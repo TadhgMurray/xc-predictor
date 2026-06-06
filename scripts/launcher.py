@@ -331,11 +331,11 @@ async def restartBrowser(playwright, old_browser, config: dict):
         # Route all Chrome traffic through WebShare's rotating residential proxy.
         # jmceylbx-us-rotate tells WebShare to use US IPs and rotate on each connection.
         # Each browser restart gets a fresh IP automatically — no manual rotation needed.
-        proxy={
-            "server": "http://p.webshare.io:80",
-            "username": "jmceylbx-us-rotate",
-            "password": "vqldxl956dvv"
-        }
+        # proxy={
+        #     "server": "http://p.webshare.io:80",
+        #     "username": "jmceylbx-us-rotate",
+        #     "password": "vqldxl956dvv"
+        # }
     )
     
     # Opens a new page in the browser.
