@@ -12,10 +12,18 @@
 import asyncio
 import time
 import subprocess
+import platform
 
-# Path to the Mullvad CLI executable on Windows.
-# r tells python to treat backslashes literally rather than escape characters.
-MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
+# Detect OS and set Mullvad CLI path accordingly.
+# Mullvad is installed via their official installer on Windows
+# and their .deb package on Ubuntu.
+if platform.system() == "Windows":
+    MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
+elif platform.system() == "Linux":
+    # Mullvad CLI on Ubuntu — installed via their .deb package.
+    MULLVAD_CLI = "/usr/bin/mullvad"
+else:
+    raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
 # List of Mullvad server locations to rotate through.
 # Format is "country city" as used by the Mullvad CLI.

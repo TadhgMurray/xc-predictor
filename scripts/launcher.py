@@ -16,7 +16,19 @@ from database import createTables, countRows, markScraped, resetInProgress, DB_P
 from scrape_results import getUnscrapedMeets, countRemaining, scrapeMeetUnified
 from playwright_stealth import Stealth
 from scraper import CloudflareException
+import platform
 
+# Detect OS and set Chrome path accordingly.
+# We must use real Chrome (not Chromium) because Cloudflare fingerprints
+# the browser binary — Chromium gets blocked, real Chrome doesn't.
+# headless=False is also required for the same reason.
+if platform.system() == "Windows":
+    CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+elif platform.system() == "Linux":
+    # On Ubuntu VM, Chrome is installed via apt and lives here.
+    CHROME_PATH = "/usr/bin/google-chrome"
+else:
+    raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
 # List of 3 dictionaries, one for each sessions. Each has slightly different
 # chrome versions and window sizes to make each session look like a unique
@@ -316,7 +328,7 @@ async def restartBrowser(playwright, old_browser, config: dict):
     # Launch a fresh browser.
     browser = await playwright.chromium.launch(
         headless = False,
-        executable_path=r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        executable_path=CHROME_PATH,
         args = ["--disable-blink-features=AutomationControlled"]
     )
 
