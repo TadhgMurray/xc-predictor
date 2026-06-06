@@ -10,7 +10,7 @@
 import asyncio
 from playwright.async_api import async_playwright
 import json
-from database import createTables, saveAthlete, saveResult, saveMeet, countRows, saveMeetQueue, countQueue, DB_PATH
+from database import createTables, saveAthlete, saveResult, saveMeet, countRows, saveMeetQueue, countQueue,
 import random
 
 # Custom exception for rate limiting so callers can handle it differently

@@ -12,7 +12,7 @@ from datetime import date
 
 # Add scripts folder so we can import DB_PATH from databse.py.
 sys.path.insert(0, "scripts")
-from database import DB_PATH
+from database import getConn
 
 # loadResults
 # Purpose: Loads all normalized results from the DB that the engine needs
@@ -22,7 +22,7 @@ from database import DB_PATH
 #         result_id, athlete_id, course_name, normalized_time, date, pool.
 def loadResults() -> list[dict]:
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn
 
     # row_factory makes each row come back as a dict instead of a tuple/
     # Without this, row[0] is result_id, row[1] is athlete_id etc - which
@@ -86,7 +86,7 @@ def loadResults() -> list[dict]:
 #                         difficulty, n_results, n_athletes.
 def saveCourseDifficulties(difficulties: dict):
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     cursor = conn.cursor()
 
     # Today's date as a string for last_updated column.
@@ -135,7 +135,7 @@ def saveCourseDifficulties(difficulties: dict):
 # e.g. {(10234, "college_m"): {"speed_rating": 127.3, "n_races": 14}}
 def saveAthleteRatings(ratings: dict):
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     cursor = conn.cursor()
 
     today = date.today().isoformat()
@@ -173,7 +173,7 @@ def saveAthleteRatings(ratings: dict):
 # Output: None.
 def saveResultSpeedRatings(result_ratings: dict):
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     cursor = conn.cursor()
 
     # Build list of (speed_rating, result_id) tuples for executemany.

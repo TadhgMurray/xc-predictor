@@ -11,7 +11,7 @@ import random
 import sqlite3
 import sys
 from playwright.async_api import async_playwright
-from database import createTables, saveAthlete, saveMeet, saveResult, countRows, DB_PATH, getConn, saveMeetTF, saveResultTF, logScrapedEventTF
+from database import createTables, saveAthlete, saveMeet, saveResult, countRows, getConn, saveMeetTF, saveResultTF, logScrapedEventTF
 from scraper import getMeetData, getMeetResults, getMeetDataTF, getMeetResultsTF, RateLimitException, CloudflareException
 
 sys.path.insert(0, "engine")
@@ -26,7 +26,7 @@ from normalize_distance import EVENT_DISTANCES_TF
 def getUnscrapedMeets(limit: int = 500) -> list[tuple[int, str]]:
 
     # Connects to the db file, creates a cursor object to execute SQL commands.
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     cursor = conn.cursor()
 
     # RETURNING makes UPDATE return the rows it just changed, so we mark
@@ -56,7 +56,7 @@ def getUnscrapedMeets(limit: int = 500) -> list[tuple[int, str]]:
 def countRemaining() -> int:
     
     # Connects to the db file, creates a cursor object to execute SQL commands.
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     cursor = conn.cursor()
 
     # Gets how many meets are still unscraped

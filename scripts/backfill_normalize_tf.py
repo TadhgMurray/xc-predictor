@@ -22,7 +22,7 @@ from normalize_distance import normalizeResult
 
 # Add scripts folder so we can import database.py
 sys.path.insert(0, "scripts")
-from database import DB_PATH
+from database import getConn
 
 # How many rows to process in each batch. More means faster but more memory
 # because most of the time is spent talking to the database.
@@ -31,7 +31,7 @@ BATCH_SIZE = 10000
 def main():
 
     # Connect to the database.
-    conn = sqlite3.connect(DB_PATH)
+    conn = getConn()
     # WAL mode lets the scraper and normalizer write simultaneously
     # without blocking each other. Default mode locks the entire file
     # on any write — WAL uses a separate log file instead.
