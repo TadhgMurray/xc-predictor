@@ -7,9 +7,11 @@
 #          SQLite database (xc.db) and writes it to the shared Postgres
 #          instance on GCP Cloud SQL. Runs in batches to avoid memory issues.
 
+import os
 import sqlite3
 import psycopg2
-import os
+import psycopg2.extras
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -47,9 +49,13 @@ def getPGConn():
 #   insert_sql: the Postgres INSERT statement to run
 #   row_to_tuple: function that converts a sqlite3.Row to a tuple
 #                 matching the INSERT statement's placeholders
-def migrateTable(sqlite_conn, pg_conn, table: str, insert_sql: str, 
-                 row_to_tuple):
+def migrateTable(sqlite_conn, pg_conn, table: str, columns: str, 
+                 row_to_tuple, conflict_column: str = None):
     
+    # Uses PostgreSQL COPY for bulk loading instead of INSERT.
+    # COPY streams all rows in one shot — much faster than executemany
+    # which does one round trip per batch.
+
     sqlite_cur = sqlite_conn.cursor()
     pg_cur = pg_conn.cursor()
 
@@ -58,32 +64,32 @@ def migrateTable(sqlite_conn, pg_conn, table: str, insert_sql: str,
     total = sqlite_cur.fetchone()[0]
     print(f"Migrating {table}: {total} rows...")
 
-    #Read and insert in batches to avoid loading everything into memory.
-    offset = 0
-    inserted = 0
+    # Read ALL rows from SQLite at once — 2.2GB fits in RAM fine.
+    sqlite_cur.execute(f"SELECT * FROM {table}")
+    rows = sqlite_cur.fetchall()
 
-    while offset < total:
-        # Read one batch from SQLite.
-        sqlite_cur.execute(
-            f"SELECT * FROM {table} LIMIT ? OFFSET ?",
-            (BATCH_SIZE, offset)
-        )
-        rows = sqlite_cur.fetchall()
+    # Convert all rows to tuples.
+    tuples = [row_to_tuple(r) for r in rows]
 
-        if not rows:
-            break
+    # Use execute_values for fast bulk insert — sends all rows in one
+    # network round trip instead of one per batch.
+    # %s in the template is replaced with (val1, val2, ...) per row.
+    psycopg2.extras.execute_values(
+        pg_cur, # The cursor to run the query on.
+        # Values %s is a placeholder for all rows, expands it into
+        # values automatically. Join puts the column strings into
+        # a list so we can send all as a list.
+        f"""
+            INSERT INTO {table} ({', '.join(columns)})
+            VALUES %s
+            ON CONFLICT DO NOTHING
+        """,
+        tuples,
+        page_size=10000  # How many rows per network packet.
+    )
 
-        # Convert rows to tuples and insert into Postgres.
-        # executemany() inserts all rows in one round trip — faster than
-        # calling execute() in a loop.
-        pg_cur.executemany(insert_sql, [row_to_tuple(r) for r in rows])
-        pg_conn.commit()
-
-        inserted += len(rows)
-        offset += BATCH_SIZE
-        print(f"  {table}: {inserted}/{total} rows inserted")
-
-    print(f"  {table}: done.")
+    pg_conn.commit()
+    print(f"  {table}: {total} rows inserted.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Table migration functions
@@ -93,11 +99,7 @@ def migrateAthletes(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="athletes",
-        insert_sql="""
-            INSERT INTO athletes (athlete_id, first_name, last_name, gender, school)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (athlete_id) DO NOTHING
-        """,
+        columns=["athlete_id", "first_name", "last_name", "gender", "school"],
         # Converts a sqlite3.Row to a tuple matching the INSERT placeholders.
         # ON CONFLICT DO NOTHING skips duplicates safely.
         row_to_tuple=lambda r: (
@@ -110,12 +112,8 @@ def migrateMeets(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="meets",
-        insert_sql="""
-            INSERT INTO meets (div_id, meet_id, meet_name, course_name, 
-                             distance, gps_lat, gps_long, state)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (div_id) DO NOTHING
-        """,
+        columns=["div_id", "meet_id", "meet_name", "course_name",
+                "distance", "gps_lat", "gps_long", "state"],
         row_to_tuple=lambda r: (
             r["div_id"], r["meet_id"], r["meet_name"], r["course_name"],
             r["distance"], r["gps_lat"], r["gps_long"], r["state"]
@@ -126,13 +124,9 @@ def migrateResults(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="results",
-        insert_sql="""
-            INSERT INTO results (result_id, athlete_id, meet_id, div_id,
-                               time_seconds, grade, date, normalized_time,
-                               speed_rating)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (result_id) DO NOTHING
-        """,
+        columns=["result_id", "athlete_id", "meet_id", "div_id",
+                "time_seconds", "grade", "date", "normalized_time",
+                "speed_rating"],
         row_to_tuple=lambda r: (
             r["result_id"], r["athlete_id"], r["meet_id"], r["div_id"],
             r["time_seconds"], r["grade"], r["date"],
@@ -144,11 +138,7 @@ def migrateMeetQueue(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="meet_queue",
-        insert_sql="""
-            INSERT INTO meet_queue (meet_id, sport, scraped)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (meet_id) DO NOTHING
-        """,
+        columns=["meet_id", "sport", "scraped"],
         row_to_tuple=lambda r: (r["meet_id"], r["sport"], r["scraped"])
     )
 
@@ -156,13 +146,9 @@ def migrateMeetsTF(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="meets_tf",
-        insert_sql="""
-            INSERT INTO meets_tf (div_id, meet_id, meet_name, event_short,
-                                event_id, distance_meters, gps_lat, gps_long,
-                                state, is_indoor)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (div_id, event_id) DO NOTHING
-        """,
+        columns=["div_id", "meet_id", "meet_name", "event_short",
+                "event_id", "distance_meters", "gps_lat", "gps_long",
+                "state", "is_indoor"],
         row_to_tuple=lambda r: (
             r["div_id"], r["meet_id"], r["meet_name"], r["event_short"],
             r["event_id"], r["distance_meters"], r["gps_lat"], r["gps_long"],
@@ -174,13 +160,9 @@ def migrateResultsTF(sqlite_conn, pg_conn):
     migrateTable(
         sqlite_conn, pg_conn,
         table="results_tf",
-        insert_sql="""
-            INSERT INTO results_tf (result_id, athlete_id, meet_id, div_id,
-                                  event_id, event_short, time_seconds, grade,
-                                  date, is_relay, normalized_time, speed_rating)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (result_id) DO NOTHING
-        """,
+        columns=["result_id", "athlete_id", "meet_id", "div_id",
+                "event_id", "event_short", "time_seconds", "grade",
+                "date", "is_relay", "normalized_time", "speed_rating"],
         row_to_tuple=lambda r: (
             r["result_id"], r["athlete_id"], r["meet_id"], r["div_id"],
             r["event_id"], r["event_short"], r["time_seconds"], r["grade"],

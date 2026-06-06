@@ -12,7 +12,7 @@ import asyncio
 import random
 from vpn_rotation import VPNRotator
 from playwright.async_api import async_playwright
-from database import createTables, countRows, markScraped, resetInProgress, DB_PATH, getConn
+from database import createTables, countRows, markScraped, resetInProgress, getConn
 from scrape_results import getUnscrapedMeets, countRemaining, scrapeMeetUnified
 from playwright_stealth import Stealth
 from scraper import CloudflareException
