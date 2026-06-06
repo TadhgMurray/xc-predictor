@@ -433,11 +433,8 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
         # Update queue sport tag to XC so we have accurate records.
         # This fixes any meets that were mislabeled as TF in the queue.
         conn = getConn()
-        conn.execute(
-            "cursor = conn.cursor()
-            cursor.execute("UPDATE meet_queue SET sport = %s WHERE meet_id = %s", ('XC', meet_id))
-            (meet_id,)
-        )
+        cursor = conn.cursor()
+        cursor.execute("UPDATE meet_queue SET sport = %s WHERE meet_id = %s", ('XC', meet_id))
         conn.commit()
         conn.close()
 
