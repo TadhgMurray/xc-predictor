@@ -1,0 +1,11 @@
+# Database — too large for Git, binary file
+data/xc.db
+data/*.db
+
+# Python bytecode — auto-generated, not source code
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code settings
+.vscode/
