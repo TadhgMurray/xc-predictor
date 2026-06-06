@@ -167,9 +167,8 @@ SESSION_CONFIGS = [
 # Arguments:
 #           playwright: the Playwright instance shared across all sessions.
 #           config: the session config dict with label, user_agent, viewport.
-#           rotator: shared VPNRotator instance for coordinated IP rotation.
 # Output: Dict with keys label, processed, failed, results_saved.
-async def runSession(playwright, config: dict, rotator: VPNRotator) -> dict:
+async def runSession(playwright, config: dict) -> dict:
     
     # Gets config for this browser session.
     label = config["label"]
@@ -228,9 +227,6 @@ async def runSession(playwright, config: dict, rotator: VPNRotator) -> dict:
                 # popping up. Goes to next IP in VPN.
                 except CloudflareException:
                     print(f"{label} [CLOUDFLARE] IP blocked, removing server and rotating")
-                    # Remove the blocked server then rotate to the next one.
-                    rotator.removeCurrentServer()
-                    await rotator.rotate(label, "cloudflare block")
                     # Restart browser on the fresh IP.
                     browser, page = await restartBrowser(playwright, browser, config)
                     meets_since_restart = 0
@@ -244,8 +240,6 @@ async def runSession(playwright, config: dict, rotator: VPNRotator) -> dict:
                     # HTML block — athletic.net returned a page instead of JSON.
                     if "Unexpected token '<'" in str(e) or "DOCTYPE" in str(e):
                         print(f"{label} [HTML BLOCK] Got HTML instead of JSON, rotating immediately")
-                        rotator.removeCurrentServer()
-                        await rotator.rotate(label, "html block")
                         browser, page = await restartBrowser(playwright, browser, config)
                         meets_since_restart = 0
                         consecutive_failures = 0
@@ -267,13 +261,6 @@ async def runSession(playwright, config: dict, rotator: VPNRotator) -> dict:
                     consecutive_failures += 1
                     print(f"{label} [FAIL #{failed}] Meet {meet_id} marked failed")
 
-                # Check if VPN rotation should be triggered.
-                # Rotates every 200 meets or on 20 consecutive failures.
-                # If rotation happened, reset the counter for this session.
-                rotated = await rotator.checkRotation(label, consecutive_failures)
-
-                if rotated:
-                    consecutive_failures = 0
                 
                 # Pause between meets to avoid detection.
                 await asyncio.sleep(random.uniform(3.0, 5.0))
@@ -329,7 +316,7 @@ async def restartBrowser(playwright, old_browser, config: dict):
     browser = await playwright.chromium.launch(
         headless = False,
         executable_path=CHROME_PATH,
-        args = ["--disable-blink-features=AutomationControlled"]
+        args = ["--disable-blink-features=AutomationControlled"],
     )
 
     # Each restart gets a slightly randomized Chrome version so the
@@ -340,7 +327,15 @@ async def restartBrowser(playwright, old_browser, config: dict):
     context = await browser.new_context(
         user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version}.0.0.0 Safari/537.36",
         viewport = {"width": random.randint(1280, 1920), "height": random.randint(800, 1080)},
-        java_script_enabled = True
+        java_script_enabled = True,
+        # Route all Chrome traffic through WebShare's rotating residential proxy.
+        # jmceylbx-us-rotate tells WebShare to use US IPs and rotate on each connection.
+        # Each browser restart gets a fresh IP automatically — no manual rotation needed.
+        proxy={
+            "server": "http://p.webshare.io:80",
+            "username": "jmceylbx-us-rotate",
+            "password": "vqldxl956dvv"
+        }
     )
     
     # Opens a new page in the browser.
@@ -376,15 +371,11 @@ async def main():
         
         print("Launching 25 unified sessions...")
 
-        # One shared VPNRotator instance passed to all sessions.
-        # Shared so all sessions coordinate on the same lock and rotation count.
-        rotator = VPNRotator()
-
         # This is a list comprehension, a compact way of building a list.
         # tasks is a list of the function calls.
         tasks = [
             # Schedules each runSession call to run concurrently.
-            asyncio.create_task(runSession(playwright, config, rotator))
+            asyncio.create_task(runSession(playwright, config))
             for config in SESSION_CONFIGS
         ]
 
