@@ -118,7 +118,7 @@ def saveCourseDifficulties(difficulties: dict):
     cursor.executemany("""
         INSERT INTO course_difficulties (
             course_name, difficulty, n_results, n_athletes, last_updated
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, $s)
     """, rows)
 
     conn.commit()
@@ -158,7 +158,7 @@ def saveAthleteRatings(ratings: dict):
     cursor.executemany("""
         INSERT INTO athlete_ratings (
             athlete_id, pool, speed_rating, n_races, last_updated
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %)
     """, rows)
 
     conn.commit()
@@ -186,8 +186,8 @@ def saveResultSpeedRatings(result_ratings: dict):
     # executemany runs the UPDATE once per tuple in one db round-trip.
     cursor.executemany("""
         UPDATE results
-        SET speed_rating = ?
-        WHERE result_id = ?
+        SET speed_rating = %s
+        WHERE result_id = %s
     """, rows)
 
     conn.commit()

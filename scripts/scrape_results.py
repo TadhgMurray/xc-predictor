@@ -36,7 +36,7 @@ def getUnscrapedMeets(limit: int = 500) -> list[tuple[int, str]]:
         WHERE meet_id IN (
             SELECT meet_id FROM meet_queue
             WHERE scraped = 0
-            LIMIT ?
+            LIMIT %s
         )
         RETURNING meet_id, sport
     """, (limit,))
@@ -421,7 +421,7 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
             print(f"{label} [!] scrapeMeetTF failed for meet {meet_id}: {e}")
         # Sets the sport to TF in the db.
         conn = getConn()
-        conn.execute("UPDATE meet_queue SET sport = 'TF' WHERE meet_id = ?", (meet_id,))
+        conn.execute("UPDATE meet_queue SET sport = 'TF' WHERE meet_id = %s", (meet_id,))
         conn.commit()
         conn.close()
         return n, "TF"
@@ -433,7 +433,7 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
         # This fixes any meets that were mislabeled as TF in the queue.
         conn = getConn()
         conn.execute(
-            "UPDATE meet_queue SET sport = 'XC' WHERE meet_id = ?",
+            "UPDATE meet_queue SET sport = 'XC' WHERE meet_id = %s",
             (meet_id,)
         )
         conn.commit()
@@ -460,7 +460,7 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
     # Update queue sport tag to TF.
     conn = getConn()
     conn.execute(
-        "UPDATE meet_queue SET sport = 'TF' WHERE meet_id = ?",
+        "UPDATE meet_queue SET sport = 'TF' WHERE meet_id = %s",
         (meet_id,)
     )
     conn.commit()

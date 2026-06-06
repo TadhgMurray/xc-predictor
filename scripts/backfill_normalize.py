@@ -61,7 +61,7 @@ def fetchBatch(cursor, last_id: int) -> list:
         WHERE r.normalized_time is NULL
         -- result_id > last_id is the cursor — skips rows already processed.
         -- Faster than OFFSET because it uses the primary key index directly.
-        AND r.result_id > ?
+        AND r.result_id > %s
         -- Filter out '-' grades at the SQL level so SQLite never returns
         -- them. 352K rows would otherwise be fetched and immediately dropped
         -- in Python — wasteful and slow as fuck.
@@ -70,7 +70,7 @@ def fetchBatch(cursor, last_id: int) -> list:
         -- Without it SQLite returns rows in unpredictable order and
         -- last_id might skip rows
         ORDER BY r.result_id
-        LIMIT ?
+        LIMIT %s
     """, (last_id, BATCH_SIZE))
 
     return cursor.fetchall()
@@ -190,8 +190,8 @@ def main():
         if updates:
             cursor.executemany("""
                 UPDATE results
-                SET normalized_time = ?
-                WHERE result_id = ?
+                SET normalized_time = %s
+                WHERE result_id = %s
             """, updates)
             
             conn.commit()
