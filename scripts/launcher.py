@@ -403,11 +403,11 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
         # Each restart uses a different static residential proxy.
         # proxy_index cycles through the PROXIES list so sessions
         # spread across different IPs.
-        proxy={
-            "server": f"http://{host}:{port}",
-            "username": username,
-            "password": password
-        }
+        # proxy={
+        #     "server": f"http://{host}:{port}",
+        #     "username": username,
+        #     "password": password
+        # }
     )
     
     # Opens a new page in the browser.
