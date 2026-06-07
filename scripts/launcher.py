@@ -387,6 +387,11 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
     # user agent string doesn't look like a bot cycling identically.
     chrome_version = random.randint(125, 128)
 
+    # Pick proxy for this restart — cycles through the list using modulo
+    # so it wraps around when it reaches the end.
+    proxy = PROXIES[proxy_index % len(PROXIES)]
+    host, port, username, password = proxy
+
     # Changes browser context.
     context = await browser.new_context(
         user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version}.0.0.0 Safari/537.36",
