@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import platform
 from playwright.async_api import async_playwright
-from database import createTables, saveAthlete, saveMeet, saveResult, countRows, getConn, saveMeetTF, saveResultTF, logScrapedEventTF
+from database import createTables, saveAthlete, saveMeet, saveResult, countRows, getConn, saveMeetTF, saveResultTF, logScrapedEventTF, markScraped
 from scraper import getMeetData, getMeetResults, getMeetDataTF, getMeetResultsTF, RateLimitException, CloudflareException
 
 sys.path.insert(0, "engine")
