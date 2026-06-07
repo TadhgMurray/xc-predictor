@@ -32,15 +32,29 @@ def getUnscrapedMeets(limit: int = 500) -> list[tuple[int, str]]:
 
     # RETURNING makes UPDATE return the rows it just changed, so we mark
     # and fetch in one single atomic operation with no gap between them.
-    cursor.execute("""
-        UPDATE meet_queue SET scraped = 3
-        WHERE meet_id IN (
-            SELECT meet_id FROM meet_queue
-            WHERE scraped = 0
-            LIMIT %s
-        )
-        RETURNING meet_id, sport
-    """, (limit,))
+    if platform.system() == "Linux":
+        # On Linux (VM), only pick up unscraped meets — skip status 4
+        # (TF meets flagged for Windows) so they don't get grabbed here.
+        cursor.execute("""
+            UPDATE meet_queue SET scraped = 3
+            WHERE meet_id IN (
+                SELECT meet_id FROM meet_queue
+                WHERE scraped = 0
+                LIMIT %s
+            )
+            RETURNING meet_id, sport
+        """, (limit,))
+    else:
+        # On Windows, pick up unscraped (0) AND TF-flagged (4) meets.
+        cursor.execute("""
+            UPDATE meet_queue SET scraped = 3
+            WHERE meet_id IN (
+                SELECT meet_id FROM meet_queue
+                WHERE scraped = 0 OR scraped = 4
+                LIMIT %s
+            )
+            RETURNING meet_id, sport
+        """, (limit,))
 
     # Fetches all rows, returning a list of tuples with the meet ids and sport.                             
     rows = cursor.fetchall()
@@ -416,7 +430,8 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
         # On Linux (VM), skip TF — CDP timing issues make TF unreliable.
         # TF meets will be scraped by the Windows machine instead.
         if platform.system() == "Linux":
-            return 0, "SKIPPED"
+            markScraped(meet_id, status=4)
+            return -2, "SKIPPED"
 
         # XC API returned nothing — could be a TF meet, try it.
         try:
@@ -458,7 +473,8 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
     # Empty xcDivisions means this isn't an XC meet. Try TF.
     # On Linux (VM), skip TF — Windows machine handles it instead.
     if platform.system() == "Linux":
-        return 0, "SKIPPED"
+        markScraped(meet_id, status=4)
+        return -2, "SKIPPED"
 
     try:
         n = await scrapeMeetTF(page, meet_id, label)

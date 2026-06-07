@@ -310,9 +310,12 @@ async def runSession(playwright, config: dict) -> dict:
                         markScraped(meet_id, status=0)
                         continue
                     raise
-
+                
+                if n == -2:
+                    # TF meet skipped on Linux.
+                    continue
                 # Marks the meet scraped and tracks results saved.
-                if n >= 0:
+                elif n >= 0:
                     markScraped(meet_id, status=1)
                     processed += 1
                     results_saved += n
