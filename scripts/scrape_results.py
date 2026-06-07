@@ -10,6 +10,7 @@ import asyncio
 import random
 import sqlite3
 import sys
+import platform
 from playwright.async_api import async_playwright
 from database import createTables, saveAthlete, saveMeet, saveResult, countRows, getConn, saveMeetTF, saveResultTF, logScrapedEventTF
 from scraper import getMeetData, getMeetResults, getMeetDataTF, getMeetResultsTF, RateLimitException, CloudflareException
@@ -412,6 +413,11 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
     # getMeetData returned something but no meet ID — probably track and
     # field then.
     if not meet_info.get("ID"):
+        # On Linux (VM), skip TF — CDP timing issues make TF unreliable.
+        # TF meets will be scraped by the Windows machine instead.
+        if platform.system() == "Linux":
+            return 0, "SKIPPED"
+
         # XC API returned nothing — could be a TF meet, try it.
         try:
             n = await scrapeMeetTF(page, meet_id, label)
@@ -450,6 +456,10 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
     # ------------------------------------------------------------------ #
 
     # Empty xcDivisions means this isn't an XC meet. Try TF.
+    # On Linux (VM), skip TF — Windows machine handles it instead.
+    if platform.system() == "Linux":
+        return 0, "SKIPPED"
+
     try:
         n = await scrapeMeetTF(page, meet_id, label)
     except Exception as e:
@@ -458,9 +468,10 @@ async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
 
     # Update queue sport tag to TF.
     conn = getConn()
-    conn.execute(
-        "UPDATE meet_queue SET sport = 'TF' WHERE meet_id = %s",
-        (meet_id,)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE meet_queue SET sport = %s WHERE meet_id = %s",
+        ('TF', meet_id)
     )
     conn.commit()
     conn.close()
