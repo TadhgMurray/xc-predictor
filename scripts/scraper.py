@@ -511,7 +511,10 @@ async def getMeetDataTF(page, meet_id: int):
             except Exception as e:
                 print(f"[DEBUG] CDP body error: {e}")
         # Always continue the response so the page gets it too.
-        await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
+        try:
+            await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
+        except Exception:
+            pass
 
     cdp.on('Fetch.requestPaused', on_request_paused)
 
