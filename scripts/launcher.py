@@ -30,6 +30,63 @@ elif platform.system() == "Linux":
 else:
     raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
+# Static residential proxy list from WebShare.
+# Format: (host, port, username, password)
+# Each session gets assigned a proxy from this list based on its index.
+# On browser restart, cycles to the next proxy in the list.
+PROXIES = [
+    ("45.45.203.194", "8195", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("94.154.170.185", "6107", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("94.154.170.29", "5951", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.155.37", "6568", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("208.66.72.230", "5879", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("107.180.180.204", "5253", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.143.206", "7029", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("72.1.182.103", "5900", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("63.246.132.166", "5484", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.171.112", "7613", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("23.229.21.244", "8466", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.171.59", "7560", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("207.228.6.254", "7986", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("72.1.129.102", "7495", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("168.235.150.7", "5291", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.146.40", "7863", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("69.30.72.204", "5260", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("163.123.201.30", "5815", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("130.180.238.218", "5600", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.146.208", "8031", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("130.180.239.244", "6883", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("163.123.203.234", "8337", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("185.52.136.233", "8932", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.45.203.111", "8112", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.130.159", "6948", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.136.77", "8509", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("9.249.19.212", "7146", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("130.180.239.203", "6842", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.143.209", "7032", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.176.62", "7640", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("130.180.252.187", "8887", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("72.1.152.87", "5979", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("207.228.19.17", "5385", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.131.195", "7307", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("23.229.21.155", "8377", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("63.246.132.149", "5467", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("216.98.252.39", "5769", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("207.228.33.124", "8836", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("72.1.133.182", "7574", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("192.53.141.50", "5438", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("216.98.228.137", "5838", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("69.30.72.140", "5196", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("9.142.31.68", "5226", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("23.229.85.111", "5623", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("207.228.33.24", "8736", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("72.1.178.138", "7032", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("168.158.185.250", "6517", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("216.98.253.243", "6286", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("45.56.130.206", "6995", "jmceylbxstaticresidential", "vqldxl956dvv"),
+    ("207.228.33.55", "8767", "jmceylbxstaticresidential", "vqldxl956dvv"),
+]
+
 # List of 3 dictionaries, one for each sessions. Each has slightly different
 # chrome versions and window sizes to make each session look like a unique
 # machine to cloudflare.
@@ -83,82 +140,82 @@ SESSION_CONFIGS = [
         "label": "[Session 10]",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
         "viewport": {"width": 1280, "height": 960}
-    }#,
-    # {
-    #     "label": "[Session 11]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1680, "height": 1050}
-    # },
-    # {
-    #     "label": "[Session 12]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1280, "height": 1024}
-    # },
-    # {
-    #     "label": "[Session 13]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1600, "height": 1024}
-    # },
-    # {
-    #     "label": "[Session 14]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1920, "height": 1200}
-    # },
-    # {
-    #     "label": "[Session 15]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1440, "height": 960}
-    # },
-    # {
-    #     "label": "[Session 16]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1280, "height": 800}
-    # },
-    # {
-    #     "label": "[Session 17]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1366, "height": 768}
-    # },
-    # {
-    #     "label": "[Session 18]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1440, "height": 900}
-    # },
-    # {
-    #     "label": "[Session 19]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1920, "height": 1080}
-    # },
-    # {
-    #     "label": "[Session 20]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1536, "height": 864}
-    # },
-    # {
-    #     "label": "[Session 21]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1600, "height": 900}
-    # },
-    # {
-    #     "label": "[Session 22]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1280, "height": 720}
-    # },
-    # {
-    #     "label": "[Session 23]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1440, "height": 810}
-    # },
-    # {
-    #     "label": "[Session 24]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1366, "height": 900}
-    # },
-    # {
-    #     "label": "[Session 25]",
-    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-    #     "viewport": {"width": 1680, "height": 1050}
-    # }
+    },
+    {
+        "label": "[Session 11]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+        "viewport": {"width": 1680, "height": 1050}
+    },
+    {
+        "label": "[Session 12]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "viewport": {"width": 1280, "height": 1024}
+    },
+    {
+        "label": "[Session 13]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        "viewport": {"width": 1600, "height": 1024}
+    },
+    {
+        "label": "[Session 14]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+        "viewport": {"width": 1920, "height": 1200}
+    },
+    {
+        "label": "[Session 15]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+        "viewport": {"width": 1440, "height": 960}
+    },
+    {
+        "label": "[Session 16]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        "viewport": {"width": 1280, "height": 800}
+    },
+    {
+        "label": "[Session 17]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+        "viewport": {"width": 1366, "height": 768}
+    },
+    {
+        "label": "[Session 18]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "viewport": {"width": 1440, "height": 900}
+    },
+    {
+        "label": "[Session 19]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "viewport": {"width": 1920, "height": 1080}
+    },
+    {
+        "label": "[Session 20]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+        "viewport": {"width": 1536, "height": 864}
+    },
+    {
+        "label": "[Session 21]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "viewport": {"width": 1600, "height": 900}
+    },
+    {
+        "label": "[Session 22]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "viewport": {"width": 1280, "height": 720}
+    },
+    {
+        "label": "[Session 23]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "viewport": {"width": 1440, "height": 810}
+    },
+    {
+        "label": "[Session 24]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "viewport": {"width": 1366, "height": 900}
+    },
+    {
+        "label": "[Session 25]",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "viewport": {"width": 1680, "height": 1050}
+    }
 ]
 
 # runSession
@@ -193,6 +250,10 @@ async def runSession(playwright, config: dict) -> dict:
     # Resets to 0 on any success.
     consecutive_failures = 0
 
+    # Tracks which proxy to use — increments on each browser restart
+    # so we cycle through different IPs over time.
+    proxy_index = SESSION_CONFIGS.index(config)  # start each session on a different proxy
+
     # Wraps the entire session in a try/except so if anything bad happens
     # we return what we have instead of crashing the launcher and other sessions.
     try:
@@ -215,7 +276,8 @@ async def runSession(playwright, config: dict) -> dict:
                 # First meet ever, or we've hit the restart threshold.
                 # Close old browser, open fresh one, reset the counter.
                 if browser is None or meets_since_restart >= RESTART_EVERY:
-                    browser, page = await restartBrowser(playwright, browser, config)
+                    browser, page = await restartBrowser(playwright, browser, config, proxy_index)
+                    proxy_index += 1
                     meets_since_restart = 0
 
                 # Scrape the meet — tries XC first, then TF.
@@ -228,7 +290,8 @@ async def runSession(playwright, config: dict) -> dict:
                 except CloudflareException:
                     print(f"{label} [CLOUDFLARE] IP blocked, removing server and rotating")
                     # Restart browser on the fresh IP.
-                    browser, page = await restartBrowser(playwright, browser, config)
+                    browser, page = await restartBrowser(playwright, browser, config, proxy_index)
+                    proxy_index += 1
                     meets_since_restart = 0
                     consecutive_failures = 0
                     # Reset meet to unscraped so it gets retried on the fresh IP.
@@ -240,7 +303,8 @@ async def runSession(playwright, config: dict) -> dict:
                     # HTML block — athletic.net returned a page instead of JSON.
                     if "Unexpected token '<'" in str(e) or "DOCTYPE" in str(e):
                         print(f"{label} [HTML BLOCK] Got HTML instead of JSON, rotating immediately")
-                        browser, page = await restartBrowser(playwright, browser, config)
+                        browser, page = await restartBrowser(playwright, browser, config, proxy_index)
+                        proxy_index += 1
                         meets_since_restart = 0
                         consecutive_failures = 0
                         markScraped(meet_id, status=0)
@@ -263,7 +327,7 @@ async def runSession(playwright, config: dict) -> dict:
 
                 
                 # Pause between meets to avoid detection.
-                await asyncio.sleep(random.uniform(3.0, 5.0))
+                await asyncio.sleep(random.uniform(1.0, 2.0))
 
     except Exception as e:
         print(f"{label} Session crashed: {e}")
@@ -300,7 +364,7 @@ async def watchForErrorModal(page):
 #                        existing(none).
 #           config: the session config dict with user_agent and viewport.
 # Output: Returns a tuple of (browser, page) ready to scrape with.
-async def restartBrowser(playwright, old_browser, config: dict):
+async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int = 0):
 
     label = config["label"]
 
@@ -328,14 +392,14 @@ async def restartBrowser(playwright, old_browser, config: dict):
         user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version}.0.0.0 Safari/537.36",
         viewport = {"width": random.randint(1280, 1920), "height": random.randint(800, 1080)},
         java_script_enabled = True,
-        # Route all Chrome traffic through WebShare's rotating residential proxy.
-        # jmceylbx-us-rotate tells WebShare to use US IPs and rotate on each connection.
-        # Each browser restart gets a fresh IP automatically — no manual rotation needed.
-        # proxy={
-        #     "server": "http://p.webshare.io:80",
-        #     "username": "jmceylbx-us-rotate",
-        #     "password": "vqldxl956dvv"
-        # }
+        # Each restart uses a different static residential proxy.
+        # proxy_index cycles through the PROXIES list so sessions
+        # spread across different IPs.
+        proxy={
+            "server": f"http://{host}:{port}",
+            "username": username,
+            "password": password
+        }
     )
     
     # Opens a new page in the browser.
