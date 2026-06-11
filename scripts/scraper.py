@@ -10,18 +10,14 @@
 import asyncio
 from playwright.async_api import async_playwright
 import json
-from database import createTables, saveAthlete, saveResult, saveMeet, countRows, saveMeetQueue, countQueue
+from database import createTables, saveMeetQueue, countQueue
 import random
 
-# Custom exception for rate limiting so callers can handle it differently
-# from genuine failures.
-class RateLimitException(Exception):
-    pass
-
-# Raised when athletic.net returns an HTML page instead of JSON,
-# which means Cloudflare has blocked the current IP entirely.
-# Distinct from RateLimitException (429) — this is an IP block,
-# not a rate limit, and requires a VPN rotation to recover.
+# Raised when athletic.net returns a Cloudflare challenge page OR a raw
+# HTML page (detected by a <!DOCTYPE html> in the response body) instead
+# of the expected JSON. Both mean the current IP is blocked at the network
+# level and require a VPN rotation to recover. Distinct from
+# RateLimitException (429) — that is a server miscommunication error.
 class CloudflareException(Exception):
     pass
 
@@ -37,103 +33,101 @@ class CloudflareException(Exception):
 # data that will be used to train the predictor.
 async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
 
-    await page.goto(f"https://www.athletic.net/CrossCountry/meet/{meet_id}/results/{div_id}", timeout=60000)
-    # Waits until the HTML is parsed ("domcontentloaded"), as opposed to waiting
-    # for no network activity, which takes forever because there are always
-    # background processes going on.
-    # This returns as soon as the page is ready instead of always waiting 3 seconds.
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2.0   # Seconds to wait between retries
+
+    await page.goto(
+        f"https://www.athletic.net/CrossCountry/meet/{meet_id}/results/{div_id}",
+        timeout=60000
+    )
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
     await asyncio.sleep(random.uniform(1.5, 2.5))
 
-    # Use page.evaluate to run JavaScript in the context of the page to 
-    # fetch the results data from the API endpoint. Avoids issues with the 
-    # page navigating away before we can read the data and where we need
-    # to make API calls that require authentication tokens the browser has.
-    # This is a python function containing a JavaScript function inside a string
-    # as the first arg and the second arg is optional arguments we can pass to
-    # the JavaScript function to avoid syntax issues with string concatenation.
-    # async(args) => is a JS arrow function. It is async so it can use await. We
-    # uses args instead of two separate parameters because evaluate only accepts
-    # one arg, so we have to pack them together.
-    data = await page.evaluate("""
-        // Comments here are double slashes as this is JS.
-        // This function runs in the browser context, so we can use 
-        // fetch to call the API directly. async allows us to 
-        // wait for the response before returning.
-        // Pass div_id as an argument rather than concatenating it into the string.
-        // This avoids syntax errors and is cleaner.
-        async (args) => {
-            // Call the API endpoint that returns the results data for the 
-            // specified division. This is a POST request.
-            // Contains three parameters of a HTTP request. Post - send data.
-            // Headers - what we're sending. Body - data we're sending, the divId.
-            const response = await fetch('/api/v1/Meet/GetResultsData3', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    // JWT token to authenticate the request
-                    'anettokens': args.token,
-                    // athletic.net header identifying version of the app making
-                    // the request.
-                    'anet-appinfo': 'web:web:0:240'
-                },
-                // The data we're sending, specifically the division ID and
-                // the authentication token. We have to stringify it to send 
-                // it as JSON.
-                body: JSON.stringify({divId: args.divId})
-            });
-            // Return it to the Python context as a JavaScript object, 
-            // which will be converted to a Python dictionary.
-            return {
-                status: response.status,
-                text: await response.text()
-            };
-        }
-    """, {"divId": div_id, "token": jwt_token})  # Pass div_id as an argument to the function. 
-                                                 # jwt_token is the authentication token we got 
-                                                 # from the cookies so we don't get a 403 error.
-
-    # data is the dict that page.evaluate returns. We take each part of it,
-    # the HTTP status code, and the response text and hold them here. We use
-    # .get in case nothing is returned, so it doesn't crash.
-    status = data.get('status')
-    text = data.get('text', '')
-
-    # Empty text means the API returned nothing at all — this is a genuine
-    # failure, not an empty meet. Raise an exception so scrapeMeet treats
-    # it as a failed division.
-    if not text:
-        raise Exception(f"Empty response from API (status {status})")
-
-    if status == 429:
-        # Rate limited — wait 60 seconds and raise so scrapeMeet can retry.
-        # We raise a specific exception type so the caller can distinguish
-        # a rate limit from a genuine failure.
-        raise RateLimitException("Rate limited by athletic.net")
-    
-
-    # If status is not 200, the API rejected the request.
-    if status != 200:
-        raise Exception(f"API returned status {status}")
-    
-    # If the response starts with <!DOCTYPE, Cloudflare returned an HTML
-    # challenge page instead of JSON — the IP is blocked.
-    # We check before attempting json.loads() so we get a clean specific
-    # exception instead of a confusing JSONDecodeError.
-    if "<!DOCTYPE" in text or "<html" in text:
-        raise CloudflareException("Cloudflare block detected")
+    # ------------------------------------------------------------------ #
+    # Retry loop — the evaluate call can fail if the page isn't ready    #
+    # or if the server returns a 429. Retrying after a short delay       #
+    # resolves this in most cases.                                       #
+    # ------------------------------------------------------------------ #
+    last_error = None
 
 
-    # Parse the results from the response text. If it fails it raises the
-    # error to the caller.
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-         raise Exception(f"Invalid JSON response (status {status}): {text[:100]}")
+    for attempt in range(MAX_RETRIES):
 
-    # Return the results — could be an empty list for a genuine empty meet,
-    # which is fine and will be handled correctly in scrapeMeet.
-    return parsed.get("resultsXC", [])
+        try:
+            # Use page.evaluate to run JavaScript in the context of the page to 
+            # fetch the results data from the API endpoint. Avoids issues with the 
+            # page navigating away before we can read the data and where we need
+            # to make API calls that require authentication tokens the browser has.
+            # This is a python function containing a JavaScript function inside a string
+            # as the first arg and the second arg is optional arguments we can pass to
+            # the JavaScript function to avoid syntax issues with string concatenation.
+            # async(args) => is a JS arrow function. It is async so it can use await. We
+            # uses args instead of two separate parameters because evaluate only accepts
+            # one arg, so we have to pack them together.
+            # page.evaluate runs JS inside the browser, inheriting its
+            # cookies and auth state. We call the API directly rather than
+            # navigating so we get structured JSON back instead of HTML.
+            data = await page.evaluate("""
+                async (args) => {
+                    const response = await fetch('/api/v1/Meet/GetResultsData3', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'anettokens': args.token,
+                            'anet-appinfo': 'web:web:0:240'
+                        },
+                        body: JSON.stringify({divId: args.divId})
+                    });
+                    return {
+                        status: response.status,
+                        text: await response.text()
+                    };
+                }
+            """, {"divId": div_id, "token": jwt_token})
+
+            status = data.get('status')
+            text = data.get('text', '')
+
+            # Empty text or 429 — server not ready, worth retrying
+            if not text:
+                raise Exception(f"Empty response from API (status {status})")
+            if status == 429:
+                raise Exception("Server miscommunication error (status 429)")
+            if status != 200:
+                raise Exception(f"API returned status {status}")
+
+            # Cloudflare block — IP-level issue, no point retrying
+            if "<!DOCTYPE" in text or "<html" in text:
+                raise CloudflareException("Cloudflare block detected")
+
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                raise Exception(f"Invalid JSON (status {status}): {text[:100]}")
+
+            # Success — return immediately
+            return parsed.get("resultsXC", [])
+
+        except CloudflareException:
+            # Don't retry Cloudflare blocks — raise immediately so the
+            # caller can trigger VPN rotation
+            raise
+
+        except Exception as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                print(
+                    f"[XC] getMeetResults failed meet {meet_id} div {div_id} "
+                    f"attempt {attempt + 1}/{MAX_RETRIES}: {e} "
+                    f"— retrying in {RETRY_DELAY}s"
+                )
+                await asyncio.sleep(RETRY_DELAY)
+
+    # All attempts exhausted
+    raise Exception(
+        f"getMeetResults failed after {MAX_RETRIES} attempts "
+        f"(meet {meet_id} div {div_id}): {last_error}"
+    )
 
 
 # getMeetData
@@ -164,25 +158,51 @@ async def getMeetData(page, meet_id: int):
     # Make the API call directly from the browser context.
     # This uses the browser's own cookies and tokens, so we don't have 
     # to worry about authentication issues.
+    # Fetch as text() not json() so we can inspect the raw response
+    # before parsing. If Cloudflare blocks us, response.json() would
+    # crash inside the JS with a SyntaxError before Python ever sees it,
+    # meaning our DOCTYPE check would never run, because JS tries
+    # to parse it itself.
     data = await page.evaluate("""
         async (meetId) => {
-            const response = await fetch('/api/v1/Meet/GetMeetData?meetId=' + meetId + '&sport=xc');
-            return await response.json();
+             const response = await fetch(
+                '/api/v1/Meet/GetMeetData?meetId=' + meetId + '&sport=xc'
+            );
+            return await response.text();
         }
     """, meet_id)  # Pass meet_id as an argument to the function to avoid syntax issue with string concatenation.
 
     # If data is None probably a track meet so return empty lists.
-    if data is None:
+    if not data:
+        return {}, []
+    
+    # Cloudflare or HTML block — IP is blocked at the network level.
+    # Raise so scrapeMeetUnified catches CloudflareException and triggers
+    # VPN rotation instead of treating this as a generic failure.
+    if "<!DOCTYPE" in data or "<html" in data:
+        raise CloudflareException("Cloudflare block in getMeetData")
+
+    # Parse the JSON string into a Python dict.
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return {}, []
+    
+    # None means no XC data — probably a TF meet.
+    if parsed is None:
         return {}, []
     
     # Extract meet info and divisions from the API response
-    meet_info = data.get("meet", {})
+    meet_info = parsed.get("meet", {})
 
     # If meet_info is None probably a track meet so return empty lists.
     if meet_info is None:
         meet_info = {}
-    meet_info["jwtMeet"] = data.get("jwtMeet", "") # Add the jwt token to the meet_info dictionary so we can use it later to authenticate our results API request.
-    divisions = data.get("xcDivisions", [])
+
+    # Add JWT token to meet_info so results calls can authenticate.
+    meet_info["jwtMeet"] = parsed.get("jwtMeet", "")
+ 
+    divisions = parsed.get("xcDivisions", [])
 
     return meet_info, divisions
 
@@ -529,7 +549,7 @@ async def getMeetDataTF(page, meet_id: int):
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
 
     # Give CDP a moment to process the intercepted response.
-    await asyncio.sleep(1)
+    await asyncio.sleep(3)
     await cdp.send('Fetch.disable')
 
     # ------------------------------------------------------------------ #
@@ -592,76 +612,130 @@ async def getMeetDataTF(page, meet_id: int):
 async def getMeetResultsTF(page, meet_id: int, div_id: int, event_short: str,
                            gender: str, jwt_token: str):
 
-    # ------------------------------------------------------------------ #
-    # Step 1: enable CDP Fetch interception before navigating             #
-    # ------------------------------------------------------------------ #
+    # How many times to retry if CDP doesn't capture the response.
+    # The server miscommunication modal typically appears on the first
+    # navigation and gets dismissed by watchForErrorModal within 0.5s.
+    # A second navigation after dismissal almost always succeeds.
+    MAX_RETRIES = 3
 
-    cdp = await page.context.new_cdp_session(page)
-    await cdp.send('Fetch.enable', {
-        'patterns': [{'urlPattern': '*GetResultsData3*', 'requestStage': 'Response'}]
-    })
+    MAX_WAIT_SECONDS = 5      # Max time to wait for CDP to capture response
+    POLL_INTERVAL = 0.1       # How often to check if captured_data is populated
 
-    captured_data = {}
-
-    async def on_request_paused(event):
-        try:
-            body_result = await cdp.send('Fetch.getResponseBody', {
-                'requestId': event['requestId']
-            })
-            body = body_result['body']
-            if body_result.get('base64Encoded'):
-                import base64
-                body = base64.b64decode(body).decode('utf-8')
-            captured_data['body'] = body
-        except Exception as e:
-            pass  # CDP session dead or body unavailable — ignore
-        try:
-            await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
-        except Exception:
-            pass
-
-    cdp.on('Fetch.requestPaused', on_request_paused)
-
-    # ------------------------------------------------------------------ #
-    # Step 2: navigate to event URL                                       #
-    # ------------------------------------------------------------------ #
-
-    # Athletic.net event URLs follow this pattern:
-    # /TrackAndField/meet/{meet_id}/results/{gender}/{div_id}/{event_short}
-    # Navigating here causes Angular to fire GetResultsData3 automatically.
+    # Define url outside the loop — it doesn't change between retries
+    # and needs to be accessible to the on_request_paused closure.
     url = (
         f"https://www.athletic.net/TrackAndField/meet/{meet_id}"
         f"/results/{gender}/{div_id}/{event_short}"
     )
-    await page.goto(url, timeout=60000)
-    await page.wait_for_load_state("domcontentloaded", timeout=10000)
 
-    await asyncio.sleep(1)
-    await cdp.send('Fetch.disable')
 
-    # ------------------------------------------------------------------ #
-    # Step 3: parse and return results                                    #
-    # ------------------------------------------------------------------ #
+    for attempt in range(MAX_RETRIES):
 
-    if not captured_data:
-        raise Exception("GetResultsData3 never captured")
+        # ------------------------------------------------------------------ #
+        # Step 1: enable CDP Fetch interception before navigating            #
+        # ------------------------------------------------------------------ #
 
-    try:
-        parsed = json.loads(captured_data['body'])
-    except Exception as e:
-        raise Exception(f"Failed to parse GetResultsData3: {e}")
+        # We re-enable CDP on every attempt because we disabled it at the
+        # end of the previous attempt. A fresh enable ensures we don't miss
+        # the response on retry navigations.
+        cdp = await page.context.new_cdp_session(page)
+        await cdp.send('Fetch.enable', {
+            'patterns': [{'urlPattern': '*GetResultsData3*', 'requestStage': 'Response'}]
+        })
 
-    if not isinstance(parsed, dict):
-        raise Exception(f"Unexpected response type: {type(parsed)}")
+        captured_data = {}
 
-    results = parsed.get("resultsTF", [])
+        async def on_request_paused(event):
+            try:
+                body_result = await cdp.send('Fetch.getResponseBody', {
+                    'requestId': event['requestId']
+                })
+                body = body_result['body']
+                if body_result.get('base64Encoded'):
+                    import base64
+                    body = base64.b64decode(body).decode('utf-8')
+                captured_data['body'] = body
+            except Exception:
+                pass
+            try:
+                await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
+            except Exception:
+                pass
 
-    # resultsTF sometimes comes back as a list of lists — unwrap if needed.
-    # e.g. [[result1, result2, ...]] instead of [result1, result2, ...]
-    if results and isinstance(results[0], list):
-        results = results[0]
+        cdp.on('Fetch.requestPaused', on_request_paused)
 
-    return results
+        # ------------------------------------------------------------------ #
+        # Step 2: navigate to event URL                                      #
+        # ------------------------------------------------------------------ #
+
+        await page.goto(url, timeout=60000)
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+        # Wait for Angular to fire GetResultsData3 and CDP to capture it.
+        # On retries we wait a bit longer to give watchForErrorModal time
+        # to dismiss the server miscommunication modal first.
+        wait = 0.5 if attempt == 0 else 1.5
+        await asyncio.sleep(wait)
+
+        await cdp.send('Fetch.disable')
+
+        # ------------------------------------------------------------------ #
+        # Step 3: POLL for captured_data instead of flat sleep               #
+        # ------------------------------------------------------------------ #
+
+        # domcontentloaded fires when HTML is parsed. Angular boots after
+        # that, then fires GetResultsData3. We don't know how long that
+        # takes — so we poll every POLL_INTERVAL seconds until either:
+        #   a) captured_data is populated (success), or
+        #   b) MAX_WAIT_SECONDS elapses (failure, will retry)
+        elapsed = 0.0
+        while not captured_data and elapsed < MAX_WAIT_SECONDS:
+            await asyncio.sleep(POLL_INTERVAL)
+            elapsed += POLL_INTERVAL
+
+        await cdp.send('Fetch.disable')
+
+        # ------------------------------------------------------------------ #
+        # Step 4: check if we captured anything                              #
+        # ------------------------------------------------------------------ #
+
+        if not captured_data:
+            if attempt < MAX_RETRIES - 1:
+                print(f"[TF] GetResultsData3 not captured for "
+                      f"meet {meet_id} event {event_short} "
+                      f"— retrying (attempt {attempt + 1}/{MAX_RETRIES})")
+                # Brief pause before retry to let the modal get dismissed
+                # and the page settle before navigating again.
+                await asyncio.sleep(1.0)
+                continue
+            else:
+                raise Exception(
+                    f"GetResultsData3 never captured after "
+                    f"{MAX_RETRIES} attempts"
+                )
+
+        # ------------------------------------------------------------------ #
+        # Step 5: parse and return results                                   #
+        # ------------------------------------------------------------------ #
+
+        try:
+            parsed = json.loads(captured_data['body'])
+        except Exception as e:
+            raise Exception(f"Failed to parse GetResultsData3: {e}")
+
+        if not isinstance(parsed, dict):
+            raise Exception(f"Unexpected response type: {type(parsed)}")
+
+        results = parsed.get("resultsTF", [])
+
+        # resultsTF sometimes comes back as a list of lists — unwrap if needed.
+        if results and isinstance(results[0], list):
+            results = results[0]
+
+        return results
+    
+    # Should never reach here since the loop either returns or raises.
+    raise Exception("getMeetResultsTF exhausted retries without returning")
 
 
 # Tests the scraper

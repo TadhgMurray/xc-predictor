@@ -25,6 +25,8 @@ elif platform.system() == "Linux":
 else:
     raise RuntimeError(f"Unsupported OS: {platform.system()}")
 
+# ─── Server List ─────────────────────────────────────────────────────────────
+
 # List of Mullvad server locations to rotate through.
 # Format is "country city" as used by the Mullvad CLI.
 # Rotate through different continents to maximize IP diversity.
@@ -88,16 +90,24 @@ MULLVAD_LOCATIONS = [
     "ng lag",   # Lagos (new — from server list)
 ]
 
+# ─── Constants ───────────────────────────────────────────────────────────────
+
 # Total meets across ALL sessions before rotating.
 # 25 sessions × ~3-5s per meet = ~5-8 meets/second across all sessions.
 # 3000 total meets = ~6-10 minutes per IP — aggressive but safe.
 GLOBAL_MEETS_PER_ROTATION = 3000
 
-# How many consecutive failures before triggering an emergency rotation.
-FAILURE_STREAK_THRESHOLD = 10
+# Path to the proxy executable.
+PROXY_PATH = r"C:\Users\Tadhg Murray\cloud-sql-proxy\cloud-sql-proxy.exe"
+
+# The instance connection string tells the proxy which Cloud SQL
+# instance to connect to and which local port to listen on.
+PROXY_INSTANCE = "project-d8c4b484-c8fa-4e09-9fc:us-west1:free-trial-first-project=tcp:5432"
+
+# ─── VPNRotator ──────────────────────────────────────────────────────────────
 
 # VPNRotator
-# Purpose: Manages VPN server roptationa cross all scraping sessions. 
+# Purpose: Manages VPN server rotation cross all scraping sessions. 
 #          One instance is shared by all sessions in launcher.py.
 # We use a class because we need a shared state among all the
 # sessions, which can be done with one shared instance of this class. We
@@ -141,6 +151,8 @@ class VPNRotator:
         # don't cause race conditions.
         self.global_meets_since_rotation = 0
 
+    # ── Private helpers ───────────────────────────────────────────────────────\
+
     # runMullvadCommand
     # Purpose: Runs a Mullvad CLI command synchronously using subprocess.
     #          We use subprocess.run (not async) because rotation happens
@@ -150,7 +162,7 @@ class VPNRotator:
     #           self: current instance of the class.
     #           args: list of command arguments e.g. ["relay", "set", "location", "us nyc"].
     # Output: Return true if the commands succeeded, False if it failed.
-    async def runMullvadCommand(self, args: list) -> bool:
+    async def _runMullvadCommand(self, args: list) -> bool:
 
         try:
             # Runs an external program from Python, the Mullvad CLI.
@@ -178,6 +190,106 @@ class VPNRotator:
             print(f"[VPN] Exception running mullvad command: {e}")
             return False
     
+    # _connectToLocation
+    # Purpose: Sets the relay location and connects to the VPN on that server.
+    # Arguments:
+    #           self: the instance of this class.
+    #           location: a string like "us nyc" from MULLVAD_LOCATIONS which is
+    #                     the server location to switch to.
+    # Output: Returns True if both CLI calls succeed, False otherwise.
+    async def _connectToLocation(self, location: str) -> bool:
+
+        # The CLI expects location as separate tokens:
+        # `mullvad relay set location us nyc`
+        # location.split() turns "us nyc" → ["us", "nyc"]
+        location_parts = location.split()
+
+        # Step 1 — tell Mullvad which server to use next.
+        success = await self._runMullvadCommand(["relay", "set", "location"] + location_parts)
+        if not success:
+            print(f"[VPN] Failed to set relay location to {location}")
+            return False
+ 
+        # Step 2 — reconnect on the new server.
+        success = await self._runMullvadCommand(["connect"])
+        if not success:
+            print(f"[VPN] Failed to connect to {location}")
+            return False
+ 
+        # Step 3 — wait for the tunnel to fully establish before
+        # any session resumes scraping. 10s is conservative but safe.
+        print(f"[VPN] Waiting 10s for tunnel to establish on {location}...")
+        time.sleep(10)
+
+        # Step 4 — restart the Cloud SQL proxy.
+        # The proxy loses its connection to Cloud SQL when Mullvad switches
+        # servers because the network briefly drops. We kill the old process
+        # and start a fresh one so DB connections work on the new IP.
+        success = self._restartProxy()
+        if not success:
+            print(f"[VPN] WARNING: proxy restart failed — DB connections may fail")
+            # Non-fatal — scraping can continue and sessions will crash on DB
+            # errors rather than here. Better to continue than abort rotation.
+ 
+        return True
+    
+    # _restartProxy
+    # Purpose: Kills any running cloud-sql-proxy process and starts a fresh one.
+    #          Called after every VPN rotation since the proxy loses its Cloud SQL
+    #          connection when Mullvad switches servers.
+    # Arguments:
+    #           self: current instance.
+    # Output: True if proxy started successfully, False if it failed.
+    def _restartProxy(self) -> bool:
+
+        # Step 1 — kill any existing proxy process.
+        # taskkill is a Windows command that terminates a process by name.
+        # /F means force kill (don't wait for graceful shutdown).
+        # /IM means match by image name (the executable filename).
+        # We ignore errors here — if no proxy is running, taskkill fails
+        # but that's fine, we just want to make sure it's not running.
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "cloud-sql-proxy.exe"],
+            capture_output=True  # suppress output — failure is expected if not running
+        )
+
+        # Brief pause to let the port 5432 free up after killing the old process.
+        time.sleep(2)
+
+        # Step 2 — start a fresh proxy process.
+        # subprocess.Popen (not subprocess.run) starts a process in the
+        # background without waiting for it to finish. We want the proxy
+        # to keep running while the scraper runs, so we don't wait.
+        # subprocess.run would block here forever since the proxy never exits.
+        try:
+            subprocess.Popen(
+                [PROXY_PATH, f"-instances={PROXY_INSTANCE}"],
+                stdout=subprocess.DEVNULL,  # discard proxy's stdout
+                stderr=subprocess.DEVNULL   # discard proxy's stderr
+            )
+        except Exception as e:
+            print(f"[VPN] Failed to start proxy: {e}")
+            return False
+
+        # Wait for the proxy to finish starting up and begin accepting
+        # connections on localhost:5432 before scraping resumes.
+        print(f"[VPN] Waiting 5s for proxy to start...")
+        time.sleep(5)
+
+        print(f"[VPN] Proxy restarted")
+        return True
+
+
+    # _advanceIndex
+    # Purpose: Advances to the next index in the server list.
+    # Arguments:
+    #           self: the instance of this class.
+    # Output: None, change the current index of the class index to the next index.
+    async def _advanceIndex(self):
+        self.current_index = (self.current_index + 1) % len(self.locations)
+    
+    # ── Public API ────────────────────────────────────────────────────────────
+
     # recordMeet
     # Purpose: Called by each session after every successful meet to
     #          increment the global counter. Returns True if the counter
@@ -221,74 +333,55 @@ class VPNRotator:
                 print(f"[VPN] {label} skipping rotation — already rotated by another session")
                 return True
 
-            # Sets the current index to the next in the list w/ wraparound.
-            self.current_index = (self.current_index + 1) % len(self.locations)
-
-            # Gets new VPN location from the list using the new index.
+            # Advance to the next server.
+            await self._advanceIndex()
             new_location = self.locations[self.current_index]
 
-            # Step 1 - set the new relay location.
-
-            # Splits the new location string into a list.
-            location_parts = new_location.split()
-
-            # Run the command in the CLI using the new location to change our 
-            # IP address to the new VPN server.
-            success = await self.runMullvadCommand(["relay", "set", "location"] + location_parts)
-
+            elapsed = time.time() - self.last_rotation_time
+            print(
+                f"[VPN] {label} rotating → {new_location} "
+                f"(reason: {reason}, "
+                f"{elapsed:.0f}s since last rotation, "
+                f"rotation #{self.rotation_count + 1})"
+            )
+ 
+            # Connect to the new server.
+            success = await self._connectToLocation(new_location)
             if not success:
-                print(f"[VPN] Failed to set location to {new_location}")
                 return False
-            
-            # Step 2 - reconnect on the new server.
-            # Runs the command in the CLI to connect to the new IP.
-            success = await self.runMullvadCommand(["connect"])
 
-            if not success:
-                print(f"[VPN] Failed to connect to {new_location}")
-                return False
-            
-            # Step 3 — wait for the connection to establish.
-            # 10 seconds is enough for Mullvad to fully connect and
-            # get a new IP before scraping resumes.
-            print(f"[VPN] Waiting 10s for connection to establish...")
-            await asyncio.sleep(10)
+            # TODO: parse stdout to verify "Connected" status — currently only
+            # checks that the CLI command ran without crashing, not that the
+            # tunnel actually established.
+            # Verify we're connected — failure here is non-fatal,
+            # we log it and continue since the connect call succeeded.
+            await self._runMullvadCommand(["status"])
 
-            # Step 4 — verify connection.
-            # Runs the command in the CLI to check if we're connected.
-            success = await self.runMullvadCommand(["status"])
-
-            if not success:
-                print(f"[VPN] Could not verify connection status")
-
+            # Update shared state.
             self.rotation_count += 1
             self.last_rotation_time = time.time()
+ 
+            # Reset the meet counter — we're on a fresh IP now.
+            self.global_meets_since_rotation = 0
+
             print(f"[VPN] Rotation complete. Now on {new_location}")
 
             return True
 
     # checkRotation
     # Purpose: Called by each se4ssion after ever meet. Checks if rotation should
-    #          be triggered based on meet count or failure streak.
+    #          be triggered based on global meet count across all sessions.
     # Arguments:
     #           self: current instance of this class.
     #           label: session label for printed output.
-    #           consecutive_failures: current consecutive failure streak.
     # Output: Returns True if a rotation happened, False otherwise.
-    async def checkRotation(self, label: str, consecutive_failures: int) -> bool:
+    async def checkRotation(self, label: str) -> bool:
         
-        # Record this meet.
         threshold_reached = await self.recordMeet()
-
-        # Check if we've hit the global threshold.
+ 
         if threshold_reached:
-            return await self.rotate(label, "global meet count")
-
-        # Per-session failure streak check — if one session is getting
-        # hammered with failures, rotate immediately regardless of global count.
-        if consecutive_failures >= FAILURE_STREAK_THRESHOLD:
-            return await self.rotate(label, "failure streak")
-
+            return await self.rotate(label, "meet count threshold")
+ 
         return False
     
     # removeCurrentServer
