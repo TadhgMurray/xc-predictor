@@ -210,31 +210,31 @@ SESSION_CONFIGS = [
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
         "viewport": {"width": 1536, "height": 864}
     },
-    {
-        "label": "[Session 21]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "viewport": {"width": 1600, "height": 900}
-    },
-    {
-        "label": "[Session 22]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "viewport": {"width": 1280, "height": 720}
-    },
-    {
-        "label": "[Session 23]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "viewport": {"width": 1440, "height": 810}
-    },
-    {
-        "label": "[Session 24]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "viewport": {"width": 1366, "height": 900}
-    },
-    {
-        "label": "[Session 25]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "viewport": {"width": 1680, "height": 1050}
-    }
+    # {
+    #     "label": "[Session 21]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1600, "height": 900}
+    # },
+    # {
+    #     "label": "[Session 22]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1280, "height": 720}
+    # },
+    # {
+    #     "label": "[Session 23]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1440, "height": 810}
+    # },
+    # {
+    #     "label": "[Session 24]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1366, "height": 900}
+    # },
+    # {
+    #     "label": "[Session 25]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1680, "height": 1050}
+    # }
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
