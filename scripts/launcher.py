@@ -184,7 +184,7 @@ SESSION_CONFIGS = [
         "label": "[Session 15]",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
         "viewport": {"width": 1440, "height": 960}
-    }#,
+    },
     {
         "label": "[Session 16]",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
