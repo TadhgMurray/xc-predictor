@@ -13,6 +13,7 @@ import asyncio
 import time
 import subprocess
 import platform
+import os
 
 # Path to the Mullvad CLI on Windows.
 MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
@@ -294,7 +295,7 @@ class VPNRotatorWindows:
         # and both think they're the one to trigger rotation.
         async with self.lock:
             self.global_meets_since_rotation += 1
-            return self.global_meets_since_rotation >= GLOBAL_MEETS_PER_ROTATION
+            return self.global_meets_since_rotation >= WINDOWS_GLOBAL_MEETS_PER_ROTATION
         
     # rotate
     # Purpose: Rotates to the next Mullvad server location. Only one session
