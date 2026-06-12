@@ -183,7 +183,7 @@ async def getMeetData(page, meet_id: int):
     # Dismiss consent popup BEFORE any API calls.
     # _dismissConsentPopup waits up to 8s for the popup to appear —
     # we don't care if it returns False (popup absent = no problem).
-    await dismissConsentPopup(page)
+    await dismissConsentPopup(page, meet_id)
 
     # Make the API call directly from the browser context.
     # This uses the browser's own cookies and tokens, so we don't have 
