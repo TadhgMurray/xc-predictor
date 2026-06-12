@@ -419,6 +419,69 @@ LINUX_GLOBAL_MEETS_PER_ROTATION = 1000
 # to complete before traffic starts flowing again.
 HANDSHAKE_WAIT_SECONDS = 3
 
+# How long to wait for `wg-quick up`/`wg-quick down` before giving up
+# on this config. Real wg-quick calls complete in 1-3s normally —
+# 20s is generous headroom for a slow-but-working server, while still
+# being short enough that a hang only costs ~20s, not 8+ minutes.
+WG_QUICK_TIMEOUT_SECONDS = 20
+
+ 
+# _runWgQuick
+# Purpose: Runs `wg-quick <direction> <conf_path>` as a subprocess,
+#          with a timeout. If the process doesn't finish within
+#          WG_QUICK_TIMEOUT_SECONDS, kills it and returns False instead
+#          of hanging forever. This is the single place both _bringDown
+#          and _bringUp go through, so the timeout logic exists once.
+# Arguments:
+#           direction: "up" or "down" — passed straight to wg-quick.
+#           conf_path: path to the .conf file describing the interface.
+# Output: True if wg-quick exited with code 0 within the timeout,
+#         False if it failed OR timed out.
+async def _runWgQuick(direction: str, conf_path: str) -> bool:
+ 
+    # Start the subprocess without waiting for it yet — this returns
+    # immediately with a handle (proc) we can wait on or kill.
+    # Launches wq-quick as a separate OS process. 
+    # This is equivalent to running wg-quick direction conf_path,
+    # down tears down a wireguard interfrace, up creates one.
+    proc = await asyncio.create_subprocess_exec(
+        "wg-quick", direction, conf_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+ 
+    try:
+        # asyncio.wait_for races proc.wait() against a timer. If
+        # proc.wait() finishes first, we get its result normally. If
+        # the timeout fires first, wait_for raises TimeoutError and
+        # CANCELS the proc.wait() coroutine — but the underlying OS
+        # process is still running, so we have to kill it ourselves
+        # in the except block below.
+        await asyncio.wait_for(proc.wait(), timeout=WG_QUICK_TIMEOUT_SECONDS)
+ 
+    except asyncio.TimeoutError:
+        print(f"[VPN] wg-quick {direction} timed out after "
+              f"{WG_QUICK_TIMEOUT_SECONDS}s for "
+              f"{os.path.basename(conf_path)} — killing it")
+ 
+        # proc.kill() sends SIGKILL — immediate, no cleanup. We don't
+        # care about wg-quick's own cleanup at this point; we just
+        # need our process tree to not be stuck.
+        proc.kill()
+ 
+        # After kill(), the process becomes a zombie until something
+        # reads its exit status. await proc.wait() here is now safe —
+        # the process is dead, so this returns almost instantly (it's
+        # NOT the same hang as before, because the process can no
+        # longer ignore us).
+        await proc.wait()
+ 
+        return False
+ 
+    # No exception means proc.wait() returned normally within the
+    # timeout — check its exit code the normal way.
+    return proc.returncode == 0
+
 # _bringDown
 # Purpose: Tears down a WireGuard interface that's currently up.
 # Arguments:
@@ -426,15 +489,7 @@ HANDSHAKE_WAIT_SECONDS = 3
 # Output: None. Errors are swallowed — fine if nothing was up yet.
 async def _bringDown(conf_path: str):
     
-    # Launches wq-quick as a separate OS process. 
-    # This is equivalent to running wg-quick down /path/to/us-phx-wg-207.conf,
-    # wghucg tears down a wireguard interfrace.
-    proc = await asyncio.create_subprocess_exec(
-        "wg-quick", "down", conf_path,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    await proc.wait()
+    await _runWgQuick("down", conf_path)
 
 # _bringUp
 # Purpose: Brings up a new WireGuard interface from a .conf file.
@@ -443,14 +498,7 @@ async def _bringDown(conf_path: str):
 # Output: True if wg-quick succeeded, False otherwise.
 async def _bringUp(conf_path: str) -> bool:
  
-    proc = await asyncio.create_subprocess_exec(
-        "wg-quick", "up", conf_path,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    await proc.wait()
- 
-    return proc.returncode == 0
+    return await _runWgQuick("up", conf_path)
 
 # VPNRotatorLinux
 # Purpose: Manages VPN tunnel rotation inside the "mullvad" network
@@ -534,6 +582,15 @@ class VPNRotatorLinux:
         async with self.lock:
  
             old_conf = self._currentConf()
+
+            if old_conf:
+                await _bringDown(old_conf)
+ 
+        # Try up to len(self.configs) configs, starting from the next
+        # one after current_index. range(len(self.configs)) gives us
+        # one attempt per config in the pool, in case several in a
+        # row are down — without this we'd give up after just one.
+        for _ in range(len(self.configs)):
  
             self.current_index = (self.current_index + 1) % len(self.configs)
             new_conf = self.configs[self.current_index]
@@ -541,28 +598,33 @@ class VPNRotatorLinux:
             print(f"[VPN] {label} rotating ({reason}): "
                   f"{os.path.basename(old_conf) if old_conf else 'none'} "
                   f"-> {os.path.basename(new_conf)}")
-
-            # If not first time rotating brings down old wireguard
-            # interface before bringing up next one.
-            if old_conf:
-                await _bringDown(old_conf)
  
             success = await _bringUp(new_conf)
  
-            if not success:
-                print(f"[VPN] {label} wg-quick up failed for "
-                      f"{os.path.basename(new_conf)}")
-                return False
+            if success:
+                await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
  
-            await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
+                self.rotation_count += 1
+                self.last_rotation_time = time.time()
+                self.global_meets_since_rotation = 0
  
-            self.rotation_count += 1
-            self.last_rotation_time = time.time()
-            self.global_meets_since_rotation = 0
+                print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
+                return True
  
-            print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
+            # This config failed/timed out — log and loop to try the
+            # next one. old_conf is now None for subsequent attempts
+            # since we already tore it down once above.
+            print(f"[VPN] {label} wg-quick up failed/timed out for "
+                  f"{os.path.basename(new_conf)} — trying next config")
+            old_conf = None
  
-            return True
+        # Every config in the pool failed. Lock still releases (we're
+        # exiting the `async with` block normally) — sessions will
+        # resume, just with no working tunnel until the NEXT rotation
+        # attempt succeeds.
+        print(f"[VPN] {label} all {len(self.configs)} configs failed — "
+              f"giving up on this rotation")
+        return False
  
     # checkRotation
     # Purpose: Called by each session after every meet. Once the shared

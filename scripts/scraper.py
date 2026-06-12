@@ -167,6 +167,10 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
 # divisions is a list of dictionaries, each with keys: IDMeetDiv, Distance.
 async def getMeetData(page, meet_id: int):
 
+    # Timeout for the JS fetch inside the browser — same pattern as
+    # getMeetResults. 15s is generous; real responses come back in <2s.
+    JS_FETCH_TIMEOUT_MS = 15000
+
     # Navigate to the meet info page for the specified meet ID to get valid
     # cookies and tokens.
     await page.goto(f"https://www.athletic.net/CrossCountry/meet/{meet_id}/info", timeout=60000)
@@ -189,14 +193,25 @@ async def getMeetData(page, meet_id: int):
     # crash inside the JS with a SyntaxError before Python ever sees it,
     # meaning our DOCTYPE check would never run, because JS tries
     # to parse it itself.
+    # Make the API call directly from the browser context, with an
+    # AbortController so a hung server response doesn't wait forever.
     data = await page.evaluate("""
-        async (meetId) => {
-             const response = await fetch(
-                '/api/v1/Meet/GetMeetData?meetId=' + meetId + '&sport=xc'
+        async (args) => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(
+                () => controller.abort(),
+                args.timeoutMs
             );
+
+            const response = await fetch(
+                '/api/v1/Meet/GetMeetData?meetId=' + args.meetId + '&sport=xc',
+                { signal: controller.signal }
+            );
+
+            clearTimeout(timeoutId);
             return await response.text();
         }
-    """, meet_id)  # Pass meet_id as an argument to the function to avoid syntax issue with string concatenation.
+    """, {"meetId": meet_id, "timeoutMs": JS_FETCH_TIMEOUT_MS})
 
     # If data is None probably a track meet so return empty lists.
     if not data:
@@ -347,7 +362,7 @@ async def getEvents(page, state: str, year: int, month: int) -> list[int]:
 # Arguments:
 #           page: browser page where we are clicking the consent popup.
 # Output: Return True if popup dismissed, False if not found.
-async def dismissConsentPopup(page):
+async def dismissConsentPopup(page, meet_id):
     # Wait up to 2s for consent popup
     try:
         consent = page.locator("button.fc-cta-consent")
@@ -573,6 +588,11 @@ async def getMeetDataTF(page, meet_id: int):
         timeout=60000
     )
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+    # NEW — dismiss consent popup before giving CDP time to capture.
+    # Placed after goto/domcontentloaded (popup needs the page loaded
+    # to exist) but before the asyncio.sleep(3) capture window.
+    await dismissConsentPopup(page, meet_id)
 
     # Give CDP a moment to process the intercepted response.
     await asyncio.sleep(3)

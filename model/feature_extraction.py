@@ -35,6 +35,7 @@ from collections import defaultdict
 from datetime import datetime, date
 from sklearn.preprocessing import LabelEncoder
 import re
+import statistics
  
 sys.path.insert(0, "scripts")
 from database import initPool, closePool, getConn
@@ -419,6 +420,498 @@ def buildPool(grade_str: str, gender: str) -> str:
     return f"{grade}-{gender}"
 
 # ------------------------------------------------------------------ #
+# Encoder fitting
+# ------------------------------------------------------------------ #
+
+
+# _collectValues
+# Purpose: Walks every result and builds three parallel lists —
+#          one value per result for grade, pool, and school.
+#          Separated from buildEncoders so each piece is testable
+#          and buildEncoders itself stays short.
+# Arguments:
+#           results: flat list of result dicts from loadAllResults.
+# Output: A tuple of three lists (grades, pools, schools), all the
+#         same length as results.
+def _collectValues(results: list[dict]) -> tuple[list, list, list]:
+
+    grades  = []
+    pools   = []
+    schools = []
+ 
+    for r in results:
+        # raw grade string, e.g. "11", "FR", "-"
+        # NOTE: kept raw (not normalized) for the sequence feature —
+        # LabelEncoder just needs unique strings, doesn't need them clean.
+        grades.append(r["grade"])
+ 
+        # pool combines normalized grade + gender, e.g. "FR-M"
+        pools.append(buildPool(r["grade"], r["gender"]))
+ 
+        # school name, e.g. "Amherst Regional"
+        schools.append(r["school"])
+ 
+    return grades, pools, schools
+
+# _fitEncoder
+# Purpose: Fits a single LabelEncoder on a list of values.
+#          Tiny helper so buildEncoders doesn't repeat this 3x.
+# Arguments:
+#           values: list of strings (or None) to fit on.
+# Output: A fitted LabelEncoder.
+def _fitEncoder(values: list) -> LabelEncoder:
+
+    # LabelEncoder.fit_transform doesn't like None - replace with
+    # the string "None" so it's treated as it's own category.
+    cleaned = [v if v is not None else "None" for v in values]
+
+    encoder = LabelEncoder()
+
+    # fit() scans all values and builds the string -> int mapping.
+    # We don't need the transformed output here, just the fitted
+    # encoder itself (used in Chunk 3 to transform).
+    encoder.fit(cleaned)
+
+    return encoder
+
+# buildEncoders
+# Purpose: Fits LabelEncoders for grade, pool, and school across the
+#          entire dataset, prints how many categories each found,
+#          and returns them as a dict ready to be saved to disk.
+# Arguments:
+#           results: flat list of result dicts from loadAllResults.
+# Output: dict with keys "grade", "pool", "school", each mapping to
+#         a fitted LabelEncoder.
+def buildEncoders(results: list[dict]) -> dict:
+
+    grades, pools, schools = _collectValues(results)
+
+    # For each list of string values creates an string -> int
+    # mapping for later use in Chunk 3 to transform.
+    encoders = {
+        "grade":  _fitEncoder(grades),
+        "pool":   _fitEncoder(pools),
+        "school": _fitEncoder(schools),
+    }
+
+    # encoder.classes_ is the array of unique values the encoder learned.
+    # len() of that tells us how many categories each field has.
+    for name, encoder in encoders.items():
+        print(f"  {name}: {len(encoder.classes_)} categories")
+ 
+    return encoders
+
+# ------------------------------------------------------------------ #
+# CHUNK 3 — PER-ATHLETE SEQUENCE BUILDER
+# ------------------------------------------------------------------ #
+#
+# BIG IDEA:
+#   For each athlete, walk through their races in chronological order.
+#   Every race AFTER the first becomes one training example:
+#     - "sequence" = feature vectors for every race BEFORE it
+#     - "target_result" = the race itself (Chunk 4 turns this into
+#                          the context vector)
+#     - "target" = that race's normalized_time (what we're predict)
+#
+#   This is a "growing window" — race 2's history is just race 1,
+#   race 4's history is races 1-3, etc. The first race has no history,
+#   so it can't be a training example itself — but it still appears
+#   INSIDE every later example's sequence
+
+
+# _parseDate
+# Purpose: Converts a "YYYY-MM-DD" string from the DB into a Python
+#          date object so we can subtract dates to get day counts.
+# Arguments:
+#           date_str: date string, e.g. "2025-10-04"
+# Output: a datetime.date object
+def _parseDate(date_str: str) -> date:
+    # strptime parses a string into a datetime according to the format
+    # string. .date() drops the time-of-day part, leaving just the date.
+    return datetime.strptime(date_str, "%Y-%m-%d").date()
+
+# _daysAgo
+# Purpose: Computes how many days before the target race a prior race
+#          happened. This becomes the "days_ago" sequence feature —
+#          it tells the model how recent each prior race is relative
+#          to the race it's predicting.
+# Arguments:
+#           prior_date_str: date string of the prior race
+#           target_date_str: date string of the target race
+# Output: int number of days (>= 0) between the two dates
+def _daysAgo(prior_date_str: str, target_date_str: str) -> int:
+    prior_date  = _parseDate(prior_date_str)
+    target_date = _parseDate(target_date_str)
+ 
+    # Subtracting two date objects gives a timedelta object.
+    # .days extracts the whole number of days as an int.
+    return (target_date - prior_date).days
+
+# _encodeGrade
+# Purpose: Converts a raw grade string ("11", "FR", None, ...) into
+#          the integer assigned by the Chunk 2 grade LabelEncoder.
+# Arguments:
+#           grade_raw: the raw "grade" value from a result dict
+#           grade_encoder: the fitted LabelEncoder for "grade"
+#                          (encoders["grade"] from Chunk 2)
+# Output: float — the encoded grade, ready to go straight into a
+#         feature vector
+def _encodeGrade(grade_raw, grade_encoder: LabelEncoder) -> float:
+ 
+    # buildEncoders fit on "None" (the string) wherever grade was None,
+    # so we have to match that exact substitution here at transform time.
+    if grade_raw is None:
+        grade_raw = "None"
+    
+    # Transforms the raw grade string into an integer based on the label
+    # it was encoded into in chunk 2.
+    # transform() expects a LIST of values, even for a single item,
+    # and returns a list/array back — [0] grabs the first (only) result.
+    encoded = grade_encoder.transform([grade_raw])[0]
+ 
+    return float(encoded)
+
+# _orZero
+# Purpose: Converts a possibly-NULL numeric value into a float,
+#          substituting 0.0 for NULL — per MODEL.md's "missing weather
+#          -> NULL -> 0.0" rule. Defined here (Chunk 3) since sequence
+#          vectors now carry weather; Chunk 4 reuses this same helper
+#          for the context vector's weather fields — only define it
+#          once in your combined file.
+# Arguments:
+#           value: a number, or None (if RealDictCursor returned NULL)
+# Output: float — value as a float, or 0.0 if value was None
+def _orZero(value) -> float:
+ 
+    # Postgres NULL comes back as Python None via RealDictCursor.
+    # "is None" specifically checks for that — 0 or 0.0 from the DB
+    # would NOT match this and would pass through unchanged.
+    if value is None:
+        return 0.0
+ 
+    return float(value)
+
+# _altitudeDelta
+# Purpose: Computes altitude_delta = this race's altitude minus the
+#          MEDIAN altitude of every race the athlete ran BEFORE it.
+#          Captures sea-level vs altitude effects on performance —
+#          same idea as weather: a slow time at 8,000ft is a different
+#          signal than the same time at sea level.
+#          Returns 0.0 (neutral) if either the race's own altitude is
+#          unknown, or there are no prior races with known altitude to
+#          compare against — both common until the elevation backfill
+#          (MODEL.md, V2) has run.
+# Arguments:
+#           altitude: this race's altitude_meters (float or None)
+#           races_before: list of result dicts for every race the
+#                          athlete ran BEFORE this one (chronological,
+#                          may be empty for the athlete's first race)
+# Output: float — altitude_delta, or 0.0 if not computable
+def _altitudeDelta(altitude, races_before: list[dict]) -> float:
+
+    # Collect altitudes from prior races, skipping any that are still
+    # NULL (None).
+    prior_altitudes = [
+        r["altitude_meters"] for r in races_before
+        if r["altitude_meters"] is not None
+    ]
+
+    # Nothing to compare against, in either direction -> neutral 0.0.
+    if altitude is None or len(prior_altitudes) == 0:
+        return 0.0
+
+    # This returns the difference in altitude between the current result
+    # and the median result of the athlete's previous races.
+    # statistics.median sorts the values and returns the middle one
+    # (or the average of the two middle values for an even-length
+    # list) — robust to a single outlier altitude in a small history.
+    return float(altitude) - statistics.median(prior_altitudes)
+
+# _buildSequenceVector
+# Purpose: Converts ONE prior race into the 17-number feature vector
+#          for the sequence — the athlete's race AND the conditions
+#          they ran it in (weather + altitude). Included here (not
+#          just in the target's context) so the model can learn that,
+#          e.g., a slow time on a hot/humid day or at high altitude is
+#          a noisier signal of true ability than the same time under
+#          neutral conditions — it can "de-weight" that data point if
+#          it learns to.
+# Arguments:
+#           prior_result: a result dict for a race the athlete ran
+#                          BEFORE the target race
+#           target_date_str: date string of the target race, used to
+#                          compute days_ago
+#           races_before_prior: list of result dicts for every race
+#                          the athlete ran BEFORE prior_result — used
+#                          to compute prior_result's OWN altitude_delta
+#                          (may be empty if prior_result was the
+#                          athlete's first-ever race)
+#           encoders: dict of fitted LabelEncoders from Chunk 2
+# Output: list of 17 floats, in this fixed order:
+#         [normalized_time, course_difficulty, days_ago,
+#          distance_meters, grade_encoded, is_xc, is_indoor,
+#          temp_c, dew_point_c, humidity, apparent_temp_c,
+#          precipitation_mm, pressure_hpa, cloud_cover,
+#          wind_speed_km, wind_dir, altitude_delta]
+def _buildSequenceVector(prior_result: dict, target_date_str: str, 
+                        encoders: dict) -> list[float]:
+
+    return [
+        float(prior_result["normalized_time"]),
+        float(prior_result["course_difficulty"]),
+        float(_daysAgo(prior_result["date"], target_date_str)),
+        float(prior_result["distance_meters"]),
+        _encodeGrade(prior_result["grade"], encoders["grade"]),
+ 
+        # bool -> float: True becomes 1.0, False becomes 0.0
+        float(prior_result["is_xc"]),
+        float(prior_result["is_indoor"]),
+
+        # Weather this prior race was run in. _orZero handles NULLs
+        # for meets where the weather backfill hasn't reached yet.
+        _orZero(prior_result["temp_c"]),
+        _orZero(prior_result["dew_point_c"]),
+        _orZero(prior_result["humidity"]),
+        _orZero(prior_result["apparent_temp_c"]),
+        _orZero(prior_result["precipitation_mm"]),
+        _orZero(prior_result["pressure_hpa"]),
+        _orZero(prior_result["cloud_cover"]),
+        _orZero(prior_result["wind_speed_km"]),
+        _orZero(prior_result["wind_dir"]),
+ 
+        # Altitude relative to THIS race's own prior history — see
+        # _altitudeDelta docstring. _orZero handles NULL altitude
+        # via the None-check inside _altitudeDelta itself.
+        _altitudeDelta(prior_result["altitude_meters"], races_before_prior),
+    ]
+
+# buildAthleteExamples
+# Purpose: Builds all training examples for ONE athlete using the
+#          growing-window approach: for each race after the first,
+#          everything before it becomes "sequence".
+# Arguments:
+#           athlete_results: this athlete's results, already in
+#                          chronological order (one entry from
+#                          by_athlete[athlete_id])
+#           encoders: dict of fitted LabelEncoders from Chunk 2
+# Output: list of example dicts, each:
+#         {
+#           "sequence":      [[17 floats], [17 floats], ...],
+#           "prior_results": result dicts for every race before the
+#                             target (raw, for Chunk 4's altitude_delta),
+#           "target_result": result dict (full, for Chunk 4),
+#           "target":        float (normalized_time to predict),
+#         }
+def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[dict]:
+
+    examples = []
+
+    # Builds training examples for an athlete using a growing window
+    # approach for every race.
+    # Skips athlete's first-ever race because it can't be a training
+    # example (as it has no prior races).
+    for i in range(1, len(athlete_results)):
+
+        # Gets the result we're predicting
+        target_result = athelte_results[i]
+
+        # Gets all the prior results to build the training example.
+        # Slicing: everything from index 0 up to (but not including) i.
+        prior_results = athlete_results[:i]
+
+        # Builds the sequence vector by building the sequence vector for
+        # eahc prior result.
+        sequence  = [
+            _buildSequenceVector(prior, target_result["date"], athlete_results[:j], encoders)
+            for prior in prior_results
+        ]
+
+        # Adds the current training examples to our list of training
+        # examples. It contains the sequence, the context of the result
+        # we're predicting, and the normalize time of the result we're predicting.
+        # Creates a dict
+        examples.append({
+            "sequence": sequence,
+            "prior_results": prior_results,
+            "target_result": target_result,
+            "target": float(target_result["normalized_time"]),
+        })
+
+    return examples
+
+# buildAllExamples
+# Purpose: Runs buildAthleteExamples for every athlete and flattens
+#          the per-athlete lists into one big list — this flat list
+#          is the dataset Chunk 5 will pad and save to tensors.
+# Arguments:
+#           by_athlete: {athlete_id: [results...]} from groupByAthlete
+#           encoders: dict of fitted LabelEncoders from Chunk 2
+# Output: flat list of example dicts (see buildAthleteExamples)
+def buildAllExamples(by_athlete: dict, encoders: dict):
+
+    all_examples = []
+
+    # For each athlete it builds their training examples.
+    for athlete_id, athlete_results in by_athlete.items():
+        # .extend() appends every item from this athlete's list
+        # onto all_examples, rather than appending the whole list
+        # as one nested element.
+        all_examples.extend(buildAthleteExamples(athlete_results, encoders))
+
+    print(f"Built {len(all_examples):,} training examples")
+    return all_examples
+
+# ------------------------------------------------------------------ #
+# CHUNK 4 — CONTEXT FEATURE BUILDER
+# ------------------------------------------------------------------ #
+#
+# BIG IDEA:
+#   Chunk 3 built the "sequence" (history) for each example. Chunk 4
+#   builds the "context" — a single vector describing the TARGET race
+#   itself (the one we're predicting normalized_time for).
+#
+#   Per MODEL.md, the context vector is, in order:
+#     [course_difficulty, distance_meters, day_of_year,
+#      days_since_last_race, pool_encoded, gender_encoded,
+#      school_encoded,
+#      temp_c, dew_point_c, humidity, apparent_temp_c,
+#      precipitation_mm, pressure_hpa, cloud_cover,
+#      wind_speed_km, wind_dir]
+#      altitude_delta]
+#
+#   That's 7 "race info" features + 9 weather features
+#   + 1 altitude feature = 17 floats.
+
+# ------------------------------------------------------------------ #
+# Gender encoding
+# ------------------------------------------------------------------ #
+#
+# Unlike grade/pool/school, gender is a clean, fixed "M"/"F" straight
+# from the athletes table — no messy variants to clean up. A small
+# hardcoded mapping is simpler than a full LabelEncoder and doesn't
+# need to be saved/loaded in encoders.pkl.
+
+GENDER_MAP = {"M": 0.0, "F": 1.0}
+
+# _encodeGender
+# Purpose: Converts a gender string to a float using GENDER_MAP.
+# Arguments:
+#           gender: "M", "F", or possibly something unexpected/None.
+# Output: float — 0.0 for "M", 1.0 for "F", -1.0 for anything else
+#         (so unexpected values are visible/debuggable downstream
+#         rather than silently colliding with "M").
+def _encodeGender(gender: str) -> float:
+ 
+    # dict.get(key, default) returns the value for key if present,
+    # otherwise returns default — avoids a KeyError for unexpected
+    # gender values while still flagging them (-1.0 stands out).
+    return GENDER_MAP.get(gender, -1.0)
+
+# ------------------------------------------------------------------ #
+# Date helpers
+# ------------------------------------------------------------------ #
+
+# _dayOfYear
+# Purpose: Converts a "YYYY-MM-DD" date string into its day-of-year
+#          number (1-366). This captures SEASONALITY — e.g. an XC
+#          race in early September vs late November is a meaningfully
+#          different point in the season, even across different years.
+# Arguments:
+#           date_str: date string, e.g. "2025-10-04"
+# Output: int, 1-366
+def _dayOfYear(date_str: str) -> int:
+ 
+    # _parseDate is defined in Chunk 3 — reused here rather than
+    # re-implemented, since it's the same "YYYY-MM-DD" -> date parse.
+    parsed = _parseDate(date_str)
+ 
+    # .timetuple() converts a date into a time.struct_time, which has
+    # a .tm_yday field — the day-of-year count (Jan 1 = 1).
+    return parsed.timetuple().tm_yday
+
+# ------------------------------------------------------------------ #
+# Context vector builder
+# ------------------------------------------------------------------ #
+
+# _buildContextVector
+# Purpose: Builds the 17-number context vector for ONE example,
+#          describing the target race (course, timing, cohort,
+#          weather, altitude). This is the second half of each
+#          training example, alongside the "sequence" from Chunk 3.
+# Arguments:
+#           target_result: the result dict for the race being
+#                          predicted (example["target_result"])
+#           sequence: this example's sequence from Chunk 3 — used
+#                          to read off days_since_last_race without
+#                          recomputing it
+#           prior_results: result dicts for every race before the
+#                          target (example["prior_results"]) — used
+#                          to compute the target's altitude_delta
+#                          relative to the athlete's full history
+#           encoders: dict of fitted LabelEncoders from Chunk 2
+# Output: list of 17 floats, in the fixed order documented above
+def _buildContextVector(target_result: dict, sequence: list[list[float]], 
+                        prior_results: list[dict], encoders: dict) -> list[float]:
+    
+    # pool combines normalized grade + gender. It is applied to the TARGET
+    # race instead of a history race. It encodes it by using the pool
+    # transformation to transform it into a float.
+    pool_str = buildPool(target_result["grade"], target_result["gender"])
+    pool_encoded = float(encoders["pool"].transform([pool_str])[0])
+
+    # School encoder, same "None" substitution pattern as _encodeGrade
+    # in Chunk 3 — buildEncoders fit on "None" wherever school was None.
+    school_raw = target_result["school"] if target_result["school"] is not None else "None"
+    school_encoded = float(encoders["school"].transform([school_raw])[0])
+
+    # sequence[-1] is the most recent prior race (sequence is in
+    # chronological order, same as athlete_results). Index [2] of
+    # each 17-element vector is days_ago (see Chunk 3's
+    # _buildSequenceVector ordering) — for the LAST prior race,
+    # "days_ago relative to this target" IS "days since last race".
+    days_since_last_race = sequence[-1][2]
+
+    # altitude_delta for the TARGET race, relative to the athlete's
+    # FULL prior history.
+    altitude_delta = _altitudeDelta(target_result["altitude_meters"], prior_results)
+
+    return [
+        float(target_result["course_difficulty"]),
+        float(target_result["distance_meters"]),
+        float(_dayOfYear(target_result["date"])),
+        days_since_last_race,
+        pool_encoded,
+        _encodeGender(target_result["gender"]),
+        school_encoded,
+ 
+        # Weather — each passed through _orZero for NULL -> 0.0.
+        _orZero(target_result["temp_c"]),
+        _orZero(target_result["dew_point_c"]),
+        _orZero(target_result["humidity"]),
+        _orZero(target_result["apparent_temp_c"]),
+        _orZero(target_result["precipitation_mm"]),
+        _orZero(target_result["pressure_hpa"]),
+        _orZero(target_result["cloud_cover"]),
+        _orZero(target_result["wind_speed_km"]),
+        _orZero(target_result["wind_dir"]),
+ 
+        altitude_delta,
+    ]
+
+def addContextToExamples(examples: list[dict], encoders: dict) -> None:
+
+    for example in examples:
+        example["context"] = _buildContextVector(
+            example["target_result"],
+            example["sequence"],
+            example["prior_results"],
+            encoders,
+        )
+
+    print(f"Added context vectors to {len(examples):,} examples")
+ 
+
+# ------------------------------------------------------------------ #
 # MAIN (placeholder — will be filled in subsequent chunks)
 # ------------------------------------------------------------------ #
 
@@ -435,12 +928,18 @@ if __name__ == "__main__":
         results = loadAllResults()
         by_athlete = groupByAthlete(results)
  
+        print("Building encoders...")
+        encoders = buildEncoders(results)
+
+        print("Building training examples...")
+        examples = buildAllExamples(by_athlete, encoders)
+
+        print("Building context vectors...")
+        addContextToExamples(examples, encoders)
         # Subsequent chunks will add:
-        #   - buildEncoders(results)
-        #   - buildTrainingExamples(by_athlete, encoders)
-        #   - saveDataset(examples)
- 
-        print("Chunk 1 complete — DB load and grouping working.")
+        #   - padding + tensor saving (Chunk 5)
+
+        print("Chunks 1-4 complete.")
  
     finally:
         closePool()

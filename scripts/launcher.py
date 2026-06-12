@@ -242,6 +242,7 @@ SESSION_CONFIGS = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# watchForErrorModal
 # Purpose: Background task that continuously watches for athletic.net's
 #          "Server Communication Error" modal and dismisses it via Escape.
 #          Runs for the entire session lifetime so it catches the modal
