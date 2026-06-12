@@ -14,6 +14,7 @@ import time
 import subprocess
 import platform
 import os
+import glob
 
 # Path to the Mullvad CLI on Windows.
 MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
