@@ -93,7 +93,7 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
                             'anettokens': args.token,
                             'anet-appinfo': 'web:web:0:240'
                         },
-                        body: JSON.stringify({divId: args.divId})
+                        body: JSON.stringify({divId: args.divId}),
                                        
                         // Ties fetch to the controller. If abort() fires,
                         // fetch throws AbortError — which propagates up
@@ -109,7 +109,7 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
                         text: await response.text()
                     };
                 }
-            """, {"divId": div_id, "token": jwt_token})
+            """, {"divId": div_id, "token": jwt_token, "timeoutMs": JS_FETCH_TIMEOUT_MS})
 
             status = data.get('status')
             text = data.get('text', '')
