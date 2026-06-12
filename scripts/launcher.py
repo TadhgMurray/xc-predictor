@@ -160,56 +160,56 @@ SESSION_CONFIGS = [
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
         "viewport": {"width": 1280, "height": 960}
     },
-    {
-        "label": "[Session 11]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-        "viewport": {"width": 1680, "height": 1050}
-    },
-    {
-        "label": "[Session 12]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-        "viewport": {"width": 1280, "height": 1024}
-    },
-    {
-        "label": "[Session 13]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        "viewport": {"width": 1600, "height": 1024}
-    },
-    {
-        "label": "[Session 14]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-        "viewport": {"width": 1920, "height": 1200}
-    },
-    {
-        "label": "[Session 15]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-        "viewport": {"width": 1440, "height": 960}
-    },
-    {
-        "label": "[Session 16]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-        "viewport": {"width": 1280, "height": 800}
-    },
-    {
-        "label": "[Session 17]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-        "viewport": {"width": 1366, "height": 768}
-    },
-    {
-        "label": "[Session 18]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "viewport": {"width": 1440, "height": 900}
-    },
-    {
-        "label": "[Session 19]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-        "viewport": {"width": 1920, "height": 1080}
-    },
-    {
-        "label": "[Session 20]",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        "viewport": {"width": 1536, "height": 864}
-    },
+    # {
+    #     "label": "[Session 11]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1680, "height": 1050}
+    # },
+    # {
+    #     "label": "[Session 12]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1280, "height": 1024}
+    # },
+    # {
+    #     "label": "[Session 13]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1600, "height": 1024}
+    # },
+    # {
+    #     "label": "[Session 14]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1920, "height": 1200}
+    # },
+    # {
+    #     "label": "[Session 15]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1440, "height": 960}
+    # },
+    # {
+    #     "label": "[Session 16]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1280, "height": 800}
+    # },
+    # {
+    #     "label": "[Session 17]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1366, "height": 768}
+    # },
+    # {
+    #     "label": "[Session 18]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1440, "height": 900}
+    # },
+    # {
+    #     "label": "[Session 19]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1920, "height": 1080}
+    # },
+    # {
+    #     "label": "[Session 20]",
+    #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    #     "viewport": {"width": 1536, "height": 864}
+    # },
     # {
     #     "label": "[Session 21]",
     #     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",

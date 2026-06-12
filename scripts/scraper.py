@@ -36,6 +36,11 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
     MAX_RETRIES = 3
     RETRY_DELAY = 2.0   # Seconds to wait between retries
 
+    # Timeout for the JS fetch inside the browser.
+    # 15 seconds is generous — real responses come back in under 2s.
+    # If it takes longer than this, the server is hung and we should move on.
+    JS_FETCH_TIMEOUT_MS = 15000
+
     await page.goto(
         f"https://www.athletic.net/CrossCountry/meet/{meet_id}/results/{div_id}",
         timeout=60000
@@ -54,7 +59,8 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
     for attempt in range(MAX_RETRIES):
 
         try:
-            # Use page.evaluate to run JavaScript in the context of the page to 
+            # Use page.evaluate to run Java
+            # Script in the context of the page to 
             # fetch the results data from the API endpoint. Avoids issues with the 
             # page navigating away before we can read the data and where we need
             # to make API calls that require authentication tokens the browser has.
@@ -69,6 +75,17 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
             # navigating so we get structured JSON back instead of HTML.
             data = await page.evaluate("""
                 async (args) => {
+                    // AbortController lets us cancel the fetch after a timeout.
+                    // Without this, a hung server response waits forever.
+                    const controller = new AbortController();
+
+                    // Schedule abort() to fire after timeoutMs.
+                    // If fetch completes first, clearTimeout cancels this.
+                    const timeoutId = setTimeout(
+                        () => controller.abort(),
+                        args.timeoutMs
+                    );
+                                       
                     const response = await fetch('/api/v1/Meet/GetResultsData3', {
                         method: 'POST',
                         headers: {
@@ -77,7 +94,16 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
                             'anet-appinfo': 'web:web:0:240'
                         },
                         body: JSON.stringify({divId: args.divId})
+                                       
+                        // Ties fetch to the controller. If abort() fires,
+                        // fetch throws AbortError — which propagates up
+                        // through page.evaluate to Python as an exception.
+                        signal: controller.signal
                     });
+                                       
+                    // Response arrived in time — cancel the scheduled abort.
+                    clearTimeout(timeoutId);
+                                       
                     return {
                         status: response.status,
                         text: await response.text()

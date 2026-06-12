@@ -74,13 +74,15 @@ def _buildLoadQuery() -> str:
         -- Only load results that have been normalized
         WHERE r.normalized_time IS NOT NULL
         -- Skip sentinel values and unreasonably large times.
-        -- 100000 seconds is over 27 hours — no real race result.
-        AND r.normalized_time < 100000
+        -- 3600 seconds is an 1 hour — no real race result.
+        AND r.normalized_time < 3600
         -- Skips impossible values.
         AND r.normalized_time > 600
         -- Only load results with a valid date for decay weighting
         AND r.date IS NOT NULL
         AND r.date != ''
+        -- Skips MS as those results are fucked.
+        AND r.grade NOT IN ('1','2','3','4','5','6','7','8','7-8')
         AND m.course_name IS NOT NULL
         AND m.course_name != ''
         -- Order by older dates first.
@@ -162,7 +164,7 @@ def saveAthleteRatings(ratings: dict):
  
     with getConn() as conn:
         cursor = conn.cursor()
-        
+
         # TRUNCATE is significantly faster than DELETE for 4M rows.
         # Safe because the engine always does a full recompute.
         cursor.execute("TRUNCATE athlete_ratings")

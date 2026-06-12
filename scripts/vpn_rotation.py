@@ -14,16 +14,8 @@ import time
 import subprocess
 import platform
 
-# Detect OS and set Mullvad CLI path accordingly.
-# Mullvad is installed via their official installer on Windows
-# and their .deb package on Ubuntu.
-if platform.system() == "Windows":
-    MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
-elif platform.system() == "Linux":
-    # Mullvad CLI on Ubuntu — installed via their .deb package.
-    MULLVAD_CLI = "/usr/bin/mullvad"
-else:
-    raise RuntimeError(f"Unsupported OS: {platform.system()}")
+# Path to the Mullvad CLI on Windows.
+MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
 
 # ─── Server List ─────────────────────────────────────────────────────────────
 
@@ -95,7 +87,7 @@ MULLVAD_LOCATIONS = [
 # Total meets across ALL sessions before rotating.
 # 25 sessions × ~3-5s per meet = ~5-8 meets/second across all sessions.
 # 3000 total meets = ~6-10 minutes per IP — aggressive but safe.
-GLOBAL_MEETS_PER_ROTATION = 3000
+WINDOWS_GLOBAL_MEETS_PER_ROTATION  = 3000
 
 # Path to the proxy executable.
 PROXY_PATH = r"C:\Users\Tadhg Murray\cloud-sql-proxy\cloud-sql-proxy.exe"
@@ -106,14 +98,11 @@ PROXY_INSTANCE = "project-d8c4b484-c8fa-4e09-9fc:us-west1:free-trial-first-proje
 
 # ─── VPNRotator ──────────────────────────────────────────────────────────────
 
-# VPNRotator
-# Purpose: Manages VPN server rotation cross all scraping sessions. 
-#          One instance is shared by all sessions in launcher.py.
-# We use a class because we need a shared state among all the
-# sessions, which can be done with one shared instance of this class. We
-# also use a class because the sessions need to remember things between
-# calls about consecutive failures and # of successes.
-class VPNRotator:
+# VPNRotatorWindows
+# Purpose: Manages VPN server rotation across all scraping sessions on
+#          Windows, using the Mullvad CLI. One instance is shared by
+#          all sessions in launcher.py.
+class VPNRotatorWindows:
     
     # __init__
     # Purpose: This is the constructor(what __init__ does). It sets
@@ -410,3 +399,201 @@ class VPNRotator:
         self.current_index = self.current_index % len(self.locations)
 
         print(f"[VPN] Removed blocked server {removed} — {len(self.locations)} servers remaining")
+
+# ============================================================
+# LINUX (VM) — wg-quick / network namespace rotator
+# ============================================================
+
+# Directory holding all the .conf files downloaded from Mullvad.
+# wg-quick names interfaces after the filename (minus .conf), and
+# this whole launcher process runs inside `ip netns exec mullvad`,
+# so wg-quick commands here automatically operate on that namespace.
+WIREGUARD_DIR = os.path.expanduser("~/xc-predictor/wireguard")
+ 
+# Rotate proactively every this many meets (summed across all sessions).
+LINUX_GLOBAL_MEETS_PER_ROTATION = 1000
+ 
+# How long to wait after bringing a new tunnel up for the handshake
+# to complete before traffic starts flowing again.
+HANDSHAKE_WAIT_SECONDS = 3
+
+# _bringDown
+# Purpose: Tears down a WireGuard interface that's currently up.
+# Arguments:
+#           conf_path: path to the .conf file describing the interface.
+# Output: None. Errors are swallowed — fine if nothing was up yet.
+async def _bringDown(conf_path: str):
+    
+    # Launches wq-quick as a separate OS process. 
+    # This is equivalent to running wg-quick down /path/to/us-phx-wg-207.conf,
+    # wghucg tears down a wireguard interfrace.
+    proc = await asyncio.create_subprocess_exec(
+        "wg-quick", "down", conf_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+# _bringUp
+# Purpose: Brings up a new WireGuard interface from a .conf file.
+# Arguments:
+#           conf_path: path to the .conf file describing the interface.
+# Output: True if wg-quick succeeded, False otherwise.
+async def _bringUp(conf_path: str) -> bool:
+ 
+    proc = await asyncio.create_subprocess_exec(
+        "wg-quick", "up", conf_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+ 
+    return proc.returncode == 0
+
+# VPNRotatorLinux
+# Purpose: Manages VPN tunnel rotation inside the "mullvad" network
+#          namespace on the VM, cycling through downloaded .conf files
+#          via wg-quick. One instance shared by all sessions.
+class VPNRotatorLinux:
+ 
+    # __init__
+    # Purpose: Loads the list of available configs and sets up shared
+    #          state for cross-session coordination.
+    # Arguments:
+    #           self: the current instance of the class.
+    # Output: None.
+    def __init__(self):
+        
+        # join glues directory path and pattern together. glob finds files
+        # matching the pattern. It returns a list of matching file paths, which
+        # is then order alphabetically by sorted. This makes a sorted list of
+        # all the file paths in the Wireguard directory.
+        self.configs = sorted(glob.glob(os.path.join(WIREGUARD_DIR, "*.conf")))
+ 
+        if not self.configs:
+            raise RuntimeError(f"No .conf files found in {WIREGUARD_DIR}")
+ 
+        print(f"[VPN] Loaded {len(self.configs)} configs")
+ 
+        # -1 means "no tunnel up yet" — first rotate() moves to index 0.
+        self.current_index = -1
+ 
+        self.lock = asyncio.Lock()
+        self.global_meets_since_rotation = 0
+        self.rotation_count = 0
+        self.last_rotation_time = time.time()
+ 
+    # _currentConf
+    # Purpose: Returns the path to the currently-active config, or None
+    #          if no tunnel is up yet.
+    # Arguments:
+    #           self: current instance.
+    # Output: A path string, or None.
+    def _currentConf(self) -> str | None:
+ 
+        if self.current_index == -1:
+            return None
+ 
+        return self.configs[self.current_index]
+ 
+    # removeCurrentServer
+    # Purpose: Permanently removes the current config from the rotation
+    #          pool — used when a server is confirmed Cloudflare-blocked.
+    # Arguments:
+    #           self: current instance.
+    # Output: None.
+    def removeCurrentServer(self):
+ 
+        if self.current_index == -1:
+            return
+ 
+        if len(self.configs) <= 1:
+            print(f"[VPN] Only one config left, cannot remove")
+            return
+ 
+        removed = self.configs.pop(self.current_index)
+        print(f"[VPN] Removed {os.path.basename(removed)} from pool "
+              f"({len(self.configs)} remaining)")
+ 
+        # Step back so the next rotate() doesn't skip the item that
+        # shifted into this index.
+        self.current_index -= 1
+ 
+    # rotate
+    # Purpose: Tears down the current tunnel (if any) and brings up the
+    #          next one in the cycle, wrapping around at the end.
+    # Arguments:
+    #           self: current instance.
+    #           label: session label for log output, e.g. "[Session 3]".
+    #           reason: why we're rotating, for logging.
+    # Output: True if the new tunnel came up successfully, False otherwise.
+    async def rotate(self, label: str, reason: str) -> bool:
+ 
+        async with self.lock:
+ 
+            old_conf = self._currentConf()
+ 
+            self.current_index = (self.current_index + 1) % len(self.configs)
+            new_conf = self.configs[self.current_index]
+ 
+            print(f"[VPN] {label} rotating ({reason}): "
+                  f"{os.path.basename(old_conf) if old_conf else 'none'} "
+                  f"-> {os.path.basename(new_conf)}")
+
+            # If not first time rotating brings down old wireguard
+            # interface before bringing up next one.
+            if old_conf:
+                await _bringDown(old_conf)
+ 
+            success = await _bringUp(new_conf)
+ 
+            if not success:
+                print(f"[VPN] {label} wg-quick up failed for "
+                      f"{os.path.basename(new_conf)}")
+                return False
+ 
+            await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
+ 
+            self.rotation_count += 1
+            self.last_rotation_time = time.time()
+            self.global_meets_since_rotation = 0
+ 
+            print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
+ 
+            return True
+ 
+    # checkRotation
+    # Purpose: Called by each session after every meet. Once the shared
+    #          counter crosses LINUX_GLOBAL_MEETS_PER_ROTATION, triggers
+    #          a proactive rotation.
+    # Arguments:
+    #           self: current instance.
+    #           label: session label for log output.
+    # Output: True if a rotation happened, False otherwise.
+    async def checkRotation(self, label: str) -> bool:
+ 
+        async with self.lock:
+            self.global_meets_since_rotation += 1
+ 
+            if self.global_meets_since_rotation < LINUX_GLOBAL_MEETS_PER_ROTATION:
+                return False
+ 
+        # Lock released before calling rotate() — rotate() acquires its
+        # own lock, so holding this one would deadlock.
+        return await self.rotate(label, "meet count threshold")
+ 
+ 
+# ============================================================
+# Platform selection
+# ============================================================
+#
+# launcher.py does `from vpn_rotation import VPNRotator` and calls
+# `VPNRotator()` — this picks the right implementation based on OS,
+# same pattern as CHROME_PATH in launcher.py.
+ 
+if platform.system() == "Windows":
+    VPNRotator = VPNRotatorWindows
+elif platform.system() == "Linux":
+    VPNRotator = VPNRotatorLinux
+else:
+    raise RuntimeError(f"Unsupported OS: {platform.system()}")

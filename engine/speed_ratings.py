@@ -332,7 +332,14 @@ def _computeCourseDifficulties(results_by_course: dict,
             deviation = (r["normalized_time"] / ability) - 1.0
             deviations.append(deviation)
 
-        if not deviations:
+        # Count unique athletes on this course.
+        n_athletes = len(set(r["athlete_id"] for r in course_results))
+        
+        # No usables results for this course - keep difficulty at 0.
+        # Too few athletes to compute a reliable difficulty —
+        # treat as flat neutral. Will be recomputed on future
+        # engine runs as more data comes in.
+        if not deviations or n_athletes < 20:
             # No usables results for this course - keep difficulty at 0.
             new_difficulties[course_name] = 0.0
         else:
