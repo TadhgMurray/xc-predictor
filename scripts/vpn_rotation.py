@@ -425,6 +425,12 @@ HANDSHAKE_WAIT_SECONDS = 3
 # being short enough that a hang only costs ~20s, not 8+ minutes.
 WG_QUICK_TIMEOUT_SECONDS = 20
 
+# How long to wait for the connectivity-check curl. Short — we only
+# need to know the tunnel can reach the internet at all, not that
+# athletic.net returns real content (a Cloudflare 403 still proves
+# the tunnel works).
+CONNECTIVITY_CHECK_TIMEOUT_SECONDS = 8
+
  
 # _runWgQuick
 # Purpose: Runs `wg-quick <direction> <conf_path>` as a subprocess,
@@ -482,6 +488,57 @@ async def _runWgQuick(direction: str, conf_path: str) -> bool:
     # timeout — check its exit code the normal way.
     return proc.returncode == 0
 
+# _interfaceName
+# Purpose: Derives the interface name wg-quick uses from a .conf path —
+#          wg-quick names interfaces after the filename minus ".conf".
+# Arguments:
+#           conf_path: e.g. ".../us-atl-wg-001.conf"
+# Output: e.g. "us-atl-wg-001"
+def _interfaceName(conf_path: str) -> str:
+    # basename strips the directory; [:-5] strips ".conf" (5 chars)
+    return os.path.basename(conf_path)[:-5]
+
+
+# _interfaceExists
+# Purpose: Checks whether a network interface with this name currently
+#          exists, by asking the kernel directly via `ip link show`.
+#          This is how we detect interfaces left behind by a killed
+#          wg-quick process — wg-quick's own exit code can't tell us.
+# Arguments:
+#           name: interface name, e.g. "us-atl-wg-001"
+# Output: True if it exists, False otherwise.
+async def _interfaceExists(name: str) -> bool:
+
+    proc = await asyncio.create_subprocess_exec(
+        "ip", "link", "show", "dev", name,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+    # ip link show exits 0 if the device exists, non-zero otherwise.
+    return proc.returncode == 0
+
+# _forceRemoveInterface
+# Purpose: Deletes a network interface directly via `ip link delete`,
+#          bypassing wg-quick entirely. Used when wg-quick down
+#          failed/timed out but the interface is still present —
+#          this is the fallback that actually removes it.
+# Arguments:
+#           name: interface name to delete.
+# Output: None. Errors are swallowed — if it's already gone, this
+#         fails harmlessly.
+async def _forceRemoveInterface(name: str):
+
+    print(f"[VPN] Force-removing stale interface {name}")
+
+    proc = await asyncio.create_subprocess_exec(
+        "ip", "link", "delete", name,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await proc.wait()
+
 # _bringDown
 # Purpose: Tears down a WireGuard interface that's currently up.
 # Arguments:
@@ -489,7 +546,14 @@ async def _runWgQuick(direction: str, conf_path: str) -> bool:
 # Output: None. Errors are swallowed — fine if nothing was up yet.
 async def _bringDown(conf_path: str):
     
+    name = _interfaceName(conf_path)
+
     await _runWgQuick("down", conf_path)
+
+    # Verifies the wireguard interface is teared down.
+    # If not, it force removes it.
+    if await _interfaceExists(name):
+        await _forceRemoveInterface(name)
 
 # _bringUp
 # Purpose: Brings up a new WireGuard interface from a .conf file.
@@ -499,6 +563,47 @@ async def _bringDown(conf_path: str):
 async def _bringUp(conf_path: str) -> bool:
  
     return await _runWgQuick("up", conf_path)
+
+# _verifyConnectivity
+# Purpose: After a tunnel comes up, confirms it actually routes traffic
+#          by curling a known URL. wg-quick exiting 0 only means the
+#          interface and routes were CONFIGURED — not that the
+#          handshake succeeded or the exit IP is reachable. This check
+#          was the missing piece that let a dead tunnel be accepted as
+#          "rotation complete" before.
+# Arguments: None.
+# Output: True if curl got any HTTP response, False on timeout/no route.
+async def _verifyConnectivity() -> bool:
+
+    # Launches curl as a subprocess, which is a command-line program for
+    # making HTTP(S) requests, which returns a page's HTML
+    # . -s means silent supressed progress output,
+    # dev/null throws away page content. The http_code part means print
+    # only request's status after finishing. Pipe captures the stdout
+    # so Python can read it, rather than letting it print to terminal.
+    proc = await asyncio.create_subprocess_exec(
+        "curl", "--max-time", str(CONNECTIVITY_CHECK_TIMEOUT_SECONDS),
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "https://www.athletic.net",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        # Wait for curl to finish and returns it's stdout, stderr output
+        # as bytes (status code, empty as we distcard stderr).
+        stdout, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=CONNECTIVITY_CHECK_TIMEOUT_SECONDS + 2
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return False
+
+    # -w "%{http_code}" prints just the status code, e.g. "200" or "403".
+    # "000" means curl couldn't connect at all (no route / DNS failure).
+    code = stdout.decode().strip()
+    return code not in ("", "000")
 
 # VPNRotatorLinux
 # Purpose: Manages VPN tunnel rotation inside the "mullvad" network
@@ -578,53 +683,75 @@ class VPNRotatorLinux:
     #           reason: why we're rotating, for logging.
     # Output: True if the new tunnel came up successfully, False otherwise.
     async def rotate(self, label: str, reason: str) -> bool:
+
+        # Snapshot before acquiring the lock. If this changes by the
+        # time we get the lock, another session already completed a
+        # rotation while we were waiting — the IP is already fresh,
+        # so we skip instead of rotating again.
+        count_before = self.rotation_count
  
         async with self.lock:
+
+            if self.rotation_count != count_before:
+                print(f"[VPN] {label} skipping rotation — already rotated by another session")
+                return True
  
             old_conf = self._currentConf()
 
             if old_conf:
                 await _bringDown(old_conf)
  
-        # Try up to len(self.configs) configs, starting from the next
-        # one after current_index. range(len(self.configs)) gives us
-        # one attempt per config in the pool, in case several in a
-        # row are down — without this we'd give up after just one.
-        for _ in range(len(self.configs)):
- 
-            self.current_index = (self.current_index + 1) % len(self.configs)
-            new_conf = self.configs[self.current_index]
- 
-            print(f"[VPN] {label} rotating ({reason}): "
-                  f"{os.path.basename(old_conf) if old_conf else 'none'} "
-                  f"-> {os.path.basename(new_conf)}")
- 
-            success = await _bringUp(new_conf)
- 
-            if success:
-                await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
- 
-                self.rotation_count += 1
-                self.last_rotation_time = time.time()
-                self.global_meets_since_rotation = 0
- 
-                print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
-                return True
- 
-            # This config failed/timed out — log and loop to try the
-            # next one. old_conf is now None for subsequent attempts
-            # since we already tore it down once above.
-            print(f"[VPN] {label} wg-quick up failed/timed out for "
-                  f"{os.path.basename(new_conf)} — trying next config")
-            old_conf = None
- 
-        # Every config in the pool failed. Lock still releases (we're
-        # exiting the `async with` block normally) — sessions will
-        # resume, just with no working tunnel until the NEXT rotation
-        # attempt succeeds.
-        print(f"[VPN] {label} all {len(self.configs)} configs failed — "
-              f"giving up on this rotation")
-        return False
+            # Try up to len(self.configs) configs, starting from the next
+            # one after current_index. range(len(self.configs)) gives us
+            # one attempt per config in the pool, in case several in a
+            # row are down — without this we'd give up after just one.
+            for _ in range(len(self.configs)):
+    
+                self.current_index = (self.current_index + 1) % len(self.configs)
+                new_conf = self.configs[self.current_index]
+    
+                print(f"[VPN] {label} rotating ({reason}): "
+                    f"{os.path.basename(old_conf) if old_conf else 'none'} "
+                    f"-> {os.path.basename(new_conf)}")
+    
+                success = await _bringUp(new_conf)
+    
+                if success:
+                    await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
+
+                    # Verifies it's actually connected.
+                    if await _verifyConnectivity():
+                        self.rotation_count += 1
+                        self.last_rotation_time = time.time()
+                        self.global_meets_since_rotation = 0
+
+                        print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
+                        return True
+                    
+                    print(f"[VPN] {label} {os.path.basename(new_conf)} came up but "
+                        f"failed connectivity check — tearing down and trying next")
+                else:
+                    # This config failed/timed out — log and loop to try the
+                    # next one.
+                    print(f"[VPN] {label} wg-quick up failed/timed out for "
+                        f"{os.path.basename(new_conf)} — trying next config")
+                
+                # Whether wg-quick "succeeded" or not, this config isn't
+                # usable. Tear it down WITH verification before trying the
+                # next one — this is what stops a half-up interface from
+                # this attempt sticking around alongside the next one.
+                await _bringDown(new_conf)
+
+                old_conf = None
+    
+            # Every config in the pool failed. Lock still releases (we're
+            # exiting the `async with` block normally) — sessions will
+            # resume, just with no working tunnel until the NEXT rotation
+            # attempt succeeds.
+            print(f"[VPN] {label} all {len(self.configs)} configs failed — "
+                f"giving up on this rotation")
+            
+            return False
  
     # checkRotation
     # Purpose: Called by each session after every meet. Once the shared
