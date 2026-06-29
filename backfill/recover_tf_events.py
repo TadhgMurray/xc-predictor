@@ -34,11 +34,14 @@ from database import (
 from scraper import getMeetDataTF, CloudflareException, EVENT_ID_TO_SHORT
 from scrape_results import _collectTFEventDiv, _saveTFMeet
 from launcher import restartBrowser, SESSION_CONFIGS
+import asyncio
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BATCH_SIZE = 100
 N_SESSIONS = 5
+PER_EVENT_DELAY = 2.5
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -146,7 +149,7 @@ async def _runSession(playwright, grouped: dict, meet_ids: list, session_index: 
 
     # Reuse SESSION_CONFIGS from launcher.py so recovery sessions look
     # identical to main scraper sessions to Cloudflare.
-    config = SESSION_CONFIGS[]
+    config = SESSION_CONFIGS[session_index % len(SESSION_CONFIGS)]
 
     # restartBrowser handles Chrome launch, stealth, webdriver patch,
     # and initial navigation to athletic.net.
@@ -209,6 +212,7 @@ async def _processMeet(page, meet_id: int, events: list):
             raise
         except Exception:
             continue
+        await asyncio.sleep(PER_EVENT_DELAY)
 
     # Step 4: save everything in one transaction using existing helper.
     _saveTFMeet(meet_id, label, meets_to_save, athletes_to_save, results_to_save)
@@ -275,6 +279,9 @@ def _reconstructEventData(meet_id: int, events: list) -> tuple:
     except Exception as e:
         print(f"[Recovery] meets_tf lookup failed for meet {meet_id}: {e}")
         return {}, []
+    
+    print(f"[RECON] meet {meet_id}: {len(rows)} meets_tf rows, "
+          f"{len(needed)} needed", flush=True)
  
     events_dict = {}
     event_divs  = []
@@ -283,10 +290,10 @@ def _reconstructEventData(meet_id: int, events: list) -> tuple:
  
         # Look up gender from the hardcoded EVENT_ID_TO_SHORT mapping.
         mapping = EVENT_ID_TO_SHORT.get(event_id)
-        if not mapping:
-            continue
- 
-        _, gender = mapping
+        if mapping:
+            _, gender = mapping
+        else:
+            gender = None  
  
         # events_dict format matches what getMeetDataTF returns.
         events_dict[event_id] = {
@@ -313,10 +320,9 @@ def _reconstructEventData(meet_id: int, events: list) -> tuple:
 def _markEventsComplete(meet_id: int, events: list, results_to_save: list):
  
     # Build set of (event_short, div_id) combos that got results saved.
-    succeeded = {
-        (event_short, div_id)
-        for _, _, div_id, _, event_short, _ in results_to_save
-    }
+    succeeded = set()
+    for result, meet_info, div_id, event_id, event_short, is_relay, school, is_field in results_to_save:
+        succeeded.add((event_short, div_id))
  
     scraped_log = []
  

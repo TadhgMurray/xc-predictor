@@ -9,6 +9,7 @@
 import asyncio
 import random
 import sys
+import psycopg2
 
 from playwright.async_api import async_playwright
 
@@ -16,14 +17,18 @@ from database import (
     createTables, getConn,
     saveMeet, saveAthletesBulk, saveResultsBulk,
     saveMeetTF, saveResultsTFBulk,
-    logScrapedEventsTFBulk, updateMeetSport,
-    markScraped, getUnscrapedMeets, countRemaining, countRows,
+    logScrapedEventsTFBulk,
+    markScraped, countRows, saveMeetTeams,
+    saveMeetExtras, _resolveSchool, saveMeetTFMeta
 )
+
 from scraper import (
     getMeetData, getMeetResults,
     getMeetDataTF, getMeetResultsTF,
-    CloudflareException
+    getAllResultsTF, getAllResultsXC,
+    CloudflareException, RateLimitException
 )
+from scrape_tuning import perRequestDelayRange
  
 sys.path.insert(0, "engine")
 from normalize_distance import EVENT_DISTANCES_TF
@@ -40,6 +45,21 @@ from normalize_distance import EVENT_DISTANCES_TF
 def parseMeetDate(meet_info: dict) -> str:
     raw = meet_info.get("MeetDate", "")
     return raw.split("T")[0] if raw else ""
+ 
+# isFieldEvent
+# Purpose: 1 if event_short is a field event (jump/throw), else 0. Used by the
+#          per-div fallback, which has no isField flag to read.
+# Arguments: event_short: event code string.
+# Output: 1 field / 0 not.
+def isFieldEvent(event_short: str) -> int:
+    # Field event short codes. Extend if a field short shows up that's not here;
+    # the fast path doesn't rely on this (it has isField), so it only matters for
+    # the rare per-div fallback.
+    FIELD_EVENTS = {
+        "hj", "pv", "lj", "tj", "shot", 
+        "discus", "javelin", "hammer", "wt"
+    }
+    return 1 if event_short in FIELD_EVENTS else 0
 
 # isRelayEvent
 # Purpose: Returns 1 if the event short code is a relay event, 0 if not.
@@ -78,9 +98,91 @@ def buildAthleteDict(result: dict) -> dict:
         "FirstName":  result.get("FirstName"),
         "LastName":   result.get("LastName"),
         "Gender":     result.get("Gender"),
-        "SchoolName": result.get("SchoolName")
-
+        # Names SchoolName in XC and TeamName in TF.
+        "SchoolName": result.get("SchoolName") or result.get("TeamName")
     }
+
+# Threshold for "this looks like a dead IP, not normal 429 noise."
+# Counts consecutive event/div fetches that exhausted ALL of
+# getMeetResultsTF's internal retries (3 attempts each) — NOT raw 429
+# responses. Two such exhausted cycles back to back (6 total 429s) is
+# enough to rule out a one-off blip without wasting too much time
+# hammering a possibly-dead IP. Tune this after watching real logs.
+CONSECUTIVE_FAILURE_THRESHOLD = 2
+ 
+ 
+# _isStuckPattern
+# Purpose: Tiny, isolated decision: given the current consecutive-
+#          failure count for this meet, has it crossed the threshold
+#          that means "stop treating this as normal noise, treat it as
+#          a possibly-dead IP"?
+# Arguments:
+#           consecutive_failures: count of consecutive exhausted-retry
+#                                  failures so far in this meet.
+# Output: True if we've hit the threshold, False otherwise.
+def _isStuckPattern(consecutive_failures: int) -> bool:
+    return consecutive_failures >= CONSECUTIVE_FAILURE_THRESHOLD
+
+# _retryStuckEventDiv
+# Purpose: Handles one event/div that triggered the stuck-session
+#          threshold. Pauses all sessions, retries the fetch exactly
+#          once, and forces a real VPN rotation if the retry also
+#          fails. Always appends exactly one placeholder row if the
+#          final outcome is still a failure — never zero, never two.
+# Arguments:
+#           page, meet_id, meet_info, event_div, events_dict, jwt_token:
+#                       same as _collectTFEventDiv — needed to retry it.
+#           label: session label for logging.
+#           vpn_rotator: the shared VPNRotatorWindows/Linux instance.
+#           meets_to_save, athletes_to_save, results_to_save: collector
+#                       lists, mutated in place (same as
+#                       _collectTFEventDiv normally does).
+# Output: None. Mutates the collector lists. Always leaves exactly one
+#         placeholder for this event/div if the retry didn't succeed.
+async def _retryStuckEventDiv(page, meet_id: int, meet_info: dict,
+                               event_div: dict, events_dict: dict,
+                               jwt_token: str, label: str, vpn_rotator,
+                               meets_to_save: list, athletes_to_save: list,
+                               results_to_save: list):
+ 
+    # Step 1 — pause everyone. This call returns once the pause is over
+    # (vpn_rotator owns the actual sleep duration).
+    await vpn_rotator.handleStuckSession(label)
+ 
+    # Step 2 — retry this exact event/div, ONE time.
+    # add_placeholder_on_failure=True here because this IS the final
+    # attempt for this event/div if it fails — no further retry follows.
+    retry_succeeded = await _collectTFEventDiv(
+        page, meet_id, meet_info, event_div, events_dict, jwt_token, label,
+        meets_to_save, athletes_to_save, results_to_save,
+        add_placeholder_on_failure=True
+    )
+ 
+    if retry_succeeded:
+        print(f"{label} Stuck-session retry succeeded — IP recovered after pause")
+        return
+ 
+    # Step 3 — pause alone didn't fix it. Force a real rotation.
+    # Note: rotating does NOT touch meets_to_save/results_to_save and
+    # does NOT mark the meet as failed — _collectTFEventDiv's retry call
+    # above already appended the one placeholder this event/div gets.
+    # The meet keeps going exactly like any other single-event/div
+    # failure (see scrapeMeetTF's existing "continue" behavior).
+    print(f"{label} Stuck-session retry still failing — forcing VPN rotation")
+    await vpn_rotator.rotate(label, "stuck session — persistent 429s after pause")
+
+# _classifyFailure
+# Purpose: Small helper — maps a caught exception to a short string
+#          describing WHAT KIND of failure it was. Pulled out as its
+#          own function so _collectTFEventDiv's except blocks stay
+#          short, and so this mapping logic lives in exactly one place.
+# Arguments:
+#           e: the caught exception instance.
+# Output: One of "rate_limited" or "other_error" (a string label).
+def _classifyFailure(e: Exception) -> str:
+    if isinstance(e, RateLimitException):
+        return "rate_limited"
+    return "other_error"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # XC scraping
@@ -97,7 +199,7 @@ def buildAthleteDict(result: dict) -> dict:
 #           label: session label for logging.
 # Output: List of result dicts, or raises on unrecoverable failure.
 async def _fetchXCDivisionResults(page, meet_id: int, div_id: int,
-                                jwt_token: list, label: str) -> list:
+                                jwt_token: str, label: str) -> list:
     
     max_retries = 3
 
@@ -139,31 +241,213 @@ async def _fetchXCDivisionResults(page, meet_id: int, div_id: int,
 def _collectXCDivision(meet_info: dict, div: dict, results: list,
                         collected_meets: list, collected_athletes: list,
                         collected_results: list):
-    
+    print("[COLLECT] _collectXCDivision", flush=True)
     # Collect the meet row for this division.
     collected_meets.append((meet_info, div))
     
     # Collect all results and athletes for this division.
     for r in results:
+
+        # Defensive: skip any non-dict row (a malformed/nested result) instead of
+        # crashing the whole session on r.get(...). Mirrors _collectFlatEvent's guard.
+        if not isinstance(r, dict):
+            continue
         
         if not r.get("AthleteID") or not r.get("IDResult"):
             continue
 
         collected_athletes.append(r)
-        collected_results.append((r, meet_info))
+
+        # XC results from GetMeetResults carry SchoolName directly.
+        # Fall back to TeamName only if SchoolName is missing/empty —
+        # "or" skips to the right side if the left is None or "".
+        school = r.get("SchoolName") or r.get("TeamName") or "Unknown"
+
+        # Carry the final school alongside the athlete, WITHOUT mutating r.
+        collected_athletes.append((r, school))
+        collected_results.append((r, meet_info, school))
+
+# _collectXCFlatEvent
+# Purpose: Turn ONE flatEvents entry from GetAllResultsData (XC) into collector
+#          rows — the fast-path analog of _collectXCDivision, which fetched each
+#          division separately. The key win: an XC flatEvents entry uses the SAME
+#          field names as an xcDivisions[] entry (IDMeetDiv, Meters, Division,
+#          LevelMask, CourseId), so it can be handed to saveMeet as `divData`
+#          unchanged — no remapping needed (unlike the TF flatEvents path, which
+#          renamed everything). Results are inline in event["results"], so there's
+#          no per-division fetch.
+# Arguments:
+#           event:
+#               One XC flatEvents dict — carries IDMeetDiv, Meters, Division,
+#               LevelMask, CourseId, Gender, and an inline results[] list.
+#           meet_info:
+#               Meet-level dict from getMeetData (ID/Name/Location/jwtMeet).
+#           collected_meets:
+#               Collector list of (meet_info, div) tuples, mutated in place.
+#           collected_athletes:
+#               Collector list of athlete dicts, mutated in place.
+#           collected_results:
+#               Collector list of (result, meet_info, school) tuples, mutated
+#               in place.
+# Output:
+#           None. Mutates the three collector lists.
+def _collectXCFlatEvent(event: dict, meet_info: dict,
+                        collected_meets: list, collected_athletes: list,
+                        collected_results: list):
+
+    # The flatEvents entry IS the division dict saveMeet wants — same keys
+    # (IDMeetDiv, Meters, Division, LevelMask, CourseId). So we append it as the
+    # `div` half of the (meet_info, div) tuple, exactly like _collectXCDivision
+    # did with an xcDivisions[] entry. One meets row per division.
+    collected_meets.append((meet_info, event))
+
+    # Walk the inline results for this division. Same per-row guards as
+    # _collectXCDivision — skip non-dict junk and rows missing the identifying
+    # keys, so one malformed row can't sink the meet.
+    for r in event.get("results", []):
+
+        if not isinstance(r, dict):
+            continue
+
+        if not r.get("AthleteID") or not r.get("IDResult"):
+            continue
+
+        school = r.get("SchoolName") or r.get("TeamName") or "Unknown"
+
+        athlete_row = {
+            "AthleteID":  r.get("AthleteID"),
+            "FirstName":  r.get("FirstName", ""),
+            "LastName":   r.get("LastName", ""),
+            "Gender":     r.get("Gender", ""),
+            "SchoolName": school,
+        }
+        collected_athletes.append(athlete_row)
+        collected_results.append((r, meet_info, school))
+
+# _athleteRowsFromResults
+# Purpose: Build athlete upsert rows from the SAME (result, meet_info, school)
+#          tuples the results insert uses, so athletes.school is byte-identical
+#          to results.school for every (athlete_id, school) pair. This closes the
+#          FK gap where saveAthletesBulk's _resolveSchool produced a different
+#          school string than the result row carried (e.g. "Unattached" vs
+#          "36-Unattached"), leaving results_athlete_school_fkey with no match.
+# Arguments:
+#           collected_results: the (result, meet_info, school) tuple list.
+# Output:   a list of athlete dicts shaped for saveAthletesBulk, one per
+#           (athlete_id, school) pair actually referenced by a result.
+def _athleteRowsFromResults(collected_results):
+    seen = set()
+    out = []
+    for resultData, meetData, school in collected_results:
+        athlete_id = resultData.get("AthleteID")
+        if not athlete_id:
+            continue
+        # The exact pair the result will reference - dedup so we upsert each once.
+        pair = (athlete_id, school or "Unknown")
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append({
+            "AthleteID": athlete_id,
+            "FirstName": resultData.get("FirstName", ""),
+            "LastName":  resultData.get("LastName", ""),
+            "Gender":    resultData.get("Gender", ""),
+            # Force saveAthletesBulk down the same value: stash the result's
+            # school where _resolveSchool will find it first.
+            "SchoolName": school or "Unknown",
+        })
+    return out
+
+def _debugSchoolMismatch(collected_athletes, collected_results, label):
+    print(f"{label} [DEBUG] entered: {len(collected_athletes)} athletes, "
+          f"{len(collected_results)} results", flush=True)
+
+    athlete_pairs = set()
+    for a in collected_athletes:
+        aid = a.get("AthleteID")
+        if aid:
+            athlete_pairs.add((aid, _resolveSchool(a) or "Unknown"))
+
+    misses = 0
+    for resultData, meetData, school in collected_results:
+        aid = resultData.get("AthleteID")
+        if not aid:
+            continue
+        if (aid, school or "Unknown") not in athlete_pairs:
+            misses += 1
+            inserted = [s for (a_, s) in athlete_pairs if a_ == aid]
+            print(f"{label} [MISMATCH] athlete {aid}: "
+                  f"result wants {school!r}, athletes got {inserted!r}", flush=True)
+
+    print(f"{label} [DEBUG] done: {misses} mismatches", flush=True)
+            
+            # _saveResultAthletesRaw
+# Purpose: Insert the (athlete_id, school) pairs the RESULTS reference, using the
+#          result's school string VERBATIM - no _resolveSchool, no normalization -
+#          so athletes.school is byte-identical to results.school and the FK holds.
+# Arguments:
+#           conn:              open connection (caller commits).
+#           collected_results: the (result, meet_info, school) tuples.
+# Output:   none. Upserts one row per distinct (athlete_id, school) pair.
+def _saveResultAthletesRaw(conn, collected_results):
+    seen = set()
+    rows = []
+    for resultData, meetData, school in collected_results:
+        athlete_id = resultData.get("AthleteID")
+        if not athlete_id:
+            continue
+        school_value = school or "Unknown"
+        pair = (athlete_id, school_value)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        rows.append((
+            athlete_id,
+            resultData.get("FirstName", ""),
+            resultData.get("LastName", ""),
+            resultData.get("Gender", ""),
+            school_value,                      # VERBATIM - same string the result writes
+        ))
+
+    if not rows:
+        return
+    cursor = conn.cursor()
+    psycopg2.extras.execute_values(cursor, """
+        INSERT INTO athletes (athlete_id, first_name, last_name, gender, school)
+        VALUES %s
+        ON CONFLICT (athlete_id, school) DO NOTHING
+    """, rows)
 
 # _saveXCMeet
-# Purpose: Saves all collected XC data for one meet in a single DB
-#          transaction.
+# Purpose: Save all collected XC data for one meet in a single DB transaction:
+#          meets rows, athletes, results, and (new) the meet_extras blobs.
+#
+#          CHANGED: takes teams + team_scores and writes the meet_extras row.
+#          XC fills teams_json + team_scores_json; event_types_json and
+#          relay_legs_json are passed None (structurally absent for XC — no
+#          implements, no relays). The write is skipped entirely when there's
+#          nothing to store.
 # Arguments:
-#           meet_id: athletic.net meet ID (for error logging only).
-#           label: session label for logging.
-#           collected_meets: list of (meet_info, div) tuples.
-#           collected_athletes: list of athlete dicts.
-#           collected_results: list of (result, meet_info) tuples.
-# Output: Number of results saved, or -1 on failure.
+#           meet_id:
+#               athletic.net meet ID (also the meet_extras PK half — equals
+#               meet_info["ID"] for this meet).
+#           label:
+#               session label for logging.
+#           collected_meets:
+#               list of (meet_info, div) tuples.
+#           collected_athletes:
+#               list of athlete dicts.
+#           collected_results:
+#               list of (result, meet_info, school) tuples.
+#           teams:
+#               teams[] roster, or None.
+#           team_scores:
+#               accumulated teamScores[] list across divisions, or [] / None.
+# Output:
+#           Number of results saved, or -1 on failure.
 def _saveXCMeet(meet_id: int, label: str, collected_meets: list,
-                collected_athletes: list, collected_results: list) -> int:
+                collected_athletes: list, collected_results: list,
+                teams=None, team_scores=None) -> int:
 
     try:
         with getConn() as conn:
@@ -171,15 +455,34 @@ def _saveXCMeet(meet_id: int, label: str, collected_meets: list,
             for meet_info_item, div in collected_meets:
                 saveMeet(conn, meet_info_item, div)
 
-            saveAthletesBulk(conn, collected_athletes)
+
             saveResultsBulk(conn, collected_results)
+
+
+            # meet_extras: only write a row if there's something to store.
+            # `team_scores` may be an empty list when no division scored, which
+            # is falsy — so a meet with neither blob writes no row.
+            if teams or team_scores:
+                saveMeetExtras(
+                    conn, meet_id, "xc",
+                    teams,        # teams_json
+                    None,         # event_types_json — XC has no implements
+                    None,         # relay_legs_json   — XC has no relays
+                    team_scores,  # team_scores_json
+                )
 
             conn.commit()
         return len(collected_results)
     
     except Exception as e:
-        print(f"{label} [!] Save failed for meet {meet_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"{label} [!] Save failed for meet {meet_id}: {e}")   #     the conn returns to the pool
         return -1
+
+# Flag to skip getting results from meets that only have entries and
+# no results.
+SKIP_ENTRY_ONLY_DIVISIONS = True
 
 # scrapeXCDivisions
 # Purpose: Collects and saves all XC divisions for one meet.
@@ -220,6 +523,12 @@ async def scrapeXCDivisions(page, meet_id: int, meet_info: dict,
         if not div_id:
             continue
 
+        # Entry-only skip: Result == 1 means "has results". Anything else
+        # (None / Entry-only) has no results to fetch — skipping avoids a
+        # wasted network call and a resultless meets row.
+        if SKIP_ENTRY_ONLY_DIVISIONS and div.get("Result") != 1:
+            continue
+
         # Short pause between divisions to avoid detection.
         await asyncio.sleep(random.uniform(0.3, 0.6))
 
@@ -248,74 +557,145 @@ async def scrapeXCDivisions(page, meet_id: int, meet_info: dict,
         collected_meets, collected_athletes, collected_results
     )
 
+# _collectAndSaveAllResultsXC
+# Purpose: The GetAllResultsData fast path for XC. Iterates flatEvents into the
+#          collectors via _collectXCFlatEvent, then saves the whole meet in one
+#          transaction through the EXISTING _saveXCMeet (which already handles
+#          meet_extras). Pure — no awaits; the one network call already happened
+#          in the caller. Mirrors the TF _collectAndSaveAllResults.
+# Arguments:
+#           meet_id:
+#               athletic.net meet ID.
+#           meet_info:
+#               Meet-level dict from getMeetData.
+#           payload:
+#               The full GetAllResultsData dict — XC keys are flatEvents,
+#               teamScores, duplicateAthletes, correctedResultIDs.
+#           label:
+#               session label for logging.
+# Output:
+#           Results saved (int), or -1 on save failure (propagated from
+#           _saveXCMeet).
+def _collectAndSaveAllResultsXC(meet_id: int, meet_info: dict,
+                                payload: dict, label: str) -> int:
+
+    collected_meets    = []
+    collected_athletes = []
+    collected_results  = []
+
+    # Collect every division's inline results.
+    for event in payload.get("flatEvents", []):
+        if isinstance(event, dict):
+            _collectXCFlatEvent(event, meet_info,
+                                collected_meets, collected_athletes,
+                                collected_results)
+    
+    # What athletes does the PAYLOAD have, vs what we collected?
+    payload_aids = set()
+    for event in payload.get("flatEvents", []):
+        if isinstance(event, dict):
+            for r in event.get("results", []):
+                if isinstance(r, dict) and r.get("AthleteID"):
+                    payload_aids.add(r.get("AthleteID"))
+
+    collected_aids = set()
+    for rd, md, sch in collected_results:
+        collected_aids.add(rd.get("AthleteID"))
+
+    dropped = payload_aids - collected_aids
+    
+    return _saveXCMeet(
+        meet_id, label,
+        collected_meets, collected_athletes, collected_results,
+        teams=None,
+        team_scores=payload.get("teamScores"),
+    )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TF scraping
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# BIG IDEA FOR THIS SECTION:
+# scrapeMeetTF used to call getMeetDataTF itself, then ask
+# _validateTFMeetData a single yes/no question that conflated THREE
+# different situations (meet doesn't exist / meet is empty / event
+# mapping is broken) into one False.
+#
+# Now: the CALLER (scrapeMeetBySport) fetches the data and checks
+# existence FIRST — exactly like the XC branch already does with
+# getMeetData. scrapeMeetTF receives already-fetched meet_info,
+# events_dict, and event_divs, and only has to answer "given that this
+# meet exists and has event_divs to look at, can I scrape it?" That's
+# a much narrower question, which is why _validateTFMeetData shrinks.
+
 
 # _validateTFMeetData
-# Purpose: Checks that getMeetDataTF returned everything we need before
-#          we start looping over events.
+# Purpose: Given a TF meet that's already confirmed to exist (caller
+#          checked meet_info["ID"]), decides whether there's anything
+#          useful to scrape.
 # Arguments:
-#           meet_info: dict from getMeetDataTF.
-#           events_dict: event ID → event info mapping.
-#           event_divs: list of event/div combos with results.
-#           meet_id: for logging.
-#           label: session label for logging.
-# Output: True if valid, False if we should abort.
-def _validateTFMeetData(meet_info: dict, events_dict: dict,
-                         event_divs: list, meet_id: int, label: str) -> bool:
+#           event_divs: list of event/div combos with results, from
+#                       getMeetDataTF.
+# Output: True if there's at least one event_div to attempt.
+#         False if event_divs is empty (genuinely empty meet).
+def _validateTFMeetData(event_divs: list) -> bool:
     
-    if not meet_info.get("ID"):
-        print(f"{label} [!] No TF meet data for meet {meet_id}, skipping")
-        return False
-    
-    if not event_divs:
-        return False
-    
-    if not events_dict:
-        print(f"{label} [!] No events dict for meet {meet_id}, skipping")
-        return False
-    
-    return True
+    # True if contains anything, false if empty.
+    return bool(event_divs)
 
 # _collectTFEventDiv
-# Purpose: Fetches and collects data from one TF event/division combo.
-#          Does not touch the DB.
+# Purpose: Per-div FALLBACK collector — fetches one TF event/div via
+#          getMeetResultsTF and appends rows to the collectors. Derives
+#          is_field from the event short (no isField flag on this path),
+#          skips athlete creation for relays (smushed pseudo-athlete), and
+#          keeps field-event marks. Produces the 6-tuple meets row (trailing
+#          division=None) and the 8-tuple results row (trailing is_field)
+#          the save layer expects.
 # Arguments:
 #           page: Playwright page object.
 #           meet_id: athletic.net meet ID.
-#           meet_info: dict from getMeetDataTF.
-#           event_div: dict with "e" (event_id) and "d" (div_id) keys.
-#           events_dict: event ID → event info mapping.
-#           jwt_token: auth token from meet_info.
+#           meet_info: meet-level dict from getMeetDataTF.
+#           event_div: dict identifying the event/div to fetch (e=event_id,
+#                      d=div_id).
+#           events_dict: event ID -> event info mapping from getMeetDataTF.
+#           jwt_token: meet JWT auth for the GetResultsData3 call.
 #           label: session label for logging.
-#           meets_to_save: collector list for meet/event/div metadata.
-#           athletes_to_save: collector list for athlete dicts.
-#           results_to_save: collector list for result tuples.
-# Output: True if collected, False if skipped, raises on fatal error.
+#           meets_to_save: collector list for meets_tf rows, mutated in place.
+#           athletes_to_save: collector list for athlete dicts, mutated in place.
+#           results_to_save: collector list for result tuples, mutated in place.
+#           add_placeholder_on_failure: if True, append a placeholder meets row
+#                      on a fetch failure so recovery can find it.
+# Output: (success: bool, failure_kind: str | None).
 async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
-                              event_div: dict, events_dict: dict,
-                              jwt_token: str, label: str,
-                              meets_to_save: list, athletes_to_save: list,
-                              results_to_save: list) -> bool:
+                             event_div: dict, events_dict: dict,
+                             jwt_token: str, label: str,
+                             meets_to_save: list, athletes_to_save: list,
+                             results_to_save: list,
+                             add_placeholder_on_failure: bool = True,
+                             teams_capture: list = None) -> tuple[bool, str | None]:
     
     event_id = event_div.get("e")
     div_id   = event_div.get("d")
 
     event_info = events_dict.get(event_id)
     if event_info is None:
-        return False
+        # NEW: this is a LOCAL dict lookup, no network call happened.
+        # It must never be confused with a rate-limit failure — label
+        # it distinctly so scrapeMeetTF knows not to count it toward
+        # the stuck-session streak.
+        return False, "unmapped_event"
     
     event_short     = event_info["event_short"]
     gender          = event_info["gender"]
     # Converts event name to distance in meters
     distance_meters = EVENT_DISTANCES_TF.get(event_short)
     is_relay        = isRelayEvent(event_short)
+    is_field        = isFieldEvent(event_short)
 
     # Gets a meet's results
     try:
-        results = await getMeetResultsTF(
+        results, teams = await getMeetResultsTF(
             page, meet_id, div_id, event_short, gender, jwt_token
         )
 
@@ -323,18 +703,25 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
         raise
 
     except Exception as e:
+        # CHANGED: classify the exception instead of assuming it's
+        # always the same kind of problem.
+        failure_kind = _classifyFailure(e)
+
         # Single event/div failure — skip it, don't fail the whole meet.
         # TF meets have many event/div combos so one bad one isn't fatal.
         print(f"{label} [!] getMeetResultsTF failed for meet {meet_id} "
               f"event {event_short} div {div_id}: {e}")
+        
         # Still record this event in meets_tf with distance_meters = -1
         # so the recovery script can find it via the gap between
-        # meets_tf and tf_scraped_events.
-        meets_to_save.append((meet_info, div_id, event_id, event_short, -1))
-        return False
-    
-    # Saves meet for later bulk upload.
-    meets_to_save.append((meet_info, div_id, event_id, event_short, distance_meters))
+        # meets_tf and tf_scraped_events. If says to only append
+        # if the caller asked us to.
+        if add_placeholder_on_failure:
+            meets_to_save.append((meet_info, div_id, event_id, event_short, -1, None))
+
+        return False, failure_kind
+
+    meets_to_save.append((meet_info, div_id, event_id, event_short, distance_meters, None))
 
     # Saves all results in the meet and the athelete they are attatched to for 
     # later bulk upload
@@ -343,25 +730,97 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
         if not isinstance(result, dict):
             continue
         
-        # Skips sentinel times, which are DNF/DQ/DNS.
-        sort_int = result.get("SortInt", 0)
-        if isSentinelTime(sort_int):
-            continue
+        # CHANGED: field events keep their mark; running events drop sentinels.
+        if is_field:
+            if not result.get("Result"):
+                continue
+        else:
+            if isSentinelTime(result.get("SortInt", 0)):
+                continue
         
-        athletes_to_save.append(buildAthleteDict(result))
-        results_to_save.append((result, meet_info, div_id, event_id, event_short, is_relay))
+        # Relay results: skip athlete creation (smushed FirstName + pseudo
+        # AthleteID). Keep the relay result row; real runners are in relayLegs.
+        if not is_relay:
+            athletes_to_save.append(buildAthleteDict(result))
  
-    return True
+        school = result.get("SchoolName") or result.get("TeamName")
+        # CHANGED: +is_field (8-tuple).
+        results_to_save.append(
+            (result, meet_info, div_id, event_id, event_short, is_relay, school, is_field)
+        )
+ 
+    return True, None
+
+# _collectFlatEvent
+# Purpose: Turns ONE flatEvents entry from GetAllResultsData into collector
+#          rows. The wrapper hands us EventShort/isField/Division directly, and
+#          its results are inline — no per-event fetch, no event-id map.
+#          Defensive: skips junk results so one bad row can't sink the meet.
+# Arguments:
+#           event: one flatEvents dict — carries DivId, EventId, EventShort,
+#                  Division, isField, Round, and an inline results[] list.
+#           meet_info: meet-level dict (ID/Name/Location/date/LevelMask).
+#           meets_to_save: collector list for meets_tf rows, mutated in place.
+#           athletes_to_save: collector list for athlete dicts, mutated in place.
+#           results_to_save: collector list for result tuples, mutated in place.
+# Output: None.
+def _collectFlatEvent(event: dict, meet_info: dict,
+                      meets_to_save: list, athletes_to_save: list,
+                      results_to_save: list):
+ 
+    div_id      = event.get("DivId")
+    event_id    = event.get("EventId")
+    event_short = event.get("EventShort")
+    division    = event.get("Division")
+    is_field    = 1 if event.get("isField") else 0
+    is_relay    = isRelayEvent(event_short)
+ 
+    # Field events have no track distance (they have a mark) -> None.
+    distance_meters = EVENT_DISTANCES_TF.get(event_short)
+ 
+    # One meets_tf row per (div_id, event_id). Prelims and finals share that
+    # key but differ by Round on each result, so a single metadata row is
+    # correct (saveMeetTF's ON CONFLICT DO NOTHING keeps the first).
+    meets_to_save.append(
+        (meet_info, div_id, event_id, event_short, distance_meters, division)
+    )
+    
+    # For every result in the event check if it's either invalid or if
+    # we can add it to the results and athletes to save.
+    for result in event.get("results", []):
+ 
+        if not isinstance(result, dict):
+            continue
+ 
+        # Field events: keep only rows with an actual mark.
+        # Running events: drop sentinel SortInts (DNF/DNS/DQ).
+        if is_field:
+            if not result.get("Result"):
+                continue
+        else:
+            if isSentinelTime(result.get("SortInt")):
+                continue
+ 
+        # Relay results carry a smushed FirstName ("A<BR>B<BR>C<BR>D") and a
+        # pseudo-athlete AthleteID — don't make an athlete record from them.
+        # The real runners live in relayLegs (stored as relay_legs_json). The
+        # relay result row itself is still kept, with is_relay=1.
+        if not is_relay:
+            athletes_to_save.append(buildAthleteDict(result))
+ 
+        school = result.get("SchoolName") or result.get("TeamName") or "Unknown"
+        results_to_save.append(
+            (result, meet_info, div_id, event_id, event_short, is_relay, school, is_field)
+        )
+
 
 
 # _buildScrapedEventsList
-# Purpose: Builds the deduplicated list of (meet_id, event_short, div_id)
-#          tuples for logScrapedEventsTFBulk from the results_to_save list, which
-#          logs the events that have been scraped from TF in one DB connection.
+# Purpose: Deduplicated (meet_id, event_short, div_id) keys for
+#          logScrapedEventsTFBulk, pulled from results_to_save.
 # Arguments:
-#           results_to_save: list of (result, meet_info, div_id, event_id,
-#                            event_short, is_relay) tuples.
-# Output: List of (meet_id, event_short, div_id) tuples, deduplicated.
+#           results_to_save: list of 8-tuples (see saveResultsTFBulk).
+# Output: list of unique (meet_id, event_short, div_id) tuples.
 def _buildScrapedEventsList(results_to_save: list) -> list:
 
     # Log every successfully scraped event/div combo.
@@ -372,7 +831,7 @@ def _buildScrapedEventsList(results_to_save: list) -> list:
     seen = set()
     events = []
 
-    for _, meet_info, div_id, event_id, event_short, _ in results_to_save:
+    for _, meet_info, div_id, event_id, event_short, _, _, _ in results_to_save:
 
         # (meet_id, event_short, div_id) is the unique key — same as the
         # PRIMARY KEY in tf_scraped_events.
@@ -384,63 +843,275 @@ def _buildScrapedEventsList(results_to_save: list) -> list:
 
     return events
 
-# _saveTFMeet
-# Purpose: Saves all collected TF data for one meet in a single DB
-#          transaction, then bulk-logs the scraped events for recovery.
+    # Save through the existing XC save path. teamScores comes precomputed in
+    # this payload (no reconstruction from per-result Score+TeamID needed);
+    # `teams` has no separate XC array, so pass None and let teamScores fill
+    # team_scores_json. _saveXCMeet skips the meet_extras write if both are empty.
+    return _saveXCMeet(
+        meet_id, label,
+        collected_meets, collected_athletes, collected_results,
+        teams=None,
+        team_scores=payload.get("teamScores"),
+    )
+
+# _collectAndSaveAllResults
+# Purpose: The GetAllResultsData fast path. Iterates flatEvents into the
+#          collectors, then saves the meet + its teams/eventTypes/relayLegs
+#          blobs in one transaction. Pure (no awaits) — the one network call
+#          already happened in scrapeMeetTF.
 # Arguments:
-#           meet_id: athletic.net meet ID (for error logging only).
+#           meet_id: athletic.net meet ID.
+#           meet_info: meet-level dict from getMeetDataTF.
+#           payload: the full GetAllResultsData dict (flatEvents, teams,
+#                    eventTypes, relayLegs).
 #           label: session label for logging.
-#           meets_to_save: list of meet/event/div metadata tuples.
-#           athletes_to_save: list of athlete dicts.
-#           results_to_save: list of result tuples.
-# Output: Number of results saved, or -1 on failure.
-def _saveTFMeet(meet_id: int, label: str, meets_to_save: list,
-                athletes_to_save: list, results_to_save: list) -> int:
+# Output: results saved, or -1 on save failure.
+def _collectAndSaveAllResults(meet_id: int, meet_info: dict,
+                              payload: dict, label: str) -> int:
+ 
+    meets_to_save    = []
+    athletes_to_save = []
+    results_to_save  = []
     
+    # Collects all the results for each event in the meet.
+    for event in payload.get("flatEvents", []):
+        if isinstance(event, dict):
+            _collectFlatEvent(event, meet_info,
+                              meets_to_save, athletes_to_save, results_to_save)
+            
+ 
+    # Saves per-meet blobs, straight from the same payload.
+    return _saveTFMeet(
+        meet_id, label,
+        meets_to_save, athletes_to_save, results_to_save,
+        payload.get("teams"),
+        payload.get("eventTypes"),
+        payload.get("relayLegs"),
+    )
+
+# _saveTFMeet
+# Purpose: Saves one TF meet in a single transaction — meets_tf rows,
+#          athletes, results — then bulk-logs scraped events. Optionally
+#          writes the per-meet teams/eventTypes/relayLegs blobs to meet_extras
+#          (fast path passes them; the per-div fallback leaves them None).
+# Arguments:
+#           meet_id: athletic.net meet ID (for logging).
+#           label: session label for logging.
+#           meets_to_save: list of 6-tuples
+#                    (meet_info, div_id, event_id, event_short,
+#                     distance_meters, division).
+#           athletes_to_save: list of athlete dicts.
+#           results_to_save: list of 8-tuples (see saveResultsTFBulk).
+#           teams_array: teams[] roster blob, or None on the fallback path.
+#           event_types_array: eventTypes[] catalog blob, or None.
+#           relay_legs_array: relayLegs[] blob, or None.
+# Output: results saved, or -1 on failure.
+def _saveTFMeet(meet_id: int, label: str, meets_to_save: list,
+                athletes_to_save: list, results_to_save: list,
+                teams_array=None, event_types_array=None, relay_legs_array=None) -> int:
+
     try:
         # Save meet info, athletes info, and results info for TF into the db.
         with getConn() as conn:
 
-            for meet_info, div_id, event_id, event_short, distance_meters in meets_to_save:
-                saveMeetTF(conn, meet_info, div_id, event_id, event_short, distance_meters)
+            # Meet-level metadata row (meets_tf_meta): venue/gps/season/GoogleData/
+            # has_results. The full path never wrote this — only _saveMetaOnlyTF did.
+            # Without it, full-path TF scrapes save geometry + results but NO
+            # meet-level meta, reintroducing the gap the meta backfill just closed.
+            # meet_info is identical on every meets_to_save tuple, so take the first.
+            if meets_to_save:
+                saveMeetTFMeta(conn, meets_to_save[0][0])
+
+            wrote = 0
+            for meet_info, div_id, event_id, event_short, distance_meters, division in meets_to_save:
+                saveMeetTF(conn, meet_info, div_id, event_id, event_short,
+                           distance_meters, division)
+                wrote += 1
 
             saveAthletesBulk(conn, athletes_to_save)
             saveResultsTFBulk(conn, results_to_save)
 
+            # NEW: per-meet blobs (only the fast path passes them; fallback
+            # leaves them None and skips the write).
+            if teams_array or event_types_array or relay_legs_array:
+                saveMeetExtras(conn, meet_id, "tf",
+                               teams_array, event_types_array, relay_legs_array)
+
             conn.commit()
-        
+
         # Logs scraped events after the commit - we only want to
         # record events whose results acutally made it into the db.
         scraped_events = _buildScrapedEventsList(results_to_save)
         logScrapedEventsTFBulk(scraped_events)
 
         return len(results_to_save)
-    
+
     except Exception as e:
         print(f"{label} [!] Save failed for TF meet {meet_id}: {e}")
         return -1
     
 # scrapeMeetTF
-# Purpose: Scrapes all results from one TF meet. Gets the meet event/divs,
-#          loops over all event/div combos, collects results, then saves
-#          everything in one transaction.
+# Purpose: Scrape a whole TF meet. Fast path = one getAllResultsTF call for the
+#          entire meet (~30x fewer requests). Fallback = the old per-div loop
+#          when a meet doesn't serve "all results".
 # Arguments:
 #           page: Playwright page object.
 #           meet_id: athletic.net meet ID.
+#           meet_info: meet-level dict from getMeetDataTF; carries jwtMeet
+#                      (auths GetAllResultsData) plus the meet metadata.
+#           events_dict: event ID -> event info mapping from getMeetDataTF.
+#                        Used ONLY by the per-div fallback; the fast path
+#                        ignores it.
+#           event_divs: list of event/div combos from getMeetDataTF. Used
+#                       ONLY by the per-div fallback.
+#           label: session label for logging e.g. "[Session 1]".
+#           vpn_rotator: shared VPN rotator. Only the fallback's stuck-session
+#                        handling touches it.
+# Output: total results saved, -1 on failure, or 0 if the meet is empty.
+async def scrapeMeetTF(page, meet_id: int, meet_info: dict,
+                       events_dict: dict, event_divs: list,
+                       label: str, vpn_rotator) -> int:
+ 
+    jwt_token = meet_info.get("jwtMeet", "")
+ 
+    # ---- Fast path: one call for the whole meet -------------------------- #
+    payload = None
+    try:
+        payload = await getAllResultsTF(page, meet_id, jwt_token)
+    except CloudflareException:
+        raise   # IP block — bubble up for rotation
+    except RateLimitException:
+        # Per-session/IP 429. Distinct [429] line so you can grep the rate while
+        # tuning perMeetDelayRange. Marked failed -> retried later via meet_queue
+        # (the "just slow down" behavior — no per-meet backoff here).
+        print(f"{label} [429] rate limited on meet {meet_id} — marking failed")
+        return -1
+    except Exception as e:
+        # Anything else: log and fall through to the per-div path.
+        print(f"{label} [!] GetAllResultsData failed for meet {meet_id}: {e} "
+              f"— falling back to per-div")
+ 
+    flat_events = payload.get("flatEvents") if isinstance(payload, dict) else None
+ 
+    if flat_events:
+        return _collectAndSaveAllResults(meet_id, meet_info, payload, label)
+ 
+    # ---- Fallback: original per-event/div loop --------------------------- #
+    # return await _scrapeMeetTFPerDiv(
+    #     page, meet_id, meet_info, events_dict, event_divs, label, vpn_rotator
+    # )
+
+    # Fallback removed (6/22). No flatEvents on a meet that's already confirmed
+    # to exist (scrapeMeetBySport checked meet_info["ID"]) -> treat as a
+    # fast-path failure, mark the meet failed so it's retried rather than
+    # silently marked done. NOTE: a genuinely empty/entries-only meet also lands
+    # here and will retry; accepted tradeoff for never losing a real meet.
+    
+    # No flatEvents. Distinguish the two cases using event_divs
+    # (eventDivsWithResults from getMeetDataTF — what athletic.net itself says
+    # this meet has):
+    #
+    #   event_divs EMPTY -> the meet genuinely has no TF results (entries-only,
+    #     cancelled, XC-only with a stray TF queue row, future meet). This is a
+    #     PERMANENT state, not a miss. Mark DONE (return 0) so it stops churning
+    #     the queue forever. Confirmed via meet 551979: ID present,
+    #     eventDivsWithResults=0, flatEvents=0.
+    #
+    #   event_divs NON-EMPTY -> the meet CLAIMS results but the fast path got
+    #     none. That's a real miss (the case the removed fallback used to cover).
+    #     Mark failed (-1) so it retries.
+    if not event_divs:
+        # Genuinely empty — success with 0 results, do not retry.
+        return 0
+ 
+    # Has divisions but the fast path returned nothing. Some of these recover
+    # per-event, some don't - so route them to the recovery system instead of
+    # retrying the (dead) fast path forever. Persist the meets_tf division rows
+    # NOW so find_failed_tf_events.py's gap query (meets_tf present,
+    # tf_scraped_events absent) catches them and recover_tf_events.py can
+    # reconstruct + retry each event-div individually.
+    print(f"{label} [recover] Meet {meet_id}: {len(event_divs)} event-divs, "
+          f"no flatEvents — saving division metadata for recovery")
+    _saveDivisionsForRecovery(meet_id, meet_info, events_dict, event_divs)
+    return 0
+
+# _saveDivisionsForRecovery
+# Purpose: When the fast path returns no flatEvents but the meet CLAIMS divisions,
+#          persist those division rows to meets_tf (results unsaved) so the meet
+#          enters the recovery pipeline: find_failed_tf_events.py sees a gap
+#          (meets_tf present, tf_scraped_events absent) and queues each event-div
+#          for recover_tf_events.py to retry per-event. Reuses saveMeetTF so the
+#          rows are byte-identical to the normal save path's, which is what
+#          _reconstructEventData reads back.
+# Arguments:
+#           meet_id:     athletic.net meet ID.
+#           meet_info:   meet-level dict (ID/Name/Location/date/LevelMask).
+#           events_dict: {event_id: {"event_short", "gender"}} from getMeetDataTF.
+#           event_divs:  [{"e": event_id, "d": div_id}, ...] the meet claims.
+# Output:   None. Writes meets_tf rows only (no results, no athletes).
+def _saveDivisionsForRecovery(meet_id, meet_info, events_dict, event_divs):
+    meets_to_save = []
+
+    # For evey event div saves it and then saves the entire meet,
+    # allow the recovery to see events but no results - rescrape.
+    for event_div in event_divs:
+        event_id = event_div.get("e")
+        div_id   = event_div.get("d")
+
+        info = events_dict.get(event_id)
+        if not info:
+            continue                       # no metadata for this event -> skip
+        event_short = info.get("event_short")
+
+        distance_meters = EVENT_DISTANCES_TF.get(event_short)
+        division = info.get("gender")      # whatever saveMeetTF expects as division
+
+        meets_to_save.append(
+            (meet_info, div_id, event_id, event_short, distance_meters, division)
+        )
+
+    if not meets_to_save:
+        return
+
+    with getConn() as conn:
+        for meet_info_item, div_id, event_id, event_short, distance_meters, division in meets_to_save:
+            saveMeetTF(conn, meet_info_item, div_id, event_id, event_short,
+                       distance_meters, division)
+        conn.commit()
+    
+# _scrapeMeetTFPerDiv
+# Purpose: Scrapes all results from one TF meet. Gets the meet event/divs,
+#          loops over all event/div combos, collects results, then saves
+#          everything in one transaction. This is the fallback if we can't
+#          scrape all results in one transaction.
+# Arguments:
+#           page: Playwright page object.
+#           meet_id: athletic.net meet ID.
+#           meet_info: dict from getMeetDataTF — caller has already
+#                      confirmed meet_info["ID"] is present.
+#           events_dict: event ID -> event info mapping, from getMeetDataTF.
+#           event_divs: list of event/div combos with results, from
+#                       getMeetDataTF.
 #           label: session label for logging e.g. "[Session 1]".
 # Output: Total results saved, or -1 on failure, 0 if meet is empty.
-async def scrapeMeetTF(page, meet_id: int, label: str) -> int:
-
-    # Gets the meet data for the TF meet.
-    try:
-        meet_info, events_dict, event_divs = await getMeetDataTF(page, meet_id)
-    except Exception as e:
-        print(f"{label} [!] getMeetDataTF failed for meet {meet_id}: {e}")
-        return -1
+async def _scrapeMeetTFPerDiv(page, meet_id: int, meet_info: dict,
+                        events_dict: dict, event_divs: list,
+                        label: str, vpn_rotator) -> int:
     
-    # Return 0 for empty meets (not a failure), -1 for bad data.
-    if not _validateTFMeetData(meet_info, events_dict, event_divs, meet_id, label):
-        return 0 if not event_divs else -1
+    # Genuinely empty meet — exists, but nothing to scrape.
+    # This is success with 0 results, not a failure.
+    if not _validateTFMeetData(event_divs):
+        return 0
+    
+    # event_divs is non-empty but events_dict is empty — every event_div
+    # in this meet uses event IDs we don't have in EVENT_ID_TO_SHORT.
+    # This is a systemic mapping problem (not "a couple events missing"),
+    # so it's a hard failure rather than silently producing all-placeholder
+    # rows. Worth investigating EVENT_ID_TO_SHORT if this comes up often.
+    if not events_dict:
+        print(f"{label} [!] events_dict empty but event_divs non-empty "
+              f"for meet {meet_id} — event ID mapping may be stale")
+        return -1
     
     # Cookies token for authenticating our requests.
     jwt_token  = meet_info.get("jwtMeet", "")
@@ -450,32 +1121,76 @@ async def scrapeMeetTF(page, meet_id: int, label: str) -> int:
     athletes_to_save = []
     results_to_save  = []
 
+    # NEW: tracks consecutive exhausted-retry failures within THIS meet.
+    # Resets to 0 on every successful event/div, and at the start of
+    # every new call to scrapeMeetTF (i.e. every new meet).
+    consecutive_failures = 0
+
     for event_div in event_divs:
+
+        # Pause between event/div fetches — paced to hold the COMBINED
+        # GetResultsData3 rate at the target against the shared IP.
+        low, high = perRequestDelayRange()
+        await asyncio.sleep(random.uniform(low, high))  
+
         try:
-            success = await _collectTFEventDiv(
+            # CHANGED: add_placeholder_on_failure=False — we don't yet
+            # know if this is "normal, one-off failure" or "stuck
+            # pattern," so we hold off on the placeholder until we
+            # decide which branch we're in, below.
+           success, failure_kind = await _collectTFEventDiv(
                 page, meet_id, meet_info, event_div, events_dict,
                 jwt_token, label,
-                meets_to_save, athletes_to_save, results_to_save
+                meets_to_save, athletes_to_save, results_to_save,
+                add_placeholder_on_failure=False,
             )
-
-            if not success:
-                event_id = event_div.get("e")
-                div_id   = event_div.get("d")
-                event_info = events_dict.get(event_id)
-                if event_info:
-                    meets_to_save.append((
-                        meet_info, div_id, event_id,
-                        event_info["event_short"], -1
-                    ))
-
         except CloudflareException:
-            # Fatal for the whole meet — bubble up.
+            # Fatal for the whole meet — bubble up, exactly as before.
             raise
-
-        except Exception:
-            # Non-fatal single event failure already logged in _collectTFEventDiv.
+    
+        if success:
+            # Reset the streak — this event/div worked, whatever came
+            # before it doesn't matter anymore.
+            consecutive_failures = 0
             continue
 
+        # ── We're in failure territory. Decide: ordinary, or stuck? ──
+        # CHANGED: only a real 429 advances the stuck-session streak.
+        # Mapping misses and other_error still get logged + placeholdered
+        # below, they just can't trigger a pause/rotation anymore.
+        if failure_kind == "rate_limited":
+            consecutive_failures += 1
+        else:
+            # NEW: explicitly log that this failure is NOT counted, so
+            # future-you reading logs can tell the difference between
+            # "ignored on purpose" and "the counter is silently broken
+            # again."
+            print(f"{label} [!] {failure_kind} for meet {meet_id} "
+                f"event_div {event_div} — not counted toward stuck-session streak")
+
+        if consecutive_failures > 0 and _isStuckPattern(consecutive_failures):
+            await _retryStuckEventDiv(
+                page, meet_id, meet_info, event_div, events_dict,
+                jwt_token, label, vpn_rotator,
+                meets_to_save, athletes_to_save, results_to_save
+            )
+            consecutive_failures = 0
+
+        else:
+            # Any failure that did NOT trigger the stuck-retry path gets
+            # its placeholder appended here — covers unmapped_event,
+            # other_error, and rate_limited failures that are still
+            # below the stuck threshold. _retryStuckEventDiv (above)
+            # appends its own placeholder for the case it handles, so
+            # this branch must not double-append for that case.
+            event_id = event_div.get("e")
+            div_id   = event_div.get("d")
+            event_info = events_dict.get(event_id)
+            if event_info:
+                meets_to_save.append((
+                    meet_info, div_id, event_id,
+                    event_info["event_short"], -1, None
+                ))
  
     return _saveTFMeet(
         meet_id, label,
@@ -485,190 +1200,261 @@ async def scrapeMeetTF(page, meet_id: int, label: str) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Unified entry point
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# BIG IDEA FOR THIS SECTION:
+# scrapeMeetUnified used to do "detect sport, then scrape it, then
+# retag the queue." In the new flow, the LOOP in launcher.py already
+# knows which sport to try for this meet_id (from meet_queue's
+# per-sport status) — there's nothing to detect or retag.
+#
+# scrapeMeetBySport is the new single entry point: given a meet_id AND
+# a known sport, fetch the meet data for that sport, check whether it
+# exists, and if so scrape it. Both branches (XC and TF) follow the
+# same shape: fetch -> check existence -> empty-meet check -> scrape.
+#
+# The (n, exists) return tuple is the contract launcher.py depends on:
+#   exists=False        -> write NOTHING to meet_queue (try again later)
+#   exists=True, n>=0    -> markScraped(meet_id, sport, 1)  [success]
+#   exists=True, n==-1   -> markScraped(meet_id, sport, 2)  [failure]
 
-# _attemptTF
-# Purpose: Attempts to scrape a meet that is presumably TF.
+
+# scrapeMeetBySport
+# Purpose: Given a meet_id and a KNOWN sport ("XC" or "TF"), fetches
+#          that sport's meet data, checks whether the meet exists, and
+#          scrapes it if so. This is the single entry point the
+#          sequential-scan loop in launcher.py calls.
 # Arguments:
 #           page: Playwright page object.
 #           meet_id: athletic.net meet ID.
-#           label: session label for logging.
-# Output: Tuple of (n, detected_sport).
-#         n: results saved, -1 on failure, -2 if skipped.
-#         detected_sport: "TF"
-async def _attemptTF(page, meet_id: int, label: str) -> tuple:
-    try:
-        n = await scrapeMeetTF(page, meet_id, label)
-    except Exception as e:
-        print(f"{label} [!] scrapeMeetTF failed for meet {meet_id}: {e}")
-        return -1, "UNKNOWN"
-    updateMeetSport(meet_id, "TF")
-    return n, "TF"
+#           sport: "XC" or "TF" — which sport to attempt. The caller
+#                  decides this from meet_queue's per-sport status, not
+#                  this function.
+#           label: session label for logging e.g. "[Session 1]".
+# Output: Tuple of (n, exists).
+#         exists=False: this meet_id has no meet for this sport (or the
+#                        response was empty/malformed in a way that's
+#                        indistinguishable from absence). n is always 0
+#                        in this case and should be ignored.
+#         exists=True, n>=0: meet exists, n results saved (0 is valid —
+#                        an empty meet).
+#         exists=True, n==-1: meet exists, but scraping or saving failed.
+async def scrapeMeetBySport(page, meet_id: int, sport: str, 
+                            label: str, vpn_rotator) -> tuple:
 
-# scrapeMeetUnified
-# Purpose: Detects wether a meet is XC or TF, scrapes it with the
-#          correct scraper, and update the queue sport tag.
-# Arguments:
-#           page: Playwright page object.
-#           meet_id: athletic.net meet ID.
-#           label: session label for logging.
-# Output: Tuple of (n, detected_sport).
-#         n: results saved, -1 on failure, -2 if skipped.
-#         detected_sport: "XC", "TF", "SKIPPED", or "UNKNOWN".
-async def scrapeMeetUnified(page, meet_id: int, label: str) -> tuple:
+    if sport == "XC":
 
-    # We always try XC first because:
-    # 1. Most unscraped meets are TF but unknown XC meets are more valuable
-    # 2. getMeetData already uses the XC URL so we're consistent with
-    #    all existing scraped data
-    # 3. If xcDivisions comes back non-empty, it's definitively XC —
-    #    the API only returns XC divisions for XC meets
-
-    try:
-        meet_info, divisions = await getMeetData(page, meet_id)
-    except Exception as e:
-        print(f"{label} [!] getMeetData failed for meet {meet_id}: {e}")
-        return -1, "UNKNOWN"
-    
-    # getMeetData returned something but no meet ID — probably track and
-    # field then.
-    if not meet_info.get("ID"):
-        return await _attemptTF(page, meet_id, label)
-    
-    # Non-empty divisions means the XC API returned XC data — it's XC.
-    if divisions:
-
-        updateMeetSport(meet_id, "XC")
-
-        # Scrape it as XC using the existing scrapeMeet logic.
-        # We already have meet_info and divisions from the getMeetData call
-        # above, so we pass them directly instead of calling getMeetData again.
-        n = await scrapeXCDivisions(page, meet_id, meet_info, divisions, label)
-
-        return n, "XC"
-    
-    # Valid meet ID but no divisions — not XC, try TF.
-    return await _attemptTF(page, meet_id, label)
-
-
-# scrapeMeet
-# Purpose: Fetches meet data then scrapes all XC divisions.
-# Arguments:
-#           page: browser page we are fetching info from.
-#           meet_id: id of the meet we are scraping.
-#           label: session label for printed output. Shows what browser session
-#                  is running this function.
-# Output: Returns an integer showing how many results were saved.
-async def scrapeMeet(page, meet_id: int, label: str) -> int:
-
-    # try/except wraps the API call so that if anything fails, we can catch it.
-    try:
-        # Gets meet data, which is two dicts for the meet info and the
-        # divisions. This includes the jwt_token and the div_id.
-        meet_info, divisions = await getMeetData(page, meet_id)
-    except Exception as e:
-        # Exception is the error, we store it as e so we can print it out.
-        print(f"{label} [!] getMeetData failed for meet {meet_id}: {e}")
-        return -1
-    
-    # This catches if the API call succeeds but an empty object is returned.
-    if not meet_info.get("ID"):
-        print(f"{label} [!] No meet data returned for meet {meet_id}, skipping")
-        return -1
-    
-    # Empty meet with no results.
-    if not divisions:
-        return 0
-    
-    return await scrapeXCDivisions(page, meet_id, meet_info, divisions, label)
-
-# main
-# Purpose: Scrapes the results from all the XC meets in our meet queue.
-# Arguments: None.
-# Output: None, but updates the results and athletes table in the db.
-async def main():
-
-    # Make sure the tables exist before we write to them.
-    createTables()
-
-    # Launches the browser
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless = False,
-            args = ["--disable-blink-features=AutomationControlled"]
-        )
-
-        # Creates a fresh browser profile.
-        context = await browser.new_context(
-            # Tells website what browser and OS is making request. We fake
-            # it to look more human.
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-            # Browser window size. We set it to this size because this is
-            # a common size, so less likely to be detected.
-            viewport = {"width": 1280, "height": 800},
-            java_script_enabled = True
-        )
-
-        # Opens a new tab.
-        page = await context.new_page()
-
-        # Runs a piece of JS on every page to make the browser look more human
-        # by changing its properties.
-        await page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: => undefined})"
-        )
-
-        # Tracks the number of meets that were correctly processed and the failures.
-        processed = 0
-        failed = 0
-
-        # Processes meet results in batches, 500 at a time until all meets
-        # are scraped or skipped.
-        while True:
-
-            # Gets 500 unscraped meets from the db.
-            batch = getUnscrapedMeets(limit = 500)
-
-            if not batch:
-                print("Queue empty - Phase 2 complete,")
-                break
-            
-            # We scrape each XC meet in the 500 batch.
-            for meet_id, sport in batch:
-                # If sport is not XC it gets marked scraped and skipped
-                if sport.upper() != "XC":
-                    markScraped(meet_id, status = 1)
-                    continue
-                
-                # Scrapes the meet results.
-                n = await scrapeMeet(page, meet_id)
-
-                # If scrapeMeet succeeded(n != -1) we marked it scraped with succeed
-                # status 1. Otherwise we marked it unscraped with failure status
-                # 2.
-                if n >= 0:
-                    markScraped(meet_id, status = 1)
-                    processed += 1
-                    print(f"[{processed}] Meet {meet_id}: {n} results saved | {countRemaining()} remaining")
-                else:
-                    markScraped(meet_id, status = 2)
-                    failed += 1
-                    print(f"[Fail #{failed}] Meet {meet_id} marked failed")
-
-                await asyncio.sleep(random.uniform(0.3, 0.6))
-            
-                # Every 100 meets processed we reload athletic.net to avoid detection
-                # and to get new JWT tokens to avoid them expiring.
-                if processed % 100 == 0 and processed > 0:
-                    await page.goto("https://www.athletic.net")
-                    await page.wait_for_timeout(1000)
+        # Fetch meet-level info and division list.
+        try:
+            meet_info, divisions = await getMeetData(page, meet_id)
+        except CloudflareException:
+            # Session-level event — bubble up to launcher's retry/rotation loop.
+            raise
+        except Exception as e:
+            print(f"{label} [!] getMeetData failed for meet {meet_id}: {e}")
+            # Treat fetch-level errors the same as "doesn't exist" —
+            # writing nothing means we'll try again on a future pass.
+            return 0, False
         
-        # When queue is empty it prints the total number of rows 
-        # (meets, divs processed).
-        countRows()
-        print(f"Done. Processed: {processed}, Failed: {failed}")
-        await browser.close()
+        # meet_info["ID"] missing means: no XC meet at this ID, OR the
+        # response was empty/malformed (these are indistinguishable —
+        # see the discussion in design notes). Either way: write nothing.
+        if not meet_info.get("ID"):
+            print(f"{label} Meet {meet_id} (XC): skipped (doesn't exist)")
+            return 0, False
+        
+        # ---- Fast path: one getAllResultsData call for the whole meet ---- #
+        # Mirrors scrapeMeetTF: token from meet_info, same exception contract,
+        # NO fallback to the per-division loop (per the 6/22 TF precedent —
+        # fast-path-or-fail so a real miss retries rather than silently 0-ing).
+        jwt_token = meet_info.get("jwtMeet", "")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        payload = None
+        try:
+            payload = await getAllResultsXC(page, meet_id, jwt_token)
+        except CloudflareException:
+            raise   # IP block — bubble up for rotation
+        except RateLimitException:
+            # Per-session/IP 429. Distinct [429] line for grepping the rate
+            # while tuning perMeetDelayRange. Marked failed -> retried later
+            # via meet_queue (no per-meet backoff).
+            print(f"{label} [429] rate limited on meet {meet_id} (XC) — marking failed")
+            return -1, True
+        except Exception as e:
+            # Anything else: log and fail the meet (no fallback). It retries.
+            print(f"{label} [!] GetAllResultsData (XC) failed for meet {meet_id}: {e}")
+            return -1, True
+
+        # Stores as variable to find the payload is empty or not.
+        flat_events = payload.get("flatEvents") if isinstance(payload, dict) else None
+
+        if flat_events:
+            n = _collectAndSaveAllResultsXC(meet_id, meet_info, payload, label)
+        else:
+            # Meet exists (ID present) but the fast path returned no flatEvents.
+            # Mirror TF: distinguish genuinely-empty from a real miss using
+            # `divisions` (what getMeetData itself says this meet has).
+            #   divisions EMPTY    -> genuinely no XC results: success, 0, no retry.
+            #   divisions NON-EMPTY -> claims results but got none: real miss, retry.
+            if not divisions:
+                return 0, True
+            print(f"{label} [!] Meet {meet_id} (XC) claims {len(divisions)} "
+                  f"divisions but GetAllResultsData returned no flatEvents — failed")
+            return -1, True
+
+        if n == -1:
+            print(f"{label} Meet {meet_id} (XC): failed")
+        else:
+            print(f"{label} Meet {meet_id} (XC): saved {n} results")
+
+        return n, True
+    
+    elif sport == "TF":
+
+        # Fetch meet-level info, event ID mapping, and event/div list.
+        try:
+            meet_info, events_dict, event_divs = await getMeetDataTF(page, meet_id)
+        except CloudflareException:
+            raise
+        except Exception as e:
+            print(f"{label} [!] getMeetDataTF failed for meet {meet_id}: {e}")
+            return 0, False
+        
+        # Same existence check as XC, mirrored for TF.
+        if not meet_info.get("ID"):
+            print(f"{label} Meet {meet_id} (TF): skipped (doesn't exist)")
+            return 0, False
+ 
+        # Hand off to scrapeMeetTF, which handles the empty-meet case
+        # and the empty-events_dict failure case internally.
+        n = await scrapeMeetTF(
+            page, meet_id, meet_info, events_dict, event_divs,
+            label, vpn_rotator 
+        )
+
+        if n == -1:
+            print(f"{label} Meet {meet_id} (TF): failed")
+        else:
+            print(f"{label} Meet {meet_id} (TF): saved {n} results")
+                  
+        return n, True
+    
+    else:
+        # Defensive — launcher.py should only ever pass "XC" or "TF".
+        # If this ever fires, it's a bug in the caller, not a scraping
+        # outcome, so we raise rather than silently returning a result
+        # that would get written to meet_queue.
+        # !r is a conversion flag inside an f-string, it tells Python
+        # to use repr() on the value instead of str(), which add '' around
+        # the value.
+        raise ValueError(f"scrapeMeetBySport got unknown sport: {sport!r}")
 
     
+# ─────────────────────────────────────────────────────────────────────────────
+# Meta-only TF re-scrape (no results fetch)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY: the two meets_tf bugs (NULL source rollback + the (div_id,event_id) PK
+# collision) meant almost no TF meet metadata ever saved. The RESULTS are intact
+# (158M rows), so we don't re-pull them — we only need to lay down meets_tf rows
+# (+ the new meets_tf_meta row). GetMeetData(sport=tf) carries everything needed
+# at the meet+division grain WITHOUT a results call:
+#   - meet.Location  -> venue/gps/state/track_type/length/indoor + GoogleData
+#   - tfDivisions    -> div_id + division name (via events_dict/getMeetDataTF)
+#   - eventDivsWithResults (event_divs) -> the (event_id, div_id) grid
+# event_short / distance_meters are NOT in this call; they're filled afterward by
+# a SQL copy from results_tf (which already has event_short per result).
+
+
+# _saveMetaOnlyTF
+# Purpose: Write a TF meet's metadata with NO results. Reuses the exact
+#          recovery-write pattern (_saveDivisionsForRecovery): walk event_divs ->
+#          saveMeetTF per (div_id, event_id). ALSO writes the one meet-level
+#          meets_tf_meta row. event_short/distance come from events_dict where
+#          present; the SQL backfill fixes any gaps from results_tf afterward.
+# Arguments:
+#           meet_id:     athletic.net meet ID.
+#           meet_info:   the `meet` dict from getMeetDataTF (ID/Name/Location/
+#                        SeasonID/Gender/Template/LevelMask/MeetDate/...).
+#           events_dict: {event_id: {"event_short", "gender"}} from getMeetDataTF.
+#           event_divs:  [{"e": event_id, "d": div_id}, ...] the meet claims.
+#           label:       session label for logging.
+# Output:   int — number of meets_tf rows written (0 if the meet has no event-divs).
+def _saveMetaOnlyTF(meet_id: int, meet_info: dict, events_dict: dict,
+                    event_divs: list, label: str) -> int:
+
+    # Division-name map stashed on meet_info by getMeetDataTF (IDDiv -> name).
+    division_by_div = meet_info.get("_divisionByIdDiv", {})
+
+    # Build the per-event rows exactly like _saveDivisionsForRecovery does, so
+    # they're byte-identical to the normal path's meets_tf rows.
+    meets_to_save = []
+    for event_div in event_divs:
+        event_id = event_div.get("e")
+        div_id   = event_div.get("d")
+
+        # events_dict may lack an entry for an event id; still write the row with
+        # event_short=None (the SQL backfill fills it from results_tf later).
+        info = events_dict.get(event_id) or {}
+        event_short     = info.get("event_short")
+        distance_meters = EVENT_DISTANCES_TF.get(event_short)
+        # Real division name ('Open', 'Invitational'), keyed by div_id (= IDDiv),
+        # falling back to None rather than gender if the map lacks it.
+        division = division_by_div.get(div_id)
+
+        meets_to_save.append(
+            (meet_info, div_id, event_id, event_short, distance_meters, division)
+        )
+
+    # One transaction: the meet-level row + all event rows together.
+    with getConn() as conn:
+        # Meet-level metadata (venue/address/season/GoogleData) — one row.
+        saveMeetTFMeta(conn, meet_info)
+
+        # Per-event geometry rows into meets_tf (unchanged saver, 3-col PK).
+        for meet_info_item, div_id, event_id, event_short, distance_meters, division in meets_to_save:
+            saveMeetTF(conn, meet_info_item, div_id, event_id, event_short,
+                       distance_meters, division)
+
+        conn.commit()
+
+    print(f"{label} Meet {meet_id} (TF meta-only): wrote {len(meets_to_save)} "
+          f"meets_tf rows + 1 meets_tf_meta")
+    return len(meets_to_save)
+
+
+# scrapeMeetTFMetaOnly
+# Purpose: The meta-only entry point for one TF meet: fetch GetMeetData(sport=tf)
+#          and write metadata, NO results. Mirrors the TF branch of
+#          scrapeMeetBySport's fetch + existence check, then hands off to
+#          _saveMetaOnlyTF instead of scrapeMeetTF.
+# Arguments:
+#           page:        Playwright page object.
+#           meet_id:     athletic.net meet ID.
+#           label:       session label for logging.
+#           vpn_rotator: shared rotator (unused on the meta path, kept for a
+#                        uniform call signature with scrapeMeetBySport).
+# Output:   tuple (n, exists) matching scrapeMeetBySport's contract:
+#             n >= 0  -> meets_tf rows written (0 = empty/doesn't-exist-for-TF)
+#             exists  -> whether a TF meet exists at this id
+async def scrapeMeetTFMetaOnly(page, meet_id: int, label: str, vpn_rotator) -> tuple:
+
+    try:
+        meet_info, events_dict, event_divs = await getMeetDataTF(page, meet_id)
+    except CloudflareException:
+        raise                               # IP block — bubble to launcher rotation
+    except Exception as e:
+        print(f"{label} [!] getMeetDataTF failed for meet {meet_id}: {e}")
+        return 0, False
+
+    # No TF meet at this id (or empty/malformed response).
+    if not meet_info.get("ID"):
+        print(f"{label} Meet {meet_id} (TF meta): skipped (doesn't exist)")
+        return 0, False
+
+    # Genuinely no event-divs -> meet exists but has nothing to write. Success
+    # with 0, do not retry (mirrors scrapeMeetTF's empty-meet handling).
+    if not event_divs:
+        return 0, True
+
+    n = _saveMetaOnlyTF(meet_id, meet_info, events_dict, event_divs, label)
+    return n, True

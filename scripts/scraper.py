@@ -21,32 +21,54 @@ import random
 class CloudflareException(Exception):
     pass
 
+# RateLimitException
+# Purpose: Raised specifically when the server returns HTTP 429
+#          (rate limited). This is a SEPARATE class from the generic
+#          Exception so callers can tell "we got rate-limited" apart
+#          from "something else went wrong" (timeout, bad JSON, etc.)
+#          without parsing error message strings. Same pattern as
+#          CloudflareException — a type carries information that a
+#          string message can't reliably carry.
+class RateLimitException(Exception):
+    pass
+
+
 
 # getMeetResults
-# Purpose: Function to scrape meet results from Athletic.net for a given 
-# race and division
-# arguments: page (Playwright page object), (should be ints) meet_id is the ID of the meet, div_id is the 
-# ID of the race division, jwt_token is the authentication token we get from the cookies to
-# avoid a 403 error when we call the API.
-# output: list of dictionaries, one per athlete. Each dictionary contains 
-# the athlete's name, time, and other relevant info. This is the raw 
-# data that will be used to train the predictor.
+# Purpose: Scrape one XC division's results from athletic.net's GetResultsData3
+#          endpoint, via a direct in-page fetch (inherits the browser's cookies/
+#          auth). Retries on transient errors; raises CloudflareException on an
+#          IP-level block so the caller can rotate VPN.
+#
+#          CHANGED: now returns a 3-tuple (results, teams, team_scores) instead
+#          of just the results list. teams[] (team rosters) and teamScores[]
+#          (per-division team scoring) come from the same response and were
+#          being discarded.
+# Arguments:
+#           page:
+#               Playwright page object.
+#           meet_id:
+#               athletic.net meet ID (logging/error context only).
+#           div_id:
+#               division ID to fetch results for.
+#           jwt_token:
+#               meet JWT auth token (anettokens header) from meet_info.
+# Output:
+#           On success, a tuple (results, teams, team_scores):
+#               results      - list of resultsXC[] dicts (one per athlete).
+#               teams        - teams[] roster list, or None if absent.
+#               team_scores  - teamScores[] list for this division, or None.
+#           Raises CloudflareException on an IP block, or Exception once all
+#           retries are exhausted.
 async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
 
     MAX_RETRIES = 3
-    RETRY_DELAY = 2.0   # Seconds to wait between retries
+    RETRY_DELAY = 60.0   # Seconds to wait between retries
 
     # Timeout for the JS fetch inside the browser.
     # 15 seconds is generous — real responses come back in under 2s.
     # If it takes longer than this, the server is hung and we should move on.
     JS_FETCH_TIMEOUT_MS = 15000
-
-    await page.goto(
-        f"https://www.athletic.net/CrossCountry/meet/{meet_id}/results/{div_id}",
-        timeout=60000
-    )
-    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-    await asyncio.sleep(random.uniform(1.5, 2.5))
 
     # ------------------------------------------------------------------ #
     # Retry loop — the evaluate call can fail if the page isn't ready    #
@@ -132,7 +154,27 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
                 raise Exception(f"Invalid JSON (status {status}): {text[:100]}")
 
             # Success — return immediately
-            return parsed.get("resultsXC", [])
+            # CHANGED: pull the three pieces of this response we care about.
+            # resultsXC[] = the athlete results. teams[] = the meets teams roster
+            # (same list repeated in every division's response — caller grabs it
+            # once). teamScores[] = THIS division's team scoring (caller
+            # accumulates across divisions). teams/team_scores are None when the
+            # response omits them.
+            results = parsed.get("resultsXC", [])
+
+            # resultsXC sometimes comes back as a list-of-lists (the actual
+            # result dicts nested one level deeper) — same shape quirk TF handles
+            # in getMeetResultsTF. Unwrap so callers always get a flat list of
+            # result dicts. Without this, _collectXCDivision iterates the outer
+            # list and each item is a LIST, not a dict -> r.get(...) crashes the
+            # whole session ('list' object has no attribute 'get').
+            if results and isinstance(results[0], list):
+                results = results[0]
+
+            teams = parsed.get("teams")
+            team_scores = parsed.get("teamScores")
+ 
+            return results, teams, team_scores
 
         except CloudflareException:
             # Don't retry Cloudflare blocks — raise immediately so the
@@ -155,9 +197,94 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
         f"(meet {meet_id} div {div_id}): {last_error}"
     )
 
+# getAllResultsTF
+# Purpose: Fetch one TF meet's entire result set in a single GET, via an in-page
+#          fetch (inherits the browser's cookies/session). This is the fast path;
+#          scrapeMeetTF falls back to per-event/div fetching if this returns no
+#          flatEvents or raises a non-Cloudflare error.
+# Arguments:
+#           page:
+#               Playwright page object.
+#           meet_id:
+#               athletic.net meet ID.
+#           jwt_token:
+#               meet JWT (jwtMeet from getMeetDataTF) — sent as the anettokens
+#               header to authenticate the call.
+# Output:
+#           The parsed GetAllResultsData payload dict, whose keys include
+#           flatEvents, teams, eventTypes, relayLegs. Returns {} if the response
+#           is empty/non-JSON. Raises CloudflareException on an IP block so the
+#           caller can rotate VPN.
+async def getAllResultsXC(page, meet_id: int, jwt_token: str): 
+
+    # Timeout for the in-browser fetch — same 15s budget as the other fetchers.
+    # A whole-meet payload is bigger than a single div, but still returns fast;
+    # 15s is comfortably generous and guards against a hung response.
+    JS_FETCH_TIMEOUT_MS = 15000
+ 
+    data = await page.evaluate("""
+        async (args) => {
+            // AbortController cancels the fetch if it hangs past timeoutMs.
+            const controller = new AbortController();
+            const timeoutId = setTimeout(
+                () => controller.abort(), args.timeoutMs
+            );
+ 
+            // GET with meetId + rawResults/showTips in the query string. Auth is
+            // the anettokens header (the jwtMeet token). anet-appinfo mirrors the
+            // other calls' client-identification header.
+            const response = await fetch(
+                '/api/v1/Meet/GetAllResultsData?meetId=' + args.meetId +
+                '&rawResults=false&showTips=false',
+                {
+                    headers: {
+                        'anettokens': args.token,
+                        'anet-appinfo': 'web:web:0:240'
+                    },
+                    signal: controller.signal
+                }
+            );
+ 
+            clearTimeout(timeoutId);
+            return { status: response.status, text: await response.text() };
+        }
+    """, {"meetId": meet_id, "token": jwt_token, "timeoutMs": JS_FETCH_TIMEOUT_MS})
+ 
+    status = data.get("status")
+    text = data.get("text", "")
+ 
+    # Empty body — treat as "no fast-path payload"; caller falls back to per-div.
+    if not text:
+        return {}
+ 
+    # Cloudflare/HTML block — IP-level. Raise so scrapeMeetTF re-raises it up to
+    # the launcher for VPN rotation (must NOT be swallowed as a generic miss).
+    if "<!DOCTYPE" in text or "<html" in text:
+        raise CloudflareException("Cloudflare block in getAllResultsTF")
+    
+    # 429 = per-session/IP rate limit. Raise RateLimitException so scrapeMeetTF
+    # can log it distinctly (the signal you tune perMeetDelayRange against).
+    # Previously a 429 fell through to JSON-parse and looked like a generic
+    # failure — invisible. Now it's surfaced.
+    if status == 429:
+        raise RateLimitException("429 rate limit in getAllResultsTF")
+ 
+    # Parse. On malformed JSON, return {} so the caller falls back rather than
+    # crashing — a bad fast-path response shouldn't lose the meet.
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+ 
+    if not isinstance(parsed, dict):
+        return {}
+ 
+    return parsed
+ 
+
 
 # getMeetData
-# Purpose: Fetches meet metadaata and division list from athletic.net for a
+# Purpose: Fetches meet metadata and division list from athletic.net for a
 # given meet ID. Returns meet info.
 # Arguments: page is the Playwright page object. We pass it so we don't have
 # to keep opening a new page.meet_id is the ID of the meet to fetch data for.
@@ -170,20 +297,6 @@ async def getMeetData(page, meet_id: int):
     # Timeout for the JS fetch inside the browser — same pattern as
     # getMeetResults. 15s is generous; real responses come back in <2s.
     JS_FETCH_TIMEOUT_MS = 15000
-
-    # Navigate to the meet info page for the specified meet ID to get valid
-    # cookies and tokens.
-    await page.goto(f"https://www.athletic.net/CrossCountry/meet/{meet_id}/info", timeout=60000)
-    # Waits until the HTML is parsed ("domcontentloaded"), as opposed to waiting
-    # for no network activity, which takes forever because there are always
-    # background processes going on.
-    # This returns as soon as the page is ready instead of always waiting 3 seconds.
-    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-
-    # Dismiss consent popup BEFORE any API calls.
-    # _dismissConsentPopup waits up to 8s for the popup to appear —
-    # we don't care if it returns False (popup absent = no problem).
-    await dismissConsentPopup(page, meet_id)
 
     # Make the API call directly from the browser context.
     # This uses the browser's own cookies and tokens, so we don't have 
@@ -213,8 +326,9 @@ async def getMeetData(page, meet_id: int):
         }
     """, {"meetId": meet_id, "timeoutMs": JS_FETCH_TIMEOUT_MS})
 
-    # If data is None probably a track meet so return empty lists.
-    if not data:
+    # data is the raw response text — empty or "null" both mean no XC
+    # data for this meet_id.
+    if not data or data == "null":
         return {}, []
     
     # Cloudflare or HTML block — IP is blocked at the network level.
@@ -229,8 +343,7 @@ async def getMeetData(page, meet_id: int):
     except json.JSONDecodeError:
         return {}, []
     
-    # None means no XC data — probably a TF meet.
-    if parsed is None:
+    if not isinstance(parsed, dict):
         return {}, []
     
     # Extract meet info and divisions from the API response
@@ -246,115 +359,6 @@ async def getMeetData(page, meet_id: int):
     divisions = parsed.get("xcDivisions", [])
 
     return meet_info, divisions
-
-# getRankings
-# Purpose: Fetches the rankings data and returns the list of athletes and their data.
-# Arguments: 
-#           page is the current Playwright page.
-#           gender is the gender of the race we're searching. It should be a string
-#           page_num is the page number of the rankings to fetch. It should be a string.
-# Output: A list of athlete objects, each containing the athlete's name, time, and 
-# other relevant info.
-async def getRankings(page, gender: str, page_num: str):
-    
-    # Precalculating distance based on gender because cannot do so in JS.
-    dist = 10000 if gender == "m" else 6000
-
-    # Makes the API call directly from the browser with given info in browser.
-    # Data stores the entire dictionary the API call sends back.
-    data = await page.evaluate("""
-        async (args) => {
-            const response = await fetch('/api/v1/xcRankings/GetRankings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    // This is the request body and the params athletc.net expects.
-                    // This was taken from the GetRankings API (as seen above).
-                    reportType: 'div',
-                    divListId: 79899,
-                    gender: args.gender,
-                    distance: args.distance,
-                    // qParams is the field that controls Page Number.
-                    qParams: { page: args.pageNum },
-                    version: 2
-                })
-            });
-            return await response.json();
-        }
-    """, {"gender": gender, "distance" : dist, "pageNum": page_num})
-
-    # Gets the data from then list containing the rankings 
-    # (including the athlete id). We put this into a Python List.
-    return data.get("rankings", [])
-
-# getEvents
-# Purpose: Gets the meet dictionaries for all the meets in a state in a month.
-# Arguments: 
-#           page: browser page we are fetching from
-#           state: state we are fetching meets from
-#           year, month: year and month of meets we are fetching
-# Output: Returns a list[int] of the meet IDs for that month/state/year. We
-# only need the meet IDs because we're going to scrape those pages later anyway.
-async def getEvents(page, state: str, year: int, month: int) -> list[int]:
-
-    # Format month as zero-padded string (01, 02, etc.).
-    month_str = str(month).zfill(2)
-
-    # Set start and end dates for month.
-    start = f"{year}-{month_str}-01"
-    end = f"{year}-{month_str}-28" # Safe last day for all months. Shouldn't
-                                   # matter anyway as athletic.net only cares
-                                   # about month and year.
-
-    # Grabs the meet data for that month from the athletic net page.
-    data = await page.evaluate("""
-        async (args) => {
-            const response = await fetch('/api/v1/Event/Events', {
-                method: 'POST',
-                headers : { 'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    start: args.start,
-                    end: args.end,
-                    state: args.state,
-                    country: 'US',
-                    // Mask codes for all levels + XC.
-                    sportMask: 0,
-                    levelMask: 0,
-                    // Any location, any meet.
-                    filterTerm: '',
-                    location: ''
-                })
-            });
-            return await response.text();
-        }
-    """, {"start": start, "end": end, "state": state})
-
-    # If no meets during that time period and state, return an empty list.
-    # We do this to avoid a crash caused by using json.loads() on no data.
-    if not data:
-        return []
-    
-    # Uses try/except in case data is returned but it isn't valid JSON. Avoids
-    # issues with using json.loads() on invalid JSON.
-    try:
-        # Converts raw text string from API to a Python dictionary, which
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        # Cloudflare block
-        if "Just a moment" in data:
-            print(f"Cloudflare block for {state} {year}-{month}, skipping")
-        # Empty month
-        else:
-            print(f"Unexpected response for {state} {year}-{month}: {data[:100]}")
-        return []
-
-    # Specifically gets the "events" section dictionary for each meet
-    # and puts each one into a Python list.
-    events = parsed.get("events", [])
-
-    # Returns all the meet IDs and sport(XC/TF) as a tuple in a list. We
-    # also return sport to differentiate them for the model.
-    return [(e["IDMeet"], e.get("Sport")) for e in events if e.get("IDMeet")]
 
 # dismissConsentPopup
 # Purpose: Clicks on the GDPR consent popup. Useful when VPNing to Europe.
@@ -394,60 +398,6 @@ async def dismissConsentPopup(page, meet_id):
 # 100m is most common but older/field-only meets may not have it.
 DUMMY_EVENTS = ["100m", "200m", "400m", "800m", "1mile", "3000m", "5000m"]
 
-# fetchEventsArray
-# Purpose: Makes a dummy GetResultsData3 call to get the events lookup array.
-#          Tries multiple events until one returns a non-empy array.#
-# Arguments:
-#           page: Playwright browser page object.
-#           div_id: the first division ID from event_divs, used for the dummy call.
-#           jwt_token: the meet JWT token from meet_info, used to authenticate the call.
-# Output: Raw events array from the API — a list of dicts each with keys
-#         "ID" (event_id int), "EventShort" (str), and "Gender" ("M" or "F").
-#         Returns [] if all fallback event shorts fail.
-async def fetchEventsArray(page, div_id, jwt_token):
-
-    # The events array maps event IDs to their short codes and genders.
-    # e.g. event ID 58 -> {"event_short": "1mile", "gender": "m"}
-    # This array is only returned by GetResultsData3, not GetMeetData.
-    # So we make dummy calls to GetResultsData3 just to get the events
-    # array — we don't use the actual results from this call.
-    # We use eventShort with the list above as the dummy events because every TF meet
-    # has at leat one of these events, so the call will succeed and 
-    # return the full events array.
-    # The div_id we pass doesn't matter for getting the events array.
-    for event_short in DUMMY_EVENTS:
-        events_raw = await page.evaluate("""
-            async (args) => {
-                const response = await fetch('/api/v1/Meet/GetResultsData3', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'anettokens': args.token,
-                        'anet-appinfo': 'web:web:0:240'
-                    },
-                    body: JSON.stringify({
-                        gender: 'm',
-                        divId: args.divId,
-                        eventShort: args.eventShort,
-                        rawResults: false,
-                        showTips: false
-                    })
-                });
-                try {
-                    const data = await response.json();
-                    return data.events || [];
-                } catch(e) {
-                    return [];
-                }
-            }
-        """, {"divId": div_id, "token": jwt_token, "eventShort": event_short})
-
-        # Non-empty means this event exists in the meet — events array is populated
-        if events_raw:
-            return events_raw
-
-    return []
-
 # Wait until the JWT cookie is actually set before firing any API calls.
 # Polls every 500ms for up to 10 seconds.
 async def waitForCookies(page):
@@ -484,6 +434,8 @@ EVENT_ID_TO_SHORT = {
     18: ("tj",                "m"),
     39: ("4x800m",            "m"),
     40: ("distmed12,4,8,16",  "m"),
+    41: ("55m",  "m"),
+    43: ("55mh", "m"),
     50: ("4x200m",            "m"),
     52: ("1600m",             "m"),
     58: ("1mile",             "m"),
@@ -511,6 +463,8 @@ EVENT_ID_TO_SHORT = {
     34: ("pv",                "f"),
     35: ("lj",                "f"),
     36: ("tj",                "f"),
+    46: ("55m",  "f"),
+    48: ("55mh", "f"),
     51: ("4x200m",            "f"),
     53: ("1600m",             "f"),
     59: ("1mile",             "f"),
@@ -527,10 +481,10 @@ EVENT_ID_TO_SHORT = {
 # getMeetDataTF
 # Purpose: Fetches TF meet metadata, the events lookup table (mapping event
 #          IDs to their short codes and genders), and the list of event/div
-#          combos that have results to scrape.
-#          Uses CDP Fetch.enable to intercept the response body before Chrome
-#          garbage collects it — more reliable than page.on('response') or
-#          page.expect_response() with real Chrome.
+#          combos that have results to scrape — via a direct fetch from
+#          whatever page is currently loaded. No navigation needed;
+#          the API works from any athletic.net page once cookies/session
+#          are established.
 # Arguments:
 #           page: Playwright browser page object.
 #           meet_id: athletic.net meet ID integer.
@@ -542,88 +496,86 @@ EVENT_ID_TO_SHORT = {
 async def getMeetDataTF(page, meet_id: int):
 
     # ------------------------------------------------------------------ #
-    # Step 1: enable CDP Fetch interception before navigating             #
+    # Step 1: Fetch TF Meet Metadata                                      #
     # ------------------------------------------------------------------ #
 
-    # CDP Fetch.enable pauses matching responses at the protocol level before
-    # Chrome can garbage collect the body — unlike page.on('response') which
-    # races against Chrome's cleanup.
-    cdp = await page.context.new_cdp_session(page)
-    await cdp.send('Fetch.enable', {
-        'patterns': [{'urlPattern': '*GetMeetData*', 'requestStage': 'Response'}]
-    })
+    JS_FETCH_TIMEOUT_MS = 15000
 
-    captured_data = {}
+    data = await page.evaluate("""
+        async (args) => {
+            // Create a controller so we can cancel the fetch if it hangs.
+            const controller = new AbortController();
+                               
+            // Schedules the controller to fire after timeoutMs.
+            const timeoutId = setTimeout(
+                () => controller.abort(), args.timeoutMs
+            );
+            
+            // Fetches the meet data. This is a GET request,
+            // so we don't need to send any data.
+            const response = await fetch(
+                '/api/v1/Meet/GetMeetData?meetId=' + args.meetId + '&sport=tf',
+                // Attaches the controller to this fetch request.
+                { signal: controller.signal }
+            );
 
-    async def on_request_paused(event):
-        url = event.get('request', {}).get('url', '')
-        if 'sport=tf' in url and str(meet_id) in url:
-            try:
-                body_result = await cdp.send('Fetch.getResponseBody', {
-                    'requestId': event['requestId']
-                })
-                body = body_result['body']
-                # CDP returns base64 encoded body for binary responses —
-                # decode if needed.
-                if body_result.get('base64Encoded'):
-                    import base64
-                    body = base64.b64decode(body).decode('utf-8')
-                captured_data['body'] = body
-            except Exception as e:
-                print(f"[DEBUG] CDP body error: {e}")
-        # Always continue the response so the page gets it too.
-        try:
-            await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
-        except Exception:
-            pass
-
-    cdp.on('Fetch.requestPaused', on_request_paused)
+            // Cancels the scheduled abort.    
+            clearTimeout(timeoutId);
+            
+            // Returns the resposnse status and text body.
+            return { status: response.status, text: await response.text() };
+            }
+    """, {"meetId": meet_id, "timeoutMs": JS_FETCH_TIMEOUT_MS})
 
     # ------------------------------------------------------------------ #
-    # Step 2: navigate                                                     #
+    # Step 2: parse response                                              #
     # ------------------------------------------------------------------ #
 
-    await page.goto(
-        f"https://www.athletic.net/TrackAndField/meet/{meet_id}/results",
-        timeout=60000
-    )
-    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+    status = data.get("status")
+    text = data.get("text", "")
 
-    # NEW — dismiss consent popup before giving CDP time to capture.
-    # Placed after goto/domcontentloaded (popup needs the page loaded
-    # to exist) but before the asyncio.sleep(3) capture window.
-    await dismissConsentPopup(page, meet_id)
-
-    # Give CDP a moment to process the intercepted response.
-    await asyncio.sleep(3)
-    await cdp.send('Fetch.disable')
-
-    # ------------------------------------------------------------------ #
-    # Step 3: parse response                                              #
-    # ------------------------------------------------------------------ #
-
-    if not captured_data:
+    # Empty response — treat as no TF data.
+    if not text:
         return {}, {}, []
 
+    # Cloudflare block — IP-level issue, raise so the caller can rotate.
+    if "<!DOCTYPE" in text or "<html" in text:
+        raise CloudflareException("Cloudflare block in getMeetDataTF")
+
     try:
-        data = json.loads(captured_data['body'])
-    except Exception:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}, {}, []
+
+    if not isinstance(parsed, dict):
         return {}, {}, []
 
     if not isinstance(data, dict):
         return {}, {}, []
 
-    meet_info = data.get("meet", {})
+    meet_info = parsed.get("meet", {})
     if not isinstance(meet_info, dict):
         return {}, {}, []
 
-    meet_info["jwtMeet"] = data.get("jwtMeet", "")
-    event_divs = data.get("eventDivsWithResults", [])
+    # Add JWT token so getMeetResultsTF can authenticate.
+    meet_info["jwtMeet"] = parsed.get("jwtMeet", "")
+
+    # Stash the IDDiv -> Division-name map so the meta-only path can write the
+    # real division name ('Open', 'Invitational') instead of falling back to
+    # gender. tfDivisions carries it; the normal results path ignores this key.
+    tf_divisions = parsed.get("tfDivisions") or []
+    meet_info["_divisionByIdDiv"] = {
+        d.get("IDDiv"): d.get("Division")
+        for d in tf_divisions if isinstance(d, dict)
+    }
+
+    event_divs = parsed.get("eventDivsWithResults", [])
+
     if not event_divs:
         return meet_info, {}, []
 
     # ------------------------------------------------------------------ #
-    # Step 4: build events dict from hardcoded ID mapping                 #
+    # Step 3: build events dict from hardcoded ID mapping                 #
     # ------------------------------------------------------------------ #
 
     # We use a hardcoded event ID → (event_short, gender) mapping instead
@@ -643,9 +595,10 @@ async def getMeetDataTF(page, meet_id: int):
 
 
 # getMeetResultsTF
-# Purpose: Fetches results for a single event/division/gender combo by
-#          navigating directly to the event URL and intercepting Angular's
-#          GetResultsData3 response via CDP Fetch.enable.
+# Purpose: Fetches results for one event/division/gender combo via a
+#          direct fetch from whatever page is currently loaded — no
+#          navigation needed. Uses the jwtMeet token obtained once per
+#          meet from getMeetDataTF, same pattern as XC's getMeetResults.
 # Arguments:
 #           page: Playwright browser page object.
 #           meet_id: athletic.net meet ID integer.
@@ -658,209 +611,204 @@ async def getMeetDataTF(page, meet_id: int):
 async def getMeetResultsTF(page, meet_id: int, div_id: int, event_short: str,
                            gender: str, jwt_token: str):
 
-    # How many times to retry if CDP doesn't capture the response.
-    # The server miscommunication modal typically appears on the first
-    # navigation and gets dismissed by watchForErrorModal within 0.5s.
-    # A second navigation after dismissal almost always succeeds.
     MAX_RETRIES = 3
+    RETRY_DELAY = 2.0
+    JS_FETCH_TIMEOUT_MS = 15000
 
-    MAX_WAIT_SECONDS = 5      # Max time to wait for CDP to capture response
-    POLL_INTERVAL = 0.1       # How often to check if captured_data is populated
-
-    # Define url outside the loop — it doesn't change between retries
-    # and needs to be accessible to the on_request_paused closure.
-    url = (
-        f"https://www.athletic.net/TrackAndField/meet/{meet_id}"
-        f"/results/{gender}/{div_id}/{event_short}"
-    )
-
+    last_error = None
 
     for attempt in range(MAX_RETRIES):
-
-        # ------------------------------------------------------------------ #
-        # Step 1: enable CDP Fetch interception before navigating            #
-        # ------------------------------------------------------------------ #
-
-        # We re-enable CDP on every attempt because we disabled it at the
-        # end of the previous attempt. A fresh enable ensures we don't miss
-        # the response on retry navigations.
-        cdp = await page.context.new_cdp_session(page)
-        await cdp.send('Fetch.enable', {
-            'patterns': [{'urlPattern': '*GetResultsData3*', 'requestStage': 'Response'}]
-        })
-
-        captured_data = {}
-
-        async def on_request_paused(event):
-            try:
-                body_result = await cdp.send('Fetch.getResponseBody', {
-                    'requestId': event['requestId']
-                })
-                body = body_result['body']
-                if body_result.get('base64Encoded'):
-                    import base64
-                    body = base64.b64decode(body).decode('utf-8')
-                captured_data['body'] = body
-            except Exception:
-                pass
-            try:
-                await cdp.send('Fetch.continueResponse', {'requestId': event['requestId']})
-            except Exception:
-                pass
-
-        cdp.on('Fetch.requestPaused', on_request_paused)
-
-        # ------------------------------------------------------------------ #
-        # Step 2: navigate to event URL                                      #
-        # ------------------------------------------------------------------ #
-
-        await page.goto(url, timeout=60000)
-        await page.wait_for_load_state("domcontentloaded", timeout=10000)
-
-        # Wait for Angular to fire GetResultsData3 and CDP to capture it.
-        # On retries we wait a bit longer to give watchForErrorModal time
-        # to dismiss the server miscommunication modal first.
-        wait = 0.5 if attempt == 0 else 1.5
-        await asyncio.sleep(wait)
-
-        await cdp.send('Fetch.disable')
-
-        # ------------------------------------------------------------------ #
-        # Step 3: POLL for captured_data instead of flat sleep               #
-        # ------------------------------------------------------------------ #
-
-        # domcontentloaded fires when HTML is parsed. Angular boots after
-        # that, then fires GetResultsData3. We don't know how long that
-        # takes — so we poll every POLL_INTERVAL seconds until either:
-        #   a) captured_data is populated (success), or
-        #   b) MAX_WAIT_SECONDS elapses (failure, will retry)
-        elapsed = 0.0
-        while not captured_data and elapsed < MAX_WAIT_SECONDS:
-            await asyncio.sleep(POLL_INTERVAL)
-            elapsed += POLL_INTERVAL
-
-        await cdp.send('Fetch.disable')
-
-        # ------------------------------------------------------------------ #
-        # Step 4: check if we captured anything                              #
-        # ------------------------------------------------------------------ #
-
-        if not captured_data:
-            if attempt < MAX_RETRIES - 1:
-                print(f"[TF] GetResultsData3 not captured for "
-                      f"meet {meet_id} event {event_short} "
-                      f"— retrying (attempt {attempt + 1}/{MAX_RETRIES})")
-                # Brief pause before retry to let the modal get dismissed
-                # and the page settle before navigating again.
-                await asyncio.sleep(1.0)
-                continue
-            else:
-                raise Exception(
-                    f"GetResultsData3 never captured after "
-                    f"{MAX_RETRIES} attempts"
-                )
-
-        # ------------------------------------------------------------------ #
-        # Step 5: parse and return results                                   #
-        # ------------------------------------------------------------------ #
-
         try:
-            parsed = json.loads(captured_data['body'])
-        except Exception as e:
-            raise Exception(f"Failed to parse GetResultsData3: {e}")
+            data = await page.evaluate("""
+                async (args) => {
+                    // Create a controller so we can cancel the fetch if it hangs.
+                    const controller = new AbortController();
+                    
+                    // Schedule abort() to fire after timeoutMs — cancelled below
+                    // if the fetch completes first.
+                    const timeoutId = setTimeout(
+                        () => controller.abort(), args.timeoutMs
+                    );
 
-        if not isinstance(parsed, dict):
-            raise Exception(f"Unexpected response type: {type(parsed)}")
+                    // Fetches the meet results data for this MeetID. Method is POST because
+                    // GetResultsData3 expects us to send which event/div we want.
+                    const response = await fetch('/api/v1/Meet/GetResultsData3', {
+                        method: 'POST',
+                        // Headers are extra metadata sent with the 
+                        // request as key-value pairs. 
+                        headers: {
+                            // Tells server the body we're sending is JSON.
+                            'Content-Type': 'application/json',
+                            // Authetnication header.
+                            'anettokens': args.token,
+                            // client-identification header.
+                            'anet-appinfo': 'web:web:0:240'
+                        },
+                        // Body of the data we're sending.
+                        body: JSON.stringify({
+                            gender: args.gender,
+                            divId: args.divId,
+                            eventShort: args.eventShort,
+                            rawResults: false,
+                            showTips: false
+                        }),
+                        // Links fetch to the about controller.
+                        signal: controller.signal
+                    });
 
-        results = parsed.get("resultsTF", [])
+                    // Fetch succeeded, cancel the timout.
+                    clearTimeout(timeoutId);
+                    
+                    // response.text is the response body.
+                    return { status: response.status, text: await response.text() };
+                }
+            """, {
+                "divId": div_id,
+                "eventShort": event_short,
+                "gender": gender,
+                "token": jwt_token,
+                "timeoutMs": JS_FETCH_TIMEOUT_MS
+            })
 
-        # resultsTF sometimes comes back as a list of lists — unwrap if needed.
-        if results and isinstance(results[0], list):
-            results = results[0]
+            status = data.get("status")
+            text = data.get("text", "")
 
-        return results
-    
-    # Should never reach here since the loop either returns or raises.
-    raise Exception("getMeetResultsTF exhausted retries without returning")
+            if not text:
+                raise Exception(f"Empty response from API (status {status})")
+            if status == 429:
+                raise RateLimitException("Server returned 429 (rate limited)")
+            if status != 200:
+                raise Exception(f"API returned status {status}")
 
+            if "<!DOCTYPE" in text or "<html" in text:
+                raise CloudflareException("Cloudflare block detected")
 
-# Tests the scraper
-async def main():
+            # Try converting a JSON string into a Python object. If it's not
+            # a valid JSON string it raises an exception.
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                raise Exception(f"Invalid JSON (status {status}): {text[:100]}")
+            
+            results = parsed.get("resultsTF", [])
 
-    createTables()
-    
-    async with async_playwright() as p:
+            # resultsTF sometimes comes back as a list of lists — unwrap if needed.
+            if results and isinstance(results[0], list):
+                results = results[0]
 
-        # Opens a new chrome browser, headless=True so browser is visible. 
-        # This makes it harder for cloudflare to detect us.
-        # args to stop Chrome advertising it's automated.
-        browser = await p.chromium.launch(
-            headless = False,
-            args = ["--disable-blink-features=AutomationControlled"]
-        )
+            # NEW: the statewide teams[] roster rides along in every
+            # GetResultsData3 response (a few hundred entries on a state
+            # meet, ~a dozen on a dual, occasionally absent). We were
+            # throwing it away here. Surface it so the caller can store it.
+            # None when the response has no teams key.
+            teams = parsed.get("teams")
 
-        # Fresh browser profile to make it less detectable as a bot, 
-        # with user agent spoofing to look like a real browser.
-        context = await browser.new_context(
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-            viewport = {"width": 1280, "height": 800},
-            java_script_enabled = True
-        )
-
-        # Opens a new tabe in the browser, this is where we will navigate to 
-        # the meet results page and scrape the data
-        page = await context.new_page()
-
-        # Changes webdriver property so scraper doesn't say it's a bot. 
-        # undefined = human, true = robot.
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-
-        # Navigate to athletic.net so relative URLs work
-        await page.goto("https://www.athletic.net")
-        await page.wait_for_timeout(2000)
-
-        # A set of all meet ids to avoid duplicates due to location. Since
-        # Meet IDs are unique each year, yearly meets should still be collected.
-        all_meet_ids = set()
-
-        # List of US states to search
-        us_states = ['AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 
-             'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 
-             'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 
-             'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 
-             'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
+            return results, teams
         
-        # Goes through every year, month, and state since 1990 to find all
-        # the meets. Year first makes us go through the meets chronologically.
-        for year in range(1990, 2027):
-            # Re-go to athletic.net to stop the session from dying.
-            await page.goto("https://www.athletic.net/events/usa/al/2024-9-1")
-            await page.wait_for_timeout(3000)
-            for month in range (1, 13):
-                for state in us_states:
-                    # Gets meets for that year, that month, that state,
-                    # adds it to all_meet_ids, and then sleeps a random
-                    # amount of time to avoid detection. We use update instead
-                    # of add because it adds all items at once, instead of one
-                    # at a time.
-                    meets = await getEvents(page, state, year, month)
-                    all_meet_ids.update(meets)
-                    # Saves to db in case of a memory overflow error
-                    for meet_id, sport in meets:
-                        saveMeetQueue(meet_id, sport)
-                    await asyncio.sleep(random.uniform(0.5, 1.0))
+        except CloudflareException:
+            # Don't retry Cloudflare blocks — raise immediately so the
+            # caller can trigger VPN rotation.
+            raise
 
-                # Prints current year and month and running total of number of meets
-                print(f"{year}-{month}: running total {len(all_meet_ids)}")
+        except Exception as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                print(
+                    f"[TF] GetResultsData3 failed meet {meet_id} "
+                    f"event {event_short} div {div_id} "
+                    f"attempt {attempt + 1}/{MAX_RETRIES}: {e} "
+                    f"— retrying in {RETRY_DELAY}s"
+                )
+                await asyncio.sleep(RETRY_DELAY)
 
-        print(f"Done. Total unique meets: {len(all_meet_ids)}")
+    # If for loop ran the max number of times without exiting, raise
+    # an exception.
+    raise Exception(
+        f"getMeetResultsTF failed after {MAX_RETRIES} attempts "
+        f"(meet {meet_id} div {div_id} event {event_short}): {last_error}"
+    )
 
-        # Prints size of the databse storing the meet queue.
-        countQueue()
+# getAllResultsTF
+# Purpose: Fetch one TF meet's entire result set in a single GET, via an in-page
+#          fetch (inherits the browser's cookies/session). This is the fast path;
+#          scrapeMeetTF falls back to per-event/div fetching if this returns no
+#          flatEvents or raises a non-Cloudflare error.
+# Arguments:
+#           page:
+#               Playwright page object.
+#           meet_id:
+#               athletic.net meet ID.
+#           jwt_token:
+#               meet JWT (jwtMeet from getMeetDataTF) — sent as the anettokens
+#               header to authenticate the call.
+# Output:
+#           The parsed GetAllResultsData payload dict, whose keys include
+#           flatEvents, teams, eventTypes, relayLegs. Returns {} if the response
+#           is empty/non-JSON. Raises CloudflareException on an IP block so the
+#           caller can rotate VPN.
+async def getAllResultsTF(page, meet_id: int, jwt_token: str): 
 
-        await browser.close()
-
-# Only runs main() if this script is run directly, not if it's imported.
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Timeout for the in-browser fetch — same 15s budget as the other fetchers.
+    # A whole-meet payload is bigger than a single div, but still returns fast;
+    # 15s is comfortably generous and guards against a hung response.
+    JS_FETCH_TIMEOUT_MS = 15000
+ 
+    data = await page.evaluate("""
+        async (args) => {
+            // AbortController cancels the fetch if it hangs past timeoutMs.
+            const controller = new AbortController();
+            const timeoutId = setTimeout(
+                () => controller.abort(), args.timeoutMs
+            );
+ 
+            // GET with m//eetId + rawResults/showTips in the query string. Auth is
+            // the anettokens header (the jwtMeet token). anet-appinfo mirrors the
+            // other calls' client-identification header.
+            const response = await fetch(
+                '/api/v1/Meet/GetAllResultsData?meetId=' + args.meetId +
+                '&rawResults=false&showTips=false',
+                {
+                    headers: {
+                        'anettokens': args.token,
+                        'anet-appinfo': 'web:web:0:240'
+                    },
+                    signal: controller.signal
+                }
+            );
+ 
+            clearTimeout(timeoutId);
+            return { status: response.status, text: await response.text() };
+        }
+    """, {"meetId": meet_id, "token": jwt_token, "timeoutMs": JS_FETCH_TIMEOUT_MS})
+ 
+    status = data.get("status")
+    text = data.get("text", "")
+ 
+    # Empty body — treat as "no fast-path payload"; caller falls back to per-div.
+    if not text:
+        return {}
+ 
+    # Cloudflare/HTML block — IP-level. Raise so scrapeMeetTF re-raises it up to
+    # the launcher for VPN rotation (must NOT be swallowed as a generic miss).
+    if "<!DOCTYPE" in text or "<html" in text:
+        raise CloudflareException("Cloudflare block in getAllResultsTF")
+    
+    # 429 = per-session/IP rate limit. Raise RateLimitException so scrapeMeetTF
+    # can log it distinctly (the signal you tune perMeetDelayRange against).
+    # Previously a 429 fell through to JSON-parse and looked like a generic
+    # failure — invisible. Now it's surfaced.
+    if status == 429:
+        raise RateLimitException("429 rate limit in getAllResultsTF")
+ 
+    # Parse. On malformed JSON, return {} so the caller falls back rather than
+    # crashing — a bad fast-path response shouldn't lose the meet.
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+ 
+    if not isinstance(parsed, dict):
+        return {}
+ 
+    return parsed
+ 

@@ -11,3 +11,15 @@ __pycache__/
 .vscode/
 
 scripts/config.py
+
+# Secrets (NEVER commit)
+*.conf
+
+# Runtime state (regenerated every run)
+checkpoints/
+*.log
+
+# Scrape debris
+tfrrs_*.html
+
+tfrrs/parser/find

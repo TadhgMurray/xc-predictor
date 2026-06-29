@@ -15,6 +15,7 @@ import subprocess
 import platform
 import os
 import glob
+import random
 
 # Path to the Mullvad CLI on Windows.
 MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
@@ -27,26 +28,75 @@ MULLVAD_CLI = r"C:\Program Files\Mullvad VPN\resources\mullvad.exe"
 MULLVAD_LOCATIONS = [
     # United States — most options, athletic.net is a US site so these
     # tend to have the least latency and best success rates
-    "us nyc",   # New York
-    "us lax",   # Los Angeles
-    "us chi",   # Chicago
-    "us dal",   # Dallas
-    "us mia",   # Miami
-    "us sea",   # Seattle
-    "us atl",   # Atlanta
-    "us den",   # Denver
-    "us hou",   # Houston
-    "us phx",   # Phoenix
-    "us slc",   # Salt Lake City
-    "us det",   # Detroit
-    "us bos",   # Boston
-    "us was",   # Washington DC
-    "us sjc",   # San Jose
-    "us sec",   # Secaucus NJ (new — from server list)
-    "us ash",   # Ashburn VA (new — from server list)
-    "us ral",   # Raleigh NC (new — from server list)
-    "us mca",   # McAllen TX (new — from server list)
-    "us kan",   # Kansas City (new — from server list)
+    # "us nyc",   # New York
+    # "us lax",   # Los Angeles
+    # "us chi",   # Chicago
+    # "us dal",   # Dallas
+    # "us mia",   # Miami
+    # "us sea",   # Seattle
+    # "us atl",   # Atlanta
+    # "us den",   # Denver
+    # "us hou",   # Houston
+    # "us phx",   # Phoenix
+    # "us slc",   # Salt Lake City
+    # "us det",   # Detroit
+    # "us bos",   # Boston
+    # "us was",   # Washington DC
+    # "us sjc",   # San Jose
+    # "us sec",   # Secaucus NJ (new — from server list)
+    # "us ash",   # Ashburn VA (new — from server list)
+    # "us ral",   # Raleigh NC (new — from server list)
+    # "us mca",   # McAllen TX (new — from server list)
+    # "us kan",   # Kansas City (new — from server list)
+
+    # ─── Western Europe ───
+    # "gb lon",   # London
+    # # "gb glw",   # Glasgow
+    # "gb mnc",   # Manchester
+    # "ie dub",   # Dublin
+    # "fr par",   # Paris
+    # "fr mrs",   # Marseille
+    # "fr bod",   # Bordeaux
+    # "nl ams",   # Amsterdam
+    # "be bru",   # Brussels
+    # "lu lux",   # Luxembourg
+
+    # # # ─── Central Europe ───
+    # "de fra",   # Frankfurt
+    # "de ber",   # Berlin
+    # "de dus",   # Dusseldorf
+    # "ch zrh",   # Zurich
+    # "at vie",   # Vienna
+    # "cz prg",   # Prague
+    # "pl waw",   # Warsaw
+    # "hu bud",   # Budapest
+    # "sk bts",   # Bratislava
+
+    # # # ─── Northern Europe ───
+    # "se sto",   # Stockholm
+    # "se got",   # Gothenburg
+    # "se mma",   # Malmo
+    # "no osl",   # Oslo
+    # "no svg",   # Stavanger
+    # "dk cph",   # Copenhagen
+    # "fi hel",   # Helsinki
+    # "ee tll",   # Tallinn
+    # "lv rix",   # Riga
+    # "lt vno",   # Vilnius
+
+    # # ─── Southern Europe ───
+    # "es mad",   # Madrid
+    # "es bcn",   # Barcelona
+    # "es vlc",   # Valencia
+    # "pt lis",   # Lisbon
+    # "it mil",   # Milan
+    # "it rom",   # Rome
+    # "it pmo",   # Palermo
+    # "gr ath",   # Athens
+    # "hr zag",   # Zagreb
+    # "rs beg",   # Belgrade
+    # "ro buh",   # Bucharest
+    # "bg sof",   # Sofia
 
     # Canada — confirmed working overnight
     "ca tor",   # Toronto
@@ -54,8 +104,8 @@ MULLVAD_LOCATIONS = [
     "ca mon",   # Montreal (new — visible in server list as ca-mon)
 
     # Latin America — confirmed working overnight, minus bad codes
-    "br sao",   # Sao Paulo
-    "br for",   # Fortaleza (new — from server list)
+    # "br sao",   # Sao Paulo
+    # "br for",   # Fortaleza (new — from server list)
     "ar bue",   # Buenos Aires
     "co bog",   # Bogota
     "pe lim",   # Lima
@@ -73,9 +123,9 @@ MULLVAD_LOCATIONS = [
     "au bne",   # Brisbane (new — from server list)
     "hk hkg",   # Hong Kong
     "nz akl",   # Auckland
-    "th bkk",   # Bangkok
-    "my kul",   # Kuala Lumpur
-    "ph mnl",   # Manila (new — from server list)
+    # "th bkk",   # Bangkok
+    # "my kul",   # Kuala Lumpur
+    # "ph mnl",   # Manila (new — from server list)
     "id jkt",   # Jakarta (new — from server list)
 
     # Middle East / Africa — confirmed working overnight
@@ -89,7 +139,17 @@ MULLVAD_LOCATIONS = [
 # Total meets across ALL sessions before rotating.
 # 25 sessions × ~3-5s per meet = ~5-8 meets/second across all sessions.
 # 3000 total meets = ~6-10 minutes per IP — aggressive but safe.
-WINDOWS_GLOBAL_MEETS_PER_ROTATION  = 3000
+WINDOWS_GLOBAL_MEETS_PER_ROTATION  = 5000
+
+
+# How many seconds to spread the post-rotation PAGE RELOADS across. After a real
+# rotation every session reloads its page to refresh Cloudflare clearance on the
+# new IP (see _reloadWithCooldown in launcher.py); doing all 200 at once is the
+# main cause of the post-rotation 1015 burst. waitForTunnel sleeps each session to
+# its slot (index * 90/total) so the reloads ramp evenly over this window —
+# ~2.2 sessions/second at 200 sessions.
+POST_ROTATION_STAGGER_SECONDS = 270
+
 
 # Path to the proxy executable.
 PROXY_PATH = r"C:\Users\Tadhg Murray\cloud-sql-proxy\cloud-sql-proxy.exe"
@@ -97,6 +157,16 @@ PROXY_PATH = r"C:\Users\Tadhg Murray\cloud-sql-proxy\cloud-sql-proxy.exe"
 # The instance connection string tells the proxy which Cloud SQL
 # instance to connect to and which local port to listen on.
 PROXY_INSTANCE = "project-d8c4b484-c8fa-4e09-9fc:us-west1:free-trial-first-project=tcp:5432"
+
+# How long to wait after a rotation before allowing ANOTHER rotation.
+# The post-rotation 429 burst is EXPECTED and self-resolves in ~30-60s
+# (see context doc). Without this cooldown, every session independently
+# hits its own consecutive-failure threshold during that burst and each
+# tries to rotate again — which restarts the burst — which makes every
+# session fail again — an infinite loop. This cooldown breaks the loop
+# by making rotate() a no-op (not a failure) while a recent rotation
+# is still settling.
+ROTATION_COOLDOWN_SECONDS = 5
 
 # ─── VPNRotator ──────────────────────────────────────────────────────────────
 
@@ -142,7 +212,26 @@ class VPNRotatorWindows:
         # don't cause race conditions.
         self.global_meets_since_rotation = 0
 
+        # Incremented every rotation. Each session tracks which generation
+        # it last staggered for — only stagger once per rotation, not on
+        # every call when meets_since_rotation happens to be 0.
+        self.rotation_generation = 0
+
+        # tunnel_ready is an asyncio.Event — a simple green/red light
+        # that all sessions share.
+        #
+        # Set (green) = tunnel is up, sessions can make network requests.
+        # Cleared (red) = rotation in progress, sessions must pause.
+        #
+        # Starts SET because when the scraper first launches, Mullvad
+        # is already connected — no rotation is in progress, so sessions
+        # should be able to start scraping immediately without waiting.
+        self.tunnel_ready = asyncio.Event()
+        self.tunnel_ready.set()
+
+
     # ── Private helpers ───────────────────────────────────────────────────────\
+
 
     # runMullvadCommand
     # Purpose: Runs a Mullvad CLI command synchronously using subprocess.
@@ -180,6 +269,33 @@ class VPNRotatorWindows:
         except Exception as e:
             print(f"[VPN] Exception running mullvad command: {e}")
             return False
+        
+    # _verifyConnectivity
+    # Purpose: After a connect, confirm the tunnel actually routes traffic by
+    #          curling TFRRS. `mullvad connect` returning success only means the
+    #          CLI command ran — NOT that the tunnel established and traffic
+    #          flows. This is the check whose absence let a dead tunnel be
+    #          accepted as "rotation complete" and strand every session.
+    # Arguments:
+    #           self: current instance.
+    # Output:   True if curl got any HTTP response, False on timeout/no route.
+    async def _verifyConnectivity(self) -> bool:
+        try:
+            # -s silent, -o NUL discard body (Windows' /dev/null is NUL),
+            # -w prints just the status code, --max-time caps the wait.
+            result = subprocess.run(
+                ["curl", "--max-time", "8", "-s", "-o", "NUL",
+                 "-w", "%{http_code}", "https://www.tfrrs.org"],
+                capture_output=True, text=True, timeout=12,
+            )
+            code = result.stdout.strip()
+            # "000" = curl couldn't connect (no route/DNS); "" = nothing.
+            # Any real HTTP code (200, 403, even a Cloudflare 503) proves the
+            # tunnel carries traffic — that's all we're checking.
+            return code not in ("", "000")
+        except Exception:
+            # subprocess timeout or curl missing -> treat as no connectivity.
+            return False
     
     # _connectToLocation
     # Purpose: Sets the relay location and connects to the VPN on that server.
@@ -211,16 +327,6 @@ class VPNRotatorWindows:
         # any session resumes scraping. 10s is conservative but safe.
         print(f"[VPN] Waiting 10s for tunnel to establish on {location}...")
         time.sleep(10)
-
-        # Step 4 — restart the Cloud SQL proxy.
-        # The proxy loses its connection to Cloud SQL when Mullvad switches
-        # servers because the network briefly drops. We kill the old process
-        # and start a fresh one so DB connections work on the new IP.
-        success = self._restartProxy()
-        if not success:
-            print(f"[VPN] WARNING: proxy restart failed — DB connections may fail")
-            # Non-fatal — scraping can continue and sessions will crash on DB
-            # errors rather than here. Better to continue than abort rotation.
  
         return True
     
@@ -281,6 +387,117 @@ class VPNRotatorWindows:
     
     # ── Public API ────────────────────────────────────────────────────────────
 
+    # How long to pause ALL sessions when one session looks "stuck" —
+    # i.e. GetResultsData3 is 429ing past the point where normal retries
+    # should have recovered it. This is separate from a full rotation:
+    # we try waiting first, since sometimes the IP just needs a breather,
+    # and only rotate if waiting doesn't fix it (see scrape_results.py).
+    STUCK_SESSION_PAUSE_SECONDS = 60
+
+    # _pauseAllSessions
+    # Purpose: Pauses every session scraper-wide for a fixed number of
+    #          seconds, then resumes them. Reuses the SAME tunnel_ready
+    #          Event that rotate() uses — sessions calling waitForTunnel()
+    #          don't know or care WHY the tunnel is paused, only that it
+    #          is. This is what lets us pause-without-rotating using
+    #          machinery that already exists, instead of inventing a
+    #          second coordination primitive.
+    # Arguments:
+    #           self: current instance.
+    #           seconds: how long to keep all sessions paused.
+    # Output: None.
+    async def _pauseAllSessions(self, seconds: int):
+ 
+        # Clearing tunnel_ready makes every session currently sitting in
+        # (or about to call) waitForTunnel() suspend there — same as
+        # during a real rotation, except we're not actually touching
+        # Mullvad or the proxy.
+        self.tunnel_ready.clear()
+ 
+        await asyncio.sleep(seconds)
+ 
+        # Re-open the gate. Sessions waiting in waitForTunnel() wake up
+        # and proceed (with their usual post-rotation stagger, since we
+        # don't bump rotation_generation here — see note below).
+        self.tunnel_ready.set()
+
+    # handleStuckSession
+    # Purpose: Called by a session when GetResultsData3 has failed too
+    #          many times in a row (see CONSECUTIVE_FAILURE_THRESHOLD in
+    #          scrape_results.py) — a pattern that looks like a dead IP
+    #          rather than ordinary rate-limit noise. Pauses every
+    #          session for STUCK_SESSION_PAUSE_SECONDS so nobody keeps
+    #          hammering a possibly-dead IP while we wait to see if it
+    #          recovers on its own.
+    #
+    #          IMPORTANT: this method does NOT retry the failed call and
+    #          does NOT rotate. It only pauses-then-resumes. The caller
+    #          (scrape_results.py) is responsible for retrying the
+    #          specific event/div once the pause is over, and for
+    #          deciding to call rotate() if that retry also fails. This
+    #          keeps vpn_rotation.py sport/endpoint-agnostic — it has no
+    #          idea what GetResultsData3 is, and shouldn't need to.
+    # Arguments:
+    #           self: current instance.
+    #           label: session label for logging, e.g. "[Session 7]".
+    # Output: None.
+    async def handleStuckSession(self, label: str):
+ 
+        print(
+            f"[VPN] {label} reporting a stuck session (repeated 429s) — "
+            f"pausing ALL sessions for {self.STUCK_SESSION_PAUSE_SECONDS}s "
+            f"before allowing a retry"
+        )
+ 
+        await self._pauseAllSessions(self.STUCK_SESSION_PAUSE_SECONDS)
+ 
+        print(f"[VPN] {label} pause complete — resuming, caller will retry")
+    
+
+    # waitForTunnel
+    # Purpose: Called by each session before every network request
+    #          (i.e., before scrapeMeetBySport). If a rotation is in
+    #          progress (tunnel_ready is cleared), this suspends the
+    #          calling session until the new tunnel is confirmed up —
+    #          WITHOUT blocking the event loop (other sessions' non-
+    #          network code can still run while this one waits).
+    #          After tunnel_ready fires, adds a small per-session
+    #          random stagger before returning, so all waiting sessions
+    #          don't pile onto the new IP simultaneously.
+    # Arguments:
+    #           self: current instance.
+    #           index: this session's index (0-99). Used to spread the
+    #                  post-rotation stagger — higher-index sessions
+    #                  wait slightly longer on average, distributing
+    #                  the resume burst across ~POST_ROTATION_STAGGER_SECONDS
+    #                  rather than all hitting the new IP at once.
+    #           total_sessions: the total number of sessions running, used
+    #                           for pausing after rotating
+    # Output: None. Returns when the tunnel is ready and this session's
+    #         stagger has elapsed.
+    async def waitForTunnel(self, index: int, last_generation_seen: int, 
+                            total_sessions: int):
+
+        # Wait for tunnel if rotation in progress.
+        await self.tunnel_ready.wait()
+
+        # If no NEW rotation happened since this session last returned from
+        # waitForTunnel, there is nothing to stagger around — return at once.
+        # This is the guard the old comment described but the code never did.
+        if self.rotation_generation == last_generation_seen:
+            return self.rotation_generation
+
+        # Only stagger if we actually just waited through a NEW rotation.
+        # If rotation_generation hasn't advanced since this session last
+        # checked, no stagger needed — just return immediately.
+        slot_duration  = POST_ROTATION_STAGGER_SECONDS / total_sessions
+        my_wait        = index * slot_duration
+
+        await asyncio.sleep(my_wait)
+
+        # Return new generation so caller doesn't stagger again next call.
+        return self.rotation_generation
+
     # recordMeet
     # Purpose: Called by each session after every successful meet to
     #          increment the global counter. Returns True if the counter
@@ -323,37 +540,77 @@ class VPNRotatorWindows:
             if self.rotation_count != count_before:
                 print(f"[VPN] {label} skipping rotation — already rotated by another session")
                 return True
+            
+            # NEW: cooldown check. self.rotation_count > 0 guards the very
+            # first rotation ever (last_rotation_time is just the init
+            # timestamp then, not a real rotation) so we don't accidentally
+            # block startup.
+            seconds_since_last = time.time() - self.last_rotation_time
+            if self.rotation_count > 0 and seconds_since_last < ROTATION_COOLDOWN_SECONDS:
+                print(
+                    f"[VPN] {label} rotation requested ({reason}) but only "
+                    f"{seconds_since_last:.0f}s since last rotation — within "
+                    f"{ROTATION_COOLDOWN_SECONDS}s cooldown, skipping. "
+                    f"This is likely the expected post-rotation 429 burst."
+                )
+                return True
+            
+            # NEW: clear tunnel_ready BEFORE starting teardown.
+            # From this moment, any session that calls waitForTunnel()
+            # will pause here — they won't fire requests on the dying
+            # connection or pile onto the new IP before it's ready.
+            # Sessions already mid-request will finish their current
+            # request (we can't cancel in-flight awaits), but no NEW
+            # requests start until we set() below.
+            self.tunnel_ready.clear()
+            print(f"[VPN] {label} tunnel paused — sessions will wait for new IP")
 
-            # Advance to the next server.
-            await self._advanceIndex()
-            new_location = self.locations[self.current_index]
+            # Try servers until one connects AND verifies. Without this loop, a
+            # single dead server would open the gate onto a tunnel that carries
+            # no traffic and strand every session.
+            connected = False
+            for _ in range(len(self.locations)):
+                await self._advanceIndex()
+                new_location = self.locations[self.current_index]
+                print(f"[VPN] {label} rotating → {new_location} "
+                      f"(reason: {reason}, rotation #{self.rotation_count + 1})")
 
-            elapsed = time.time() - self.last_rotation_time
-            print(
-                f"[VPN] {label} rotating → {new_location} "
-                f"(reason: {reason}, "
-                f"{elapsed:.0f}s since last rotation, "
-                f"rotation #{self.rotation_count + 1})"
-            )
- 
-            # Connect to the new server.
-            success = await self._connectToLocation(new_location)
-            if not success:
+                # _connectToLocation: set relay + connect + wait. (Proxy step
+                # already stripped — local-first Postgres, no proxy.)
+                if not await self._connectToLocation(new_location):
+                    print(f"[VPN] {label} connect failed on {new_location} — next")
+                    continue
+
+                # The load-bearing new check: does traffic actually flow?
+                if await self._verifyConnectivity():
+                    connected = True
+                    break
+                print(f"[VPN] {label} {new_location} connected but no traffic "
+                      f"— trying next server")
+
+            if not connected:
+                # Every server failed. Re-open the gate anyway so sessions aren't
+                # frozen forever; they'll error on the dead tunnel and trigger
+                # another rotation. (Better than a permanent stall.)
+                print(f"[VPN] {label} ALL servers failed to verify — releasing "
+                      f"gate onto best-effort tunnel")
+                self.tunnel_ready.set()
                 return False
-
-            # TODO: parse stdout to verify "Connected" status — currently only
-            # checks that the CLI command ran without crashing, not that the
-            # tunnel actually established.
-            # Verify we're connected — failure here is non-fatal,
-            # we log it and continue since the connect call succeeded.
-            await self._runMullvadCommand(["status"])
 
             # Update shared state.
             self.rotation_count += 1
+            self.rotation_generation += 1
             self.last_rotation_time = time.time()
  
             # Reset the meet counter — we're on a fresh IP now.
             self.global_meets_since_rotation = 0
+
+            # NEW: set tunnel_ready AFTER proxy restart confirms the
+            # new IP is working. _connectToLocation already does the
+            # 10s tunnel wait + proxy restart — by this point the new
+            # IP is confirmed ready. All sessions waiting in
+            # waitForTunnel() will now wake up and begin their stagger.
+            self.tunnel_ready.set()
 
             print(f"[VPN] Rotation complete. Now on {new_location}")
 
@@ -376,31 +633,20 @@ class VPNRotatorWindows:
         return False
     
     # removeCurrentServer
-    # Purpose: Removes current server from locations list in case
-    #          of cloudflare IP block of VPN IP.
+    # Purpose: NO-OP (was: permanently pop the current server from the pool). Kept
+    #          as a method so _handleCloudflareBlock's existing call site is
+    #          unaffected — it just does nothing now. The 90s rotation cooldown in
+    #          rotate() is the sole throttle; servers are never destroyed, so the
+    #          pool can't be drained by a 429 burst.
     # Arguments:
-    #           self: current instance of this class.
-    # Output: None.
+    #           self: current instance.
+    # Output:   None.
     def removeCurrentServer(self):
-        
-        # Need at least 2 servers to remove one — if only 1 is left
-        # we have nowhere to go so we keep it.
-        if len(self.locations) <= 1:
-            print(f"[VPN] Only one server left, cannot remove")
-            return
-        
-        # Get the name of the server being removed for the log message.
-        removed = self.locations[self.current_index]
-
-        # .pop(index) removes the item at that position and shifts
-        # everything after it down by one.
-        self.locations.pop(self.current_index)
-
-        # Wrap the index in case we just removed the last item in the list.
-        # e.g. if index was 9 and list now has 9 items (0-8), 9 % 9 = 0.
-        self.current_index = self.current_index % len(self.locations)
-
-        print(f"[VPN] Removed blocked server {removed} — {len(self.locations)} servers remaining")
+        # Intentionally does nothing. See file header for why removing servers on
+        # every Cloudflare block drained the pool 46 -> 1. If you ever want
+        # bad-server pruning back, gate it behind the same 90s cooldown rotate()
+        # uses (only prune when an actual rotation fires), never per-block.
+        return
 
 # ============================================================
 # LINUX (VM) — wg-quick / network namespace rotator

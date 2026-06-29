@@ -5,6 +5,18 @@
 # File Title: normalize_distance.py
 # Purpose: Classifies Rresults into competitive pools and normalizes time
 #          to a 5k equivalent for comparison across distances (not terrain).
+#
+# Update 6/18/2026:
+#   normalizeTime() now uses per-pool 2D cubic splines fitted by
+#   fit_distance_exponent.py instead of the placeholder 1.06 exponent.
+#   Splines are loaded ONCE at module level (when this file is first
+#   imported) so millions of normalizeTime() calls share one in-memory
+#   object rather than reading from disk every call.
+#   If the spline file doesn't exist yet, falls back to DISTANCE_EXPONENT_BY_POOL.
+
+import os
+import math
+import pickle
 
 
 # ------------------------------------------------------------------ #
@@ -93,6 +105,48 @@ TARGET_DISTANCE_METERS = 5000
 # calibration anchor for their personal distance curve.
 FLAT_COURSE_DIFFICULTY = 0.0
 
+# Path to the fitted spline file produced by fit_distance_exponent.py.
+_SPLINE_FILE = os.path.join(os.path.dirname(__file__), "..", "engine", "data", "distance_spline.pkl")
+
+# ------------------------------------------------------------------ #
+# MODULE-LEVEL SPLINE LOADING
+# ------------------------------------------------------------------ #
+
+
+# _loadSplines
+# Purpose: Load the spline file from disk. Returns None if not found
+#          so the rest of the module can fall back gracefully.
+# Arguments: None (uses module-level _SPLINE_FILE path).
+# Output: dict of splines, or None.
+def _loadSplines():
+ 
+    if not os.path.exists(_SPLINE_FILE):
+        print(
+            f"[normalize_distance] Spline file not found at {_SPLINE_FILE}. "
+            "Falling back to placeholder exponent. "
+            "Run engine/fit_distance_exponent.py to generate splines."
+        )
+        return None
+ 
+    with open(_SPLINE_FILE, "rb") as f:
+        splines = pickle.load(f)
+ 
+    print(f"[normalize_distance] Splines loaded from {_SPLINE_FILE}. "
+          f"Pools: {[k for k in splines if k != 'global']}")
+    return splines
+
+# Load splines ONCE when this module is first imported.
+# Why module level: normalizeTime() is called millions of times during
+# an engine run. Loading from disk inside the function would mean
+# millions of file reads + pickle deserializations. Loading here means
+# one read, one deserialization, then the object lives in memory for
+# the entire run.
+#
+# _SPLINES is either:
+#   - A dict mapping pool -> fitted SmoothBivariateSpline (normal case)
+#   - None if the spline file doesn't exist yet (falls back to exponent)
+_SPLINES = _loadSplines()
+
 # ------------------------------------------------------------------ #
 # POOL CLASSIFICATION
 # ------------------------------------------------------------------ #
@@ -170,34 +224,81 @@ def metersFromDistance(distance) -> float | None:
 # ------------------------------------------------------------------ #
 
 # normalizeTime
-# Purpose: Converts a race time at any diostance to a flat 5k equivalent. Use a 
-#          per-pool exponent so different competitive levels can have different 
-#          fatigue curves once fitted.
-#          Formula: T_normalized = T * (5000 / distance) ** exponent.
+# Purpose: Convert a race time at any distance to a flat 5K equivalent.
+#
+#   If splines are loaded (normal case after fit_distance_exponent.py runs):
+#     Uses 2D cubic spline — more accurate, captures physiological zones.
+#     Formula:
+#       log_x     = log(5000 / distance)           — ratio to 5K
+#       log_z     = log((distance + 5000) / 2)     — absolute location
+#       log_ratio = spline(log_x, log_z)            — predicted log(T_5k/T_dist)
+#       normalized = time * exp(log_ratio)
+#
+#   If splines are not loaded (fallback):
+#     Uses per-pool power law exponent (placeholder 1.06).
+#     Formula: normalized = time * (5000 / distance) ^ exponent
+#
 # Arguments:
-#           time_seconds: the original time in seconds.
-#           distance_meters: the original distance in meters.
-#           pool: the competitive pool of the result, used to look up the exponent.
-#                 e.g. "college_m", "hs_f".
-# Output: Returns the normalized flat 5k equivalent time in seconds, or None
-#         if the input time or distance is missing or invalid.
+#   time_seconds:    original time in seconds.
+#   distance_meters: original distance in meters.
+#   pool:            competitive pool, e.g. "college_m", "hs_f".
+# Returns: Normalized flat 5K equivalent time in seconds, or None if invalid.
 def normalizeTime(time_seconds: float, distance_meters: float, pool: str) -> float | None:
 
-    # If time or distance is missing or invalid return None.
     if not time_seconds or not distance_meters:
         return None
     if time_seconds <= 0 or distance_meters <= 0:
         return None
+ 
+    # Use splines if available, otherwise fall back to exponent.
+    if _SPLINES is not None:
+        return _normalizeWithSpline(time_seconds, distance_meters, pool)
+    else:
+        return _normalizeWithExponent(time_seconds, distance_meters, pool)
     
-    # Look up the exponenet for this pool, fall back to default if not found.
-    # dict.get(key, default) returns dict[key] if key in dict, else default, instead
-    # of a key error.
+# _normalizeWithSpline
+# Purpose: Normalize using the fitted 2D spline for this pool.
+#          Falls back to global spline if pool has no dedicated spline.
+# Arguments:
+#   time_seconds:    original time in seconds.
+#   distance_meters: original distance in meters.
+#   pool:            competitive pool string.
+# Returns: Normalized time in seconds as float.
+def _normalizeWithSpline(time_seconds: float, distance_meters: float, pool: str) -> float:
+ 
+    # Use pool-specific spline if available, otherwise global.
+    spline = _SPLINES.get(pool) or _SPLINES["global"]
+ 
+    # Distance ratio: how far is this race relative to 5K?
+    # log(5000/distance): positive if race is shorter than 5K, negative if longer.
+    log_x = math.log(TARGET_DISTANCE_METERS / distance_meters)
+ 
+    # Absolute location: where on the distance spectrum is this pair?
+    log_z = math.log((distance_meters + TARGET_DISTANCE_METERS) / 2)
+ 
+    # spline() returns a 2D numpy array even for scalar inputs — float() extracts the value.
+    # log_ratio = log(T_5k / T_dist), so T_5k = T_dist * exp(log_ratio).
+    log_ratio = float(spline(log_x, log_z))
+ 
+    normalized = time_seconds * math.exp(log_ratio)
+    return round(normalized, 2)
+ 
+ 
+# _normalizeWithExponent
+# Purpose: Fallback normalization using the placeholder power law exponent.
+#          Used when spline file hasn't been generated yet.
+# Arguments:
+#   time_seconds:    original time in seconds.
+#   distance_meters: original distance in meters.
+#   pool:            competitive pool string.
+# Returns: Normalized time in seconds as float.
+def _normalizeWithExponent(time_seconds: float, distance_meters: float, pool: str) -> float:
+ 
+    # dict.get(key, default) returns the default if key not in dict.
     exponent = DISTANCE_EXPONENT_BY_POOL.get(pool, DEFAULT_EXPONENT)
-
-    # Normalized Time formula as seen above: T2 = T1 * (D2 / D1) ^ exponent.
-    normalized_time = time_seconds * (TARGET_DISTANCE_METERS / distance_meters) ** exponent
-
-    return round(normalized_time, 2)
+ 
+    normalized = time_seconds * (TARGET_DISTANCE_METERS / distance_meters) ** exponent
+    return round(normalized, 2)
 
 
 # ------------------------------------------------------------------ #

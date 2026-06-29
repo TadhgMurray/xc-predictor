@@ -59,6 +59,13 @@ TF_DEFAULT_HOUR  = 15
 # Matches the filter in the speed ratings engine.
 MIN_NORMALIZED_TIME = 600
 
+# Number of examples per chunk file.
+CHUNK_SIZE = 10_000
+
+# TODO: replace with real pass 1 once TF scraping completes and we
+# can check realistic max_len from actual data.
+MAX_SEQ_LEN_PLACEHOLDER = 500
+
 # ------------------------------------------------------------------ #
 # CHUNK 1 — DATABASE QUERIES
 # ------------------------------------------------------------------ #
@@ -136,7 +143,7 @@ def loadXCResults() -> list[dict]:
                 w.wind_speed_km,
                 w.wind_dir,
                        
-                - Altitude of the meet location.
+                -- Altitude of the meet location.
                 -- NULL until elevation backfill runs.
                 m.altitude_meters,
  
@@ -165,6 +172,11 @@ def loadXCResults() -> list[dict]:
         AND   r.normalized_time > %s
         AND   r.date IS NOT NULL
         AND   r.date != ''
+        -- Drop profile-less meet entries (AAU/junior/user-uploaded) saved
+        -- with NULL athlete_id — they have no stable identity, can't be
+        -- tracked across races, and are useless/polluting to a per-athlete
+        -- sequence model. (See 6/25 diagnostics: ~2.5M such TF rows.)
+        AND   r.athlete_id IS NOT NULL
                        
         -- ORDER BY date so when we group by athlete later,
         -- the races are already in chronological order.
@@ -232,7 +244,8 @@ def loadTFResults() -> list[dict]:
  
             FROM results_tf r
             JOIN athletes  a  ON r.athlete_id = a.athlete_id
-            JOIN meets_tf  m  ON r.div_id     = m.div_id
+            JOIN meets_tf  m  ON r.meet_id    = m.meet_id
+                             AND r.div_id     = m.div_id
                              AND r.event_id   = m.event_id
  
             LEFT JOIN weather w
@@ -244,6 +257,8 @@ def loadTFResults() -> list[dict]:
             AND   r.date IS NOT NULL
             AND   r.date != ''
             AND   r.is_relay = 0
+            -- Drop NULL-athlete_id profile-less entries (see XC note above).
+            AND   r.athlete_id IS NOT NULL
  
             ORDER BY r.date ASC
         """, (TF_DEFAULT_HOUR, MIN_NORMALIZED_TIME))
@@ -653,7 +668,8 @@ def _altitudeDelta(altitude, races_before: list[dict]) -> float:
 #          temp_c, dew_point_c, humidity, apparent_temp_c,
 #          precipitation_mm, pressure_hpa, cloud_cover,
 #          wind_speed_km, wind_dir, altitude_delta]
-def _buildSequenceVector(prior_result: dict, target_date_str: str, 
+def _buildSequenceVector(prior_result: dict, target_date_str: str,
+                        races_before_prior: list[dict],
                         encoders: dict) -> list[float]:
 
     return [
@@ -683,6 +699,12 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
         # _altitudeDelta docstring. _orZero handles NULL altitude
         # via the None-check inside _altitudeDelta itself.
         _altitudeDelta(prior_result["altitude_meters"], races_before_prior),
+        # Absolute altitude of this race's venue (NEW — index 17).
+        # Pairs with altitude_delta above: delta = "how far from your
+        # normal", this = "where you are now". Together they let the
+        # model learn the non-linear altitude effect neither expresses
+        # alone. _orZero -> 0.0 until the elevation backfill populates it.
+        _orZero(prior_result["altitude_meters"]),
     ]
 
 # buildAthleteExamples
@@ -713,7 +735,7 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[di
     for i in range(1, len(athlete_results)):
 
         # Gets the result we're predicting
-        target_result = athelte_results[i]
+        target_result = athlete_results[i]
 
         # Gets all the prior results to build the training example.
         # Slicing: everything from index 0 up to (but not including) i.
@@ -721,9 +743,9 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[di
 
         # Builds the sequence vector by building the sequence vector for
         # eahc prior result.
-        sequence  = [
-            _buildSequenceVector(prior, target_result["date"], athlete_results[:j], encoders)
-            for prior in prior_results
+        sequence = [
+            _buildSequenceVector(prior, target_result["date"], prior_results[:j], encoders)
+            for j, prior in enumerate(prior_results)
         ]
 
         # Adds the current training examples to our list of training
@@ -806,6 +828,287 @@ def _encodeGender(gender: str) -> float:
     # otherwise returns default — avoids a KeyError for unexpected
     # gender values while still flagging them (-1.0 stands out).
     return GENDER_MAP.get(gender, -1.0)
+
+# ------------------------------------------------------------------ #
+# CHUNK 5 — PADDING, TENSORS, AND SAVING
+# ------------------------------------------------------------------ #
+#
+# BIG IDEA:
+#   PyTorch needs every training example to be the same shape so they
+#   can be stacked into a batch. Our sequences have variable length —
+#   an athlete with 2 races has a sequence of length 1, an athlete
+#   with 20 races has a sequence of length 19.
+#
+#   The solution is PADDING: find the longest sequence in the dataset,
+#   then pad every shorter sequence with rows of 0.0 up to that length.
+#
+#   But we need to tell the Transformer which positions are real and
+#   which are padding — otherwise it'll "attend" to the zero rows and
+#   corrupt the computation. That's what the ATTENTION MASK is for:
+#     True  = real race (attend to this)
+#     False = padding  (ignore this)
+#
+#   Final output — 5 files saved to model/data/:
+#     sequences.pt  — shape [N, max_seq_len, 17]  (float32)
+#     masks.pt      — shape [N, max_seq_len]       (bool)
+#     context.pt    — shape [N, 17]                (float32)
+#     targets.pt    — shape [N]                    (float32)
+#     encoders.pkl  — fitted LabelEncoders (for inference)
+#
+#   Where N = total number of training examples across all athletes.
+
+
+# _maxSequenceLength
+# Purpose: Finds the longest sequence across all examples.
+#          This becomes the padded width every example is stretched to.
+# Arguments:
+#           examples: flat list of example dicts from buildAllExamples.
+# Output: int — length of the longest sequence.
+def _maxSequenceLength(examples: list[dict]) -> int:
+
+    # len(ex["sequence"]) = number of prior races for that example.
+    # max() returns the largest of those counts.
+    # Goes through all training examples finding the length
+    # of the longest sequence (the most races).
+    return max(len(ex["sequence"]) for ex in examples)
+
+# _padSequence
+# Purpose: Pads ONE sequence to max_len by appending rows of zeros,
+#          and builds the corresponding attention mask.
+# Arguments:
+#           sequence: list of 17-float vectors (the real race data).
+#           max_len:  target length to pad up to.
+# Output: tuple of:
+#           padded   — list of max_len vectors (real + zero rows)
+#           mask     — list of max_len bools (True=real, False=padding)
+def _padSequence(sequence: list[list[float]], max_len: int):
+
+    # Length of this specific raw sequence.
+    real_len = len(sequence)
+
+    # How many zero rows to add based on this sequence's length
+    # and the max sequence length.
+    pad_len = max_len - real_len
+
+    # A single zero row — 17 zeros matching the sequence feature width.
+    # We build one and reuse it rather than recomputing inside the loop.
+    zero_row = [0.0] * 18
+
+     # Concatenate real rows + pad rows.
+    # [zero_row] * pad_len creates a list of pad_len zero rows.
+    padded = sequence + [zero_row] * pad_len
+
+    # True for every real race, False for every padding row.
+    mask = [True] * real_len + [False] * pad_len
+
+    return padded, mask
+
+# _buildTensors
+# Purpose: Converts all examples into four PyTorch tensors ready for
+#          training. Pads sequences to uniform length and builds masks.
+# Arguments:
+#           examples: flat list of example dicts (with "sequence",
+#                     "context", "target" keys populated by Chunks 3-4).
+#           max_len:  padded sequence length from _maxSequenceLength.
+# Output: tuple of (sequences_tensor, masks_tensor,
+#                   context_tensor, targets_tensor)
+def _buildTensors(examples: list[dict], max_len: int):
+
+    # Pre-allocate four Python lists — one entry per example.
+    # We'll convert these to tensors in one shot at the end,
+    # which is faster than calling torch.tensor() in a loop.
+    all_sequences = []
+    all_masks     = []
+    all_contexts  = []
+    all_targets   = []
+
+    # For each example pads it's training sequence and builds
+    # it's mask, then appends it to the python lists.
+    for ex in examples:
+
+        # Pad this example's sequence and build its mask.
+        padded, mask = _padSequence(ex["sequence"], max_len)
+
+        all_sequences.append(padded)
+        all_masks.append(mask)
+        all_contexts.append(ex["context"])
+        all_targets.append(ex["target"])
+
+    # torch.tensor() converts a nested Python list into a tensor.
+    # dtype=torch.float32 — standard precision for neural net weights.
+    # dtype=torch.bool    — True/False mask, no gradient needed.
+    sequences_tensor = torch.tensor(all_sequences, dtype=torch.float32)
+    masks_tensor     = torch.tensor(all_masks,     dtype=torch.bool)
+    context_tensor   = torch.tensor(all_contexts,  dtype=torch.float32)
+    targets_tensor   = torch.tensor(all_targets,   dtype=torch.float32)
+
+    # Print shapes so we can sanity-check before saving.
+    # e.g. sequences: [2_400_000, 847, 17]
+    #      masks:     [2_400_000, 847]
+    #      context:   [2_400_000, 17]
+    #      targets:   [2_400_000]
+    # This prints as [depth, rows, columns], i.e. # of examples,
+    # steps, features.
+    print(f"  sequences : {list(sequences_tensor.shape)}")
+    print(f"  masks     : {list(masks_tensor.shape)}")
+    print(f"  context   : {list(context_tensor.shape)}")
+    print(f"  targets   : {list(targets_tensor.shape)}")
+
+    return sequences_tensor, masks_tensor, context_tensor, targets_tensor
+
+# _saveTensors
+# Purpose: Saves the four tensors to disk in model/data/.
+#          torch.save uses Python's pickle format — torch.load()
+#          at training time will restore the exact tensor.
+# Arguments:
+#           sequences_tensor, masks_tensor, context_tensor,
+#           targets_tensor: the four tensors from _buildTensors.
+#           output_dir: directory to save into (OUTPUT_DIR constant).
+# Output: None. Prints each file path on save.
+def _saveTensors(sequences_tensor, masks_tensor,
+                 context_tensor, targets_tensor,
+                 output_dir: str) -> None:
+    
+    # os.path.join glues the directory and filename together correctly
+    # on any OS (Windows uses \, Linux uses /).
+    files = {
+        "sequences.pt": sequences_tensor,
+        "masks.pt":     masks_tensor,
+        "context.pt":   context_tensor,
+        "targets.pt":   targets_tensor,
+    }
+
+    # Gets the path to each file, and then saves the tensors
+    # to there.
+    for filename, tensor in files.items():
+        path = os.path.join(output_dir, filename)
+        torch.save(tensor, path)
+        print(f"  Saved {path}")
+
+# _saveEncoders
+# Purpose: Saves the fitted LabelEncoders to disk using pickle.
+#          At inference time, the Flask app loads these to transform
+#          the same categorical features the same way as training.
+# Arguments:
+#           encoders: dict of fitted LabelEncoders from buildEncoders.
+#           output_dir: directory to save into.
+# Output: None.
+def _saveEncoders(encoders: dict, output_dir: str) -> None:
+
+    path = os.path.join(output_dir, "encoders.pkl")
+
+    # "wb" = write binary — pickle needs binary mode.
+    # Writes the binary encoders for each string we
+    # input in the model to this file
+    with open(path, "wb") as f:
+        pickle.dump(encoders, f)
+
+    print(f"  Saved {path}")
+
+# saveAll
+# Purpose: Two-pass chunked save. Pass 1 finds max_len (placeholder
+#          for now — TODO: replace with real pass once we know realistic
+#          sequence lengths from actual data). Pass 2 builds examples
+#          in batches of CHUNK_SIZE, pads each batch to max_len, saves
+#          each chunk to model/data/chunk_NNNN.pt immediately, then
+#          discards it — keeps memory flat regardless of dataset size.
+# Arguments:
+#           by_athlete: {athlete_id: [results...]} from groupByAthlete.
+#           encoders: dict of fitted LabelEncoders from Chunk 2.
+#           output_dir: where to save (OUTPUT_DIR constant).
+# Output: None. Saves chunk files + metadata.pkl to output_dir.
+def saveAll(examples: list[dict], encoders: dict, output_dir: str) -> None:
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # TODO: Pass 1 — iterate all athletes to find real max_len.
+    # For now use placeholder.
+    max_len = MAX_SEQ_LEN_PLACEHOLDER
+    print(f"Using placeholder max_len: {max_len} (TODO: fit from data)")
+
+    # Pass 2 — build tensors, pad, save in chunks.
+    chunk_idx     = 0
+    total_examples = 0
+    buffer        = []  # holds up to CHUNK_SIZE examples before flushing
+
+    # For each athlete result builds training examples, context, and saves
+    # them in chunks.
+    for athlete_results in by_athlete.values():
+
+        # Builds training examples and context, adds to current buffer.
+        examples = buildAthleteExamples(athlete_results, encoders)
+        addContextToExamples(examples, encoders)
+        buffer.extend(examples)
+
+        # Flush whenever buffer hits CHUNK_SIZE by saving chunk and
+        # discarding examples.
+        while len(buffer) >= CHUNK_SIZE:
+            _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx, output_dir)
+            chunk_idx     += 1
+            total_examples += CHUNK_SIZE
+            # Discard the flushed examples — this is what keeps RAM flat.
+            buffer = buffer[CHUNK_SIZE:]
+
+    # Flush any remaining examples that didn't fill a full chunk.
+    if buffer:
+        _saveChunk(buffer, max_len, chunk_idx, output_dir)
+        total_examples += len(buffer)
+        chunk_idx += 1
+
+    # Save metadata so DataLoader knows how many chunks exist.
+    _saveMetadata(max_len, total_examples, chunk_idx, output_dir)
+    _saveEncoders(encoders, output_dir)
+
+    print(f"Done. {total_examples:,} examples saved in {chunk_idx} chunks.")
+
+# _saveChunk
+# Purpose: Pads one buffer of examples to max_len, converts to tensors,
+#          saves to chunk_NNNN.pt.
+# Arguments:
+#           examples:   list of up to CHUNK_SIZE example dicts.
+#           max_len:    padded sequence length.
+#           chunk_idx:  chunk number, used for filename.
+#           output_dir: directory to save into.
+# Output: None.
+def _saveChunk(examples: list[dict], max_len: int,
+               chunk_idx: int, output_dir: str) -> str:
+    
+    sequences_t, masks_t, context_t, targets_t = _buildTensors(examples, max_len)
+
+    path = os.path.join(output_dir, f"chunk_{chunk_idx:04d}.pt")
+
+    # Saves tensors for this chunk to file specified in path.
+    torch.save({
+        "sequences": sequences_t,
+        "masks":     masks_t,
+        "context":   context_t,
+        "targets":   targets_t,
+    }, path)
+
+    print(f"  Saved {path} ({len(examples):,} examples)")
+
+# _saveMetadata
+# Purpose: Saves metadata of all chunks so train.py's DataLoader knows
+#          max_len, total examples, and how many chunk files exist.
+# Arguments:
+#           max_len:        padded sequence length all chunks share, derived from
+#                           max results an athlete has.
+#           total_examples: total number of training examples across all chunks.
+#           num_chunks:     how many chunk_NNNN.pt files were written.
+#           output_dir:     directory to save metadata.pkl into.
+# Output: None.
+def _saveMetadata(max_len: int, total_examples: int,
+                  num_chunks: int, output_dir: str) -> None:
+
+    path = os.path.join(output_dir, "metadata.pkl")
+    with open(path, "wb") as f:
+        pickle.dump({
+            "max_len":        max_len,
+            "total_examples": total_examples,
+            "num_chunks":     num_chunks,
+            "chunk_size":     CHUNK_SIZE,
+        }, f)
+    print(f"  Saved {path}")
 
 # ------------------------------------------------------------------ #
 # Date helpers
@@ -896,6 +1199,9 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
         _orZero(target_result["wind_dir"]),
  
         altitude_delta,
+        # Absolute altitude of the target race's venue (NEW — index 17).
+        # Same pairing rationale as the sequence vector.
+        _orZero(target_result["altitude_meters"]),
     ]
 
 def addContextToExamples(examples: list[dict], encoders: dict) -> None:
@@ -931,15 +1237,8 @@ if __name__ == "__main__":
         print("Building encoders...")
         encoders = buildEncoders(results)
 
-        print("Building training examples...")
-        examples = buildAllExamples(by_athlete, encoders)
-
-        print("Building context vectors...")
-        addContextToExamples(examples, encoders)
-        # Subsequent chunks will add:
-        #   - padding + tensor saving (Chunk 5)
-
-        print("Chunks 1-4 complete.")
+        print("Saving chunked tensors...")
+        saveAll(by_athlete, encoders, OUTPUT_DIR)
  
     finally:
         closePool()
