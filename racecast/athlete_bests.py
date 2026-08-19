@@ -172,7 +172,12 @@ def season_bests_flat(races, seasons):
         if sport not in ("XC", "TF") or not date:
             continue
 
-        key = (date[:4], sport)
+        # ! THE SEASON LABEL THE ROUTE STAMPED, not date[:4] -- the academic
+        #   year, shown as year+1 for TF. It must be the same key
+        #   group_into_seasons used or the seasons.get() below finds nothing
+        #   and every season rating renders as a dash. The date slice remains
+        #   only as the fallback for a caller that never stamped labels.
+        key = (race.get("season_label") or date[:4], sport)
         bucket = buckets.setdefault(key, {"events": {}, "rating": None})
 
         if _is_better_rating(race, bucket["rating"]):

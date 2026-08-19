@@ -87,6 +87,56 @@
           aria-label="{{ title }}. {{ blurb }}">{{ '★' if current else '' }}{{ f.code }}</span>
 {%- endmacro %}
 
+{# ===================================================================== #}
+{#  BOARD NOTES -- why a season is missing from the ranking boards.      #}
+{#                                                                       #}
+{#  The engine rates every season; the boards refuse the ones whose      #}
+{#  grade evidence is unresolved (no pool) or too thin to trust (rule 7: #}
+{#  fewer than two races). Without this flag the page shows those        #}
+{#  ratings and the boards silently don't, which reads as a bug in the   #}
+{#  boards. The words live here, same as FLAG_INFO, and nowhere else.    #}
+{#                                                                       #}
+{#  Every blurb ends by saying the ratings themselves are unaffected --  #}
+{#  the flag is about board eligibility, and an athlete reading it must  #}
+{#  not come away thinking their numbers are wrong.                      #}
+{# ===================================================================== #}
+{% set BOARD_NOTES = {
+  'low_trust': {
+    'title': 'Rated, not ranked',
+    'blurb': 'This season has fewer than two races behind its grade — too few to corroborate it — so it is left off the ranking boards. The ratings shown here are unaffected.'
+  },
+  'no_evidence': {
+    'title': 'Not ranked — no grade evidence',
+    'blurb': 'No usable grade was found for this season, so it cannot be placed in a division and is left off the ranking boards. The ratings shown here are unaffected.'
+  },
+  'contradicted': {
+    'title': 'Not ranked — conflicting grades',
+    'blurb': 'The sources disagree about this season\'s grade, so it cannot be placed in a division and is left off the ranking boards. The ratings shown here are unaffected.'
+  },
+  'thin_field': {
+    'title': 'Not ranked — grade unresolved',
+    'blurb': 'The only grade evidence for this season came from race fields too inconsistent to trust, so it is left off the ranking boards. The ratings shown here are unaffected.'
+  },
+  'lone_word': {
+    'title': 'Not ranked — grade unresolved',
+    'blurb': 'The only grade evidence for this season is a single class word from a single race — not enough to place it — so it is left off the ranking boards. The ratings shown here are unaffected.'
+  }
+} %}
+
+{# The badge itself. Same tooltip machinery as flag() — data-title/data-blurb,
+   tabindex for keyboards, aria-label for screen readers. An unknown kind
+   renders nothing rather than raising: the note is an annotation, and a new
+   verdict name in the database must not take the page down. #}
+{% macro board_note(kind) %}
+    {%- set n = BOARD_NOTES.get(kind) -%}
+    {%- if n -%}
+    <span class="flag flag--warn season-flag" tabindex="0"
+          data-title="{{ n.title }}"
+          data-blurb="{{ n.blurb }}"
+          aria-label="{{ n.title }}. {{ n.blurb }}">Unranked</span>
+    {%- endif -%}
+{%- endmacro %}
+
 {% macro season_block(year, sport, season) %}
     <div class="season" id="{{ year }}-{{ sport }}">
         {# The rating is IN the heading, not buried in the meta line below it:
@@ -94,6 +144,7 @@
            showing the same figure. #}
         <h3 class="season-head">
             {{ year }} {{ sport }}
+            {% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}
             <span class="season-rating">{{ "%.1f"|format(season.rating) if season.rating else "—" }}</span>
         </h3>
         <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}</p>
