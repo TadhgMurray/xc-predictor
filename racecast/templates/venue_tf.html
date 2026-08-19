@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ label if label else "Venue " ~ location_id }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+{% include "_topbar.html" %}
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ label if label else "Venue " ~ location_id }}</h1>
+    <p class="meta">
+        {{ "Indoor" if is_indoor else "Outdoor" }} ·
+        Difficulty:
+        {{ "%+.3f"|format(difficulty.difficulty) if difficulty and difficulty.difficulty is not none else "—" }}
+        {% if difficulty %}
+            · {{ "{:,}".format(difficulty.n_results) }} results
+            · {{ "{:,}".format(difficulty.n_athletes) }} athletes
+        {% endif %}
+    </p>
+
+    <div class="placeholder-slot">
+        Team records — coming later
+    </div>
+
+    <h2>Meets held here</h2>
+    <table>
+        <thead><tr><th>Meet</th><th>Last held</th><th>Results</th></tr></thead>
+        <tbody>
+            {% for m in venue_meets %}
+            <tr>
+                <td><a href="/meet/tf/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
+                <td>{{ m.last_date }}</td>
+                <td>{{ "{:,}".format(m.n_results) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Best performances</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Athlete</th>
+                <th>Event</th>
+                <th>Result</th>
+                <th>Grade</th>
+                <th>School</th>
+                <th>Meet</th>
+                <th>Date</th>
+                <th>Rating</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in bests %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.name if row.name else "Unknown" }}
+                    {% endif %}
+                </td>
+                <td>{{ row.event_short if row.event_short else "—" }}</td>
+                <td>{{ row.display_result }}</td>
+                <td>{{ row.grade if row.grade else "—" }}</td>
+                <td>{{ row.school if row.school else "—" }}</td>
+                <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
+                <td>{{ row.date }}</td>
+                <td>{{ "%.1f"|format(row.speed_rating) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

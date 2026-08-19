@@ -40,10 +40,28 @@ import torch.nn as nn
 # ------------------------------------------------------------------ #
 
 # Width of one race vector coming in from feature_extraction.py.
-SEQUENCE_FEATURES = 18
+SEQUENCE_FEATURES = 21
 
 # Width of the target-race context vector (also from feature_extraction).
-CONTEXT_FEATURES = 18
+# 21, not 20: is_forecast was added at index 0. ⚠ THIS MUST MATCH
+# _buildContextVector IN feature_extraction.py. A mismatch surfaces as a shape
+# error inside the first Linear AFTER the extraction has written gigabytes.
+CONTEXT_FEATURES = 21
+
+# ★ VENUE EMBEDDING. course_difficulty stays as the PRIOR -- it is solved from
+#   athletes who raced here and elsewhere, which is cross-athlete linkage this
+#   model cannot reconstruct from its own loss. The embedding is for the
+#   RESIDUAL: whatever about a venue survives after its delta is charged.
+#
+#   The tilt work measured why one number is not enough -- a course does not
+#   slow every runner by the same factor; the effect scales with ability at
+#   corr = -0.993. A scalar cannot express that. A vector can.
+#
+# ⚠ SIZE IT FROM venue_vocab.pkl, NEVER FROM A COUNT AT TRAINING TIME. The
+#   vocabulary is written beside the chunks; deriving it again from a different
+#   slice would reindex every venue, and the embedding trained for Woodward
+#   Park would belong to some other course.
+VENUE_EMBED_DIM = 16
 
 # The "thinking width" we project each race into before attention.
 # 17 raw numbers is too cramped; 256 gives attention room to work.
@@ -110,11 +128,11 @@ DROPOUT = 0.1
 # XCPredictor Model Class 
 # ------------------------------------------------------------------ #
 
-class XCPredictor(nn.module):
+class XCPredictor(nn.Module):
     # Inheriting nn.Module is what makes PyTorch track our weights,
     # move the model to GPU, toggle dropout, and save/load — for free.
 
-    def __init__(self):
+    def __init__(self, n_venues: int = 1):
         # Runs nn.Module's own setup first. Mandatory before we register
         # any layers, or PyTorch won't see our weights.
         super().__init__()
@@ -122,6 +140,11 @@ class XCPredictor(nn.module):
         # Build the three parts of the model.
         self.input_projection = self._buildInputProjection()
         self.encoder          = self._buildEncoder()
+        # padding_idx=0 pins the UNKNOWN_VENUE row at zero and keeps it there:
+        # no gradient flows to it, so the thin-venue bucket cannot drift into
+        # meaning something. It is "no information", and it stays that way.
+        self.venue_embedding  = nn.Embedding(n_venues, VENUE_EMBED_DIM,
+                                             padding_idx=0)
         self.head             = self._buildHead()
 
     # _buildInputProjection
@@ -198,8 +221,9 @@ class XCPredictor(nn.module):
         # different ways (curves). An intermediate step helps show that.
         # Returns an object holding the list of the three steps (273->64->1)
         # and to run them sequentially.
-        return nn.sequential(
-            nn.Linear(EMBED_DIM + CONTEXT_FEATURES, 64),  # 273 -> 64
+        return nn.Sequential(
+            # 256 pooled history + 20 context + 16 venue = 292.
+            nn.Linear(EMBED_DIM + CONTEXT_FEATURES + VENUE_EMBED_DIM, 64),
             nn.ReLU(),                                    # the nonlinearity
             nn.Linear(64, 1),                             # 64 -> 1
         )
@@ -214,14 +238,23 @@ class XCPredictor(nn.module):
     #           masks:     [B, S]     bool — True = real race, False = padding
     #           context:   [B, 17]    target-race feature vector
     # Output:   [B] — one predicted (z-scored) normalized_time per example
-    def forward(self, sequences: torch.Tensor,
-                masks: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        
-        x        = self._project(sequences)                   # [B,S,17]  -> [B,S,256]
-        x        = self._encode(x, masks)                     # [B,S,256] -> [B,S,256]
-        pooled   = self._poolRealRaces(x, masks)              # [B,S,256] -> [B,256]
-        combined = self._combineWithContext(pooled, context)  #           -> [B,273]
-        return self._predict(combined)                        # [B,273]   -> [B]
+    def forward(self, sequences: torch.Tensor, masks: torch.Tensor,
+                context: torch.Tensor,
+                venues: torch.Tensor = None) -> torch.Tensor:
+
+        x        = self._project(sequences)         # [B,S,21]  -> [B,S,256]
+        x        = self._encode(x, masks)           # [B,S,256] -> [B,S,256]
+        pooled   = self._poolRealRaces(x, masks)    # [B,S,256] -> [B,256]
+
+        # venues defaults to None so an existing caller still runs -- it then
+        # gets the padding row, which is zeros, and behaves exactly as before.
+        if venues is None:
+            venues = torch.zeros(pooled.shape[0], dtype=torch.long,
+                                 device=pooled.device)
+        venue_vec = self.venue_embedding(venues)    #           -> [B,16]
+
+        combined = torch.cat([pooled, context, venue_vec], dim=1)   # -> [B,292]
+        return self._predict(combined)              # [B,292]   -> [B]
     
     # _project
     # Purpose: The "dimension up" box. Rewrites each race's 17 raw numbers as

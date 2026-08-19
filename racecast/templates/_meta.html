@@ -1,0 +1,133 @@
+{# ===================================================================== #}
+{#  _meta.html -- search + link-preview metadata.                        #}
+{#                                                                       #}
+{#  Include INSIDE <head> on every page:                                 #}
+{#      {% include "_meta.html" %}                                       #}
+{#                                                                       #}
+{#  Per-page overrides, all optional -- set them before the include:     #}
+{#      {% set meta_title       = "Rankings" %}                          #}
+{#      {% set meta_description = "…" %}                                 #}
+{#      {% set meta_path        = "/rankings" %}                         #}
+{#      {% set meta_crumbs     = [("Rankings", "/rankings"),              #}
+{#                                  ("HS Boys",  none)] %}                 #}
+{#                                                                       #}
+{#  meta_crumbs is what turns the grey URL line in a Google result into   #}
+{#      racecast.co > Rankings > HS Boys                                  #}
+{#  instead of the raw path. The LAST crumb takes `none` for its url --   #}
+{#  it is the page you are on, so it is not a link.                       #}
+{#                                                                       #}
+{#  Same reasoning as _topbar.html: one file, every page follows.        #}
+{#                                                                       #}
+{#  ⚠ THIS PARTIAL EMITS <title>. Any page that includes it must NOT     #}
+{#    also declare its own, or the document gets two and browsers pick   #}
+{#    the first while some scrapers pick the last.                       #}
+{# ===================================================================== #}
+
+{# Defaults. A page that sets nothing still gets a complete, correct card. #}
+{% set _title = meta_title | default(none) %}
+{% set _full_title = (_title ~ " — Racecast") if _title else
+                     "Racecast — every result on one comparable scale" %}
+{# ⚠ DO NOT NAME THE DATA SOURCES HERE. This string is what Google caches and
+   shows under the link, and what every scraper copies into a card. Wherever
+   the results come from, this is the worst place to publish it -- it is
+   reproduced everywhere and retracted nowhere.
+   (The footer of home.html still names them; that is a separate call.) #}
+{% set _desc = meta_description | default(
+    "Every cross country and track result on one comparable scale. Compare "
+    "any race, any course, any season, from middle school to college.") %}
+
+<title>{{ _full_title }}</title>
+
+{# The line Google shows under the blue link. Roughly 155 characters before
+   it gets truncated with an ellipsis, so the first sentence has to stand
+   alone -- anything after it may never be read. #}
+<meta name="description" content="{{ _desc }}">
+
+{# ---- Open Graph: Facebook, LinkedIn, Slack, iMessage, Discord ------- #}
+{# og:image must be an ABSOLUTE url. Scrapers fetch it without a page
+   context, so a relative /static/... path resolves against nothing and the
+   card renders with no image at all. _external=True is what makes Flask
+   emit the full origin. #}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Racecast">
+<meta property="og:title" content="{{ _full_title }}">
+<meta property="og:description" content="{{ _desc }}">
+<meta property="og:url" content="{{ request.url_root.rstrip('/') ~ (meta_path | default(request.path)) }}">
+<meta property="og:image" content="{{ url_for('static', filename='og-image.png', _external=True) }}">
+{# Declared dimensions let a scraper lay out the card before the image
+   finishes downloading -- without them, first-time shares often render
+   with no picture and only fix themselves on a later re-scrape. #}
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Racecast — every result on one comparable scale">
+
+{# ---- Twitter/X: reads og:* for everything except the card type ------ #}
+{# summary_large_image gives the full-width image. Without this tag the
+   default is a small square thumbnail with the image cropped to a circle-ish
+   box, which throws away most of a 1200x630 design. #}
+<meta name="twitter:card" content="summary_large_image">
+
+{# ---- Structured data: what shapes the RESULT ITSELF ----------------- #}
+{# The og:* tags above control the CARD that chat apps draw. They do almost
+   nothing for a Google result. This block is the part that does:
+
+     name          lets Google print "Racecast" as the site name above the
+                   result instead of falling back to the bare domain.
+     SearchAction  makes the sitelinks search box eligible -- the little
+                   "Search racecast.com" field that appears under a result
+                   for a recognised site. Google decides whether to show it;
+                   this only makes it possible.
+
+   Only emitted on the home page. Declaring a WebSite on every URL is a
+   common mistake -- the site is one thing, not one per page. #}
+{# ---- Breadcrumbs: the "site > Section > Page" trail in a result ----- #}
+{# Emitted on any page that sets meta_crumbs. Google reads BreadcrumbList
+   and replaces the raw URL line with it, so a result shows where the page
+   sits before anyone clicks.
+
+   position is 1-based and must be CONTIGUOUS. loop.index gives that for
+   free; hand-numbering is where these usually break.
+
+   The final crumb deliberately has no "item". That is the spec's way of
+   saying "this is the current page" -- emitting a self-link there is the
+   most common error in breadcrumb markup and Google flags it. #}
+{% if meta_crumbs %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {%- for label, path in meta_crumbs %}
+    {
+      "@type": "ListItem",
+      "position": {{ loop.index }},
+      "name": "{{ label }}"
+      {%- if path %},
+      "item": "{{ request.url_root.rstrip('/') ~ path }}"
+      {%- endif %}
+    }{{ "," if not loop.last }}
+    {%- endfor %}
+  ]
+}
+</script>
+{% endif %}
+
+{% if (meta_path | default(request.path)) == "/" %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Racecast",
+  "url": "{{ request.url_root }}",
+  "description": "{{ _desc }}",
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": {
+      "@type": "EntryPoint",
+      "urlTemplate": "{{ request.url_root }}search?q={search_term_string}"
+    },
+    "query-input": "required name=search_term_string"
+  }
+}
+</script>
+{% endif %}

@@ -137,7 +137,10 @@ def _isIndividualTable(table):
 def _parseRaceTable(table, meet_id, event_id, event_name):
     # Race-level facts shared by every finisher in this table.
     gender   = _genderFromTitle(event_name)
-    distance = _distanceFromTitle(event_name)
+    # Distance can live in the events-list title OR only in the <h3> "(5k)".
+    # _resolveDistance tries the clean title first, then the <h3> fallback — so
+    # class-named races ("Class I Boys") still get their distance from "(5k)".
+    distance = _resolveDistance(event_name, table)
  
     body = table.find("tbody")
     if body is None:
@@ -218,6 +221,49 @@ def _titleForTable(table):
     for chunk in h3.stripped_strings:
         return chunk   # first non-empty line = the title text
     return None
+
+
+# _fullTitleForTable
+# Purpose: The FULL text of the nearest <h3> above a table, joining every text
+#          chunk — used for DISTANCE extraction, where the "(5k)" may sit in the
+#          <h3> even when the clean events-list title (e.g. "Class I Boys") omits
+#          it. Unlike _titleForTable (first chunk only, for a clean NAME), this
+#          keeps everything so the distance parser can see the "(5k)".
+# Arguments:
+#           table: a <table> Tag.
+# Output:   the joined <h3> text (e.g. "Class I Boys Team Results (5k) Top↑"),
+#           or None if there's no <h3>. The trailing "Top↑" anchor text is
+#           harmless to distance parsing (it holds no digits+k/meters pattern).
+def _fullTitleForTable(table):
+    h3 = table.find_previous("h3")
+    if h3 is None:
+        return None
+    # Join ALL stripped strings (not just the first), so a "(5k)" living in a
+    # later chunk is included. " ".join over stripped_strings collapses the
+    # <h3>'s internal whitespace/newlines into single spaces.
+    chunks = list(h3.stripped_strings)
+    return " ".join(chunks) if chunks else None
+
+
+# _resolveDistance
+# Purpose: Find a race's distance from the BEST available title. Distance and the
+#          clean name can live in DIFFERENT places: some meets put "8000 Meters"
+#          in the events-list title (so event_name carries it), others name the
+#          race only by class/gender ("Class I Boys") and put the distance only in
+#          the per-table <h3> as "(5k)". So we try the events-list title first,
+#          then fall back to the full <h3> text.
+# Arguments:
+#           event_name: the clean events-list title (may or may not hold a distance).
+#           table:      the race's <table> Tag (to reach its <h3> for the fallback).
+# Output:   distance in metres (float), or None if neither title states one.
+def _resolveDistance(event_name, table):
+    # 1) Try the clean events-list title — where "8000 Meters" usually lives.
+    distance = _distanceFromTitle(event_name)
+    if distance is not None:
+        return distance
+    # 2) Fall back to the FULL <h3> text, which may carry the "(5k)" the clean
+    #    title omitted. This is the case for class-named meets (109, 110).
+    return _distanceFromTitle(_fullTitleForTable(table))
  
  
 # _eventIdFromAnchorName
@@ -253,24 +299,111 @@ def _genderFromTitle(title):
     return None
  
  
+# ------------------------------------------------------------------ #
+# DISTANCE PARSING - unit constants + converters + the ordered pattern list
+# ------------------------------------------------------------------ #
+#
+# THE IDEA: every distance form a title can use is one (regex -> converter) pair.
+# _distanceFromTitle walks the list IN ORDER and returns the first hit. Order is
+# load-bearing; adding a unit is one more tuple, not a new branch.
+#
+# TWO REAL-DATA QUIRKS this handles:
+#   * commas: "5,000 Meters" must read as 5000, not 5 — so we STRIP the thousands
+#     comma from the title before matching (a comma otherwise walls the number).
+#   * mangled "Mile": TFRRS writes some metric races as "5,000 Mile Run" meaning
+#     5,000 METRES. A thousands-scale "mile" distance is physically absurd (nobody
+#     races 5,000 miles), so a number >= 1000 followed by "mile" is really metres.
+#     This rule is tried BEFORE the real-mile rule so "5000 Mile" -> 5000 m, while
+#     a genuine "3 Mile" (small number) still falls through to real miles.
+
+METRES_PER_MILE = 1609.344   # international mile (exact)
+METRES_PER_KM   = 1000.0
+METRES_PER_YARD = 0.9144     # exact
+
+# The smallest "mile" number we treat as a mangled metre value. 3-8 mile races are
+# real; a 4-digit "mile" is a mislabelled metre distance.
+MANGLED_MILE_MIN = 1000
+
+
+# _milesToMetres / _kmToMetres / _yardsToMetres / _identity
+# Purpose : one-line converters, one per unit. Each takes the numeric string the
+#           regex captured and returns metres (float). Named so the pattern list
+#           reads "this regex -> miles" with no lambda logic hidden inside it.
+# Argument: value - the captured number as a string, e.g. "3" or "2.5" or "5000".
+# Output  : distance in metres (float).
+def _milesToMetres(value):
+    return float(value) * METRES_PER_MILE
+
+def _kmToMetres(value):
+    return float(value) * METRES_PER_KM
+
+def _yardsToMetres(value):
+    return float(value) * METRES_PER_YARD
+
+def _identity(value):
+    # Forms already in metres ("8000 Meters", "5000m", mangled "5,000 Mile").
+    return float(value)
+
+
+# _stripThousandsCommas
+# Purpose : turn "5,000" into "5000" so a comma can't wall the number capture.
+#           Only removes a comma sitting BETWEEN digits (a thousands separator),
+#           never a comma used as punctuation elsewhere in the title.
+# Argument: title - the raw title string.
+# Output  : the title with intra-number commas removed.
+def _stripThousandsCommas(title):
+    # (?<=\d),(?=\d): a comma with a digit on each side — the thousands separator.
+    # Lookarounds mean only the comma is removed, digits are kept.
+    return re.sub(r"(?<=\d),(?=\d)", "", title)
+
+
+# A number: digits with an optional decimal, captured in group(1).
+_NUM = r"(\d+(?:\.\d+)?)"
+
+# THE PATTERN LIST — first match wins. Ordering rules:
+#   1. Meters/metres first: the fullest word, never mis-read by a shorter rule.
+#   2. ★ thousands-mile (>=1000 + "mile") BEFORE real miles: claims the mangled
+#      "5000 Mile" as metres before the mile rule can multiply it.
+#   3. real miles (small "N mile"/"mi").
+#   4. km ("k"/"km").
+#   5. yards.
+#   6. bare "m" suffix LAST ("5000m"); m NOT followed by a letter, so it can't
+#      bite the "m" in "mile"/"meters".
+_DISTANCE_PATTERNS = [
+    # "8000 Meters" / "6000 metres"  ->  as-is
+    (re.compile(_NUM + r"\s*met(?:er|re)s?", re.IGNORECASE), _identity),
+    # ★ "5000 Mile" (number >= 1000) -> METRES. \d{4,} guarantees >= 1000, so a
+    #   3/8-mile race never matches here and falls to the real-mile rule below.
+    (re.compile(r"(\d{4,})\s*miles?\b", re.IGNORECASE), _identity),
+    # ★ "8000k" (number >= 1000 + k) -> METRES. Same mangling one unit over: an
+    #   "8000k" race is absurd (8,000 km); it means 8000 metres. Tried before the
+    #   real-km rule so "8k"/"6k" (small number) still multiply to metres.
+    (re.compile(r"(\d{4,})\s*k(?:m)?\b", re.IGNORECASE), _identity),
+    # "3 Mile" / "2.5 Miles" / "2 mi"  ->  x1609.344
+    (re.compile(_NUM + r"\s*(?:miles?|mi)\b", re.IGNORECASE), _milesToMetres),
+    # "8k" / "8 km"  ->  x1000
+    (re.compile(_NUM + r"\s*k(?:m)?\b", re.IGNORECASE), _kmToMetres),
+    # "1000 Yards" / "880 yd"  ->  x0.9144
+    (re.compile(_NUM + r"\s*(?:yards?|yd)\b", re.IGNORECASE), _yardsToMetres),
+    # "5000m" bare-metre suffix, m not followed by another letter
+    (re.compile(_NUM + r"\s*m(?![a-z])", re.IGNORECASE), _identity),
+]
+
+
 # _distanceFromTitle
-# Purpose: Read the race distance (metres) from a title like "Men's Race - 8000
-#          Meters". Best-effort: tries an explicit metre count, then a "Nk" form.
-# Arguments:
-#           title: the race title, or None.
-# Output:   distance in metres as a float (8000.0), or None if not found.
+# Purpose : read the race distance (metres) from a title, tolerant of commas and
+#           the mangled-"mile" quirk. Walks _DISTANCE_PATTERNS; first unit wins.
+# Argument: title - the race title (clean events-list title OR full <h3>), or None.
+# Output  : distance in metres (float), or None if no known unit form is present.
 def _distanceFromTitle(title):
     if not title:
         return None
-    # "8000 Meters" -> 8000
-    metres = re.search(r"(\d+)\s*[Mm]eters", title)
-    if metres:
-        return float(metres.group(1))
-    # "8k" / "8K" -> 8000  (only if the metre form is absent)
-    km = re.search(r"(\d+(?:\.\d+)?)\s*[Kk]\b", title)
-    if km:
-        return float(km.group(1)) * 1000.0
-    return None
+    clean = _stripThousandsCommas(title)     # "5,000" -> "5000" first
+    for pattern, convert in _DISTANCE_PATTERNS:
+        match = pattern.search(clean)
+        if match:
+            return convert(match.group(1))   # group(1) = the captured number
+    return None                              # no known unit -> genuinely unknown
 
 # ================================================================== #
 # TEAM RESULTS - the per-team scoring rows (PL / Team / Total Time / Avg. Time /

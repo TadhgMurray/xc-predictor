@@ -18,6 +18,7 @@
 #          skipped. Run it, stop it, run it again; it picks up where it left off.
  
 import sys
+import os
 import time
 import requests
  
@@ -28,22 +29,28 @@ from database import initPool, closePool, getConn
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Open-Meteo's elevation endpoint. Free, no API key (same access model as the
-# weather backfill). Accepts MULTIPLE coordinates per call as comma-separated
-# latitude= and longitude= lists, returning an elevation[] array in order.
-ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
+# Open-Meteo's elevation endpoint on the PAID (customer) API -- no rate limit,
+# commercial licence. Accepts MULTIPLE coordinates per call as comma-separated
+# latitude=/longitude= lists, returning an elevation[] array in order.
+ELEVATION_URL = "https://customer-api.open-meteo.com/v1/elevation"
+
+# API key from the environment (never hard-coded). Set before running:
+#   PowerShell:  $env:OPENMETEO_KEY = "your-key-here"
+#   bash:        export OPENMETEO_KEY="your-key-here"
+API_KEY = os.environ.get("OPENMETEO_KEY", "").strip()
  
-# Coordinates per API call. Open-Meteo's elevation endpoint accepts up to 100
-# lat/long pairs in one request, so we look up 100 venues per HTTP call instead
-# of one-at-a-time. This is the single biggest efficiency lever here.
-BATCH_SIZE = 1000
+# Coordinates per API call. The Open-Meteo Elevation API HARD-CAPS at 100
+# coordinate pairs per request (documented limit; >100 returns HTTP 400 and the
+# whole batch is lost). At 100 the GET URL is well under any length limit, so we
+# use a plain GET as the docs specify.
+BATCH_SIZE = 100
  
-# Small pause between calls — same "good API citizen" courtesy as the weather
-# backfill. At 100 coords/call and 10k calls/day, throughput is not a concern.
-SLEEP_BETWEEN_BATCHES = 0.5  # seconds
+# Small courtesy pause between calls. Paid tier has no rate limit; this is just
+# politeness.
+SLEEP_BETWEEN_BATCHES = 0.1
  
 # Per-request network timeout (seconds).
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 60
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,10 +68,11 @@ REQUEST_TIMEOUT = 30
 # Output:   None.
 def _addAltitudeColumns(conn):
     cursor = conn.cursor()
-    cursor.execute("ALTER TABLE meets    ADD COLUMN IF NOT EXISTS altitude_meters REAL")
-    cursor.execute("ALTER TABLE meets_tf ADD COLUMN IF NOT EXISTS altitude_meters REAL")
+    cursor.execute("ALTER TABLE meets       ADD COLUMN IF NOT EXISTS altitude_meters REAL")
+    cursor.execute("ALTER TABLE meets_tf    ADD COLUMN IF NOT EXISTS altitude_meters REAL")
+    cursor.execute("ALTER TABLE meets_tfrrs ADD COLUMN IF NOT EXISTS altitude_meters REAL")
     conn.commit()
-    print("[elevation] altitude_meters column ready on meets, meets_tf")
+    print("[elevation] altitude_meters column ready on meets, meets_tf, meets_tfrrs")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,10 +92,10 @@ def _addAltitudeColumns(conn):
 def _getCoordsToFetch(conn) -> list:
     cursor = conn.cursor()
  
-    # UNION the still-NULL coordinates from both tables, then DISTINCT the union
-    # so a venue shared by XC and TF is one lookup. We key on the raw stored
-    # lat/long pair (the same values we'll match on when writing back), so the
-    # write-back UPDATE lines up exactly with what we fetched.
+    # UNION the still-NULL coordinates from all THREE venue tables, then DISTINCT
+    # the union so a venue shared across sports/sources is one lookup. We key on
+    # the raw stored lat/long pair (the same values we match on when writing
+    # back), so the write-back UPDATE lines up exactly with what we fetched.
     cursor.execute("""
         SELECT DISTINCT lat, long FROM (
             SELECT gps_lat AS lat, gps_long AS long
@@ -100,6 +108,14 @@ def _getCoordsToFetch(conn) -> list:
  
             SELECT gps_lat AS lat, gps_long AS long
             FROM meets_tf
+            WHERE gps_lat IS NOT NULL
+              AND gps_long IS NOT NULL
+              AND altitude_meters IS NULL
+
+            UNION
+
+            SELECT gps_lat AS lat, gps_long AS long
+            FROM meets_tfrrs
             WHERE gps_lat IS NOT NULL
               AND gps_long IS NOT NULL
               AND altitude_meters IS NULL
@@ -133,9 +149,12 @@ def _fetchElevations(batch: list) -> list:
     longs = ",".join(str(long) for _,  long in batch)
  
     try:
+        # GET, as the docs specify. A 100-coordinate comma list is a short URL
+        # (well under any length limit), so there is no need for POST (which the
+        # API does not document). apikey rides in the query params.
         response = requests.get(
             ELEVATION_URL,
-            params={"latitude": lats, "longitude": longs},
+            params={"latitude": lats, "longitude": longs, "apikey": API_KEY},
             timeout=REQUEST_TIMEOUT,
         )
         if response.status_code != 200:
@@ -199,6 +218,11 @@ def _saveElevations(conn, results: list) -> int:
             UPDATE meets_tf SET altitude_meters = %s
             WHERE gps_lat = %s AND gps_long = %s AND altitude_meters IS NULL
         """, (elevation, lat, long))
+
+        cursor.execute("""
+            UPDATE meets_tfrrs SET altitude_meters = %s
+            WHERE gps_lat = %s AND gps_long = %s AND altitude_meters IS NULL
+        """, (elevation, lat, long))
  
         written += 1
  
@@ -241,6 +265,13 @@ def _printProgress(done: int, total: int, start_time: float):
 # Output:   None.
 def main():
     print("[elevation] Starting elevation backfill")
+
+    if not API_KEY:
+        print("[elevation] ERROR: OPENMETEO_KEY is not set. Set it first:")
+        print('  PowerShell:  $env:OPENMETEO_KEY = "your-key-here"')
+        print('  bash:        export OPENMETEO_KEY="your-key-here"')
+        return
+
     initPool()
     start_time = time.time()
  
@@ -250,6 +281,18 @@ def main():
             _addAltitudeColumns(conn)
             coords = _getCoordsToFetch(conn)
  
+        # --limit N: only process the first N coordinates this run (a cheap
+        # smoke test before turning the full backfill loose). Resumable, so a
+        # limited run just fills a slice and the next run continues.
+        import argparse
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--limit", type=int, default=0,
+                        help="process only the first N coordinates (0 = all)")
+        limit = ap.parse_args().limit
+        if limit:
+            coords = coords[:limit]
+            print(f"[elevation] --limit {limit}: processing {len(coords)} this run")
+
         total = len(coords)
         if total == 0:
             print("[elevation] All venues already have elevation — nothing to do")

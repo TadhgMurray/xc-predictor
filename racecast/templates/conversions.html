@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Conversions — Racecast</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<section class="conv">
+    <h1>Conversions</h1>
+    <p class="conv-intro">
+        Enter one performance — a time, a rating, an athlete, or a specific
+        result — and see it projected across courses and distances.
+        <span class="req-key"><span class="req">*</span> required (or a source that implies it)</span>
+    </p>
+
+    {# ---- SOURCE CONTROLS ------------------------------------------- #}
+    <div class="conv-source">
+        <div class="conv-row">
+            <label>Source
+                <select id="source-type">
+                    <option value="time">A time</option>
+                    <option value="rating">A speed rating</option>
+                    <option value="athlete">An athlete</option>
+                    <option value="result">A specific result</option>
+                </select>
+            </label>
+
+            <label>Pool
+                <select id="source-pool">
+                    {% for key, lbl in pools %}
+                        <option value="{{ key }}">{{ lbl }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label>Sport
+                <select id="source-sport">
+                    <option value="XC">Cross Country</option>
+                    <option value="TF">Track &amp; Field</option>
+                </select>
+            </label>
+        </div>
+
+        {# Fields that show/hide by source type. data-for lists the types
+           each field applies to; JS toggles visibility. #}
+        <!-- ATHLETE source: search by name -->
+        <div data-for="athlete result" class="src-field">
+            <label class="field-label">Athlete <span class="req">*</span></label>
+            <div class="drop-anchor">
+                <input type="text" id="in-athlete" placeholder="Search athlete…" autocomplete="off">
+                <div id="athlete-drop" class="conv-drop"></div>
+            </div>
+            <div id="athlete-chosen" class="chosen"></div>
+        </div>
+
+        <!-- RESULT source: after an athlete is picked, choose one of their races -->
+        <div data-for="result" class="src-field">
+            <label class="field-label">Race <span class="req">*</span></label>
+            <select id="in-result-select"><option value="">— pick athlete first —</option></select>
+        </div>
+
+        <!-- TIME source -->
+        <!-- type="text", not "number": a number input rejects "9:01.10"
+             outright (the value comes back as "") and shows spinner arrows
+             that are meaningless for a duration. JS parseTime handles
+             ss.ss / m:ss.ss / h:mm:ss.ss. -->
+        <label class="src-field" data-for="time">
+            <span class="field-label">Time (hh:mm:ss) <span class="req">*</span></span>
+            <input type="text" id="in-time" value="00:00:00"
+                   inputmode="numeric" autocomplete="off">
+        </label>
+        <!-- list= turns this into an EDITABLE dropdown: pick a common
+             distance or type any number. type="text" again, to drop the
+             spinners; JS parseFloat's it. -->
+        <div data-for="time" class="src-field">
+            <span class="field-label">Distance (m) <span class="req">*</span></span>
+            <!-- .drop-anchor is what removes the gap: .conv-drop is
+                 position:absolute; top:100%, so it hangs off its nearest
+                 POSITIONED ancestor. That used to be .src-field -- whose box
+                 includes the label and the "chosen" line -- so the menu
+                 appeared a row and a half below the input. Anchoring to a
+                 wrapper that holds ONLY the input puts it flush. -->
+            <div class="drop-anchor">
+                <input type="text" id="in-distance" autocomplete="off">
+                <div id="in-distance-drop" class="conv-drop"></div>
+            </div>
+        </div>
+        <!-- TIME source can name the course it was run on (adjusts difficulty out) -->
+        <div data-for="time" class="src-field">
+            <label>Course (optional)</label>
+            <div class="drop-anchor">
+                <input type="text" id="in-course" placeholder="Search course…" autocomplete="off">
+                <div id="in-course-drop" class="conv-drop"></div>
+            </div>
+            <div id="in-course-chosen" class="chosen"></div>
+        </div>
+
+        <!-- RATING source -->
+        <label data-for="rating" class="src-field">
+            <span class="field-label">Speed rating <span class="req">*</span></span>
+            <input type="number" id="in-rating" step="0.1">
+        </label>
+
+        {# Optional input weather (adjust OUT of the source's conditions) #}
+        <details class="conv-weather src-field" data-for="time">
+            <summary>Input weather (optional — the conditions the source was run in)</summary>
+            <!-- UNIT BUTTONS. Each unit-bearing field carries data-unit with
+                 the unit currently DISPLAYED; the buttons convert the value in
+                 place and flip it. readWeather() converts back to the model's
+                 canonical units (degC, m/s) before sending, so the wire format
+                 never changes and only the display does. -->
+            <div class="conv-row">
+                <label><span class="field-label">Apparent temp
+                    <span class="unit-toggle">(<button type="button"
+                        class="unit-btn is-on" data-target="in-wx-temp"
+                        data-unit="C">°C</button><button type="button"
+                        class="unit-btn" data-target="in-wx-temp"
+                        data-unit="F">°F</button>)</span></span>
+                    <input type="number" id="in-wx-temp" step="0.1"
+                           data-unit="C"></label>
+                <label><span class="field-label">Wind
+                    <span class="unit-toggle">(<button type="button"
+                        class="unit-btn is-on" data-target="in-wx-wind"
+                        data-unit="ms">m/s</button><button type="button"
+                        class="unit-btn" data-target="in-wx-wind"
+                        data-unit="mph">mph</button>)</span></span>
+                    <input type="number" id="in-wx-wind" step="0.1"
+                           data-unit="ms"></label>
+                <label>Precip (mm)
+                    <input type="number" id="in-wx-precip" step="0.1"></label>
+                <label>Soil (mud)
+                    <input type="number" id="in-wx-soil" step="0.1"></label>
+            </div>
+
+            <!-- APPARENT TEMP IS STILL THE FIELD THE MODEL READS. These only
+                 FILL it, for anyone who has air temp and humidity rather than
+                 a finished apparent temp.
+                 ⚠ The value computed here is an APPROXIMATION of the number
+                   the weather API supplied when the corpus was built. It uses
+                   the Australian apparent-temperature formula (what Open-Meteo
+                   reports), but it is a second implementation of a definition
+                   this codebase does not own -- so the direct field stays, and
+                   anyone converting a specific race should look the real
+                   number up rather than reconstruct it. -->
+            <details class="conv-wx-parts">
+                <summary>Don't have apparent temp? Enter its parts</summary>
+                <div class="conv-row">
+                    <label><span class="field-label">Air temp
+                        <span class="unit-toggle">(<button type="button"
+                            class="unit-btn is-on" data-target="in-wx-airtemp"
+                            data-unit="C">°C</button><button type="button"
+                            class="unit-btn" data-target="in-wx-airtemp"
+                            data-unit="F">°F</button>)</span></span>
+                        <input type="number" id="in-wx-airtemp" step="0.1"
+                               data-unit="C"></label>
+                    <label>Humidity (%)
+                        <input type="number" id="in-wx-humidity" step="1"
+                               min="0" max="100"></label>
+                </div>
+                <p class="conv-hint" id="wx-derived">
+                    Wind is taken from the field above.
+                </p>
+            </details>
+        </details>
+
+        <button id="convert-btn" class="conv-go">Convert</button>
+    </div>
+
+    {# ---- THE TWO TABLES ------------------------------------------- #}
+    <div class="conv-normalized" id="norm-display"></div>
+
+    <div class="conv-tables">
+        {# XC table -- most common courses, extensible #}
+
+        <div class="conv-table-wrap">
+            <h2>Cross Country</h2>
+            <table class="conv-table" id="xc-table">
+                <thead><tr><th>Course</th><th>Distance</th><th>Time</th></tr></thead>
+                <tbody id="xc-body">
+                    {% for c in xc_courses %}
+                    <tr data-course="{{ c.course_name }}"
+                        data-difficulty="{{ c.difficulty }}"
+                        data-distance="{{ c.distance }}">
+                        <td>{{ c.course_name }}</td>
+                        <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
+                        <td class="cell-time">—</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="conv-add">
+                <div class="drop-anchor">
+                    <input type="text" id="add-course" placeholder="Search a course…" autocomplete="off">
+                    <div id="course-drop" class="conv-drop"></div>
+                </div>
+            </div>
+        </div>
+
+        {# TF table -- usual distances, extensible #}
+        <div class="conv-table-wrap">
+            <h2>Track &amp; Field</h2>
+            <table class="conv-table" id="tf-table">
+                <thead><tr><th>Distance</th><th>Time</th></tr></thead>
+                <tbody id="tf-body">
+                    {% for dist, lbl in tf_distances %}
+                    <tr data-distance="{{ dist }}">
+                        <td>{{ lbl }}</td>
+                        <td class="cell-time">—</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="conv-add">
+                <div class="drop-anchor">
+                    <input type="text" id="add-distance" placeholder="Search a distance…" autocomplete="off">
+                    <div id="distance-drop" class="conv-drop"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<script src="{{ url_for('static', filename='conversions.js') }}"></script>
+</body>
+</html>

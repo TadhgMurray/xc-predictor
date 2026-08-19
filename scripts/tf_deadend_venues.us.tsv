@@ -1,0 +1,250 @@
+# meets_tf DEAD-END venues (no venue name, no gps twin). Fill gps_lat/gps_long by hand where the meet names reveal a place.
+# location_id	n_divs	n_meets	states	sample_meet_names	gps_lat	gps_long
+# auto-filled 2026-07-11 by fill_deadend_venues.py (per-row rule in provenance sidecar)
+138170	2717	28	MS	2025 MAIS 1-AA, 1-AAA, 1-AAAA & 2-AAA Varsity District Track & Field Championship | Colt Relays | Gulfport Gaston Hewes Relays | Lee Academy Classic		
+141903	2247	65	KY	AAU KY District | Bluegrass State Games | City of Middletown MS Track Classic | Eastern Quad	36.662	-88.310
+141795	1811	59	MN	2005 AAU Minnesota Junior Olympic | AAU MN Championships | Boys JV - May 2 | Boys JV - Rosemount, Apple Valley, Eagan, Burnsville		
+138213	673	6	VA	BWSP Queens and Kings | BWSP Queens and Kings - Meet 2 | BWSP Queens and Kings - Meet 3 | BWSP Queens and Kings Championships		
+140576	657	39	MO	SLPS- Boys (St. Louis Public Schools Only) | Dewanda Lewis-Bey PHL Field Days | Field Day - Phl | Gateway Institute of Technology Invitational		
+141237	604	22	MN	Blaze Invitational | Blaze Invite | Burnsville Boys JV | Burnsville Boys JV Quad	44.130	-93.993
+138346	498	4	NB	AUS Track and Field Championships | NBIndoor+UniversityIndoor | Red & Black Open	45.950	-66.640
+140734	376	13	IA	2A State Qualifier - Eddyville-Blakesburg-Fremont | EBF HS Boys Relays | Eddyville-Blaskesburg Girls' Relays | Eddyville Girls Invitational	41.681	-93.246
+142470	367	16	NH	NHWTL JV 2 | NHWTL UNH Afternoon | NHWTL UNH Morning | NWTL UNH PM		
+113007	355	6	TX	District 4-5A Meet | District Championships 3-5A | Johnson County Relays | Keith Gilbert Elk Relays		
+141173	353	4	NC	Johnson Riley | MidState Championship | NC United	37.041	-88.350
+142556	327	2	NB	Atlantic Indoors | Moncton Open	46.100	-64.800
+112977	289	8	OS	GMM Invitational | Humphreys Invitational | Humphreys Invitational KAIAC schools | JMM Invitational	36.970	127.030
+140936	250	7	PA	7th vs 8th | Altoona vs Bishop Guilfoyle, Penns Valley, and Tyrone | CD East/CD @ Altoona | CM/BG @ Altoona		
+138176	243	8	OH	Ohio State HS Qualifier # 1 | Ohio State HS Qualifier # 2 | Ohio State HS Qualifier # 3 | Ohio State HS Qualifier # 4	40.006	-83.029
+112888	238	9	OS	GDOE Meet 2- UMSvsVSAB, FBvsAIJMS, OMSvsIMS, JRMSvsAMS, FBvsVSAB, OMSvsAMS | GDOE Meet 3- IMSvsAIJMS, VSABvsJRMS, OMSvsUMS, AMSvsFBLG, VSABvsAIJMS, OMSvsJRMS | GDOE Meet 4- AIJMSvsOMS, VSABvsIMS, UMSvsAMS, JRMSvsFBLG, UMSvsFBLG, IMSvsAMS | GDOE Meet 5- IMSvsUMS, AMSvsVSAB, FBLGvsOMS, JRMSvsAIJMS	13.470	144.790
+112838	236	7	OS	Mike Petty Memorial III Final Results | Petty Memorial - Day One | Petty Memorial - Day Two | Petty Memorial IV Final Results	26.340	127.800
+142599	225	1	NSW	Coles Region 2 Champs	-33.850	151.070
+112873	223	7	OS	Iiaag All-Island Championship | IIAAG Meet#1- GHSvsOHS, GWvsFD-AOLG, SHSvsSSHS | IIAAG Meet#2- SSHSvsGHS, GWvsGHS, SHSvsGW, OHSvsJFK, FD-AOLGvsJFK, SSHSvsOHS | IIAAG Meet#3- JFKvsSSHS, OHSvsGW, FD-AOLGvsSHS,	13.470	144.790
+141811	221	6	MS	Coastal Mississippi Challenge | MHSAA Division 8-2A Championship | MHSAA Region 4-3A | Nativity BVM Meet		
+141950	216	1	VA	AAU Virginia North District Qualifier	38.897	-77.072
+138318	215	4	MS	Velma Jackson Invitational | Velma Jackson Invitational II | Velma Jackson Region 6-1A	32.776	-89.867
+112850	208	10	OS	GPSS Meet #1 | GPSS Meet #3 | GPSS Meet #4 | GPSS Meet #5	13.470	144.790
+112939	191	6	OS	Iiaag All-Island Championship | Iiaag Meet #3 | Iiaag Meet #4 | Iiaag Meet #5	13.470	144.790
+142047	180	1	IL	AAU Central District Qualifier 2	41.887	-87.766
+142045	169	1	VA	Cannonball Cooper Invite		
+141187	168	5	NE	Boone Central Invitational | Boone Central MS Invite | Mid State Conference Championships | St. Paul MS Invitational	41.688	-98.003
+141229	165	5	PA	George School #1 | George School #2 | George School #3 | George School #4	41.621	-79.670
+140778	153	4	NC	Mid-South Relays | SAC #3 | SAC #6 | SAC Championship	35.790	-82.241
+140571	146	4	MO	Clayton Classic | Clayton Varsity | Greyhound Invite | Greyhound JV	38.650	-90.336
+112926	145	7	OS	GDOE Middle School Meet #1 | GDOE Middle School Meet #2 | GDOE Middle School Meet #3 | GDOE Middle School Meet #4	13.470	144.790
+141062	144	4	PA	East Stroudsburg South #3 | ESS Dual #1 | ESS Dual #2 | ESS Dual #4	40.998	-75.184
+141228	143	4	PA	ESN Dual #1 | ESN Dual #2 | ESN Dual #3 | ESN Dual #4		
+141063	142	4	PA	Stroudsburg Dual #1 | Stroudsburg Dual #2 | Stroudsburg Dual #3 | Stroudsburg Dual #4	40.986	-75.195
+142032	139	1	Texas	TAAF Region 6	30.266	-97.650
+141197	135	3	IA	CIML HS Boys Conference | SE Polk HS Boys | SE Polk MS Coed		
+141106	132	4	IA	Perry HS Boys | Perry HS Girls | Perry MS Coed | Perry MS Girls	41.839	-94.107
+138047	129	1	NB	Dernière Chanc	46.100	-64.800
+142216	127	1	NSW	NSW Primary Schools 24	-33.850	151.070
+141869	125	1	NC	Ken Roberts Panther Elite		
+141483	122	3	IA	Mt Ayr HS Coed | POI HS Coed Conf Meet	40.715	-94.238
+142455	121	2	AB	Dino#1 | Dino3	51.080	-114.130
+142509	121	1	TX	Afterburners Track Meet		
+112940	120	4	OS	DHS Invitational | HHS Invitational | OHS Invitational MS,HS | SAHS Invitational	37.550	126.990
+140583	120	4	MO	Troy JV | Troy South MS | Troy Throwdown | Troy Trojan Varsity Invitational	38.979	-90.981
+141194	117	3	IA	DSM Valley HS Boys | DSM Valley HS Boys 9/10 | DSM Valley HS Coed	41.571	-93.709
+142742	114	2	CA	Beaumont vs Shadow Hills/ Palm Desert | Norte Vista vs Hillcrest/ La Sierra	33.930	-116.976
+141159	112	3	IA	Newton HS Coed | Newton MS Boys	41.700	-93.054
+142360	112	1	QLD	2025 SE HART Reg. Relays	-27.560	153.060
+141122	107	3	IA	Clarke HS Boys | Clarke HS Girls	41.015	-93.784
+141680	107	3	St. Andrew Parish	FRENCH FORAY #3 | INSPORTS CENTRAL PRIMARY CHAMPS 2024 | JCF NATIONAL SPORTS 2024	18.000	-76.780
+112839	107	4	OS	All-Island | Iaag #2- Sshs-Jfk/shs-Gw/fd*aolg-Ghs | Iaag #5- Jfk-Ghs/gw-Fd*aolg/sshs-Shs | Iaag All-Island	13.470	144.790
+138217	106	1	SK	K of C	52.130	-106.630
+140575	104	2	MO	Pacific HS | Pacific MS	38.482	-90.742
+141443	95	1	NSW	Treloar Shield - Round 2	-33.850	151.070
+112890	95	3	OS	All Island Championship | IIAAG Meet 1- OHSvsGH, SHSvsSSHS, FD/AOLGvsGW | IIAAG Meet 2- GHSvsFD/AOLG, SSHSvsOHS, SHSvsJFK, OHS vsJFK	13.470	144.790
+141444	94	1	NSW	Treloar Shield - Round 3	-33.850	151.070
+112934	93	2	OS	Okinawa Quad #3 | Okinawa Quad #5	26.340	127.800
+141448	91	7	PA	Garnet Valley MS #2 | Garnet Valley MS #3 | Garnet Valley MS #4 | Garnet Valley MS #5	39.843	-75.537
+112992	90	3	os	DMHS Invitational (Sr. Recognition) (MS) | Korea Finals | SAHS Invitational	37.550	126.990
+112906	88	3	OS	OAC Weekly Quadrangular	26.340	127.800
+139744	88	4	IL	Minooka Girls Invitational | Minooka vs. Oswego East and Joliet West Girls | Minooka vs. Oswego Girls | Minooka vs. Plainfield East	41.455	-88.262
+141583	84	2	IA	DSM Christian HS Coed | DSM Christian MS Coed		
+142494	84	4	PA	PCL Indoor Championships | TFCAGP #2 | TFCAGP #4 | TFCAGP #5	41.395	-75.261
+112885	82	1	NS	DISTR10		
+140544	78	1	MO	Nortwest Invite	38.280	-93.395
+142743	77	1	CA	Los Al vs Servite /Rosary	38.630	-121.441
+141078	76	2	PA	Lock Haven Bald Eagle | Lock Haven HS Classic	41.114	-77.482
+141515	76	2	IA	WCAC HS Coed Conf | WCV HS Coed		
+140512	76	2	MO	AAA Conference | Borgia Invitational	39.260	-94.658
+141830	75	1	NC	NCHSAA 1A/3A Outdoor State Championship		
+112927	75	3	OS	10th Annual Mike Petty Memorial Meet | JV Petty | OAC Weekly Quadrangular - 1	26.340	127.800
+140551	74	3	IL	Minooka Girls Invitational | Minooka vs PCHS vs Oswego | Minooka vs Yorkville	41.455	-88.262
+141389	73	2	IA	CN Robinson Relays | NevadaGirls24	42.342	-91.579
+140716	72	1	IL	Bloomington/Normal Intercity Boys and Girls		
+141447	72	2	PA	GFS #2 | GFS #3	40.033	-75.172
+141449	71	2	PA	Westtown #2 | Westtown #3	39.931	-75.552
+112884	70	1	OS	ECC Championships		
+141231	70	2	PA	FC Dual 1 | Friends Central Dual #2	39.963	-75.153
+112967	68	2	OS	Kaiserslautern HS Meet	49.440	7.770
+142702	68	2	IL	Glenbard East Rams Girls Invite | Glenbard East Rams Invitational		
+141593	68	2	NE	2024 CRC Invite | SRC 2024 INVT	40.724	-96.773
+113006	68	1	KS	Syracuse HPL Meet		
+112937	68	2	OS	Ramstein Track Meet	49.440	7.600
+141568	68	2	NE	2024 NSAA B-4 Districts | Boone Central JH Quad		
+112913	67	2	OS	Korea Int Schools Invite | KOrea INternational Schools District Championship	37.550	126.990
+141514	66	2	IA	Martensdale HS Coed | Martensdale MS Coed	41.374	-93.739
+141341	66	3	PA	Germantown Academy #1 | Springside Chestnut Hill #1 | Springside Chestnut Hill #2	40.138	-75.220
+141873	66	1	PA	CYO Area I	41.665	-80.488
+112938	64	2	OS	Iiaag Meet #2 | Iiaag Track & Field Meet #1	13.470	144.790
+141599	64	1	NE	Fairbury JH Invite		
+142732	64	1	OH	Central District Indoor Championships	41.494	-81.655
+112935	63	1	OS	Okinawa Quad #4	26.340	127.800
+112948	62	1	OS	O.A.A.C. Quad Meet	26.340	127.800
+112879	62	1	OS	Weekly Quadrangular		
+112880	60	1	OS	Weekly Quadrangular -Field Events		
+112883	60	2	OS	Weekly Okinawa Quadrangular | Weekly Quadrangular - Running Events	26.340	127.800
+142458	59	2	NY	Section 7 CVAC League Meets # 3A and 3B | Section 7 CVAC League Meets # 3B		
+113012	58	2	os	Last Chance (Make-up meet for 24 Mar) | OMHS Invitational (MS)		
+112973	58	1	OS	Screaming Eagle Track Meet		
+112981	58	1	os	Kanto #3 Oi Futo	35.580	139.760
+112982	58	1	os	Kanto #4A Oi Futo	35.580	139.760
+112959	58	1	OS	Kanto Schools #4	35.680	139.760
+113000	58	1	OR	Reedsport Middle School Meet	43.702	-124.097
+141156	57	1	NY	Iona/Ursuline Invite		
+112903	57	1	OS	Kanto Schools Meet D-2	35.680	139.760
+140577	57	2	MO	Eureka Boys Invite | Kimball-Wintermeyer Invitational	38.503	-90.628
+112904	56	2	OS	ISST Championships 2012 Day 1 | ISST Championships 2012 Day 2		
+138150	56	2	FL	Lightning Sprint Out 2 | Lightning Sprint Out 3		
+142376	56	2	NC	GC Middle Schools Invitational | Panther Invitational	36.005	-78.933
+112936	56	1	OS	Okinawa District Finals	26.340	127.800
+112892	54	1	OS	ISST Brussels 2011	50.850	4.350
+141704	53	2	PA	Malvern Prep #2 | PAISAA		
+112932	52	1	OS	2014 KSAA HS Track & Field Championship	37.550	126.990
+112960	51	1	OS	Kanto Schools #7b MS mostly	35.680	139.760
+142555	50	1	IL	Akinosun Invitational		
+112919	49	1	OS	Vicenza HS	45.550	11.550
+113002	48	1	MA	MIAA EMASS D1 Championship		
+112987	48	2	os	Bahrain Invitational #4 | Bahrain School Last Chance Meet	26.190	50.550
+112902	47	1	OS	Kanto Schools Meet C - Int'l Schools	35.680	139.760
+112998	47	1	os	Screaming Eagles Track and Field Invitational		
+112841	45	2	OS	GW vs. JFK | IIAAG Meet #3- SSHS vs JFK, SHS vs GW, AOLG/FD vs GH	13.470	144.790
+112947	42	1	OS	O.A.A.C. Quad Meet	26.340	127.800
+113028	41	1	os	Bahrain Meet #1	26.190	50.550
+140585	40	1	MO	FZE Varsity		
+112950	40	1	OS	DISTRICT FINALS		
+112898	40	1	OS	All-Japan (64th Local Soutai) - North Japan		
+140586	40	1	MO	Grain Valley Invite	39.019	-94.198
+112930	39	1	OS	Last Chance Invitational		
+112946	39	1	OS	O.A.A.C. Quad Meet	26.340	127.800
+112975	38	1	OS	Japan 70th InterHigh HS Nationals		
+141304	38	1	IA	Collins-Maxwell HS Coed	41.890	-93.396
+140588	38	1	MO	Suburban Conference Red Girls Championships	37.331	-89.557
+140582	38	1	MO	Battle JV	38.938	-92.350
+140746	38	1	MO	Bob Thorpe Invite		
+112971	37	1	OS	Japan 69th InterHigh Nationals		
+141891	36	1	WI	WIAA D2 Sectional - Portage	44.460	-89.511
+141589	36	1	PA	ESS Cavalier		
+141698	36	1	MO	MCSAA State Track Meet - 2024	32.278	-106.748
+141294	36	1	PA	Spring Ford #2	40.208	-75.527
+141719	36	1	WI	WIAA D3 Regional-Cashton	43.743	-90.779
+141354	36	1	IL	NIC 10 Girls Conference Meet	41.699	-87.586
+141791	36	1	IA	LHC MS Girls Meet		
+141817	36	1	PA	Inter-Ac		
+112854	35	2	OS	Kubasaki Kadena | Okinawa Relays Day#1 (replaces Petty)	26.350	127.770
+141468	35	1	NE	Platteview #2 2024	41.126	-101.736
+141747	34	1	NE	NSAA D-5 District Championships		
+140754	34	1	NE	Coaches Legacy 2024		
+112965	34	1	OS	Ramstein Invitational	49.440	7.600
+112921	34	1	OS	AFNorth	50.940	5.970
+113008	34	1	os	Lakenheath Invitational	52.410	0.560
+112886	34	1	OS	BFA Meet	47.710	7.660
+112852	34	1	OS	Heidel,Ramst,Vilseck, BFA,Bamberg@Hohenfels 2009	49.220	11.830
+112922	34	1	OS	Patch Invitational 2013	48.750	9.100
+141590	34	1	NE	L&C Conf		
+113015	34	1	os	Kaiserslautern Invite 2	49.440	7.770
+112918	34	1	OS	Hohenfels Invite	49.220	11.830
+112944	34	1	OS	Patch Track Meet	48.750	9.100
+113009	33	1	os	Naples HS Invitational Track meet	40.850	14.270
+112905	33	1	OS	Osan American, Daegu, Seoul American	37.090	127.030
+112929	33	1	OS	Japan 66th InterHigh Nationals		
+112928	32	1	OS	Lakenheath Home Meet	52.410	0.560
+112889	32	1	OS	IIAAG Meet 6- SSHSvsGW, GHSvsJFK, SHSvsFD/AOLG, GWvsSHS	13.470	144.790
+112952	32	1	OS	Vicenza HS Track and Field	45.550	11.550
+112966	32	1	OS	IIAAG TRACK & FIELD ALL-ISLAND	13.470	144.790
+112894	32	1	OS	Okinawa Relays Day#2 (replaces Petty)	26.340	127.800
+112907	31	1	OS	OAC Weekly Quadrangular	26.340	127.800
+142528	31	1	NC	Falcon Relays	35.190	-78.648
+112887	31	1	OS	IIAAG Meet 4- JFKvsFD/AOLG, FD/AOLGvsSSHS, GHSvsSHS, GWvsOHS	13.470	144.790
+112994	30	1	os	OAC Meet #7	26.340	127.800
+140942	30	1	NC	2024 Union Pines Viking Relays	35.318	-79.347
+113022	30	1	os	Last Chance Invitational		
+112853	30	1	OS	Weekly Triangular- OAC Running Events	26.340	127.800
+112995	30	1	os	OAC District Finals (Meet #8)	26.340	127.800
+112882	30	1	OS	OAC District Meet	26.340	127.800
+112993	30	1	os	OAC Meet #6	26.340	127.800
+112988	30	1	os	HHS Invitational		
+112924	30	1	OS	IIAAG Meet #4	13.470	144.790
+112911	30	1	OS	SISAC Championships		
+112909	30	1	OS	O.a.c. District Meet	26.340	127.800
+112908	30	1	OS	OAC Weekly Quadrangular	26.340	127.800
+112875	30	1	OS	Japan RegionFar East Qualifying Meet		
+113019	29	1	os	SAMHS Invitational (+MS)		
+141252	28	1	NY	Rondout Valley vs. New Paltz	41.815	-74.188
+142634	28	1	IL	Proviso East 14th Annual Lady Pirate Invite		
+112859	28	1	OS	Petty Memorial VIII- Day #2	26.340	127.800
+112843	28	1	OS	Petty Memorial VII- Day #1	26.340	127.800
+112949	28	1	OS	O.A.A.C. Quad Meet	26.340	127.800
+113001	28	1	ID	Northside Conference Meet	43.593	-116.572
+142352	28	2	AZ	AZ HS 5K Open Champs | Hugh Morrison	32.161	-110.891
+112891	27	2	OS	Petty Memorial V - Day One | Petty Memorial V - Day Two	26.340	127.800
+112881	26	1	OS	Weekly Quadrangular - Running Events		
+112877	26	1	OS	Korea International Schools Invitational	37.550	126.990
+141281	26	1	IA	Dordt HS Invite	43.081	-96.164
+141019	25	1	IA	Graceland HS Meet	40.617	-93.926
+112931	24	1	OS	2014 KSAA MS Track & Field Championship	37.550	126.990
+112923	23	1	OS	Daegu Invitational	35.870	128.600
+112920	23	1	OS	OAHS Invite		
+113034	23	1	os	Rota Home Meet 3	36.620	-6.350
+112869	23	1	OS	July/August Local Athletic Track Meets		
+112893	22	1	OS	GDOE Meet 1- UMSvsJRMS, AIJMSvsAMS, IMSvsFBLG, VSABvsOMS, AIJMSvsUMS, JRMSvsIMS	13.470	144.790
+112914	22	1	OS	GDOE Middle School Meet #2	13.470	144.790
+112972	22	1	CS	National Jrs		
+141943	22	1	NE	Midwest Night of Stars		
+142644	22	1	MI	AQ MITS #2		
+112861	21	1	OS	YR22 Saitama Consolidated HS Track Meet	35.860	139.650
+112976	20	1	OS	LOKEREN	51.100	3.990
+112956	20	1	OS	GDOE Meet#1	13.470	144.790
+112917	20	1	OS	Eagles Intersquad Meet		
+140322	19	1	CA	Heritage vs San Jacinto/ Elsinore	38.773	-121.390
+140572	19	1	MO	Rockwood Girls Quad	36.903	-93.081
+141450	18	1	PA	Lower Merion Meet	40.025	-75.277
+142562	18	1	IL	Clinton Early Bird Meet	38.590	-89.420
+112868	18	1	OS	65th Kanagawa Track Meet (6/27, 7/3&4)	35.450	139.640
+140957	18	1	PA	Garnet Valley Dual #1	39.843	-75.537
+112955	18	1	OS	"Pre-Petty	26.340	127.800
+112896	18	1	OS	All-Japan (64th) Soutai - Central Regional		
+112943	18	1	OS	Chiba-ken Primaries #1	35.610	140.120
+141702	17	1	PA	Notre Dame #2	40.319	-75.180
+112897	17	1	OS	Late May, Early June Meets		
+112925	16	1	OS	GDOE Middle School Meet #1	13.470	144.790
+141851	16	1	IN	IHSAA Boys Sectional 18		
+142681	15	1	AB	ACAC #3		
+112867	15	1	OS	31st Tokyo Grade-Level Meet Regions 2, 3, 5, 6	35.680	139.760
+141784	14	1	PA	Strath Haven MS #3	39.895	-75.372
+141215	14	1	NY	NYCAL #1		
+112863	14	1	OS	Kanagawa Meet Days 1 2 3 4	35.450	139.640
+112837	12	1	OS	All-Island		
+112865	10	2	OS	KIDS Track & Field Meet | Long Distance & Field Events Track Meet		
+113026	10	1	OS	DoDEA Europe Virtual Meet		
+112895	8	1	OS	Kanto Region Season Openers	35.680	139.760
+112860	7	1	OS	Junior High Joint Track Meet		
+112864	6	1	OS	Koza Prefectural time trials	26.340	127.800
+112872	6	1	OS	Kanto Prefectural Long-Distance Meets (Fall)	35.680	139.760
+113004	6	1	OH	Adena Tri	40.218	-80.873
+112836	5	1	OS	GW		
+112899	5	1	OS	Tokai/Hokuriku Early July		
+142000	4	1	CA	Time Trial	47.107	-88.556
+112916	4	1	OS	Team Time Trials		
+141912	3	1	NJ	53rd Tri-State Games		
+112910	2	1	OS	CocaCola1500		
+112953	1	1	OS	Netherlands Junior National Indoor		
+112901	1	1	OS	Kanto Schools Meet A-2 - Int'l Schools	35.680	139.760
+112870	1	1	OS	Koshigaya City Track&Field Meet	35.890	139.790
+112840	1	1	OS	Marianas Invitational		
+112915	1	1	OS	Keihäskarnevaalit		
+112866	1	1	OS	Higashi Matsuyama Long Distance Meet 2010	36.040	139.400

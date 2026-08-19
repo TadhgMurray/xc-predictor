@@ -178,9 +178,87 @@ class ChunkedRaceDataset(Dataset):
         mask     = chunk["masks"][row]       # [S]
         context  = chunk["context"][row]     # [17]
         target   = chunk["targets"][row]     # scalar
+        # ★ int64, its own tensor. An embedding index is a lookup key, not a
+        #   measurement -- see feature_extraction._saveChunk.
+        #   .get() so a chunk written before venues existed still loads: it
+        #   yields 0, the UNKNOWN_VENUE row, which is pinned to zeros.
+        venue    = (chunk["venues"][row] if "venues" in chunk
+                    else torch.zeros((), dtype=torch.long))
 
-        return sequence, mask, context, target
+        return sequence, mask, context, target, venue
     
+# ------------------------------------------------------------------ #
+# CHUNK 2b — BATCH SAMPLER: shuffle without destroying the chunk cache
+# ------------------------------------------------------------------ #
+#
+# ★ THE PROBLEM THIS SOLVES, AND IT IS NOT A MICRO-OPTIMISATION.
+#   ChunkedRaceDataset caches ONE chunk. A plain DataLoader(shuffle=True)
+#   draws random GLOBAL indices, so consecutive __getitem__ calls land in
+#   different chunk files and the cache misses almost every time. Each miss
+#   is a torch.load() of an entire 10,000-example file -- to return ONE row.
+#   A 64-example batch reads ~64 whole chunk files. That is not slow
+#   training, it is training that never finishes.
+#
+# ★ THE FIX KEEPS BOTH PROPERTIES. Batches are built WITHIN a chunk, so one
+#   file load serves 64 examples. Randomness survives at two levels:
+#     - the ORDER of chunks is shuffled every epoch
+#     - the rows WITHIN each chunk are shuffled every epoch
+#   What is lost is cross-chunk mixing inside a single batch. That matters
+#   only if chunks are ordered by something correlated with the target --
+#   and feature_extraction writes them in athlete order, so a batch is 64
+#   examples from nearby athletes rather than 64 from everywhere.
+#
+# ⚠ SO IF ATHLETE ORDER EVER CORRELATES WITH THE TARGET (sorted by school,
+#   by state, by era) this introduces batch-level bias. The cheap insurance
+#   is to shuffle examples ONCE at extraction time; then chunk-local
+#   batching is exactly equivalent to global shuffling.
+
+
+class ChunkAwareBatchSampler:
+    """
+    Yields lists of indices, each list entirely inside one chunk file.
+
+    A batch_sampler is the torch hook for "I want to choose which indices
+    go together", as opposed to `sampler`, which only chooses their order.
+    DataLoader calls __iter__ once per epoch, so the reshuffle below happens
+    once per epoch automatically.
+    """
+
+    def __init__(self, dataset, batch_size: int, shuffle: bool):
+        # A Subset (from random_split) wraps the real dataset and holds the
+        # global indices it owns. We need BOTH: the chunk_size to group by,
+        # and the actual indices this split is allowed to touch.
+        base = getattr(dataset, "dataset", dataset)
+        self.indices = list(getattr(dataset, "indices",
+                                    range(len(dataset))))
+        self.chunk_size = base.chunk_size
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+
+        # Group this split's indices by which chunk file they live in.
+        self.by_chunk = {}
+        for i in self.indices:
+            self.by_chunk.setdefault(i // self.chunk_size, []).append(i)
+
+    def __iter__(self):
+        import random
+        chunk_ids = list(self.by_chunk)
+        if self.shuffle:
+            random.shuffle(chunk_ids)
+        for cid in chunk_ids:
+            rows = list(self.by_chunk[cid])
+            if self.shuffle:
+                random.shuffle(rows)
+            for start in range(0, len(rows), self.batch_size):
+                yield rows[start:start + self.batch_size]
+
+    def __len__(self) -> int:
+        # Number of BATCHES, not examples -- DataLoader reports this as
+        # len(loader), and a wrong value here silently truncates an epoch.
+        return sum((len(v) + self.batch_size - 1) // self.batch_size
+                   for v in self.by_chunk.values())
+
+
 # buildDataLoader
 # Purpose: Wrap a Dataset in a DataLoader, which batches examples,
 #          optionally shuffles them, and yields ready-to-use batches.
@@ -194,8 +272,9 @@ class ChunkedRaceDataset(Dataset):
 def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
     return DataLoader(
         dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=shuffle,
+        # ★ batch_sampler REPLACES batch_size + shuffle. Passing all three
+        #   is an error in torch, so they are gone from this call.
+        batch_sampler=ChunkAwareBatchSampler(dataset, BATCH_SIZE, shuffle),
         # DataLoader auto-STACKS the per-example tensors __getitem__
         # returns: 64 sequences of [S,17] become one [64, S, 17], 64
         # masks become [64, S], etc. That leading 64 is the B in every
@@ -240,7 +319,7 @@ def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
 #           dataset: a ChunkedRaceDataset (gives us num_chunks + the
 #                    chunk-loading helper)
 # Output:  a 1-D tensor [total_examples] — every target, in global order
-def _loadAllTargets(dataset: ChunkedRaceDataset) -> torch.tensor:
+def _loadAllTargets(dataset: ChunkedRaceDataset) -> torch.Tensor:
 
     per_chunk_targets = []
 
@@ -444,7 +523,7 @@ def splitTrainVal(dataset):
 #           criterion: MSELoss, turns (pred, target) into one number
 #           mean/std:  target stats, to z-score each batch's targets
 # Output:  float — average training loss over the epoch
-def _trainOneEpoch(model, loader, optimizer, criterion, mean, str) -> float:
+def _trainOneEpoch(model, loader, optimizer, criterion, mean, std) -> float:
 
     # Flips model into training mode, dropout on.
     model.train()
@@ -456,13 +535,14 @@ def _trainOneEpoch(model, loader, optimizer, criterion, mean, str) -> float:
     # masks      [64, S]       which rows are real races vs padding
     # context    [64, 17]      the 64 target-race context vectors
     # targets    [64]          the 64 true normalized_times to predict
-    for sequeunce, masks, context, targets in loader:
+    for sequences, masks, context, targets, venues in loader:
 
         # Moves this batch onto the save device as the model.
         sequences = sequences.to(DEVICE)
         masks     = masks.to(DEVICE)
         context   = context.to(DEVICE)
         targets   = targets.to(DEVICE)
+        venues    = venues.to(DEVICE)
 
         # z-score the targets so they match the scale the model predicts
         # in (chunk 3). Same mean/std for every batch.
@@ -470,7 +550,7 @@ def _trainOneEpoch(model, loader, optimizer, criterion, mean, str) -> float:
 
         # --- the four-line core of learning ---
         optimizer.zero_grad()                      # 1. clear old gradients
-        preds = model(sequences, masks, context)   # 2. forward: guess
+        preds = model(sequences, masks, context, venues)   # 2. forward: guess
         loss  = criterion(preds, targets)          # 3. measure how wrong
         loss.backward()                            # 4a. compute gradients
         optimizer.step()                           # 4b. apply the update
@@ -503,16 +583,17 @@ def _validateOneEpoch(model, loader, criterion, mean, std) -> float:
     # off.
     with torch.no_grad():
 
-        for sequences, masks, context, targets in loader:
+        for sequences, masks, context, targets, venues in loader:
 
             sequences = sequences.to(DEVICE)
             masks     = masks.to(DEVICE)
             context   = context.to(DEVICE)
             targets   = targets.to(DEVICE)
+            venues    = venues.to(DEVICE)
 
             targets = zScore(targets, mean, std)
 
-            preds = model(sequences, masks, context)
+            preds = model(sequences, masks, context, venues)
             loss  = criterion(preds, targets)
 
             total_loss += loss.item()
@@ -578,7 +659,24 @@ def main():
 
     # 5. The model, moved onto the GPU (or CPU fallback). .to(DEVICE)
     #    sends every weight to that device so model and data live together.
-    model = XCPredictor().to(DEVICE)
+    # ★ SIZED FROM venue_vocab.pkl, WRITTEN BESIDE THE CHUNKS. Counting
+    #   distinct venues in the loaded data instead would give a different size
+    #   on any subset, and every embedding row would belong to a different
+    #   course than the one it was trained for.
+    vocab_path = os.path.join(DATA_DIR, "venue_vocab.pkl")
+    if os.path.exists(vocab_path):
+        with open(vocab_path, "rb") as f:
+            n_venues = pickle.load(f)["n_venues"]
+        print(f"  venue embedding: {n_venues:,} rows "
+              f"(index 0 is the shared unknown bucket)")
+    else:
+        # No vocabulary means chunks from before this feature. One row, always
+        # index 0, so the embedding contributes a constant zero and the model
+        # behaves exactly as it did.
+        n_venues = 1
+        print("  venue_vocab.pkl not found -- venue embedding disabled")
+
+    model = XCPredictor(n_venues=n_venues).to(DEVICE)
 
     # 6. Adam — applies the weight updates using the gradients
     #    loss.backward() computes. model.parameters() hands it every
@@ -589,21 +687,6 @@ def main():
     #    drives downward. Matches predicting a single continuous value.
     criterion = nn.MSELoss()
     
-    # --- build (chunk 4) ---
-    dataset = ChunkedRaceDataset(DATA_DIR)
-    train_subset, val_subset = splitTrainVal(dataset)
-
-    all_targets = _loadAllTargets(dataset)
-    mean, std   = computeTargetStats(all_targets, train_subset.indices)
-    saveTargetStats(mean, std, STATS_OUT)
-
-    train_loader = buildDataLoader(train_subset, shuffle=True)
-    val_loader   = buildDataLoader(val_subset,   shuffle=False)
-
-    model     = XCPredictor().to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.MSELoss()
-
     # --- the epoch loop (calls chunk 5's helpers) ---
     # Track the best val loss so far. Start at infinity so the very first
     # epoch always counts as an improvement and saves once.

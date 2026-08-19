@@ -1,88 +1,144 @@
+#!/usr/bin/env python3
 # Project: xc-predictor
-# File:    scripts/reset_xc_neither_full.py
-# Purpose: Reset the FULL XC "neither" bucket to scraped=0 so the full XC path
-#          re-scrapes it. We confirmed this is NOT a saver bug: ~10% of these
-#          still have live data on anet (recoverable), the rest are anet-
-#          depopulated and will simply re-mark empty. This is the recovery pass
-#          for the live slice; the empties cost only re-fetches.
+# File:    dedup/prep_for_merge.py
+# Purpose: Get the database ready for merge_links.py, entirely from Python -- no
+#          psql. Three jobs, each idempotent (safe to run more than once):
 #
-# INVARIANT: identity is (meet_id, sport, source). This flips ONLY the
-# (sport='XC', source='anet') rows; any TF/tfrrs row sharing an integer is left
-# alone.
+#            1. ADD canon_meet_id to results / results_tf. The merge writes this
+#               column for meet links; it does not exist yet, so without this the
+#               meet pass errors the moment it goes live.
+#            2. ADD a native_id index on results_tf. The merge stamps the tfrrs
+#               side by native_id, which is unindexed -> a full scan of ~193M
+#               rows. The index turns that from minutes into seconds.
+#            3. CHECK for stale tfrrs-XC rows left in results_tf. If any remain,
+#               the meet stamp (which matches on meet_id + source but NOT sport)
+#               can bleed across sports, because meet_id integers are reused
+#               across sports. This only REPORTS -- it changes nothing -- so you
+#               decide whether to clean up before merging meets.
 #
-# WRITES (bulk UPDATE). Builds the bucket set-based (one scan each over results /
-# meets), prints the count, prompts y/N. RUN WITH THE LAUNCHER OFF — the `meets`
-# scan holds a read lock a concurrent launcher startup would wedge on (until the
-# _migrateLocationID guard is in).
-#
-# Run from project root:  python scripts/reset_xc_neither_full.py
+#          Nothing here writes to result/athlete DATA. It only adds empty columns
+#          and an index, and reads a count.
 
 import sys
+
 sys.path.insert(0, "scripts")
 from database import getConn
 
 
-# _buildBucket
-# Purpose:   Materialize the neither bucket: scraped=1 XC-anet queue meets with
-#            NO anet results and NO meets row. Set-based — one scan each into a
-#            DISTINCT-id temp table, then LEFT JOIN (no per-row EXISTS).
-# Arguments: cur — open cursor.
-# Output:    None (creates TEMP TABLE neither(meet_id)).
-def _buildBucket(cur) -> None:
-    for t in ("neither", "r_xc", "m_xc"):
-        cur.execute(f"DROP TABLE IF EXISTS {t}")
-    cur.execute("CREATE TEMP TABLE r_xc AS "
-                "SELECT DISTINCT meet_id FROM results WHERE source='anet'")
-    cur.execute("CREATE TEMP TABLE m_xc AS "
-                "SELECT DISTINCT meet_id FROM meets "
-                "WHERE source='anet' AND meet_id IS NOT NULL")
-    cur.execute("""
-        CREATE TEMP TABLE neither AS
-        SELECT q.meet_id
-        FROM meet_queue q
-        LEFT JOIN r_xc r ON r.meet_id = q.meet_id
-        LEFT JOIN m_xc m ON m.meet_id = q.meet_id
-        WHERE q.sport='XC' AND q.source='anet' AND q.scraped=1
-          AND r.meet_id IS NULL AND m.meet_id IS NULL
-    """)
+# ================================================================== #
+# CHUNK 1 -- DB ACCESS
+# ================================================================== #
 
 
-# _reset
-# Purpose:   Flip the bucket's XC-anet queue rows to scraped=0. sport+source
-#            paired and scraped=1 guarded; joins meet_queue to the bucket temp.
-# Arguments: cur — open cursor.
-# Output:    number of queue rows updated.
-def _reset(cur) -> int:
-    cur.execute("""
-        UPDATE meet_queue q
-        SET scraped = 0
-        FROM neither n
-        WHERE q.meet_id = n.meet_id
-          AND q.sport='XC' AND q.source='anet' AND q.scraped=1
+# _exec
+# Purpose: Run one statement and commit. For DDL (ALTER/CREATE), which is what
+#          this whole script is.
+# Arguments: sql, params.
+# Output:  none.
+def _exec(sql, params=()):
+    with getConn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        conn.commit()
+
+
+# _scalar
+# Purpose: Run a query that returns a single number and hand it back.
+# Arguments: sql, params.
+# Output:  the first column of the first row (or 0 if no rows).
+def _scalar(sql, params=()):
+    with getConn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+# ================================================================== #
+# CHUNK 2 -- JOB 1: the canon_meet_id column
+# ================================================================== #
+
+
+# _addCanonMeetId
+# Purpose: Add canon_meet_id BIGINT to both results tables if missing. IF NOT
+#          EXISTS makes a re-run a no-op, so this is safe to run repeatedly.
+# Output:  none (prints what it did).
+def _addCanonMeetId():
+    for table in ("results", "results_tf"):
+        # ADD COLUMN IF NOT EXISTS: adds the column only when absent; on a table
+        # that already has it, this does nothing and does not error.
+        _exec(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS canon_meet_id BIGINT")
+        print(f"  canon_meet_id present on {table}.")
+
+
+# ================================================================== #
+# CHUNK 3 -- JOB 2: the native_id index (speeds the tfrrs stamp)
+# ================================================================== #
+
+
+# _addNativeIdIndex
+# Purpose: Build a partial index on results_tf(native_id) for tfrrs rows, so the
+#          merge's tfrrs-side UPDATE uses an index instead of scanning 193M rows.
+#          CONCURRENTLY = builds without locking the table for writes; the
+#          tradeoff is it CANNOT run inside a transaction, so this uses its own
+#          autocommit connection rather than the _exec helper.
+# Output:  none (prints).
+def _addNativeIdIndex():
+    with getConn() as conn:
+        conn.autocommit = True              # CONCURRENTLY forbids a transaction
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_results_tf_native_id
+            ON results_tf (native_id) WHERE source = 'tfrrs'
+        """)
+    print("  idx_results_tf_native_id present (tfrrs stamp will use it).")
+
+
+# ================================================================== #
+# CHUNK 4 -- JOB 3: the stale tfrrs-XC safety check (report only)
+# ================================================================== #
+
+
+# _checkStaleXC
+# Purpose: Count tfrrs rows in results_tf that look like XC (the mis-route the
+#          roadmap flagged for cleanup). If >0, the meet merge can cross sports;
+#          you should clean those before stamping canon_meet_id on meets.
+#          NOTE: adjust the XC test to however the mis-route actually marked the
+#          rows -- result_kind is the likeliest discriminator on results_tf.
+# Output:  the count (also prints a verdict).
+def _checkStaleXC():
+    n = _scalar("""
+        SELECT count(*) FROM results_tf
+        WHERE source = 'tfrrs' AND result_kind = 'XC'
     """)
-    return cur.rowcount
+    if n == 0:
+        print("  stale tfrrs-XC rows in results_tf: 0  -> meet merge is safe.")
+    else:
+        print(f"  stale tfrrs-XC rows in results_tf: {n:,}  -> CLEAN BEFORE meet merge")
+        print("     (the athlete merge is unaffected; only the meet stamp is at risk).")
+    return n
+
+
+# ================================================================== #
+# CHUNK 5 -- DRIVER
+# ================================================================== #
 
 
 # main
-# Purpose:   Build the bucket, show the count, confirm, flip, commit.
-def main() -> None:
-    with getConn() as conn:
-        cur = conn.cursor()
-        print("building bucket (one scan over results / meets, a few sec)...",
-              flush=True)
-        _buildBucket(cur)
-        cur.execute("SELECT COUNT(*) FROM neither")
-        n = cur.fetchone()[0]
-        print(f"XC neither meets to reset: {n:,}")
-        if not n:
-            print("nothing to do.")
-            return
-        if input(f"flip {n:,} XC-anet rows to scraped=0? [y/N] ").strip().lower() != "y":
-            print("aborted, no changes.")
-            return
-        updated = _reset(cur)
-        conn.commit()
-        print(f"done: {updated:,} XC-anet queue rows set to scraped=0.")
+# Purpose: Run the three prep jobs in order and print a go / no-go for meets.
+# Output:  none.
+def main():
+    print("=== prep_for_merge: readying the DB for merge_links.py ===\n")
+    print("job 1: canon_meet_id column")
+    _addCanonMeetId()
+    print("\njob 2: native_id index")
+    _addNativeIdIndex()
+    print("\njob 3: stale tfrrs-XC check")
+    stale = _checkStaleXC()
+
+    print("\n--- summary ---")
+    print("  athlete merge: ready.")
+    print("  meet merge:   ", "ready." if stale == 0 else "clean stale XC rows first.")
 
 
 if __name__ == "__main__":

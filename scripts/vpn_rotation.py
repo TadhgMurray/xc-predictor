@@ -139,7 +139,7 @@ MULLVAD_LOCATIONS = [
 # Total meets across ALL sessions before rotating.
 # 25 sessions × ~3-5s per meet = ~5-8 meets/second across all sessions.
 # 3000 total meets = ~6-10 minutes per IP — aggressive but safe.
-WINDOWS_GLOBAL_MEETS_PER_ROTATION  = 5000
+WINDOWS_GLOBAL_MEETS_PER_ROTATION  = 1000
 
 
 # How many seconds to spread the post-rotation PAGE RELOADS across. After a real
@@ -166,7 +166,7 @@ PROXY_INSTANCE = "project-d8c4b484-c8fa-4e09-9fc:us-west1:free-trial-first-proje
 # session fail again — an infinite loop. This cooldown breaks the loop
 # by making rotate() a no-op (not a failure) while a recent rotation
 # is still settling.
-ROTATION_COOLDOWN_SECONDS = 5
+ROTATION_COOLDOWN_SECONDS = 90
 
 # ─── VPNRotator ──────────────────────────────────────────────────────────────
 

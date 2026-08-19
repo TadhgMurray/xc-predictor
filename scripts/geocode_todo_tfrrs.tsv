@@ -1,0 +1,4858 @@
+# n_meets	state	city	venue_name	location_raw	gps_lat	gps_long   (fill the last two with your geocoder)
+36	MD		Mount St. Mary's	Mount St. Mary's Emmitsburg, MD 21727		
+36	IL		Illinois-Chicago	Illinois-Chicago Chicago, IL 60608		
+20	PA		Schenley Park	Schenley Park Pittsburgh, PA 15229		
+11	MT		Montana	Montana Missoula, MT 59812		
+10	AR		Rebsamen Golf Course	Rebsamen Golf Course Little Rock, AR 72204		
+10	TX		HOT Soccer Fields	HOT Soccer Fields 6101 Airport Rd Waco, TX 76710		
+9	FL		Davenport	Davenport Davenport, FL 33837		
+9	PR		Universidad UPR-Recinto Rio Piedras	Universidad UPR-Recinto Rio Piedras 14 Ave. Universidad Ste. 1401 San Juan, PR 00926		
+8	UT		Murray Park Cross-Country Course	Murray Park Cross-Country Course Murray, UT 84107		
+7	OR		Avery Park	Avery Park 100 Avery Park Road Corvallis, OR 97330		
+7	FL		Markham Park	Markham Park 16001 West SR-84 Sunrise, FL		
+6	NV		Craig Ranch Regional Park	Craig Ranch Regional Park North Las Vegas, NV 89154		
+6	MA		Franklin Park	Franklin Park Boston, MA 02131		
+6	MD		Stevenson University	Stevenson University Stevenson, MD 21153		
+6	IN		FW Carroll MS	FW Carroll MS Ft. Wayne, IN 46818		
+6	FL		Bayshore HS	Bayshore HS Bradenton, FL 34210		
+6	NY		Hofstra University	Hofstra University Hempstead, NY 11549		
+6	FL		Pine Crest West	Pine Crest West Fort Lauderdale, FL 33334		
+6	KS		Clearwater Middle School	Clearwater Middle School Clearwater, KS 67026		
+5	MD		Oregon Ridge State Park	Oregon Ridge State Park Baltimore, MD 21252		
+5	WI		Lowes Creek County Park	Lowes Creek County Park Eau Claire, WI 55441		
+5	PR		Universidad UPR-Recinto Rio Piedras	Universidad UPR-Recinto Rio Piedras San Juan, PR 00926		
+5	VA	Fredericksburg	Mary Washington	Mary Washington Fredericksburg, VA		
+5	NY		Fenner Fields, Cazenovia, NY	Fenner Fields, Cazenovia, NY Cazenovia, NY 13035		
+5	FL		King's Academy	King's Academy West Palm Beach, FL 33409		
+5	NH		Belmont HS	Belmont HS Belmont, NH 03220		
+5	FL		Carlin Park	Carlin Park Jupiter, FL 33458		
+5	AR	City Not Supplied	Venue Not Supplied	Venue Not Supplied City Not Supplied, AR		
+5	NV		Shadow Mountain	Shadow Mountain Sparks, NV 89434		
+5			Hargis Creek	Hargis Creek Wellington, KS, Kansas 67152		
+4	PA		McDade Park	McDade Park Scranton, PA 18504		
+4	MD		Stevenson	Stevenson Stevenson, MD 21153		
+4	VA		Buford Meredith Cross Country Course	Buford Meredith Cross Country Course Blacksburg, VA 24061		
+4	NY		SUNY Plattsburgh	SUNY Plattsburgh Plattsburgh, NY 12901		
+4	MD		Jericho Park	Jericho Park 9510 Laurel Bowie Road Bowie, MD 20720		
+4	ND		UND Cross Country Course	UND Cross Country Course Grand Forks, ND 58202		
+4	FL		Mandarin	Mandarin Jacksonville, FL 32258		
+4	PA	Doylestown	Delaware Valley University	Delaware Valley University Doylestown, PA		
+4	IN		Borden	Borden , IN		
+4	NY		CCNY	CCNY New York, NY 10031		
+4	CT		Fairfield University	Fairfield University Fairfield, CT 06824		
+4	FL		Sperling Sports Complex	Sperling Sports Complex Deland, FL 32724		
+4	IA		Luther College	Luther College Decorah, IA 50428		
+4	VA		Pole Green Park -- Richmond, VA	Pole Green Park -- Richmond, VA 8996 Pole Green Park Lane Mechanicsville, VA 23116		
+4	PA		Messiah College	Messiah College Mechanicsburg, PA 17055		
+4	AR	Conway	Central Arkansas	Central Arkansas 20 Kinley Dr Conway, AR		
+4	FL		Indian River County Fairgrounds	Indian River County Fairgrounds Vero Beach, FL 32963		
+4	PR		U.P.R. Rio Piedras	U.P.R. Rio Piedras San Juan, PR 00927		
+4	OH		Franciscan (Ohio)	Franciscan (Ohio) Steubenville, OH 43952		
+4	TN		Percy Warner Park	Percy Warner Park Percy Warner Park Nashville, TN 37221		
+4	PA		Shippensburg University Cross Country	Shippensburg University Cross Country Shippensburg, PA 17257		
+4	GA	Macon	Industrial Children's Home	Industrial Children's Home Macon, GA		
+4	FL		Indian Rocks Christian Track	Indian Rocks Christian Track Largo, FL 32312		
+4	IN		Ox Bow Park	Ox Bow Park 23033 CR 45 Goshen, IN 46516		
+4	NJ		Rosedale Park	Rosedale Park Pennington, NJ 08534		
+4	KS		Clearwater HS	Clearwater HS Clearwater, KS 67026		
+4			Winfield HS Course	Winfield HS Course Winfield, Kansas 67156		
+4			Mulvane HS Grounds	Mulvane HS Grounds Mulvane, Kansas 67110		
+4	NH		Coe-Brown Northwood Academy	Coe-Brown Northwood Academy Coe-Brown Northwood Academy, NH 03261		
+3	NY		SUNY Canton	SUNY Canton Canton, NY 13617		
+3	ME		Saxl Park	Saxl Park Bangor, ME 04401		
+3	PA		WESTMINSTER COLLEGE	WESTMINSTER COLLEGE NEW WILMINGTON, PA 16142		
+3	KS		Rim Rock Farms	Rim Rock Farms Lawrence, KS 66045		
+3	PA		St Francis University	St Francis University Loretto, PA 15940		
+3	CA		Don Knabe Park	Don Knabe Park Cerritos, CA 92373		
+3	VT		Castleton College Cross-Country Course	Castleton College Cross-Country Course Castleton, VT 05735		
+3	FL		Bayshore	Bayshore Bradenton, FL 34210		
+3	FL		Lake Buena Vista HS	Lake Buena Vista HS Orlando, FL 32836		
+3	FL		Bartram Trail	Bartram Trail St. Johns, FL 32259		
+3	FL		First Coast	First Coast Jacksonville, FL 32218		
+3	FL	Baldwin	Baldwin	Baldwin Baldwin, FL		
+3	FL		Gaither HS	Gaither HS Tampa, FL 33618		
+3	TX		MACGREGOR PARK	MACGREGOR PARK 5225 CALHOUN HOUSTON, TX 77021		
+3	DC		Kenilworth Park	Kenilworth Park Washington, DC 20019		
+3	MA	Northampton	Smith College	Smith College 106 Village Street Northampton, MA		
+3	PA		Big Spring High School	Big Spring High School Newville, PA 17013		
+3	NY	Bronx	Lehman	Lehman Bronx, NY		
+3	FL		Wolfson	Wolfson Jacksonville, FL 32217		
+3	FL	Miami	Tropical Park	Tropical Park Miami, FL		
+3	IL		Illinois	Illinois Champaign, IL 61820		
+3	FL	Bradenton	Saint Stephen's	Saint Stephen's Bradenton, FL		
+3	NC	Charlotte	McAlpine Creek Park	McAlpine Creek Park Charlotte, NC		
+3	FL		Tradewinds	Tradewinds Coconut Creek, FL 33073		
+3	ME		Maine Maritime Academy	Maine Maritime Academy West River Road Castine, ME 04901		
+3	WV		V.A. Hospital	V.A. Hospital Clarksburg, WV 26301		
+3	ND		Rose Creek Golf Course	Rose Creek Golf Course Fargo, ND 58102		
+3	FL	Davenport	RCHS	RCHS Davenport, FL		
+3	NC		Wingate University	Wingate University 224 East Wilson St. Wingate, NC 28174		
+3	IL		Sauk Valley Community College Campus	Sauk Valley Community College Campus Dixon, IL 61021		
+3	TN		Maryville College	Maryville College Maryville, TN 37803		
+3	TN		Freed-Hardeman University Cross-Country Course	Freed-Hardeman University Cross-Country Course Henderson, TN 38340		
+3	MD		Towson	Towson Towson, MD 21252		
+3	FL		Ribault	Ribault Jacksonville, FL 32208		
+3	AL		Faith Academy	Faith Academy Mobile, AL 36608		
+3	FL	Marathon	Marathon	Marathon Marathon, FL		
+3			Wellesley College	Wellesley College Wellesley, MA 2481		
+3	MI		Hope College X-C Course (Ridge Point Church)	Hope College X-C Course (Ridge Point Church) Holland, MI 49424		
+3	NC		Old Keith Hills Golf Course	Old Keith Hills Golf Course Lillington, NC 27546		
+3	WV		Pipestem State Park	Pipestem State Park 3405 Pipestem Drive Pipestem , WV 25979		
+3	MA		Medfield	Medfield Medfield, MA 02052		
+3	IN		NorthWood	NorthWood 2101 N Main St Nappanee, IN 46550		
+3	KS		Kansas Pavilions	Kansas Pavilions Valley Center, KS 67147		
+3	FL		WA West Athletic Complex	WA West Athletic Complex Lauderdale Lakes, FL 33308		
+3	FL		St Cloud High School	St Cloud High School 2000 Bulldog Lane St. Cloud, FL 34769		
+2	NH		Hopkinton State Fairgrounds	Hopkinton State Fairgrounds 513 Park Ave Hopkinton, NH 03229		
+2	TX		Texas A&M International University	Texas A&M International University 5201 University Blvd. Laredo, TX 78041		
+2	WV		Meadowood Soccer Complex	Meadowood Soccer Complex Tornado, WV 25202		
+2	TX		Old Settlers Park	Old Settlers Park , TX		
+2	NC		Beeson Park	Beeson Park Kernersville, NC 28645		
+2	AR		Ozarks (Ark.)	Ozarks (Ark.) 1000 Market St Clarksville, AR 72830		
+2	VT		Red Rocks Park	Red Rocks Park South Burlington, VT 05405		
+2	PA		Westminster (Pa.)	Westminster (Pa.) New Wilmington, PA 16142		
+2	MN		St. Cloud State	St. Cloud State St. Cloud, MN 56301		
+2	MN		Como Golf Course, St. Paul	Como Golf Course, St. Paul St. Paul, MN 55116		
+2	WA		Lower Woodland Park	Lower Woodland Park Seattle, WA 98103		
+2	TN		Family Life Center	Family Life Center 250 Old Farmers Rd Clarksville, TN 37040		
+2			Core Creek Park	Core Creek Park woodbourne road langhorne, pa 19047		
+2	MN		Bethel MN	Bethel MN St. Paul, MN 55112		
+2	OH		Ottawa Golf Course	Ottawa Golf Course Toledo, OH 43606		
+2	CA		Fairbanks Cross Country Park	Fairbanks Cross Country Park San Luis Obisbo, CA 93405		
+2	NY		Beaver Island State Park	Beaver Island State Park 2136 Oakfield Road Grand Island, NY 14072		
+2	NV		Mira Loma Park	Mira Loma Park Reno, NV 89502		
+2	CA		Riverside Cross Country Course	Riverside Cross Country Course Riverside, CA 92501		
+2	MT		U Montana	U Montana Missoula, MT 59801		
+2	MN		East Complex	East Complex Moorhead, MN 56562		
+2	GA		ALBANY STATE UNIVERSITY	ALBANY STATE UNIVERSITY ALBANY, GA 31705		
+2	PA		Washington & Jefferson College	Washington & Jefferson College Washington, PA 15301		
+2	PA		Marywood University	Marywood University Scranton, PA 18509		
+2			Pembroke HS	Pembroke HS Pembroke, MA 2358		
+2	CA		California	California Berkeley, CA 94720		
+2	ME		Saxl Park	Saxl Park Bangor, ME 04469		
+2	IN		Earlham	Earlham Richmond, IN 47374		
+2	TX	San Antonio	Olmos Basin Park	Olmos Basin Park San Antonio, TX		
+2	IL		Detweiller Park	Detweiller Park Peoria, IL 61614		
+2	CA		Beau Pre Golf Course	Beau Pre Golf Course McKinleyville, CA 95521		
+2	NH		Grimes Field	Grimes Field Hillsbrough, NH 03244		
+2	TN		Sewanee Golf Course	Sewanee Golf Course Sewanee, TN 37383		
+2	CA	Millbrae	Crystal Springs XC Course	Crystal Springs XC Course Millbrae, CA		
+2	PA		Baker Field, Lancaster, PA	Baker Field, Lancaster, PA Lancaster, PA 17604		
+2	FL	Sumterville	Silo Oaks	Silo Oaks Sumterville, FL		
+2	FL		TCA Campus	TCA Campus Lake Worth, FL 33463		
+2	IN	Borden	Warpath	Warpath Borden, IN		
+2	MA	WILLIAMSTOWN	MT GREYLOCK HS	MT GREYLOCK HS WILLIAMSTOWN, MA		
+2	IN		Conference	Conference 1 Squire Drive North Manchester, IN 46962		
+2	FL		Cocoa Beach	Cocoa Beach Cocoa Beach, FL 32931		
+2	CA	San Rafael	Dominican Home Course	Dominican Home Course San Rafael, CA		
+2	MI		University Park Golf Course	University Park Golf Course , MI		
+2	NC	Wingate	Wingate	Wingate Wingate, NC		
+2	FL		Hagerty High School	Hagerty High School Oviedo, FL 32765		
+2	ME		Colby College	Colby College Waterville, ME 04901		
+2	FL		Ives Estate Park	Ives Estate Park Miami, FL 33179		
+2	VA	Axton	Smith River Sports Complex	Smith River Sports Complex Axton, VA		
+2	CA	Millbrae	Crystal Springs Course	Crystal Springs Course Millbrae, CA		
+2	FL		Bishop Verot	Bishop Verot Ft. Myers, FL 33919		
+2			NMU Golf Course	NMU Golf Course Marquette, Mi 49855		
+2	FL	Stuart	Pine School	Pine School Stuart, FL		
+2	WI		Concordia (Wis.)	Concordia (Wis.) Mequon, WI 53097		
+2	IN	Nappanee	NorthWood	NorthWood Nappanee, IN		
+2	FL		William F. Sheffield Regional Park	William F. Sheffield Regional Park Jacksonville, FL 32209		
+2	FL		Jackson	Jackson Jacksonville, FL 32206		
+2	FL		Lake Placid	Lake Placid Lake Placid, FL 33852		
+2	PR		UPRRP	UPRRP San Juan, PR 00925		
+2	MA		Hampshire College	Hampshire College Hampshire, MA 01002		
+2	TN	Maryville	Maryville College	Maryville College Maryville, TN		
+2	FL	Tampa	Ed Radice Park	Ed Radice Park Tampa, FL		
+2	OH	Wilberforce	Wilberforce University	Wilberforce University Wilberforce, OH		
+2	FL		Centennial	Centennial 1485 SW Cashmere Blvd Port St. Lucie, FL 34986		
+2	PA		PSU Brandywine	PSU Brandywine 25 Yearsley Mill Road Media, PA 19063		
+2	FL		Palmer Trinity	Palmer Trinity Miami, FL 33157		
+2	AL		TRM	TRM Brewton, AL 36527		
+2	IN	Veedersburg	Fountain Central HS	Fountain Central HS Veedersburg, IN		
+2	HI		BYU-Hawaii	BYU-Hawaii Laie, HI 96762		
+2	OH		FRANCISCAN UNIVERSITY	FRANCISCAN UNIVERSITY STEUBENVILLE, OH 43952		
+2	PA		Bicentennial Park	Bicentennial Park Bethlehem, PA 18017		
+2	MT		Bill Roberts Golf Course	Bill Roberts Golf Course Helena, MT 59601		
+2			Wilmington (Ohio)	Wilmington (Ohio) Wilmington, Ohio 45177		
+2	PA	Waynesburg	Greene County Airport	Greene County Airport Waynesburg, PA		
+2	CA	San Rafael	Dominican University XC Course	Dominican University XC Course San Rafael, CA		
+2	FL		Bulldog XC Course	Bulldog XC Course Frostproof, FL 33843		
+2	AZ		Central Arizona	Central Arizona Coolidge, AZ 85228		
+2	FL	St. Augustine	FSDB	FSDB St. Augustine, FL		
+2	IA		Noelridge Park	Noelridge Park Cedar Rapids, IA 50428		
+2	IN		Huntington University	Huntington University Huntington, IN 46750		
+2	PA		Bicentennial Park	Bicentennial Park 5351 Park West Lane Northampton, PA 18067		
+2	CA		Arroyo Verde Park	Arroyo Verde Park Ventura, CA 93003		
+2	WA	Spokane	Spokane Polo Fields	Spokane Polo Fields Spokane, WA		
+2	PA		CTC Championships Cross Country Course	CTC Championships Cross Country Course Center Valley, PA 18034		
+2	PA		Immaculata Cross Country Course	Immaculata Cross Country Course Malvern, PA 19345		
+2	FL		Holloway Park	Holloway Park - Lakeland, FL Lakeland, FL 32806		
+2	FL		UWF	UWF Pensacola, FL 32504		
+2	FL		Hamilton County	Hamilton County Jasper, FL 32052		
+2	FL		Eagles XC Course	Eagles XC Course Daytona Beach, FL 32114		
+2	WI	Kenosha	Wayne E. Dannehl National Cross Country	Wayne E. Dannehl National Cross Country Kenosha, WI		
+2	CO		Fort Lewis	Fort Lewis 2300 Rim Drive Durango, CO 81301		
+2	FL	Belleview	Belleview	Belleview Belleview, FL		
+2	FL		Ridgeview	Ridgeview Orange Park, FL 32065		
+2	OH		Walsh University	Walsh University North Canton, OH 44720		
+2	MA		Franklin Park	Franklin Park Boston, MA 02130		
+2	FL	Pace	Pace Soccer Complex	Pace Soccer Complex Pace, FL		
+2	PA		Berks Youth Recreation Facility	Berks Youth Recreation Facility 1098 County Welfare Road Leesport, PA 19533		
+2	NC		Asheville Christian Academy	Asheville Christian Academy Swannanoa, NC 28645		
+2	PA		Baker Field	Baker Field Lancaster, PA 17602		
+2	LA		UNO	UNO New Orleans, LA 70122		
+2	TX		Westlake TX	Westlake TX Austin, TX 78746		
+2	IL		Channahon Park	Channahon Park 23304 W. McClintock Rd. Channahon, IL 60410		
+2	NJ		Stockton University	Stockton University Galloway, NJ 08205		
+2	FL		Cottondale	Cottondale Cottondale, FL 32431		
+2	PR		U.P.R. Cayey	U.P.R. Cayey Cayey, PR 00714		
+2	FL	Davenport	Ridge Community HS	Ridge Community HS Davenport, FL		
+2	NY		Jamesville Beach State Park	Jamesville Beach State Park Jamesville, NY 13502		
+2	FL		Cottondale	Cottondale Cottondale, FL 32312		
+2	PA	Gibsonia	Eden Hall	Eden Hall Gibsonia, PA		
+2	OH		Oberlin College	Oberlin College Oberlin, OH 44074		
+2	IN		Huntington Univ	Huntington Univ Huntington, IN 46750		
+2	FL		East Ridge High School	East Ridge High School Clermont, FL 34711		
+2	TX		Joyce Family Athletic Village	Joyce Family Athletic Village Longview, TX 75607		
+2	KS		JCCC	JCCC Overland Park, KS 66210		
+2	FL		Trinity Prep XC Course	Trinity Prep XC Course Winter Park, FL 32792		
+2	MD		The Hawks XC Pavilion	The Hawks XC Pavilion 1 College Backbone Road Princess Anne, MD 21853		
+2	NY	Farmingdale	Bethpage State Park	Bethpage State Park Farmingdale, NY		
+2	FL		South Lake High School	South Lake High School Groveland, FL 34736		
+2	IL		Southern Illinois	Southern Illinois Carbondale, IL 62901		
+2	IN		Ft. Wayne Northrop	Ft. Wayne Northrop 7001 Coldwater Rd. Fort Wayne, IN 46825		
+2	NJ		Brookdale CC	Brookdale CC 765 Newman Springs Road Lincroft, NJ 07738		
+2	PA		Elizabethtown Solar Array Course	Elizabethtown Solar Array Course Elizabethtown, PA 17022		
+2	IN		Hanover, IN	Hanover, IN Hanover, IN 47243		
+2	OH		Kenyon XC Course	Kenyon XC Course Gambier, OH 43022		
+2	VA		Rogers Stadium	Rogers Stadium Ettrick, VA 23803		
+2	GA		7 Mile Farm	7 Mile Farm Statesboro, GA 30066		
+2	CA		www.finishedresults.com	www.finishedresults.com San Bernardino, CA 92093		
+2	ME		University of Maine	University of Maine College Ave Orono, ME 04469		
+2	PA		Elizabethtown College Campus Loop	Elizabethtown College Campus Loop Elizabethtown, PA 17022		
+2	VA		Petersburg National Battlefield	Petersburg National Battlefield Petersburg, VA 23806		
+2	TN		Shelby Farms CC Course	Shelby Farms CC Course Memphis, TN 38112		
+2	TN	Knoxville	Sequoyah Hills Park	Sequoyah Hills Park Knoxville, TN		
+2	TX		Houston	Houston Houston, TX 77204		
+2	NE		Chadron State College	Chadron State College 1000 Main Street Chadron, NE 69337		
+2	FL		FSDB	FSDB FSDB, St. Augustine, FL 32084		
+2	VA		Bridgewater College	Bridgewater College 402 E. College St. Bridgewater, VA 22812		
+2	SC		Winthrop Farm Course	Winthrop Farm Course Rock Hill, SC 29733		
+2	VA		VSU Campus-Rogers Stadium	VSU Campus-Rogers Stadium 1 Hayden Drive Petersburg, VA 23806		
+2	NM	Las Vegas	Gene Torres Golf Course	Gene Torres Golf Course Las Vegas, NM		
+2	WI		Cole Acres Country Club	Cole Acres Country Club Platteville, WI 53818		
+2	PA		Bloomsburg	Bloomsburg Bloomsburg, PA 17815		
+2	MD		Utica Park	Utica Park 10200-B Old Frederick Rd Frederick, MD		
+2	VT		Thetford	Thetford PO Box 190 Academy Road Thetford Academy, VT 05074		
+2	PA		Mingo Creek Park	Mingo Creek Park Finleyville, PA 15332		
+2	NH	Bow	Bow High School	Bow High School Bow, NH		
+2	FL		Fred Poppe Regional Park	Fred Poppe Regional Park Palm Bay, FL 32907		
+2	PA	Latrobe	St. Vincent	St. Vincent Latrobe, PA		
+2	MD		Maplehurst Country Club	Maplehurst Country Club Frostburg, MD 21532		
+2	GA		Covenant College Cross-Country Course	Covenant College Cross-Country Course Lookout Mountain, GA 30750		
+2	NY	Hamburg	Hilbert	Hilbert Hamburg, NY		
+2	SC		Owens Field Park	Owens Field Park 1401 Hamilton Blvd Columbia, SC 29205		
+2	OR		Clackamas Community College	Clackamas Community College Oregon City, OR 97045		
+2	NJ		saint peters university	saint peters university jersey city, NJ 07304		
+2	NC		Lake Kristi	Lake Kristi 3933 Mobleys Bridge Road Grimesland, NC 27837.		
+2	IN	Ligonier	West Noble Schools	West Noble Schools Ligonier, IN		
+2	PA		Haverford	Haverford Haverford, PA 19013		
+2	FL	Ave Maria	Ave Maria	Ave Maria Ave Maria, FL		
+2	WV		Crispin Golf Course- Oglebay Resort	Crispin Golf Course- Oglebay Resort Wheeling, WV 26003		
+2	PA		Bucknell West Fields	Bucknell West Fields Lewisburg, PA 17837		
+2	NC		Salisbury Community Park XC Course	Salisbury Community Park XC Course Salisbury, NC 28147		
+2	VA		New Market Battlefield State Historical Park	New Market Battlefield State Historical Park New Market, VA 22807		
+2	PA		Alumni XC	Alumni XC 370 Lancaster Ave Haverford, PA 19041		
+2	FL		East Ridge High School	East Ridge High School 13322 Excalibur Rd Clermont, FL 34711		
+2	MI		RB	RB Fremont, MI 49412		
+2	MI		Fremont	Fremont 101 Main Fremont, MI 40412		
+2	WI		Norbuck Park	Norbuck Park Marquette, WI 49855		
+2	MD		Mount St. Mary's Univerisity	Mount St. Mary's Univerisity Emmitsburg, MD 21727		
+2	OH		Kenyon College	Kenyon College Gambier, OH 12345		
+2	MN		Les Bolstad Golf Course	Les Bolstad Golf Course Falcon Heights, MN 55441		
+2	AZ		Mesa Thunderbird Cross Country Classic	Mesa Thunderbird Cross Country Classic , AZ		
+2	NH		Sanborn Regional High School	Sanborn Regional High School Kingston, NH 13323		
+2	PA		St Vincent College	St Vincent College Latrobe, PA 15650		
+2	KS		Sand Plum	Sand Plum Hays, KS 67601		
+2	WV		VA Park	VA Park Clarksburg, WV 23601		
+2	AL		TRM	TRM , AL		
+2	FL		South County Regional Park	South County Regional Park Boca Raton, FL 33431		
+2	VA		Virginia Tech	Virginia Tech 185 Beamer Way Blacksburg, VA 24060		
+2	MD	City Not Supplied	McDaniel	McDaniel City Not Supplied, MD		
+2	PA		Alumni Cross Country Course	Alumni Cross Country Course Haverford, PA 19041		
+2	NC	Wingate	Wingate University	Wingate University Wingate, NC		
+2	TX		South Plains College Track	South Plains College Track Levelland, TX 79336		
+2	GA		AUC Campus	AUC Campus Atlanta, GA 30066		
+2	VA	Kernstown	Kernstown Battlefield	Kernstown Battlefield Kernstown, VA		
+2	AR		Ox Bow Park	Ox Bow Park 23033 CR 45 Goshen, AR 46516		
+2	IN		Ft. Wayne Northrop	Ft. Wayne Northrop Fort Wayne, IN 46825		
+2	NH		Hopkinton State Fairgrounds	Hopkinton State Fairgrounds Hopkinton, NH 03229		
+2	IA		Central College	Central College Pella, IA 50428		
+2	FL		RAM's XC Course	RAM's XC Course Lake Mary, FL 32746		
+2	IN	Greentown	Howard County Fairgrounds	Howard County Fairgrounds Greentown, IN		
+2	ME		UMaine	UMaine Univ of Maine Orono, ME 04469		
+2	FL		Holloway Park	Holloway Park Lakeland, FL 11111		
+2	FL		Pompano Municipal	Pompano Municipal Pompano Beach, FL 33060		
+2			Coakley Middle Schooll	Coakley Middle Schooll Norwood, MA 2062		
+2	KS		Valley Point Golf Course	Valley Point Golf Course Valley Center, KS 67147		
+2	VA		VSU	VSU Petersburg, VA 23806		
+2	KS		Colby Country Club	Colby Country Club Colby, KS 67701		
+2	IN		Indiana University Cross-Country Course	Indiana University Cross-Country Course Bloomington, IN 47408		
+2	MN		Saint Mary's University MN	Saint Mary's University MN 700 Terrace Hts #62 Winona, MN 55987		
+2			Rock the Desert Festival Field	Rock the Desert Festival Field Midland, TX 7971		
+2			Wellsville Cross Country Course	Wellsville Cross Country Course Wellsville, Kansas 66092		
+2	TX		WTC Soccer Complex	WTC Soccer Complex Snyder, TX 00000		
+2	TX		Angelo State Cross Country Course	Angelo State Cross Country Course San Angelo, TX 76904		
+2	FL	Palm Bay	Bayside HS	Bayside HS Palm Bay, FL		
+2	FL		Jensen Beach High School	Jensen Beach High School Jensen Beach, FL 34957		
+2	GA		Boling Park	Boling Park 1098 Marietta Hwy Canton, GA 30114		
+2	MN		Bethany Lutheran College	Bethany Lutheran College Mankato, MN 56001		
+2	FL		New Smyrna Beach	New Smyrna Beach 100 Barracuda Blvd. N. Smyrna Beach, FL 32169		
+2	AL		Blakeley Park	Blakeley Park Spanish Fort, AL 36527		
+2	FL		Cedar Key	Cedar Key Cedar Key, FL 32625		
+2	PA		PSU-Brandywine	PSU-Brandywine Media,, PA 19063		
+2			Valley Point Golf Course	Valley Point Golf Course Valley Center, Kansas 67147		
+2	OH		Gorby Family Cross Country Course	Gorby Family Cross Country Course 7574 Columbiana-Canfield Rd. Canfield, OH 44406		
+2	WI		2006 USATF Minnesota	2006 USATF Minnesota Marquette, WI 49855		
+2	GA		Ga. Industrial ChildrenÃ¢Â€Â™s Home	Ga. Industrial ChildrenÃ¢Â€Â™s Home Macon, GA 30066		
+2	WI		Wayne E. Dannehl Cross Country Course	Wayne E. Dannehl Cross Country Course Kenosha, WI 53141		
+2	KS	Liberal	Arkalon Park	Arkalon Park Liberal, KS		
+2	PA	Pittsburgh	La Roche University	La Roche University Pittsburgh, PA		
+2	NH		Colby-Sawyer College	Colby-Sawyer College New London, NH 03257		
+2	LA		McNeese State	McNeese State Lake Charles, LA 70605		
+2	FL		Monsignor Pace	Monsignor Pace 15600 NW 32nd Avenue Miami, FL 33054		
+2	MA		Gordon College	Gordon College Bennett Center Wenham, MA 01984		
+2	AL		Blakeley Park	Blakeley Park 9300 Lawson Rd. Spanish Fort, AL 36527		
+2	TX		North East Metropolitan Park	North East Metropolitan Park Pflugerville, TX 78727		
+2	IN		Columbia City	Columbia City Columbia City, IN 46725		
+2			Valley Center Golf Course	Valley Center Golf Course Valley Center, Kansas 67147		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NJ		Rowan College @ Gloucester County	Rowan College @ Gloucester County Sewell, NJ 08080		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CT		Univ. of St.  Joseph	Univ. of St. Joseph West Hartford, CT 06117		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IL		Maxwell Park	Maxwell Park Normal, IL 12345		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MA		Mt. Greylock HS	Mt. Greylock HS Williamstown, MA 01267		
+1						
+1	MT		Hickory Swing Golf Course	Hickory Swing Golf Course Great Falls, MT 59401		
+1	CA		bakersfield college	bakersfield college balersfield, CA 93305		
+1	PA		Bethlehem, PA 18015	Bethlehem, PA 18015		
+1	WA		Magnuson Park	Magnuson Park Seattle, WA 98115		
+1	TX		Fort Worth, TX 76117	Fort Worth, TX 76117		
+1	OR		Clackamas Community College	Clackamas Community College 19600 Molalla Ave Oregon City, OR 97045		
+1						
+1						
+1	MI		Fremont HS	Fremont HS address Fremont, MI 49412		
+1						
+1	MN		Moorview Soccer Complex	Moorview Soccer Complex 23rd St S Moorhead, MN 56560		
+1	TX		West Texas A&M Univ. Canyon, TX	West Texas A&M Univ. Canyon, TX Canyon, TX 79016		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	OH		Kingswood Park	Kingswood Park Mason, OH 45039		
+1	TX		Kate Barr-Ross Park, Huntsville, TX	Kate Barr-Ross Park, Huntsville, TX Huntsville, TX 77341		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NY		Hobart College	Hobart College Geneva, NY 14623		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Holloway Park	Holloway Park Lakeland, FL 32796		
+1						
+1						
+1	CA		Patrick's Point State Park	Patrick's Point State Park 4150 Patricks Point Dr Trinidad, CA 95570		
+1	CA		None	None Oakland, CA 94610		
+1	SC		Rock Hill, SC 29733	Rock Hill, SC 29733		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NY		Hamilton College Cross-Country Course	Hamilton College Cross-Country Course 1400 Washington Ave. Clinton, NY 13323		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Waco, TX 76798	Waco, TX 76798		
+1	AL		Veterans Park, Hoover, Alabama	Veterans Park, Hoover, Alabama Hoover, AL 35242		
+1	FL		UNF Golf Course	UNF Golf Course 1 Betty Holzendorf Drive Jacksonville, FL 32224		
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Cross Country Course	Cross Country Course Center Valley, PA 18034		
+1	AL		Stanley Park, Westfield, MA	Stanley Park, Westfield, MA 677 Western Avenue Westfield, AL 01040		
+1						
+1						
+1	MO		NW Missouri	NW Missouri Maryville, MO 12345		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Chamizal National Memorial Park	Chamizal National Memorial Park El Paso, TX 79905		
+1	PA		St FRANCIS COLLEGE	St FRANCIS COLLEGE Loretto, PA 15940		
+1						
+1						
+1	NY		SUNY Delhi Golf Course	SUNY Delhi Golf Course Delhi, NY 13753		
+1						
+1						
+1						
+1						
+1	TX		University of North Texas, Discovery Park	University of North Texas, Discovery Park 3940 N. Elm St. Denton, TX 76207		
+1	LA	Baton Rouge	Highland Road Park	Highland Road Park Baton Rouge, LA		
+1						
+1	OH		Akron	Akron North Canton, OH 44720		
+1	FL		St Leo University	St Leo University - The Abbey Course Saint Leo, FL 33574		
+1	PA		Weast Branch XC Course	Weast Branch XC Course Lock Haven, PA 17745		
+1	DE		DSU  Outreach & Research Center	DSU Outreach & Research Center Dover, DE 19709		
+1	MI		Pine View Golf Club	Pine View Golf Club 52065 Pulver Road Three Rivers, MI 49093		
+1						
+1	AL		Harry Pritchett XC Course, Tuscaloosa, Al.	Harry Pritchett XC Course, Tuscaloosa, Al. Tuscaloosa, AL 35487		
+1	SC		Winthrop University	Winthrop University Rock Hill, SC 34189		
+1						
+1	PA		Schenley	Schenley Pittsburgh, PA 15229		
+1	TX		Pecan Park	Pecan Park Nacogdoches, TX 75962		
+1	NY		VCP	VCP Bronx, NY 10471		
+1	NJ		Rosedale Park	Rosedale Park Hopewell, NJ 08628		
+1						
+1	NY	Kings Park	Sunken Meadow	Sunken Meadow Kings Park, NY		
+1	MI		Marquette, MI 49855	Marquette, MI 49855		
+1	PA		LHU XC Foundation Fields	LHU XC Foundation Fields Lock Haven, PA 17745		
+1						
+1	CA		Riverside City Cross Country Course	Riverside City Cross Country Course Riverside, CA 92501		
+1	IN		Angel Mounds Cross Country Course	Angel Mounds Cross Country Course Evansville, IN 47714		
+1	OH		Wallace Lake	Wallace Lake Berea, OH 44017		
+1	NC		WakeMed Park Cross Country Course	WakeMed Park Cross Country Course Cary, NC 27511		
+1	MT		Great Falls	Great Falls UP, 1301 20th Steet South Great Falls, MT 59405		
+1						
+1	TX		West Texas A&M Univ	West Texas A&M Univ Canyon, TX 79016		
+1						
+1						
+1	PA	Abington	St. Vincent	St. Vincent Abington, PA		
+1						
+1						
+1						
+1	TN		Tennessee Tri-Star Cros Country Challenge	Tennessee Tri-Star Cros Country Challenge 2450 E J. Chapman Dr. Knoxville, TN 37996		
+1						
+1	AL		Oakville Indian Mounds Course	Oakville Indian Mounds Course Danville, AL 35601		
+1	OH		Kenyon CC Course	Kenyon CC Course Gambier, OH 43022		
+1	WV		Davis & Elkins, WV	Davis & Elkins, WV Elkins, WV 26241		
+1	NC		Roger Lake Kristi	Roger Lake Kristi Greenville, NC 27858		
+1	SD		Mounty Marty College	Mounty Marty College Yankton, SD 51101		
+1	PA		Dicksonson Park	Dicksonson Park Carlisle, PA 17013		
+1						
+1						
+1						
+1						
+1	ND		Rose Creek Golf Course	Rose Creek Golf Course 1500 East Rose Creek Pkwy S Fargo, ND 58104		
+1	SC		Milliken Research Park	Milliken Research Park 920 Milliken Park Spartanburg, SC 29301		
+1	TX		PVAMU	PVAMU 700 University Drive Prairie View, TX 77446		
+1						
+1	WI		Green Bay Arboretum Trails	Green Bay Arboretum Trails Green Bay, WI 54311		
+1						
+1	VA		Bridgewater College (Va.)	Bridgewater College (Va.) 402 E College St. Bridgewater, VA 22812		
+1						
+1	OH		LC Boles Golf Course	LC Boles Golf Course Wooster, OH 44691		
+1	WV		Davis & Elkins College	Davis & Elkins College Elkins, WV 26241		
+1						
+1						
+1	NY	Oneonta	Hartwick College	Hartwick College Oneonta, NY		
+1	MI		Stoatin Brae Golf Course	Stoatin Brae Golf Course Augusta, MI 49008		
+1	SD		Adams Nature Preserve	Adams Nature Preserve North Sioux City, SD 60572		
+1	FL		Holloway Park	Holloway Park Lakeland, FL 32779		
+1	VA		Eastern State Course	Eastern State Course Williamsburg, VA 23185		
+1	TX		Dale Watts Cross Country course	Dale Watts Cross Country course College Station, TX 77843		
+1	VA		Elizabeth Campus Fields	Elizabeth Campus Fields 1100 Kime Lane Salem, VA 24153		
+1	RI		Campus Course	Campus Course Smithfield, RI 02917		
+1						
+1						
+1	WA		Lake Sammamish	Lake Sammamish 2000 Northwest Sammamish Road Issaquah, WA 98027		
+1	NH		Hosted by Franklin Pierce University	Hosted by Franklin Pierce University Hopkinton, NH 03229		
+1	SD		Madison Country Club	Madison Country Club Madison, SD 57042		
+1	SC		The Hackler Course at Coastal Carolina University	The Hackler Course at Coastal Carolina University 107 Citadel Drive Conway, SC 29526		
+1						
+1	PA		Cheyney University	Cheyney University Cheyney, PA 19319		
+1	TX		Memorial Park Sugar Land	Memorial Park Sugar Land Sugar Land, TX 77479		
+1	NY		Fenner Fields, Cazenovia, NY	Fenner Fields, Cazenovia, NY Jamesville, NY 13502		
+1						
+1	PR		U.P.R. Rio Piedras	U.P.R. Rio Piedras San Juan, PR 00960		
+1	WI		St. Beloit Club Golf Course	St. Beloit Club Golf Course Beloit, WI 53511		
+1	NY		Van Cortland Park	Van Cortland Park Bronx, NY 10462		
+1						
+1	CA		King City	King City King City, CA 93924		
+1	CA		Irvine Regional Park (Orange, CA)	Irvine Regional Park (Orange, CA) Irvine, CA 92862		
+1						
+1						
+1	NM		NMSU-Intramural Fields	NMSU-Intramural Fields Las Cruces , NM 88003		
+1						
+1						
+1	MN	City Not Supplied	Pike Island	Pike Island City Not Supplied, MN		
+1	NH		Belmont High School	Belmont High School Belmont, NH 03246		
+1	VT		Hard'ack Rekreational Area	Hard'ack Rekreational Area St Albans City, VT 05478		
+1	NC	Laurinburg	St. Andrews	St. Andrews Laurinburg, NC		
+1	WA		Colfax Golf Club	Colfax Golf Club Colfax, WA 99111		
+1	IL		Weibring Golf Course	Weibring Golf Course 800 Gregory Street Normal, IL 61761		
+1						
+1						
+1						
+1	MI		University Park Golf Course	University Park Golf Course Muskegon, MI 48109		
+1	SC		SOAR Athletic Fields	SOAR Athletic Fields Columbia, SC 29203		
+1	CA		Fairbanks Cross Country Course	Fairbanks Cross Country Course San Luis Obispo, CA 93924		
+1						
+1	MA	Pembroke	Pembroke HS	Pembroke HS Pembroke, MA		
+1	IA		Wartburg XC Course	Wartburg XC Course - Waverly, IA Wartburg, IA 50677		
+1						
+1	PA		Cairn University Campus	Cairn University Campus 200 Manor Avenue Langhorne, PA 19047		
+1	NY		Broadway Park	Broadway Park Broadway Ave. Sayville, NY 11782		
+1						
+1						
+1						
+1	MD		John Caslin XC Course	John Caslin XC Course Towson, MD 21204		
+1						
+1	FL		Dreher Park	Dreher Park West Palm Beach, FL 33405		
+1	NC		Chowan University	Chowan University Murfreesboro, NC 27855		
+1						
+1						
+1						
+1	OH		Clark County Fairgrounds	Clark County Fairgrounds Springfield, OH 45501		
+1	MI		Heritage Park	Heritage Park 3221 North Adrian Hwy Adrian, MI 49221		
+1	SD		Madison Golf and Country Club	Madison Golf and Country Club 45152 233rd St Madison, SD		
+1	CA	El Dorado	El Dorado Park	El Dorado Park El Dorado, CA		
+1	NY		Van Cortland Park	Van Cortland Park New York, NY 11111		
+1	NY	Guilderland	Tawasentha Town Park	Tawasentha Town Park Guilderland, NY		
+1	FL		Merritt Island	Merritt Island Merritt Island, FL 32926		
+1	FL	Bradenton	Saint Stephen's Episcopal School	Saint Stephen's Episcopal School Bradenton, FL		
+1	IN		Sunset Hill Farm	Sunset Hill Farm 775 Meridian Road Valparaiso, IN 46383		
+1	MA		Williams	Williams COLE FIELD WILLIAMSTOWN, MA 01267		
+1						
+1	FL		STU CAMPUS	STU CAMPUS Miami, FL 33054		
+1	PA		Lancaster Bible College	Lancaster Bible College LBC XC Course Lancaster, PA 17601		
+1						
+1	IN	Veedersburg	Fountain Central High School	Fountain Central High School Veedersburg, IN		
+1	PA		F&M Baker Campus	F&M Baker Campus Lancaster, PA 17604		
+1	AR		Harding Unviersity	Harding Unviersity Searcy, AR 72143		
+1	FL	Melbourne	Wickham Park	Wickham Park Melbourne, FL		
+1						
+1	CO		Buffalo Ranch	Buffalo Ranch Boulder, CO 80309		
+1						
+1	MA		Bradley Palmer State Park	Bradley Palmer State Park Essex County, MA 01915		
+1	VT		NVU-Lyndon	NVU-Lyndon Lyndon, VT 05819		
+1	WV	Elkins	Davis & Elkins	Davis & Elkins Elkins, WV		
+1	MI	MI	Forest Akers East Golf Course	Forest Akers East Golf Course East Lansing, MI, MI		
+1	NJ	Lincroft	Brookdale CC	Brookdale CC Lincroft, NJ		
+1	SC		Winthrop Farm Cross Country Course	Winthrop Farm Cross Country Course Rock Hill, SC 29733		
+1						
+1						
+1						
+1	NC		High Point University	High Point University High Point, NC 27268		
+1	WI		Lake Breeze Golf Course	Lake Breeze Golf Course Winneconne, WI 12345		
+1						
+1	TX		Rice	Rice 6100 South Main Houston, TX 77251		
+1	PA		Gwynedd Mercy	Gwynedd Mercy 1325 Sumneytown Pike Gwynedd Valley, PA 19437		
+1						
+1	TX	Sherman	Pecan Grove Park	Pecan Grove Park Sherman, TX		
+1	OK		Gordon Cooper Technology Center	Gordon Cooper Technology Center 1 John C Burton Dr. Shawnee, OK 74804		
+1	SC	Aiken	Generations Park	Generations Park Aiken , SC		
+1	PA		Belmont Plateau	Belmont Plateau Doylestown, PA 19131		
+1						
+1						
+1						
+1	VA		Roanoke	Roanoke 2501 Green Hill Park Road Salem, VA 24153		
+1	CO		Air Force	Air Force USAF Academy, CO 80840		
+1	PA		Oval at Schendley Park	Oval at Schendley Park Pittsburgh, PA 15222		
+1						
+1	WI		Greenfield Prk	Greenfield Prk Milwaukee, WI 53234		
+1	NJ		CSE	CSE Morristown, NJ 07940		
+1						
+1	IN		Purdue Northwest Westville	Purdue Northwest Westville 1401 US 421 Westville, IN 46391		
+1	KY		Berea College	Berea College Berea, KY 40404		
+1	NE		Skutt Catholic Athletic Complex	Skutt Catholic Athletic Complex Omaha, NE 68178		
+1	IN		Sunset Hill Farm County Park	Sunset Hill Farm County Park 775 Meridian Rd Valparaiso, IN 46385		
+1						
+1	NE		Auburn High School	Auburn High School Auburn, NE 68305		
+1	TX		Angelo State	Angelo State San Angelo, TX 79710		
+1						
+1	IN		Franklin	Franklin Franklin, IN 46131		
+1	IN		Northview Church	Northview Church Carmel , IN 46033		
+1	MI		Hudson MIills Metropark	Hudson MIills Metropark Dexter, MI 48130		
+1						
+1						
+1	WV		Lotito Park	Lotito Park 1780 Stadium Drive Bluefield, WV 24605		
+1	FL		Sperling XC Course	Sperling XC Course Deland, FL 32724		
+1	CT		University of St. Joseph	University of St. Joseph West Hartford, CT 19131		
+1	NM	Las Vegas	NMHU Golf Course	NMHU Golf Course Las Vegas, NM		
+1	NY		Sunken Meadow State Park	Sunken Meadow State Park Kings Park, NY 11754		
+1						
+1	MN	City Not Supplied	St. Catherines	St. Catherines City Not Supplied, MN		
+1						
+1	MO		Griffon XC	Griffon XC St. Joseph, MO 64501		
+1	IN		Brownsburg	Brownsburg Brownsburg, IN 46112		
+1						
+1	MT		Sleepy Hollow Golf Course	Sleepy Hollow Golf Course Dillon, MT 59725		
+1	CA		Hartnell	Hartnell Salinas, CA 93901		
+1	FL		Monsignor Pace Campus	Monsignor Pace Campus Miami, FL 33054		
+1						
+1						
+1						
+1						
+1	VT		NVU Lyndon	NVU Lyndon Lyndon, VT 05849		
+1	AL		Huntingdon Cross Country Course	Huntingdon Cross Country Course 4080 Moore Road Grady, AL 36036		
+1	TN		Reflection Ridge	Reflection Ridge Lookout Mountain, TN 30750		
+1	FL		Lely	Lely Naples, FL 34113		
+1	FL		Harmony High School	Harmony High School St. Cloud, FL 34769		
+1	SC		Jasper Park	Jasper Park Hardeeville, SC 31402		
+1	MT	Butte	Highland View Golf Course	Highland View Golf Course Butte, MT		
+1	SC		Milliken	Milliken 920 Milliken Rd Spartanburg, SC 29301		
+1	HS		Martin County HS	Martin County HS 16001 West SR-84 Jupiter, FL 34994		
+1						
+1						
+1	TN		Walters State Course	Walters State Course Morristown, TN 37814		
+1						
+1						
+1	PA		LBC Campus Course	LBC Campus Course Lancaster, PA 17601		
+1	NC	Pembroke	UNC Pembroke	UNC Pembroke Pembroke, NC		
+1						
+1	OR		Michelbook Country Club	Michelbook Country Club McMinnville, OR 97128		
+1	AZ	Surprise	White Tank Regional Mountain Park	White Tank Regional Mountain Park Surprise, AZ		
+1	AZ		Randolph Golf Course	Randolph Golf Course Tucson, AZ 85711		
+1	FL		MDCA Campus	MDCA Campus Mount Dora, FL 32757		
+1	NY		Bassett Park	Bassett Park Williamsville, NY 14226		
+1						
+1	IN		Taylor Univ Farm	Taylor Univ Farm Upland, IN 46953		
+1	CO	Durango	Fort Lewis	Fort Lewis Durango, CO		
+1	IN		Blue River Cross Country Course	Blue River Cross Country Course Shelbyville, IN 00000		
+1						
+1	IN		Mt Vernon HS	Mt Vernon HS Fortville, IN 46040		
+1	IN		Penn	Penn 59400 Elm Rd Mishawaka, IN 46544		
+1						
+1	AR		Indiana East	Indiana East , AR		
+1						
+1	FL		Lake McKeithan	Lake McKeithan Brooksville, FL 34601		
+1	FL	Ruskin	Lennard HS	Lennard HS Ruskin, FL		
+1	FL		Pace Campus	Pace Campus 16001 West SR-84 Miami Gardens, FL 33054		
+1						
+1						
+1	NH		Newmarket Junior/Senior High School	Newmarket Junior/Senior High School Newmarket, NH 03857		
+1	NH		North Star Timing	North Star Timing Proctor Academy, NH 03303		
+1	IN	West Lebanon	Hanging Rock	Hanging Rock West Lebanon, IN		
+1	NH		Newmarket Junior/Senior High School	Newmarket Junior/Senior High School 213 S. Main Street Newmarket, NH 03857		
+1	GA	West Point	Point University	Point University West Point, GA		
+1	TN		Milligan University	Milligan University Milligan, TN 37682		
+1	IN		Rossville	Rossville Rossville, IN 46065		
+1	ME		PVCC	PVCC Orono, ME 04469		
+1						
+1	IN	West Lebanon	Hanging Rock Camp	Hanging Rock Camp West Lebanon, IN		
+1						
+1	FL		Gateway Fairgrounds	Gateway Fairgrounds Lake City, FL 32025		
+1						
+1	FL		Key West	Key West Key West, FL 33040		
+1	MT	Great Falls	Anaconda Golf Course	Anaconda Golf Course Great Falls, MT		
+1	NH	Bethlehem	SKI HEARTH FARM	SKI HEARTH FARM Ski Hearth Farm Bethlehem, NH		
+1						
+1	MT		Cottonwood Country Club	Cottonwood Country Club 508 Country Club Rd Glendive, MT 59330		
+1	TN		Mike Rose Complex	Mike Rose Complex - Memphis,TN - 8/31/2024 Memphis, TN 38125		
+1						
+1	FL	Brooksville	Sand Hill Scout Reservation	Sand Hill Scout Reservation Brooksville, FL		
+1						
+1	FL		Crystal River High School	Crystal River High School Crystal River, FL 34429		
+1						
+1	FL		DeSoto County	DeSoto County Arcadia, FL 33821		
+1	CA		Cal St. Fullerton	Cal St. Fullerton Carbon Canyon Regional, CA 92834		
+1						
+1	WA		The Course	The Course 2521 N Flora Rd Spokane, WA 99216		
+1	FL		Jacksonville	Jacksonville Jacksonville, FL 32211		
+1	NC		Owen's Park	Owen's Park Louisburg, NC 27551		
+1	IA		Indian Hills Community College	Indian Hills Community College Ottumwa, IA 50023		
+1						
+1	IN	Borden	Borden	Borden Borden, IN		
+1	NC		Dorothea Dix Park	Dorothea Dix Park Raleigh, NC 27603		
+1	FL		Trinity Christian Academy	Trinity Christian Academy Lake Worth, FL 33463		
+1	FL		Bradenton Christian School	Bradenton Christian School Bradenton, FL 34200		
+1			Mercyhurst	Mercyhurst Girard, PA 1641l7		
+1	IN		Eagle Park	Eagle Park P.O. Box 68 Nashville, IN 47448		
+1	FL		MCHS	MCHS Stuart, FL 34994		
+1	VA		Sweet Briar College	Sweet Briar College Amherst, VA 24595		
+1						
+1	TX		Cris Quinn Soccer Complex	Cris Quinn Soccer Complex Beaumont, TX 77713		
+1	MN		Wapikada Golf Course	Wapikada Golf Course Sauk Rapids, MN 56379		
+1	FL		Chiefland	Chiefland Chiefland, FL 32626		
+1	MO		Cape Splash Center	Cape Splash Center Cape Girardeau, MO 67301		
+1	FL		Berkeley Prep	Berkeley Prep Tampa, FL 33615		
+1	IN		The Farm	The Farm - Taylor XC Course Upland, IN 46953		
+1						
+1	FL		Hebrew Academy	Hebrew Academy Miami Beach, FL 33140		
+1	IN	Attica	Attica	Attica Attica, IN		
+1	FL		Atlantic Coast	Atlantic Coast Jacksonville, FL 32119		
+1	NH		Con-Val Regional High School	Con-Val Regional High School 184 Hancock Road Peterborough, NH 03458		
+1	KY		Phil Moore Park	Phil Moore Park Midway, KY 40347		
+1						
+1	MI		Forest Akers Golf Course	Forest Akers Golf Course East Lansing, MI 00000		
+1	TN		University of the South	University of the South Suwenee, TN 30066		
+1	IN		LaVern Gibson Championship Cross Country Cour	LaVern Gibson Championship Cross Country Cour 599 S Tabortown St Terre Haute, IN 47803		
+1	FL	Brooksville	McKethan Lake	McKethan Lake Brooksville, FL		
+1	WI		Shorewood Cross Country Course | Green Bay WI	Shorewood Cross Country Course | Green Bay WI 2532 Shorewood Drive Green Bay, WI 00000		
+1	FL		PRHS	PRHS 1655 victory lane Naples, FL 34120		
+1	AL		Graham Creek Nature Preserve	Graham Creek Nature Preserve 1 Pride Dr. Gulf Shores, AL 36527		
+1	LA		UL-Monroe	UL-Monroe Monroe, LA 71209		
+1	FL		Episcopal FL	Episcopal FL Jacksonville, FL 32207		
+1	FL		@ First Coast HS	@ First Coast HS Jacksonville, FL 32208		
+1	TX		Brenham High School	Brenham High School 525 A H Ehrig Dr Brenham, TX 77833		
+1	FL		Treasure Coast	Treasure Coast Port St. Lucie, FL 34953		
+1						
+1	FL		Satellite	Satellite Satellite Beach, FL 32937		
+1	ND		Parkhurst Recreation Area	Parkhurst Recreation Area 6030 College Lane Jamestown, ND 58405		
+1	AR		Lyon College	Lyon College Batesville, AR 72503		
+1	NH		The Derryfield School	The Derryfield School 2108 River Rd. Manchester, NH 03104		
+1	FL		Melbourne	Melbourne Melbourne, FL 32901		
+1						
+1	ME	Castine	Maine Maritime Academy	Maine Maritime Academy Castine, ME		
+1	MA		Mass. Maritime Academy	Mass. Maritime Academy 101 Academy Drive Bourne, MA 02532		
+1	NH		Alvirne High School	Alvirne High School 200 Derry Rd., Rte. 102 Hills House X-C Course - Hudson, NH 03051		
+1	FL		West Orange HS	West Orange HS 1625 S. Beulah Rd. Winter Garden, FL 34787		
+1	FL		Trinity Catholic	Trinity Catholic 2600 S.W. 42nd St. Ocala, FL 34474		
+1	OH		Lehman Cross Country Course	Lehman Cross Country Course Westerville, OH 43081		
+1	KY		Falling Springs Park	Falling Springs Park Versailles, KY 40383		
+1	IL		St. James Farms	St. James Farms Wrenville, IL 60555		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	ME		University of Maine	University of Maine College Avenue Orono, ME 04469		
+1						
+1						
+1						
+1	MN		Como Park Golf Course	Como Park Golf Course - St. Paul, MN St. Paul, MN 55103		
+1	TX		Texas	Texas Austin, TX 78713		
+1	OH		Elvin R.  King Cross Country Course	Elvin R. King Cross Country Course 251 N. Main Street Cedarville, OH 45314		
+1	MT		University of Montana Golf Course	University of Montana Golf Course Missoula, MT 59812		
+1	TN		Buffalo Valley Golf Course, Unicoi, TN	Buffalo Valley Golf Course, Unicoi, TN Unicoi, TN 37692		
+1	VT		Johnson State College	Johnson State College Johnson, VT 05656		
+1	GA		Americus Sumter Park	Americus Sumter Park 726 S Martin Luther King Blvd Americus, GA 31719		
+1	TX	Tyler	UT Tyler Soccer Fields	UT Tyler Soccer Fields Tyler, TX		
+1	PA		Herr Park Course	Herr Park Course Lancaster, PA 17603		
+1	MN	City Not Supplied	St. Kates	St. Kates City Not Supplied, MN		
+1	KY	City Not Supplied	Yellow Creek Park	Yellow Creek Park City Not Supplied, KY		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	WA		Ft. Steilacoom Park	Ft. Steilacoom Park Tacoma, WA 98416		
+1						
+1						
+1						
+1						
+1	OH		Capital University	Capital University Columbus, OH 43209		
+1	KS		Prairie Ridge Park	Prairie Ridge Park Hutchinson, KS 67501		
+1						
+1						
+1						
+1	MI		Goodells County Park	Goodells County Park Goodells, MI 48653		
+1	MA		Gordon College	Gordon College Wenham, MA 04005		
+1						
+1	IL		University of IL	University of IL - Springfield Springfield, IL 60431		
+1						
+1						
+1						
+1						
+1						
+1	WI		Lake Breezee Golf Course	Lake Breezee Golf Course Winneconne, WI 12345		
+1						
+1						
+1						
+1						
+1						
+1	NH		College Woods Course	College Woods Course Durham, NH 03824		
+1						
+1						
+1						
+1						
+1	TX		River Creek Golf Course	River Creek Golf Course 1605 FM 1177 Wichita Falls, TX 76305		
+1			CWRU Squire Valleeview Farm	CWRU Squire Valleeview Farm Hunting Valley, OH 44		
+1			Lyon College	Lyon College		
+1						
+1	WI		Wayne E. Dannehl National Cross Country Course	Wayne E. Dannehl National Cross Country Course Kenosha, WI 53144		
+1	ME		Battery Park	Battery Park - UNE Biddeford, ME 04005		
+1	MN		Highland 9-Hole Golf Course	Highland 9-Hole Golf Course St. Paul, MN 55104		
+1						
+1	NY		Plattsburgh	Plattsburgh Plattsburgh, NY 12901		
+1	SC	Newberry	The Farm	The Farm Newberry, SC		
+1						
+1						
+1	IN		Blue River CC Course	Blue River CC Course 725 Lee Blvd Shelbyville, IN 46176		
+1						
+1						
+1	CT		Stenger Farm	Stenger Farm New London, CT 06320		
+1	OF	Wilberforce	Central State University	Central State University Wilberforce, OF		
+1	FL		Eagle Springs Golf Course	Eagle Springs Golf Course 171 Country Club Lane Defuniak Springs, FL 32312		
+1						
+1						
+1						
+1						
+1	IN		Sunset Hill Farm	Sunset Hill Farm 775 Meridian Rd Valparaiso, IN 46383		
+1						
+1	FL		Highlander Park	Highlander Park Dunedin, FL 34698		
+1						
+1						
+1						
+1	FL		The Claw	The Claw Tampa, FL 11111		
+1						
+1						
+1						
+1						
+1						
+1	NY		Hudson Valley Sportsdome	Hudson Valley Sportsdome 240 Milton Turnpike Milton, NY 12547		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Rose Tree Park	Rose Tree Park Media, PA 12345		
+1						
+1						
+1	MD		Utica District Park	Utica District Park Frederick, MD 21701		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MI		Hillsdale College	Hillsdale College Hillsdale, MI 49242		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PR		U.P.R. Cayey	U.P.R. Cayey Avenida Antonio R. Barcel 205 Cayey, PR 00736		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Western Texas Cross Country Course	Western Texas Cross Country Course Snyder, TX 79549		
+1						
+1						
+1						
+1						
+1			Grove City	Grove City City Not Supplied,		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CA		Oxnard	Oxnard Oxnard, CA 93033		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IL	WARRENVILLE	ST. JAMES FARM	ST. JAMES FARM WARRENVILLE, IL		
+1						
+1						
+1						
+1	PA		Carlisle, PA 17013	Carlisle, PA 17013		
+1						
+1						
+1	MD		Princess Anne, MD 21853	Princess Anne, MD 21853		
+1						
+1						
+1	FL		The Claw:  USF Golf Course	The Claw: USF Golf Course Tampa, FL 33607		
+1						
+1						
+1	TX		Lake Wichita Park	Lake Wichita Park Wichita Falls, TX 76308		
+1	SC		Winthrop	Winthrop Rock Hill, SC 29730		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	AR	City Not Supplied	St. Catherines University	St. Catherines University City Not Supplied, AR		
+1						
+1	NV		Craig Ranch Regional Park	Craig Ranch Regional Park North Last Vegas, NV 89154		
+1	CA		UC Santa Cruz East Field	UC Santa Cruz East Field Santa Cruz, CA 95064		
+1						
+1						
+1	TX		Tejas Golf Course	Tejas Golf Course Stephenville, TX 76402		
+1	TX		UT-Tyler	UT-Tyler Tyler, TX 75707		
+1						
+1						
+1						
+1						
+1	VA		Buford Merideth Cross Country Course	Buford Merideth Cross Country Course XC Course Rd. Blacksburg, VA 24061		
+1						
+1	ME		Saxl Park	Saxl Park Bangor, ME 04011		
+1	KY		Berea College Alumni Fields	Berea College Alumni Fields Berea, KY, KY 40404		
+1	OH		Rio Grande CC Course	Rio Grande CC Course Rio Grande, OH 45674		
+1						
+1	OH	Richmond	IU East	IU East Richmond, OH		
+1						
+1	FL	Sarasota	The Classical Academy	The Classical Academy Sarasota, FL		
+1	NH		Bow High School	Bow High School Bow, NH 03304		
+1						
+1	VT		Hard'Ack	Hard'Ack Saint Albans, VT 05478		
+1	SD		The Bluffs Golf Course	The Bluffs Golf Course Vermillion, SD 57069		
+1						
+1	TN	Knoxville	Cheorkee Farms	Cheorkee Farms Knoxville, TN		
+1	CA		West Valley Championship Course	West Valley Championship Course Cottonwood, CA 96003		
+1			Idaho State Cross Country Course	Idaho State Cross Country Course Pocatello, Id 83201		
+1	NH		BETHLEHAM	BETHLEHAM 1901 Main St Bethlehem, NH 03547		
+1			Nehoiden Golf Course	Nehoiden Golf Course Keohane Sports Center Wellesley, MA 2481		
+1	IN		Harrison HS	Harrison HS West Lafayette, IN 47906		
+1	IN	Bremen	Bremen	Bremen Bremen, IN		
+1	CA		Cal St. Fullerton	Cal St. Fullerton California State University, Fullerton, CA 92834		
+1						
+1	CA		Humboldt	Humboldt Arcata, CA 95521		
+1	FL		Leto HS	Leto HS Tampa, FL 33614		
+1	IN		Van Hoozen Park / Homestead HS	Van Hoozen Park / Homestead HS 4310 Homestead Rd Ft. Wayne, IN 46814		
+1	FL		B. T. Washington	B. T. Washington Pensacola, FL 32504		
+1	FL		Pennekamp	Pennekamp Kay Largo, FL 33070		
+1	DE		Delaware Outreach & Research Center	Delaware Outreach & Research Center 884 Smyrna Leipsic Road Smyra, DE 17788		
+1						
+1						
+1	IL		EIU	EIU Charleston, IL 61920		
+1	MI		Gainney Athletic Complex	Gainney Athletic Complex 1661 E Paris Ave GRAND RAPIDS, MI 49546		
+1						
+1						
+1	PA		Cooper's Lake Campground	Cooper's Lake Campground Slippery Rock, PA 16057		
+1	NY		Finger Lakes Community College	Finger Lakes Community College Canandaigue, NY 14424		
+1	OH		Clark County Fairgrounds	Clark County Fairgrounds 10643 Vermilion Road Springfield, OH 45501		
+1						
+1	NV		Shadow Mountain Park	Shadow Mountain Park Sparkf, NV 89434		
+1						
+1	PA		CALIFORNIA UNIVERSITY	CALIFORNIA UNIVERSITY California, PA 15419		
+1			Edmond Santa Fe HS	Edmond Santa Fe HS Edmond,OK, Oklahoma 73170		
+1						
+1						
+1						
+1	FL		Lawnwood Stadium	Lawnwood Stadium Ft. Pierce, FL 34950		
+1						
+1	NC		Cleveland CC	Cleveland CC 137 S. Post Rd. Shelby, NC 28152		
+1						
+1						
+1	KS		Allen County Country Club	Allen County Country Club Iola, KS 66062		
+1						
+1						
+1	MI		Pine View Golf Club	Pine View Golf Club Three Rivers, MI 49009		
+1	NC		Ivey M. Redmon Sports Complex	Ivey M. Redmon Sports Complex Kernersville, NC 27262		
+1	FL	Dunedin	Highlander Park	Highlander Park Dunedin, FL		
+1	FL		Dixie Hollins	Dixie Hollins St Petersburg, FL 32312		
+1	ND		North Dakota State	North Dakota State Fargo, ND 58104		
+1						
+1						
+1						
+1	OH		Morehead State University	Morehead State University Morehead, OH 40351		
+1						
+1	CA		Woodley Lakes Golf Course	Woodley Lakes Golf Course Van Nuys, CA 90045		
+1	CA		San Mateo	San Mateo San Mateo, CA 94402		
+1						
+1	CA		Butte College	Butte College Oroville, CA 95965		
+1	MN		Gusvaus Adlophus College	Gusvaus Adlophus College St. Peter, MN 56082		
+1						
+1	KS		Sterling College	Sterling College Sterling, KS 67579		
+1	MT		Bill Roberts	Bill Roberts Helena, MT 59501		
+1						
+1	MA		UMass-Amherst	UMass-Amherst Amherst, MA 01003		
+1	IA		Iowa Western	Iowa Western Council Bluffs, IA 51503		
+1	GA		Bolin Park	Bolin Park Canton, GA 30066		
+1	CA		Crystal Springs Course	Crystal Springs Course Belmont, CA 94402		
+1	KS		Johnson Golf Course	Johnson Golf Course Johnson, KS 67855		
+1	IN	Anderson	Mounds State Park	Mounds State Park Anderson, IN		
+1						
+1						
+1						
+1	OR	Portland	Fernhill Park	Fernhill Park Portland, OR		
+1	CA		UCSB Lagoon	UCSB Lagoon Santa Barbara, CA 93101		
+1			Wisconsin River Golf Club	Wisconsin River Golf Club Stevens, Point WI		
+1						
+1	FL		Riverside	Riverside Jacksonville, FL 32327		
+1			Foss Park Golf Course	Foss Park Golf Course North Chicago, Illinois 60064		
+1						
+1						
+1						
+1	PA		ST FRANCIS	ST FRANCIS LORETTO, PA 15940		
+1	NH		Dartmouth XC Course	Dartmouth XC Course Hanover, NH 03755		
+1	MO		KATY Trail	KATY Trail St. Charles, MO 63301		
+1	CA		Lake Casitas	Lake Casitas Ventura, CA 93001		
+1	FL		Florida Tech	Florida Tech Melbourne, FL 32901		
+1						
+1	TX		Grover Nelson Park	Grover Nelson Park Abilene, TX 79602		
+1						
+1						
+1	CA		Steve	Steve Woodland Hills, CA 91371		
+1	FL		Freedom (Tampa)	Freedom (Tampa) Tampa, FL 33647		
+1	NY		Long Island	Long Island Brooklyn, NY 11201		
+1						
+1						
+1						
+1	FL		Mitchell	Mitchell New Port Richey, FL 34655		
+1						
+1	PA		Immaculata University	Immaculata University 1145 W King Rd Immaculata, PA 19345		
+1						
+1	IN	Cayuga	North Vermillion	North Vermillion Cayuga, IN		
+1	CT		St. Joseph's University	St. Joseph's University West Hartord, CT 00000		
+1	AL		Wallace State	Wallace State 801 N. Main Street Hanceville, AL 35077		
+1						
+1	PA		Lancaster Bible College	Lancaster Bible College 901 Eden Road Lancaster, PA 17601		
+1						
+1						
+1						
+1						
+1	PA		Baker Field	Baker Field Lancaster, PA 17604		
+1	PA		Westtown School	Westtown School Cheyney, PA 19319		
+1	DE		Delaware	Delaware Newark, DE 19716		
+1	NH		Freestyle Farm	Freestyle Farm Amherst, NH 03031		
+1	CA	Fresno	Woodland Park	Woodland Park WOODWARD PARK Fresno, CA		
+1	FL		Pensacola Catholic	Pensacola Catholic Pensacola, FL 32505		
+1	TX	Wichita Falls	Midwestern St	Midwestern St Wichita Falls, TX		
+1	MD		Oregon Ridge Park	Oregon Ridge Park Baltimore, MD 21252		
+1						
+1	FL	Lakeland	Lake Boney Park	Lake Boney Park Lakeland, FL		
+1	AL		Brewton MS	Brewton MS Brewton, AL 35487		
+1	KS	Topeka	Washburn Rural	Washburn Rural Topeka, KS		
+1	WA		Plantes Ferry Park & Sports Complex	Plantes Ferry Park & Sports Complex Spokane, WA 99251		
+1	KS		Hutchinson Fun Valley	Hutchinson Fun Valley Hutchinson, KS 67501		
+1	CA	San Luis Obispo	Fairbanks Cross Country Course	Fairbanks Cross Country Course San Luis Obispo, CA		
+1						
+1						
+1						
+1	IN		Delta	Delta Muncie, IN 47303		
+1	AL		TRM	TRM Brewton, AL 35487		
+1						
+1						
+1						
+1	MA		Brown	Brown Mark Coogan Cross Country Course at Highland Park - Attleboro, MA 02912		
+1	PA		Elizabethtown Solar Panel Loop	Elizabethtown Solar Panel Loop Elizabethtown, PA 17022		
+1	FL		Cecil Field Golf Course	Cecil Field Golf Course Jacksonville, FL 32221		
+1	PA		University of Pittsburgh Greensburg	University of Pittsburgh Greensburg Greensburg, PA 15601		
+1	OH		University of Rio Grande	University of Rio Grande F34 Rio Grande, OH 45601		
+1	GA		Region Open	Region Open Rome, GA 30066		
+1	NJ		Giralda Farms	Giralda Farms Madison, NJ 07940		
+1						
+1						
+1	KS		Wichita State University	Wichita State University Wichita, KS 67260		
+1	SC		Columbia International University	Columbia International University Columbia, SC 29203		
+1						
+1						
+1	MI	Goodells	Goodells Park	Goodells Park Goodells, MI		
+1	FL		Tradewinds Park	Tradewinds Park 16001 West SR-8 16001 West SR-84 Coconut Creek, FL 33073		
+1	NC		Tryon International Equestrian Center	Tryon International Equestrian Center 2659 Sandy Plains Road Mill Spring, NC 28756		
+1						
+1	IA		NIACC	NIACC 500 College Dr Mason City, IA 50401		
+1						
+1	FL		The Bolles School	The Bolles School Jacksonville, FL 32207		
+1						
+1	NH		Alvirne High School	Alvirne High School 200 Derry Rd., Rte. 102 Hills House XC Course - Hudson, NH 03051		
+1	SC		Winthrop Farm XC Course	Winthrop Farm XC Course Rock Hill, SC 29733		
+1	IN		Southmont	Southmont Carwfordsville, IN 47933		
+1						
+1	WI		Greenfield Park	Greenfield Park Milwaukee, WI 30066		
+1						
+1	KS		Arkalon Park	Arkalon Park Liberal, KS 67901		
+1	FL		The Benjamin School	The Benjamin School 11000 Ellison Wilson Road PBG, FL 33408		
+1	FL		Fun n Sun Expo center	Fun n Sun Expo center Lakeland, FL 33801		
+1	FL		ESPN WWOS Complex	ESPN WWOS Complex Orlando, FL 11111		
+1	MD		Baltimore County Agricultural Center	Baltimore County Agricultural Center Cockeysville, MD 21030		
+1	WV		Lotito Park	Lotito Park 1780 Stadium Drive Bluefield, WV 24701		
+1	FL		Chamberlain	Chamberlain Tampa, FL 33612		
+1	IN	Syracuse	Wawasee XC Course	Wawasee XC Course Syracuse, IN		
+1			Willow Metropark	Willow Metropark - Chestnut Grove New Boston, Michigan 48164		
+1						
+1	AK		Russian Jack Springs Golf Course	Russian Jack Springs Golf Course Anchorage, AK 99504		
+1	IN		North Harrison High School	North Harrison High School , IN		
+1	NH		St. Anselm	St. Anselm 100 St Anselm Dr Goffstown, NH 03102		
+1	NY		Van Courtlandt Park	Van Courtlandt Park Broadway and Vancortlandt Park Bronx, NY 10471		
+1	SC		Columbia (S.C.)	Columbia (S.C.) Columbia, SC 29203		
+1	KY		Arlington Course	Arlington Course 1510 Lexington Road Richmond, KY 40475		
+1	FL		Cocoa HS	Cocoa HS Cocoa, FL 32926		
+1						
+1			Amend Park	Amend Park Billings, Montana 59101		
+1	AR	Conway	Beaverfork Park	Beaverfork Park Conway, AR		
+1	FL	Titusville	Chain of Lakes	Chain of Lakes Titusville, FL		
+1			Mary Help of Christians	Mary Help of Christians 6400 E Chelsea St. Tampa, Fl 33610		
+1	IL		Wheaton St. James Park	Wheaton St. James Park Wheaton, IL 60625		
+1	IA		Seminole Park Cross-Country Course	Seminole Park Cross-Country Course Cedar Rapids, IA 52402		
+1	IN		New Haven	New Haven 1300 Green Road New Haven, IN 46774		
+1	KY		Phil Moore Park	Phil Moore Park , KY		
+1						
+1						
+1	NY	Canandaigua	FLCC	FLCC Canandaigua, NY		
+1	WA		Jefferson Park Golf Course	Jefferson Park Golf Course Seattle, WA 98115		
+1	SD		Adams Nature Preserve,  North Sioux City, SD	Adams Nature Preserve, North Sioux City, SD North Sioux Cty, SD 57049		
+1	CA		Blanchard Park Wash	Blanchard Park Wash 220 E. Sixth Street Rains Center - Pomona College Claremont, CA 90210		
+1						
+1						
+1	VA		Kernstown Battlefield	Kernstown Battlefield Winchester, VA 22601		
+1	NY		York College	York College Jamaica, NY 11451		
+1	TX		Angelo State	Angelo State San Angelo, TX 76909		
+1						
+1						
+1	WV		VA Hospital	VA Hospital Clarksburg, WV 26031		
+1	KY		Murray State	Murray State Murray, KY 44444		
+1						
+1	SC	Aiken	Pacer Path	Pacer Path Aiken, SC		
+1						
+1	MD		Hood College	Hood College Frederick, MD 21701		
+1						
+1	VA		Virginia Wesleyan University	Virginia Wesleyan University Virginia Beach, VA 23455		
+1	SC		James Island County Park	James Island County Park Charleston, SC 29613		
+1	IL		Spring Lake State Park	Spring Lake State Park Macomb, IL 61455		
+1						
+1	AR	Clarksville	Univ of the Ozarks Trails	Univ of the Ozarks Trails Clarksville, AR		
+1						
+1	MI		Northern Michigan	Northern Michigan Marquette, MI 12345		
+1	OH		Bluffton Nature Preserve	Bluffton Nature Preserve Bluffton, OH 45818		
+1						
+1	NC		Southside Park, Newton, N.C.	Southside Park, Newton, N.C. Newton, NC 28658		
+1	PA		DVU Campus	DVU Campus 741 Grenoble Rd Doylestown, PA 18901		
+1	CA		Tuolumne Reginoal Park	Tuolumne Reginoal Park Modesto, CA 95354		
+1	LA		Louisiana Tech	Louisiana Tech Ruston, LA 71270		
+1	OH		LIberty Park	LIberty Park Delaware, OH 43015		
+1	PA		Baker Field	Baker Field Lancaster, PA 17603		
+1	NY		Lemoyne College	Lemoyne College Syracuse, NY 13214		
+1	TX		Rice	Rice 6100 Main Houston, TX 77251		
+1	NC		Ivey Redmon Sports Complex	Ivey Redmon Sports Complex 788 Beeson Rd. Kernersville, NC 27284		
+1	IL		SIUE XC Course	SIUE XC Course Edwardsville, IL 62025		
+1	PA		ChesLen Preserve	ChesLen Preserve 1199 Cannery Rd Coatesville, PA 19320		
+1	NY		St. Joseph's College	St. Joseph's College Patchogue, NY 11772		
+1	OK		Big Green Soccer Complex	Big Green Soccer Complex 2800 W Gore Lawton, OK 73505		
+1						
+1						
+1						
+1	PA		Unionville High School	Unionville High School 750 Unionville Rd Kennett Square, PA 19348		
+1	GA		Atlanta	Atlanta Atlanta, GA 30066		
+1						
+1						
+1	LA		Live Oak Park	Live Oak Park New Orleans, LA 70148		
+1	SC		Milliken Arboretum	Milliken Arboretum Spartanburg, SC 29303		
+1	VT		NVU-Lyndon	NVU-Lyndon Lyndonville, VT 05851		
+1						
+1	IL		Forsyth Park	Forsyth Park Forsyth, IL 62522		
+1	OH		Otterbein University	Otterbein University Westerville, OH 43082		
+1	GA		Georgia Industrial Children's Home	Georgia Industrial Children's Home 4690 N. Mumford Rd. Macon, GA 31216		
+1						
+1	WI		Dr. Wayne E. Dannehl Cross Country Course	Dr. Wayne E. Dannehl Cross Country Course Kenosha, WI 53144		
+1	PA		Mingo Creek Park	Mingo Creek Park Finleyville, PA 15301		
+1	TX		Texas A&M	Texas A&M College Station, TX 77842		
+1	FL	Oviedo	Seminole State College	Seminole State College Oviedo, FL		
+1	PA		Dickinson Park	Dickinson Park West High Street Carlisle, PA 17013		
+1	WA		Club Northwest	Club Northwest Seattle, WA 98112		
+1						
+1	CA		Polo Fields -GGP	Polo Fields -GGP San Francisco, CA 94112		
+1						
+1	KS		Johnson Country Club	Johnson Country Club Johnson, KS 67855		
+1	TN		Greene Farm	Greene Farm Jefferson City, TN 37877		
+1	OH		Univ. of Akron	Univ. of Akron - Firestone Metro Park Akron, OH 44319		
+1						
+1	IL		Aspen Ridge Golf Course	Aspen Ridge Golf Course 1763 E 4000n Rd Bourbonnaise, IL 60914		
+1	OH		Ottawa Park Golf Course	Ottawa Park Golf Course Toledo, OH 43606		
+1	NC		Al Buehler Trail	Al Buehler Trail Durham, NC 27708		
+1	NY		Medaille v Hilbert Men's Dual 2	Medaille v Hilbert Men's Dual 2 5200 South Park Avenue Hamburg, NY 14075		
+1						
+1						
+1	NC		Catawba College	Catawba College Salisbury, NC 28645		
+1	CA		Chabot Stadium	Chabot Stadium Hayward, CA 94545		
+1	FL		Frostproof HS	Frostproof HS Frostproof, FL 33843		
+1	MI	Adrian	Heritage Park	Heritage Park Adrian, MI		
+1	NC		Frank Liske Park	Frank Liske Park Concord, NC 28036		
+1						
+1						
+1						
+1						
+1						
+1						
+1	IL		Delavan HS	Delavan HS Delavan, IL 61745		
+1	NC		Al Buehler Trail	Al Buehler Trail Durham, NC 27705		
+1	MD		Emmitsburg, MD 21727	Emmitsburg, MD 21727		
+1	KS		Newman University Cross-Country Course	Newman University Cross-Country Course Wichita , KS 67205		
+1	SC		University of South Carolina	University of South Carolina Columbia, SC 29208		
+1	FL		South County Regional Park	South County Regional Park 11200 Park Access Road Boca Raton, FL 33498		
+1	PA		Schenely Park	Schenely Park Pittsburgh, PA 15213		
+1			Edmond Santa Fe HS	Edmond Santa Fe HS Edmond, Oklahoma 73013		
+1	TX		SUGAR CREEK PARK	SUGAR CREEK PARK Houston, TX 77204		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	GA		Georgia College and State University	Georgia College and State University Milledgeville, GA 31061		
+1	OH		Squire Valleevue Farm	Squire Valleevue Farm Cleveland, OH 44122		
+1	MN		Riverside Park	Riverside Park Minneapolis, MN 55441		
+1						
+1	CA		Legg Lake	Legg Lake South El Monte, CA 91733		
+1	IA		Morgan Creek Park	Morgan Creek Park Palo, IA 50428		
+1	IN		Earlham College	Earlham College Richmond, IN 47374		
+1	NJ		Rowan College @ Gloucester County	Rowan College @ Gloucester County Sewell, NJ 08102		
+1	FL		Holloway Park	Holloway Park Lakeland, FL 32806		
+1	NY		Finger Lakes CC	Finger Lakes CC Canandaigua, NY 14424		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	AZ		Central Arizona	Central Arizona 8470 N. Overfield Coolidge, AZ 85128		
+1	NH		Stratham Hill Park	Stratham Hill Park 30 Linden St. Stratham, NH 03833		
+1						
+1	CA		Frank G. Bonelli Regional Park-San Dimas, CA	Frank G. Bonelli Regional Park-San Dimas, CA San Dimas, CA 91773		
+1	MD		Jefferson Park	Jefferson Park St. Leonard, MD 20685		
+1						
+1	PA		LORETTO, PA	LORETTO, PA LORETTO, PA 15940		
+1	PA		California University Short Course	California University Short Course California , PA 13323		
+1	OH		Indian Ripple Park	Indian Ripple Park Dayton, OH 45429		
+1			aceheader2%	aceheader2% acecity%, acestate% 12345		
+1						
+1	NY		Sayville	Sayville Sayville, NY 11764		
+1						
+1	ND		Jamestown College	Jamestown College Jamestown, ND 58405		
+1						
+1	ST		Venu	Venu address city, ST 12345		
+1						
+1	IA		Ewing Park, Des Moines, IA	Ewing Park, Des Moines, IA Des Moines, IA 50311		
+1	IN		Tipton HS XC	Tipton HS XC Tipton, IN 46072		
+1	MN		Carleton College	Carleton College Northfield, MN 55441		
+1						
+1			Thames Valley GC	Thames Valley GC London, Ontario, Ontario N6A 3K7		
+1	GA		Brewton Parker College 2023	Brewton Parker College 2023 Mount Vernon, GA 30066		
+1						
+1	KS		Lawrence, KS 66045	Lawrence, KS 66045		
+1	WI	Beloit	Leeson Park	Leeson Park - Beloit, WI		
+1	TX		Schreiner	Schreiner Kerrville, TX 78028		
+1	FL		Classical Academy MS 3k v2025	Classical Academy MS 3k v2025 8000 Bee Ridge Rd Sarasota, FL 34241		
+1	NY		Stony Brook University	Stony Brook University Stony Brook, NY 11790		
+1	VT		Dresden Athletics Fields	Dresden Athletics Fields 41 Lebanon St. Norwich, VT 03755		
+1						
+1						
+1	PA		Misericordia	Misericordia Dallas, PA 18612		
+1	FL		Miami Country Day	Miami Country Day 601 NE 107th Street Miami, FL 33161		
+1	PA	City Not Supplied	La Roche	La Roche City Not Supplied, PA		
+1	MN		101 St. Olaf Ave.	101 St. Olaf Ave. 101 St. Olaf Ave. Northfield, MN 55057		
+1			Parkhurst	Parkhurst Jamestown, ND 584012		
+1	IN		Salem High School	Salem High School , IN		
+1	IN		Charlestown State Park	Charlestown State Park , IN		
+1	FL		PTS Main Field	PTS Main Field 7900 SW 176 Street Palmetto Bay, FL 33157		
+1	LA		Enos Darbonne	Enos Darbonne 4205 Ryan Street Lake Charles, LA 70605		
+1	IN		Eastern (Pekin) High School	Eastern (Pekin) High School , IN		
+1	IN		Eastbrook	Eastbrook Upland , IN 46953		
+1						
+1						
+1	CA		Cal St. Fullerton	Cal St. Fullerton Cal State Fullerton Campus Course, CA 92834		
+1						
+1						
+1	NC		State Frm Fields	State Frm Fields Boone, NC 28608		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NY	Latham	The Crossings of Latham	The Crossings of Latham Latham, NY		
+1						
+1	NH		BHS	BHS Bow, NH 03304		
+1	LA	Monroe	UL-Monroe	UL-Monroe Monroe, LA		
+1						
+1						
+1						
+1						
+1						
+1						
+1	SC	Spartanburg	Millikan Research Center	Millikan Research Center Spartanburg, SC		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	OK		Big Green Soccer Comples	Big Green Soccer Comples Lawton, OK 73501		
+1						
+1						
+1						
+1						
+1	MI		Pleasant Hills Golf Club	Pleasant Hills Golf Club 4452 East Millbrook Road Mt. Pleasant, MI 48858		
+1	PA		LU Cross Country Course	LU Cross Country Course Lincoln University, PA 19352		
+1						
+1	VA		Bridgewater XC Course	Bridgewater XC Course Bridgewater, VA 22812		
+1	VA		Liberty XC Course	Liberty XC Course Lynchburg, VA 24502		
+1						
+1						
+1	VA		Vista Links Golf Course	Vista Links Golf Course 100 Vista Links Drive Buean Vista, VA 24416		
+1	ND		Fargo, ND 58105	Fargo, ND 58105		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	OK	Oklahoma City	Eldon Lyon Park	Eldon Lyon Park Oklahoma City, OK		
+1						
+1	FL	Arcadia	DeSoto County	DeSoto County Arcadia, FL		
+1						
+1	NH		Souhegan High School	Souhegan High School Amherst, NH 03031		
+1	FL		Montverde Eagles XC Course	Montverde Eagles XC Course Montverde, FL 34756		
+1	FL		Silver Dollar Golf Course	Silver Dollar Golf Course Odessa, FL 33635		
+1	FL		ODA	ODA 444 Reid St. Sarasota, FL 34242		
+1	NC		V.E. & Lydia Owens Park	V.E. & Lydia Owens Park Louisburg, NC 27551		
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Plantation Central Park	Plantation Central Park Plantation , FL 33313		
+1						
+1						
+1	NC		J. Burt Gillette Athletic Complex	J. Burt Gillette Athletic Complex Wilson, NC 27893		
+1	LA		.	. . ., LA 00000		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CT		Wickham Park	Wickham Park Manchester, CT 06106		
+1						
+1						
+1						
+1						
+1						
+1	GA		Stewart Field	Stewart Field 6935 Eckle Street Ft. Benning, GA 31901		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	RI		Bryant Campus Course	Bryant Campus Course Smithfield, RI 02917		
+1	TX		Nelson Park	Nelson Park Abilene, TX 78214		
+1						
+1						
+1						
+1						
+1	NV		Sierra Sage Golf Course	Sierra Sage Golf Course Reno, NV 89512		
+1	NY	Newburgh	Mount Saint Mary College Cross-Country Course	Mount Saint Mary College Cross-Country Course Newburgh, NY		
+1	PA		Coopers Lake Camp Ground	Coopers Lake Camp Ground 17 a Morrow field House Slippe Slippery Rock, PA 16057		
+1	PA		Belmont Plateau	Belmont Plateau Philadelphia, PA 19122		
+1						
+1						
+1						
+1						
+1						
+1						
+1	NH		Hopkinton State Fair	Hopkinton State Fair 41 Temple Street Hopkinton, NH 02114		
+1						
+1	WA	Spokane	Spokane Polo Grounds	Spokane Polo Grounds Spokane , WA		
+1						
+1	FL	Palatka	RAVINE GARDENS, PALATKA	RAVINE GARDENS, PALATKA Ravine Gardens Palatka, FL		
+1	SC		Johns Island County Park	Johns Island County Park 1761 Hay Road Charleston, SC 29455		
+1	GA		Clark Atlanta University	Clark Atlanta University Atlanta, GA 30066		
+1	IA		William Penn University	William Penn University Oskaloosa, IA 52577		
+1	TN		Victor Ashe Park	Victor Ashe Park 4901 Bradshaw Rd Knoxville, TN 37912		
+1						
+1	ME		Rotary Park	Rotary Park Biddeford, ME 04005		
+1						
+1	FL	Winter Garden	Foundation	Foundation FOUNDATION ACADEMY, Winter Garden, FL		
+1	TN		Freed-Hardeman Cross Country Course	Freed-Hardeman Cross Country Course 460 Ozier Road Pinson Henderson, TN 38340		
+1	NY		Medaille v Hilbert Men's Dual 1	Medaille v Hilbert Men's Dual 1 5200 South Park Avenue Hamburg, NY 14075		
+1						
+1	OK	Lawton	Big Green Soccer Club	Big Green Soccer Club Lawton, OK		
+1	IA		DMACC, Ankeny, IA	DMACC, Ankeny, IA Ankeny, IA 50023		
+1	AL		Montevallo XC Course	Montevallo XC Course 901 Shelby St. Montevallo, AL 35115		
+1	CA		Morley Field	Morley Field , CA		
+1	MA	Chicopee	Elms College Cross-Country Course	Elms College Cross-Country Course Chicopee, MA		
+1	OH		Hillcrest Golf Club	Hillcrest Golf Club 800 W. Bigelow Ave. Findlay, OH 45840		
+1	IA		DMACC Ankeny Campus	DMACC Ankeny Campus Ankeny, IA 50023		
+1	MT		Black Eagle Golf Course	Black Eagle Golf Course Black Eagle, MT 59414		
+1	MI		Concordia (Mich) University Campus	Concordia (Mich) University Campus Ann Arbor, MI 48105		
+1	NC		Duke University	Duke University Durham, NC 27705		
+1	FL		St. Ann School	St. Ann School Naples, FL 32327		
+1						
+1	IN		West Noble	West Noble Ligonier, IN 00000		
+1						
+1	CA	Belmont	Crystal Springs	Crystal Springs Belmont, CA		
+1						
+1	MN		Carleton College Arb.	Carleton College Arb. Northfield, MN 55057		
+1	NH		Gunstock Mountain Resort	Gunstock Mountain Resort Gunstock Mountain Resort, NH 03246		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	AR		Harding CC Course	Harding CC Course Searcy, AR 72143		
+1	CA	Sunnyvale	Bay Lands Park	Bay Lands Park Sunnyvale, CA		
+1						
+1						
+1	TN	Memphis	Rice Community center	Rice Community center Memphis , TN		
+1						
+1			Keene State College Owl Complex	Keene State College Owl Complex Krif Road Keene, New Hampshire 03431		
+1	AR		FA	FA , AR		
+1	LA		Loyola-New Orleans	Loyola-New Orleans Merrero, LA, LA 70072		
+1	OR		Meriwether Golf Course	Meriwether Golf Course Hillsboro, OR 97207		
+1	MO		Swope Park XC Course	Swope Park XC Course Kansas City, MO 64132		
+1	IN		Hanover Cross Country Course	Hanover Cross Country Course Hanover, IN 47243		
+1	WA		Seattle, Wash.	Seattle, Wash. 4101 Beacon Ave South Seattle, WA 98108		
+1	OH		Pearson Park	Pearson Park Oregon, OH 43606		
+1						
+1	WV		Grispin Golf Course (at Oglebay Resort)	Grispin Golf Course (at Oglebay Resort) Wheeling, WV 26003		
+1	CO	Denver	Wash Park	Wash Park Denver, CO		
+1	MO		Countryside Cross Country Course	Countryside Cross Country Course Kirksville, MO 63501		
+1						
+1	TN		Hillsdale Baptist Family Life Center	Hillsdale Baptist Family Life Center Clarksville, TN 37043		
+1	CA		Folsom Lake College	Folsom Lake College Folsom, CA 95630		
+1						
+1						
+1						
+1						
+1	NJ		Garret Mountain	Garret Mountain Woodland Park, NJ 07424		
+1	MI		Gracewil Golf Course	Gracewil Golf Course Grand Rapids, MI 49544		
+1						
+1						
+1	OK	Lawton	Big Green Soccer Complez	Big Green Soccer Complez Lawton, OK		
+1	NH		Bow High	Bow High Bow, NH 03304		
+1	IL		Detweiller Pakr	Detweiller Pakr Peoria, IL 61615		
+1						
+1	PR		UPR Recinto Rio Piedras	UPR Recinto Rio Piedras San Juan, PR 00975		
+1						
+1						
+1	NH	Conord	St. Pauls School	St. Pauls School Conord, NH		
+1			Cattails Golf Course	Cattails Golf Course Alamosa, CO CO		
+1	WA		CHAMBER CREEK REGIONAL PARK	CHAMBER CREEK REGIONAL PARK UNIVERSITY PLACE, WA 98466		
+1	IA		Southeast Polk HS, Pleasent Hill, IA	Southeast Polk HS, Pleasent Hill, IA Pleasant Hill, IA 50237		
+1	SD		Moccasin Creek Soccer Complex	Moccasin Creek Soccer Complex Aberdeen, SD 57401		
+1	ND		McDowell Dam Recreation Area	McDowell Dam Recreation Area Bismarck, ND 58501		
+1	IN	Salem	Salem	Salem Salem, IN		
+1	MO		Allison Sports Complex	Allison Sports Complex Springfield, MO 65802		
+1						
+1						
+1						
+1	NY	Rosendale	Williams Lake	Williams Lake Rosendale, NY		
+1	NC	Mount Olive	Mount Olive	Mount Olive Mount Olive, NC		
+1	IN	Albion	Central Noble	Central Noble 302 Cougar Court Albion, IN		
+1						
+1						
+1	FL		Cardinal Newman	Cardinal Newman West Palm Beach, FL 33409		
+1						
+1	FL		South Country Regional Park	South Country Regional Park Boca Raton, FL 34986		
+1	MA		Franklin Park	Franklin Park 1 Franklini Park Dr Boston, MA 02131		
+1	WA		Lower Woodland Park	Lower Woodland Park Seattle, WA 98117		
+1						
+1						
+1	VA		Elizabeth Campus	Elizabeth Campus Salem, VA 24153		
+1	NC		Ivey M. Redmon Sport Complex	Ivey M. Redmon Sport Complex Kernersville, NC 27262		
+1						
+1						
+1						
+1	CT		Yale Golf Course	Yale Golf Course New Haven, CT 06042		
+1	NH		Franklin Pierce University	Franklin Pierce University Hopkinton Town Library 61 Houston Fields Hopkinton, NH 03229		
+1						
+1	OH		Bowling Green XC Course	Bowling Green XC Course 1610 Stadium Drive Bowling Green, OH 43403		
+1						
+1	IN		The Farm	The Farm - Taylor XC Course Upland, IN 46989		
+1						
+1						
+1						
+1						
+1	NH		Belmont	Belmont NH, NH 03220		
+1	IL		Channahon Community Park	Channahon Community Park Channahon, IL 60435		
+1	IN		Eastbrook HS	Eastbrook HS Marion, IN 46953		
+1						
+1						
+1						
+1	WI		The Run for Down Under	The Run for Down Under Marquette, WI 49855		
+1						
+1						
+1						
+1	WI		CVC Nordic Championship	CVC Nordic Championship Marquette, WI 49855		
+1						
+1						
+1	IN		Franke Park	Franke Park 8021 Arlington Park Blvd Fort Wayne, IN 46835		
+1	FL		Plantation Heritage	Plantation Heritage Plantation, FL 33317		
+1	FL		Eagle Springs Golf Course	Eagle Springs Golf Course 555 Walton Road Defuniak Springs, FL 32312		
+1	FL		Middleburg High School	Middleburg High School Middleburg, FL 32068		
+1	PA	Dunmore	PSU-Scranton	PSU-Scranton Dunmore, PA		
+1	FL		Holloway Park	Holloway Park Lakeland, FL 33606		
+1						
+1						
+1	FL		St. Joseph Golf Club XC Course	St. Joseph Golf Club XC Course Port St. Joe, FL 32456		
+1	MN		Winthrop Gold Course	Winthrop Gold Course Winthrop, MN 55396		
+1						
+1						
+1	PA	Middletown	Bryn Athyn	Bryn Athyn Middletown, PA		
+1	NY		Alfred University	Alfred University Alfred, NY 14802		
+1	NH		Dublin School	Dublin School 18 Lehmann Way Dublin, NH 04071		
+1						
+1	MN		Carleton Aboretum	Carleton Aboretum Northfield, MN 55057		
+1						
+1						
+1						
+1	FL		Bayshore High School	Bayshore High School Bradenton, FL 34210		
+1	NH		Alvirne High School	Alvirne High School 200 Derry Rd., Rte. 102 Hill House XC Course - Hudson, NH 03051		
+1	PA		Lincoln University	Lincoln University Lincoln University, PA 19352		
+1	FL	Riverview	Spoto High School	Spoto High School Riverview, FL		
+1	FL		Oleta River State  Park	Oleta River State Park 16001 West SR-84 North Miami Beach, FL		
+1	FL		CB Smith Park	CB Smith Park Pembroker Pines , FL 33028		
+1	NY		Tompkins Cortland Community College	Tompkins Cortland Community College Dryden, NY 13053		
+1						
+1	NH		BHS	BHS Belmont, NH 03220		
+1						
+1	NY	Colonie	The Crossing of Colonie	The Crossing of Colonie Colonie, NY		
+1	NJ		The College of New Jersey	The College of New Jersey Ewing, NJ 08628		
+1						
+1	FL		Larry & Penny Thompson Park	Larry & Penny Thompson Park Miami, FL 33196		
+1	LA	New Orleans	New Orleans Lake Front	New Orleans Lake Front New Orleans, LA		
+1	FL		Santa Fe College	Santa Fe College Gainesville, FL 32606		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Mingo Park	Mingo Park Finleyville, PA 15301		
+1	NJ		Oak Ridge Park	Oak Ridge Park Clark, NJ 07066		
+1	GA		Nash Battlefield Farm	Nash Battlefield Farm Hampton, GA 30322		
+1	NY		Van Cortlandt Park	Van Cortlandt Park New York, NY 10471		
+1						
+1	FL	West Palm Beach	King's Academy	King's Academy West Palm Beach, FL		
+1						
+1	PA		LaRoche Campus	LaRoche Campus Pittsburgh, PA 15237		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IL		Lewis XC Course	Lewis XC Course Romeoville, IL 63044		
+1						
+1			Cedar Ridge Golf Course	Cedar Ridge Golf Course Cedar City, UT UT		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	OH		Hill Crest Golf Club	Hill Crest Golf Club 800 W. Bigelow Ave Findlay, OH 45840		
+1						
+1	OH		Walsh University	Walsh University 2020 East Maple Street North Canton, OH 44720		
+1						
+1						
+1						
+1						
+1	WI		Concordia University	Concordia University - Wisconsin 12800 N. Lake Shore Dr Mequon, WI 53097		
+1						
+1	FL		University of West Florida	University of West Florida Pensacola, FL 32514		
+1	FL		Florida Atlantic	Florida Atlantic 12551 Glades Rd Boca Raton, FL 33431		
+1						
+1	PA		Murray H Goodman Campus	Murray H Goodman Campus 150 Goodman Drive Bethlehem, PA 18015		
+1	FL		Puppy Creek Ranch	Puppy Creek Ranch 195 Harvey Young Farm Crawfordville, FL 32327		
+1	SC		Owens Field Cross-Country Course	Owens Field Cross-Country Course 1600 Harden Street Columbia, SC 29205		
+1	AR		JBU XC Course	JBU XC Course 2000 W Villa View Dr Siloam Springs, AR 72761		
+1						
+1						
+1						
+1	FL		Laurel Hill	Laurel Hill Laurel Hill, FL 32312		
+1	NH		Campbell High School	Campbell High School 1 Highlander Court Litchfield, NH 03052		
+1	FL		SCS	SCS Sarasota, FL 34232		
+1						
+1	CA		Wildhorse Golf Club	Wildhorse Golf Club Davis, CA 95616		
+1						
+1						
+1	NH		Colby-Sawyer	Colby-Sawyer New London, NH 03257		
+1						
+1	MI		Michigan	Michigan Ann Arbor, MI 48109		
+1	TX		Prairie View A&M University	Prairie View A&M University Prairie View, TX 77446		
+1	LA		Grambling	Grambling Lincoln Parish Park Ruston, LA 71245		
+1	IN		Eagle Park, Nashville Indiana	Eagle Park, Nashville Indiana P.O. Box 68 Nashville, IN 47448		
+1	IN	New Carlisle	New Prairie HS	New Prairie HS New Carlisle, IN		
+1						
+1						
+1						
+1	MD		MD-Eastern Shore	MD-Eastern Shore Princess Anne, MD 21853		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IN		LaVern Gibson Championship Cross Country Cours	LaVern Gibson Championship Cross Country Cours 599 Tabortown Rd Terre Haute, IN 47803		
+1	CT		Mitchell College Stegman Farm	Mitchell College Stegman Farm New London, CT 06320		
+1	AR	Clarksville	Univ of the Ozarks	Univ of the Ozarks Clarksville, AR		
+1						
+1						
+1						
+1						
+1						
+1	FL		Tampa Sickles	Tampa Sickles Tampa, FL 33625		
+1						
+1	NY		Field of Dreams XC course	Field of Dreams XC course One Willard Avenue Houghton, NY 14744		
+1						
+1	OH		Hillcrest Golf Course	Hillcrest Golf Course Findlay, OH 45840		
+1						
+1	VT		Norwich	Norwich 158 Harmon Drive Northfield, VT 05663		
+1	MA		Highland Park	Highland Park 02703 Attleboro, MA 02703		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL	West Palm Beach	Dyer Park	Dyer Park West Palm Beach, FL		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Trinity Youth Camp	Trinity Youth Camp Keystone Heights, FL 32656		
+1	MI	Houghton	Michigan Tech	Michigan Tech Houghton, MI		
+1	VT		Vermont	Vermont Burlington, VT 05405		
+1	AR		Arkansas	Arkansas 2300 Highland Batesville, AR 72501		
+1	NY		Central Park	Central Park New York, NY 10031		
+1						
+1						
+1						
+1	GA		Covenant	Covenant Lookout Mountain, GA 30750		
+1						
+1						
+1						
+1						
+1						
+1						
+1	KS		Witchita State	Witchita State Witchita, KS 67260		
+1	OK		Oklahoma State Cross Country Course	Oklahoma State Cross Country Course Stillwater, OK 74078		
+1	TN		Mike Rose Soccer Complex	Mike Rose Soccer Complex 9000 East Shelby Drive Memphis, TN 38125		
+1						
+1	AR		Pollards Field	Pollards Field 2000 W Villa View Dr Siloam Springs, AR 72761		
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Bradenton Christian	Bradenton Christian Bradenton, FL 34241		
+1	FL		2025 Out-of-Door 3k	2025 Out-of-Door 3k Sarasota, FL 34241		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	OR		Pine Ridge Golf Club	Pine Ridge Golf Club , OR		
+1	NC		Meredith College	Meredith College Raleigh, NC 27607		
+1	MN		Gustavus Adolphus Campus	Gustavus Adolphus Campus St. Peter, MN 55441		
+1						
+1						
+1	DE		Carousel Park	Carousel Park carousel park wilmington, DE 12345		
+1	MT	Billings	Amend Park	Amend Park Billings, MT		
+1	NM		Gene Torres Golf Course	Gene Torres Golf Course 1 Country Club Dr Las Vegas, NM 87701		
+1	WV		Mon Rail Trail	Mon Rail Trail Morgantown, WV 12345		
+1	NC		Oatlands Plantation, Leesburg, VA.	Oatlands Plantation, Leesburg, VA. Leesburg, Va Leesburg, NC 20176		
+1	AZ		Silver Lake Park	Silver Lake Park Tucson, AZ 85713		
+1	IN		IU Varsity Cross Country Course	IU Varsity Cross Country Course Bloomington, IN 12345		
+1						
+1	PA		Lamb's Creek Recreation Area	Lamb's Creek Recreation Area Mansfield, PA 16933		
+1	PA		West Branch XC Course	West Branch XC Course Lock Haven Athletic Complex Lock Haven, PA 17745		
+1	NY		Morrisville State	Morrisville State 80 Eaton Street Morrisville, NY 13408		
+1	MS		Delta State University	Delta State University Cleveland, MS 38733		
+1	IL		Univ. of Ill. Arboretum	Univ. of Ill. Arboretum Urbana, IL 12345		
+1						
+1						
+1						
+1	NC		Montreat	Montreat Montreat, NC 28757		
+1	PA		Robertson Athletic Complex Course	Robertson Athletic Complex Course Meadville, PA 16336		
+1						
+1						
+1						
+1						
+1						
+1						
+1	NH		New Hampshire	New Hampshire Pelham, NH 03824		
+1	FL		3Y Ranch	3Y Ranch 195 Harvey Young Farm Crawfordville, FL 32327		
+1	NH		Bow High School	Bow High School 55 Falcon Way Bow, NH 03304		
+1	NY		Broadway Park	Broadway Park Sayville, NY 11782		
+1						
+1						
+1						
+1						
+1	NH		Sanborn Regional High School	Sanborn Regional High School 13 Church St. Kingston, NH 03848		
+1						
+1						
+1	MI		Fremont	Fremont 156 Homestead Avenue Fremont, MI 49412		
+1	AR	City Not Supplied	Bridgewater College	Bridgewater College City Not Supplied, AR		
+1	SD		Madison Country Club	Madison Country Club Madison, SD 12345		
+1						
+1	TN		Moccasin Bend	Moccasin Bend Chattanooga, TN 37415		
+1	MO		Cardinal Hills Golf Course	Cardinal Hills Golf Course Liberty, MO 64068		
+1						
+1	NY		Saint Bonaventure, NY	Saint Bonaventure, NY Saint Bonaventure, NY 14778		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	WI		PatriotLeague XC Championship Meet	PatriotLeague XC Championship Meet Marquette, WI 49855		
+1	WI		Pac-10 Conference	Pac-10 Conference Marquette, WI 49855		
+1	WI		District 9-5A Cross Country Championship	District 9-5A Cross Country Championship Marquette, WI 49855		
+1						
+1						
+1						
+1	FL		Escambia County Equestrian Center	Escambia County Equestrian Center Pensacola, FL 32526		
+1						
+1	NH		Monadnock Regional High School	Monadnock Regional High School East Swanzey, NH 03446		
+1	MD		Winter Place Park	Winter Place Park Salisbury, MD 21801		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NH		Hollis/Brookline High School	Hollis/Brookline High School 24 Cavalier Court Hollis, NH 03049		
+1	TN	Memphis	Venue Not Supplied	Venue Not Supplied Memphis, TN		
+1						
+1	PA		PSU Behrend	PSU Behrend Erie, PA 16510		
+1						
+1						
+1						
+1						
+1						
+1						
+1	ME		UMaine	UMaine Orono, ME 04469		
+1	MO		Six Flags Amusement Park	Six Flags Amusement Park Eureka, MO 63141		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CA		Balboa Park	Balboa Park San Diego, CA 92314		
+1	CA		Palos Verdes Park	Palos Verdes Park Palos Verdes, CA 90274		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NH	Concord	St. Paul's School	St. Paul's School Concord, NH		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Union Canal Tunnel Park	Union Canal Tunnel Park Lebanon, PA 17046		
+1	MI		Pleasant Hills Golf Course	Pleasant Hills Golf Course 6012 South Mission Road Mount Pleasant, MI 48858		
+1						
+1						
+1						
+1	TX	Austin	Walter E. Long Lake	Walter E. Long Lake Austin, TX		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TN		Sewanee Golf Club	Sewanee Golf Club Sewanee, TN 37383		
+1	GA		Nash Farm Battlefield Park	Nash Farm Battlefield Park Hampton, GA 30228		
+1	ID		ISU Centenial XC Course	ISU Centenial XC Course Alvin Ricken Drive Pocatello, ID 83201		
+1						
+1						
+1						
+1						
+1	AR	City Not Supplied	Hampden-Sydney College	Hampden-Sydney College City Not Supplied, AR		
+1						
+1						
+1						
+1						
+1						
+1	IN		South Side Annex	South Side Annex , IN		
+1	NY		Van Cortland Park	Van Cortland Park Bayside, NY 10471		
+1						
+1						
+1						
+1	IN		Sunset Hill Farm County Park	Sunset Hill Farm County Park 2125 Sout 11th Street Valparaiso, IN 46304		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Chain of Lakes Park- Titusville, FL	Chain of Lakes Park- Titusville, FL Titusville, FL 32806		
+1	AR		Arkansas-Little Rock	Arkansas-Little Rock 3400 Rebsamen Park Rd Little Rock, AR 72202		
+1	NM		New Mexico Junior College	New Mexico Junior College Hobbs, NM 88240		
+1	FL		Venue	Venue Address Orlando, FL 32825		
+1	NE		Millard South	Millard South Omaha, NE 68137		
+1	WI		Crystal Springs Course	Crystal Springs Course Marquette, WI 49855		
+1						
+1						
+1	MI		Fremont	Fremont 24 Cavalier Court Fremont, MI 49412		
+1						
+1						
+1						
+1						
+1						
+1	NM		UNM N. Campus Golf Course	UNM N. Campus Golf Course Albuquerque, NM 87131		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Classic Elites Soccer Complex	Classic Elites Soccer Complex 11600 Starcrest Dr. San Antonio, TX 78247		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MN	St. Bonifacius	crown college	crown college St. Bonifacius, MN		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	ID		University of Idaho	University of Idaho Moscow, ID 83843		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		BA South Coumty Regional Park	BA South Coumty Regional Park 12551 Glades Road Boca Raton, FL 33498		
+1						
+1						
+1						
+1						
+1	NY		Van Cortlandt Park in the Bronx	Van Cortlandt Park in the Bronx Broadway & Vancortlandt Park South Bronx, NY 10462		
+1						
+1	GA		Council Farm Course	Council Farm Course 1079 Council Mc Cranie Rd MILLEDGEVILLE, GA 31061		
+1	GA		First Tee Golf Course	First Tee Golf Course LaGrange, GA 30241		
+1	DE		Delaware State Outreach and Research Facility	Delaware State Outreach and Research Facility Smyrna, DE 11223		
+1	TX		New Summerfield	New Summerfield TX-110 New Summerfield, TX 75780		
+1						
+1	FL		Sebastian High School	Sebastian High School Sebastain, FL 32958		
+1						
+1	TX	Wichita Falls	River Creek Golf Course	River Creek Golf Course Wichita Falls, TX		
+1	WI		Fields for Kids Soccer Complex	Fields for Kids Soccer Complex 700 N Pettibone Drive La Crosse, WI 64601		
+1						
+1						
+1						
+1	NJ		Garrett Park	Garrett Park Woodland Park, NJ 07430		
+1	WA		Pipestem, WV	Pipestem, WV Pipestem, WA 25979		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	VA		New Market Battlefield	New Market Battlefield New Market, VA 22846		
+1	FL		FAMU Rec Center	FAMU Rec Center 2101 Wahnish Way Tallahassee, FL 32222		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CT		Long Lane Farm	Long Lane Farm 100 Long Farm Road Middletown, CT 06459		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Holloway Park XC Course	Holloway Park XC Course Lakeland, FL 33801		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Embry-Riddle Cross Country Course	Embry-Riddle Cross Country Course 600 S. Clyde Morris Blvd. Daytona Beach, FL 32114		
+1						
+1						
+1	VT		St. Michael's	St. Michael's Colchester, VT 05446		
+1	MN		Buffalo Heights Golf Course	Buffalo Heights Golf Course 905 Highway 25 S Buffalo, MN 55313		
+1						
+1						
+1						
+1	PA		Lorimer Park Cross-Country Course	Lorimer Park Cross-Country Course Huntingdon Valley, PA 19006		
+1						
+1						
+1						
+1	PA		Union Canal Tunnel Park	Union Canal Tunnel Park - Lebanon, PA Lebanon, PA 17046		
+1	FL		Escambia County Equestrian Center- Pensacola	Escambia County Equestrian Center- Pensacola Pensacola, FL 32806		
+1	AK		Alaska Fairbanks	Alaska Fairbanks Fairbanks, AK 99709		
+1	VT		Middlebury College	Middlebury College Middlebury, VT 05452		
+1						
+1	AR	City Not Supplied	Saint Mary's University	Saint Mary's University City Not Supplied, AR		
+1						
+1						
+1	FL	Jacksonville	Jacksonville Classical Academy	Jacksonville Classical Academy Jacksonville, FL		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NH		St.Anslem College	St.Anslem College Manchester, NH 03102		
+1	PA		Doug Watts Course	Doug Watts Course Edinboro, PA 16444		
+1						
+1						
+1						
+1						
+1						
+1						
+1	MN		Bluestem Center for the Arts	Bluestem Center for the Arts Moorhead, MN 56561		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1			Vermont Tech	Vermont Tech Randolph Center, VT VT		
+1	NC		McApline Creek Greenway	McApline Creek Greenway Charlotte, NC 28223		
+1						
+1						
+1						
+1						
+1	IA		A.N. Kyper Athletics Complex	A.N. Kyper Athletics Complex Pella, IA 50219		
+1						
+1						
+1						
+1						
+1	MN		Saint Mary's University of Minnesota	Saint Mary's University of Minnesota 700 Terrace Heights Winona, MN 55987		
+1	IN	Westville	Purdue Northwest	Purdue Northwest Westville, IN		
+1						
+1	NC	City Not Supplied	Freedom Park(Charlotte,NC)	Freedom Park(Charlotte,NC) City Not Supplied, NC		
+1	TX		TAMU Commerce	TAMU Commerce Commerce, TX 75429		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	GA		Savannah State University	Savannah State University 1 University Blvd Savannah, GA 30066		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		San Gabriel Park	San Gabriel Park Georgetown, TX 76513		
+1						
+1						
+1	PA	Gibsonia	Chatham Eden Hall Campus	Chatham Eden Hall Campus Ridge Road Gibsonia, PA		
+1	FL		Hardee HS	Hardee HS Wauchula, FL 33873		
+1	FL		Baker (Cape Coral)	Baker (Cape Coral) 3500 Aqualinda Blvd Cape Coral, FL 33914		
+1						
+1	AR	Clarksville	Ozarks Trails	Ozarks Trails Clarksville, AR		
+1	FL		DHS XC	DHS XC Davenport, FL 33837		
+1						
+1						
+1						
+1	KY	Owensboro	Kentucky Wesleyan	Kentucky Wesleyan Owensboro, KY		
+1						
+1						
+1						
+1						
+1						
+1	MA		MDES Campus Course	MDES Campus Course Princess Anne, MA 21853		
+1	KS		Lexington Lake	Lexington Lake De Soto, KS 66018		
+1						
+1						
+1			SMA MIDDLE SCHOOL	SMA MIDDLE SCHOOL Sarasota, FL 3424		
+1						
+1						
+1	GA		Kennesaw	Kennesaw Cartersville, GA 30144		
+1						
+1	SC		Hosted by So. Wesleyan Univ in Central, SC	Hosted by So. Wesleyan Univ in Central, SC Central, SC 29630		
+1	NH		KENNETT	KENNETT 176 Main St. Conway, NH 03818		
+1						
+1						
+1	NH		John Stark	John Stark Weare, NH 03281		
+1	NH		Bedford High School	Bedford High School Bedford, NH 03110		
+1	WI		Prescott High School	Prescott High School Prescott, WI 54021		
+1	NH		John Stark Regional High School	John Stark Regional High School Weare, NH 03281		
+1	WV	Bluefield	Lotito Park	Lotito Park Bluefield, WV		
+1	NJ		Green Lane Fields	Green Lane Fields The College of New Jersey Ewing, NJ 08628		
+1	FL		Central High School	Central High School Brooksville, FL 34613		
+1	ID		LCSC XC Traile	LCSC XC Traile Lewiston, ID 83501		
+1	FL		Whispering Pines Park	Whispering Pines Park Inverness, FL 34450		
+1						
+1						
+1						
+1						
+1						
+1	SC		Winthrop University Farm	Winthrop University Farm Rock Hill, SC 29733		
+1	CA		NTC Park at Liberty Station	NTC Park at Liberty Station 7250 Mesa College Drive San Diego, CA 92111		
+1	OH		Ottawa Park Golf Course	Ottawa Park Golf Course 1 Walden Drive Toledo, OH 43606		
+1						
+1	CA		Central Park, HB	Central Park, HB Huntington Beach, CA 92647		
+1	PA		Elizabethtown College Campus Loop	Elizabethtown College Campus Loop One Alpha Drive Elizabethtown, PA 17022		
+1						
+1						
+1	MA		Great Barrington Fairgrounds	Great Barrington Fairgrounds 775 Main Street Great Barrington, MA 01230		
+1	NH		North Star Timing	North Star Timing Hollis-Brookline, NH 03049		
+1	NY		Montgomery Place	Montgomery Place Andonia, NY 12504		
+1						
+1						
+1						
+1	WA		East Lake Padden	East Lake Padden Ballingham, WA 98226		
+1	KY		Spero Kereiakes Park	Spero Kereiakes Park Bowling Green, KY 42103		
+1						
+1	PR		U.C.B.	U.C.B. Avenida Zaya Verde Urb. La Milagrosa Bayamon, PR 00960		
+1						
+1						
+1	TN		U. of the South Golf Course	U. of the South Golf Course Sewanee, TN 30066		
+1	NC	Kernersville	Ivey M. Redmon Sports Complex	Ivey M. Redmon Sports Complex Kernersville, NC		
+1	TX		Canyon, Texas	Canyon, Texas Canyon, TX 79015		
+1	NY		Ronald C. Hoffmann Championship CC Course	Ronald C. Hoffmann Championship CC Course St. Lawrence University Canton, NY 13617		
+1	MN		St. Catherine University	St. Catherine University 2004 Randolph Ave Saint Paul, MN 55105		
+1	IL		Illinois-Springfield	Illinois-Springfield Springfield, IL 62703		
+1	CA		Bonelli Park	Bonelli Park San Dimas, CA 91740		
+1	MA	Northampton	Smith College Cross Country Course	Smith College Cross Country Course Northampton, MA		
+1						
+1	WV		Barbour County Fair Grounds	Barbour County Fair Grounds 101 College Hill Drive Philippi, WV 26416		
+1	IA		Max Cross Country Course	Max Cross Country Course Waverly, IA 50428		
+1						
+1						
+1	VT		Middlebury College	Middlebury College Middlebury College, Athletics Middlebury, VT 05753		
+1						
+1	KS		Cotton wood Point	Cotton wood Point Marion, KS 66062		
+1	KY		Yellow Creek Park	Yellow Creek Park 3000 Fredrica St. Owensboro, KY 42303		
+1						
+1	PA		Misericordia	Misericordia East 42nd St Dallas, PA 18612		
+1	WY	Riverton	Central Wyoming College	Central Wyoming College Riverton, WY		
+1	VA	Bluefield	Bluefield	Bluefield Bluefield, VA		
+1	NY		Hudson Valley Sports Dome	Hudson Valley Sports Dome Milton, NY 12550		
+1	CA		Oxnard College	Oxnard College Oxnard, CA 93033		
+1	CA		Woodward Park	Woodward Park Clovis, CA 12345		
+1	IN		Southeastern Baptist Youth Camp CC Course	Southeastern Baptist Youth Camp CC Course Greensburg, IN 47240		
+1	MN		St. John's University	St. John's University Collegeville, MN 56321		
+1	IN	Cowan	Cowan HS	Cowan HS Cowan, IN		
+1						
+1	VA		Virginia State	Virginia State Petersburg, VA 23806		
+1	FL		Fernandina Beach	Fernandina Beach 435 Citrone Drive Fernandina Beach, FL 32304		
+1	WA		Downriver Golf Course	Downriver Golf Course 3225 N. Columbia Circle Spokane, WA 99205		
+1	NY		Hilbert College	Hilbert College Hamburg, NY 14075		
+1	VA		Randolph	Randolph 2500 Rivermont Avenue Lynchburg, VA 24503		
+1			Concordia University Campus	Concordia University Campus Ann Arbor, Michigan 48105		
+1	TX		Prairie View Stadium	Prairie View Stadium FM 1098 Rd & University Dr Prairie View, TX 77446		
+1	MI		Alma College X-C Course (Shepherd High School XC Course)	Alma College X-C Course (Shepherd High School XC Course) Alma, MI 48801		
+1	KS		Hutchinson Community College	Hutchinson Community College Hutchinson, KS 66062		
+1						
+1	NY		Norfolk-Norwood HS	Norfolk-Norwood HS Norfolk, NY 13668		
+1	PA		Mansfield University	Mansfield University Mansfield, PA 16933		
+1	WI		Bay College	Bay College Escabana, WI 49221		
+1	NC	Rocky Mount	NC Wesleyan	NC Wesleyan Rocky Mount, NC		
+1	NC	Wilson	Barton	Barton Wilson, NC		
+1						
+1	MI		Whiteford Valley Golf Club	Whiteford Valley Golf Club Ottawa, MI 49267		
+1	AZ		Tucson Country Club	Tucson Country Club Tucson, AZ 85721		
+1	CA		Saint Mary's College of California	Saint Mary's College of California Moraga, CA 94605		
+1	FL		CB Smith Park	CB Smith Park Pembroke Pines, FL 33028		
+1						
+1	TN	Mroristown	Walters State CC Course	Walters State CC Course Mroristown, TN		
+1	NH		Gunstock Mountain Resort	Gunstock Mountain Resort Gilford, NH 03246		
+1						
+1						
+1	LA		City Park	City Park New Orleans, LA 70118		
+1	SC	Due West	Bobby Clarke Farm	Bobby Clarke Farm Due West, SC		
+1	SC	Charleston	Jones Island County Park	Jones Island County Park Charleston, SC		
+1	AR	Fort Smith	First Tee	First Tee Fort Smith, AR		
+1	MD		Hood College at Utica District Park	Hood College at Utica District Park Frederick, MD 21701		
+1	CA		Hayward Regional Shoreline Park	Hayward Regional Shoreline Park 3010 W Winton Ave Hayward, CA 94545		
+1						
+1	TX		Abilene Christian Course	Abilene Christian Course Aibilene, TX 79697		
+1						
+1	NC		North Carolina Weslyan	North Carolina Weslyan Rocky Mount, NC 27804		
+1	WI		Wayne E. Dannehl Cross Country Course	Wayne E. Dannehl Cross Country Course Kenosha, WI 53144		
+1	DE		White Clay Creek	White Clay Creek Newark, DE 19716		
+1	IN		Oak Hill High School	Oak Hill High School Mier, IN 83605		
+1	WA		Eastern Washington University	Eastern Washington University - Cheney, Wash. Cheney, WA 99004		
+1	MI		Fisher Field	Fisher Field Midland, MI 48640		
+1	IN		LaVern Gibson Championship Cross Country Course	LaVern Gibson Championship Cross Country Course 599 Tabertown St Terre Haute, IN 47803		
+1	IN		Sam Bell Cross Country Course	Sam Bell Cross Country Course Discovery Road Bloomington, IN 47408		
+1	WA		Lake Wilderness Park	Lake Wilderness Park Maple Valley, WA 98042		
+1	FL		Countryside HS	Countryside HS clearwater, FL 34621		
+1						
+1	NY		2022 Hilbert College Meghan Memorial XC	2022 Hilbert College Meghan Memorial XC 5200 South Park Avenue Hamburg, NY 14075		
+1			Cairn University	Cairn University langhorne, pa 19047		
+1						
+1	OH		Champions Park  XC Course	Champions Park XC Course 4401 S. Charleston Pike Springfield, OH 45505		
+1	OH		Clinton Heights Golf Course	Clinton Heights Golf Course 2760 E. Twp. Rd. 122 Tiffin, OH 44883		
+1	WA		Hovander Homestead Park	Hovander Homestead Park 5299 Nielsen Ave Ferndale, WA 98248		
+1	FL		The Claw: USF Golf Course	The Claw: USF Golf Course Tampa, FL 11111		
+1						
+1						
+1	MN		Carleton Arb	Carleton Arb Northfield, MN 55057		
+1	CO		North Monument Valley Park	North Monument Valley Park 205 W Fontanero Colorado Springs, CO 80907		
+1	NC	Elizabeth City	Elizabeth City State University	Elizabeth City State University Elizabeth City, NC		
+1	NE		Platteview Country Club	Platteview Country Club Bellevue, NE 68123		
+1						
+1	PA		Forty Fort Sports Complex	Forty Fort Sports Complex Forty Fot, PA 18704		
+1	FL		Middleburg	Middleburg Orange Park , FL 32068		
+1	LA		University Club of Baton Rouge	University Club of Baton Rouge 15333 Memorial Tower Dr Baton Rouge, LA 70810		
+1	MO		Franics Park	Franics Park St. Louis, MO 63110		
+1	NC		Elon University	Elon University , NC		
+1	FL		Bradenton Christian	Bradenton Christian Bradenton, FL 34200		
+1	PA		Allegheny Athletic Fields	Allegheny Athletic Fields Meadville, PA 16335		
+1	IN		Muscatatuck State Park	Muscatatuck State Park , IN		
+1	IA		DMACC	DMACC 2006 S Ankeny Blvd Ankeny, IA 50023		
+1	NH		Concord High School	Concord High School Concord, NH 03301		
+1	NC		Delhi	Delhi Delhi, NC 13753		
+1	LA		LSU	LSU Baton Rouge, LA 70894		
+1						
+1	PA		B&D Acres	B&D Acres 3121 Hunington Furnace Road Tyrone, PA 16686		
+1	MO	Neosho	Crowder College	Crowder College Neosho, MO		
+1	FL		Sarasota Christian	Sarasota Christian Sarasota, FL 34232		
+1						
+1	FL		MorningSide Park	MorningSide Park 750 NE 55th Ter Miami, FL 33137		
+1						
+1	NC		Lake Kristi	Lake Kristi 3933 Mobleys Bridge Rd Grimesland, NC 27837		
+1	NH		Hopkinton Runners Society	Hopkinton Runners Society 63 Penacook Rd Hopkinton Fairgrounds - Hopkinton, NH, NH 03229		
+1	FL		NSB	NSB 100 Barracuda Blvd. NSB, FL 32169		
+1	FL		Veterans Park	Veterans Park Fort Myers, FL 33912		
+1	MD		USNA Cross Country Course	USNA Cross Country Course Annapolis, MD 21402		
+1	FL		Lake McKethan Recreation Area	Lake McKethan Recreation Area Brooksville, FL 34601		
+1	IN		Winchester Community	Winchester Community , IN		
+1	HI		Kapiolani Park	Kapiolani Park Honolulu, HI 96822		
+1	AR		South Bend Adams	South Bend Adams , AR		
+1	IN		Lebanon	Lebanon 1601 Longley Drive Lebanon, IN 46052		
+1						
+1	MT		Bridger Creek Golf Course	Bridger Creek Golf Course 2710 McIlhattan Rd, Bozeman, MT 59715		
+1	FL		South County Regional Park	South County Regional Park Boca Raton , FL 33334		
+1	NM		New Mexico Highlands	New Mexico Highlands Las Vegas, NM 87701		
+1	FL		Flanagan HS	Flanagan HS Pembroke Pines, FL 33028		
+1	MA		Hampshire College	Hampshire College Amherst, MA 01040		
+1						
+1						
+1						
+1	AL	Huntsville	John Hunt Cross Country Park	John Hunt Cross Country Park Huntsville, AL		
+1						
+1						
+1	TX	Round Rock	Old Settler Park	Old Settler Park Round Rock, TX		
+1	CO		Colorado Mesa	Colorado Mesa Grand Junction, CO 81501		
+1	IN		Van Hoozen Park	Van Hoozen Park Ft. Wayne, IN 46814		
+1						
+1						
+1	FL		Providence School of Jacksonville	Providence School of Jacksonville Jacksonville, FL 32224		
+1						
+1	FL		Rockledge HS	Rockledge HS Rockledge, FL 34761		
+1						
+1						
+1						
+1						
+1						
+1						
+1	SC	Charleston	Johns Island County Park	Johns Island County Park Charleston, SC		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TN		Walters State CC	Walters State CC Morristown, TN 37813		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		PSU Brandywine	PSU Brandywine Media PA, PA 19063		
+1	FL	Tampa	The Claw at USF	The Claw at USF Tampa, FL		
+1	CA		Mason Park, Irvine	Mason Park, Irvine Irvine, CA 92612		
+1						
+1	NY		Van Cortlandt Park	Van Cortlandt Park - Bronx, NY New York City, NY 06042		
+1	TN		Maryville College Campus	Maryville College Campus Maryville, TN 37801		
+1						
+1	IN		CERAland Park	CERAland Park 3989 S. 525 E. Columbus, IN 47203		
+1	NC		Pfeiffer XC Course	Pfeiffer XC Course Misenheimer, NC 28109		
+1						
+1						
+1	FL		The Claw GC @ USF	The Claw GC @ USF Tampa, FL 33618		
+1						
+1						
+1						
+1						
+1	MI		Venue	Venue Fremont, MI 49412		
+1						
+1						
+1	PA		John Rudy County Park	John Rudy County Park York, PA 17406		
+1						
+1						
+1	NY		Vassar Farms	Vassar Farms Poughkeepsie, NY 10604		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA	Moon Township	Youthtowne	Youthtowne Moon Township, PA		
+1						
+1						
+1						
+1	MN		Lesterwood Golf Course	Lesterwood Golf Course Duluth, MN 55804		
+1	MN		Crown College	Crown College 8700 College View Drive St Bonifacius, MN 55375		
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Country Campus Golf Course	Country Campus Golf Course Huntsville, TX 77340		
+1						
+1						
+1						
+1						
+1						
+1	LA	Baton Rouge	Highland Park	Highland Park Baton Rouge, LA		
+1						
+1	AR		St. Scholastica	St. Scholastica Fort Smith, AR 72903		
+1						
+1						
+1						
+1	GA		Abraham Baldwin Agricultural College	Abraham Baldwin Agricultural College One Blue Devil Way Tifton, GA 32312		
+1						
+1						
+1						
+1	MD	Salisbury	Salisbury	Salisbury Salisbury, MD		
+1						
+1						
+1						
+1	NC		Salisbury Community Park	Salisbury Community Park 935 Hurley School Rd Salisbury, NC, NC 28144		
+1						
+1						
+1						
+1	MO		Washington University	Washington University Saint Louis, MO 63130		
+1	FL		Woodlawn Beach Middle School	Woodlawn Beach Middle School Gulf Breeze, FL 32566		
+1						
+1	FL		Hagerty	Hagerty 3225 Lockwood Boulevard Oviedo, FL 32765		
+1						
+1						
+1						
+1	OR		Corban University	Corban University Salem, OR 97303		
+1	VA		VSU	VSU Petersburg, VA 12345		
+1	CA		UCSB	UCSB Santa Barbara, CA 90210		
+1	CO		Colorado Springs, CO	Colorado Springs, CO Colorado Springs, CO 80918		
+1						
+1						
+1	NC		Western Carolina University	Western Carolina University Cullowhee, NC 28723		
+1						
+1	GA		Brewton-Parker Campus	Brewton-Parker Campus Mt. Vernon, GA 30445		
+1						
+1						
+1						
+1						
+1	AZ		Dell Urich Golf Course	Dell Urich Golf Course Tucson, AZ 85719		
+1						
+1	FL		Nature Coast Technical High School	Nature Coast Technical High School 4057 California Street Brooksville, FL 34604		
+1	FL		Lakewood Ranch	Lakewood Ranch Bradenton, FL 34211		
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Pleasant Ridge Park	Pleasant Ridge Park 8271 Barker Rd Girard, PA 16417		
+1						
+1						
+1						
+1						
+1						
+1	SC		Winthrop Farms	Winthrop Farms Rock Hill, SC 29370		
+1						
+1	PA		WCCC	WCCC Pittsburgh, PA 15222		
+1						
+1						
+1	TX	Shamrock	Country Club	Country Club Shamrock, TX		
+1						
+1	MD		Naval Academy Golf Course	Naval Academy Golf Course Annapolis, MD 21402		
+1	MI		Concordia University Ann Arbor	Concordia University Ann Arbor 4090 Geddes Ave. Ann Arbor, MI 48198		
+1	NC		Southside Park	Southside Park Newton, NC 28645		
+1						
+1						
+1	MO		MSSU  Tom Rutledge  XC Course	MSSU Tom Rutledge XC Course Joplin, MO 63132		
+1	LA		Acadiana Park	Acadiana Park Lafayette, LA 70506		
+1						
+1	FL		University of North Florida Golf Course	University of North Florida Golf Course 1 Betty Holzendorf Drive Jacksonville, FL 32224		
+1						
+1						
+1						
+1						
+1	CA		East Field	East Field Santa Cruz, CA 95003		
+1	FL		Saint Stephen's	Saint Stephen's 315 Forty First St W Bradenton, FL 34209		
+1						
+1						
+1						
+1	NH		Owl Athletic Complex	Owl Athletic Complex 110 Krif Rd Keene, NH 03431		
+1	AL		Chocoolocco Park	Chocoolocco Park Oxford, AL 36203		
+1						
+1						
+1	NY		Mount Saint Mary College Cross-Country Course	Mount Saint Mary College Cross-Country Course Newbergh, NY 12550		
+1	NY		Stony Brook University	Stony Brook University Stony Brook, NY 11794		
+1	NC		Valley Pine Country Club	Valley Pine Country Club 901 Lasker Golf Course Rd Jackson, NC 27845		
+1	GA		Fort Valley State University	Fort Valley State University Fort Valley, GA 30066		
+1						
+1						
+1	NY		University at Albany	University at Albany UALBANY ALBANY, NY 12222		
+1						
+1						
+1						
+1	OK		Carl Albert State College	Carl Albert State College Poteau, OK 74932		
+1	GA		Berry College	Berry College Rome, GA 30089		
+1						
+1	PA	Pittsburgh	Chatham Eden Hall Campus	Chatham Eden Hall Campus Pittsburgh, PA		
+1	AL		Graham Creek Nature Preserve	Graham Creek Nature Preserve Gulf Shores, AL 36527		
+1						
+1	IN		IU Varsity Cross Country Course	IU Varsity Cross Country Course Bloomington, IN 47408		
+1						
+1			Premier Sports Complex	Premier Sports Complex		
+1						
+1	OH		Columbus State Community College	Columbus State Community College Delaware, OH 43015		
+1	MA		Franklin Park	Franklin Park Boston, MA 02138		
+1						
+1						
+1						
+1						
+1	MO		Fayette, MO	Fayette, MO Fayette, MO 65248		
+1	LA		Southeastern Louisiana University	Southeastern Louisiana University Hammond, LA 70403		
+1	CA		Putah Creek Reserve	Putah Creek Reserve Davis, CA 95616		
+1	IA		Grinnell College Golf Course, IA	Grinnell College Golf Course, IA Grinnell, IA 50112		
+1	GA		Columbus State University	Columbus State University Columbus, GA 31904		
+1	NV		Craig Ranch Regional Park	Craig Ranch Regional Park North Ls Vegas, NV 89154		
+1	KS		Marion Reservoir	Marion Reservoir Marion, KS 67579		
+1						
+1						
+1	VA		Kernstown Battlefield	Kernstown Battlefield 610 Battle Park Drive Kernstown, VA 22601		
+1						
+1						
+1						
+1						
+1	IL		McKendree University XC Course	McKendree University XC Course Lebanon, IL 63044		
+1	NH		Mines Falls	Mines Falls Mines Falls - Nashua, NH 03063		
+1	IL		Channahon Park	Channahon Park Channahon, IL 60410		
+1	FL		University	University Orlando, FL 32817		
+1	PA		Goodman Cross Country Course	Goodman Cross Country Course Bethlehem, PA 18015		
+1	TX		Spicewood Country Club Golf Course	Spicewood Country Club Golf Course Austin, TX 78704		
+1						
+1						
+1						
+1	GA		McIntosh Reserve Park	McIntosh Reserve Park Whitesburg, GA 30066		
+1	KS		Emporia State	Emporia State Emporia, KS 66801		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MI		Hope College X-C Course (West Ottawa Golf Course)	Hope College X-C Course (West Ottawa Golf Course) Holland, MI 49424		
+1						
+1						
+1	SC		Winthrop Univeristy Farm Course	Winthrop Univeristy Farm Course Rock Hill, SC 29732		
+1	IA		Iowa Western Community College	Iowa Western Community College Council Bluffs, IA 51503		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1			LaVern Gibson Championship Cross Country Course	LaVern Gibson Championship Cross Country Course 599 Tabertown St. Terre Haute,, in 47803		
+1	MI		University Park Golf Club	University Park Golf Club Muskegon, MI 49442		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	CA		University of Redlands	University of Redlands Redlands, CA 92373		
+1	NC		Freedom Park	Freedom Park - Charlotte, NC Charlotte, NC 28203		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	GA	Demorest	Tallulah Falls Farm Course	Tallulah Falls Farm Course Demorest, GA		
+1						
+1						
+1						
+1						
+1	NE		Wayne State College	Wayne State College Wayne, NE 48202		
+1						
+1						
+1						
+1	TX		San Gabriel Park	San Gabriel Park Georgetown, TX 78626		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Fernandina Beach	Fernandina Beach 2800 Bill Melton Rd Fernandina Beach, FL 32304		
+1						
+1	IN		Blue River CC Venue, Blue River Memorial Park	Blue River CC Venue, Blue River Memorial Park 725 Lee Boulevard Shelbyville, IN 46176		
+1						
+1						
+1						
+1						
+1						
+1	TX		Texas A&M (Eastern Deadline)	Texas A&M (Eastern Deadline) College Station, TX 77843		
+1						
+1						
+1	NE		Doane College XC Course	Doane College XC Course Crete, NE 68372		
+1	SC	Columbia	CIU Cross-Country Course	CIU Cross-Country Course Columbia, SC		
+1	SC		University of South Carolina	University of South Carolina 900 Clemson Rd Columbia, SC 29229		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Lorimer Park	Lorimer Park Huntingdon Valley, PA 16802		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL	Tampa	Mary Help	Mary Help Tampa, FL		
+1	NY	SARATOGA SPRINGS	Saratoga State Park	Saratoga State Park SARATOGA SPRINGS, NY		
+1	MA	Williamstown	Williams College	Williams College Williamstown, MA		
+1	NY		Hudson Valley Sports Dome	Hudson Valley Sports Dome Milton, NY 11764		
+1	PA		Farm Course at Kutztown University	Farm Course at Kutztown University Kutztown, PA 19530		
+1	IL		Millikin	Millikin 3915 West Main Street Decatur, IL 62522		
+1	TX		Abilene Christian University	Abilene Christian University Abilene, TX 79602		
+1						
+1	WI		Shorewood Cross Country Course	Shorewood Cross Country Course Green Bay, WI 54115		
+1	SC	Aiken	USC Aiken Pacer Path & Campus	USC Aiken Pacer Path & Campus Aiken, SC		
+1						
+1	FL	Lakeland	Holloway Park XC Course	Holloway Park XC Course Lakeland, FL		
+1						
+1						
+1						
+1						
+1						
+1	NH	Nashua	Rivier	Rivier Nashua, NH		
+1						
+1						
+1	FL	Dunedin	Hammock Park	Hammock Park Hammock Park Dunedin , FL		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NY		Bethpage State Park Polo Field	Bethpage State Park Polo Field Garden City, NY 11530		
+1	MD		Mount St. Mary's	Mount St. Mary's Emmitsburg, MD 33574		
+1						
+1	CA		2017 UCSB Gaucho Invitational	2017 UCSB Gaucho Invitational Santa Barbara, CA 93101		
+1	TN	Harriman	Roane State Community College	Roane State Community College Harriman, TN		
+1						
+1	TX		SPC	SPC Levelland, TX 79336		
+1	KS		Goddard HS	Goddard HS Goddard, KS 67052		
+1	MS		Millsaps College	Millsaps College Clinton, MS 39209		
+1						
+1						
+1	KY		Masterson Station Park	Masterson Station Park Lexington, KY 40506		
+1	CA		Quarry Lakes Regional Park	Quarry Lakes Regional Park Fremont, CA 94536		
+1						
+1						
+1						
+1						
+1	CA		Johnson Spring View Park, Rocklin	Johnson Spring View Park, Rocklin Rocklin, CA 95677		
+1	PA		Doug Watts Cross Country Course	Doug Watts Cross Country Course Edinboro, PA 16412		
+1	TX		Angelo State University	Angelo State University San Angelo, TX 76909		
+1	PA		South Strbane Community Park	South Strbane Community Park Washington, PA 15301		
+1						
+1						
+1	PA		Letterkenny Fields	Letterkenny Fields Dallas, PA 18612		
+1	WI		UW-Platteville	UW-Platteville Platteville, WI 53818		
+1	IL		Community Park	Community Park Jacksonville, IL 62650		
+1	NH	Castle-in-the-Clouds	Moultonborough	Moultonborough - Castle in the Clouds Castle-in-the-Clouds, NH		
+1						
+1						
+1	TX		The Max A. Mandel Municipal Golf Course	The Max A. Mandel Municipal Golf Course 27700 FM 1472 Mines Road Laredo, TX 78045		
+1			Wartburg XC Course	Wartburg XC Course - Waverly, IA Wartburg, Iowa 50677		
+1			Marshfield Fairgrounds	Marshfield Fairgrounds Marshfield, MA 2050		
+1	KY		Lykins Park	Lykins Park 1601 Mt. Sterling Rd. Winchester, KY 40391		
+1	FL		Crescent Lake Park	Crescent Lake Park 1320 5th St. N. St Petersburg, FL 32312		
+1	MA		Fort Devens	Fort Devens Devens, MA 03049		
+1						
+1						
+1	FL		East Lee County	East Lee County Lehigh, FL 33971		
+1						
+1	SC		Furman University Golf Course	Furman University Golf Course 400 N Hwy 25 Bypass Greenville, SC 29617		
+1						
+1						
+1	MI		Stony Creek Metropark	Stony Creek Metropark 14500 E. Mile rd Shelby Twp., MI 48316		
+1						
+1						
+1	TN		Tweetsie Trail, Elizabethton, TN	Tweetsie Trail, Elizabethton, TN Elizabethton, TN 37643		
+1	MO		www.trxctiming.com	www.trxctiming.com St. Charles, MO 63044		
+1	NY		Houghton College Field of Dreams XC Course	Houghton College Field of Dreams XC Course Houghton, NY 14744		
+1						
+1	NY	Hamburg	Hilbert College	Hilbert College 5200 South Park Ave Hamburg, NY		
+1						
+1						
+1	IN		Goshen	Goshen #1 Redskin Rd. Goshen, IN 46526		
+1	IN		SouthRidge	SouthRidge Huntingburg, IN 47542		
+1	IN		Southridge	Southridge Huntingburg, IN 47424		
+1	FL	Brooksville	Lake Mckethan	Lake Mckethan Brooksville, FL		
+1	FL		, FL	, FL		
+1	MD		Oak Ridge Park	Oak Ridge Park Hughesville, MD 20637		
+1						
+1	TX		The Range--WTAMU	The Range--WTAMU Canyon, TX 79015		
+1	NY		Delaware Park Golf Course	Delaware Park Golf Course Buffalo, NY 14208		
+1	KS		Fun Valley Sports Complex	Fun Valley Sports Complex 4401 W 4th Ave Hutchinson, KS 67501		
+1	OH		Ottawa Park Golf Course	Ottawa Park Golf Course 2315 Walden Pond Toled, OH 43606		
+1	FL		SL	SL SL, FL 33040		
+1	FL		St. Stephens Episcopal 5k	St. Stephens Episcopal 5k Bradenton, FL 34209		
+1	RI		Bryant Univ. Campus Course	Bryant Univ. Campus Course Smithfield, RI 02917		
+1	IN	Evansville	Angel Mounds	Angel Mounds Evansville, IN		
+1	TX		Texas A&M-CC	Texas A&M-CC Corpus Christi, TX 78412		
+1						
+1	FL		Cecil Field	Cecil Field 13715 Lake Newman St Jacksonville, FL 32312		
+1						
+1						
+1	GA		Thomas County Middle School	Thomas County Middle School Thomasville, GA 32312		
+1						
+1	NH		Amherst Middle School	Amherst Middle School Amherst, NH 03031		
+1			DeSales University	DeSales University 2755 Station Avenue Center Valley, PA PA		
+1	OH		Bluffton University Nature Preserve	Bluffton University Nature Preserve Bluffton, OH 45817		
+1	FL		KWHS Golf Course	KWHS Golf Course Marathon, FL 33040		
+1						
+1	FL		Wellington HS	Wellington HS 2101 Greenview Shores Blvd Wellington, FL 33414		
+1	NH		St. Anselm College	St. Anselm College Manchester, NH 03045		
+1	TX		Jeep Webb	Jeep Webb Borger, TX 79007		
+1	MA		Chicopee Memorial Park	Chicopee Memorial Park Chicopee, MA 01002		
+1			St Mary University	St Mary University Leavenworth, Kansas 66048		
+1						
+1			St. Paul's School	St. Paul's School 325 Pleasent St Concord, NH 3301		
+1	TN		Walters State CC	Walters State CC 500 S Davy Crockett Pkwy Morristown, TN 37814		
+1	WI		Wayne E. Dannehl National Cross Country Course	Wayne E. Dannehl National Cross Country Course 4400 Petrifying Springs Rd Kenosha, WI 53144		
+1	OH		Hillcrest Golf Course	Hillcrest Golf Course 800 Bigelow Ave Findlay, OH 45840		
+1						
+1	NJ		Ramapo College	Ramapo College Mahwah, NJ 07430		
+1			Flandrau State Park	Flandrau State Park New Ulm, MN 555441		
+1	NC		McAlpine Clreek Park	McAlpine Clreek Park Charlotte, NC 77843		
+1						
+1						
+1						
+1	AL		Graham Creek Nature Preserve	Graham Creek Nature Preserve 1 Pride Dr. Foley, AL 36535		
+1	IN		Huntington University	Huntington University 450 MacGahan St. Huntington , IN 46750		
+1	AR		Arkansas	Arkansas Batesville, AR 72501		
+1	MI		Spruce Ridge Golf Club	Spruce Ridge Golf Club 26831 Dutch Settlement Rd. Dowagiac, MI 49047		
+1	FL	Bradenton	Southeast High School	Southeast High School Bradenton, FL		
+1	FL		Williston High School	Williston High School 427 West Noble Ave. Williston, FL 34769		
+1	FL		Out-of-Door Academy	Out-of-Door Academy Sarasota, FL 34340		
+1	PA		Big Spring HS	Big Spring HS Newville, PA 17257		
+1	FL	Merritt Island	Merritt Island Christian	Merritt Island Christian Merritt Island, FL		
+1						
+1						
+1						
+1	KY		Kentucky	Kentucky 3051 Leestown Road Lexington, KY 40511		
+1	AR		Winamac Community	Winamac Community , AR		
+1	CA		UC Santa Barbara	UC Santa Barbara Mission Club, Lompoc, CA 93106		
+1	FL		Bethel Mennonite	Bethel Mennonite Sarasota, FL 34241		
+1	IN		Woodlan	Woodlan 1300 Green Road Woodburn, IN 46774		
+1						
+1						
+1						
+1	TX		Chamizal Memorial National Park, El Paso, TX	Chamizal Memorial National Park, El Paso, TX 800 South Marcial St. ElPaso, TX 79905		
+1	FL	Boca Raton	South County Park	South County Park Boca Raton, FL		
+1	WV		West Virginia Tech	West Virginia Tech Beckley, WV 25801		
+1	NC		Glen Cannon Country Club	Glen Cannon Country Club 337 Glen Cannon Dr. Pisgah Forest, NC 28768		
+1						
+1						
+1	WI		Wayne E. Dannehl National Cross Course	Wayne E. Dannehl National Cross Course Kenosha, WI 53144		
+1						
+1						
+1	PA		McDade Park	McDade Park Scranton, PA 18440		
+1	OH		Oberlin College North Fields	Oberlin College North Fields 200 Woodland St Oberlin, OH 44074		
+1						
+1			Gordan College, Wenham, MA	Gordan College, Wenham, MA 255 Grapevine Road WENHAM, MA 1984		
+1						
+1						
+1						
+1	LA		Lafreniere Park	Lafreniere Park 3000 Downs Blvd. Metairie, LA 70003		
+1						
+1						
+1	RI		Bulldog Stadium	Bulldog Stadium 1150 Douglas Pike Smithfield, RI 02917		
+1						
+1						
+1						
+1	LA		Northwestern State University	Northwestern State University Natchitoches, LA 71497		
+1	CA		Pomona-Pitzer Campus Course	Pomona-Pitzer Campus Course The Rains Center Claremont, CA 91711		
+1	WA	Seattle	Lower Woodland Park	Lower Woodland Park Seattle, WA		
+1						
+1	GA		Stewart Field on Eckel Street	Stewart Field on Eckel Street Eckel Street Ft. Benning, GA 31901		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Forstproof XC Course	Forstproof XC Course Frostproof, FL 33843		
+1	NY		Twin Ponds on The Farm	Twin Ponds on The Farm Montgomeryn, NY 10471		
+1						
+1	TX		Pecan Acres Park	Pecan Acres Park Nacogdoches, TX 75961		
+1	PA		Bryn Athyn College XC Course	Bryn Athyn College XC Course Bryn Athyn, PA 19009		
+1	NY		Ronald C. Hoffmann Cross Country Course	Ronald C. Hoffmann Cross Country Course St. Lawrence University Park Street Canton, NY 13617		
+1	VA		Pole Green Park	Pole Green Park 8996 Pole Green Park Lane Mechanicsville, VA 23116		
+1						
+1						
+1						
+1	NC		Ashley High School	Ashley High School Wilmington, NC 28403		
+1	UT		Palisades Golf Course	Palisades Golf Course 2200 East Palisade Road Sterling, UT 84665		
+1	KS		SM Park	SM Park Overland Park, KS 66219		
+1	AR	Arkadelphia	Ouachita Baptist Cross Country Course	Ouachita Baptist Cross Country Course Arkadelphia, AR		
+1						
+1	TN		Milligan University	Milligan University Milligan University, TN 37682		
+1	IN		Muscatatuck State Park	Muscatatuck State Park Muscatatuck Park North Vernon, IN 47265		
+1						
+1	GA		Middle Georgia State Unviversity	Middle Georgia State Unviversity Fulton Mill Rd Macon, GA 31206		
+1						
+1						
+1						
+1	NJ		North Athletic Complex	North Athletic Complex Galloway, NJ 08240		
+1	CA		Shady Rest Park (7800 ft elevation)	Shady Rest Park (7800 ft elevation) Mammoth Lakes, CA 93546		
+1	FL	Bradenton	GTBray Park	GTBray Park Bradenton, FL		
+1						
+1	SC		Laurel Hill Plantation	Laurel Hill Plantation Mt Pleasant, SC 29466		
+1	MI		Eagle Crest Golf Course	Eagle Crest Golf Course Ypsilanti, MI 48197		
+1						
+1						
+1	OK		Gordon Cooper Technology Center, Shawnee, Ok	Gordon Cooper Technology Center, Shawnee, Ok Shawnee, OK 74804		
+1						
+1	PA		Schenley Park	Schenley Park Pittsburgh, PA 15701		
+1	DE		Carousel Farm Park	Carousel Farm Park 3700 Limestone Rd Wilmington, DE 19780		
+1						
+1	FL	Bradenton	St. Stephens Episcopal	St. Stephens Episcopal Bradenton, FL		
+1	IL		The North 40 XC Course	The North 40 XC Course DeKalb, IL 00000		
+1						
+1	PA		Lincolin Unversity XC Course	Lincolin Unversity XC Course Lincolin Unversitry, PA 99999		
+1						
+1	FL		Cottondale High School	Cottondale High School Cottondale, FL 32312		
+1	FL	Palatka	Palatka	Palatka Palatka, FL		
+1	TX		LeTourneau University Trails	LeTourneau University Trails Longview, TX 75607		
+1	NH		North Star Timing	North Star Timing Freestyle Farm, Amherst, NH 03054		
+1	MI		Kaatke Golf Course	Kaatke Golf Course Big Rapids, MI 49307		
+1	FL	Weeki Wachee	Weeki Wachee Preseve	Weeki Wachee Preseve Weeki Wachee, FL		
+1	NJ		Garret Mountain Reservation	Garret Mountain Reservation Woodland Park, NJ 07424		
+1	FL		West Orange	West Orange 1625 Beulah Rd Winter Garden, FL 34787		
+1	PR		Pista ATletica UPRRP	Pista ATletica UPRRP 14 Ave. Universidad Ste. 1401 San Juan, PR 00926		
+1						
+1						
+1						
+1						
+1	DE		Delaware State University	Delaware State University Dover, DE 19709		
+1						
+1						
+1						
+1						
+1	PA		Gettysburg	Gettysburg Gettysburg, PA 17522		
+1	TX		Balcones-Spicewood Springs Course -Austin,TX	Balcones-Spicewood Springs Course -Austin,TX Austin, TX 78750		
+1	IL		IC Campus	IC Campus Jacksonville, IL 61761		
+1						
+1						
+1						
+1	NC		Western Carolina University	Western Carolina University Cullowee, NC 28723		
+1	TX		Camp Hoblitzelle	Camp Hoblitzelle Midlothian, TX 76065		
+1						
+1						
+1						
+1	AZ		Quincie Douglas Park	Quincie Douglas Park Tucson, AZ 85713		
+1						
+1						
+1						
+1						
+1	CA		Golden Gate Park, San Francisco, CA	Golden Gate Park, San Francisco, CA San Francisco, CA 94118		
+1	MI		Fremont	Fremont 1 Squire Drive Fremont, MI 49412		
+1						
+1						
+1	WA		Chambers Creek Regional Park	Chambers Creek Regional Park 6320 Grandview Dr W. Univerity Place, WA 98467		
+1						
+1	OH		Silver Creek Metropark CC Trails	Silver Creek Metropark CC Trails Norton, OH 44325		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	WA		Pacific Lutheran Invitational 2015	Pacific Lutheran Invitational 2015 TACOMA, WA 98447		
+1			Carrigan Intermediate School XC Course	Carrigan Intermediate School XC Course West Haven, CT 6516		
+1						
+1						
+1	AL		Troy State Track & Field	Troy State Track & Field Dothan, AL 36303		
+1	MO	Park Hills	Mineral Area College	Mineral Area College Park Hills, MO		
+1	LA		Ward 3 Rec: Enos Darbonne Sports Complex	Ward 3 Rec: Enos Darbonne Sports Complex Lake Street Louisiana, LA 70605		
+1	NC		Livingstone	Livingstone 935 Hurley School Road Salisbury, NC 28147		
+1						
+1						
+1						
+1						
+1						
+1						
+1	SC		Weston Lake Recreation Area	Weston Lake Recreation Area Columbia , SC 29208		
+1						
+1	NE		Doane College	Doane College Crete, NE 68333		
+1	OH		Columbus State Community College Delaware	Columbus State Community College Delaware Delware, OH 43015		
+1						
+1						
+1						
+1						
+1						
+1						
+1	KS		Rolling Acres Golf Club	Rolling Acres Golf Club McPherson, KS 67530		
+1						
+1						
+1	FL		Davenport HS	Davenport HS Davenport, FL 33837		
+1	NH		Winnacunnet High School	Winnacunnet High School Alumni Drive Hampton, NH 03842		
+1	MD		McDaniel College	McDaniel College 2 College Hill Westminster, MD 21157		
+1	CA		Palo Corona	Palo Corona Carmel Valley, CA 93924		
+1						
+1	FL		Wiregrass Ranch High School	Wiregrass Ranch High School Wiregrass Ranch High School Wesley Chapel, FL 33543		
+1	TN		Cherokee Farms	Cherokee Farms Knoxville, TN 00000		
+1						
+1			N.C. Central	N.C. Central Cary, North Carolina		
+1						
+1	AR	Mena	UARM Cross Country Course	UARM Cross Country Course Mena, AR		
+1	LA		NELSA-Chennault Park	NELSA-Chennault Park Monroe, LA 71209		
+1						
+1	PA		Schenley Park	Schenley Park 1 Overlook Dr Pittsburgh, PA 15213		
+1	NE		Wayne State-Country Club Course	Wayne State-Country Club Course Wayne, NE 68787		
+1						
+1						
+1	OK		Spring Creek Park	Spring Creek Park Edmond, OK 73003		
+1	KS		Cottonwood Point, Marion Resevoir	Cottonwood Point, Marion Resevoir Marion, KS 66861		
+1	SC		Milliken Park	Milliken Park Spartanburg, SC 29301		
+1	OH		Kings Island Golf Course	Kings Island Golf Course Mason, OH 45039		
+1	PA		Saint Vincent College	Saint Vincent College Latrobe, PA 15650		
+1						
+1	NY	Milton	Hudson Valley Dome	Hudson Valley Dome Milton, NY		
+1	IN		Angel Mounds	Angel Mounds 2025 Lincoln Ave. Ramona Apt. Evansville, IN 63044		
+1	AR		Southern Arkansas University	Southern Arkansas University Magnolia, AR 71753		
+1						
+1						
+1						
+1	SC		Recreation Fields Course	Recreation Fields Course 3000 Downs Blvd. Conway, SC 29526		
+1						
+1						
+1						
+1	FL		Mitchell High School	Mitchell High School Trinity, FL 34655		
+1						
+1						
+1	PA		UNIVERSITY PARK, PA	UNIVERSITY PARK, PA University Park, PA 16802		
+1						
+1						
+1						
+1						
+1	AL		Alabama	Alabama 5901 Watermelon Rd. Northport, AL 35473		
+1	TN		Shelby Farms Park	Shelby Farms Park Memphis, TN 38112		
+1	FL		Oakridge Middle School	Oakridge Middle School 14975 Collier Boulevard Naples, FL 34119		
+1						
+1	CA		Leadbetter Beach / Shoreline Park	Leadbetter Beach / Shoreline Park Santa Barbara, CA 90210		
+1						
+1	TX		Balcones-Spicewood Springs Course	Balcones-Spicewood Springs Course 11210 Spicewood Club Drive Austin, TX 78750		
+1						
+1						
+1						
+1						
+1	IL		University of IL	University of IL - Springfield, IL Springfield, IL 60431		
+1	TX		UNT Cross Country Course	UNT Cross Country Course Denton, TX 76203		
+1						
+1						
+1						
+1						
+1						
+1						
+1	VA		Panorama Farms	Panorama Farms Charlottesville, VA 22901		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX	San Antonio	San Antonio State School	San Antonio State School San Antonio, TX		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MI	Port Huron	Goodells County Park	Goodells County Park Port Huron, MI		
+1						
+1	MT		Hickory Swings Golf Course	Hickory Swings Golf Course Great Falls, MT 59401		
+1						
+1	NY		Van Cortland Park	Van Cortland Park New York, NY 10023		
+1	PA		Gettysburg College	Gettysburg College Gettysburg, PA 19530		
+1						
+1						
+1	WI		Catholic ConferenceXC Championship Meet	Catholic ConferenceXC Championship Meet Marquette, WI 49855		
+1						
+1	CA	Long Beach	Heartwell Park	Heartwell Park Long Beach, CA		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	ON	Cobden	Logos Land	Logos Land Cobden, ON		
+1	NH		Portsmouth Christian High School	Portsmouth Christian High School Portsmouth, NH 03820		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	RI		Colt State Park	Colt State Park Route 114 Hope Street Bristol, RI 02809		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Bishop Verot High School	Bishop Verot High School 5598 Sunrise drive ft myers, FL 33919		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MI		Fremont	Fremont 907 First NH Turnpike Fremont, MI 49412		
+1						
+1						
+1						
+1						
+1						
+1	TX	Abilene	Sherrod Residential Park	Sherrod Residential Park Abilene, TX		
+1	CA		CCSF	CCSF 50 Phelan Avenue San Francisco, CA 94112		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Texas A&M	Texas A&M College Station, TX 77843		
+1	IN		Angel Mounds Cross Country Course	Angel Mounds Cross Country Course Evansville, IN 47712		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	SC		Coastal Carolina University	Coastal Carolina University Conway, SC 29526		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IN		Camp Sycamore Valley	Camp Sycamore Valley Lafayette, IN 46065		
+1						
+1	PA		Bucknell Cross Country Course	Bucknell Cross Country Course Lewisburg, PA 17837		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TN		Shelby Farms Course	Shelby Farms Course , TN		
+1	PA	Ridgeway	Grandinetti Elementary	Grandinetti Elementary Ridgeway, PA		
+1	WI		Tri-Metro CC Championships	Tri-Metro CC Championships Marquette, WI 49855		
+1	MI		RB	RB 24 Cavalier Court Fremont, MI 49412		
+1						
+1			Venue	Venue Address Orlando, Fl 32825		
+1	WI		Diablo Valley	Diablo Valley 321 Golf Club Drive Marquette, WI 49855		
+1	NH		Keene High School	Keene High School 43 Arch St. Keene, NH 03431		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	GA		Georgia College and State University	Georgia College and State University Milledgeville, GA 12345		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	WI		Stanford Golf Course	Stanford Golf Course Marquette, WI 49855		
+1	WI		2006 USATF Region7	2006 USATF Region7 Marquette, WI 49855		
+1	WI		Portage Warrior Challenge	Portage Warrior Challenge , WI		
+1	WA		Runners Soul Valley XC Classic	Runners Soul Valley XC Classic , WA		
+1	WI		Kendall Soccer Park	Kendall Soccer Park Marquette, WI 49855		
+1	AZ		ACCAC Conference Championships	ACCAC Conference Championships , AZ		
+1						
+1	MI		Currie Golf Course	Currie Golf Course Midland, MI 48640		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	WI		Long Beach	Long Beach 4901 Carson Street Marquette, WI 49855		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	SC		SC State University	SC State University Orangeburg , SC 29117		
+1	VA		HumanKind Campus	HumanKind Campus 151 Linden Avenue Lynchburg, VA 24503		
+1						
+1						
+1						
+1						
+1	NY		Hamilton College Cross-Country Course	Hamilton College Cross-Country Course 2400 N Gemini Rd Clinton, NY 13323		
+1	AK		South Alabama	South Alabama Mobile, AK 36608		
+1	OR		Ash Creek Preserve	Ash Creek Preserve Monmouth, OR 97351		
+1	AL		South Alabama	South Alabama Mobile, AL 12345		
+1	CT		Stanley Quarter Park	Stanley Quarter Park New Britain, CT 06051		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TN	Nashville	Percy Warner State Park	Percy Warner State Park Nashville, TN		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	HI		Naniloa Golf Course	Naniloa Golf Course Hilo, HI 12345		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	IA		Lakeside Municipal Golf Course	Lakeside Municipal Golf Course Fort Dodge, IA 50428		
+1	MD		Hereford High School	Hereford High School Parkton, MD 21120		
+1						
+1						
+1	NY		Sunken Meadow State Park	Sunken Meadow State Park Kings Point, NY 11754		
+1						
+1	CA		Speedway Meadows, Golden Gate Park	Speedway Meadows, Golden Gate Park San Francisco, CA 94118		
+1	CA		Pasadena Rose Bowl	Pasadena Rose Bowl Pasadena, CA 90210		
+1	PA		Penn State Abington Cross-Country Course	Penn State Abington Cross-Country Course Huntington Valley, PA 19006		
+1	MD		Jericho Park	Jericho Park Bowie, MD 20717		
+1	IL		UI-Springfield	UI-Springfield Springfield, IL 62703		
+1	DE		Delaware State Complex	Delaware State Complex Dover, DE 19901		
+1	TN		Vaughn's Gap @ Percy Warner Park	Vaughn's Gap @ Percy Warner Park 7311 TN-100 Nashville, TN 37221		
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		Chamizal Memorial National Park	Chamizal Memorial National Park El Paso, TX 79905		
+1			Pella, IA	Pella, IA - Central XC Course Pella, Iowa 50219		
+1						
+1						
+1	TN		Percy Warner State Park	Percy Warner State Park Nashville, TN 00000		
+1						
+1						
+1	NC		Al Buehler Trail	Al Buehler Trail Durham, NC 12345		
+1						
+1	MD		Goucher College, Towson, MD	Goucher College, Towson, MD Towson, MD 21204		
+1	FL		University of  Central Florida	University of Central Florida Orlando, FL 32825		
+1						
+1	PA		Foundation Field, Lock Haven University	Foundation Field, Lock Haven University Havenview Drive Lock Haven, PA 17745		
+1						
+1	TX		Texas-Tyler	Texas-Tyler Tyler, TX 75707		
+1	TX		Lynn Creek Park	Lynn Creek Park Grand Prairie, TX 75052		
+1						
+1	PA		Haverford College	Haverford College Haverford, PA 19010		
+1	OR		Ash Creek Preserve	Ash Creek Preserve Church St West Monmouth, OR 97361		
+1	NC		Forest Hill Park	Forest Hill Park 1639 University Dr Durham, NC 27707		
+1	PA		Cross Country Course	Cross Country Course Lincoln, PA 19352		
+1						
+1						
+1						
+1						
+1	NY		LIU  Post	LIU Post Brookville, NY 11764		
+1	SC		Furman University	Furman University Greenville, SC 29613		
+1						
+1						
+1						
+1						
+1						
+1	FL		Sydney Dover Trails, FL	Sydney Dover Trails, FL Valrico, FL 33594		
+1	SC		Laurel Hill Plantation	Laurel Hill Plantation Mount Pleasant, SC 29465		
+1	NC		WCU, Cullowhee, NC	WCU, Cullowhee, NC Cullowhee, NC 28723		
+1	CA		Pasadena Rose Bowl	Pasadena Rose Bowl pasadena, CA 91103		
+1	VA		Eastern State	Eastern State Williamsburg, VA 23185		
+1	OR		Willamette Mission State Park	Willamette Mission State Park Brooks, OR 97330		
+1	LA		Chennault Airpark	Chennault Airpark 4500 Chennault Pkwy Lake Charles, LA 70615		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MO		Central Fields	Central Fields - Forest Park St. Louis, MO 63110		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MN		Wapicada Golf Course	Wapicada Golf Course Sauk Rapids, MN 55441		
+1	WA		Pacific Lutheran	Pacific Lutheran TACOMA, WA 98447		
+1	PA	Bryn Athyn	Bryn Athyn Cross-Country Course	Bryn Athyn Cross-Country Course Bryn Athyn, PA		
+1	KY		Admiral Stadium XC Course	Admiral Stadium XC Course Danville, KY 40422		
+1						
+1	OH		Bowling Green, OH 43403	Bowling Green, OH 43403		
+1	DE		Carousel Park, Wilmingon, DE	Carousel Park, Wilmingon, DE Wilmington, DE 19808		
+1	IL		Weibring Golf Course	Weibring Golf Course Normail, IL 61790		
+1	WA		Lower Woodland Park	Lower Woodland Park 1000 N 50th St Seattle, WA 98103		
+1						
+1						
+1	NH	HENNIKER	New England College	New England College HENNIKER, NH		
+1	NM		UNM North Golf Course	UNM North Golf Course Albuquerque, NM 87131		
+1	PA		Union Canal Tunnel Park	Union Canal Tunnel Park Lebanon , PA 17003		
+1	TN		Carson Newman	Carson Newman Jefferson City, TN 37760		
+1						
+1	NY		SUNY New Paltz	SUNY New Paltz New Paltz, NY 12345		
+1	MI		Turkeyville Farm	Turkeyville Farm 18935 15 1/2 Mile Rd Marshall, MI 49068		
+1	MD		Stevenson University	Stevenson University 1525 Greenspring Valley Rd Stevenson, MD 21153		
+1	MD		Stevenson XC Course	Stevenson XC Course Stevenson, MD 21153		
+1						
+1	IN		Angel Mounds State Historic Site	Angel Mounds State Historic Site 8215 Pollack Ave Evansville, IN 47715		
+1	IL		Hillsboro Golf Course	Hillsboro Golf Course Hillsboro, IL 63132		
+1	MD		Jefferson Patterson Park & Museum	Jefferson Patterson Park & Museum St. Leonard, MD 20685		
+1	MI	Milford	Kensington Metro Park	Kensington Metro Park Milford, MI		
+1	KY		Wasioto Winds Golf Course, Pineville, KY	Wasioto Winds Golf Course, Pineville, KY Pineville, KY 40977		
+1	NJ		Deer Path Park	Deer Path Park Flemington , NJ 07430		
+1	MT		Hickory Swing Golf Course	Hickory Swing Golf Course UP, 1301 20th Street South Great Falls, MT 59405		
+1						
+1						
+1						
+1						
+1	MO		Fountain Bluff Sports Complex	Fountain Bluff Sports Complex 2200 Old State Hwy 210 Liberty, MO 64068		
+1	MS		Tatum Park	Tatum Park Hattisburg, MS 39401		
+1	CA		www.finishedresults.com	www.finishedresults.com Riverside, CA 92521		
+1	MN		St. Olaf College Cross-Country Course	St. Olaf College Cross-Country Course Northfield, MN 55057		
+1	IA		Grinnell Country Club	Grinnell Country Club - Grinnell College Grinnell, IA 50112		
+1	VT		Casleton College Cross-Country Course	Casleton College Cross-Country Course Casleton, VT 12345		
+1	NY		Field of Dreams Cross Country Course	Field of Dreams Cross Country Course One Willard Avenue Houghton, NY 14744		
+1						
+1						
+1	AL		Harry Pritchett Course, Tuscaloosa, Alabama	Harry Pritchett Course, Tuscaloosa, Alabama Tuscaloosa, AL 35487		
+1	CT		Central Connecticut	Central Connecticut New Britain, CT 06051		
+1						
+1						
+1						
+1	IN		IU East Cross Country Course	IU East Cross Country Course Richmond, IN 12345		
+1	AK		Alaska Fairbanks	Alaska Fairbanks Fairbanks, AK 99795		
+1	TX		Camp Perkins Boy Scouts of America	Camp Perkins Boy Scouts of America Wichita Falls, TX 76305		
+1	OR		McIver Park	McIver Park Estacada, OR 97219		
+1						
+1						
+1						
+1						
+1			Franklin Park	Franklin Park Boston , MA 2124		
+1	PR		U.P.R. Cayey	U.P.R. Cayey Avenida Antonio R. Barcelo 205 Cayey, PR 00736		
+1						
+1						
+1						
+1						
+1						
+1	OK		OSU Cross Country Course	OSU Cross Country Course Stillwater, OK 74075		
+1						
+1	NJ		Stockton University	Stockton University 101 Vera King Farris Drive Galloway, NJ 08205		
+1	CA		Cal State San Marcos Campus	Cal State San Marcos Campus San Diego, CA 92096		
+1	NH		ALLWell North	ALLWell North Holderness, NH 03245		
+1						
+1						
+1	MN		Augsburg	Augsburg Minneapolis, MN 55454		
+1	LA	City Not Supplied	New Orleans Lakefront	New Orleans Lakefront City Not Supplied, LA		
+1	SC		Furman University Golf Course	Furman University Golf Course Greenville, SC 29613		
+1	WV		Meadowood Park	Meadowood Park Tornado, WV 25202		
+1	SC		Matthews Industrial Park	Matthews Industrial Park Santee, SC 29117		
+1	SC	Columbia	Columbia International University	Columbia International University Columbia, SC		
+1	MN		Como Park Golf Course	Como Park Golf Course St. Paul, MN 55105		
+1						
+1	MI		Albion College X-C Course (Tomac Woods Golf Course)	Albion College X-C Course (Tomac Woods Golf Course) Albion, MI 49224		
+1	TX		River Creek Golf Course	River Creek Golf Course Wichita Falls, TX 76308		
+1	CA		University of Redlands Cross Country Course	University of Redlands Cross Country Course 1200 East Colton Avenue Redlands, CA 92373		
+1						
+1	VA		Buena Vista Golf Course	Buena Vista Golf Course 100 Vista Links Drive Buena Vista, VA 24416		
+1						
+1	PA		Standing Stone Golf Course	Standing Stone Golf Course Huntingdon, PA 99999		
+1	OH		Case Western	Case Western Cleveland, OH 44106		
+1	FL		Mark Bostic Golf Course, UF	Mark Bostic Golf Course, UF Gainesville, FL 11111		
+1	PA		Carrie Blast Furnace	Carrie Blast Furnace Rankin, PA 15260		
+1	OH		Butler Campus	Butler Campus - Laurel School Butler Campus-Laurel School- 7420 Fairmount Rd Novelty, OH 44072		
+1	WA		St Martins College	St Martins College 5000 Abbey Way SE Lacey, WA 98503		
+1						
+1	PA		Roadman Park-California	Roadman Park-California California, PA 15417		
+1	SC		Hackler Course (college) and Recreation Fields (HS)	Hackler Course (college) and Recreation Fields (HS) 3000 Downs Blvd. Conway, SC 29526		
+1	VA	City Not Supplied	Venue Not Supplied	Venue Not Supplied City Not Supplied, VA		
+1	GA		Georgia International Horse Park	Georgia International Horse Park Conyers, GA 30013		
+1						
+1						
+1	WA		Colfax Golf Club	Colfax Golf Club Colfax, WA 99163		
+1	VT		Johnson State	Johnson State Johnson, VT 05656		
+1	TX		Wee-Chi-Tah Mtn. Bike Trail	Wee-Chi-Tah Mtn. Bike Trail 111. N. Burnett Wichita Falls, TX 76310		
+1						
+1						
+1	BC	Victoria	Beacon Hill Park XC Course	Beacon Hill Park XC Course Victoria, BC		
+1	NJ		Deer Path Park	Deer Path Park Flemington, NJ 08882		
+1	TX		LeTourneau Trails	LeTourneau Trails Longview, TX 75607		
+1	OK		Alva Golf & Country Club	Alva Golf & Country Club Alva, OK 73717		
+1						
+1	IN		Hanover Cross Country Course	Hanover Cross Country Course Hanover, IN 47374		
+1	TX		Pecan Park	Pecan Park 712 Hayter St Nacogdoches, TX 75961		
+1	MI		South Course @ Hudson Mills Metropark	South Course @ Hudson Mills Metropark Dexter, MI 48130		
+1	PA	City Not Supplied	St. Vincent	St. Vincent City Not Supplied, PA		
+1	MN		Concordia College	Concordia College Moorhead, MN 56562		
+1	OH		Ohio Christian University	Ohio Christian University 1476 Lancaster Pike Circleville, OH 43113		
+1	VA		Virginia Tech	Virginia Tech Blacksburg, VA 24060		
+1						
+1	WI	La Crosse	Pettibone Park	Pettibone Park - La Crosse, WI		
+1			Valley Center Golf Course	Valley Center Golf Course Valley Center, Kansas 67070		
+1	ND		Rose Creek Golf Course	Rose Creek Golf Course Fargo, ND 58105		
+1	NY		Stony Brook University	Stony Brook University Stony Brook Stony Brook, NY 11764		
+1	IN		Blue River CC Venue, Blue River Memorial Park	Blue River CC Venue, Blue River Memorial Park Shelbyville, IN 46176		
+1	WA		Apple Ridge Run Cross Country Course	Apple Ridge Run Cross Country Course Yakima, WA 98926		
+1	FL		UCF Campus	UCF Campus Orlando, FL 11111		
+1						
+1	PA		Gettysburg Cross Country Course	Gettysburg Cross Country Course Gettysburg, PA 17325		
+1						
+1	CA		Riverside Course	Riverside Course Riverside, CA 92506		
+1	SC		Erskine College	Erskine College 20 North Main St Due West, SC 29639		
+1	WA		Jafferson Golf Course	Jafferson Golf Course Saettle, WA 98108		
+1	KS		Kansas Veteran's Home	Kansas Veteran's Home Winfield, KS 67019		
+1	PA		Schenley Park, Pittsburgh, PA	Schenley Park, Pittsburgh, PA Pittsburgh, PA 15222		
+1	MI		Hope College X-C Course (Hope College)	Hope College X-C Course (Hope College) Holland, MI 49424		
+1	GA		Mount Zion Baptist Church	Mount Zion Baptist Church 7102 Mt Zion Blvd Jonesboro, GA 30236		
+1			Edmond Santa Fe HS	Edmond Santa Fe HS Edmond, OK, Oklahoma 73160		
+1	MI		Hudson Mills Metropark	Hudson Mills Metropark 8801 N Territorial Rd Dexter, MI 48103		
+1	SC		Milliken	Milliken 920 Milliken Rd Spartanburg, SC 29303		
+1	NY	Latham	The Crossings	The Crossings Latham, NY		
+1	GA		Flint Farm	Flint Farm Waleska, GA 30183		
+1	TN		Camp Jordan	Camp Jordan 323 Camp Jordan Parkway Chattanooga, TN 37412		
+1	CT		University of St. Joseph	University of St. Joseph West Hartford, CT 06117		
+1	WI		Colburn Park	Colburn Park Green Bay, WI 54304		
+1	TN		Milligan College	Milligan College Milligan College, TN 37682		
+1	WV		Cedar Creek State Park	Cedar Creek State Park 200 High St. Glenville, WV 26351		
+1	WI		Lake Breeze Golf Course	Lake Breeze Golf Course Oshkosh, WI 00000		
+1	PA		Reservoir Park	Reservoir Park York, PA 17403		
+1	NY		St. Lawrence Univeristy	St. Lawrence Univeristy Canton, NY 13617		
+1						
+1						
+1						
+1	VA		Eastern State	Eastern State Williamsburg, VA 23188		
+1	TX		Williamson County Park	Williamson County Park Leander, TX 78641		
+1						
+1	GA		Albany State University	Albany State University Albany, GA 31701		
+1	NJ		Branch Brook Park, Newark	Branch Brook Park, Newark Newark, NJ 07102		
+1	SC	Newberry	Newberry XC Course	Newberry XC Course Newberry, SC		
+1	TX		Southeast Metropolitan Park	Southeast Metropolitan Park Austin, TX 78746		
+1	MI		Shepherd High School	Shepherd High School 321 S 4th St. Shepherd, MI 48883		
+1	MI		Eastern Michigan	Eastern Michigan Ypsilanti, MI 48197		
+1	PA	Montdale	Lakeland High School	Lakeland High School Montdale, PA		
+1						
+1						
+1						
+1	MD		Goucher College XC Course	Goucher College XC Course Towson, MD 21402		
+1	NH		Hopkinton Fairgrounds	Hopkinton Fairgrounds Hopkinton, NH 03229		
+1	TX		UTD Golf Facility Cross-Country Course	UTD Golf Facility Cross-Country Course Richardson, TX 75080		
+1	NY		Fredonia State College	Fredonia State College Fredonia, NY 14063		
+1	PA		Baker Field	Baker Field Millersville, PA 17551		
+1	PA		Edinboro Universtiy	Edinboro Universtiy Edinboro, PA 16412		
+1	KS		Cessna Activity	Cessna Activity Wichita, KS 67218		
+1	VA		Bluefield	Bluefield 1780 Stadium Drive Bluefield, VA 24605		
+1	IN	Hammond	Purdue Northwest	Purdue Northwest Hammond, IN		
+1	AZ		Silverlake Park	Silverlake Park 2420 S Kino Pkwy Tucson, AZ 85713		
+1						
+1	NH		Bow High School	Bow High School , NH		
+1						
+1	VA		Mary Baldwin	Mary Baldwin 100 Baldwin Blvd. Fishersville, VA 22939		
+1	WA		Chambers Bay Central Meadow	Chambers Bay Central Meadow University Place, Washington, WA 98195		
+1						
+1	MD	McHenry	Garrett College	Garrett College McHenry, MD		
+1			Elvin R. King XC Course	Elvin R. King XC Course Cedarville, Ohio 45314		
+1	FL	Lehigh Acres	Lehigh High School	Lehigh High School Lehigh Acres, FL		
+1	WI		Reid Gold Course	Reid Gold Course Appleton, WI 00000		
+1	NJ		Branch Brook Park	Branch Brook Park Branch Brook Park Newark, NJ 07104		
+1	FL		Clay HS	Clay HS Green Cove Springs, FL 32043		
+1	MT	Dillon	Beaverhead Golf Course	Beaverhead Golf Course Dillon, MT		
+1	VA		Mary Baldwin	Mary Baldwin Staunton, VA 24401		
+1	WA		Apple Ridge	Apple Ridge Yakima, WA 98926		
+1	SD		Eureka Trail	Eureka Trail 125 TN-307 Athens, SD 37303		
+1	TX		Rice University	Rice University Houston, TX 77251		
+1	HI		Central Oahu Regional Park	Central Oahu Regional Park Waipahu, HI 96816		
+1	NY		Sunken Meadow State Park	Sunken Meadow State Park Sunken Meadow State Park Kings Park, NY 11754		
+1	MO		Jefferson Barracks Park	Jefferson Barracks Park St. Louis, MO 63125		
+1	WA		Chambers Creek Regional Park	Chambers Creek Regional Park University Place, WA 98467		
+1						
+1	MN		MSU Moorhead Campus	MSU Moorhead Campus Moorhead, MN 56560		
+1	FL	Spring Hill	Springstead	Springstead Spring Hill, FL		
+1						
+1	DE	Wilmington	Carousel State Park	Carousel State Park Wilmington, DE		
+1	PA		Gettysburg College cross-country course	Gettysburg College cross-country course 300 N Washington St Gettysburg, PA 17325		
+1	FL		Matanzas XC Course	Matanzas XC Course Flagler, FL 32137		
+1	WA		Wandermere Golf Course	Wandermere Golf Course Spokane, WA 99208		
+1						
+1	GA	Augusta	Augusta Canal Towpath	Augusta Canal Towpath Augusta, GA		
+1	FL	Fern Park	Knights CX Course	Knights CX Course Fern Park, FL		
+1	NM		WTC Cross Country Course	WTC Cross Country Course Hobbs, NM 88240		
+1	PA		Pleasant Ridge Park XC Course	Pleasant Ridge Park XC Course Girard, PA 16417		
+1	FL	North Port	North Port XC Course	North Port XC Course North Port, FL		
+1	FL		Kelly Road Park	Kelly Road Park Ft. Myers, FL 33908		
+1	FL	Starke	Bradford Middle School	Bradford Middle School Starke, FL		
+1	FL		Palmetto Ridge HS	Palmetto Ridge HS Naples, FL 34116		
+1	FL		Oak Ridge FL	Oak Ridge FL Naples , FL 32809		
+1	FL		Mandarin	Mandarin Jax, FL 32258		
+1	FL		Cecil Field	Cecil Field Jacksonville , FL 32720		
+1	TN		Camp Jordan	Camp Jordan East Ridge, TN 37412		
+1						
+1	FL	Brooksville	Sand hii Boys Scout Reservation	Sand hii Boys Scout Reservation Brooksville, FL		
+1	FL	Altamonte Springs	Forest City XC Course	Forest City XC Course Altamonte Springs, FL		
+1	FL	Lecanto	Lecanto High	Lecanto High Lecanto, FL		
+1						
+1	FL		South Lake High School	South Lake High School Groveland, FL 34715		
+1	AL		Alabama	Alabama Tuscaloosa, AL 35487		
+1						
+1	IN		Madison High School	Madison High School Madison, IN 47250		
+1	FL		Tradewinds Park	Tradewinds Park Coral Springs, FL 33073		
+1	FL		Julington-Durbin Trails	Julington-Durbin Trails Jacksonville, FL 32258		
+1	ID	Eagle	Eagle Island State Park	Eagle Island State Park Eagle, ID		
+1	FL		Clearwater Catholic	Clearwater Catholic Clearwater, FL 34260		
+1	FL	Dunedin	Dunedin, FL	Dunedin, FL		
+1	NH		Safford Park	Safford Park 247 Monadnock Highway Swanzey, NH 03446		
+1	IL	Elsah	Principia North Farm	Principia North Farm Elsah, IL		
+1	TX	Wheeler	Tom Britt Memorial Park	Tom Britt Memorial Park Wheeler, TX		
+1	TN		Skyhawk Runway Trail	Skyhawk Runway Trail Host: UT-Martin Martin, TN 38238		
+1	PA		Lancaster Bible College	Lancaster Bible College Lancaster, PA 17608		
+1	FL	Brooksville	Lake McKethan Lake	Lake McKethan Lake Brooksville, FL		
+1	FL		Palmer Trinity Main Field	Palmer Trinity Main Field 7900 SW 176 Street Palmetto Bay, FL 33157		
+1	FL		Wiregrass Ranch	Wiregrass Ranch 2909 Mansfield Blvd Wesley Chapel, FL 33543		
+1	AR		Pollardâ€™s Field	Pollardâ€™s Field 2000 W Villa View Dr. Siloam Springs, AR 72761		
+1	MI		Northwood Univ	Northwood Univ MIdland, MI 48640		
+1						
+1	NH		PCA	PCA 1 Seaborne Drive Dover, NH 03820		
+1	FL	Naples	St. Ann's Naples	St. Ann's Naples Naples, FL		
+1			William Jessup	William Jessup Rocklin, CA 9		
+1						
+1	FL		Pace HS	Pace HS Pace, FL 32533		
+1						
+1	FL		Ashton Brosnaham Park	Ashton Brosnaham Park Pensacola, FL 32533		
+1	FL		Cardianl Newman	Cardianl Newman WPB, FL 33409		
+1	FL		Florida Deaf	Florida Deaf Anastasia Island, St. Augustine, FL 32084		
+1	FL	Santa Rosa Beach	Emerald Coast Middle School	Emerald Coast Middle School Santa Rosa Beach, FL		
+1	FL		Tohopekaliga HS	Tohopekaliga HS 3675 Boggy Creek Rd Kissimmee, FL 34744		
+1	FL		St. John Paul II Catholic School	St. John Paul II Catholic School 5100 Terrebone Drive Tallahassee, FL 32312		
+1	IN		Caston	Caston P.O. Box128 Lakeville, IN 46931		
+1	FL		Carney Island Recreation & Conservation Area	Carney Island Recreation & Conservation Area 13275 SE 115th Ave Ocklawaha, FL 32179		
+1	FL		Taylor Park	Taylor Park 100 East Washington Avenue Largo, FL 32180		
+1	IL		UIS XC Course	UIS XC Course Springfield, IL 62703		
+1	IN		Tippecanoe County Amphitheater Park	Tippecanoe County Amphitheater Park Lafayette, IN 47905		
+1	NH		Kingswood Regional High School	Kingswood Regional High School 396 South Main St. Abenaki Ski Area - Wolfeboro, NH 03894		
+1	IN	Veedersburg	Fountain Central	Fountain Central Veedersburg, IN		
+1						
+1	FL		3Y Ranch	3Y Ranch Crawfordville, FL 32327		
+1	FL	Key West	Sombrero Beach	Sombrero Beach Key West, FL		
+1	NH	Goffstown	St. Anselm	St. Anselm Goffstown, NH		
+1	TN		Freed-Hardeman	Freed-Hardeman Henderson, TN 38340		
+1	PA		Lancaster County Central Park	Lancaster County Central Park 1049 Rockford Rd. Lancaster, PA 17602		
+1	FL	Tampa	Mary Help Christian	Mary Help Christian Tampa, FL		
+1	FL		Brown & Brown Farms	Brown & Brown Farms 13940 US 301 Oxford, FL 34484		
+1			Sarasota Military Academy	Sarasota Military Academy 3101 Bethel Ln Sarasota, FL 3424		
+1	FL		Pirate XC Course	Pirate XC Course 3535 Old Kings Rd N Flagler, FL 32137		
+1	FL		Lake Mckethan	Lake Mckethan Brooksville, FL 34601		
+1	FL		Classical Academy 2025	Classical Academy 2025 Sarasota, FL 34241		
+1	IL		Channahon Community Park	Channahon Community Park 23400 W McClintock Rd Channahon, IL 60410		
+1	TN	Harriman	Roane State	Roane State Harriman, TN		
+1	FL		Largo HS	Largo HS Largo, FL 34640		
+1	FL		Heritage Park & Gardens	Heritage Park & Gardens 1004 Helvenston St SE Live Oak, FL 34741		
+1	FL		Phipps Park	Phipps Park 1775 Miller Landing Road Tallahassee, FL 32312		
+1	FL	Lehigh Acres	Lehigh High School	Lehigh High School 801 Gunnery Road Lehigh Acres, FL		
+1	IN		Huntington Univ.	Huntington Univ. 1300 Green Road Huntington, IN 46774		
+1	NY	New York	CCNY	CCNY New York, NY		
+1	NH		NHTI	NHTI Concord, NH 03824		
+1	IN	Williamsport	Courthourse	Courthourse Williamsport, IN		
+1						
+1	FL	Lake City	Alligator Park	Alligator Park Lake City, FL		
+1	FL		Warrior XC Course	Warrior XC Course Winter Garden, FL 34787		
+1	ID		NW Nazarene	NW Nazarene 28 S Midland Blvd Nampa, ID 83686		
+1	IN		North Miami High School	North Miami High School 394 E 900N Denver, IN 46926		
+1						
+1	CA		Woodward Park	Woodward Park 1101 E. University Avenue Fresno, CA 93741		
+1	IL		North Central College @ St.James Fram	North Central College @ St.James Fram 2S541 Winfield Rd Chicago, IL 60625		
+1	KS		Fun Valley	Fun Valley 1300 North Plum Hutchinson, KS 67501		
+1	NY	New York	John Jay	John Jay New York, NY		
+1	NY		Murphy Field Cross Country Course	Murphy Field Cross Country Course Rochester, NY 14618		
+1	WY		Central Wyoming College	Central Wyoming College , WY		
+1	FL		Matanzas	Matanzas 3535 Old Kings Rd N Palm Coast, FL 32137		
+1	LA		LSU	LSU P.O. Box 25095 Baton Rouge, LA 70894		
+1	FL		@ First Coast HS	@ First Coast HS Jacksonville, FL 32218		
+1	IN		Big Walnut Sports Park	Big Walnut Sports Park 910 E Washington St. Greencastle, IN 46135		
+1	FL		BP	BP Key West, FL 33040		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	FL		Venice HS	Venice HS Venice, FL 34285		
+1						
+1						
+1	IN		Hanover College Cross Country Course	Hanover College Cross Country Course 500 S Gardner St Scottsburg, IN 47170		
+1						
+1						
+1						
+1	CA		Compton	Compton Wilson Park, CA 90221		
+1			Veterans Home	Veterans Home - Grounds Winfield, Kansas 67156		
+1						
+1	VA		S/SE Regional Preview	S/SE Regional Preview Winchester, VA 22601		
+1						
+1						
+1						
+1	DC		Fort Dupont Park	Fort Dupont Park Washington, DC 20002		
+1						
+1	AR		UA Agri Farms	UA Agri Farms Fayetteville, AR 72701		
+1						
+1						
+1	NH		Coe-Bron Northwood Academy	Coe-Bron Northwood Academy Northwood, NH 03261		
+1						
+1						
+1						
+1	MI		Cass Benton Park	Cass Benton Park Northville, MI 48167		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		F&M XC Course	F&M XC Course Lancaster, PA 17604		
+1						
+1	MT		MSU	MSU Bozeman, MT 59717		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	MO		Frank E. Peters GC	Frank E. Peters GC Nevada, MO 65211		
+1						
+1						
+1						
+1	KS	Leonardville	Leonardville Golf Course	Leonardville Golf Course Leonardville, KS		
+1	IN		Taylor University	Taylor University Uploand, IN 46989		
+1	PA		Baker Campus	Baker Campus Lancaster, PA 17603		
+1						
+1	FL	Inverness	Whispereing Pines	Whispereing Pines Inverness , FL		
+1						
+1	FL		Wiregrass Ranch	Wiregrass Ranch Wesley Chapel, FL 33543		
+1	TX		Kent Co. Golf Course	Kent Co. Golf Course Jayton, TX 79528		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	TX		LAKE LONG	LAKE LONG AUTIN, TX 78701		
+1						
+1						
+1						
+1	KS		Rolling Hills	Rolling Hills McPherson, KS 67460		
+1	NY		VCP	VCP Bronx, NY 10463		
+1	OH	Kettering	Indian Ripple Park	Indian Ripple Park Kettering, OH		
+1						
+1						
+1	IN		Tippecanoe Valley	Tippecanoe Valley Akron, IN 46910		
+1						
+1	IN		North Harrison High School	North Harrison High School 1070 Hwy 64 Ramsey, IN 47166		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	KS		Silver Lake Jr. High	Silver Lake Jr. High Silver Lake, KS 66539		
+1						
+1						
+1						
+1	FL		Walsingham Park	Walsingham Park Largo, FL 32312		
+1						
+1						
+1	OR		Lewis & Clark College	Lewis & Clark College Portland, OR 97219		
+1						
+1						
+1						
+1						
+1						
+1	TX		Kent Co. Golf Course	Kent Co. Golf Course Box 168 Jayton, TX 79528		
+1						
+1						
+1						
+1	NC		Western Carolina University	Western Carolina University 1 University Way Cullowhee, NC 28723		
+1	AR	Clarksvile	Univeristy of the Ozarks Trails	Univeristy of the Ozarks Trails Clarksvile, AR		
+1						
+1						
+1	TX		Collin Country Adventure Camp Anna, TX	Collin Country Adventure Camp Anna, TX Melissa, TX 75454		
+1	MT		Dover Park	Dover Park Mary Ln Billings, MT 59105		
+1						
+1						
+1						
+1	AZ		Buffalo Park	Buffalo Park Flagstaff, AZ 86001		
+1						
+1						
+1	KS	Wichita	Arkalon Park	Arkalon Park Wichita, KS		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	PA		Alumni Cross Country Course	Alumni Cross Country Course Haverford, PA 12345		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1			College of Wooster Golf Course	College of Wooster Golf Course Wooster, OH 4691		
+1						
+1						
+1						
+1	TX	Leander	Old Settlers Park	Old Settlers Park Leander, TX		
+1	IN		Highland HS	Highland HS 9135 Erie St. Highand, IN 46321		
+1						
+1						
+1						
+1	FL		Morgan Park	Morgan Park 1710 East Gibson Street Arcadia, FL 33821		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	KS		Cessna Activity Center	Cessna Activity Center 2301 E Douglas Ave Wichita, KS 67211		
+1	NH		Belmont HS Woods Loop	Belmont HS Woods Loop Belmont, NH 03220		
+1						
+1						
+1						
+1						
+1						
+1						
+1	IL		Donovon Park	Donovon Park Peoria, IL 61614		
+1						
+1						
+1						
+1	CA		Irvine Park	Irvine Park irvine, CA 92869		
+1	TX		Bulldog Stadium	Bulldog Stadium Borger, TX 79007		
+1						
+1						
+1						
+1						
+1						
+1						
+1	CA		Balboa Park	Balboa Park San Diego, CA 92101		
+1	VT		Lyndon State	Lyndon State Lyndon, VT 05851		
+1						
+1						
+1						
+1	IL		Donovan Golf Course	Donovan Golf Course Peoria, IL 61625		
+1						
+1						
+1						
+1						
+1			13th St Park	13th St Park Andover, Kansas 67002		
+1						
+1						
+1	CA		El Dorado Park	El Dorado Park , CA		
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1						
+1	NC	Cary	WakeMed Soccer Park -- Cary NC	WakeMed Soccer Park -- Cary NC Cary, NC		
+1						
+1	FL		Ocala Jockey Club	Ocala Jockey Club 8720 W Hwy 318 Reddick, FL 32686		
+1	FL		Hawk XC Course	Hawk XC Course Port Orange, FL 32119		
+1						
+1						
+1						
+1						
+1	TN		Eastland Green South Nine Golf Course	Eastland Green South Nine Golf Course 4674 Sango Rd Clarksville, TN 37403		
+1						
+1			Southeastern Oklahoma State	Southeastern Oklahoma State Surant, OK, Oklahoma 74730		
+1	IL		Camera Park	Camera Park Glendale Heights, IL 60478		
+1						
+1						
+1	NY		St. Joseph's College	St. Joseph's College Kings Point, NY 11754		
+1						
+1	NH		MOULTONBOROUGH	MOULTONBOROUGH 23 Blake Rd Moultonborough, NH 03254		
+1	CA		Toro Park	Toro Park Salinas, CA 93924		
+1	LA		Louisiana Tech	Louisiana Tech Ruston, LA 71272		
+1	TX		EJ "Jeep" Webb Track	EJ "Jeep" Webb Track Borger, TX 79007		
+1	TN		Maryville Cpllege	Maryville Cpllege Maryville, TN 37804		
+1						
+1	PA		Haverford	Haverford Haverford, PA 19041		
+1	NH		Nashua South	Nashua South Nashua, NH 03063		
+1						
+1						
+1						
+1	SC		Clemson Sandhill Research and Education Center	Clemson Sandhill Research and Education Center Columbia, SC 29208		
+1						
+1						
+1						
+1	CA		Crystal Springs XC Course	Crystal Springs XC Course Belmont, CA 95119		
+1						
+1	MT		Hickory Swing Golf Course	Hickory Swing Golf Course Great Falls, MT 59404		
+1						
+1						
+1						
+1						
+1	TX		TLU	TLU Fleming and Memorial Seguin, TX 78666		
+1						

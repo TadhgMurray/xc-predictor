@@ -1,0 +1,2401 @@
+h1 { color: black }
+p  { color: rgb(82, 82, 82); }
+.tagline { color: crimson; }
+.box { color: crimson; padding: 1px; }
+.row {
+  display: flex;
+  gap: 1px;
+}
+.meta {
+  color: gray;
+  font-size: 14px;
+}
+
+.flag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  margin-right: 3px;
+  color: #fff;
+}
+.flag--pr  { background: #b8860b; }   /* PR  — gold-ish */
+.flag--sr  { background: #4b7a34; }   /* SR  — green */
+.flag--cpr { background: #2e53e6; }   /* course PR — blue */
+.flag--rpr { background: #6b3fa0; }   /* rating PR — purple */
+
+.star { color: #b8860b; margin-left: 4px; }
+.star--rating { color: #6b3fa0; }
+.flag--csr { background: #1f6f8b; }
+.flag--rsr { background: #8b3f6b; }
+
+.page-layout { display: flex; gap: 24px; align-items: flex-start; }
+.main-col    { flex: 1; min-width: 0; }
+.sidebar     { width: 280px; flex-shrink: 0; }
+
+.chart-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+
+/* TF section: results and charts side by side */
+.section-split {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;   /* charts sit at the top, don't stretch to
+                                  match the height of a long results table */
+}
+
+.section-main {
+    flex: 1;                   /* take all remaining width */
+    min-width: 0;              /* CRITICAL -- see below */
+}
+
+.chart-col {
+    flex: 0 0 260px;           /* don't grow, don't shrink, exactly 260px */
+    display: flex;
+    flex-direction: column;    /* charts stack vertically */
+    gap: 0.75rem;
+    position: sticky;          /* stay visible while scrolling the seasons */
+    top: 1rem;
+}
+
+/* The sidebar now carries charts, not just a list, so it needs real width. */
+.sidebar {
+    flex: 0 0 340px;        /* was narrower -- charts need room to be readable */
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;            /* space between the PR panel and the charts */
+}
+
+.chart-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* Bigger: taller slots, and full sidebar width. */
+.chart-slot {
+    min-height: 220px;      /* was however tall the placeholder text made it */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #bbb;
+    border-radius: 4px;
+    color: #777;
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 0.5rem;
+}
+
+@media (max-width: 900px) {
+    .sidebar { flex: 1 1 auto; }   /* stack below the main column on phones */
+}
+
+/* ---- Race tables ------------------------------------------------------ */
+
+table {
+    border-collapse: collapse;   /* adjacent cell borders merge into one line
+                                    instead of doubling up */
+    width: 100%;
+}
+
+th, td {
+    /* vertical | horizontal. You said rows are fine, so the first number
+       stays modest and the second does the work. */
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #ddd;      /* the boxes */
+    text-align: left;
+    vertical-align: top;
+}
+
+thead th {
+    background: #f5f5f5;
+    font-weight: 600;
+    white-space: nowrap;         /* stop headers wrapping to two lines */
+}
+
+/* Numbers right-aligned and tabular so digits line up in a column.
+   tabular-nums forces equal-width digits -- without it, 1 is narrower than
+   0 in most fonts and the decimal points drift. Matters now that times
+   carry ragged precision (9:19 next to 9:19.42). */
+/* ⚠ THIS WAS GLOBAL AND RIGHT-ALIGNED EVERY TABLE'S 4th, 5th AND 6th COLUMN
+   ON THE SITE -- written for the athlete page's result table, applied to all
+   of them. It is why a `table td { text-align: left }` rule further down did
+   nothing: td:nth-child(4) outranks it on specificity.
+
+   tabular-nums stays. That is the part actually worth having: fixed-width
+   digits so a column of times lines up instead of jittering row to row.
+   Alignment is handled once, for every table, at the bottom of this file. */
+td:nth-child(4),   /* Result     */
+td:nth-child(5),   /* Rating     */
+td:nth-child(6) {  /* Difficulty */
+    font-variant-numeric: tabular-nums;
+}
+
+/* Dates and times shouldn't wrap mid-value */
+td:nth-child(1) { white-space: nowrap; }
+
+/* ---- top bar --------------------------------------------------------- */
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid #e5e5e5;
+}
+.brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; }
+.topnav { display: flex; gap: 1.25rem; }
+.topnav a { text-decoration: none; color: #333; }
+.topsearch { margin-left: auto; }          /* pushes search to the right */
+.topsearch input { padding: 0.4rem 0.7rem; min-width: 220px; }
+ 
+/* ---- hero ------------------------------------------------------------ */
+/* ---- hero: nine-photo mosaic with a centred title -------------------- */
+/*
+ * A 4x4 grid, laid out with NAMED AREAS rather than line numbers:
+ *
+ *     m1   m2   m2   m3
+ *     m4   TT   TT   m5
+ *     m4   TT   TT   m5
+ *     m6   m7   m8   m9
+ *
+ * ★ THE CELL SHAPES ARE THE POINT. Nine identical squares would crop the
+ *   portraits to heads and the panoramas to slivers. So the grid offers three
+ *   shapes and the photos are assigned to match:
+ *     m2      2:1 wide   -> the widest source (1.78)
+ *     m4, m5  1:2 tall   -> the two portraits (0.80, 0.81)
+ *     rest    ~1:1       -> the mid-landscape and square sources
+ *
+ * ★ grid-template-areas, not grid-column/row numbers. Nine tiles plus a
+ *   spanning title is where line numbers stop being readable -- the ASCII
+ *   block below IS the layout, so rearranging is editing a picture rather
+ *   than recomputing four numbers per tile.
+ *
+ * ★ aspect-ratio on the SECTION, not heights on tiles. One number sets the
+ *   band's proportion and the rows divide it; per-tile heights is how a
+ *   mosaic ends up with a ragged bottom edge.
+ */
+.hero-mosaic {
+    display: grid;
+    grid-template-columns: 1fr 1.3fr 1.3fr 1fr;
+    /* ★ THE OUTER ROWS ARE THE TALL ONES. At 1 / 0.8 / 0.8 / 1 the top and
+     *   bottom strips were shallow enough that cover-crop threw away most of
+     *   each photo -- Bolt lost his head, Kipchoge lost the clock. 1.6 makes
+     *   those rows twice the height of the middle pair, so the images that
+     *   have to carry a moment actually show it. The title cell gets less of
+     *   the band and more absolute height, because the section is taller. */
+    grid-template-rows: 1.6fr 0.7fr 0.7fr 1.6fr;
+    grid-template-areas:
+        "m1 m2 m2 m3"
+        "m4 tt tt m5"
+        "m4 tt tt m5"
+        "m6 m7 m8 m9";
+    gap: 3px;                       /* the seam. 0 for butted panels */
+    max-width: 1280px;
+    margin: 0 auto;
+    aspect-ratio: 16 / 11;          /* taller band -- outer rows need the room */
+    background: #0a0c0e;            /* shows through the gaps */
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.m1 { grid-area: m1; } .m2 { grid-area: m2; } .m3 { grid-area: m3; }
+.m4 { grid-area: m4; } .m5 { grid-area: m5; } .m6 { grid-area: m6; }
+.m7 { grid-area: m7; } .m8 { grid-area: m8; } .m9 { grid-area: m9; }
+.mtitle { grid-area: tt; }
+
+/* ---- per-tile framing ------------------------------------------------ */
+/*
+ * background-position decides WHICH PART SURVIVES the cover-crop, and the
+ * default `center` is wrong whenever the subject is not centred. These are
+ * measured off each source, not guessed:
+ *
+ *   m2  Bolt's face sits ~28% across and ~13% down a 1296x729 frame. Centre
+ *       crops straight through his chest; 30% 22% keeps the head and the
+ *       backward glance, which is the entire reason for the photo.
+ *   m8  Kipchoge's 1:59:40 clock is in the top ~15% of the frame. Anything
+ *       but `top` loses it, and the clock is the point of the image.
+ *   m1  the NXN tape break is upper-middle; `center top` keeps the arms.
+ *   m9  the shout is upper-middle of a tight portrait.
+ *   m6  Bannister is left of frame and breasting the tape at mid-height.
+ *
+ * ! SPECIFICITY TRAP. `.mtile` further down ALSO sets background-position, it
+ *   is also a single class, and it comes LATER -- so a bare `.mN` loses the
+ *   tie on source order and its framing silently never applies. Any tile rule
+ *   here MUST be written as `.hero-mosaic .mN` (0,2,0) to win. `.m2` was the
+ *   only one written that way, which is why it was the only one that worked.
+ *   .m1, .m8 and .m9 are still bare and therefore still inert.
+ */
+.m1 { background-position: center 15%; }
+.hero-mosaic .m2 { background-position: 30% 22%; }
+.hero-mosaic .m6 { background-position: 25% center; }
+.m8 { background-position: center top; }
+.m9 { background-position: center 20%; }
+
+/* Every tile: cover-crop, dimmed and desaturated so the centre cell stays
+   dominant and nine competing photos read as one texture. */
+.mtile {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    filter: grayscale(0.2) brightness(0.78);
+    transition: filter 0.25s;
+}
+.hero-mosaic:hover .mtile { filter: grayscale(0) brightness(0.92); }
+
+/* The centre cell. Solid, not translucent: nine photos behind a see-through
+   panel is noise, and the title has to win. */
+.mtitle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1.25rem 1.5rem;
+    background: #0a0c0e;
+    z-index: 1;
+}
+
+.hero-mosaic .brand {
+    display: block;
+    color: #fff;
+    font-size: 2.8rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    text-decoration: none;
+}
+.hero-mosaic .tagline {
+    color: rgba(255,255,255,0.82);
+    margin: 0.45rem 0 1rem;
+    font-size: 1rem;
+}
+.hero-mosaic .facts {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.hero-mosaic .fact { color: rgba(255,255,255,0.72); font-size: 0.85rem; }
+.hero-mosaic .fact-num { font-weight: 700; color: #fff; }
+
+/* Narrow: the ring collapses to two tiles above and two below. Nine slivers
+   on a phone would make all nine illegible, so five are hidden rather than
+   shrunk -- the ones kept are the two portraits, which suit a phone anyway. */
+@media (max-width: 760px) {
+    .hero-mosaic {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 110px auto 110px;
+        grid-template-areas:
+            "m4 m5"
+            "tt tt"
+            "m2 m9";
+        aspect-ratio: auto;
+    }
+    .m1, .m3, .m6, .m7, .m8 { display: none; }
+    .mtitle { padding: 1.5rem 1rem; }
+    .hero-mosaic .brand { font-size: 1.9rem; }
+}
+}
+ 
+/* ---- rankings controls ---------------------------------------------- */
+.rankings { padding: 1.5rem; }
+.rank-controls {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;   /* add this line */
+    margin-bottom: 1.5rem;
+}
+.toggle-group button, .chip {
+    padding: 0.4rem 0.8rem; border: 1px solid #ccc; background: #fff;
+    cursor: pointer; border-radius: 4px;
+}
+.toggle-group button.is-active { background: #222; color: #fff; border-color: #222; }
+.chip { opacity: 0.45; }                    /* off state */
+.chip.is-on { opacity: 1; }
+ 
+/* ---- board visibility (the whole point of the toggles) --------------- */
+/* Hide every board-pair by default; show only the one matching the current
+   sport+scope on .rankings. Attribute selectors do the switching. */
+.board-pair { display: none; }
+.rankings[data-sport="XC"][data-scope="season"]  .board-pair[data-sport="XC"][data-scope="season"],
+.rankings[data-sport="XC"][data-scope="alltime"] .board-pair[data-sport="XC"][data-scope="alltime"],
+.rankings[data-sport="TF"][data-scope="season"]  .board-pair[data-sport="TF"][data-scope="season"],
+.rankings[data-sport="TF"][data-scope="alltime"] .board-pair[data-sport="TF"][data-scope="alltime"] {
+    display: block;
+}
+ 
+/* pool chips hide a pool everywhere at once */
+body.hide-hs_m      .pool-block[data-pool="hs_m"],
+body.hide-hs_f      .pool-block[data-pool="hs_f"],
+body.hide-college_m .pool-block[data-pool="college_m"],
+body.hide-college_f .pool-block[data-pool="college_f"],
+body.hide-ms_m      .pool-block[data-pool="ms_m"],
+body.hide-ms_f      .pool-block[data-pool="ms_f"] {
+    display: none;
+}
+
+.topsearch { margin-left: auto; } /* stays hard right */
+ 
+/* ---- grid-based boards --------------------------------------------- */
+:root {
+    --cols: 3rem minmax(0, 1fr) minmax(0, 1fr) 5rem minmax(0, 1fr);   /* rating 4rem -> 5rem */   /* # was 2rem, now 2.5 */  /* the 6 column widths, shared */
+    --board-gap: 1rem;                    /* gutter between the two boards */
+}
+
+.board-pair-grid {
+    display: flex;
+    gap: var(--board-gap);
+    align-items: flex-start;
+}
+.board-side { flex: 1 1 0; min-width: 0; }
+
+.board-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: var(--cols);
+}
+.cell {
+    /* remove: display: flex; align-items: center; */
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #ddd;
+    border-top: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.c-school, .c-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.grid-head {
+    display: grid;
+    grid-template-columns: var(--cols);
+}
+
+.head {
+    padding: 0.4rem 0.9rem;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-top: 1px solid #ddd;
+    font-weight: 600;
+}
+.cell.blank { border-bottom: 1px solid #eee; }   /* keeps the line, no content */
+
+.c-year { text-align: right; font-variant-numeric: tabular-nums; justify-content: flex-end; }
+
+.c-rank, .c-rating {
+    text-align: center;
+    overflow: visible;
+    text-overflow: clip;
+    font-variant-numeric: tabular-nums;
+}
+.board-title,
+.pool-name {
+    margin: 0 0 0.5rem 0;
+    padding-left: 0;      /* start at the container's left edge */
+}
+
+.board-grid,
+.grid-head {
+    margin-left: 0;       /* make sure the table isn't indented */
+}
+.head-center { text-align: center; }
+
+@media (max-width: 850px) {
+    .board-pair-grid { flex-direction: column; }
+}
+
+.search-wrap {
+    position: relative;
+    margin-left: auto;      /* pushes the whole search block to the right */
+}
+.search-results {
+    position: absolute;
+    top: 100%; left: 0; right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    max-height: 400px;
+    display: flex;              /* column: scrolling list + pinned footer */
+    flex-direction: column;
+    z-index: 100;
+}
+.sr-scroll {
+    overflow-y: auto;          /* only THIS scrolls */
+    flex: 1;
+}
+.sr-more {
+    flex: none;                /* pinned, never scrolls away */
+    border-top: 1px solid #ddd;
+    padding: 0.5rem 0.7rem;
+    background: #fafafa;
+    text-align: center;
+    font-weight: 500;
+    text-decoration: none;
+    color: #333;
+}
+.sr-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.4rem 0.7rem;
+    text-decoration: none;
+    color: #222;
+    border-bottom: 1px solid #eee;
+}
+.sr-item:hover { background: #f5f5f5; }
+.sr-kind {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: #999;
+    min-width: 3.5rem;
+}
+.sr-label { font-weight: 500; }
+.sr-sub { color: #888; font-size: 0.85rem; margin-left: auto; }
+
+.search-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+.search-tab {
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    text-decoration: none;
+    color: #333;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.search-tab.is-active { background: #222; color: #fff; border-color: #222; }
+.tab-count {
+    font-size: 0.75rem;
+    opacity: 0.6;
+    background: rgba(0,0,0,0.08);
+    padding: 0 0.35rem;
+    border-radius: 8px;
+}
+.search-tab.is-active .tab-count { background: rgba(255,255,255,0.2); }
+
+.results-table { width: 100%; border-collapse: collapse; }
+.results-table th, .results-table td {
+    padding: 0.5rem 0.9rem;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+}
+.results-table thead th { background: #f5f5f5; font-weight: 600; }
+.result-row { cursor: pointer; }
+.result-row:hover { background: #f9f9f9; }
+
+.year-filter {
+    margin-bottom: 1rem;
+}
+
+.conv-add { position: relative; }        /* anchor */
+.conv-drop {
+    position: absolute;
+    top: 100%;                            /* directly below the input */
+    left: 0; right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    z-index: 50;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.conv-drop:empty { display: none; }      /* invisible when no results */
+.drop-item { padding:0.4rem 0.7rem; cursor:pointer; }
+.drop-item:hover { background:#f0f0f0; }
+.drop-meta { color:#999; font-size:0.8rem; }
+
+.src-field { position: relative; }
+
+.conv-drop {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    z-index: 100;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.conv-drop:empty { display: none; }
+
+/* ===== CONVERSIONS ===== matches the site's tables + spacing ===== */
+
+.conv { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+.conv h1 { margin: 0 0 0.25rem; }
+.conv-intro { color: #666; margin: 0 0 1.5rem; font-size: 0.95rem; }
+
+/* red-asterisk required marker + the key line */
+.req { color: #c0392b; font-weight: 700; }
+.req-key { color: #999; font-size: 0.8rem; margin-left: 0.5rem; }
+
+/* ---- source panel: a bordered card, like a form ---- */
+.conv-source {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    background: #fafafa;
+}
+.conv-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 0.75rem;
+}
+/* each field: label stacked over its input */
+.conv-row > label,
+.src-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: #444;
+    position: relative;              /* anchors its dropdown */
+}
+.conv-row input,
+.conv-row select,
+.src-field input,
+.src-field select {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    min-width: 160px;
+}
+
+/* the picked-athlete / picked-course confirmation line */
+.chosen { color: #2a7d46; font-size: 0.8rem; min-height: 1em; }
+
+/* ---- search dropdowns (all of them share .conv-drop) ---- */
+.conv-drop {
+    position: absolute;
+    top: 100%; left: 0; right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    z-index: 100;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.conv-drop:empty { display: none; }
+.drop-item { padding: 0.4rem 0.7rem; cursor: pointer; font-size: 0.9rem; }
+.drop-item:hover { background: #f0f0f0; }
+.drop-meta { color: #999; font-size: 0.8rem; margin-left: 0.4rem; }
+
+/* ---- optional weather, collapsed ---- */
+.conv-weather { margin: 0.5rem 0; }
+.conv-weather summary { cursor: pointer; color: #555; font-size: 0.85rem; }
+
+/* ---- the Convert button: primary, matches the site's dark toggle ---- */
+.conv-go {
+    margin-top: 0.5rem;
+    padding: 0.55rem 1.4rem;
+    background: #222;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.conv-go:hover { background: #000; }
+
+/* ---- the headline result ---- */
+.conv-normalized {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+    min-height: 1.4em;
+    color: #111;
+}
+.conv-normalized:empty { display: none; }
+
+/* ---- two tables side by side, stack on narrow ---- */
+.conv-tables {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+}
+.conv-table-wrap { flex: 1 1 0; min-width: 0; }
+.conv-table-wrap h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+
+@media (max-width: 800px) {
+    .conv-tables { flex-direction: column; }   /* stack on narrow */
+}
+
+/* ---- the result tables: same look as the leaderboard tables ---- */
+.conv-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.conv-table th,
+.conv-table td {
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+    font-size: 0.9rem;
+}
+.conv-table thead th {
+    background: #f5f5f5;
+    border-bottom: 2px solid #ddd;
+    font-weight: 600;
+}
+/* numeric columns right-aligned with tabular figures, like the boards */
+.conv-table .cell-dist,
+.conv-table .cell-time {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- the add-course / add-distance row under each table ---- */
+.conv-add { position: relative; margin-top: 0.5rem; }
+.conv-add input {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.field-label { display: block; }   /* text + asterisk stay on one line */
+
+.conv-row { gap: 1.25rem; row-gap: 1rem; }
+.src-field { margin-bottom: 0.25rem; }
+
+.topbar { display: flex; align-items: center; gap: 1.5rem;
+          padding: 0.75rem 1.5rem; border-bottom: 1px solid #e5e5e5; }
+.brand { font-weight: 700; font-size: 1.2rem; text-decoration: none; color: #111; }
+.topnav { display: flex; gap: 1.25rem; }
+.topnav a { text-decoration: none; color: #333; }
+
+.search-wrap { position: relative; margin-left: auto; width: 320px; }  /* right */
+#search-input { width: 100%; padding: 0.45rem 0.7rem;
+                border: 1px solid #ccc; border-radius: 4px; }
+
+.search-wrap { position: relative; }
+.search-results {
+    position: absolute;
+    top: 100%; left: 0; right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    z-index: 200;
+    max-height: 400px;
+    display: flex;
+    flex-direction: column;
+}
+.search-results:empty { display: none; }
+.sr-scroll { overflow-y: auto; flex: 1; }
+.sr-item { display: flex; gap: 0.5rem; padding: 0.4rem 0.7rem;
+           text-decoration: none; color: #222; border-bottom: 1px solid #eee; }
+.sr-item:hover { background: #f5f5f5; }
+.sr-more { padding: 0.5rem; text-align: center; background: #fafafa;
+           border-top: 1px solid #ddd; text-decoration: none; color: #333; }
+
+/*
+ * rankings.css -- styles for the rankings page ONLY.
+ *
+ * Goes in racecast/static/. Loaded by templates/rankings.html AFTER style.css.
+ *
+ * ★ EVERY RULE IS SCOPED UNDER .rankings-page.
+ *
+ *   There is no bare `body`, `h1`, `table`, `th`, `td` or `a` selector in this
+ *   file, and no `*` reset. An earlier version had all of those, was pasted
+ *   into style.css, and immediately restyled every page on the site --
+ *   its `table` and `a` rules outranked the real ones simply by coming later.
+ *
+ *   Scoping makes that impossible: nothing here can match an element outside
+ *   the rankings wrapper, no matter where the file ends up.
+ *
+ * The board switch keys off .rankings-page[data-board], NOT body[data-board],
+ * for the same reason -- the page owns its own state, not the document.
+ */
+
+.rankings-page {
+  /* Locally scoped tokens. Declared on the wrapper rather than :root so they
+     cannot collide with variables in style.css. */
+  --rk-muted:   #6b7280;
+  --rk-line:    #e5e7eb;
+  --rk-accent:  #1d4ed8;
+  --rk-warn-bg: #fef3c7;
+  --rk-warn-fg: #78350f;
+  --rk-error:   #b91c1c;
+  --rk-hover:   #f9fafb;
+}
+
+.rankings-page * { box-sizing: border-box; }
+
+.rankings-page .sub {
+  color: var(--rk-muted);
+  margin: 0 0 1.25rem;
+  font-size: 0.875rem;
+}
+
+
+/* ---------------------------------------------------------------- *
+ *  BOARD TABS
+ * ---------------------------------------------------------------- */
+
+.rankings-page .tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.rankings-page .tab {
+  padding: 0.5rem 1.125rem;
+  border: 1px solid var(--rk-line);
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Styled off aria-selected rather than a separate .active class, so the
+   accessible state and the visible state cannot drift apart. */
+.rankings-page .tab[aria-selected="true"] {
+  background: var(--rk-accent);
+  border-color: var(--rk-accent);
+  color: #fff;
+}
+
+
+/* ---------------------------------------------------------------- *
+ *  FILTERS
+ * ---------------------------------------------------------------- */
+
+.rankings-page .filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  align-items: flex-end;
+  padding: 0.875rem;
+  border: 1px solid var(--rk-line);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.rankings-page .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.rankings-page .field label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--rk-muted);
+}
+
+.rankings-page .field input,
+.rankings-page .field select {
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--rk-line);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.875rem;
+  min-width: 7rem;
+}
+
+.rankings-page .field input.narrow { min-width: 4.5rem; }
+.rankings-page .field input.state  { text-transform: uppercase; }
+
+/* WHICH FILTERS ARE VISIBLE depends on the board, driven entirely by
+   [data-board] on the wrapper. rankings.js sets that one attribute and never
+   touches individual fields.
+
+   Date fields are PERFORMANCE-only: an "ability" measured over two weeks is
+   one or two races, which is a performance. The API returns 400 for that
+   combination rather than silently ignoring it, so hiding the inputs keeps the
+   UI and the API telling the same story. */
+.rankings-page .perf-only { display: none; }
+.rankings-page[data-board="performance"] .perf-only    { display: flex; }
+.rankings-page[data-board="performance"] .ability-only { display: none; }
+
+/* ★ THE PR BOARD HIDES BOTH OF THE OTHERS' CONTROLS AND SHOWS ITS OWN.
+   min_races is an ability idea and dates are a performance one; the times
+   board wants a distance and, being one row per athlete, has no race count to
+   filter on. Driven off data-board like the rules above, so rankings.js never
+   touches individual field visibility. */
+.rankings-page .pr-only { display: none; }
+.rankings-page[data-board="pr"] .pr-only      { display: flex; }
+.rankings-page[data-board="pr"] .ability-only { display: none; }
+.rankings-page[data-board="pr"] .perf-only    { display: flex; }
+
+/* The caveat is a paragraph, not a field, so flex would stretch it. */
+.rankings-page .board-note {
+  flex-basis: 100%;
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted, #666);
+}
+.rankings-page[data-board="pr"] .board-note { display: block; }
+
+/* Times are compared down a column, so they line up and share a width. */
+/* A DNF is not a slow time, so it should not read as one. */
+.rankings-page .rk td.time.dnf a { color: var(--muted, #888); }
+
+.rankings-page .rk td.time {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rankings-page button.go {
+  padding: 0.4375rem 1.25rem;
+  border: 0;
+  border-radius: 5px;
+  background: var(--rk-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.rankings-page button.go:disabled { opacity: 0.5; cursor: default; }
+
+
+/* ---------------------------------------------------------------- *
+ *  THE KNOWN-BIAS NOTICE
+ * ---------------------------------------------------------------- */
+
+/* Hidden by default; rankings.js adds .show when the API reports
+   national_bias, i.e. whenever no state filter is applied. */
+.rankings-page .notice {
+  display: none;
+  padding: 0.625rem 0.875rem;
+  background: var(--rk-warn-bg);
+  color: var(--rk-warn-fg);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  margin-bottom: 0.875rem;
+}
+.rankings-page .notice.show { display: block; }
+
+
+/* ---------------------------------------------------------------- *
+ *  TABLE
+ * ---------------------------------------------------------------- */
+/*
+ * These deliberately do NOT restyle tables generally -- style.css already has
+ * `table`, `th, td` and `td:nth-child(...)` rules for the race and meet pages,
+ * and those positional selectors would fight with this table's column order.
+ * Everything here is under .rankings-page and stays there.
+ */
+
+.rankings-page table.rk {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.rankings-page table.rk th,
+.rankings-page table.rk td {
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  border-bottom: 1px solid var(--rk-line);
+}
+
+.rankings-page table.rk th {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--rk-muted);
+  font-weight: 600;
+}
+
+/* tabular-nums forces fixed-width digits, so a column of ratings lines up on
+   the decimal point instead of jittering row to row. */
+.rankings-page table.rk td.num,
+.rankings-page table.rk th.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.rankings-page table.rk td.rank   { color: var(--rk-muted); width: 2.875rem; }
+.rankings-page table.rk td.rating { font-weight: 600; }
+
+.rankings-page table.rk tbody tr:hover { background: var(--rk-hover); }
+
+.rankings-page .state { color: var(--rk-muted); font-size: 0.8125rem; }
+
+
+/* ---------------------------------------------------------------- *
+ *  STATUS + PAGING
+ * ---------------------------------------------------------------- */
+
+.rankings-page .status {
+  padding: 1.75rem 0;
+  color: var(--rk-muted);
+  text-align: center;
+}
+.rankings-page .status.error { color: var(--rk-error); }
+
+.rankings-page .pager {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.rankings-page .pager button {
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--rk-line);
+  background: #fff;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+}
+.rankings-page .pager button:disabled { opacity: 0.4; cursor: default; }
+
+.rankings-page .pager .page { color: var(--rk-muted); font-size: 0.8125rem; }
+
+/* Hidden until the first result set arrives; rankings.js toggles this class. */
+.rankings-page .pager.hidden { display: none; }
+
+/* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
+/*
+ * ★ WHY THESE NEED display:inline EXPLICITLY.
+ *   .conv-row > label is `display:flex; flex-direction:column`, so EVERY
+ *   child becomes its own row -- including bare text nodes. That put the
+ *   "(", each button, the ",", the ")" and the input on six separate lines.
+ *   Wrapping the parenthetical in .unit-toggle makes it ONE flex item, and
+ *   inside that span normal inline flow resumes.
+ *
+ *   width:auto is load-bearing too: .conv-row input,select sets min-width
+ *   160px, and a button left to inherit button defaults renders far wider
+ *   than its text.
+ */
+/* The parenthetical is one WIDGET, so inline-flex: the two buttons share an
+   edge and behave as a single segmented control rather than a list. */
+.unit-toggle {
+    display: inline-flex;
+    align-items: baseline;
+    color: #bbb;
+    font-weight: 400;
+}
+.unit-btn {
+    /* inline-block so padding and a border box lay out; still in line flow.
+       ZERO vertical padding and line-height 1 keep the control the same
+       height as the parentheses beside it -- any vertical padding makes it
+       taller than the text it sits in, which is what made it look bolted on. */
+    display: inline-block;
+    width: auto;
+    min-width: 0;
+    padding: 0 0.35rem;
+    margin: 0;
+    border: 1px solid #ddd;
+    border-radius: 0;
+    background: #f4f4f4;
+    font: inherit;
+    font-size: 0.7rem;
+    line-height: 1.15;
+    color: #aaa;
+    cursor: pointer;
+    vertical-align: baseline;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+/* Joined: round only the outer corners, and collapse the shared border so
+   the seam is one line rather than two. */
+.unit-btn:first-of-type  { border-radius: 4px 0 0 4px; }
+.unit-btn:last-of-type   { border-radius: 0 4px 4px 0; border-left: none; }
+
+/* ONE-OR-THE-OTHER: the chosen unit is filled dark, the other SOFTENS to a
+   near-invisible grey. A pair where both are legible reads as two separate
+   buttons; a pair where one recedes reads as a choice already made. */
+.unit-btn.is-on {
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #fff;
+    font-weight: 600;
+}
+.unit-btn:not(.is-on):hover { background: #e8e8e8; color: #666; }
+.unit-btn.is-on:hover { background: #333; border-color: #333; }
+.unit-btn:focus-visible { outline: 2px solid #4a90d9; outline-offset: 1px; }
+
+/* the constituent-parts sub-panel inside the weather block */
+.conv-wx-parts { margin: 0.5rem 0 0 0; }
+.conv-wx-parts summary {
+    cursor: pointer; color: #777; font-size: 0.8rem;
+}
+.conv-hint { color: #777; font-size: 0.8rem; margin: 0.4rem 0 0 0; }
+
+/* ---- dropdown anchoring ------------------------------------------------ */
+/*
+ * .conv-drop is position:absolute; top:100%, so it hangs off its nearest
+ * POSITIONED ancestor. .src-field is position:relative and its box includes
+ * the label AND the "chosen" confirmation line -- so the menu opened a row
+ * and a half below the input. .drop-anchor wraps ONLY the input, so the menu
+ * sits flush against it.
+ */
+.drop-anchor { position: relative; display: block; }
+.drop-anchor > input { width: 100%; box-sizing: border-box; }
+
+/* The menu matches the input exactly: same left edge, same width. A native
+   <datalist> could do neither, which is why distance now uses this instead.
+ *
+ * The input keeps its OWN complete border and the menu sits just beneath it
+ * as a separate box. The earlier -1px overlap merged the two into one shape,
+ * which hid the input's bottom edge and made the field look like it had grown
+ * rather than opened. border-top is restored here for the same reason -- the
+ * base .conv-drop rule removes it, which only makes sense for a merged shape.
+ */
+.drop-anchor > .conv-drop {
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 2px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+/* the masked time field reads as a clock, so give it the digits' spacing */
+#in-time { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+/* ---- rankings section heading ---------------------------------------- */
+.rank-heading {
+    margin: 2rem 0 0.15rem;
+    text-align: center;
+    font-size: 1.6rem;
+    letter-spacing: -0.01em;
+}
+.rank-sub {
+    margin: 0 0 1.5rem;
+    text-align: center;
+    color: #777;
+    font-size: 0.9rem;
+}
+
+/* The per-pool heading now carries a real label, so it can afford to look
+   like one rather than like a debug string. */
+.pool-name {
+    margin: 1.25rem 0 0.4rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #333;
+    letter-spacing: 0.01em;
+}
+
+/* Deep link from a home-page pool table into the full /rankings board.
+   Carries the pool, sport, board and season the user is currently looking at.
+
+   Styled as a bordered pill rather than a text link: the site has no accent
+   hue at all (#111/#222/#333 throughout), so a coloured link would be the only
+   colour on the page. This borrows the vocabulary .chip and
+   .toggle-group button.is-active already established -- outline at rest,
+   fills dark on hover -- which reads as "control", not "footnote".
+
+   inline-block inside a right-aligned wrapper: the pill must shrink to its
+   text. A block-level element with text-align:right would put the words on the
+   right but stretch the border across the whole table. */
+.pool-head {
+    display: flex;
+    align-items: baseline;      /* two different font sizes, one visual line */
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1.25rem 0 0.4rem;   /* inherited from .pool-name, which is now zeroed */
+}
+.pool-head .pool-name {
+    margin: 0;                  /* the row owns the spacing now */
+}
+.pool-more {
+    flex: none;                 /* never let the label squeeze the link */
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #222;
+    text-decoration: none;
+    background: #fff;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.pool-more:hover,
+.pool-more:focus-visible {
+    background: #222;
+    border-color: #222;
+    color: #fff;
+}
+/* The arrow nudges on hover. Separate span so only the glyph moves, and
+   inline-block because transform does nothing to an inline element. */
+.pool-more .arr {
+    display: inline-block;
+    transition: transform 0.12s ease;
+}
+.pool-more:hover .arr { transform: translateX(2px); }
+
+/* "XC -- 2025 Season" / "TF -- All-Time". Sits above the two boards and names
+   the view.
+
+   LEFT-ALIGNED ON PURPOSE. Centring it was tried and looked wrong: the label
+   is short, the pair below it is wide, and a centred line floating over two
+   left-aligned tables reads as unmoored rather than as their heading. It also
+   stopped lining up with .board-title below it. Do not re-centre.
+
+   Had no rule at all before this and was rendering as a default <h2>; the
+   size and weight here match .rank-heading's register one step down. */
+.board-scope-label {
+    margin: 1.6rem 0 0.9rem;
+    text-align: left;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: #222;
+}
+
+/* The hero wordmark, as an image rather than text.
+
+   .brand still carries the old font rules; they now apply to nothing, because
+   the anchor's only child is an <img>. Left in place because the topbar's
+   .brand is still text.
+
+   min() rather than a fixed width: the mosaic's centre cell is a grid area
+   that narrows on small screens, and a fixed-width logo would overflow it
+   before the media query at 850px fires. The percentage wins on narrow
+   screens, the px ceiling wins on wide ones.
+
+   display: block on the img kills the inline-descender gap under it, which
+   would otherwise push the tagline a few px lower than the design. */
+.hero-mosaic .brand-logo {
+    display: block;
+    margin: 0 0 0.5rem;
+    line-height: 0;
+}
+.hero-mosaic .brand-logo img {
+    display: block;
+    /* A block element with an explicit width and no auto margins sits hard
+       left -- it does NOT inherit the parent's text-align: center, because
+       that centres inline content, not the block's own box. */
+    margin-inline: auto;
+    width: min(420px, 78%);
+    height: auto;
+}
+
+@media (max-width: 850px) {
+    /* The mosaic collapses to a single column here and the centre cell gets
+       most of the width, so the logo can take more of it. */
+    .hero-mosaic .brand-logo img { width: min(340px, 88%); }
+}
+
+/* Topbar wordmark. Replaces the text .brand on every page via _topbar.html.
+
+   HEIGHT, NOT WIDTH. The topbar is a flex row with align-items: center, so
+   what matters is that the mark's cap height matches the nav links beside it.
+   Setting a width would let the mark's height drift if the artwork's aspect
+   ratio ever changes; setting the height pins the thing the eye compares.
+
+   1.15rem against the nav's 1rem: the mark is all-caps, and caps set to the
+   same em size as mixed-case text read visually smaller.
+
+   The .brand rules above still apply (font-weight, color) but now govern
+   nothing, since the anchor's only child is an image. Left alone rather than
+   removed -- they are shared with markup this patch does not touch. */
+.topbar .brand-mark {
+    display: flex;
+    align-items: center;
+    line-height: 0;
+    flex: none;
+}
+.topbar .brand-mark img {
+    display: block;
+    /* 3rem, because the LOCKUP is 2.75x the height of its own letters -- the
+       tick scale and the plate sit above and below the caps. At the 1.15rem
+       used for the flat cut the actual word would be ~7px tall. This is the
+       one number to change if the bar feels too deep. */
+    height: 3rem;
+    width: auto;
+}
+
+/* The lockup is ~2.5x taller than the text it replaced, so the bar's own
+   padding comes down to stop the header eating the fold. */
+.topbar { padding-top: 0.4rem; padding-bottom: 0.4rem; }
+
+@media (max-width: 700px) {
+    /* The search field takes 320px of a narrow bar; shrink the mark before
+       anything is forced to wrap. */
+    .topbar .brand-mark img { height: 2.25rem; }
+}
+
+/* ---- prose pages: /about and /report -------------------------------- *
+ * Scoped under .page so nothing here can reach the boards, the mosaic or
+ * the rankings table -- the same containment .rankings-page uses, and for
+ * the same reason: an earlier version put bare `h2` and `p` rules in this
+ * file and restyled the whole site.
+ *
+ * max-width in ch, not px: the readable line length is a function of the
+ * FONT, and 68 characters stays right if the type ever changes size. */
+.page {
+    max-width: 68ch;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    line-height: 1.65;
+    color: #222;
+}
+.page h1 { font-size: 1.9rem; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
+.page h2 { font-size: 1.2rem; margin: 2.2rem 0 0.6rem; }
+.page h3 { font-size: 1rem; margin: 1.6rem 0 0.4rem; }
+.page p  { margin: 0 0 0.9rem; }
+.page a  { color: #111; }
+.page-lead { font-size: 1.05rem; color: #444; margin-bottom: 1.5rem; }
+.page-meta { color: #777; font-size: 0.85rem; }
+
+.page-steps { padding-left: 1.2rem; margin: 0 0 1rem; }
+.page-steps li { margin-bottom: 0.7rem; }
+
+/* ---- the report form ------------------------------------------------ */
+.form-row { margin: 0 0 1.1rem; }
+.form-row label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+}
+.form-row label .opt { font-weight: 400; color: #888; }
+.form-row input,
+.form-row select,
+.form-row textarea {
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.95rem;
+    /* Without this, a textarea inherits the browser's monospace default and
+       looks like a different site from the paragraph above it. */
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.form-row textarea { resize: vertical; }
+
+/* Hidden until it has something to say, so the layout does not jump when a
+   message appears. */
+.form-status { display: none; margin-top: 0.8rem; font-size: 0.9rem; }
+.form-status.show { display: block; }
+.form-status.error { color: #a32d2d; }
+
+
+/* ---- topbar: About / Report ----------------------------------------- */
+/* .muted is gone: the report link reads the same as every other nav item.
+   Greying it out was me deciding it mattered less than it does. */
+
+@media (max-width: 1100px) {
+    /* Five nav items plus a 320px search field overflows before the existing
+       850px breakpoint fires. Let the search shrink first -- it is the only
+       element here that degrades gracefully at a smaller width. */
+    .search-wrap { width: 220px; }
+    .topnav { gap: 0.9rem; }
+}
+@media (max-width: 820px) {
+    .search-wrap { width: 180px; }
+}
+
+/* ---- flag tooltips --------------------------------------------------- *
+ * A white speech bubble to the RIGHT of the badge, outlined in that badge's
+ * own colour.
+ *
+ * Each flag class sets --tip; the bubble border and its tail both read it, so
+ * a flag's colour is declared once and the tooltip follows. Adding a flag
+ * type means adding one line here, not three.
+ *
+ * Built from data attributes, not a JS library: the text is already in the
+ * DOM, so there is nothing to initialise and nothing to re-initialise when a
+ * table re-renders. It works with JS disabled.
+ *
+ * Shown on :focus as well as :hover -- hover alone is invisible to keyboard
+ * users and to every touch device, which is why the badges carry tabindex. */
+.flag--pr  { --tip: #b8860b; }
+.flag--sr  { --tip: #4b7a34; }
+.flag--cpr { --tip: #2e53e6; }
+.flag--rpr { --tip: #6b3fa0; }
+.flag--csr { --tip: #1f6f8b; }
+.flag--rsr { --tip: #8b3f6b; }
+
+.flag {
+    position: relative;
+    cursor: help;
+}
+.flag:focus { outline: none; }
+.flag:focus-visible {
+    outline: 2px solid var(--tip, #111);
+    outline-offset: 1px;
+}
+
+.flag::after {
+    /* \A with white-space: pre-line is what puts the title and the blurb on
+       separate lines out of two attributes -- a pseudo-element cannot hold
+       two differently-styled children. */
+    content: attr(data-title) "\A" attr(data-blurb);
+    white-space: pre-line;
+    position: absolute;
+    /* ABOVE the badge, opening to the RIGHT: its LEFT edge lines up with the
+       badge, so the text runs away from the flag rather than back over it.
+       Anchoring right instead would push the bubble leftward across the row
+       it belongs to. */
+    bottom: calc(100% + 10px);
+    left: 0;
+    z-index: 60;
+    width: 250px;
+    padding: 9px 12px;
+    border: 2px solid var(--tip, #111);
+    border-radius: 9px;
+    background: #fff;
+    color: #222;
+    /* The badge is 11px/700 white with letter-spacing. None of that suits a
+       paragraph, so every one of those is reset here. */
+    font-size: 11.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+    pointer-events: none;
+}
+
+/* The tail, pointing DOWN at the badge. A white square with two coloured
+   edges rotated 45deg -- that gives an OUTLINED arrow. A plain CSS triangle is
+   made of borders so it cannot itself be outlined, and a solid one would cut
+   through the bubble's border where they meet; the white fill covers that
+   seam. Right + bottom edges are the two that meet at the DOWNWARD corner
+   once rotated. */
+.flag::before {
+    content: "";
+    position: absolute;
+    bottom: calc(100% + 5px);
+    left: 12px;
+    z-index: 61;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border-right: 2px solid var(--tip, #111);
+    border-bottom: 2px solid var(--tip, #111);
+    transform: rotate(45deg);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+    pointer-events: none;
+}
+
+.flag:hover::after, .flag:focus::after,
+.flag:hover::before, .flag:focus::before {
+    opacity: 1;
+    visibility: visible;
+}
+
+@media (max-width: 900px) {
+    /* Flags sit in the LAST table column. On a wide screen the bubble opens
+       rightwards over the sidebar, which is fine; once the layout stacks
+       there is nothing to the right but the edge of the page, so it anchors
+       to the badge's right edge and opens leftwards instead. The tail moves
+       with it -- otherwise it would point at empty space. */
+    .flag::after {
+        left: auto;
+        right: 0;
+        width: 210px;
+    }
+    .flag::before {
+        left: auto;
+        right: 12px;
+    }
+}
+
+/* ---- rankings: filter menus, WIP, find-an-athlete ------------------- *
+ * All scoped under .rankings-page, the same containment rankings.css uses --
+ * an earlier version put bare `table` and `a` rules in this file and
+ * restyled the whole site. */
+.rankings-page .combo { position: relative; }
+
+/* ★ FIXED SIZE, ALWAYS. The trigger shows a count, never the selections, so
+   the toolbar cannot reflow as values are ticked and unticked. */
+.rankings-page .combo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    width: 150px;
+    padding: 0.42rem 0.55rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    color: #999;                 /* "Any" is a placeholder, not a value */
+    cursor: pointer;
+    text-align: left;
+}
+.rankings-page .combo.has-values .combo-btn { color: #111; font-weight: 600; }
+.rankings-page .combo-btn:hover { border-color: #888; }
+.rankings-page .combo-btn-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rankings-page .combo-caret { color: #999; font-size: 0.7rem; }
+
+/* The panel. Wide and scrollable rather than tall and pushy -- it floats over
+   the toolbar instead of moving it. */
+.rankings-page .combo-panel {
+    position: absolute;
+    z-index: 50;
+    top: calc(100% + 4px);
+    left: 0;
+    /* width is set inline, per field: 56 states and 12 grades do not want the
+       same box. See PANEL in rankings.js. */
+    border: 1px solid #bbb;
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+}
+.rankings-page .combo-panel.hidden { display: none; }
+/* ⚠ A 520px PANEL UNDER A RIGHT-HAND FILTER RUNS OFF THE PAGE. rankings.js
+   measures on open and adds .flip, which anchors it to the trigger's right
+   edge instead. Measured, not assumed from column order -- the filter row
+   wraps at narrow widths and which control is rightmost changes. */
+.rankings-page .combo-panel.flip { left: auto; right: 0; }
+
+.rankings-page .combo-search { padding: 7px; border-bottom: 1px solid #eee; }
+.rankings-page .combo-input {
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.88rem;
+    box-sizing: border-box;
+}
+
+/* ★ A GRID, AND NO SCROLLBAR FOR BOUNDED LISTS. All 56 states are visible at
+   once, so after two uses you know where Texas is and go straight to it -- the
+   thing a scroll bar takes away, because a row's position depends on where the
+   scroll was left.
+ *
+ * ⚠ grid, NOT column-count. CSS columns were tried and they FRAGMENT a flex
+ *   row at the column break -- the second column rendered half outside the
+ *   panel. Grid places each row whole.
+ *
+ * max-height is a backstop for the searched field, whose result count is not
+ * bounded; the bounded lists never reach it. */
+.rankings-page .combo-opts {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr));
+    gap: 1px 4px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 5px;
+}
+/* Column-major: fill DOWN the first column, then the second. Needs explicit
+   ROWS and auto COLUMNS -- the inverse of the default -- so grid-template-
+   columns is cleared or the two would fight and produce implicit columns. */
+.rankings-page .combo-opts.flow-col {
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    grid-template-rows: repeat(var(--rows, 1), auto);
+    grid-auto-columns: minmax(0, 1fr);
+}
+.rankings-page .combo-none { grid-column: 1 / -1; }
+/* ⚠ NO CSS COLUMNS. Two columns were tried and each row is a flex box, which
+   column-count splits and clips at the break -- the second column rendered
+   half off the panel. A single scrolling list is what the taller panel is
+   for, and it cannot break. */
+
+/* ★ EVERY INHERITED LABEL STYLE IS RESET HERE, DELIBERATELY. These rows are
+   <label> elements so the checkbox has a proper hit target and a screen
+   reader gets the association -- but .rankings-page label is styled for the
+   FILTER captions above the controls: uppercase, letter-spaced, bold, small.
+   Inheriting that rendered the state list as "A L A B A M A". A <div> would
+   dodge it and lose the accessibility, so the styles are overridden instead. */
+/* ⚠ FOUR CLASSES PLUS THE ELEMENT, ON PURPOSE. rankings.css is loaded AFTER
+   style.css, so its label rule beats anything here at equal specificity --
+   `.rankings-page .combo-opt` (0,2,0) lost the tie and the states rendered as
+   "A L A B A M A". This selector outranks it without !important, which would
+   just move the fight somewhere harder to see. */
+.rankings-page .combo-panel .combo-opts label.combo-opt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* Tight rows: 14 of them have to fit without a scrollbar. */
+    padding: 3px 5px;
+    margin: 0;
+    border-radius: 3px;
+    font-size: 0.86rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #222;
+    cursor: pointer;
+}
+/* The name takes the slack so the code sits flush right without margin
+   tricks that fight the flex gap. */
+/* nowrap + ellipsis: a wrapped label would make its entire grid row taller
+   across every column. Truncating one long name beats adding a line to four. */
+.rankings-page .combo-panel .combo-opts label.combo-opt > span:first-of-type {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rankings-page .combo-panel .combo-opts label.combo-opt:hover { background: #f2f2ee; }
+.rankings-page .combo-panel .combo-opts label.combo-opt.is-on {
+    background: #eef2fd;
+    font-weight: 600;
+}
+/* ⚠ AN EXPLICIT WIDTH, BECAUSE THE CHECKBOX INHERITS ONE. rankings.css sizes
+   filter inputs to fill their field, and that rule reaches these checkboxes
+   too -- each one rendered 112px wide, which left the flex row no space and
+   collapsed every state NAME to zero width. The panel showed a column of bare
+   codes with the names invisible.
+
+   Sized here rather than by unsetting, since "whatever the browser default
+   is" varies between engines and this has to line up in a grid. */
+.rankings-page .combo-panel .combo-opts label.combo-opt input[type="checkbox"] {
+    flex: none;
+    width: 14px;
+    min-width: 14px;
+    height: 14px;
+    margin: 0;
+    padding: 0;
+}
+.rankings-page .combo-panel .combo-opts .combo-code {
+    color: #999;
+    font-size: 0.78rem;
+    font-weight: 400;
+    letter-spacing: normal;
+    flex: none;
+}
+.rankings-page .combo-none { padding: 10px; color: #999; font-size: 0.86rem; }
+
+.rankings-page .combo-add {
+    display: block;
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 4px;
+    border: 1px dashed #bbb;
+    border-radius: 4px;
+    background: #fafaf8;
+    font: inherit;
+    font-size: 0.86rem;
+    cursor: pointer;
+    text-align: left;
+}
+.rankings-page .combo-add:hover { background: #f0f0ec; }
+
+.rankings-page .combo-foot {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 7px;
+    border-top: 1px solid #eee;
+}
+.rankings-page .combo-foot button {
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.83rem;
+    cursor: pointer;
+    padding: 2px 4px;
+}
+.rankings-page .combo-clear { color: #888; }
+.rankings-page .combo-clear:hover { color: #a32d2d; }
+.rankings-page .combo-done { color: #2e53e6; font-weight: 600; }
+
+.rankings-page .find-results {
+    position: absolute;
+    z-index: 40;
+    left: 0;
+    right: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 2px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background: #fff;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.rankings-page .find-results.hidden { display: none; }
+.rankings-page .find-opt {
+    display: block;
+    width: 100%;
+    padding: 0.35rem 0.6rem;
+    border: 0;
+    background: none;
+    text-align: left;
+    font: inherit;
+    font-size: 0.88rem;
+    cursor: pointer;
+}
+.rankings-page .find-opt:hover { background: #f0f0ec; }
+.rankings-page .find-sub { display: block; color: #888; font-size: 0.78rem; }
+
+/* ---- not built yet --------------------------------------------------- */
+.rankings-page .wip { margin: 0 0 1rem; font-size: 0.85rem; color: #777; }
+.rankings-page .wip summary { cursor: pointer; }
+.rankings-page .wip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    margin-top: 0.6rem;
+}
+.rankings-page .wip-row input {
+    padding: 0.35rem 0.5rem;
+    border: 1px dashed #ccc;
+    border-radius: 4px;
+    background: #fafaf8;
+    color: #aaa;
+    font: inherit;
+    font-size: 0.85rem;
+    width: 130px;
+}
+
+/* ---- find an athlete ------------------------------------------------- */
+.rankings-page .findme { margin: 0 0 1rem; }
+.rankings-page .findme label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+}
+.rankings-page .find-wrap { position: relative; max-width: 340px; }
+.rankings-page .find-wrap input {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+.rankings-page .find-status { display: none; margin-top: 0.4rem; font-size: 0.85rem; }
+.rankings-page .find-status.show { display: block; }
+.rankings-page .find-status.error { color: #a32d2d; }
+
+.rankings-page tr.is-found td { background: #fdf6d8; }
+.rankings-page tr.is-found td:first-child { box-shadow: inset 3px 0 0 #b8860b; }
+
+/* ---- sortable headers ------------------------------------------------ *
+ * The header IS the sort control -- there is no Sort/Order menu. */
+.rankings-page table.rk th { text-align: left; }
+.rankings-page table.rk td { text-align: left; }
+
+.rankings-page th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.rankings-page th.sortable:hover { color: #111; text-decoration: underline; }
+.rankings-page th.is-sorted { color: #111; font-weight: 700; }
+
+/* ---- loading --------------------------------------------------------- *
+ * Loud on purpose. A faint grey word where a table used to be reads as an
+ * empty result, so people re-click Apply -- which the busy guard swallows,
+ * and the page looks broken. */
+.rankings-page .status.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.7rem;
+    min-height: 180px;
+    font-size: 1rem;
+    color: #444;
+}
+.rankings-page .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2.5px solid #ddd;
+    border-top-color: #2e53e6;
+    border-radius: 50%;
+    animation: rk-spin 0.7s linear infinite;
+}
+@keyframes rk-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+    /* A spinner is decoration; the message is the information. */
+    .rankings-page .spinner { animation: none; border-top-color: #ddd; }
+}
+
+
+/* ---- predictions ----------------------------------------------------- *
+ * Scoped under .predict2, the same containment the rankings page uses. */
+.predict2 { max-width: 940px; margin: 0 auto; padding: 2rem 1.5rem 4rem; color: #222; }
+.predict2 h1 { font-size: 1.9rem; margin: 0 0 0.4rem; }
+
+/* Steps reveal themselves as the one above is answered. An empty form with
+   every input visible asks the reader to work out the order. */
+.predict2 .step { margin: 0 0 1.8rem; padding-top: 1.4rem;
+                  border-top: 1px solid #eee; }
+.predict2 .step.hidden { display: none; }
+.predict2 .step-head { display: flex; align-items: center; gap: 8px;
+                       font-size: 0.95rem; font-weight: 700; margin-bottom: 0.8rem; }
+.predict2 .step-n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #111; color: #fff; font-size: 0.75rem;
+}
+
+/* Two big choices, not a dropdown: there are two, they are equally weighted,
+   and each needs a line of explanation that a <select> cannot carry. */
+.predict2 .cards { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem; }
+.predict2 .card {
+    flex: 1 1 260px; text-align: left; padding: 0.7rem 0.85rem;
+    border: 1px solid #ccc; border-radius: 6px; background: #fff;
+    font: inherit; cursor: pointer;
+}
+.predict2 .card:hover { border-color: #888; }
+.predict2 .card.is-on { border-color: #111; box-shadow: inset 0 0 0 1px #111; }
+.predict2 .card-t { display: block; font-weight: 600; font-size: 0.92rem; }
+.predict2 .card-d { display: block; color: #777; font-size: 0.8rem; margin-top: 2px; }
+.predict2 .when-pane.hidden, .predict2 .who-pane.hidden { display: none; }
+
+.predict2 .pick-wrap { position: relative; max-width: 380px; }
+.predict2 .pick-wrap.wide { max-width: 520px; }
+.predict2 .pick-wrap input {
+    width: 100%; padding: 0.5rem 0.65rem; border: 1px solid #ccc;
+    border-radius: 4px; font: inherit; font-size: 0.95rem; box-sizing: border-box;
+}
+.predict2 .pick-results {
+    position: absolute; z-index: 40; left: 0; right: 0; max-height: 320px;
+    overflow-y: auto; margin-top: 2px; border: 1px solid #ccc;
+    border-radius: 5px; background: #fff; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+.predict2 .pick-results.hidden { display: none; }
+/* The year heading. A meet name matches thirty editions and the year is the
+   only thing that separates them. */
+.predict2 .pick-group {
+    padding: 3px 8px; background: #f4f4f0; border-top: 1px solid #eee;
+    font-size: 0.72rem; font-weight: 700; color: #666; letter-spacing: 0.04em;
+}
+.predict2 .pick-opt {
+    display: block; width: 100%; padding: 0.4rem 0.65rem; border: 0;
+    background: none; text-align: left; font: inherit; font-size: 0.88rem;
+    cursor: pointer;
+}
+.predict2 .pick-opt:hover { background: #f0f0ec; }
+.predict2 .pick-sub { display: block; color: #888; font-size: 0.78rem; }
+
+/* The chosen athletes.
+ *
+ * ⚠ opacity: 1 IS THE LINE THAT MATTERS, AND COLOUR WAS NEVER THE PROBLEM.
+ *   A global `.chip { opacity: 0.45 }` exists further up this file for the
+ *   athlete page's OFF-state toggles, and it was fading these to 45% -- so
+ *   darkening the text from #222 to #111 to #000 changed nothing visible,
+ *   twice. A transparent black is still grey.
+ */
+.predict2 .chip {
+    opacity: 1;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 6px 3px 10px; border: 1px solid #bbb; border-radius: 999px;
+    background: #f1f1ec; color: #000; font-size: 0.88rem; font-weight: 600;
+}
+.predict2 .chip.big { font-size: 0.95rem; font-weight: 600; }
+.predict2 .chip-x { border: 0; background: none; cursor: pointer; color: #444;
+                    font-size: 1.05rem; line-height: 1; padding: 0 3px; }
+.predict2 .chip-x:hover { color: #a32d2d; }
+.predict2 .chip-note { margin-left: 8px; color: #888; font-size: 0.82rem; }
+
+/* Step 1, answered. A filled card in the place the search box was, so the
+   step still reads as step 1 rather than vanishing. */
+.predict2 .meet-search.hidden, .predict2 .meet-chosen.hidden { display: none; }
+.predict2 .meet-chosen {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+    align-items: center;
+    max-width: 520px;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid #ccc;
+    border-left: 3px solid #111;
+    border-radius: 5px;
+    background: #fafaf8;
+}
+.predict2 .mc-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.predict2 .mc-name { font-size: 1.05rem; font-weight: 700;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The year as its own token rather than part of the name -- thirty editions
+   are one meet, not thirty names. */
+.predict2 .mc-year {
+    flex: none; padding: 1px 6px; border-radius: 3px;
+    background: #eceae2; color: #555; font-size: 0.78rem; font-weight: 600;
+}
+.predict2 .mc-main { grid-column: 1; grid-row: 1; }
+.predict2 .mc-sub  { grid-column: 1; grid-row: 2; color: #888; font-size: 0.82rem; }
+/* ⚠ BOTH COORDINATES, NOT JUST THE ROW. `grid-row: 1 / span 2` alone puts the
+   button in the first FREE cell, which is column 1 -- so Change rendered to
+   the LEFT of the meet name and shoved it across. Auto-placement fills by
+   row; spanning rows does not imply a column. */
+.predict2 .mc-change {
+    grid-column: 2; grid-row: 1 / span 2; align-self: center;
+    border: 1px solid #ccc; border-radius: 4px; background: #fff;
+    padding: 0.3rem 0.6rem; font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.predict2 .mc-change:hover { border-color: #888; }
+
+/* A team already in the field: shown, with the action it offers named. */
+.predict2 .pick-opt.is-in .pick-name { color: #888; }
+.predict2 .pick-name { }
+/* The action sits right-aligned so the eye can run down a column of Add /
+   Remove rather than hunting for it after each name. */
+.predict2 .pick-act {
+    float: right; margin-left: 10px;
+    font-size: 0.75rem; font-weight: 600; color: #2e53e6;
+}
+.predict2 .pick-opt.is-in .pick-act { color: #a32d2d; }
+.predict2 .chosen.hidden, .predict2 .chosen-meet.hidden { display: none; }
+.predict2 .chosen, .predict2 .chosen-meet { margin-top: 8px; }
+
+.predict2 .hint { color: #888; font-size: 0.82rem; margin: 0.45rem 0 0; }
+.predict2 label { display: block; font-size: 0.8rem; font-weight: 600;
+                  margin-bottom: 0.25rem; }
+.predict2 input[type=date] { padding: 0.4rem 0.55rem; border: 1px solid #ccc;
+                             border-radius: 4px; font: inherit; }
+.predict2 .check { display: flex; align-items: center; gap: 7px;
+                   font-weight: 400; font-size: 0.85rem; margin: 0; }
+.predict2 .check input { width: 14px; height: 14px; margin: 0; }
+
+/* The field. A grid of team cards, each editable in place -- a roster is a
+   thing you scan and adjust, not a list you read top to bottom. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 1rem;
+                        align-items: center; justify-content: space-between;
+                        margin-bottom: 0.8rem; font-size: 0.88rem; }
+.predict2 .field-grid.hidden { display: none; }
+.predict2 .field-grid { display: grid; gap: 8px; align-items: start;
+                        grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+/* Breathing room before "Add a team" -- it is a different action from editing
+   the field above it, and butting it against the grid read as part of it. */
+.predict2 .field-grid + .pick-wrap { margin-top: 1.4rem; }
+.predict2 .team-card { border: 1px solid #e2e2dc; border-radius: 6px;
+                       background: #fff; }
+
+/* The summary IS the closed card, so the padding lives here rather than on
+   the container -- otherwise a collapsed team keeps the body's spacing and
+   the grid rows come out uneven. */
+.predict2 .team-name {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0.5rem 0.6rem;
+    font-weight: 600; font-size: 0.87rem;
+    cursor: pointer; list-style: none;
+}
+/* The default disclosure triangle is replaced by our own, so it sits after
+   the name instead of before it and does not shove the label around. */
+.predict2 .team-name::-webkit-details-marker { display: none; }
+.predict2 .team-name::before {
+    content: "\25b8"; color: #bbb; font-size: 0.7rem;
+    transition: transform 0.12s ease;
+}
+.predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
+.predict2 .t-label { flex: 1; min-width: 0; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .team-n { color: #999; font-weight: 400; }
+.predict2 .team-x {
+    flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
+    font-size: 1rem; line-height: 1; padding: 0 2px;
+}
+.predict2 .team-x:hover { color: #a32d2d; }
+
+/* Show: nothing / teams / rosters. A segmented control rather than two
+   toggles -- the states are mutually exclusive and the current one should be
+   readable without pressing anything. */
+.predict2 .viewsel {
+    display: inline-flex; align-items: center; gap: 0;
+    margin-left: 10px; font-size: 0.78rem; color: #888;
+}
+.predict2 .vbtn {
+    border: 1px solid #ddd; background: #fff; margin-left: -1px;
+    padding: 1px 7px; font: inherit; font-size: 0.78rem; color: #555;
+    cursor: pointer;
+}
+.predict2 .vbtn:first-of-type { margin-left: 8px; border-radius: 3px 0 0 3px; }
+.predict2 .vbtn:last-of-type  { border-radius: 0 3px 3px 0; }
+.predict2 .vbtn.is-on { background: #111; border-color: #111; color: #fff; }
+
+/* A button that reads as a link: quiet actions beside the field summary. */
+.predict2 .linkish {
+    border: 0; background: none; padding: 0; margin-left: 8px;
+    font: inherit; font-size: 0.82rem; color: #2e53e6;
+    text-decoration: underline; cursor: pointer;
+}
+.predict2 .linkish.undo { color: #a32d2d; }
+.predict2 .team-body { padding: 0 0.6rem 0.55rem; }
+/* Names are the content of this card, not chrome -- they were 0.82rem in the
+   inherited grey and hard to read against the rating beside them. */
+.predict2 .runner-row { display: flex; align-items: center; gap: 6px;
+                        font-size: 0.86rem; padding: 2px 0; color: #222; }
+.predict2 .r-name { flex: 1; min-width: 0; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .r-rating { color: #666; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
+                 font-size: 0.95rem; line-height: 1; padding: 0 2px; }
+.predict2 .r-x:hover { color: #a32d2d; }
+.predict2 .runner-row.is-out { color: #aaa; }
+.predict2 .runner-row.is-back { color: #222; }
+.predict2 .r-add { border: 1px solid #ccc; background: #fff; border-radius: 3px;
+                   font: inherit; font-size: 0.72rem; cursor: pointer;
+                   padding: 0 5px; }
+/* "Add from squad", and the list it opens. Quiet until used -- most cards
+   never need it, and thirty of these should not read as thirty buttons. */
+.predict2 .squad-btn {
+    display: block; width: 100%; margin-top: 6px;
+    border: 1px dashed #ddd; border-radius: 3px; background: #fff;
+    padding: 2px 6px; font: inherit; font-size: 0.74rem; color: #666;
+    cursor: pointer; text-align: left;
+}
+.predict2 .squad-btn:hover { border-color: #999; color: #222; }
+.predict2 .squad-list { margin-top: 4px; max-height: 190px; overflow-y: auto; }
+.predict2 .squad-list.hidden { display: none; }
+.predict2 .squad-loading { color: #999; font-size: 0.76rem; padding: 3px 0; }
+
+.predict2 .dropped { margin-top: 5px; }
+.predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
+
+.predict2 .actions { display: flex; align-items: center; gap: 12px;
+                     margin-top: 1.4rem; }
+.predict2 .actions.hidden { display: none; }
+.predict-status { display: none; font-size: 0.88rem; }
+.predict-status.show { display: inline; }
+.predict-status.error { color: #a32d2d; }
+
+/* The answer. Big, with the band under it -- a prediction without a range
+   claims a precision the data does not have. */
+.predict2 .result { margin-top: 1.6rem; }
+.predict2 .result-big { font-size: 2.6rem; font-weight: 700; line-height: 1; }
+.predict2 .result-band { margin-top: 0.35rem; color: #555; font-size: 0.95rem; }
+.predict2 .scored { margin-top: 0.5rem; font-size: 0.95rem; }
+.predict2 .scored em { font-style: normal; color: #a32d2d; font-weight: 600; }
+.predict2 table.rk { margin-top: 1.2rem; width: 100%; }
+.predict2 table.rk th, .predict2 table.rk td { text-align: left; }
+.predict2 .runner { display: inline-block; margin-right: 0.7rem;
+                    font-size: 0.8rem; color: #444; }
+.predict2 .runner em { color: #888; font-style: normal; }
+
+
+/* ---- predictions ----------------------------------------------------- *
+ * Scoped under .predict2, the same containment the rankings page uses. */
+.predict2 { max-width: 940px; margin: 0 auto; padding: 2rem 1.5rem 4rem; color: #222; }
+.predict2 h1 { font-size: 1.9rem; margin: 0 0 0.4rem; }
+
+/* Steps reveal themselves as the one above is answered. An empty form with
+   every input visible asks the reader to work out the order. */
+.predict2 .step { margin: 0 0 1.8rem; padding-top: 1.4rem;
+                  border-top: 1px solid #eee; }
+.predict2 .step.hidden { display: none; }
+.predict2 .step-head { display: flex; align-items: center; gap: 8px;
+                       font-size: 0.95rem; font-weight: 700; margin-bottom: 0.8rem; }
+.predict2 .step-n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #111; color: #fff; font-size: 0.75rem;
+}
+
+/* Two big choices, not a dropdown: there are two, they are equally weighted,
+   and each needs a line of explanation that a <select> cannot carry. */
+.predict2 .cards { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem; }
+.predict2 .card {
+    flex: 1 1 260px; text-align: left; padding: 0.7rem 0.85rem;
+    border: 1px solid #ccc; border-radius: 6px; background: #fff;
+    font: inherit; cursor: pointer;
+}
+.predict2 .card:hover { border-color: #888; }
+.predict2 .card.is-on { border-color: #111; box-shadow: inset 0 0 0 1px #111; }
+.predict2 .card-t { display: block; font-weight: 600; font-size: 0.92rem; }
+.predict2 .card-d { display: block; color: #777; font-size: 0.8rem; margin-top: 2px; }
+.predict2 .when-pane.hidden, .predict2 .who-pane.hidden { display: none; }
+
+.predict2 .pick-wrap { position: relative; max-width: 380px; }
+.predict2 .pick-wrap.wide { max-width: 520px; }
+.predict2 .pick-wrap input {
+    width: 100%; padding: 0.5rem 0.65rem; border: 1px solid #ccc;
+    border-radius: 4px; font: inherit; font-size: 0.95rem; box-sizing: border-box;
+}
+.predict2 .pick-results {
+    position: absolute; z-index: 40; left: 0; right: 0; max-height: 320px;
+    overflow-y: auto; margin-top: 2px; border: 1px solid #ccc;
+    border-radius: 5px; background: #fff; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+.predict2 .pick-results.hidden { display: none; }
+/* The year heading. A meet name matches thirty editions and the year is the
+   only thing that separates them. */
+.predict2 .pick-group {
+    padding: 3px 8px; background: #f4f4f0; border-top: 1px solid #eee;
+    font-size: 0.72rem; font-weight: 700; color: #666; letter-spacing: 0.04em;
+}
+.predict2 .pick-opt {
+    display: block; width: 100%; padding: 0.4rem 0.65rem; border: 0;
+    background: none; text-align: left; font: inherit; font-size: 0.88rem;
+    cursor: pointer;
+}
+.predict2 .pick-opt:hover { background: #f0f0ec; }
+.predict2 .pick-sub { display: block; color: #888; font-size: 0.78rem; }
+
+/* The chosen athletes.
+ *
+ * ⚠ opacity: 1 IS THE LINE THAT MATTERS, AND COLOUR WAS NEVER THE PROBLEM.
+ *   A global `.chip { opacity: 0.45 }` exists further up this file for the
+ *   athlete page's OFF-state toggles, and it was fading these to 45% -- so
+ *   darkening the text from #222 to #111 to #000 changed nothing visible,
+ *   twice. A transparent black is still grey.
+ */
+.predict2 .chip {
+    opacity: 1;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 6px 3px 10px; border: 1px solid #bbb; border-radius: 999px;
+    background: #f1f1ec; color: #000; font-size: 0.88rem; font-weight: 600;
+}
+.predict2 .chip.big { font-size: 0.95rem; font-weight: 600; }
+.predict2 .chip-x { border: 0; background: none; cursor: pointer; color: #444;
+                    font-size: 1.05rem; line-height: 1; padding: 0 3px; }
+.predict2 .chip-x:hover { color: #a32d2d; }
+.predict2 .chip-note { margin-left: 8px; color: #888; font-size: 0.82rem; }
+
+/* Step 1, answered. A filled card in the place the search box was, so the
+   step still reads as step 1 rather than vanishing. */
+.predict2 .meet-search.hidden, .predict2 .meet-chosen.hidden { display: none; }
+.predict2 .meet-chosen {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+    align-items: center;
+    max-width: 520px;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid #ccc;
+    border-left: 3px solid #111;
+    border-radius: 5px;
+    background: #fafaf8;
+}
+.predict2 .mc-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.predict2 .mc-name { font-size: 1.05rem; font-weight: 700;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The year as its own token rather than part of the name -- thirty editions
+   are one meet, not thirty names. */
+.predict2 .mc-year {
+    flex: none; padding: 1px 6px; border-radius: 3px;
+    background: #eceae2; color: #555; font-size: 0.78rem; font-weight: 600;
+}
+.predict2 .mc-main { grid-column: 1; grid-row: 1; }
+.predict2 .mc-sub  { grid-column: 1; grid-row: 2; color: #888; font-size: 0.82rem; }
+/* ⚠ BOTH COORDINATES, NOT JUST THE ROW. `grid-row: 1 / span 2` alone puts the
+   button in the first FREE cell, which is column 1 -- so Change rendered to
+   the LEFT of the meet name and shoved it across. Auto-placement fills by
+   row; spanning rows does not imply a column. */
+.predict2 .mc-change {
+    grid-column: 2; grid-row: 1 / span 2; align-self: center;
+    border: 1px solid #ccc; border-radius: 4px; background: #fff;
+    padding: 0.3rem 0.6rem; font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.predict2 .mc-change:hover { border-color: #888; }
+
+/* A team already in the field: shown, with the action it offers named. */
+.predict2 .pick-opt.is-in .pick-name { color: #888; }
+.predict2 .pick-name { }
+/* The action sits right-aligned so the eye can run down a column of Add /
+   Remove rather than hunting for it after each name. */
+.predict2 .pick-act {
+    float: right; margin-left: 10px;
+    font-size: 0.75rem; font-weight: 600; color: #2e53e6;
+}
+.predict2 .pick-opt.is-in .pick-act { color: #a32d2d; }
+.predict2 .chosen.hidden, .predict2 .chosen-meet.hidden { display: none; }
+.predict2 .chosen, .predict2 .chosen-meet { margin-top: 8px; }
+
+.predict2 .hint { color: #888; font-size: 0.82rem; margin: 0.45rem 0 0; }
+.predict2 label { display: block; font-size: 0.8rem; font-weight: 600;
+                  margin-bottom: 0.25rem; }
+.predict2 input[type=date] { padding: 0.4rem 0.55rem; border: 1px solid #ccc;
+                             border-radius: 4px; font: inherit; }
+.predict2 .check { display: flex; align-items: center; gap: 7px;
+                   font-weight: 400; font-size: 0.85rem; margin: 0; }
+.predict2 .check input { width: 14px; height: 14px; margin: 0; }
+
+/* The field. A grid of team cards, each editable in place -- a roster is a
+   thing you scan and adjust, not a list you read top to bottom. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 1rem;
+                        align-items: center; justify-content: space-between;
+                        margin-bottom: 0.8rem; font-size: 0.88rem; }
+.predict2 .field-grid.hidden { display: none; }
+.predict2 .field-grid { display: grid; gap: 8px; align-items: start;
+                        grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+/* Breathing room before "Add a team" -- it is a different action from editing
+   the field above it, and butting it against the grid read as part of it. */
+.predict2 .field-grid + .pick-wrap { margin-top: 1.4rem; }
+.predict2 .team-card { border: 1px solid #e2e2dc; border-radius: 6px;
+                       background: #fff; }
+
+/* The summary IS the closed card, so the padding lives here rather than on
+   the container -- otherwise a collapsed team keeps the body's spacing and
+   the grid rows come out uneven. */
+.predict2 .team-name {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0.5rem 0.6rem;
+    font-weight: 600; font-size: 0.87rem;
+    cursor: pointer; list-style: none;
+}
+/* The default disclosure triangle is replaced by our own, so it sits after
+   the name instead of before it and does not shove the label around. */
+.predict2 .team-name::-webkit-details-marker { display: none; }
+.predict2 .team-name::before {
+    content: "\25b8"; color: #bbb; font-size: 0.7rem;
+    transition: transform 0.12s ease;
+}
+.predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
+.predict2 .t-label { flex: 1; min-width: 0; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .team-n { color: #999; font-weight: 400; }
+.predict2 .team-x {
+    flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
+    font-size: 1rem; line-height: 1; padding: 0 2px;
+}
+.predict2 .team-x:hover { color: #a32d2d; }
+
+/* Show: nothing / teams / rosters. A segmented control rather than two
+   toggles -- the states are mutually exclusive and the current one should be
+   readable without pressing anything. */
+.predict2 .viewsel {
+    display: inline-flex; align-items: center; gap: 0;
+    margin-left: 10px; font-size: 0.78rem; color: #888;
+}
+.predict2 .vbtn {
+    border: 1px solid #ddd; background: #fff; margin-left: -1px;
+    padding: 1px 7px; font: inherit; font-size: 0.78rem; color: #555;
+    cursor: pointer;
+}
+.predict2 .vbtn:first-of-type { margin-left: 8px; border-radius: 3px 0 0 3px; }
+.predict2 .vbtn:last-of-type  { border-radius: 0 3px 3px 0; }
+.predict2 .vbtn.is-on { background: #111; border-color: #111; color: #fff; }
+
+/* A button that reads as a link: quiet actions beside the field summary. */
+.predict2 .linkish {
+    border: 0; background: none; padding: 0; margin-left: 8px;
+    font: inherit; font-size: 0.82rem; color: #2e53e6;
+    text-decoration: underline; cursor: pointer;
+}
+.predict2 .linkish.undo { color: #a32d2d; }
+.predict2 .team-body { padding: 0 0.6rem 0.55rem; }
+/* Names are the content of this card, not chrome -- they were 0.82rem in the
+   inherited grey and hard to read against the rating beside them. */
+.predict2 .runner-row { display: flex; align-items: center; gap: 6px;
+                        font-size: 0.86rem; padding: 2px 0; color: #222; }
+.predict2 .r-name { flex: 1; min-width: 0; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .r-rating { color: #666; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
+                 font-size: 0.95rem; line-height: 1; padding: 0 2px; }
+.predict2 .r-x:hover { color: #a32d2d; }
+.predict2 .runner-row.is-out { color: #aaa; }
+.predict2 .runner-row.is-back { color: #222; }
+.predict2 .r-add { border: 1px solid #ccc; background: #fff; border-radius: 3px;
+                   font: inherit; font-size: 0.72rem; cursor: pointer;
+                   padding: 0 5px; }
+/* "Add from squad", and the list it opens. Quiet until used -- most cards
+   never need it, and thirty of these should not read as thirty buttons. */
+.predict2 .squad-btn {
+    display: block; width: 100%; margin-top: 6px;
+    border: 1px dashed #ddd; border-radius: 3px; background: #fff;
+    padding: 2px 6px; font: inherit; font-size: 0.74rem; color: #666;
+    cursor: pointer; text-align: left;
+}
+.predict2 .squad-btn:hover { border-color: #999; color: #222; }
+.predict2 .squad-list { margin-top: 4px; max-height: 190px; overflow-y: auto; }
+.predict2 .squad-list.hidden { display: none; }
+.predict2 .squad-loading { color: #999; font-size: 0.76rem; padding: 3px 0; }
+
+.predict2 .dropped { margin-top: 5px; }
+.predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
+
+.predict2 .actions { display: flex; align-items: center; gap: 12px;
+                     margin-top: 1.4rem; }
+.predict2 .actions.hidden { display: none; }
+.predict-status { display: none; font-size: 0.88rem; }
+.predict-status.show { display: inline; }
+.predict-status.error { color: #a32d2d; }
+
+/* The answer. Big, with the band under it -- a prediction without a range
+   claims a precision the data does not have. */
+.predict2 .result { margin-top: 1.6rem; }
+.predict2 .result-big { font-size: 2.6rem; font-weight: 700; line-height: 1; }
+.predict2 .result-band { margin-top: 0.35rem; color: #555; font-size: 0.95rem; }
+.predict2 .scored { margin-top: 0.5rem; font-size: 0.95rem; }
+.predict2 .scored em { font-style: normal; color: #a32d2d; font-weight: 600; }
+.predict2 table.rk { margin-top: 1.2rem; width: 100%; }
+.predict2 table.rk th, .predict2 table.rk td { text-align: left; }
+.predict2 .runner { display: inline-block; margin-right: 0.7rem;
+                    font-size: 0.8rem; color: #444; }
+.predict2 .runner em { color: #888; font-style: normal; }
+
+
+/* ---- meet page ------------------------------------------------------- *
+ * Scoped under .meet-page, the same containment the other pages use. */
+.meet-page { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; }
+.meet-page h1 { font-size: 1.7rem; margin: 0 0 0.3rem; }
+.meet-page h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; }
+.meet-page h3 { font-size: 1rem; margin: 1.6rem 0 0.5rem;
+                display: flex; align-items: baseline; gap: 10px; }
+.meet-page .meta { color: #777; font-size: 0.9rem; margin: 0 0 1rem; }
+.meet-page .hint { color: #888; font-size: 0.84rem; margin: 0.3rem 0 0.8rem; }
+.meet-page .muted { color: #999; }
+
+/* The compiled table is long -- a full invitational is several hundred rows --
+   so it is tighter than the division summary above it. */
+.meet-page table.rk { width: 100%; }
+.meet-page table.rk th, .meet-page table.rk td { text-align: left; }
+.meet-page table.compact th, .meet-page table.compact td {
+    padding: 2px 8px; font-size: 0.86rem;
+}
+.meet-page .rank { color: #888; width: 3rem; }
+
+.meet-page .cg-note { color: #999; font-size: 0.82rem; font-weight: 400; }
+.meet-page .crumb { font-size: 0.85rem; margin: 0 0 0.3rem; }
+/* The "this never happened" notice. Bordered rather than grey italics: someone
+   arriving from a link has no other way to know these runners were not on the
+   line together, so it has to survive being skimmed. */
+.meet-page .synthetic {
+    margin: 0.8rem 0 1.4rem; padding: 0.6rem 0.8rem;
+    border-left: 3px solid #b8860b; border-radius: 3px;
+    background: #fdf9e8; color: #5a4a1a; font-size: 0.86rem; line-height: 1.5;
+}
+.meet-page .compiled-group { margin-bottom: 2rem; }
+
+/* Scores fold away: the results are what most visits want, and a score table
+   above them pushes the finishers below the fold. */
+.meet-page .cg-scores { margin-bottom: 0.6rem; }
+.meet-page .cg-scores summary { cursor: pointer; font-size: 0.9rem;
+                                font-weight: 600; }
+.meet-page .scorers { color: #666; font-size: 0.8rem; }
+.meet-page .mini-team { display: inline-block; margin-right: 8px;
+                        font-size: 0.82rem; }
+.meet-page .mini-team em { color: #888; font-style: normal; }
+/* Runners 6 and 7 do not score but do displace -- shown, and marked as not
+   counting toward the total. */
+.meet-page .mini-team.displacer { color: #bbb; }
+
+
+
+
+/* ---- tables: everything left aligned --------------------------------- *
+ * ⚠ GLOBAL, AND DELIBERATELY SO. Numbers default to left here too. Right
+ *   alignment is the typographic convention for figures, but this site mixes
+ *   times, ratings, places and names in the same rows, and a table where some
+ *   columns hug one edge and some the other reads as two tables. One rule,
+ *   everywhere, so no page has to remember. */
+table th, table td { text-align: left; }
+
+/* Runners 6 and 7 score nothing but displace everyone behind them -- shown,
+   and marked as not counting. */
+.displacer, .displacer a { color: #aaa; }
+
+/* The "this race did not happen" notice on a compiled page. Bordered rather
+   than italic grey: someone arriving from a shared link has no other way to
+   know these runners were not on the line together, so it has to survive
+   being skimmed. */
+.synthetic {
+    margin: 0.8rem 0 1.2rem;
+    padding: 0.6rem 0.8rem;
+    border-left: 3px solid #b8860b;
+    border-radius: 3px;
+    background: #fdf9e8;
+    color: #5a4a1a;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    max-width: 70ch;
+}
+
+
+/* ---- school page: best athletes chart -------------------------------- *
+ * CSS bars rather than a charting library: twelve horizontal bars need one
+ * div each and no JavaScript, and the athlete pages already carry the only
+ * charting code on the site. */
+.school-chart { margin: 0 0 1.5rem; max-width: 720px; }
+.sc-row {
+    display: grid;
+    grid-template-columns: 11rem 1fr 3rem 5rem;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    font-size: 0.88rem;
+}
+.sc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-bar { background: #eeeeea; border-radius: 2px; height: 13px; }
+.sc-fill {
+    display: block; height: 100%; border-radius: 2px; background: #2e53e6;
+    /* A zero-width bar is invisible and reads as missing data, so the
+       smallest one still gets a sliver. */
+    min-width: 3px;
+}
+.sc-val { font-variant-numeric: tabular-nums; font-weight: 600; }
+.sc-yrs { color: #999; font-size: 0.8rem; }
+
+@media (max-width: 640px) {
+    /* The year span is the first thing to go: it is context, not the point. */
+    .sc-row { grid-template-columns: 8rem 1fr 3rem; }
+    .sc-yrs { display: none; }
+}
+
+
+/* ---- school page ----------------------------------------------------- */
+
+/* Sport picker. A joined pair with one filled: two links with a separator
+   read as unrelated items, and bold alone does not say "this is selected". */
+.seg { display: inline-flex; margin: 0.2rem 0 0.8rem; }
+.seg-btn {
+    padding: 0.35rem 0.8rem;
+    border: 1px solid #ccc;
+    background: #fff;
+    color: #333;
+    font-size: 0.88rem;
+    text-decoration: none;
+}
+.seg-btn + .seg-btn { border-left: 0; }
+.seg-btn:first-child { border-radius: 4px 0 0 4px; }
+.seg-btn:last-child  { border-radius: 0 4px 4px 0; }
+.seg-btn.is-on { background: #111; border-color: #111; color: #fff; }
+
+/* Seasons. Wraps rather than scrolls: twenty years is four short lines and a
+   horizontal scroller would hide half of them. */
+.yearbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 1.2rem; }
+.yb {
+    padding: 1px 7px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #fff;
+    color: #444;
+    font-size: 0.8rem;
+    text-decoration: none;
+}
+.yb:hover { border-color: #888; }
+.yb.is-on { background: #111; border-color: #111; color: #fff; }
+
+/* Staged reveal. The control is the table's last row, so it reads as part of
+   the list it extends rather than as a second table underneath. */
+tr.row-hidden { display: none; }
+tr.more-row td { padding: 0; }
+.more-btn {
+    display: block;
+    width: 100%;
+    padding: 0.45rem;
+    border: 0;
+    background: #fafaf8;
+    font: inherit;
+    font-size: 0.85rem;
+    color: #2e53e6;
+    cursor: pointer;
+    text-align: left;
+}
+.more-btn:hover { background: #f0f0ec; }
+.more-left { color: #999; }
+.h2-note { color: #999; font-weight: 400; font-size: 0.8em; }

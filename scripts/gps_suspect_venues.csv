@@ -1,0 +1,1145 @@
+table,location_id,state,lat,lon,n_rows,reason,clue
+meets_tf,52018,OR,-27.5583,153.0623,7577,outside OR box,SPS
+meets_tf,111677,WA,44.04707,-123.0249,3522,outside WA box,Wilkins Concordia hammer meet 
+meets_tf,138170,MS,34.219753,0.0,2717,outside MS box,MAIS North State AAA Championship
+meets_tf,141903,KY,38.243637,0.0,2247,outside KY box,USATF Region 5 Junior Olympic Championships (KY)
+meets_tf,122459,KY,19.3133,-81.2546,2109,outside KY box,Tates Creek Relay Meet
+meets_tf,66121,LA,36.18571,-86.67797,1422,outside LA box,"Week Four: Meigs, Bailey, Kipp Academy"
+meets_tf,99970,SD,45.94215,-102.1626,1294,outside SD box,SDHSAA Region 8B Track & Field Meet
+meets_tf,91722,MI,43.07597,-107.29028,1191,outside MI box,OK Silver: Northpointe @ Kelloggsville
+meets_tf,123149,MA,31.791702,-7.09262,1185,outside MA box,Worcester League Meet 4
+meets_tf,80676,OR,40.730637,-73.93446,1093,outside OR box,Wallowa County Meet
+meets_tf,76472,IL,39.85667,-86.038216,824,outside IL box,Mike Holman Invite 
+meets_tf,69190,IL,37.80081,-121.91881,693,outside IL box,Vermilion County Kickoff Classic
+meets_tf,110789,NE,41.59114,-81.20041,680,outside NE box,Willoughby South & Chardon
+meets_tf,138213,VA,37.060043,0.0,673,outside VA box,HRH Winter Storm Classic
+meets_tf,65814,UT,36.07259,-79.77337,627,outside UT box,USATF Region 3 Junior Olympic Championships
+meets_tf,52059,OR,13.037208,80.23438,556,outside OR box,Wilsonville @ Madras
+meets_tf,138162,WA,-31.94947,115.782295,543,outside WA box,"Western Australia 10,000m Championships & Combined Events Co"
+meets_tf,116505,TX,30.178366,-93.21563,517,outside TX box,McNeese State University Indoor Meet II
+meets_tf,53195,NC,28.385233,-81.56387,508,outside NC box,Walt Disney World Invitational
+meets_tf,70038,DE,38.172077,-75.3764,479,outside DE box,Worchester County Invit #1
+meets_tf,66376,ID,36.331547,-92.39697,391,outside ID box,Sr. Bomber Relays
+meets_tf,67021,MD,36.83745,-76.21427,372,outside MD box,AAU Junior Olympics
+meets_tf,54624,TX,30.178366,-93.21563,354,outside TX box,McNeese State Cowboy Relays
+meets_tf,141173,NC,36.002644,0.0,353,outside NC box,NC United
+meets_tf,122466,IN,20.593683,78.96288,343,outside IN box,Westview vs Concord
+meets_tf,72498,NV,38.907173,-78.20751,315,outside NV box,"Skyline vs. Sherando, Randolph-Macon Academy"
+meets_tf,95355,CA,43.86209,-79.381165,264,outside CA box,Ontario vs Alta Loma
+meets_tf,123148,MA,31.791702,-7.09262,264,outside MA box,Stoughton vs Archbishop Williams
+meets_tf,56151,AZ,31.774199,-106.47915,261,outside AZ box,Region X Junior Olympics
+meets_tf,90812,CT,42.66636,-72.485176,254,outside CT box,"SA vs NMH, Cushing, VA"
+meets_tf,59504,OR,33.440063,-117.61686,253,outside OR box,"San Clemente, Aliso Niguel, Mission Viejo, J Serra Quad Meet"
+meets_tf,63452,TN,34.81516,-92.354294,235,outside TN box,Christian Competition
+meets_tf,128679,AZ,40.143105,47.576927,235,outside AZ box,vs. Coronado + Campo Verde + Poston Butte
+meets_tf,143859,TN,13.085566,80.27173,231,outside TN box,World Para Athletics Championships
+meets_tf_meta,111677,WA,44.04707,-123.0249,228,outside WA box,Unknown
+meets_tf,141950,VA,37.38826,0.0,216,outside VA box,AAU Virginia North District Qualifier
+meets_tf,122440,IN,-27.124819,153.36714,205,outside IN box,WesDel/Seton Catholic/Cowan
+meets_tf,142047,IL,42.32037,0.0,180,outside IL box,AAU Central District Qualifier 2
+meets_tf,81555,MD,40.885666,-75.15146,175,outside MD box,Southern Lehigh vs. Wilson @ Bangor 
+meets_tf,102106,PA,47.52825,-122.099686,169,outside PA box,Yough Intrasquad
+meets_tf,142045,VA,37.628197,0.0,169,outside VA box,Cannonball Cooper Invite
+meets_tf,82532,IN,41.11859,-83.18447,165,outside IN box,Tiffin University HS Meet #3
+meets_tf,125503,IN,37.09024,-95.71289,157,outside IN box,"New Haven JH, Paul Harding JH @ Leo JH"
+meets_tf,66476,IN,36.418247,-89.04341,156,outside IN box,Union City/Seton Catholic/Union County
+meets_tf,140778,NC,35.185627,0.0,153,outside NC box,SAC Championship
+meets,634,NV,39.19494,-120.12052,149,outside NV box,North Tahoe HS
+meets_tf_meta,123149,MA,31.791702,-7.09262,149,outside MA box,
+meets_tf,87727,NY,42.124027,-80.088104,142,outside NY box,Victor Rambler 
+meets_tf,89038,PA,42.33513,-71.166466,140,outside PA box,Twin Rivers Invitational
+meets,8642,MI,37.09024,-95.71289,137,outside MI box,Unknown: send forum at michigancrosscountry.com
+meets_tf,63397,TX,34.762573,-92.33938,137,outside TX box,Christian Competition Invitational Meet
+meets_tf,87509,OH,42.090946,-71.26434,134,outside OH box,Olentangy Liberty v. Hilliard Bradley 
+meets_tf,52038,NE,2.7763832,-77.6672,133,outside NE box,District D9
+meets_tf,63164,IN,34.580578,-92.58205,130,outside IN box,Westview vs. Fairfield
+meets_tf,116969,UT,36.07259,-79.77337,130,outside UT box,USATF North Carolina Junior Olympics Championships
+meets_tf,141869,NC,36.002644,0.0,125,outside NC box,Ken Roberts Panther Elite
+meets_tf,71598,IN,38.683857,-88.35141,123,outside IN box,North Daviess vs. Clay City
+meets_tf,142509,TX,29.533957,0.0,121,outside TX box,Afterburners Track Meet
+meets_tf,122441,CA,-17.819342,23.953646,120,outside CA box,Suburban League Preliminaries
+meets_tf,94581,OR,43.602695,-116.20146,119,outside OR box,Idaho vs Utah Outdoor Border Clash
+meets_tf,102202,Ne,47.569965,-52.73489,119,outside NE box,Spring Meet
+meets_tf,125420,OH,37.09024,-95.71289,117,outside OH box,Dioc of Cleveland Meet #45-West Geauga
+meets_tf,137501,CA,50.097935,-104.722534,115,outside CA box,Wilcox vs. Saratoga
+meets_tf,63320,GA,34.713863,-86.58352,108,outside GA box,Huntsville Panther Invitational
+meets_tf,83787,IN,41.37978,-83.63008,98,outside IN box,Dayton Wolverine Last Chance Invitational
+meets_tf,124847,IL,35.96064,-83.92074,98,outside IL box,Knoxville JHS Track Meet #2
+meets,3663,MI,47.60414,-122.1987,96,outside MI box,Bellevue HS
+meets_tf,122483,OR,25.064074,72.424706,96,outside OR box,LHS School Records
+meets_tf,78943,WI,40.358875,-74.6561,94,outside WI box,Fastest Four and Field Meet
+meets_tf,67566,WY,37.17021,-122.16733,91,outside WY box,Riverside Invitational 2012
+meets_tf,80422,IN,40.684025,-84.651695,91,outside IN box,Parkway Tri-Meet
+meets_tf,79813,IN,40.555428,-84.55776,86,outside IN box,Jay County / Celina / Elida
+meets_tf,110162,CA,39.74389,-105.02011,84,outside CA box,AREA MEET COALINGA
+meets_tf,62628,TX,34.219276,-92.009575,83,outside TX box,Port City Speed
+meets_tf,64190,MO,35.22583,-80.85284,81,outside MO box,WOMS v. Holland Middle School 
+meets_tf,52014,HI,-36.7987,145.15033,80,outside HI box,Ruby Tuesday
+meets_tf,64147,OH,35.205853,-97.442314,79,outside OH box,Poland Invitational
+meets_tf,109881,IN,38.718716,-90.6429,79,outside IN box,Greensburg Invitational
+meets_tf,111123,PA,42.335117,-71.16646,78,outside PA box,Williamson & Wyalusing
+meets_tf,140544,MO,38.371563,0.0,78,outside MO box,Nortwest Invite
+meets_tf,141515,IA,41.50458,0.0,76,outside IA box,WCV HS Coed
+meets_tf,122468,IN,20.593683,78.96288,74,outside IN box,Season Bests
+meets_tf,136183,WI,45.873196,-112.035576,73,outside WI box,Trempealeau County Meet
+meets_tf,64337,SD,35.303905,-119.02019,72,outside SD box,USD Twilight
+meets_tf,78955,FL,40.36384,-111.92178,70,outside FL box,Region IV JV Meet
+meets_tf,103536,CA,49.305775,-124.20025,70,outside CA box,Bell VS. South Gate
+meets_tf,136060,FL,45.681473,-111.03199,70,outside FL box,Bozeman Meet 1
+meets_tf,111844,OR,44.73132,-85.63528,68,outside OR box,6A-5 Greater Valley District Meet Day 2
+meets_tf,141593,NE,41.180435,0.0,68,outside NE box,SRC 2024 INVT
+meets_tf_meta,52018,OR,-27.5583,153.0623,68,outside OR box,Queensland Sport Center (QSAC)
+meets_tf,125392,TX,37.09024,-95.71289,67,outside TX box,Alpine Fightin' Buck Relays
+meets_tf,141873,PA,40.09904,0.0,66,outside PA box,CYO Area I
+meets_tf,63165,NE,34.58184,-94.22119,65,outside NE box,Season Bests
+meets_tf,64420,NE,35.34733,-119.0225,65,outside NE box,Wayne JH Invite
+meets_tf_meta,141903,KY,38.243637,0.0,65,outside KY box,Eastern High School
+meets_tf,86807,WI,41.94991,-88.115234,64,outside WI box,Stratford Middle School Invite
+meets_tf,123738,KS,33.300148,-90.94385,64,outside KS box,Washington County MS Meet
+meets_tf,125413,MA,37.09024,-95.71289,64,outside MA box,PEMBROKE vs PLYMOUTH SOUTH
+meets_tf,125472,CA,37.09024,-95.71289,64,outside CA box,Yreka Lions F/S & Varsity Invitational
+meets_tf,125482,MD,37.09024,-95.71289,64,outside MD box,Northwood HS @ Kennedy HS 3:30 P.M.
+meets_tf,81539,PA,40.882477,-97.59211,63,outside PA box,Yough
+meets_tf,102979,NE,48.1014,-122.18095,63,outside NE box,Marysville Invite
+meets_tf,69336,NE,37.871044,-122.25077,62,outside NE box,WACC - Non-Varsity Championships
+meets_tf,111402,CA,43.070717,-89.38321,62,outside CA box,El Cap at West Hills
+meets_tf_meta,122459,KY,19.3133,-81.2546,62,outside KY box,
+meets_tf,77348,CA,40.033005,-75.33668,61,outside CA box,Big East Outdoor Track & Field Championships
+meets_tf_meta,66121,LA,36.18571,-86.67797,61,outside LA box,McGavock HS
+meets,2330,WV,39.7293,-94.240555,60,outside WV box,Cameron HS
+meets_tf,72432,NE,38.895718,-76.98636,60,outside NE box,Dundy JH Track meet
+meets_tf,80584,WV,40.711525,-80.63023,60,outside WV box,Beaver Local HS Track meet
+meets_tf,110458,IN,40.57406,-93.422295,60,outside IN box,Edgewood
+meets_tf,129750,IN,40.779545,-74.02375,60,outside IN box,Union City HS Quad
+meets_tf,54570,NY,30.13136,-95.46449,59,outside NY box,Space City Relays
+meets_tf,66543,IN,36.515656,-87.277374,59,outside IN box,Clarksville HS Tri-Meet
+meets_tf_meta,141795,MN,44.744637,0.0,59,outside MN box,Rosemount High School
+meets_tf,62020,PA,34.08148,-118.149994,57,outside PA box,USC
+meets_tf,138150,FL,25.971066,0.0,56,outside FL box,Lightning Sprint Out 3
+meets_tf,142376,NC,36.060455,0.0,56,outside NC box,Panther Invitational
+meets_tf,53118,TX,28.18792,-81.152466,54,outside TX box,Last Chance at Harmony
+meets_tf,86523,WI,41.89918,-87.94667,54,outside WI box,Lutheran Invitational
+meets_tf,94083,CA,43.440273,-80.42952,54,outside CA box,Unknown Meet
+meets_tf,67313,MD,37.020027,-76.35508,53,outside MD box,"Warwick, Hampton, Phoebus, Denbigh, Gloucester"
+meets_tf,52559,GA,26.283392,-98.16283,51,outside GA box,RGVCA Meet of Champions 6A Girls
+meets_tf,132723,IN,42.633423,-71.31617,51,outside IN box,KV @ Lowell MS
+meets_tf,109555,IN,37.28549,-76.76166,50,outside IN box,"Zionsville, Southport, Arsenal Tech"
+meets_tf,110832,IN,41.70138,-71.388016,50,outside IN box,Westview vs. Churubusco
+meets_tf,142555,IL,41.70867,0.0,50,outside IL box,Akinosun Invitational
+meets_tf,66066,IL,36.166477,-86.771286,49,outside IL box,UW-Oshkosh Track and Field Invitational 2001
+meets_tf,76873,IN,39.947254,-83.796585,49,outside IN box,Springfield Track Invite
+meets_tf,110495,CA,40.69061,-75.20936,49,outside CA box,NHS vs. PV
+meets_tf,122439,AR,-38.416096,-63.616673,49,outside AR box,Season Records
+meets,6273,IL,37.09024,-95.71289,48,outside IL box,TBA
+meets_tf,57366,OR,32.623405,-117.09499,48,outside OR box,NKN Meet
+meets_tf,66981,IA,36.81441,-119.75807,48,outside IA box,NLMS Track Meet
+meets_tf,103729,IN,53.072636,8.793819,48,outside IN box,IHSAA Girls Sectional (Bremen)
+meets_tf,125502,IN,37.09024,-95.71289,48,outside IN box,"Benton Central, Twin Lakes @ Jefferson"
+meets_tf,145678,AK,5.005211,7.886361,48,outside AK box,MTN CHAMPS Grand Final
+meets_tf,110191,NE,39.843124,-96.635544,47,outside NE box,Marysville Junior High Track Invitational
+meets_tf,134870,CA,44.261715,-80.93204,47,outside CA box,Madison vs Crawford
+meets_tf_meta,91722,MI,43.07597,-107.29028,46,outside MI box,Wyoming Kelloggsville HS
+meets_tf,72399,CA,38.889854,-76.97187,45,outside CA box,Delano Porterville EYL Dual
+meets_tf,145666,LA,6.4973726,3.379225,45,outside LA box,MTN CHAMPS Continental Relays
+meets_tf_meta,122466,IN,20.593683,78.96288,45,outside IN box,
+meets,6893,IN,38.896656,-104.9722,44,outside IN box,Cascade
+meets_tf,53021,TX,27.975868,-82.503334,44,outside TX box,East Chambers Buc Relays
+meets_tf,96100,IN,44.15743,-91.87955,44,outside IN box,MV vs Gibson Southern
+meets,41810,WA,47.95316,-116.58644,43,outside WA box,Farragut State Park
+meets_tf,69083,NM,37.765957,-111.58668,43,outside NM box,Escalante Invite
+meets_tf,125454,CA,37.09024,-95.71289,43,outside CA box,CMAC #2
+meets,33518,SD,45.91746,-102.115295,42,outside SD box,Lemmon Golf Course
+meets_tf,61165,IN,33.910698,-82.39807,42,outside IN box,Taft vs. Fegely
+meets_tf,86359,WI,41.87045,-87.66749,42,outside WI box,UAA Championships
+meets_tf,53303,NY,28.64789,180.0,41,outside NY box,Upper Darby Throwers Invitational
+meets_tf_meta,76472,IL,39.85667,-86.038216,41,outside IL box,Lawrence Central HS
+meets_tf,111789,IL,44.52393,-89.56616,40,outside IL box,Coldman Invitational 2005
+meets_tf,138671,OH,42.25068,-83.62409,39,outside OH box,Mid-American Conference Championships
+meets_tf_meta,140576,MO,38.62165,0.0,39,outside MO box,Gateway STEM High School
+meets_tf,52217,KS,22.65067,88.4185,38,outside KS box,HOPL MS
+meets_tf,69131,MO,37.782677,-122.4004,38,outside MO box,California Open
+meets_tf,72413,KS,38.893066,-94.378654,38,outside KS box,Summit Christian Academy Alec Rush Invitational
+meets_tf,76553,KY,39.877583,-88.93958,38,outside KY box,AAU Northern National
+meets_tf,76865,MD,39.946747,-76.72815,38,outside MD box,"Gettysburg, Messiah, York Tri-Meet"
+meets_tf,84705,ME,41.575024,-70.627625,38,outside ME box,"SMAA: Westbrook, Kennebunk @ Falmouth"
+meets_tf,86060,WI,41.819664,-72.10697,38,outside WI box,E.C.S.U. Invitational
+meets_tf,122628,CA,28.888315,-82.432594,38,outside CA box,Notre Dame at Citrus Hill
+meets_tf,125402,CA,37.09024,-95.71289,38,outside CA box,Viking Track Classic
+meets_tf,140588,MO,38.595222,0.0,38,outside MO box,Suburban Conference Red Girls Championships
+meets_tf,140746,MO,38.745304,0.0,38,outside MO box,Bob Thorpe Invite
+meets_tf,57704,OR,32.74047,-117.23055,37,outside OR box,Ross & Sharon Irwin Collegiate Scoring 
+meets_tf,67281,FL,37.000336,-94.726776,37,outside FL box,FHSAA 4A District 16
+meets_tf,82256,MA,41.056274,-73.76573,37,outside MA box,Loucks games
+meets_tf,124796,CA,35.759575,-79.0193,37,outside CA box,Whs/rhs/nhs
+meets_tf,125389,IA,37.09024,-95.71289,37,outside IA box,IHSAA 2A District 2 - KP-WC
+meets_tf,125481,OH,37.09024,-95.71289,37,outside OH box,St. Vincent v. St. Patrick
+meets_tf,57176,WI,32.54625,-117.04484,36,outside WI box,Jim Church Invitational
+meets_tf,73446,IA,39.107956,-77.2092,36,outside IA box,MCC Conference Championship
+meets_tf,77460,IN,40.050724,-82.915375,36,outside IN box,Eaton Invitational
+meets_tf,77618,NE,40.075256,-75.03218,36,outside NE box,NHIAA Meet of Champions
+meets_tf,87806,MO,42.138184,-70.69184,36,outside MO box,Marshfield Small Schools Meet
+meets_tf,110586,WI,40.945168,-81.12262,36,outside WI box,NCAA DIII National Outdoor 1997
+meets_tf,110943,WI,41.992096,-88.1838,36,outside WI box,Flyin' Hawk Invite
+meets_tf,123145,MA,31.791702,-7.09262,36,outside MA box,Best Performances
+meets_tf,125478,IL,37.09024,-95.71289,36,outside IL box,6th Annual Lady Huskies Invitational
+meets_tf,125493,ID,37.09024,-95.71289,36,outside ID box,3A District IV Meet (Day 1 and 2)
+meets_tf,133412,NE,43.048122,-76.14742,36,outside NE box,Syracuse Invitational
+meets_tf,141698,MO,37.06769,0.0,36,outside MO box,MCSAA State Track Meet - 2024
+meets_tf,141791,IA,41.309578,0.0,36,outside IA box,LHC MS Girls Meet
+meets_tf,141817,PA,40.022156,0.0,36,outside PA box,Inter-Ac
+meets_tf_meta,80676,OR,40.730637,-73.93446,36,outside OR box,Bill McCadden Memorial track
+meets_tf,77382,NE,40.03893,-82.951675,35,outside NE box,GNAC Track and Field Meet
+meets_tf,125462,IL,37.09024,-95.71289,35,outside IL box,IESA Sectional
+meets_tf,52355,NC,26.01114,-80.14601,34,outside NC box,ECC EW/JHR/SC/DHC
+meets_tf,61587,NE,34.00059,-84.039085,34,outside NE box,B-6 Districts-Ogallala
+meets_tf,67165,IN,36.943325,-76.28942,34,outside IN box,North Side Relays
+meets_tf,76778,NE,39.929214,-74.99066,34,outside NE box,Ashland Greenwood Rotary Invite
+meets_tf,77733,OR,40.096283,-75.01791,34,outside OR box,"Oakridge, Harrisburg & Glide @ PHill"
+meets_tf,92576,NE,43.02755,-76.10669,34,outside NE box,Syracuse Invitational
+meets_tf,98028,NE,44.97291,-93.25716,34,outside NE box,Waverly Invitational
+meets_tf,108756,IN,32.811703,-97.40861,34,outside IN box,Zionsville vs. Tipton
+meets_tf,112782,CA,49.636745,11.792983,34,outside CA box,Vilseck Invite
+meets_tf,113155,FL,35.225796,-80.852844,34,outside FL box,Lecanto Frosh/Soph Specatular
+meets_tf,124515,OH,34.99125,-79.0306,34,outside OH box,Dick Beeler Invitational
+meets_tf,125407,OR,37.09024,-95.71289,34,outside OR box,2A Special District 1 @ Reedsport
+meets_tf,125461,NY,37.09024,-95.71289,34,outside NY box,Wiesbaden Invitational
+meets_tf,140754,NE,40.17093,0.0,34,outside NE box,Coaches Legacy 2024
+meets_tf,141590,NE,42.562496,0.0,34,outside NE box,L&C Conf
+meets_tf,141747,NE,41.684925,0.0,34,outside NE box,NSAA D-5 District Championships
+meets_tf,63759,OR,35.040348,-98.28468,33,outside OR box,League Meet
+meets_tf,64736,NE,35.49276,-94.1387,33,outside NE box,Alma Invitational
+meets_tf,100883,CA,46.726353,-71.29727,33,outside CA box,Rio vs Live Oak Colusa E. Nic
+meets_tf,108795,MA,32.993656,-6.833425,33,outside MA box,Newton South vs AB
+meets_tf,122470,IN,20.593683,78.96288,33,outside IN box,Chesterton Relays
+meets_tf,125382,CA,37.09024,-95.71289,33,outside CA box,Riverside City College All-Comers
+meets_tf,132724,OR,42.633423,-71.31617,33,outside OR box,2A SD3 @ Oakland 
+meets,35967,OR,33.982475,-118.248955,32,outside OR box,Los Angeles
+meets_tf,53844,NE,29.622839,-82.81323,32,outside NE box,Hitchcock County JH Invite
+meets_tf,62531,VA,34.190994,-80.75974,32,outside VA box,JP Home Meet 2022 #1
+meets_tf,80840,NE,40.75802,-73.96017,32,outside NE box,Sutton S-Club Invite
+meets_tf,86710,IN,41.9337,-79.60193,32,outside IN box,Brown County @ Columbus East
+meets_tf,111898,IN,44.936275,-72.52073,32,outside IN box,Kokomo/Zionsville
+meets_tf,122471,IN,20.593683,78.96288,32,outside IN box,IHSAA 3 Participant Standard
+meets_tf,124311,IN,34.238125,-118.53012,32,outside IN box,Northridge vs Plymouth
+meets_tf,125380,VA,37.09024,-95.71289,32,outside VA box,VHSL 2A Conference 34
+meets_tf,125406,IN,37.09024,-95.71289,32,outside IN box,Bellmont vs Norwell
+meets_tf,125460,VA,37.09024,-95.71289,32,outside VA box,"Rustburg, E.C. Glass"
+meets_tf,125469,IN,37.09024,-95.71289,32,outside IN box,Greensburg vs. Batesville
+meets_tf,126188,IN,38.029305,-78.47668,32,outside IN box,Greenfield Central Quad Meet
+meets_tf,130571,IN,41.33954,-73.69735,32,outside IN box,Heritage Hills & South Spencer
+meets_tf,135309,IN,44.678684,-68.264465,32,outside IN box,Adams Central vs Eastbrook
+meets_tf,138416,FL,35.972385,-79.99531,32,outside FL box,High Point Vertklasse
+meets,40633,VT,41.922092,-71.53773,31,outside VT box,Bryant College
+meets_tf,72116,KS,38.82016,-102.35027,31,outside KS box,Weskan JH Invitational
+meets_tf,87437,NE,42.07691,-104.18889,31,outside NE box,"Torrington, Wyo. Invite"
+meets_tf,122443,PA,8.537981,-80.78213,31,outside PA box,Yough
+meets_tf,125411,NE,37.09024,-95.71289,31,outside NE box,Centura Invite
+meets_tf,125415,OR,37.09024,-95.71289,31,outside OR box,Grade School Track and Field - Contact Pat Brock for Registr
+meets_tf,134689,MO,44.05207,-123.086754,31,outside MO box,Eugene
+meets_tf,52039,ID,2.9686751,99.80663,30,outside ID box,IML JV
+meets_tf,52105,MA,17.430212,78.44186,30,outside MA box,Austin Prep vs St. Mary's
+meets_tf,75518,VA,39.64176,-77.71999,30,outside VA box,VHSL Group 4A Conference 21 West Championship
+meets_tf,76468,OH,39.855885,-74.77606,30,outside OH box,Lima Shawnee Invitational
+meets_tf,76774,MD,39.928993,-77.99738,30,outside MD box,"SHC, WB, @ McConnelsburg"
+meets_tf,76839,NE,39.941044,-82.99651,30,outside NE box,JH Dragon Invitational
+meets_tf,77428,MD,40.046837,-76.312386,30,outside MD box,Franklin and Marshall HS Season Opener 
+meets_tf,85917,NE,41.79584,43.45238,30,outside NE box,Sandhills JH Conference Track Meet
+meets_tf,87392,OR,42.068985,-76.7965,30,outside OR box,vs Elmira
+meets_tf,112087,CA,45.47027,-73.62369,30,outside CA box,LCC vs RBV
+meets_tf,122444,CA,9.943866,-84.0795,30,outside CA box,Willow Glen v Santa Teresa
+meets_tf,123997,IN,33.774826,-84.29631,30,outside IN box,North Decatur Invite
+meets_tf,125378,NC,37.09024,-95.71289,30,outside NC box,Boise Indoor
+meets_tf,125442,NE,37.09024,-95.71289,30,outside NE box,Morrill Junior High
+meets_tf,125506,OR,37.09024,-95.71289,30,outside OR box,Reedsport Middle Schools Meet
+meets_tf,128077,IN,39.739235,-104.99025,30,outside IN box,North Miami vs Eastern
+meets_tf,131903,IN,42.162006,-78.97532,30,outside IN box,Randolph So. vs Union Co. vs Wes-Del
+meets_tf,52235,KY,25.04302,-77.31604,29,outside KY box,2012 Star Performers Track Classic
+meets_tf,61867,OR,34.05252,-117.79034,29,outside OR box,Dual Meet IVHS vs RRHS 
+meets_tf,70551,WI,38.39107,-75.41919,29,outside WI box,Pittsville Middle School Invite
+meets_tf,87458,NE,42.08273,-87.98522,29,outside NE box,Arlington Tri
+meets_tf,52104,CA,17.291588,-62.70674,28,outside CA box,Nevis and St. Kitts National Champs
+meets_tf,68462,NE,37.562065,-121.96815,28,outside NE box,Bergan Invite
+meets_tf,76941,IN,39.95814,-76.667336,28,outside IN box,"CNMS, Heritage Hilles"
+meets_tf,78967,WI,40.366173,-89.54883,28,outside WI box,ITC Meet
+meets_tf,80864,PA,40.761387,-111.82578,28,outside PA box,Uniontown
+meets_tf,87655,WI,42.11346,-72.75111,28,outside WI box,Westfield MS Track Meet
+meets_tf,124251,IN,34.14426,-118.001945,28,outside IN box,Monrovia vs Indian Creek
+meets_tf,125979,OR,37.804363,-122.27111,28,outside OR box,LFL Track @ Oakland
+meets_tf,128232,IN,39.83672,-84.41134,28,outside IN box,Brookville/Hag./P. Shawnee/Meadowdale
+meets_tf,136184,WI,45.873196,-112.035576,28,outside WI box,Whithall MS Meet
+meets_tf,142352,AZ,33.323,0.0,28,outside AZ box,Hugh Morrison
+meets_tf_meta,138170,MS,34.219753,0.0,28,outside MS box,Lee Academy
+meets,13504,NE,32.67385,-97.202194,27,outside NE box,Arlington Town Course
+meets_tf,54323,NE,29.96821,-95.465195,27,outside NE box,Wisner Early Bird 7th and 8th
+meets_tf,83587,PA,41.33062,-72.19557,27,outside PA box,Connellsville
+meets_tf,93183,PA,43.15861,-78.67551,27,outside PA box,LTHS
+meets,7020,WV,35.289608,-78.97189,26,outside WV box,Anderson's Golf Course
+meets_tf,66224,NE,36.241962,-86.86542,26,outside NE box,McCool Tom White Invitational
+meets_tf,82174,PA,41.038456,-80.671234,26,outside PA box,NTL JH CHAMPIONSHIP
+meets_tf,89069,PA,42.339306,-71.08659,26,outside PA box,AAA Qualifiers
+meets_tf,97520,PA,44.825962,-93.29253,26,outside PA box,Monessen
+meets_tf,109112,PA,34.06167,-84.4183,26,outside PA box,Haverford v. GA
+meets_tf,109390,KY,35.97402,-83.91179,26,outside KY box,Univ of Kentucky HS Meet
+meets_tf,122595,IN,28.337225,-82.25842,26,outside IN box,EIAC HSR Qualifier
+meets_tf,127761,IN,39.45977,-91.03513,26,outside IN box,Pike/Lawrence North/North Central
+meets_tf,129011,IN,40.340923,-76.41135,26,outside IN box,Zionsville/Lebanon
+meets_tf,135492,WI,44.91234,-93.30104,26,outside WI box,Southwestern MS Invite
+meets_tf,135501,WI,44.927353,-93.281,26,outside WI box,Baldwin-Woodville Invite
+meets_tf_meta,69190,IL,37.80081,-121.91881,26,outside IL box,Danville Fieldhouse
+meets,36163,SC,39.51598,-77.65167,25,outside SC box,Boonsboro High School
+meets_tf,91894,WY,42.904484,-85.71324,25,outside WY box,Wyoming State Championships
+meets_tf,123147,MA,31.791702,-7.09262,25,outside MA box,New Englands
+meets_tf_meta,99970,SD,45.94215,-102.1626,25,outside SD box,Lemmon Lions Field
+meets_tf,54046,CA,29.744902,-95.39485,24,outside CA box,USATF Junior Olympic Nationals
+meets_tf,56647,IN,32.25215,-80.89897,24,outside IN box,Wells County Championship
+meets_tf,69566,IN,37.966164,-121.217766,24,outside IN box,Fegely Vs Hobart
+meets_tf,78929,NE,40.354782,-76.72982,24,outside NE box,Banner County Invite
+meets_tf,83578,IN,41.32817,-73.68998,24,outside IN box,CNMS vs Heritage Hills
+meets_tf,83609,IN,41.335327,-73.08297,24,outside IN box,Tiger Relays
+meets_tf,111922,CA,44.95816,-93.10506,24,outside CA box,MW Dual
+meets_tf,125437,MA,37.09024,-95.71289,24,outside MA box,Duxbury vs Whitman-Hanson
+meets_tf,137522,CA,50.972385,-102.94179,24,outside CA box,Van Nuys Rotary
+meets_tf,137558,IN,55.95325,-3.188267,24,outside IN box,Edinburgh Lancer Relays
+meets_tf,53300,MA,28.631071,77.28114,23,outside MA box,Wellesley
+meets_tf,66961,KS,36.806973,-97.73498,23,outside KS box,Medford Invitational
+meets_tf,73054,KS,39.017773,-94.12506,23,outside KS box,AAU Missouri Valley District Qualifier
+meets_tf,137481,CA,49.518486,-105.22599,23,outside CA box,"Tri-City, SFC vs Horizon"
+meets_tf_meta,110789,NE,41.59114,-81.20041,23,outside NE box,Chadron HS
+meets,1395,OH,30.54324,-87.2356,22,outside OH box,Scenic Hills Course
+meets,2617,NE,34.094673,-118.40272,22,outside NE box,South Park Course
+meets,3067,NV,40.701252,-74.28725,22,outside NV box,Wells
+meets_tf,76824,MD,39.9363,-77.99841,22,outside MD box,Dual
+meets_tf,83571,IN,41.326828,-73.065605,22,outside IN box,Ansonia Tiger Relays
+meets_tf,110293,AZ,40.143105,47.576927,22,outside AZ box,GSW Classic
+meets_tf,112745,IN,48.533936,-123.01329,22,outside IN box,City/County JV Invitational
+meets_tf,141943,NE,40.838478,0.0,22,outside NE box,Midwest Night of Stars
+meets_tf,142644,MI,42.962082,0.0,22,outside MI box,AQ MITS #2
+meets_tf_meta,141237,MN,44.784782,0.0,22,outside MN box,Burnsville High School
+meets_tf,93914,CA,43.401875,-80.322525,21,outside CA box,NU DO
+meets_tf,108414,IN,12.842629,77.65164,21,outside IN box,Big Orange
+meets_tf,131424,VA,41.902916,12.453389,21,outside VA box,IAC Varsity B Meet
+meets_tf,135760,IL,45.253784,-69.445465,21,outside IL box,Ritter Invite
+meets_tf_meta,128679,AZ,40.143105,47.576927,21,outside AZ box,
+meets_tf_meta,123148,MA,31.791702,-7.09262,21,outside MA box,
+meets_tf,95442,MA,43.90558,-69.823074,20,outside MA box,vs. Hebron
+meets_tf,99915,CA,45.89085,-119.51271,20,outside CA box,EOU Team Challenge
+meets_tf,109227,PA,34.59422,-120.14105,20,outside PA box,GA @ PC
+meets_tf,110526,PA,40.76371,-73.986145,20,outside PA box,GA @ CHA
+meets_tf_meta,94083,CA,43.440273,-80.42952,20,outside CA box,Unknown but mark is verfied
+meets,,NV,39.19494,-120.12052,19,outside NV box,North Tahoe HS
+meets_tf,103674,CA,51.26204,6.8259807,19,outside CA box,Thorpe Cup (Day 2)
+meets_tf,137504,AZ,50.414036,14.975035,19,outside AZ box,Spring Break Hep/Dec
+meets_tf,68004,IL,37.35679,-121.82033,18,outside IL box,SJO Lady Spartan Invite
+meets_tf,101602,IN,47.235195,-61.86215,18,outside IN box,Chesterton vs. Fegely
+meets_tf,111616,OR,44.02788,-71.76009,18,outside OR box,Lost River Invite
+meets_tf,111991,OR,40.281925,-104.77775,18,outside OR box,Gilchrest Meet
+meets_tf_meta,116505,TX,30.178366,-93.21563,18,outside TX box,McNeese State Indoor Recreation Complex
+meets_tf,69097,PA,37.771313,75.23034,17,outside PA box,Big * Meet
+meets_tf,94643,OR,43.614822,-116.20296,17,outside OR box,New Balance Boise Indoor Meet
+meets_tf,108632,IL,31.80643,34.65593,17,outside IL box,West Meck Invt
+meets_tf,134366,IL,43.804134,-120.5542,17,outside IL box,"Oregon Quad vs RF, Byron, GK (Boys)"
+meets_tf,141702,PA,40.01756,0.0,17,outside PA box,Notre Dame #2
+meets_tf,145705,MD,40.44224,-3.7100425,17,outside MD box,Meeting Madrid 2025
+meets_tf_meta,70038,DE,38.172077,-75.3764,17,outside DE box,Worchester County Recreation Center
+meets,10632,MI,33.574306,-88.6072,16,outside MI box,Waverly Golf Course (old course)
+meets,11439,NE,32.243484,-110.94747,16,outside NE box,Districts
+meets,13088,MO,42.11344,-71.2403,16,outside MO box,South Park
+meets,15509,CO,42.194515,-91.778336,16,outside CO box,Center Community Park
+meets_tf,56137,IA,31.76644,-106.49199,16,outside IA box,Viking Relays
+meets_tf,81971,PA,40.993744,-73.668816,16,outside PA box,WPIAL Finals
+meets_tf,84663,IN,41.55971,-74.19908,16,outside IN box,SIJHAC Girls Conference
+meets_tf,86387,IN,41.87284,-87.812416,16,outside IN box,"Forest Park, Vincennes Lincoln"
+meets_tf,101397,CA,47.11231,-88.54665,16,outside CA box,Keweenaw Classic
+meets_tf,111139,IN,42.37065,-71.11863,16,outside IN box,#2 Lowell Girls IHSAA Sectional
+meets_tf,122469,IN,20.593683,78.96288,16,outside IN box,Madison County Track & Field Meet
+meets_tf,128086,IN,39.743942,-84.63662,16,outside IN box,Eaton Invitational
+meets_tf,130352,IN,41.203323,-77.19453,16,outside IN box,#5 Penn Boys IHSAA Sectional
+meets_tf,141851,IN,39.901375,0.0,16,outside IN box,IHSAA Boys Sectional 18
+meets_tf_meta,142470,NH,43.139038,0.0,16,outside NH box,Paul Sweet Oval
+meets_tfrrs,6289,MI,42.428345,-123.32927,16,outside MI box,Riverside Park
+meets_tf,89692,IN,42.45572,-71.1342,15,outside IN box,Hagerstown v. Winchester Dual
+meets_tf,93229,IN,43.16792,-89.4412,15,outside IN box,Henry County Meet
+meets_tf_meta,91894,WY,42.904484,-85.71324,15,outside WY box,Unknown
+meets,26104,IN,2.7763832,-77.6672,14,outside IN box,tbd
+meets_tf,52025,ID,-6.184623,106.82165,14,outside ID box,WIC Jr-High Meet
+meets_tf,80174,NE,40.6284,-87.69422,14,outside NE box,Milford Relays
+meets_tf,103757,IN,54.75237,-1.6143028,14,outside IN box,Harrison/Lafayette Jeff
+meets_tf,108420,IN,17.656927,73.3924,14,outside IN box,Glenn vs. Bremen/North Judson
+meets_tf,110373,IN,40.33919,-83.48863,14,outside IN box,"Hobart, Wheeler"
+meets_tf,122465,IN,20.593683,78.96288,14,outside IN box,Rushville/Hauser/Waldron
+meets_tf,125498,IN,37.09024,-95.71289,14,outside IN box,WHS and New Castle @ Yorktown
+meets_tf,141215,NY,40.775772,0.0,14,outside NY box,NYCAL #1
+meets_tf,142083,NE,47.1122,6.8359146,14,outside NE box,Résisprint International
+meets_tf,92185,OR,42.956734,-112.411224,13,outside OR box,Simplot Games
+meets_tf,111269,IN,42.733135,-73.66764,13,outside IN box,Rensselaer JV Invitational
+meets_tf,111792,OR,40.340923,-76.41135,13,outside OR box,MS Meet
+meets_tf,125447,TX,37.09024,-95.71289,13,outside TX box,Golden Spur Relays
+meets_tf,125463,OR,37.09024,-95.71289,13,outside OR box,Meet of Champions
+meets_tf,137557,IN,55.95325,-3.188267,13,outside IN box,"Brownstown, Edinburg"
+meets_tf_meta,140734,IA,41.160557,0.0,13,outside IA box,Eddyville Blakesburg Fremont Schools
+meets_tfrrs,33446,FL,38.98562,-74.81969,13,outside FL box,Wildwood Middle/High School
+meets,26202,NV,39.333317,-120.350784,12,outside NV box,Auburn Ski Club
+meets,27898,MN,43.317146,-91.80755,12,outside MN box,Luther College
+meets,36446,MI,41.37219,-84.16626,12,outside MI box,Leaders Farms
+meets_tf,61112,OR,33.898556,-117.7891,12,outside OR box,Quest Pentathlon
+meets_tf,70301,IN,38.292755,-78.67958,12,outside IN box,BRV MS at Shenandoah
+meets_tf,74328,CA,39.319973,-76.66257,12,outside CA box,USATF National Junior Olympic Championships
+meets_tf,80233,IN,40.639717,-78.94445,12,outside IN box,EH vs Northeastern/ Richmond
+meets_tf,83700,IN,41.36446,-89.27791,12,outside IN box,"Vincennes, SK, Barr Reeve, @ Princeton"
+meets_tf,102078,CA,47.520752,-122.30057,12,outside CA box,Pioneer League Finals
+meets_tf,103746,CA,53.55326,-1.4838243,12,outside CA box,NorCal Throwers HS Pentathlon
+meets_tf,122458,FL,18.363008,-66.558105,12,outside FL box,Carolina Spring Classic
+meets_tf,122482,OR,25.064074,72.424706,12,outside OR box,LHS School Records
+meets_tf,123849,IN,33.51623,-90.17953,12,outside IN box,@ Greenwood
+meets_tf,127263,KS,39.091118,-94.415504,12,outside KS box,Independence Relays 
+meets_tf,131719,NE,42.062466,-104.184395,12,outside NE box,jinx tucker invite
+meets_tf,135046,WY,44.409706,-103.50908,12,outside WY box,Black Hills Classic
+meets_tf,144305,CT,41.53619,2.124529,12,outside CT box,Meeting Internacional Catalunya de Pista Coberta
+meets_tf,144443,MD,40.398773,-3.7399783,12,outside MD box,World Indoor Tour Gold Madrid 2026
+meets_tf_meta,66376,ID,36.331547,-92.39697,12,outside ID box,Mountain Home HS
+meets_tf_meta,54624,TX,30.178366,-93.21563,12,outside TX box,McNeese State Indoor Recreation Complex
+meets_tf,57796,IN,32.760994,-105.20619,11,outside IN box,NM
+meets_tf,59979,MA,33.570786,-112.1908,11,outside MA box,DR vs Somerset- Berkely
+meets_tf,62706,OR,34.241722,-118.530205,11,outside OR box,Northridge Multi-Event
+meets_tf,102264,IN,47.60236,-122.33287,11,outside IN box,Rochester MS @ Pioneer
+meets_tf,108418,IN,13.93329,75.5734,11,outside IN box,Bluffton vs Adam Central vs Woodlan
+meets_tf,111364,CA,42.966152,-78.73606,11,outside CA box,Dual
+meets_tf,122586,IN,28.039465,-81.94981,11,outside IN box,Howe vs Lakeland
+meets_tf,125425,WI,37.09024,-95.71289,11,outside WI box,North Manitowoc Central Triangular
+meets_tf_meta,52059,OR,13.037208,80.23438,11,outside OR box,Madras HS
+meets,3235,OR,41.187675,-85.08981,10,outside OR box,Steeple Chase
+meets,21346,VA,41.902916,12.453389,10,outside VA box,-
+meets,,KY,19.3133,-81.2546,10,outside KY box,OPEN
+meets_tf,86274,NE,41.858006,-87.6242,10,outside NE box,JH South Loop Invite
+meets_tf,122847,IN,30.267153,-97.74306,10,outside IN box,Brownstown Central vs Austin
+meets_tf,124441,IN,34.65816,-88.5667,10,outside IN box,6th Grade County 
+meets_tf,126547,IN,38.485123,-78.625015,10,outside IN box,Wes-Del vs Blue River at Shennandoah
+meets_tf_meta,138162,WA,-31.94947,115.782295,10,outside WA box,WA Athletics Stadium
+meets_tf_meta,72498,NV,38.907173,-78.20751,10,outside NV box,Skyline HS
+meets_tfrrs,46405,MD,38.210217,0.0,10,outside MD box,University of Maryland
+meets_tfrrs,46482,AR,27.92004,-82.785545,10,outside AR box,", AR"
+meets,30913,OR,43.547028,-72.97152,9,outside OR box,Mill River Union High School
+meets_tf,125464,OR,37.09024,-95.71289,9,outside OR box,Meet of Champions
+meets_tf_meta,65814,UT,36.07259,-79.77337,9,outside UT box,North Carolina A&T University
+meets_tfrrs,1798,MI,37.50335,-122.30899,9,outside MI box,Fremont
+meets,4969,WA,37.096527,-113.56841,8,outside WA box,St. George
+meets,40478,MI,41.591442,-86.71968,8,outside MI box,Kesling Park
+meets,,MI,47.60414,-122.1987,8,outside MI box,Bellevue HS
+meets_tf,65802,OH,36.068928,-79.810196,8,outside OH box,USATF Junior Olympics
+meets_tf,69197,NE,37.80341,-122.21755,8,outside NE box,Oakland Craig Invite
+meets_tf,97912,NE,44.94422,-93.18994,8,outside NE box,Brady Seasonal Records
+meets_tf,103632,CA,50.798374,8.753821,8,outside CA box,Thorpe Cup (Day 2)
+meets_tf,110500,IN,40.7042,-74.28355,8,outside IN box,Union Invite
+meets_tf,123144,MA,31.791702,-7.09262,8,outside MA box,coaches invite
+meets_tf_meta,82532,IN,41.11859,-83.18447,8,outside IN box,Tiffin University
+meets_tf_meta,138176,OH,40.005424,0.0,8,outside OH box,French Field House
+meets_tf_meta,122440,IN,-27.124819,153.36714,8,outside IN box,Cowan
+meets_tf_meta,90812,CT,42.66636,-72.485176,8,outside CT box,Northfield Mount Hermon School
+meets,21737,KS,38.758083,-93.73837,7,outside KS box,Warrensburg
+meets,23736,TX,16.375422,-86.46546,7,outside TX box,Rotan Golf Course 
+meets_tf,73043,IL,39.01512,-95.74989,7,outside IL box,Tiger F/S Invitational
+meets_tf,96846,IN,44.503414,-85.17196,7,outside IN box,Rochester @ Pioneer
+meets_tf,109511,IN,36.969433,-78.19063,7,outside IN box,Lowell Middle School vs. Kankakee Valley MS
+meets_tf,110811,PA,41.627453,-71.005806,7,outside PA box,Cedar Cliff vs Cumberland Valley
+meets_tf,124309,IN,34.238125,-118.53012,7,outside IN box,Meet
+meets_tf,125430,PA,37.09024,-95.71289,7,outside PA box,"NBC, McBurg, SHC"
+meets_tf,125440,TX,37.09024,-95.71289,7,outside TX box,Metroplex MS TF Series #5
+meets_tf,128678,AZ,40.143105,47.576927,7,outside AZ box,2009 Mountain T's Invitational
+meets_tf,130877,IN,41.57366,-84.005226,7,outside IN box,Delaware County Meet
+meets_tf_meta,141448,PA,39.86875,0.0,7,outside PA box,Garnet Valley Middle School
+meets_tf_meta,94581,OR,43.602695,-116.20146,7,outside OR box,Boise State University
+meets_tf_meta,140936,PA,40.489826,0.0,7,outside PA box,Mansion Park
+meets,10716,KY,43.245735,-77.399765,6,outside KY box,Webster golf course
+meets,12225,AR,36.624897,-92.134605,6,outside AR box,Cloud 9 ranch
+meets,13305,MT,-15.606506,-56.08251,6,outside MT box,TBD
+meets,18255,TX,29.993258,-90.09818,6,outside TX box,City Park
+meets,24446,NJ,41.892212,-79.83852,6,outside NJ box,Union City HS
+meets,26304,WA,37.09024,-95.71289,6,outside WA box,Shuffle Beach
+meets,30513,WI,41.96486,-87.63613,6,outside WI box,Montrose Beach
+meets,30951,WI,36.21501,-86.61295,6,outside WI box,Hermitage
+meets,32131,WI,42.03207,-92.925995,6,outside WI box,American Legion Golf Course
+meets,32728,DE,38.907192,-77.03687,6,outside DE box,Anywhere
+meets,34542,PA,40.567272,-89.61381,6,outside PA box,Parkview Golf Course
+meets,38480,OK,42.035408,-88.28257,6,outside OK box,City of Elgin Soccer Fields
+meets,45056,IA,-34.07128,18.835003,6,outside IA box,The Links
+meets,,MI,37.09024,-95.71289,6,outside MI box,Unknown: send forum at michigancrosscountry.com
+meets,,OH,30.54324,-87.2356,6,outside OH box,Scenic Hills Course
+meets,,OR,41.187675,-85.08981,6,outside OR box,Steeple Chase
+meets,,WA,37.096527,-113.56841,6,outside WA box,St. George
+meets_tf,67568,OR,37.171886,-93.24774,6,outside OR box,non-Indoor
+meets_tf,71788,OR,38.736904,-86.4797,6,outside OR box,Mitchell Intra-squad Field Event Frolic
+meets_tf,103601,OR,50.18516,-119.10515,6,outside OR box,BC Trials #1
+meets_tf,110225,MA,39.952377,-75.1636,6,outside MA box,Penn Relays
+meets_tf,125396,OR,37.09024,-95.71289,6,outside OR box,Foot Traffic / Portland Parks Youth Meet
+meets_tf,125409,CA,37.09024,-95.71289,6,outside CA box,El Segundo vs. Harvard Dual Meet
+meets_tf,125471,TX,37.09024,-95.71289,6,outside TX box,Bulldog Relays
+meets_tf_meta,52014,HI,-36.7987,145.15033,6,outside HI box,TBA
+meets_tf_meta,95355,CA,43.86209,-79.381165,6,outside CA box,Ontario HS
+meets_tf_meta,141811,MS,30.552631,0.0,6,outside MS box,St. Patrick Catholic High School
+meets_tf_meta,102106,PA,47.52825,-122.099686,6,outside PA box,Cougar Mountain
+meets_tf_meta,138213,VA,37.060043,0.0,6,outside VA box,Boo Williams Sportsplex
+meets_tf_meta,63165,NE,34.58184,-94.22119,6,outside NE box,Bearcat Stadium
+meets_tf_meta,122468,IN,20.593683,78.96288,6,outside IN box,
+meets_tf_meta,123147,MA,31.791702,-7.09262,6,outside MA box,?
+meets_tf_meta,89038,PA,42.33513,-71.166466,6,outside PA box,Alumni Stadium
+meets_tfrrs,1796,AR,44.885315,-93.74302,6,outside AR box,Crown College
+meets_tfrrs,38405,NY,39.990326,-75.21266,6,outside NY box,Hamilton College Cross-Country Course
+meets_tf,59630,CA,33.47767,-112.14922,5,outside CA box,Rock ‘n’ Roll Arizona 
+meets_tf,61543,MA,33.993176,-6.820305,5,outside MA box,Needham
+meets_tf_meta,122483,OR,25.064074,72.424706,5,outside OR box,LHS
+meets_tf_meta,66476,IN,36.418247,-89.04341,5,outside IN box,Union City HS
+meets_tf_meta,122439,AR,-38.416096,-63.616673,5,outside AR box,
+meets_tf_meta,141187,NE,41.684925,0.0,5,outside NE box,Boone Central track
+meets_tf_meta,63164,IN,34.580578,-92.58205,5,outside IN box,Fairfield
+meets_tf_meta,141229,PA,40.21339,0.0,5,outside PA box,George School
+meets_tf_meta,53195,NC,28.385233,-81.56387,5,outside NC box,disney complex
+meets_tf_meta,81555,MD,40.885666,-75.15146,5,outside MD box,Bangor Memorial Park
+meets,957,IA,37.86641,-87.05767,4,outside IA box,Rockport Country Club
+meets,1593,KS,38.485165,-89.130905,4,outside KS box,Centralia Golf course
+meets,1865,HI,35.66723,51.434795,4,outside HI box,TBA
+meets,8562,UT,42.866367,-73.7981,4,outside UT box,Turkey Trot
+meets,10571,NV,39.19471,-120.12041,4,outside NV box,North Tahoe Middle School
+meets,13648,MO,39.465034,-87.45002,4,outside MO box,Lavern Gibson CC COurse
+meets,14440,GA,35.257233,-80.82429,4,outside GA box,Druid Hills
+meets,25166,OR,34.091488,-118.283585,4,outside OR box,TBD
+meets,30400,NE,42.834785,-76.97668,4,outside NE box,Geneva Country Club
+meets,31356,NE,42.075108,-71.366455,4,outside NE box,Franklin Country Club
+meets,32132,WI,42.03207,-92.925995,4,outside WI box,American Legion Golf Course
+meets,32133,WI,42.03207,-92.925995,4,outside WI box,American Legion Golf Course
+meets,37056,MT,47.860382,-103.97003,4,outside MT box,Sundheim Park
+meets,37905,OH,37.98834,-81.15086,4,outside OH box,John P. Duda Stadium
+meets,38782,MI,36.994205,-94.5941,4,outside MI box,Eagle Creek Golf Course
+meets,40374,WA,38.669365,-87.184105,4,outside WA box,Gwaltney Sports Complex
+meets,,CO,64.751114,-147.34944,4,outside CO box,North Pole
+meets,,IL,37.09024,-95.71289,4,outside IL box,TBA
+meets,,IN,37.09024,-95.71289,4,outside IN box,Site To Be Determined
+meets,,KS,38.485165,-89.130905,4,outside KS box,Centralia Golf course
+meets,,MN,43.317146,-91.80755,4,outside MN box,Luther College
+meets,,MT,41.905346,-88.34259,4,outside MT box,Prairie county Fairgrounds 
+meets,,NM,37.266304,-107.01001,4,outside NM box,Pagosa Colorado
+meets,,NV,36.6337,-121.93126,4,outside NV box,Pacific Grove
+meets,,NV,37.09024,-95.71289,4,outside NV box,Unknown
+meets,,NV,39.19471,-120.12041,4,outside NV box,North Tahoe Middle School
+meets,,NV,39.32796,-120.18325,4,outside NV box,Truckee Tri Meet
+meets,,OR,33.8853,-117.34182,4,outside OR box,Woodcrest Christian School
+meets,,OR,34.091488,-118.283585,4,outside OR box,TBD
+meets,,OR,37.49134,-122.22471,4,outside OR box,Footlocker West Regional
+meets,,WA,47.95316,-116.58644,4,outside WA box,Farragut State Park
+meets,,WV,39.7293,-94.240555,4,outside WV box,Cameron HS
+meets_tf,54183,MS,29.826033,-95.4243,4,outside MS box,Junior Olympics Association Championships
+meets_tf,70836,KS,38.48125,-94.34464,4,outside KS box,ARCHIE
+meets_tf,74346,CA,39.325653,-76.70522,4,outside CA box,USATF Junior Olympic Nationals
+meets_tf,77240,MA,40.011143,-105.12712,4,outside MA box,Class C Champs
+meets_tf,77714,NY,40.09404,-76.354706,4,outside NY box,Rock N' Roll Throw-Off
+meets_tf,78930,NE,40.35519,-94.8898,4,outside NE box,NW Missouri Meet
+meets_tf,95132,CA,43.778744,11.279792,4,outside CA box,MULTISTARS 2017 (Day 2)
+meets_tf,103769,CA,55.825844,-4.2520475,4,outside CA box,Commonwealth Games (Day 3)
+meets_tf,136747,MS,47.037872,-122.900696,4,outside MS box,Rancho Olympia Pole Vault Meet
+meets_tf,142000,CA,33.99458,0.0,4,outside CA box,Time Trial
+meets_tf_meta,140571,MO,38.656452,0.0,4,outside MO box,Gay Field
+meets_tf_meta,125409,CA,37.09024,-95.71289,4,outside CA box,Unknown
+meets_tf_meta,138318,MS,32.77558,0.0,4,outside MS box,Velma Jackson High School
+meets_tf_meta,141173,NC,36.002644,0.0,4,outside NC box,High Point Athletic Complex
+meets_tf_meta,139744,IL,41.46854,0.0,4,outside IL box,Minooka Community High School District 111
+meets_tf_meta,57796,IN,32.760994,-105.20619,4,outside IN box,NM
+meets_tf_meta,141228,PA,41.1776,0.0,4,outside PA box,East Stroudburg North High School
+meets_tf_meta,142494,PA,40.58432,0.0,4,outside PA box,Rauch Field House
+meets_tf_meta,141062,PA,41.005398,0.0,4,outside PA box,East Stroudsburg South Senior High School
+meets_tf_meta,141106,IA,41.84029,0.0,4,outside IA box,1200 18th St
+meets_tf_meta,52038,NE,2.7763832,-77.6672,4,outside NE box,TBD
+meets_tf_meta,87509,OH,42.090946,-71.26434,4,outside OH box,Patriot Stadium
+meets_tf_meta,140778,NC,35.185627,0.0,4,outside NC box,Pinecrest High School
+meets_tf_meta,59504,OR,33.440063,-117.61686,4,outside OR box,San Clemente HS
+meets_tf_meta,109881,IN,38.718716,-90.6429,4,outside IN box,Greensburg
+meets_tf_meta,141063,PA,40.984238,0.0,4,outside PA box,Stroudsburg High School
+meets_tf_meta,140583,MO,38.97616,0.0,4,outside MO box,Troy Buchanan High School
+meets_tf_meta,71598,IN,38.683857,-88.35141,4,outside IN box,Clay City HS
+meets_tf_meta,123145,MA,31.791702,-7.09262,4,outside MA box,Ma
+meets_tf_meta,132723,IN,42.633423,-71.31617,4,outside IN box,Lowell MS
+meets_tfrrs,44622,PA,41.146393,0.0,4,outside PA box,West Branch Cross Country Course
+meets_tfrrs,45070,IL,41.934193,0.0,4,outside IL box,NIU North 40 Cross Country Course
+meets_tfrrs,44386,NC,35.67097,0.0,4,outside NC box,Salisbury Community Park
+meets_tfrrs,46205,IL,40.5121,0.0,4,outside IL box,Weibring Golf Course
+meets,28942,VT,41.921104,-71.53795,3,outside VT box,Bryant College
+meets,,IN,42.465134,-70.9437,3,outside IN box,Lynn Community Park
+meets,,KS,38.758083,-93.73837,3,outside KS box,Warrensburg
+meets,,NV,39.345238,-120.177284,3,outside NV box,Alder Creek Middle School
+meets_tf,52115,FL,19.301764,-81.36052,3,outside FL box,Carifta Games
+meets_tf,54016,IA,29.729795,-95.51125,3,outside IA box,AAU Jr Olympics
+meets_tf,72033,OR,38.80163,-77.07045,3,outside OR box,NSAF Test
+meets_tf,102287,OR,47.609066,-122.33017,3,outside OR box,USATF Regional Championships
+meets_tf,130346,OH,41.203323,-77.19453,3,outside OH box,Penn Relays
+meets_tf,130347,CA,41.203323,-77.19453,3,outside CA box,Hoover - Bonita Vista (practice meet)
+meets_tf,137534,CA,52.128067,-103.377686,3,outside CA box,Mariposa Inv.
+meets_tf_meta,79813,IN,40.555428,-84.55776,3,outside IN box,Celina HS
+meets_tf_meta,78943,WI,40.358875,-74.6561,3,outside WI box,Princeton HS
+meets_tf_meta,103729,IN,53.072636,8.793819,3,outside IN box,Bremen HS
+meets_tf_meta,141194,IA,41.587776,0.0,3,outside IA box,3650 Woodland Ave
+meets_tf_meta,141122,IA,41.04257,0.0,3,outside IA box,800 N Jackson St
+meets_tf_meta,64190,MO,35.22583,-80.85284,3,outside MO box,Panther Stadium
+meets_tf_meta,102202,Ne,47.569965,-52.73489,3,outside NE box,MUN Field House
+meets_tf_meta,140551,IL,41.44962,0.0,3,outside IL box,Minooka Central Community High School
+meets_tf_meta,125503,IN,37.09024,-95.71289,3,outside IN box,Leo HS
+meets_tf_meta,103769,CA,55.825844,-4.2520475,3,outside CA box,Hampden Park
+meets_tf_meta,122444,CA,9.943866,-84.0795,3,outside CA box,Santa Teresa
+meets_tf_meta,141341,PA,40.06192,0.0,3,outside PA box,Springside Chestnut Hill Academy
+meets_tf_meta,67313,MD,37.020027,-76.35508,3,outside MD box,Joseph S. Darling Memorial Stadium
+meets_tf_meta,80422,IN,40.684025,-84.651695,3,outside IN box,"Parkway, Ohio HS"
+meets_tf_meta,109555,IN,37.28549,-76.76166,3,outside IN box,Southport
+meets_tf_meta,111123,PA,42.335117,-71.16646,3,outside PA box,Alumni Stadium
+meets_tf_meta,141197,IA,41.59833,0.0,3,outside IA box,8325 N E University Ave
+meets_tf_meta,110458,IN,40.57406,-93.422295,3,outside IN box,away
+meets_tf_meta,92185,OR,42.956734,-112.411224,3,outside OR box,Idaho
+meets_tf_meta,141483,IA,40.717033,0.0,3,outside IA box,1001 E Columbus St
+meets_tf_meta,63320,GA,34.713863,-86.58352,3,outside GA box,Huntsville HS
+meets_tf_meta,82256,MA,41.056274,-73.76573,3,outside MA box,White Plains
+meets_tf_meta,122441,CA,-17.819342,23.953646,3,outside CA box,NA
+meets_tf_meta,141159,IA,41.688583,0.0,3,outside IA box,1205 W 6th St S #1201
+meets_tfrrs,46257,IL,41.95222,0.0,3,outside IL box,Sydney R. Marovitz Golf Course
+meets,3447,ID,38.768574,-85.381645,2,outside ID box,City Golf Course
+meets,3731,NV,39.32796,-120.18325,2,outside NV box,Truckee Tri Meet
+meets,24652,SC,44.80933,-91.5041,2,outside SC box,Eau Claire
+meets,24765,OH,39.082527,-94.339195,2,outside OH box,Blur River CC
+meets,27826,AZ,33.61947,-117.89108,2,outside AZ box,Newport Back Bay
+meets,27921,WI,35.01084,-93.27293,2,outside WI box,Two Rivers High School
+meets,28492,WI,42.306507,-89.14965,2,outside WI box,ANNA PAGE PARK -- Park Shelter
+meets,28611,TN,33.75696,-118.35396,2,outside TN box,Westmore Property (Rolling Hills)
+meets,29847,ND,45.092285,-93.12384,2,outside ND box,Chippewa Middle School
+meets,29848,ND,44.992165,-93.19607,2,outside ND box,Les Bolstad Golf COurse
+meets,41450,IA,37.941822,-96.75158,2,outside IA box,Interstate 35 HS
+meets,43081,MD,37.645035,-77.308846,2,outside MD box,Pole Green Park
+meets,,HI,35.66723,51.434795,2,outside HI box,TBA
+meets,,IA,37.86641,-87.05767,2,outside IA box,Rockport Country Club
+meets,,IN,2.7763832,-77.6672,2,outside IN box,tbd
+meets,,NE,32.243484,-110.94747,2,outside NE box,Districts
+meets,,NE,45.02783,-93.0069,2,outside NE box,"/,mn"
+meets,,NV,40.701252,-74.28725,2,outside NV box,Wells
+meets_tf,52628,IN,26.45975,80.35986,2,outside IN box,Best Indoor Season Marks
+meets_tf,54269,CA,29.922058,-90.07508,2,outside CA box,New Orleans Rock & Roll Marathon & Half Marathon
+meets_tf,54436,MD,30.028595,-90.06604,2,outside MD box,AAU National Junior Olympic Games
+meets_tf,68064,CA,37.37549,-5.9820795,2,outside CA box,7th IAAF World Champs in Athletics
+meets_tf,74678,WA,39.414314,-77.54448,2,outside WA box,Practice meet
+meets_tf,109257,IN,34.894337,-116.62792,2,outside IN box,Bedford vs Seymour
+meets_tf,110326,AZ,40.233967,-111.66465,2,outside AZ box,Stat
+meets_tf,111750,CA,44.372353,-79.6726,2,outside CA box,Great Oak All-Comers
+meets_tf,118314,WI,41.87045,-87.66749,2,outside WI box,UCTC - Ted Haydon Classic
+meets_tf,123146,MA,31.791702,-7.09262,2,outside MA box,Coaches Invite
+meets_tf,135948,CA,45.523064,-122.67648,2,outside CA box,Portland Rock n Roll Half Marathon
+meets_tf,144577,MD,40.400444,-3.5624914,2,outside MD box,Indoor High Jump
+meets_tf_meta,69336,NE,37.871044,-122.25077,2,outside NE box,Memorial Stadium
+meets_tf_meta,136747,MS,47.037872,-122.900696,2,outside MS box,Rancho Olympia
+meets_tf_meta,110526,PA,40.76371,-73.986145,2,outside PA box,CHA
+meets_tf_meta,124311,IN,34.238125,-118.53012,2,outside IN box,Northridge
+meets_tf_meta,53303,NY,28.64789,180.0,2,outside NY box,Croton-Harmon HS
+meets_tf_meta,142458,NY,44.692554,0.0,2,outside NY box,SUNY Plattsburgh
+meets_tf_meta,127761,IN,39.45977,-91.03513,2,outside IN box,pike 
+meets_tf_meta,78955,FL,40.36384,-111.92178,2,outside FL box,Westlake HS
+meets_tf_meta,143859,TN,13.085566,80.27173,2,outside TN box,Jawaharlal Nehru Stadium
+meets_tf_meta,66981,IA,36.81441,-119.75807,2,outside IA box,Bulldog Stadium
+meets_tf_meta,134870,CA,44.261715,-80.93204,2,outside CA box,Crawford
+meets_tf_meta,136183,WI,45.873196,-112.035576,2,outside WI box,Whitehall HS
+meets_tf_meta,141568,NE,41.684925,0.0,2,outside NE box,Boone Central track
+meets_tf_meta,108756,IN,32.811703,-97.40861,2,outside IN box,Tipton
+meets_tf_meta,142702,IL,41.866287,0.0,2,outside IL box,Glenbard East High School
+meets_tf_meta,65802,OH,36.068928,-79.810196,2,outside OH box,University of North Carolins A & T
+meets_tf_meta,111898,IN,44.936275,-72.52073,2,outside IN box,Kokomo
+meets_tf_meta,53118,TX,28.18792,-81.152466,2,outside TX box,Harmony HS
+meets_tf_meta,52559,GA,26.283392,-98.16283,2,outside GA box,Cat Memorial Stadium
+meets_tf_meta,140577,MO,38.51544,0.0,2,outside MO box,Eureka High School
+meets_tf_meta,95442,MA,43.90558,-69.823074,2,outside MA box,Hyde School of Maine
+meets_tf_meta,103632,CA,50.798374,8.753821,2,outside CA box,Georg Gaßmann Stadion
+meets_tf_meta,110832,IN,41.70138,-71.388016,2,outside IN box,Churubusco
+meets_tf_meta,141583,IA,41.62823,0.0,2,outside IA box,13007 Douglas Pkwy
+meets_tf_meta,63452,TN,34.81516,-92.354294,2,outside TN box,Central Arkansas Christian School
+meets_tf_meta,62628,TX,34.219276,-92.009575,2,outside TX box,Pine Bluff HS
+meets_tf_meta,69083,NM,37.765957,-111.58668,2,outside NM box,Escalante HS
+meets_tf_meta,141515,IA,41.50458,0.0,2,outside IA box,3299 White Pole Rd
+meets_tf_meta,137501,CA,50.097935,-104.722534,2,outside CA box,Wilcox
+meets_tf_meta,59630,CA,33.47767,-112.14922,2,outside CA box,phoenix
+meets_tf_meta,142742,CA,33.963215,0.0,2,outside CA box,200 Brookside Ave
+meets_tf_meta,141231,PA,39.984886,0.0,2,outside PA box,"Language Building, 1101 City Ave"
+meets_tf_meta,131424,VA,41.902916,12.453389,2,outside VA box,
+meets_tf_meta,125413,MA,37.09024,-95.71289,2,outside MA box,PEMBROKE
+meets_tf_meta,141078,PA,41.142708,0.0,2,outside PA box,Thomas Field House
+meets_tf_meta,129750,IN,40.779545,-74.02375,2,outside IN box,Union City HS
+meets_tf_meta,86807,WI,41.94991,-88.115234,2,outside WI box,Stratford HS Track
+meets_tf_meta,62020,PA,34.08148,-118.149994,2,outside PA box,USC
+meets_tf_meta,72413,KS,38.893066,-94.378654,2,outside KS box,Summit Christian Academy
+meets_tf_meta,111844,OR,44.73132,-85.63528,2,outside OR box,TBA
+meets_tf_meta,140575,MO,38.485065,0.0,2,outside MO box,Pacific High School
+meets_tf_meta,141593,NE,41.180435,0.0,2,outside NE box,Osceola
+meets_tf_meta,67566,WY,37.17021,-122.16733,2,outside WY box,Riverside Track
+meets_tf_meta,124796,CA,35.759575,-79.0193,2,outside CA box,North
+meets_tf_meta,61165,IN,33.910698,-82.39807,2,outside IN box,Boys-Fegely; Girls-Wheeler
+meets_tf_meta,138671,OH,42.25068,-83.62409,2,outside OH box,Eastern Michigan University
+meets_tf_meta,86523,WI,41.89918,-87.94667,2,outside WI box,Fox Valley Lutheran HS
+meets_tf_meta,138150,FL,25.971066,0.0,2,outside FL box,Dr. Michael M. Krop Senior High School
+meets_tf_meta,125482,MD,37.09024,-95.71289,2,outside MD box,Outdoor Track and Field Meet
+meets_tf_meta,80584,WV,40.711525,-80.63023,2,outside WV box,Beaver Local HS
+meets_tf_meta,108414,IN,12.842629,77.65164,2,outside IN box,Hamilton Heights
+meets_tf_meta,87727,NY,42.124027,-80.088104,2,outside NY box,Cathedral Prep Villa Maria Events Center
+meets_tf_meta,110500,IN,40.7042,-74.28355,2,outside IN box,Union HS
+meets_tf_meta,109112,PA,34.06167,-84.4183,2,outside PA box,GA
+meets_tf_meta,124847,IL,35.96064,-83.92074,2,outside IL box,Knoxville Track Complex
+meets_tf_meta,81539,PA,40.882477,-97.59211,2,outside PA box,Ygh
+meets_tf_meta,68462,NE,37.562065,-121.96815,2,outside NE box,Fremont HS-Appleget Field
+meets_tf_meta,141514,IA,41.37345,0.0,2,outside IA box,3200 Inwood St
+meets_tf_meta,63397,TX,34.762573,-92.33938,2,outside TX box,Scott Field
+meets_tf_meta,110225,MA,39.952377,-75.1636,2,outside MA box,Philadelphia
+meets_tf_meta,76873,IN,39.947254,-83.796585,2,outside IN box,Springfield HS
+meets_tf_meta,141449,PA,39.948254,0.0,2,outside PA box,Westtown School
+meets_tf_meta,142376,NC,36.060455,0.0,2,outside NC box,James B. Dudley High School
+meets_tf_meta,141447,PA,40.02298,0.0,2,outside PA box,Germantown Friends School Fields
+meets_tf_meta,77382,NE,40.03893,-82.951675,2,outside NE box,Columbus HS
+meets_tf_meta,129011,IN,40.340923,-76.41135,2,outside IN box,Lebanon
+meets_tf_meta,141704,PA,40.02795,0.0,2,outside PA box,Malvern Preparatory School
+meets_tf_meta,141389,IA,42.0205,0.0,2,outside IA box,1001 15th St
+meets_tf_meta,74346,CA,39.325653,-76.70522,2,outside CA box,Morgan State University
+meets_tf_meta,64420,NE,35.34733,-119.0225,2,outside NE box,Kern Track
+meets_tf_meta,64337,SD,35.303905,-119.02019,2,outside SD box,USD
+meets_tf_meta,142352,AZ,33.323,0.0,2,outside AZ box,Seton Catholic Preparatory High School
+meets_tf_meta,53300,MA,28.631071,77.28114,2,outside MA box,WHS
+meets_tf_meta,66543,IN,36.515656,-87.277374,2,outside IN box,Clarksville HS
+meets_tf_meta,103674,CA,51.26204,6.8259807,2,outside CA box,Rather Waldstadion
+meets_tf_meta,110495,CA,40.69061,-75.20936,2,outside CA box,NHS
+meets_tf_meta,140512,MO,38.550526,0.0,2,outside MO box,St Francis Borgia High School
+meets_tf_meta,136060,FL,45.681473,-111.03199,2,outside FL box,Bozeman HS
+meets_tf_meta,97912,NE,44.94422,-93.18994,2,outside NE box,Brady
+meets_tf_meta,68064,CA,37.37549,-5.9820795,2,outside CA box,Seville
+meets_tf_meta,54570,NY,30.13136,-95.46449,2,outside NY box,Knox Jr HS
+meets_tf_meta,64147,OH,35.205853,-97.442314,2,outside OH box,Poland Memorial Stadium
+meets_tf_meta,66066,IL,36.166477,-86.771286,2,outside IL box,Titan Stadium
+meets_tf_meta,124251,IN,34.14426,-118.001945,2,outside IN box,Monrovia HS
+meets_tfrrs,44623,NJ,40.266617,0.0,2,outside NJ box,The College of New Jersey
+meets_tfrrs,42516,NV,40.897137,-73.88609,2,outside NV box,VAN COURTLANDT PARK
+meets_tfrrs,46618,MS,32.363544,0.0,2,outside MS box,Millsaps College
+meets_tfrrs,44702,VA,37.199753,0.0,2,outside VA box,Lee Hall Mansion
+meets_tfrrs,44628,PA,41.012943,0.0,2,outside PA box,Murray H Goodman Campus
+meets_tfrrs,45072,KY,36.618202,0.0,2,outside KY box,Miller Memorial Golf Course
+meets_tfrrs,798,AR,37.79995,-87.026535,2,outside AR box,Yellow Creek Park
+meets,18333,IL,30.968672,-93.983406,1,outside IL box,Jasper County Country Club
+meets_tf,52043,CA,6.257695,-75.587555,1,outside CA box,Pan American Junior Games
+meets_tf,52247,CA,25.273626,51.510204,1,outside CA box,Diamond League Meet #1
+meets_tf,53253,IN,28.561104,77.16644,1,outside IN box,Eastside@ Angola
+meets_tf,54744,CA,30.249844,-81.78366,1,outside CA box,USATF Junior Olympics
+meets_tf,55133,MD,30.445547,-84.30559,1,outside MD box,FSU Relays
+meets_tf,60590,CA,33.76546,-84.38709,1,outside CA box,Halloween Half Marathon:10.27.13
+meets_tf,65789,CA,36.066856,-79.88573,1,outside CA box,USATF Youth National Championships
+meets_tf,66415,IN,36.360577,-91.8155,1,outside IN box,Caston Dual
+meets_tf,67047,TX,36.84977,-76.289215,1,outside TX box,AAU National JO T & F Championships
+meets_tf,72553,CA,38.915646,-77.04903,1,outside CA box,Marine Corps Marathon: 10.27.13
+meets_tf,75225,OR,39.556976,-119.800156,1,outside OR box,National Pole Vault Summit
+meets_tf,76832,NE,39.93869,-81.67129,1,outside NE box,Don Stine Invitational
+meets_tf,78389,OH,40.23749,-76.82956,1,outside OH box,Alter vs Steelton Highspire (Official)
+meets_tf,78545,CA,40.269753,-76.6725,1,outside CA box,Hershey North America Finals
+meets_tf,80589,MD,40.71407,-74.00897,1,outside MD box,New Balance Nats
+meets_tf,80815,NE,40.7527,-73.986374,1,outside NE box,Nebraska Shot Conversion
+meets_tf,82149,MA,41.033287,-73.76554,1,outside MA box,Loucks Games
+meets_tf,82153,CA,41.03414,-111.659584,1,outside CA box,Morgan Valley Marathon
+meets_tf,83718,NC,41.36841,-93.56502,1,outside NC box,USA Junior Track & Field Championships
+meets_tf,92018,MI,40.296658,-83.064125,1,outside MI box,1995 Midwest Meet of Champions
+meets_tf,92311,CA,42.982372,-75.586876,1,outside CA box,New York City Marathon: 11.03.13
+meets_tf,96216,CA,44.233288,-76.47955,1,outside CA box,Jamaica National Championship Meet
+meets_tf,111025,CA,42.168633,-121.71045,1,outside CA box,Enterprise Invit.
+meets_tf,111621,CA,43.85292,-79.462715,1,outside CA box,FSU Open Meet
+meets_tf,112681,CA,47.980534,-122.200035,1,outside CA box,Arcadia Invite
+meets_tf,112793,CA,53.52314,-113.61923,1,outside CA box,To be named at a later date
+meets_tf,123495,IN,32.76763,-88.65088,1,outside IN box,Dekalb vs Crestview
+meets_tf,125387,NY,37.09024,-95.71289,1,outside NY box,NYSAISAA Championships
+meets_tf,125444,NC,37.09024,-95.71289,1,outside NC box,World Youth Championship Trials 
+meets_tf,128849,TX,40.233845,-111.65853,1,outside TX box,Meet Split
+meets_tf,136190,OR,45.901955,-115.72374,1,outside OR box,Simplot Games
+meets_tf,137007,CA,47.60621,-122.33207,1,outside CA box,Seattle Rock n Roll Marathon
+meets_tf,,IN,41.32817,-73.68998,1,outside IN box,CNMS vs Heritage Hills
+meets_tf_meta,141354,IL,42.25636,0.0,1,outside IL box,Rockford East High School
+meets_tf_meta,60590,CA,33.76546,-84.38709,1,outside CA box,atlanta
+meets_tf_meta,122595,IN,28.337225,-82.25842,1,outside IN box,East Central
+meets_tf_meta,78545,CA,40.269753,-76.6725,1,outside CA box,Hershey College
+meets_tf_meta,69097,PA,37.771313,75.23034,1,outside PA box,TJ
+meets_tf_meta,125382,CA,37.09024,-95.71289,1,outside CA box,Riverside Community College-All Comers
+meets_tf_meta,66224,NE,36.241962,-86.86542,1,outside NE box,McCool Junction Track & Field
+meets_tf_meta,125420,OH,37.09024,-95.71289,1,outside OH box,To be announced
+meets_tf_meta,126188,IN,38.029305,-78.47668,1,outside IN box,Greenfield Central HS
+meets_tf_meta,125472,CA,37.09024,-95.71289,1,outside CA box,Yreka Track Stadium
+meets_tf_meta,141873,PA,40.09904,0.0,1,outside PA box,Plymouth Whitemarsh High School
+meets_tf_meta,102979,NE,48.1014,-122.18095,1,outside NE box,Marysville
+meets_tf_meta,53253,IN,28.561104,77.16644,1,outside IN box,Angola HS
+meets_tf_meta,125411,NE,37.09024,-95.71289,1,outside NE box,"Centrura, NE"
+meets_tf_meta,111991,OR,40.281925,-104.77775,1,outside OR box,Gilchrest HS
+meets_tf_meta,56151,AZ,31.774199,-106.47915,1,outside AZ box,Texas
+meets_tf_meta,72033,OR,38.80163,-77.07045,1,outside OR box,NSAF
+meets_tf_meta,135501,WI,44.927353,-93.281,1,outside WI box,King Field
+meets_tf_meta,112087,CA,45.47027,-73.62369,1,outside CA box,LCC
+meets_tf_meta,87458,NE,42.08273,-87.98522,1,outside NE box,Arlington Tri
+meets_tf_meta,74328,CA,39.319973,-76.66257,1,outside CA box,College
+meets_tf_meta,142047,IL,42.32037,0.0,1,outside IL box,Boylan Catholic High School
+meets_tf_meta,83578,IN,41.32817,-73.68998,1,outside IN box,Heritage Hills
+meets_tf_meta,54016,IA,29.729795,-95.51125,1,outside IA box,houston Texas
+meets_tf_meta,111269,IN,42.733135,-73.66764,1,outside IN box,Rensselaer Track Complex
+meets_tf_meta,137504,AZ,50.414036,14.975035,1,outside AZ box,PL
+meets_tf_meta,83587,PA,41.33062,-72.19557,1,outside PA box,Conn
+meets_tf_meta,122465,IN,20.593683,78.96288,1,outside IN box,Hauser/Waldron
+meets_tf_meta,68004,IL,37.35679,-121.82033,1,outside IL box,SJO Track
+meets_tf_meta,112681,CA,47.980534,-122.200035,1,outside CA box,
+meets_tf_meta,111789,IL,44.52393,-89.56616,1,outside IL box,
+meets_tf_meta,55133,MD,30.445547,-84.30559,1,outside MD box,Florida State University
+meets_tf_meta,122482,OR,25.064074,72.424706,1,outside OR box, LHS
+meets_tf_meta,130347,CA,41.203323,-77.19453,1,outside CA box,Pa
+meets_tf_meta,141719,WI,43.741913,0.0,1,outside WI box,Cashton
+meets_tf_meta,130352,IN,41.203323,-77.19453,1,outside IN box,#5 Penn Secitional
+meets_tf_meta,142555,IL,41.70867,0.0,1,outside IL box,10201 S Cottage Grove Ave
+meets_tf_meta,141294,PA,40.189823,0.0,1,outside PA box,Spring-Ford Area High School 10-12 Grade Center
+meets_tf_meta,93229,IN,43.16792,-89.4412,1,outside IN box,Shenandoah
+meets_tf_meta,125389,IA,37.09024,-95.71289,1,outside IA box,KP-WC
+meets_tf_meta,61587,NE,34.00059,-84.039085,1,outside NE box,602 East G
+meets_tf_meta,110293,AZ,40.143105,47.576927,1,outside AZ box,Canceled
+meets_tf_meta,141281,IA,43.0798,0.0,1,outside IA box,Sioux Center
+meets_tf_meta,102287,OR,47.609066,-122.33017,1,outside OR box,Seattle
+meets_tf_meta,141830,NC,36.077003,0.0,1,outside NC box,North Carolina Agricultural and Technical State University
+meets_tf_meta,110191,NE,39.843124,-96.635544,1,outside NE box,"Marysville, KS"
+meets_tf_meta,137557,IN,55.95325,-3.188267,1,outside IN box,Edinburg
+meets_tf_meta,110811,PA,41.627453,-71.005806,1,outside PA box,CV
+meets_tf_meta,86710,IN,41.9337,-79.60193,1,outside IN box,Columbus East
+meets_tf_meta,111616,OR,44.02788,-71.76009,1,outside OR box,Lost River
+meets_tf_meta,78930,NE,40.35519,-94.8898,1,outside NE box,NW Missouri
+meets_tf_meta,140942,NC,35.317963,0.0,1,outside NC box,Union Pines High School
+meets_tf_meta,140588,MO,38.595222,0.0,1,outside MO box,Lafayette High School
+meets_tf_meta,57366,OR,32.623405,-117.09499,1,outside OR box,NKN HS
+meets_tf_meta,142000,CA,33.99458,0.0,1,outside CA box,Ruben S. Ayala High School
+meets_tf_meta,87806,MO,42.138184,-70.69184,1,outside MO box,Marshfield Track
+meets_tf_meta,142732,OH,39.955944,0.0,1,outside OH box,The Capital Center
+meets_tf_meta,70836,KS,38.48125,-94.34464,1,outside KS box,ARCHIE
+meets_tf_meta,137481,CA,49.518486,-105.22599,1,outside CA box,Horizon
+meets_tf_meta,122443,PA,8.537981,-80.78213,1,outside PA box,y
+meets_tf_meta,142528,NC,35.972507,0.0,1,outside NC box,Southeast Guilford High School
+meets_tf_meta,125471,TX,37.09024,-95.71289,1,outside TX box,Bulldog Stadium
+meets_tf_meta,125464,OR,37.09024,-95.71289,1,outside OR box,Girls-Cascade; Boys-Gladstone
+meets_tf_meta,52355,NC,26.01114,-80.14601,1,outside NC box,DHC
+meets_tf_meta,125387,NY,37.09024,-95.71289,1,outside NY box,Astoria Park
+meets_tf_meta,85917,NE,41.79584,43.45238,1,outside NE box,TBA
+meets_tf_meta,142045,VA,37.628197,0.0,1,outside VA box,J.R. Tucker High School
+meets_tf_meta,135046,WY,44.409706,-103.50908,1,outside WY box,Sturgis
+meets_tf_meta,142509,TX,29.533957,0.0,1,outside TX box,Kenneth Hall Stadium
+meets_tf_meta,124441,IN,34.65816,-88.5667,1,outside IN box,Boonville MS
+meets_tf_meta,69197,NE,37.80341,-122.21755,1,outside NE box,Oakland
+meets_tf_meta,110162,CA,39.74389,-105.02011,1,outside CA box,Coalinga high stadium
+meets_tf_meta,134689,MO,44.05207,-123.086754,1,outside MO box,Eugene
+meets_tf_meta,111364,CA,42.966152,-78.73606,1,outside CA box,Christian
+meets_tf_meta,136184,WI,45.873196,-112.035576,1,outside WI box,Whithall HS
+meets_tf_meta,59979,MA,33.570786,-112.1908,1,outside MA box,SBHS
+meets_tf_meta,72116,KS,38.82016,-102.35027,1,outside KS box,Cheyenne Wells (CO)
+meets_tf_meta,144577,MD,40.400444,-3.5624914,1,outside MD box,Pista de baloncesto
+meets_tf_meta,86387,IN,41.87284,-87.812416,1,outside IN box,Forest Park
+meets_tf_meta,108632,IL,31.80643,34.65593,1,outside IL box,West Meck
+meets_tf_meta,76468,OH,39.855885,-74.77606,1,outside OH box,Shawnee HS
+meets_tf_meta,140746,MO,38.745304,0.0,1,outside MO box,Raymore-Peculiar High School
+meets_tf_meta,109227,PA,34.59422,-120.14105,1,outside PA box,PC
+meets_tf_meta,144305,CT,41.53619,2.124529,1,outside CT box,Pista Coberta De Catalunya D'atletisme
+meets_tf_meta,111792,OR,40.340923,-76.41135,1,outside OR box,Lebanon
+meets_tf_meta,140582,MO,38.971485,0.0,1,outside MO box,Battle High School
+meets_tf_meta,135492,WI,44.91234,-93.30104,1,outside WI box,Southerwestern HS
+meets_tf_meta,141468,NE,41.091633,0.0,1,outside NE box,Platteview High School
+meets_tf_meta,64736,NE,35.49276,-94.1387,1,outside NE box,Alma track
+meets_tf_meta,69131,MO,37.782677,-122.4004,1,outside MO box,California Open
+meets_tf_meta,131903,IN,42.162006,-78.97532,1,outside IN box,Randolph So.
+meets_tf_meta,123849,IN,33.51623,-90.17953,1,outside IN box,Greenwood MS
+meets_tf_meta,95132,CA,43.778744,11.279792,1,outside CA box,ASICS Firenze Stadium
+meets_tf_meta,132724,OR,42.633423,-71.31617,1,outside OR box,Lowell & Reedsport @ Oakland 
+meets_tf_meta,86274,NE,41.858006,-87.6242,1,outside NE box,South Loop
+meets_tf_meta,124515,OH,34.99125,-79.0306,1,outside OH box,Jack Britt Stadium
+meets_tf_meta,52115,FL,19.301764,-81.36052,1,outside FL box,Cayman Islands
+meets_tf_meta,142083,NE,47.1122,6.8359146,1,outside NE box,Centre Sportif de la Charrière
+meets_tf_meta,76832,NE,39.93869,-81.67129,1,outside NE box,Cambridge Track
+meets_tf_meta,125415,OR,37.09024,-95.71289,1,outside OR box,Mitchell HS
+meets_tf_meta,76941,IN,39.95814,-76.667336,1,outside IN box,Heritage Hills
+meets_tf_meta,125430,PA,37.09024,-95.71289,1,outside PA box,NBC
+meets_tf_meta,141747,NE,41.684925,0.0,1,outside NE box,Boone Central track
+meets_tf_meta,54046,CA,29.744902,-95.39485,1,outside CA box,Houston
+meets_tf_meta,76553,KY,39.877583,-88.93958,1,outside KY box,"Decatur, IL"
+meets_tf_meta,108420,IN,17.656927,73.3924,1,outside IN box,NJHS
+meets_tf_meta,80233,IN,40.639717,-78.94445,1,outside IN box,Northeastern HS
+meets_tf_meta,125444,NC,37.09024,-95.71289,1,outside NC box,Southern Illinois University Kort Stadium
+meets_tf_meta,145678,AK,5.005211,7.886361,1,outside AK box,Godswill Akpabio International Stadium
+meets_tf_meta,83571,IN,41.326828,-73.065605,1,outside IN box,Ansonia HS
+meets_tf_meta,140754,NE,40.17093,0.0,1,outside NE box,Thayer Central Community Schools
+meets_tf_meta,84663,IN,41.55971,-74.19908,1,outside IN box,Princeton
+meets_tf_meta,123495,IN,32.76763,-88.65088,1,outside IN box,Dekalb MS
+meets_tf_meta,141215,NY,40.775772,0.0,1,outside NY box,18th Street & Astoria Park South
+meets_tf_meta,86060,WI,41.819664,-72.10697,1,outside WI box,Eastern Connecticut State
+meets_tf_meta,56647,IN,32.25215,-80.89897,1,outside IN box,Bluffton HS
+meets_tf_meta,54183,MS,29.826033,-95.4243,1,outside MS box,Various
+meets_tf_meta,77618,NE,40.075256,-75.03218,1,outside NE box,Kearney
+meets_tf_meta,144443,MD,40.398773,-3.7399783,1,outside MD box,Gallur
+meets_tf_meta,125463,OR,37.09024,-95.71289,1,outside OR box,Cascade; Gladstone
+meets_tf_meta,125392,TX,37.09024,-95.71289,1,outside TX box,Fightin' Buck Stadium
+meets_tf_meta,80589,MD,40.71407,-74.00897,1,outside MD box,NY
+meets_tf_meta,142644,MI,42.962082,0.0,1,outside MI box,Alksnis Recreation Building
+meets_tf_meta,103746,CA,53.55326,-1.4838243,1,outside CA box,Stanislas
+meets_tf_meta,101397,CA,47.11231,-88.54665,1,outside CA box,Michigan Tech Student Development Complex
+meets_tf_meta,128232,IN,39.83672,-84.41134,1,outside IN box,"Brookville, OH"
+meets_tf_meta,131719,NE,42.062466,-104.184395,1,outside NE box,"torrington, wy"
+meets_tf_meta,137522,CA,50.972385,-102.94179,1,outside CA box,Birmingham
+meets_tf_meta,53021,TX,27.975868,-82.503334,1,outside TX box,Buccaneer Stadium
+meets_tf_meta,61543,MA,33.993176,-6.820305,1,outside MA box,NHS
+meets_tf_meta,142634,IL,41.86702,0.0,1,outside IL box,Proviso West High School
+meets_tf_meta,136190,OR,45.901955,-115.72374,1,outside OR box,Idaho
+meets_tf_meta,98028,NE,44.97291,-93.25716,1,outside NE box,Viking Stadium
+meets_tf_meta,128077,IN,39.739235,-104.99025,1,outside IN box,North Miami HS
+meets_tf_meta,101602,IN,47.235195,-61.86215,1,outside IN box,Boys-CMS; Girls-Fegely
+meets_tf_meta,71788,OR,38.736904,-86.4797,1,outside OR box,Mitchell HS
+meets_tf_meta,128086,IN,39.743942,-84.63662,1,outside IN box,Eaton HS
+meets_tf_meta,125380,VA,37.09024,-95.71289,1,outside VA box,Prince Edward Track
+meets_tf_meta,125498,IN,37.09024,-95.71289,1,outside IN box,Yorktown HS
+meets_tf_meta,82174,PA,41.038456,-80.671234,1,outside PA box,TBD
+meets_tf_meta,110943,WI,41.992096,-88.1838,1,outside WI box,
+meets_tf_meta,123144,MA,31.791702,-7.09262,1,outside MA box,j
+meets_tf_meta,96216,CA,44.233288,-76.47955,1,outside CA box,National Stadium
+meets_tf_meta,82149,MA,41.033287,-73.76554,1,outside MA box,White Plains
+meets_tf_meta,111922,CA,44.95816,-93.10506,1,outside CA box,MW
+meets_tf_meta,72432,NE,38.895718,-76.98636,1,outside NE box,DC Schools
+meets_tf_meta,52247,CA,25.273626,51.510204,1,outside CA box,"Doha, Qatar"
+meets_tf_meta,75518,VA,39.64176,-77.71999,1,outside VA box,ARCC Complex
+meets_tf_meta,127263,KS,39.091118,-94.415504,1,outside KS box,Idependence MO
+meets_tf_meta,122586,IN,28.039465,-81.94981,1,outside IN box,Lakeland
+meets_tf_meta,126547,IN,38.485123,-78.625015,1,outside IN box,Shennandoah
+meets_tf_meta,125481,OH,37.09024,-95.71289,1,outside OH box,Hoban Track
+meets_tf_meta,111025,CA,42.168633,-121.71045,1,outside CA box,Redding
+meets_tf_meta,103757,IN,54.75237,-1.6143028,1,outside IN box,Harrison
+meets_tf_meta,54323,NE,29.96821,-95.465195,1,outside NE box,Wisner HS Track
+meets_tf_meta,125478,IL,37.09024,-95.71289,1,outside IL box,Clyde F Peterson Stadium
+meets_tf_meta,130877,IN,41.57366,-84.005226,1,outside IN box,Delta
+meets_tf_meta,137007,CA,47.60621,-122.33207,1,outside CA box,seattle
+meets_tf_meta,122469,IN,20.593683,78.96288,1,outside IN box,Site To Be Determined
+meets_tf_meta,69566,IN,37.966164,-121.217766,1,outside IN box,Brickie Bowl
+meets_tf_meta,77428,MD,40.046837,-76.312386,1,outside MD box,United States
+meets_tf_meta,81971,PA,40.993744,-73.668816,1,outside PA box,Balwin
+meets_tf_meta,92576,NE,43.02755,-76.10669,1,outside NE box,"Tecumseh, NE"
+meets_tf_meta,125461,NY,37.09024,-95.71289,1,outside NY box,Wiesbaden HS
+meets_tf_meta,141589,PA,41.00627,0.0,1,outside PA box,279 N Courtland St
+meets_tf_meta,61867,OR,34.05252,-117.79034,1,outside OR box,Dual Meet IVHS vs RRHS
+meets_tf_meta,96846,IN,44.503414,-85.17196,1,outside IN box,Pioneer
+meets_tf_meta,122458,FL,18.363008,-66.558105,1,outside FL box,Puerto Rico
+meets_tf_meta,141869,NC,36.002644,0.0,1,outside NC box,High Point Athletic Complex
+meets_tf_meta,122847,IN,30.267153,-97.74306,1,outside IN box,Austin
+meets_tf_meta,70551,WI,38.39107,-75.41919,1,outside WI box,Pittsville HS
+meets_tf_meta,66415,IN,36.360577,-91.8155,1,outside IN box,Comets Field
+meets_tf_meta,141019,IA,40.61692,0.0,1,outside IA box,1 University Pl
+meets_tf_meta,80840,NE,40.75802,-73.96017,1,outside NE box,Sutton Track
+meets_tf_meta,108418,IN,13.93329,75.5734,1,outside IN box,Woodlan
+meets_tf_meta,57176,WI,32.54625,-117.04484,1,outside WI box,Larsen Field
+meets_tf_meta,77460,IN,40.050724,-82.915375,1,outside IN box,"Easton, OH"
+meets_tf_meta,123738,KS,33.300148,-90.94385,1,outside KS box,Washington County MS Meet
+meets_tf_meta,128849,TX,40.233845,-111.65853,1,outside TX box,Utah
+meets_tf_meta,125979,OR,37.804363,-122.27111,1,outside OR box,Oakland Track and Football Field
+meets_tf_meta,97520,PA,44.825962,-93.29253,1,outside PA box,MN
+meets_tf_meta,57704,OR,32.74047,-117.23055,1,outside OR box,Pt. Loma
+meets_tf_meta,113155,FL,35.225796,-80.852844,1,outside FL box,Lecanto Panther Stadium
+meets_tf_meta,67165,IN,36.943325,-76.28942,1,outside IN box,Chambers Field
+meets_tf_meta,141950,VA,37.38826,0.0,1,outside VA box,Lloyd C Bird High School
+meets_tf_meta,123997,IN,33.774826,-84.29631,1,outside IN box,North Decature
+meets_tf_meta,140572,MO,38.623234,0.0,1,outside MO box,Marquette High School
+meets_tf_meta,112745,IN,48.533936,-123.01329,1,outside IN box,Harrison HS
+meets_tf_meta,125402,CA,37.09024,-95.71289,1,outside CA box,Bstrick4211@yahoo.com
+meets_tf_meta,67568,OR,37.171886,-93.24774,1,outside OR box,berkeley
+meets_tf_meta,65789,CA,36.066856,-79.88573,1,outside CA box,Greensboro
+meets_tf_meta,66961,KS,36.806973,-97.73498,1,outside KS box,100 Main
+meets_tf_meta,125469,IN,37.09024,-95.71289,1,outside IN box,Batesville HS
+meets_tf_meta,77733,OR,40.096283,-75.01791,1,outside OR box,PHill
+meets_tf_meta,125437,MA,37.09024,-95.71289,1,outside MA box,02332
+meets_tf_meta,130571,IN,41.33954,-73.69735,1,outside IN box,Heritage Hills HS
+meets_tf_meta,61112,OR,33.898556,-117.7891,1,outside OR box,cudequest Invitational
+meets_tf_meta,140957,PA,39.86756,0.0,1,outside PA box,Garnet Valley High School
+meets_tf_meta,135309,IN,44.678684,-68.264465,1,outside IN box,Eastbrook
+meets_tf_meta,110586,WI,40.945168,-81.12262,1,outside WI box,
+meets_tf_meta,141943,NE,40.838478,0.0,1,outside NE box,Abel Stadium
+meets_tf_meta,53844,NE,29.622839,-82.81323,1,outside NE box,Trenton Track
+meets_tf_meta,141817,PA,40.022156,0.0,1,outside PA box,Penn Charter
+meets_tf_meta,78967,WI,40.366173,-89.54883,1,outside WI box,Delavan HS
+meets_tf_meta,145666,LA,6.4973726,3.379225,1,outside LA box,Herbert Macaulay Way
+meets_tf_meta,141590,NE,42.562496,0.0,1,outside NE box,Ponca
+meets_tf_meta,83609,IN,41.335327,-73.08297,1,outside IN box,Ansonia
+meets_tf_meta,133412,NE,43.048122,-76.14742,1,outside NE box,Syracuse Track
+meets_tf_meta,134366,IL,43.804134,-120.5542,1,outside IL box,Oregon 
+meets_tf_meta,125460,VA,37.09024,-95.71289,1,outside VA box,Rustuburg HS Track 
+meets_tf_meta,128678,AZ,40.143105,47.576927,1,outside AZ box,
+meets_tf_meta,138416,FL,35.972385,-79.99531,1,outside FL box,High Point University
+meets_tf_meta,141698,MO,37.06769,0.0,1,outside MO box,Joplin High School
+meets_tf_meta,87392,OR,42.068985,-76.7965,1,outside OR box,Elmira HS
+meets_tf_meta,125378,NC,37.09024,-95.71289,1,outside NC box,Jackson Track
+meets_tf_meta,137558,IN,55.95325,-3.188267,1,outside IN box,Edinburgh HS
+meets_tf_meta,112793,CA,53.52314,-113.61923,1,outside CA box,1932
+meets_tf_meta,125396,OR,37.09024,-95.71289,1,outside OR box,Grant HS 
+meets_tf_meta,87437,NE,42.07691,-104.18889,1,outside NE box,Torrington
+meets_tf_meta,141891,WI,43.559887,0.0,1,outside WI box,Bob Mael Field - Football & Track
+meets_tf_meta,102078,CA,47.520752,-122.30057,1,outside CA box,Aviation HS
+meets_tf_meta,67021,MD,36.83745,-76.21427,1,outside MD box,Norfolk
+meets_tf_meta,125506,OR,37.09024,-95.71289,1,outside OR box,Reedsport HS
+meets_tf_meta,76774,MD,39.928993,-77.99738,1,outside MD box,McConnellsburg HS
+meets_tf_meta,99915,CA,45.89085,-119.51271,1,outside CA box,Oregon
+meets_tf_meta,123146,MA,31.791702,-7.09262,1,outside MA box,?`
+meets_tf_meta,52104,CA,17.291588,-62.70674,1,outside CA box,Silver Jubilee Stadium
+meets_tf_meta,140544,MO,38.371563,0.0,1,outside MO box,Northwest High School
+meets_tf_meta,141304,IA,41.890705,0.0,1,outside IA box,400 Metcalf St
+meets_tf_meta,125502,IN,37.09024,-95.71289,1,outside IN box,Benton Central HS
+meets_tf_meta,137534,CA,52.128067,-103.377686,1,outside CA box,not sure
+meets_tf_meta,112782,CA,49.636745,11.792983,1,outside CA box,Vilseck HS
+meets_tf_meta,52235,KY,25.04302,-77.31604,1,outside KY box,Thomas A. Robinson Stadium
+meets_tf_meta,94643,OR,43.614822,-116.20296,1,outside OR box,Boise
+meets_tf_meta,141784,PA,39.89536,0.0,1,outside PA box,Strath Haven Middle School
+meets_tf_meta,141702,PA,40.01756,0.0,1,outside PA box,Academy of Notre Dame de Namur
+meets_tf_meta,135760,IL,45.253784,-69.445465,1,outside IL box,Downers Grove North HS
+meets_tf_meta,77714,NY,40.09404,-76.354706,1,outside NY box,Lancaster Fieldhouse
+meets_tf_meta,141599,NE,40.141468,0.0,1,outside NE box,Fairbury Junior-Senior High School
+meets_tf_meta,54269,CA,29.922058,-90.07508,1,outside CA box,Big Easy
+meets_tf_meta,54744,CA,30.249844,-81.78366,1,outside CA box,Florida
+meets_tf_meta,142743,CA,33.811886,0.0,1,outside CA box,3591 W Cerritos Ave
+meets_tf_meta,67281,FL,37.000336,-94.726776,1,outside FL box,Southridge Park
+meets_tf_meta,76839,NE,39.941044,-82.99651,1,outside NE box,Deshler Track & Field
+meets_tf_meta,56137,IA,31.76644,-106.49199,1,outside IA box,Stanton Track
+meets_tf_meta,87655,WI,42.11346,-72.75111,1,outside WI box,Westfield Middle School
+meets_tf_meta,52025,ID,-6.184623,106.82165,1,outside ID box,TBA
+meets_tf_meta,52217,KS,22.65067,88.4185,1,outside KS box,HOPL MS League
+meets_tf_meta,140716,IL,40.48738,0.0,1,outside IL box,Bloomington High School
+meets_tf_meta,111402,CA,43.070717,-89.38321,1,outside CA box,wh
+meets_tf_meta,125425,WI,37.09024,-95.71289,1,outside WI box,??
+meets_tf_meta,84705,ME,41.575024,-70.627625,1,outside ME box,Falmouth HS
+meets_tf_meta,125447,TX,37.09024,-95.71289,1,outside TX box,Spur
+meets_tf_meta,96100,IN,44.15743,-91.87955,1,outside IN box,MV
+meets_tf_meta,111621,CA,43.85292,-79.462715,1,outside CA box,FSU
+meets_tf_meta,92018,MI,40.296658,-83.064125,1,outside MI box,Ohio Wesleyan University
+meets_tf_meta,80815,NE,40.7527,-73.986374,1,outside NE box,Gothenburg meet Dirctor
+meets_tf_meta,141252,NY,41.815033,0.0,1,outside NY box,122 Kyserike Rd
+meets_tf_meta,140585,MO,38.78821,0.0,1,outside MO box,Fort Zumwalt East High School
+meets_tf_meta,52628,IN,26.45975,80.35986,1,outside IN box,Various
+meets_tf_meta,140586,MO,39.00903,0.0,1,outside MO box,Grain Valley High School
+meets_tf_meta,75225,OR,39.556976,-119.800156,1,outside OR box,Reno
+meets_tf_meta,73446,IA,39.107956,-77.2092,1,outside IA box,Westwood Sporting Complex
+meets_tf_meta,83787,IN,41.37978,-83.63008,1,outside IN box,Bowling Green State University
+meets_tf_meta,92311,CA,42.982372,-75.586876,1,outside CA box,new york
+meets_tf_meta,76778,NE,39.929214,-74.99066,1,outside NE box,Ashland Track
+meets_tf_meta,102264,IN,47.60236,-122.33287,1,outside IN box,Pioneer HS
+meets_tf_meta,125493,ID,37.09024,-95.71289,1,outside ID box,Filer HS
+meets_tf_meta,125440,TX,37.09024,-95.71289,1,outside TX box,Prestonwood
+meets_tf_meta,73054,KS,39.017773,-94.12506,1,outside KS box,Oak Grove HS
+meets_tf_meta,109257,IN,34.894337,-116.62792,1,outside IN box,Bedford
+meets_tf_meta,76865,MD,39.946747,-76.72815,1,outside MD box,York College of Pennsylvania in
+meets_tf_meta,110326,AZ,40.233967,-111.66465,1,outside AZ box,
+meets_tf_meta,122470,IN,20.593683,78.96288,1,outside IN box,Chesterton Track Complex
+meets_tf_meta,103601,OR,50.18516,-119.10515,1,outside OR box,Vernon
+meets_tf_meta,76824,MD,39.9363,-77.99841,1,outside MD box,McConnellsburg
+meets_tf_meta,62706,OR,34.241722,-118.530205,1,outside OR box,Cal State Northridge
+meets_tf_meta,124309,IN,34.238125,-118.53012,1,outside IN box,vs Northridge
+meets_tf_meta,141791,IA,41.309578,0.0,1,outside IA box,Lacey Sports Park
+meets_tf_meta,100883,CA,46.726353,-71.29727,1,outside CA box,E. Nic
+meets_tf_meta,54436,MD,30.028595,-90.06604,1,outside MD box,The University of New Orleans
+meets_tf_meta,78389,OH,40.23749,-76.82956,1,outside OH box,Alter vs Steelton Highspire (Official)
+meets_tf_meta,130346,OH,41.203323,-77.19453,1,outside OH box,University of Pennsylvania
+meets_tf_meta,72399,CA,38.889854,-76.97187,1,outside CA box,RFK Stadium
+meets_tf_meta,141450,PA,40.010174,0.0,1,outside PA box,Lower Merion High School
+meets_tf_meta,145705,MD,40.44224,-3.7100425,1,outside MD box,"Calle de Melquíades Álvarez, 18"
+meets_tf_meta,80174,NE,40.6284,-87.69422,1,outside NE box,MHS
+meets_tf_meta,63759,OR,35.040348,-98.28468,1,outside OR box,Oakridge
+meets_tf_meta,67047,TX,36.84977,-76.289215,1,outside TX box,"Eastern Michigan University, MI"
+meets_tf_meta,74678,WA,39.414314,-77.54448,1,outside WA box,Old Mead Middle
+meets_tf_meta,80864,PA,40.761387,-111.82578,1,outside PA box,ut
+meets_tf_meta,103536,CA,49.305775,-124.20025,1,outside CA box,Bell
+meets_tf_meta,140322,CA,33.733948,0.0,1,outside CA box,Northwood High School
+meets_tf_meta,125462,IL,37.09024,-95.71289,1,outside IL box,TBD
+meets_tf_meta,125442,NE,37.09024,-95.71289,1,outside NE box,Morrill HS
+meets_tf_meta,122628,CA,28.888315,-82.432594,1,outside CA box,Notre Dame at Citrus Hills
+meets_tf_meta,89069,PA,42.339306,-71.08659,1,outside PA box,N. Huntington
+meets_tf_meta,118314,WI,41.87045,-87.66749,1,outside WI box,University of Illinois Chicago
+meets_tf_meta,111750,CA,44.372353,-79.6726,1,outside CA box,GO
+meets_tf_meta,125406,IN,37.09024,-95.71289,1,outside IN box,Bellmont HS
+meets_tf_meta,70301,IN,38.292755,-78.67958,1,outside IN box,Shenandoah
+meets_tf_meta,122471,IN,20.593683,78.96288,1,outside IN box,-
+meets_tf_meta,135948,CA,45.523064,-122.67648,1,outside CA box,portland
+meets_tf_meta,93914,CA,43.401875,-80.322525,1,outside CA box,nu
+meets_tf_meta,52039,ID,2.9686751,99.80663,1,outside ID box,TBA
+meets_tf_meta,89692,IN,42.45572,-71.1342,1,outside IN box,Winchester HS
+meets_tf_meta,125407,OR,37.09024,-95.71289,1,outside OR box,Reedsport
+meets_tf_meta,73043,IL,39.01512,-95.74989,1,outside IL box,Winston Brown Track
+meets_tf_meta,72553,CA,38.915646,-77.04903,1,outside CA box,10.27.13
+meets_tf_meta,77348,CA,40.033005,-75.33668,1,outside CA box,Villanova Stadium
+meets_tf_meta,125454,CA,37.09024,-95.71289,1,outside CA box,Bullard
+meets_tf_meta,86359,WI,41.87045,-87.66749,1,outside WI box,University of Illinois Chicago
+meets_tf_meta,77240,MA,40.011143,-105.12712,1,outside MA box,dr
+meets_tf_meta,82153,CA,41.03414,-111.659584,1,outside CA box,morgan valley
+meets_tf_meta,62531,VA,34.190994,-80.75974,1,outside VA box,JP Home Meet 2022 #1
+meets_tf_meta,109511,IN,36.969433,-78.19063,1,outside IN box,KV
+meets_tf_meta,83700,IN,41.36446,-89.27791,1,outside IN box,Princeton Track
+meets_tf_meta,52043,CA,6.257695,-75.587555,1,outside CA box,Alfonso Galvis Duque Stadium
+meets_tf_meta,108795,MA,32.993656,-6.833425,1,outside MA box,AB
+meets_tf_meta,52105,MA,17.430212,78.44186,1,outside MA box,AP
+meets_tf_meta,141156,NY,40.963745,0.0,1,outside NY box,255 Wilmot Rd
+meets_tf_meta,78929,NE,40.354782,-76.72982,1,outside NE box,Harrisburg
+meets_tf_meta,110373,IN,40.33919,-83.48863,1,outside IN box,Col Wheeler M.S.
+meets_tf_meta,142562,IL,40.493923,0.0,1,outside IL box,Shirk Center
+meets_tf_meta,93183,PA,43.15861,-78.67551,1,outside PA box,LTHS
+meets_tf_meta,116969,UT,36.07259,-79.77337,1,outside UT box,North Carolina A&T University
+meets_tf_meta,111139,IN,42.37065,-71.11863,1,outside IN box,Lowell HS
+meets_tf_meta,141851,IN,39.901375,0.0,1,outside IN box,Mt Vernon High School
+meets_tf_meta,83718,NC,41.36841,-93.56502,1,outside NC box,Drake University
+meets_tf_meta,109390,KY,35.97402,-83.91179,1,outside KY box,
+meets_tfrrs,900000405,AK,30.687775,-88.18323,1,outside AK box,South Alabama
+meets_tfrrs,26694,IL,30.244732,-85.52202,1,outside IL box,St. James Forest Preserve
+meets_tfrrs,900000098,OH,34.10593,-93.06598,1,outside OH box,Clark County Fairgrounds
+meets_tfrrs,8109,AR,44.92531,-93.18282,1,outside AR box,St. Kates
+meets_tfrrs,44624,PA,40.53878,0.0,1,outside PA box,DeSales University
+meets_tfrrs,19953,VA,36.09185,-80.0787,1,outside VA box,Longwood University Golf Course
+meets_tfrrs,31803,CT,43.0528,-75.405975,1,outside CT box,Stanley Quarter Park
+meets_tfrrs,8100,MS,34.443794,-87.17825,1,outside MS box,Choctaw Trails XC Course
+meets_tfrrs,29208,AR,34.672104,-89.02932,1,outside AR box,", AR"
+meets_tfrrs,900000258,LA,34.05369,-118.24277,1,outside LA box,.
+meets_tfrrs,44786,NE,41.02529,0.0,1,outside NE box,Olsson XC Course at Mahoney State Park
+meets_tfrrs,46269,VA,37.596355,0.0,1,outside VA box,Joseph Bryan Park
+meets_tfrrs,6225,GA,40.759457,-74.18117,1,outside GA box,Kennesaw State
+meets_tfrrs,1377,IL,41.35766,-93.52664,1,outside IL box,Monmouth College
+meets_tfrrs,6112,KY,39.928898,-105.05269,1,outside KY box,Eagle Trace Golf Course
+meets_tfrrs,1963,AR,41.18565,-87.120155,1,outside AR box,Kankakee Valley High School
+meets_tfrrs,41285,SC,35.973938,-78.89891,1,outside SC box,Roger Milliken Center
+meets_tfrrs,5874,SD,34.939514,-81.031624,1,outside SD box,Winthrop University
+meets_tfrrs,47941,MI,37.789555,-122.16561,1,outside MI box,Merritt College
+meets_tfrrs,38157,IL,39.91043,-86.20987,1,outside IL box,St. James Forest Preserve
+meets_tfrrs,37794,KS,41.707394,-93.611465,1,outside KS box,DMACC Cross Country Course
+meets_tfrrs,31864,WI,44.16675,-93.9913,1,outside WI box,Nemadji Golf Course
+meets_tfrrs,44084,AR,35.50941,-97.642426,1,outside AR box,Eldon Lyon Park
+meets_tfrrs,6354,IA,44.00761,-97.178055,1,outside IA box,Dordt XC Course
+meets_tfrrs,44625,PA,40.510063,0.0,1,outside PA box,Kutztown University
+meets_tfrrs,31103,NC,40.2681,-74.76991,1,outside NC box,TCNJ Green Lane Fields
+meets_tfrrs,46628,AR,32.519722,-92.71797,1,outside AR box,", AR"
+meets_tfrrs,41292,NC,40.26848,-74.77763,1,outside NC box,The College of New Jersey
+meets_tfrrs,28575,TX,39.460133,-87.25987,1,outside TX box,San Antonio Meet Location
+meets_tfrrs,46170,PA,40.007442,0.0,1,outside PA box,Haverford
+meets_tfrrs,3538,WA,29.827242,-95.61414,1,outside WA box,Bear Creek Pioneer Park
+meets_tfrrs,900000276,WI,40.394505,-79.93851,1,outside WI box,Long Beach
+meets_tfrrs,6225,AR,40.759457,-74.18117,1,outside AR box,", AR"
+meets_tfrrs,44828,AR,40.749363,-86.33148,1,outside AR box,", AR"
+meets_tfrrs,4196,MI,43.69078,-116.39421,1,outside MI box,Fremont
+meets_tfrrs,10233,IA,37.96176,-87.67747,1,outside IA box,Angel Mounds XC Invitational
+meets_tfrrs,13262,AR,41.478687,-87.179115,1,outside AR box,Wheeler High School
+meets_tfrrs,18363,SC,30.392933,-81.72605,1,outside SC box,USC-Upstate
+meets_tfrrs,28763,KS,40.843155,-96.6136,1,outside KS box,Mahoney Golf Course
+meets_tfrrs,900000245,ND,33.632565,-84.46832,1,outside ND box,Jamestown College
+meets_tfrrs,900000129,CA,40.838154,-96.70909,1,outside CA box,Crystal Springs
+meets_tfrrs,6838,NC,38.801712,-77.49154,1,outside NC box,NC Carolina Wesleyan
+meets_tfrrs,5949,AR,28.80799,-81.6471,1,outside AR box,MDCA
+meets_tfrrs,33030,WI,42.324932,-87.83635,1,outside WI box,Foss Park
+meets_tfrrs,7616,MA,42.671703,-74.498276,1,outside MA box,SUNY Cobleskill
+meets_tfrrs,1912,IL,35.149982,-80.74093,1,outside IL box,Principia College North Farm
+meets_tfrrs,900000342,FL,-20.500914,-54.645992,1,outside FL box,Pace Campus
+meets_tfrrs,44621,PA,40.164185,0.0,1,outside PA box,Temple
+meets_tfrrs,24124,OH,34.208176,-77.88193,1,outside OH box,Wilmington College
+meets_tfrrs,38548,MO,34.045536,-81.030914,1,outside MO box,Cosmo Park
+meets_tfrrs,24926,AR,44.93791,-93.16848,1,outside AR box,Pike Island
+meets_tfrrs,46230,AR,29.993933,-81.67655,1,outside AR box,", AR"
+meets_tfrrs,41285,DE,35.973938,-78.89891,1,outside DE box,Delaware State
+meets_tfrrs,7518,OR,32.278774,-106.74791,1,outside OR box,New Mexico State
+meets_tfrrs,19953,NE,36.09185,-80.0787,1,outside NE box,Ivey M. Redmon Sports Complex
+meets_tfrrs,24765,IN,39.082527,-94.339195,1,outside IN box,Blue River CC Venue
+meets_tfrrs,42315,AR,40.1079,-85.39315,1,outside AR box,Cowan
+meets_tfrrs,3668,AR,41.90398,-84.609535,1,outside AR box,", AR"
+meets_tfrrs,11862,AR,41.69699,-86.01385,1,outside AR box,", AR"
+meets_tfrrs,881,GA,34.628838,-79.028564,1,outside GA box,University of North Georgia-Gainesville
+meets_tfrrs,12082,IA,34.232845,-84.503105,1,outside IA box,Boling Park
+meets_tfrrs,46156,VA,29.985083,-95.64539,1,outside VA box,Longwood Golf Course

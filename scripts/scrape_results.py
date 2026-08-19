@@ -31,7 +31,7 @@ from scraper import (
 from scrape_tuning import perRequestDelayRange
  
 sys.path.insert(0, "engine")
-from normalize_distance import EVENT_DISTANCES_TF
+from event_parse import distanceFromEventShort   # shared parser (dict + free-text)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -244,7 +244,16 @@ def _collectXCDivision(meet_info: dict, div: dict, results: list,
     print("[COLLECT] _collectXCDivision", flush=True)
     # Collect the meet row for this division.
     collected_meets.append((meet_info, div))
-    
+
+    # The division id (anet's IDMeetDiv) is a property of the DIVISION, not of
+    # each result row, so read it ONCE here rather than per-result. This is the
+    # SAME key saveMeet writes as the meets PK (divData["IDMeetDiv"] -> div_id),
+    # so a result carrying this value will match its meets row exactly. Use .get()
+    # (not div["IDMeetDiv"]) so a malformed division missing the key degrades to
+    # None instead of crashing the whole meet — None is the honest "unknown
+    # division" we would otherwise store anyway.
+    div_id = div.get("IDMeetDiv")
+
     # Collect all results and athletes for this division.
     for r in results:
 
@@ -265,7 +274,11 @@ def _collectXCDivision(meet_info: dict, div: dict, results: list,
 
         # Carry the final school alongside the athlete, WITHOUT mutating r.
         collected_athletes.append((r, school))
-        collected_results.append((r, meet_info, school))
+        # Carry div_id ALONGSIDE r (4th slot), NOT stamped onto r: r is shared
+        # with the athlete collectors and must not be mutated (same reasoning the
+        # school comment above states). div_id rides the tuple exactly as school
+        # does. THIS is the fix for div_id landing NULL on saved XC results.
+        collected_results.append((r, meet_info, school, div_id))
 
 # _collectXCFlatEvent
 # Purpose: Turn ONE flatEvents entry from GetAllResultsData (XC) into collector
@@ -301,6 +314,12 @@ def _collectXCFlatEvent(event: dict, meet_info: dict,
     # did with an xcDivisions[] entry. One meets row per division.
     collected_meets.append((meet_info, event))
 
+    # Same as _collectXCDivision: IDMeetDiv is a DIVISION property. The flatEvents
+    # entry IS the division dict (it shares the xcDivisions field names — see this
+    # function's docstring), so event["IDMeetDiv"] is this division's id. Read it
+    # ONCE here; .get() so a malformed event degrades to None, not a crash.
+    div_id = event.get("IDMeetDiv")
+
     # Walk the inline results for this division. Same per-row guards as
     # _collectXCDivision — skip non-dict junk and rows missing the identifying
     # keys, so one malformed row can't sink the meet.
@@ -322,7 +341,8 @@ def _collectXCFlatEvent(event: dict, meet_info: dict,
             "SchoolName": school,
         }
         collected_athletes.append(athlete_row)
-        collected_results.append((r, meet_info, school))
+        # 4th slot = div_id, matching _collectXCDivision's tuple contract.
+        collected_results.append((r, meet_info, school, div_id))
 
 # _athleteRowsFromResults
 # Purpose: Build athlete upsert rows from the SAME (result, meet_info, school)
@@ -338,7 +358,11 @@ def _collectXCFlatEvent(event: dict, meet_info: dict,
 def _athleteRowsFromResults(collected_results):
     seen = set()
     out = []
-    for resultData, meetData, school in collected_results:
+    # collected_results is now a 4-tuple (…, school, div_id); this function does
+    # not need div_id, but the unpack SHAPE must still match — bind it to _div to
+    # say "present, deliberately unused". A 3-target unpack here would raise
+    # "too many values to unpack" on the first row.
+    for resultData, meetData, school, _div in collected_results:
         athlete_id = resultData.get("AthleteID")
         if not athlete_id:
             continue
@@ -369,7 +393,8 @@ def _debugSchoolMismatch(collected_athletes, collected_results, label):
             athlete_pairs.add((aid, _resolveSchool(a) or "Unknown"))
 
     misses = 0
-    for resultData, meetData, school in collected_results:
+    # 4-tuple now; div_id unused in this debug pass -> _div (shape must match).
+    for resultData, meetData, school, _div in collected_results:
         aid = resultData.get("AthleteID")
         if not aid:
             continue
@@ -392,7 +417,9 @@ def _debugSchoolMismatch(collected_athletes, collected_results, label):
 def _saveResultAthletesRaw(conn, collected_results):
     seen = set()
     rows = []
-    for resultData, meetData, school in collected_results:
+    # 4-tuple now; this raw-athlete upsert doesn't need div_id -> _div. Shape
+    # must still match or the unpack raises on the first result.
+    for resultData, meetData, school, _div in collected_results:
         athlete_id = resultData.get("AthleteID")
         if not athlete_id:
             continue
@@ -599,7 +626,8 @@ def _collectAndSaveAllResultsXC(meet_id: int, meet_info: dict,
                     payload_aids.add(r.get("AthleteID"))
 
     collected_aids = set()
-    for rd, md, sch in collected_results:
+    # 4-tuple now; this diagnostic only needs the result dict -> _sch, _div unused.
+    for rd, md, _sch, _div in collected_results:
         collected_aids.add(rd.get("AthleteID"))
 
     dropped = payload_aids - collected_aids
@@ -689,7 +717,7 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
     event_short     = event_info["event_short"]
     gender          = event_info["gender"]
     # Converts event name to distance in meters
-    distance_meters = EVENT_DISTANCES_TF.get(event_short)
+    distance_meters = distanceFromEventShort(event_short)[0]
     is_relay        = isRelayEvent(event_short)
     is_field        = isFieldEvent(event_short)
 
@@ -776,7 +804,7 @@ def _collectFlatEvent(event: dict, meet_info: dict,
     is_relay    = isRelayEvent(event_short)
  
     # Field events have no track distance (they have a mark) -> None.
-    distance_meters = EVENT_DISTANCES_TF.get(event_short)
+    distance_meters = distanceFromEventShort(event_short)[0]
  
     # One meets_tf row per (div_id, event_id). Prelims and finals share that
     # key but differ by Round on each result, so a single metadata row is
@@ -1063,7 +1091,7 @@ def _saveDivisionsForRecovery(meet_id, meet_info, events_dict, event_divs):
             continue                       # no metadata for this event -> skip
         event_short = info.get("event_short")
 
-        distance_meters = EVENT_DISTANCES_TF.get(event_short)
+        distance_meters = distanceFromEventShort(event_short)[0]
         division = info.get("gender")      # whatever saveMeetTF expects as division
 
         meets_to_save.append(
@@ -1396,7 +1424,7 @@ def _saveMetaOnlyTF(meet_id: int, meet_info: dict, events_dict: dict,
         # event_short=None (the SQL backfill fills it from results_tf later).
         info = events_dict.get(event_id) or {}
         event_short     = info.get("event_short")
-        distance_meters = EVENT_DISTANCES_TF.get(event_short)
+        distance_meters = distanceFromEventShort(event_short)[0]
         # Real division name ('Open', 'Invitational'), keyed by div_id (= IDDiv),
         # falling back to None rather than gender if the map lacks it.
         division = division_by_div.get(div_id)

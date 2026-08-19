@@ -1,0 +1,200 @@
+   19365         1  ov=     800  UNIFORM_NEG  n=  12 +0    -12   clean=0    iqr=  2.2  wrong snap, label too SHORT -> page-verify drafted value
+  526794         1  ov=    1600  UNIFORM_NEG  n=  32 +0    -32   clean=0    iqr=  4.2  wrong snap, label too SHORT -> page-verify drafted value
+  365131         1  ov=    1600  UNIFORM_NEG  n=  78 +0    -73   clean=5    iqr=  5.5  wrong snap, label too SHORT -> page-verify drafted value
+   33425         1  ov=    1600  UNIFORM_NEG  n=  20 +0    -20   clean=0    iqr=  5.2  wrong snap, label too SHORT -> page-verify drafted value
+  308334         1  ov=    1600  UNIFORM_POS  n=  22 +22   -0    clean=0    iqr=  4.4  check POOL/GENDER first (9308 lesson); else label too LONG
+  474360         1  ov=    1600  UNIFORM_NEG  n=  12 +0    -12   clean=0    iqr=  5.3  wrong snap, label too SHORT -> page-verify drafted value
+  580895         1  ov=    3200  UNIFORM_NEG  n=  13 +0    -13   clean=0    iqr=  5.3  wrong snap, label too SHORT -> page-verify drafted value
+  260130         1  ov=    1600  UNIFORM_POS  n=  19 +17   -0    clean=2    iqr=  8.5  check POOL/GENDER first (9308 lesson); else label too LONG
+  643424         1  ov=    1000  UNIFORM_NEG  n=  21 +0    -19   clean=2    iqr=  3.4  wrong snap, label too SHORT -> page-verify drafted value
+  623298         1  ov=     800  UNIFORM_NEG  n=  14 +0    -13   clean=1    iqr=  6.1  wrong snap, label too SHORT -> page-verify drafted value
+   41833         1  ov=    3200  UNIFORM_POS  n=  25 +24   -0    clean=1    iqr=  5.2  check POOL/GENDER first (9308 lesson); else label too LONG
+   82735         2  ov=    3200  PARTIAL      n=  24 +16   -0    clean=8    iqr= 13.7  mixed content; label right for clean half -> per-result pins ONLY
+  443139         1  ov=     800  UNIFORM_NEG  n=  16 +0    -12   clean=4    iqr=  3.7  wrong snap, label too SHORT -> page-verify drafted value
+   67395         1  ov=    3000  BIMODAL      n=  64 +39   -15   clean=10   iqr= 30.9  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  604074         1  ov=    1600  UNIFORM_NEG  n=  19 +0    -16   clean=3    iqr=  7.1  wrong snap, label too SHORT -> page-verify drafted value
+  129681         2  ov=     800  UNIFORM_POS  n=  45 +30   -0    clean=15   iqr=  6.8  check POOL/GENDER first (9308 lesson); else label too LONG
+  570806         1  ov=    1000  UNIFORM_NEG  n=  29 +1    -19   clean=9    iqr=  6.9  wrong snap, label too SHORT -> page-verify drafted value
+   60084         1  ov=    3200  UNIFORM_POS  n= 101 +62   -0    clean=39   iqr=  4.5  check POOL/GENDER first (9308 lesson); else label too LONG
+  313708         1  ov=    1600  UNCLEAR      n=  59 +44   -8    clean=7    iqr= 10.0  shape ambiguous -> read the full --dump
+  142040         2  ov=    3200  UNIFORM_POS  n=  17 +11   -0    clean=6    iqr=  5.1  check POOL/GENDER first (9308 lesson); else label too LONG
+  423756         1  ov=    1600  UNCLEAR      n=  12 +0    -6    clean=6    iqr=  4.6  shape ambiguous -> read the full --dump
+  476970         2  ov= 1609.34  UNIFORM_NEG  n=  15 +0    -10   clean=5    iqr=  6.3  wrong snap, label too SHORT -> page-verify drafted value
+  519936         1  ov=    5000  UNCLEAR      n=  63 +15   -0    clean=48   iqr=  4.6  shape ambiguous -> read the full --dump
+  142040         1  ov=    3200  UNCLEAR      n=  12 +7    -0    clean=5    iqr=  5.5  shape ambiguous -> read the full --dump
+   64369         1  ov=    3200  UNCLEAR      n=  77 +32   -0    clean=45   iqr=  4.8  shape ambiguous -> read the full --dump
+  149289         1  ov=     800  BIMODAL      n=  19 +11   -3    clean=5    iqr=  7.1  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  568948         4  ov= 1609.34  PARTIAL      n=  35 +0    -34   clean=1    iqr= 19.2  mixed content; label right for clean half -> per-result pins ONLY
+  284156         2  ov=    1500  UNIFORM_NEG  n=  29 +0    -19   clean=10   iqr=  7.8  wrong snap, label too SHORT -> page-verify drafted value
+  618924         3  ov=    3200  UNCLEAR      n=  16 +0    -8    clean=8    iqr=  6.2  shape ambiguous -> read the full --dump
+  166430         1  ov=     800  UNCLEAR      n= 104 +25   -0    clean=79   iqr=  5.8  shape ambiguous -> read the full --dump
+  619363         1  ov=     800  UNCLEAR      n=  31 +11   -0    clean=20   iqr=  2.8  shape ambiguous -> read the full --dump
+  358033         1  ov=     800  UNCLEAR      n=  45 +0    -9    clean=36   iqr=  6.9  shape ambiguous -> read the full --dump
+  309068         1  ov=    1600  UNCLEAR      n=  27 +1    -14   clean=12   iqr=  3.6  shape ambiguous -> read the full --dump
+  125551         1  ov=     800  FEW_SPIKES   n=  96 +19   -0    clean=77   iqr=  3.5  row-level (cooked rows), not a label problem
+  421655         2  ov=     800  FEW_SPIKES   n=  19 +2    -0    clean=17   iqr= 14.0  row-level (cooked rows), not a label problem
+   83456         1  ov=    1600  UNCLEAR      n=  95 +28   -0    clean=67   iqr=  7.4  shape ambiguous -> read the full --dump
+  427302         1  ov= 1609.34  PARTIAL      n=  46 +11   -4    clean=31   iqr= 15.1  mixed content; label right for clean half -> per-result pins ONLY
+   83681         1  ov=    3200  UNCLEAR      n=  39 +12   -0    clean=27   iqr=  8.2  shape ambiguous -> read the full --dump
+  517944         1  ov=     800  BIMODAL      n=  32 +13   -7    clean=12   iqr=  6.7  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  340920         1  ov=    1600  UNIFORM_POS  n=  15 +9    -0    clean=6    iqr=  5.2  check POOL/GENDER first (9308 lesson); else label too LONG
+  294417         1  ov=    1600  PARTIAL      n=  34 +0    -20   clean=14   iqr= 11.1  mixed content; label right for clean half -> per-result pins ONLY
+  228535         4  ov=  2400.0  UNCLEAR      n=  26 +0    -9    clean=17   iqr=  5.1  shape ambiguous -> read the full --dump
+   83674         1  ov=     800  UNCLEAR      n=  84 +27   -0    clean=57   iqr=  8.4  shape ambiguous -> read the full --dump
+  404716         1  ov=    5000  UNCLEAR      n=  13 +0    -4    clean=9    iqr=  5.2  shape ambiguous -> read the full --dump
+  368847         1  ov=     800  UNCLEAR      n=  30 +0    -12   clean=18   iqr=  6.8  shape ambiguous -> read the full --dump
+  333487         1  ov=    1000  UNCLEAR      n=  20 +0    -4    clean=16   iqr=  4.6  shape ambiguous -> read the full --dump
+  282721         1  ov=    1600  UNCLEAR      n= 111 +34   -0    clean=77   iqr=  7.7  shape ambiguous -> read the full --dump
+   96471         1  ov=     800  UNCLEAR      n=  94 +28   -0    clean=66   iqr=  5.4  shape ambiguous -> read the full --dump
+  478204         2  ov=     800  PARTIAL      n=  38 +0    -23   clean=15   iqr= 17.4  mixed content; label right for clean half -> per-result pins ONLY
+  209107         1  ov=    1000  FEW_SPIKES   n=  68 +8    -0    clean=60   iqr=  4.7  row-level (cooked rows), not a label problem
+  118143         1  ov=  1200.0  UNCLEAR      n= 134 +0    -43   clean=91   iqr=  8.5  shape ambiguous -> read the full --dump
+   96443         1  ov=    1500  UNCLEAR      n=  78 +19   -0    clean=59   iqr=  6.3  shape ambiguous -> read the full --dump
+  241030         1  ov=    3200  FEW_SPIKES   n=  57 +9    -0    clean=48   iqr=  7.1  row-level (cooked rows), not a label problem
+   96484         1  ov=     800  UNCLEAR      n=  73 +17   -0    clean=56   iqr=  7.5  shape ambiguous -> read the full --dump
+   67230         1  ov=    3200  UNCLEAR      n=  86 +33   -0    clean=53   iqr=  6.5  shape ambiguous -> read the full --dump
+  446653         1  ov=    1500  PARTIAL      n=  22 +4    -0    clean=18   iqr= 11.3  mixed content; label right for clean half -> per-result pins ONLY
+  432801         1  ov=    1600  UNIFORM_NEG  n=  17 +0    -13   clean=4    iqr=  9.9  wrong snap, label too SHORT -> page-verify drafted value
+  422170         2  ov=     800  UNIFORM_NEG  n=  16 +0    -13   clean=3    iqr=  9.7  wrong snap, label too SHORT -> page-verify drafted value
+  345251         1  ov=    1600  PARTIAL      n=  30 +20   -0    clean=10   iqr= 13.6  mixed content; label right for clean half -> per-result pins ONLY
+  239227         1  ov=    3200  UNCLEAR      n=  84 +25   -0    clean=59   iqr=  8.2  shape ambiguous -> read the full --dump
+  209096         1  ov=    3200  UNCLEAR      n=  88 +27   -0    clean=61   iqr=  6.3  shape ambiguous -> read the full --dump
+  167757         1  ov=     800  UNCLEAR      n=  93 +23   -0    clean=70   iqr=  4.5  shape ambiguous -> read the full --dump
+  259411         1  ov=    1600  UNCLEAR      n=  34 +0    -10   clean=24   iqr=  7.5  shape ambiguous -> read the full --dump
+  183413         1  ov=    1600  FEW_SPIKES   n=  33 +0    -6    clean=27   iqr=  7.4  row-level (cooked rows), not a label problem
+  156048         1  ov=     800  FEW_SPIKES   n=  18 +0    -2    clean=16   iqr=  9.8  row-level (cooked rows), not a label problem
+   96453         1  ov=    3000  FEW_SPIKES   n=  73 +4    -0    clean=69   iqr=  5.2  row-level (cooked rows), not a label problem
+  464195         1  ov=     800  UNCLEAR      n=  29 +0    -15   clean=14   iqr=  5.4  shape ambiguous -> read the full --dump
+  448705         1  ov=  2400.0  PARTIAL      n=  35 +6    -0    clean=29   iqr= 10.6  mixed content; label right for clean half -> per-result pins ONLY
+  243840         2  ov=     800  FEW_SPIKES   n=  21 +2    -0    clean=19   iqr=  8.3  row-level (cooked rows), not a label problem
+  166419         1  ov=    3200  PARTIAL      n=  20 +3    -0    clean=17   iqr= 10.8  mixed content; label right for clean half -> per-result pins ONLY
+  158783         3  ov=     800  UNCLEAR      n=  24 +0    -9    clean=15   iqr=  5.7  shape ambiguous -> read the full --dump
+  140034         1  ov=    3200  FEW_SPIKES   n=  81 +15   -0    clean=66   iqr=  4.3  row-level (cooked rows), not a label problem
+  111609         1  ov=    1600  FEW_SPIKES   n=  16 +0    -3    clean=13   iqr=  2.6  row-level (cooked rows), not a label problem
+   96462         1  ov=     800  UNCLEAR      n=  80 +16   -0    clean=64   iqr=  5.3  shape ambiguous -> read the full --dump
+   69290         1  ov=     800  UNCLEAR      n=  64 +0    -20   clean=44   iqr=  8.0  shape ambiguous -> read the full --dump
+  535084         1  ov=     800  UNCLEAR      n=  32 +0    -14   clean=18   iqr=  7.8  shape ambiguous -> read the full --dump
+  281007         8  ov=     800  PARTIAL      n=  51 +13   -0    clean=38   iqr= 12.8  mixed content; label right for clean half -> per-result pins ONLY
+  272285         1  ov=     800  UNCLEAR      n=  16 +0    -8    clean=8    iqr=  6.7  shape ambiguous -> read the full --dump
+  229168         1  ov=    1500  FEW_SPIKES   n=  52 +6    -0    clean=46   iqr=  5.7  row-level (cooked rows), not a label problem
+  192284         1  ov=  2000.0  UNCLEAR      n=  29 +0    -13   clean=16   iqr=  6.9  shape ambiguous -> read the full --dump
+  172665         1  ov=     800  FEW_SPIKES   n=  34 +0    -6    clean=28   iqr=  6.1  row-level (cooked rows), not a label problem
+   96451         1  ov=    3000  FEW_SPIKES   n=  64 +11   -0    clean=53   iqr=  5.8  row-level (cooked rows), not a label problem
+  652735         1  ov=    1600  FEW_SPIKES   n=  76 +13   -0    clean=63   iqr=  5.5  row-level (cooked rows), not a label problem
+  443416         2  ov=     800  UNCLEAR      n=  26 +0    -6    clean=20   iqr=  8.7  shape ambiguous -> read the full --dump
+  282758         1  ov=    1600  FEW_SPIKES   n=  33 +4    -0    clean=29   iqr=  8.4  row-level (cooked rows), not a label problem
+  266918         1  ov=    1600  FEW_SPIKES   n=  75 +7    -0    clean=68   iqr=  9.1  row-level (cooked rows), not a label problem
+  235515         2  ov=    3200  FEW_SPIKES   n=  20 +0    -3    clean=17   iqr=  6.0  row-level (cooked rows), not a label problem
+  231053         1  ov=     800  UNCLEAR      n=  22 +1    -13   clean=8    iqr= 10.0  shape ambiguous -> read the full --dump
+  209100         1  ov=    1600  UNCLEAR      n=  82 +21   -0    clean=61   iqr=  6.5  shape ambiguous -> read the full --dump
+  205243         1  ov=    1600  FEW_SPIKES   n=  22 +0    -4    clean=18   iqr=  5.2  row-level (cooked rows), not a label problem
+  168013         1  ov=     800  UNCLEAR      n=  40 +17   -0    clean=23   iqr=  7.3  shape ambiguous -> read the full --dump
+  134261         1  ov=     800  UNCLEAR      n=  17 +5    -0    clean=12   iqr=  4.4  shape ambiguous -> read the full --dump
+  113333         1  ov=     800  UNCLEAR      n= 129 +30   -0    clean=99   iqr=  4.9  shape ambiguous -> read the full --dump
+  105600         1  ov=    1500  UNCLEAR      n=  58 +0    -20   clean=38   iqr=  8.6  shape ambiguous -> read the full --dump
+   96476         1  ov=    3200  FEW_SPIKES   n=  86 +5    -0    clean=81   iqr=  5.1  row-level (cooked rows), not a label problem
+   72880         1  ov=    3200  UNCLEAR      n= 200 +50   -2    clean=148  iqr= 10.4  shape ambiguous -> read the full --dump
+  607395         1  ov=    3200  FEW_SPIKES   n=  34 +3    -0    clean=31   iqr=  5.6  row-level (cooked rows), not a label problem
+  465628         1  ov=    1600  BIMODAL      n=  40 +6    -14   clean=20   iqr= 24.3  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  295531         1  ov=    1600  UNCLEAR      n=  24 +0    -5    clean=19   iqr=  5.0  shape ambiguous -> read the full --dump
+  272737         1  ov=    1600  FEW_SPIKES   n=  39 +0    -6    clean=33   iqr=  5.6  row-level (cooked rows), not a label problem
+  247315         1  ov=     800  UNCLEAR      n=  24 +1    -5    clean=18   iqr=  9.7  shape ambiguous -> read the full --dump
+  177059         1  ov=    1500  FEW_SPIKES   n=  75 +3    -0    clean=72   iqr=  5.8  row-level (cooked rows), not a label problem
+  596726         1  ov=     800  UNCLEAR      n=  18 +0    -4    clean=14   iqr=  9.2  shape ambiguous -> read the full --dump
+  519118         3  ov=     800  PARTIAL      n=  21 +0    -9    clean=12   iqr= 10.9  mixed content; label right for clean half -> per-result pins ONLY
+  508755         1  ov=    1600  BIMODAL      n=  65 +14   -10   clean=41   iqr=  8.8  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  473429         2  ov=     800  UNCLEAR      n=  49 +13   -0    clean=36   iqr=  7.1  shape ambiguous -> read the full --dump
+  300614         1  ov=    1600  UNCLEAR      n=  29 +0    -11   clean=18   iqr=  6.2  shape ambiguous -> read the full --dump
+  296455         1  ov=    1600  FEW_SPIKES   n=  68 +12   -0    clean=56   iqr=  6.2  row-level (cooked rows), not a label problem
+  261166         1  ov=  1200.0  FEW_SPIKES   n= 238 +0    -41   clean=197  iqr=  7.6  row-level (cooked rows), not a label problem
+  219721         3  ov=     800  FEW_SPIKES   n=  47 +0    -5    clean=42   iqr= 11.5  row-level (cooked rows), not a label problem
+  206422         1  ov=     800  FEW_SPIKES   n=  22 +0    -3    clean=19   iqr=  5.2  row-level (cooked rows), not a label problem
+  103470         1  ov=    3200  UNCLEAR      n= 113 +26   -0    clean=87   iqr=  9.4  shape ambiguous -> read the full --dump
+  103287         1  ov=     800  UNCLEAR      n=  13 +0    -4    clean=9    iqr=  6.9  shape ambiguous -> read the full --dump
+   96450         1  ov=    1500  UNCLEAR      n=  67 +16   -0    clean=51   iqr=  6.7  shape ambiguous -> read the full --dump
+   84001         1  ov=    3200  UNCLEAR      n=  85 +24   -0    clean=61   iqr=  5.3  shape ambiguous -> read the full --dump
+   74730         1  ov=    1000  UNCLEAR      n=  23 +0    -12   clean=11   iqr=  8.7  shape ambiguous -> read the full --dump
+  613139         1  ov=    1600  FEW_SPIKES   n=  83 +8    -0    clean=75   iqr=  6.0  row-level (cooked rows), not a label problem
+  541130         4  ov=  2000.0  FEW_SPIKES   n=  31 +0    -6    clean=25   iqr=  5.2  row-level (cooked rows), not a label problem
+  530210         1  ov=    1600  FEW_SPIKES   n=  27 +0    -4    clean=23   iqr=  4.4  row-level (cooked rows), not a label problem
+  463392        16  ov=  2400.0  UNCLEAR      n=  45 +9    -0    clean=36   iqr=  7.5  shape ambiguous -> read the full --dump
+  451912         1  ov=    3200  FEW_SPIKES   n=  68 +3    -0    clean=65   iqr=  5.6  row-level (cooked rows), not a label problem
+  436081         1  ov=     800  PARTIAL      n=  16 +0    -7    clean=9    iqr= 12.4  mixed content; label right for clean half -> per-result pins ONLY
+  250423         1  ov=     800  FEW_SPIKES   n=  28 +0    -0    clean=28   iqr=  9.0  row-level (cooked rows), not a label problem
+  242427         1  ov=    1500  UNIFORM_NEG  n=  17 +0    -12   clean=5    iqr=  6.7  wrong snap, label too SHORT -> page-verify drafted value
+  226402         1  ov=    1600  UNCLEAR      n=  93 +28   -0    clean=65   iqr=  8.5  shape ambiguous -> read the full --dump
+  225651         1  ov=     800  UNCLEAR      n=  55 +12   -0    clean=43   iqr=  5.7  shape ambiguous -> read the full --dump
+  130839         2  ov=     800  UNCLEAR      n=  17 +0    -5    clean=12   iqr=  7.3  shape ambiguous -> read the full --dump
+   96441         1  ov=    3000  FEW_SPIKES   n=  58 +7    -0    clean=51   iqr=  5.6  row-level (cooked rows), not a label problem
+   84000         1  ov=     800  UNCLEAR      n=  90 +23   -0    clean=67   iqr=  5.7  shape ambiguous -> read the full --dump
+  563292         1  ov=    1600  FEW_SPIKES   n=  49 +3    -0    clean=46   iqr=  5.9  row-level (cooked rows), not a label problem
+  542616         1  ov=    1600  FEW_SPIKES   n=  22 +0    -4    clean=18   iqr=  4.9  row-level (cooked rows), not a label problem
+  531814         1  ov=     800  UNCLEAR      n=  33 +0    -7    clean=26   iqr=  7.4  shape ambiguous -> read the full --dump
+  507453         1  ov=     800  FEW_SPIKES   n=  16 +0    -1    clean=15   iqr=  2.8  row-level (cooked rows), not a label problem
+  442320         1  ov=    5000  FEW_SPIKES   n=  35 +3    -0    clean=32   iqr=  4.1  row-level (cooked rows), not a label problem
+  438015         1  ov=     800  FEW_SPIKES   n=  48 +3    -0    clean=45   iqr=  7.9  row-level (cooked rows), not a label problem
+  409819         1  ov=     800  PARTIAL      n=  26 +0    -9    clean=17   iqr= 11.1  mixed content; label right for clean half -> per-result pins ONLY
+  225955         1  ov=    3200  UNCLEAR      n=  35 +13   -0    clean=22   iqr=  9.0  shape ambiguous -> read the full --dump
+  177058         1  ov=    1500  FEW_SPIKES   n=  65 +3    -0    clean=62   iqr=  6.2  row-level (cooked rows), not a label problem
+  144067         1  ov=     800  FEW_SPIKES   n=  37 +0    -5    clean=32   iqr=  5.8  row-level (cooked rows), not a label problem
+  661759         1  ov=     800  UNCLEAR      n=  30 +0    -7    clean=23   iqr= 10.0  shape ambiguous -> read the full --dump
+  600451         1  ov=     800  FEW_SPIKES   n=  22 +0    -0    clean=22   iqr=  4.3  row-level (cooked rows), not a label problem
+  433427         1  ov=    1600  FEW_SPIKES   n=  28 +0    -5    clean=23   iqr=  4.4  row-level (cooked rows), not a label problem
+  418836         1  ov=    1600  UNCLEAR      n=  13 +0    -7    clean=6    iqr=  7.5  shape ambiguous -> read the full --dump
+  376738         1  ov=     800  UNCLEAR      n=  13 +0    -6    clean=7    iqr=  8.5  shape ambiguous -> read the full --dump
+  375274         1  ov=    5000  PARTIAL      n=  13 +0    -4    clean=9    iqr= 11.7  mixed content; label right for clean half -> per-result pins ONLY
+  371778         1  ov=    1600  BIMODAL      n=  26 +4    -8    clean=14   iqr= 24.4  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  348561         1  ov=    1600  FEW_SPIKES   n=  96 +9    -0    clean=87   iqr=  5.6  row-level (cooked rows), not a label problem
+  342797         1  ov=    1600  UNCLEAR      n=  24 +8    -0    clean=16   iqr=  8.3  shape ambiguous -> read the full --dump
+  309785         1  ov=4828.032  UNCLEAR      n=  37 +0    -9    clean=28   iqr=  5.7  shape ambiguous -> read the full --dump
+  177074         1  ov=    1500  FEW_SPIKES   n=  97 +12   -0    clean=85   iqr=  8.0  row-level (cooked rows), not a label problem
+  177072         1  ov=    1000  FEW_SPIKES   n=  91 +8    -0    clean=83   iqr=  6.0  row-level (cooked rows), not a label problem
+  153406         1  ov=    1600  FEW_SPIKES   n= 107 +10   -0    clean=97   iqr=  5.7  row-level (cooked rows), not a label problem
+  142520         2  ov=    1500  UNCLEAR      n=  20 +0    -4    clean=16   iqr=  6.0  shape ambiguous -> read the full --dump
+  125554         2  ov=    1500  FEW_SPIKES   n=  66 +8    -0    clean=58   iqr=  4.8  row-level (cooked rows), not a label problem
+   96438         1  ov=    1000  FEW_SPIKES   n=  69 +13   -0    clean=56   iqr=  5.5  row-level (cooked rows), not a label problem
+   81647         1  ov=    1600  FEW_SPIKES   n=  88 +5    -0    clean=83   iqr=  6.3  row-level (cooked rows), not a label problem
+   77860         1  ov=    1000  FEW_SPIKES   n=  17 +0    -0    clean=17   iqr=  2.9  row-level (cooked rows), not a label problem
+   52793         1  ov=    3200  FEW_SPIKES   n=  23 +0    -0    clean=23   iqr=  1.9  row-level (cooked rows), not a label problem
+  615378         1  ov=     800  FEW_SPIKES   n=  45 +5    -0    clean=40   iqr=  4.9  row-level (cooked rows), not a label problem
+  557465         1  ov=     800  FEW_SPIKES   n=  64 +4    -0    clean=60   iqr=  5.3  row-level (cooked rows), not a label problem
+  405214         1  ov=     800  FEW_SPIKES   n=  36 +5    -0    clean=31   iqr=  5.0  row-level (cooked rows), not a label problem
+  284467         1  ov=    1600  FEW_SPIKES   n= 101 +10   -0    clean=91   iqr=  4.3  row-level (cooked rows), not a label problem
+  259497         1  ov=     800  FEW_SPIKES   n=  17 +0    -1    clean=16   iqr=  5.4  row-level (cooked rows), not a label problem
+  184965         1  ov=    3200  PARTIAL      n=  35 +8    -1    clean=26   iqr= 10.8  mixed content; label right for clean half -> per-result pins ONLY
+  177073         1  ov=    1000  FEW_SPIKES   n=  75 +2    -0    clean=73   iqr=  5.5  row-level (cooked rows), not a label problem
+   71773         1  ov=     800  FEW_SPIKES   n=  88 +14   -0    clean=74   iqr=  6.6  row-level (cooked rows), not a label problem
+   34894         1  ov=    1600  UNCLEAR      n=  17 +0    -10   clean=7    iqr=  7.7  shape ambiguous -> read the full --dump
+  652872         1  ov=    1600  FEW_SPIKES   n= 108 +8    -0    clean=100  iqr=  5.7  row-level (cooked rows), not a label problem
+  614854         1  ov=    1600  FEW_SPIKES   n=  38 +1    -0    clean=37   iqr=  4.6  row-level (cooked rows), not a label problem
+  596295         1  ov=    3200  FEW_SPIKES   n=  51 +0    -8    clean=43   iqr=  6.0  row-level (cooked rows), not a label problem
+  454874         2  ov=    1600  UNCLEAR      n=  21 +9    -0    clean=12   iqr=  8.2  shape ambiguous -> read the full --dump
+  420255         1  ov= 1609.34  BIMODAL      n=  47 +8    -8    clean=31   iqr= 18.8  merged races -> _RESULT_OVERRIDE split or _DISTANCE_DROP
+  352415         3  ov=     800  UNCLEAR      n=  48 +1    -10   clean=37   iqr=  7.4  shape ambiguous -> read the full --dump
+  312485         1  ov=    1600  FEW_SPIKES   n= 290 +18   -0    clean=272  iqr=  5.8  row-level (cooked rows), not a label problem
+  269735         1  ov=    1000  PARTIAL      n=  15 +0    -8    clean=7    iqr= 13.1  mixed content; label right for clean half -> per-result pins ONLY
+  259967         1  ov=    1500  FEW_SPIKES   n=  78 +5    -0    clean=73   iqr=  7.3  row-level (cooked rows), not a label problem
+  252752         1  ov=    1600  PARTIAL      n=  55 +12   -1    clean=42   iqr= 11.9  mixed content; label right for clean half -> per-result pins ONLY
+  229169         1  ov=    1500  FEW_SPIKES   n=  56 +4    -0    clean=52   iqr=  5.6  row-level (cooked rows), not a label problem
+  189401         1  ov=    1500  FEW_SPIKES   n=  32 +0    -4    clean=28   iqr= 13.3  row-level (cooked rows), not a label problem
+  177057         1  ov=    1000  FEW_SPIKES   n=  73 +5    -0    clean=68   iqr=  6.9  row-level (cooked rows), not a label problem
+  164139         2  ov=    1600  FEW_SPIKES   n=  47 +7    -0    clean=40   iqr=  9.4  row-level (cooked rows), not a label problem
+  104708         2  ov=     800  FEW_SPIKES   n=  20 +0    -3    clean=17   iqr=  5.5  row-level (cooked rows), not a label problem
+   96478         1  ov=    3200  FEW_SPIKES   n=  59 +9    -0    clean=50   iqr=  8.2  row-level (cooked rows), not a label problem
+   48089         4  ov=    1600  FEW_SPIKES   n=  25 +2    -0    clean=23   iqr= 10.1  row-level (cooked rows), not a label problem
+  647440         2  ov= 1609.34  FEW_SPIKES   n=  13 +0    -2    clean=11   iqr=  4.6  row-level (cooked rows), not a label problem
+  566665         1  ov=    1600  FEW_SPIKES   n=  34 +2    -0    clean=32   iqr= 15.9  row-level (cooked rows), not a label problem
+  465250         1  ov=    1600  UNCLEAR      n=  19 +2    -3    clean=14   iqr=  6.7  shape ambiguous -> read the full --dump
+  445690         1  ov=    1500  FEW_SPIKES   n=  21 +1    -0    clean=20   iqr= 10.6  row-level (cooked rows), not a label problem
+  330548         1  ov=    1600  FEW_SPIKES   n=  46 +0    -9    clean=37   iqr=  7.3  row-level (cooked rows), not a label problem
+  284804         3  ov=    1500  FEW_SPIKES   n=  15 +0    -2    clean=13   iqr=  5.2  row-level (cooked rows), not a label problem
+  240493         1  ov=    1600  PARTIAL      n=  19 +0    -12   clean=7    iqr= 18.1  mixed content; label right for clean half -> per-result pins ONLY
+  235496         1  ov=    1600  FEW_SPIKES   n= 232 +16   -0    clean=216  iqr=  7.0  row-level (cooked rows), not a label problem
+  209106         1  ov=    3000  FEW_SPIKES   n=  72 +2    -0    clean=70   iqr=  5.9  row-level (cooked rows), not a label problem
+  209099         1  ov=    3200  FEW_SPIKES   n=  74 +5    -0    clean=69   iqr=  4.6  row-level (cooked rows), not a label problem
+  119956         1  ov=    3200  FEW_SPIKES   n= 146 +16   -0    clean=130  iqr=  6.3  row-level (cooked rows), not a label problem
+  119953         1  ov=    1600  FEW_SPIKES   n= 179 +6    -0    clean=173  iqr=  6.0  row-level (cooked rows), not a label problem
+   95997         1  ov=    1600  FEW_SPIKES   n= 178 +5    -0    clean=173  iqr=  6.1  row-level (cooked rows), not a label problem
+   94991         1  ov=    3200  PARTIAL      n= 106 +21   -0    clean=85   iqr= 12.6  mixed content; label right for clean half -> per-result pins ONLY
+   79792         1  ov=    1600  FEW_SPIKES   n=  39 +4    -0    clean=35   iqr=  3.1  row-level (cooked rows), not a label problem
+   66143         1  ov=    1500  PARTIAL      n= 103 +24   -1    clean=78   iqr= 11.8  mixed content; label right for clean half -> per-result pins ONLY

@@ -1,0 +1,34 @@
+{# Shared topbar. Included at the top of every page's <body>.
+   Change it here once -> every page updates. #}
+<header class="topbar">
+    {# The full lockup -- trail, plate and tick scale -- sized big enough
+       that those details still read. This is why the topbar is taller than
+       it used to be. logo-flat.svg is the stripped cut if it ever needs to
+       go back to a short bar. alt carries the site name; the anchor has no
+       text of its own. #}
+    <a class="brand brand-mark" href="/">
+        <img src="{{ url_for('static', filename='logo.svg') }}" alt="Racecast">
+    </a>
+
+    {# url_for, not a hardcoded path: these break loudly at render time if a
+       route is renamed, instead of silently 404ing in production. The two
+       that are still hardcoded are the ones whose endpoints I have not
+       confirmed; Predictions has no route at all yet. #}
+    <nav class="topnav">
+        <a href="/rankings">Rankings</a>
+        <a href="/conversions">Conversions</a>
+        <a href="{{ url_for('predictions_page') }}">Predictions</a>
+        <a href="{{ url_for('about_page') }}">About</a>
+        {# Muted, and last. The topbar is the only element on EVERY page, so
+           it is the only place a report link gets site-wide reach -- but it
+           is not a destination, so it should not compete with the sections. #}
+        <a href="{{ url_for('report_page') }}">Report an issue</a>
+    </nav>
+
+    <div class="search-wrap">
+        <input type="search" id="search-input"
+               placeholder="Search athletes, meets, courses…"
+               autocomplete="off" aria-label="Search">
+        <div id="search-results" class="search-results"></div>
+    </div>
+</header>

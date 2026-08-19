@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+{# ===================================================================== #}
+{#  MACRO: build a /rankings query string for one board cell             #}
+{#                                                                       #}
+{#  The home page and rankings.py DISAGREE ON ONE WORD. Home calls the   #}
+{#  athlete board 'athlete' (that is what panels.py writes into          #}
+{#  homepage_panels.board); parseFilters calls it 'ability'. 'performance'#}
+{#  matches on both sides. Translating here, once, is the whole reason    #}
+{#  this macro exists -- a wrong guess would still return a valid-looking #}
+{#  board, so the bug would not announce itself.                          #}
+{#                                                                       #}
+{#  SCOPE HAS NO PARAMETER. parseFilters accepts board/sport/pool/state/  #}
+{#  school/grade/year/dates/min_races/limit/offset -- no 'scope'. So      #}
+{#  "This Season" is expressed as year=<season_year> and "All-Time" as    #}
+{#  the ABSENCE of year. `year` arrives already resolved: the caller owns #}
+{#  the scope decision, this macro just honours a value or its absence.   #}
+{#                                                                       #}
+{#  urlencode over hand-built '&' joining: every value here comes from a  #}
+{#  fixed vocabulary and needs no escaping today, but the filter costs    #}
+{#  nothing and stops a future free-text filter (school names have '&')   #}
+{#  from producing a broken URL.                                          #}
+{# ===================================================================== #}
+{% macro rankings_url(board_type, sport, pool, year) -%}
+    {%- set params = {
+        'board': 'ability' if board_type == 'athlete' else 'performance',
+        'sport': sport,
+        'pool':  pool
+    } -%}
+    {#- dict(params, year=...) COPIES rather than mutates: Jinja has no
+        usable in-place update, and a copy keeps the all-time branch's
+        params provably free of a year key. -#}
+    {%- set params = dict(params, year=year) if year else params -%}
+    {{- url_for('rankings_page') }}?{{ params|urlencode -}}
+{%- endmacro %}
+
+{# ===================================================================== #}
+{#  MACRO: one leaderboard column (a stack of per-pool tables)           #}
+{#  Defined at the bottom; Jinja hoists macros, so it's callable above.  #}
+{#  board_type is 'athlete' or 'performance' -- only used for a CSS hook. #}
+{# ===================================================================== #}
+{% macro board_grid(pools, board_type, labels, sport, link_year) %}
+    {# Header row, once. Sits above the pool grids; shares their column
+       template via the --cols variable so it lines up. #}
+
+    {% for pool in ['hs_m','hs_f','college_m','college_f','ms_m','ms_f'] %}
+        {% set rows = pools.get(pool, []) %}
+        {% if rows %}
+            <div class="pool-block" data-pool="{{ pool }}">
+                {# labels.get(pool, pool) -- falls back to the raw key so a
+                   new pool shows up as itself rather than vanishing. #}
+                {# Header ROW: label left, deep link right.
+
+                   NO JAVASCRIPT on the link. Jinja is already looping
+                   sport x scope x board x pool, so this element statically
+                   knows all four of its own coordinates. CSS only ever
+                   reveals the block matching the current toggles, so the
+                   visible link is always the correct one -- there is no
+                   state to read back at click time.
+
+                   The <a> is a SIBLING of the <h4>, not a child: nesting it
+                   would fold "View all" into the heading's accessible name
+                   ("High School (M) View all"). #}
+                <div class="pool-head">
+                    <h4 class="pool-name">{{ labels.get(pool, pool) }}</h4>
+                    <a class="pool-more"
+                       href="{{ rankings_url(board_type, sport, pool, link_year) }}"
+                       aria-label="View full rankings for {{ labels.get(pool, pool) }}">
+                        View all <span class="arr" aria-hidden="true">&rarr;</span>
+                    </a>
+                </div>
+
+
+                <div class="board-grid">
+                    <div class="head head-center">#</div>
+                    <div class="head">Name</div>
+                    <div class="head">School</div>
+                    <div class="head head-center">Rating</div>
+                    <div class="head">Detail</div>
+                    {% for r in rows %}
+                        {% if r is none %}
+                            {# padding row -> six blank cells keep the grid line #}
+                            <div class="cell blank"></div><div class="cell blank"></div>
+                            <div class="cell blank"></div><div class="cell blank"></div>
+                            <div class="cell blank"></div>
+                        {% else %}
+                            <div class="cell c-rank">{{ r.rank }}</div>
+                            <div class="cell c-name">
+                                {% if r.name_link %}
+                                    <a href="{{ r.name_link }}">{{ r.name }}</a>
+                                {% else %}{{ r.name }}{% endif %}
+                            </div>
+                            {# ★ THE SCHOOL LINKS THROUGH TO ITS OWN PAGE.
+                               /school/<path:school_name> already exists and
+                               takes the raw string, so no id lookup is
+                               needed -- urlencode handles the '&' in names
+                               like "Hollidaysburg Area & Tyrone". A blank
+                               school stays a plain dash: an empty link is a
+                               dead end that looks like a live one. #}
+                            <div class="cell c-school">
+                                {% if r.school %}
+                                    <a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>
+                                {% else %}—{% endif %}
+                            </div>
+                            <div class="cell c-rating">{{ '%.1f'|format(r.rating) if r.rating is not none else '—' }}</div>
+                            <div class="cell c-detail">
+                                {% if board_type == 'performance' and r.link %}
+                                    <a href="{{ r.link }}">{{ r.detail or '—' }}</a>
+                                {% else %}{{ r.detail or '—' }}{% endif %}
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+    {% endfor %}
+{% endmacro %}
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {# Search + link-preview metadata, shared with every other page.
+       Emits <title>, so the hardcoded one that used to sit here is gone --
+       two <title> elements is worse than a wrong one, because browsers take
+       the first and some scrapers take the last. #}
+    {% include "_meta.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {# The tick scale alone. The wordmark is wide and short, so at 16px it
+       would be eight illegible smudges; the scale is the only square-ish
+       part of the lockup and stays readable. #}
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+{# ================================================================= #}
+{#  ONE pool -> label map. The chips and the per-pool headings both   #}
+{#  read it, so they cannot drift apart -- previously the chips had   #}
+{#  their labels inline and the headings printed the raw key.         #}
+{# ================================================================= #}
+{% set POOL_LABELS = {
+    'hs_m':      'High School (M)',
+    'hs_f':      'High School (F)',
+    'college_m': 'College (M)',
+    'college_f': 'College (F)',
+    'ms_m':      'Middle School (M)',
+    'ms_f':      'Middle School (F)'
+} %}
+
+{# ★ DEFAULT SPORT = WHICHEVER SEASON IS MORE RECENT, read from the data      #}
+{#   rather than hardcoded. XC 2025 runs Aug-Nov 2025; TF 2026 runs Jan-Jun   #}
+{#   2026, so in August 2026 the newest complete season is TF. A tie means    #}
+{#   both are in the same year, which happens during the autumn XC season --  #}
+{#   and `>` then favours XC, which is the right answer at that point in the  #}
+{#   calendar. Falls back to panels.py's own choice if the meta is absent.    #}
+{% set _xc_y = meta.get('season_year_XC', 0)|int %}
+{% set _tf_y = meta.get('season_year_TF', 0)|int %}
+{% set DEFAULT_SPORT = ('TF' if _tf_y > _xc_y else 'XC')
+                       if (_xc_y or _tf_y) else default_sport %}
+<body>
+{% include "_topbar.html" %}
+{# ================================================================= #}
+{#  TOP BAR: section nav on the left, search on the right            #}
+{#  Conversions/Predictions are '#' -- those pages don't exist yet.  #}
+{# ================================================================= #}
+
+{# ================================================================= #}
+{#  HERO: name + placeholder facts                                   #}
+{# ================================================================= #}
+{# ================================================================= #}
+{#  HERO: nine-photo mosaic with the title in a merged centre cell    #}
+{#                                                                   #}
+{#  Tiles are EMPTY DIVS with background-images, not <img> tags: they  #}
+{#  carry no information, they must cover-crop to whatever shape the   #}
+{#  grid hands them, and keeping them out of the flow lets the grid    #}
+{#  own the layout completely.                                         #}
+{#                                                                   #}
+{#  Slot -> shape, so swapping a photo means matching its aspect:      #}
+{#    m1  square    m2  WIDE 2:1   m3  square                          #}
+{#    m4  TALL 1:2                 m5  TALL 1:2                        #}
+{#    m6  m7  m8  m9   four squares along the bottom                   #}
+{# ================================================================= #}
+<section class="hero-mosaic">
+    {% for slot in ['m1','m2','m3','m4','m5','m6','m7','m8','m9'] %}
+        <div class="mtile {{ slot }}"
+             style="background-image:url('{{ url_for('static', filename=slot ~ '.png') }}')"></div>
+    {% endfor %}
+
+    <div class="mtitle">
+        {# The wordmark is an image, so the site name has to live in alt --
+           an empty alt here would leave a link with no accessible text. #}
+        <a class="brand brand-logo" href="/">
+            <img src="{{ url_for('static', filename='logo.svg') }}" alt="Racecast">
+        </a>
+        <p class="tagline">Every result on one comparable scale.</p>
+
+        {# Facts, from homepage_meta. panels.py pre-formats the NUMBER
+           ("59M") and this owns the LABEL -- rounding is an editorial call
+           that is easier to change in Python, wording belongs beside the
+           markup it renders into.
+
+           meta.get(key, '—') so a key panels.py has not written yet degrades
+           to the dash that was here before, rather than printing None or
+           dropping the row and leaving a gap in the strip. Same reasoning as
+           labels.get(pool, pool) in the board macro. #}
+        {% set FACTS = [
+            ('fact_results', 'rated results'),
+            ('fact_courses', 'courses on one scale'),
+            ('fact_years',   'years, era-adjusted')
+        ] %}
+        <div class="facts">
+            {% for key, label in FACTS %}
+                <div class="fact">
+                    <span class="fact-num">{{ meta.get(key, '—') }}</span> {{ label }}
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+{# ================================================================= #}
+{#  RANKINGS                                                         #}
+{#  Toggles are just buttons that set a data-attr on .rankings;      #}
+{#  CSS does the showing/hiding. All data is already in the page.    #}
+{# ================================================================= #}
+<section class="rankings" id="rankings"
+         data-sport="{{ DEFAULT_SPORT }}" data-scope="season">
+
+    <h2 class="rank-heading">Rankings Snapshot</h2>
+    <p class="rank-sub">The current leaders, by level and sport.</p>
+
+    <div class="rank-controls">
+        {# sport: default comes from panels.py's wall-clock choice #}
+        <div class="toggle-group" data-toggle="sport">
+            <button data-value="XC">Cross Country</button>
+            <button data-value="TF">Track &amp; Field</button>
+        </div>
+
+        {# scope: current season vs all-time #}
+        <div class="toggle-group" data-toggle="scope">
+            <button data-value="season">This Season</button>
+            <button data-value="alltime">All-Time</button>
+        </div>
+
+        {# pool chips: these HIDE a pool when un-checked (filter, not select).
+           Order is HS -> College -> MS, per your call. #}
+        <div class="pool-chips">
+            {# Order is fixed here rather than iterating the dict, because a
+               dict's order is an implementation detail and HS should lead. #}
+            {% for key in ['hs_m','hs_f','college_m','college_f','ms_m','ms_f'] %}
+                <button class="chip is-on" data-pool="{{ key }}">{{ POOL_LABELS[key] }}</button>
+            {% endfor %}
+        </div>
+    </div>
+
+    {# One .board-pair per (sport, scope). CSS shows only the pair whose
+       data-sport/data-scope match the section's current state, so switching
+       is instant and needs no server round-trip. #}
+    {% for sport in ['XC', 'TF'] %}
+        {% for scope in ['season', 'alltime'] %}
+            <div class="board-pair" data-sport="{{ sport }}" data-scope="{{ scope }}">
+
+                {% set athlete_pools = panels.get(sport, {}).get(scope, {}).get('athlete', {}) %}
+                {% set perf_pools    = panels.get(sport, {}).get(scope, {}).get('performance', {}) %}
+
+                {# Scope -> year, resolved once for both boards in this cell.
+                   Same meta key the heading below prints, so the label and
+                   the link cannot disagree. All-time passes None, and
+                   rankings_url then omits `year` entirely.
+                   CAVEAT: if the meta row is missing, '' is falsy and a
+                   "This Season" link degrades to all-time. The heading
+                   already renders blank in that case, so the page is
+                   visibly degraded either way. #}
+                {% set link_year = meta.get('season_year_' ~ sport, '') if scope == 'season' else None %}
+
+                {# scope label, human-readable #}
+                <h2 class="board-scope-label">
+                    {{ sport }} —
+                    {% if scope == 'season' %}
+                        {{ meta.get('season_year_' ~ sport, '') }} Season
+                    {% else %}
+                        All-Time
+                    {% endif %}
+                </h2>
+
+                <div class="board-pair-grid">
+                    <div class="board-side">
+                        <h3 class="board-title">Top Athletes</h3>
+                        {{ board_grid(athlete_pools, 'athlete', POOL_LABELS, sport, link_year) }}
+                    </div>
+                    <div class="board-side">
+                        <h3 class="board-title">Best Performances</h3>
+                        {{ board_grid(perf_pools, 'performance', POOL_LABELS, sport, link_year) }}
+                    </div>
+                </div>
+
+                {% if not athlete_pools and not perf_pools %}
+                    <p class="board-empty">No data for this view.</p>
+                {% endif %}
+
+            </div>
+        {% endfor %}
+    {% endfor %}
+
+</section>
+
+<script src="{{ url_for('static', filename='home.js') }}"></script>
+</body>
+</html>

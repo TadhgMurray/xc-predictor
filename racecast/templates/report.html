@@ -1,0 +1,135 @@
+{# ===================================================================== #}
+{#  report.html -- issue reports.                                        #}
+{#                                                                       #}
+{#  ★ THE CONTEXT IS PREFILLED, NOT ASKED FOR. Every page that links here #}
+{#    passes ?about=<its own path>, so a report about an athlete arrives  #}
+{#    with the athlete's URL already attached. Asking a user to describe  #}
+{#    WHICH page they were on is how you get reports you cannot act on.   #}
+{#                                                                       #}
+{#  ★ NO <form> SUBMIT. The page posts JSON via fetch and stays put, so a #}
+{#    failed request shows an error instead of navigating to a broken     #}
+{#    page and losing what the user typed.                                #}
+{# ===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% set meta_title = "Report an issue" %}
+{% set meta_description =
+   "Report a wrong rating, a misidentified athlete, bad meet data or a site
+    bug." %}
+{% set meta_crumbs = [("Report an issue", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page">
+
+  <h1>Report an issue</h1>
+  <p class="page-lead">
+    Wrong ratings are the most useful thing you can report. Specific beats
+    general — a link and a sentence about what looks off is enough.
+  </p>
+
+  <div class="form-row">
+    <label for="kind">What kind of issue</label>
+    <select id="kind">
+      <option value="rating">A rating looks wrong</option>
+      <option value="pool">Someone is on the wrong board (HS / MS / college)</option>
+      <option value="identity">Wrong name, or two people merged into one</option>
+      <option value="missing">A result or meet is missing</option>
+      <option value="meet">Meet, course or distance is wrong</option>
+      <option value="bug">Something on the site is broken</option>
+      <option value="other">Something else</option>
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="page">Which page</label>
+    {# Prefilled from ?about=. Editable, because the user may have navigated
+       since, and a wrong prefill is worse than an empty box. #}
+    <input id="page" type="text" value="{{ about or '' }}"
+           placeholder="/athlete/12345 or a full link">
+  </div>
+
+  <div class="form-row">
+    <label for="detail">What looks wrong</label>
+    <textarea id="detail" rows="6"
+              placeholder="e.g. This athlete is a sophomore in high school but appears on the middle school board."></textarea>
+  </div>
+
+  <div class="form-row">
+    <label for="email">Email <span class="opt">optional — only if you want a reply</span></label>
+    <input id="email" type="email" placeholder="you@example.com">
+  </div>
+
+  <button class="go" id="send">Send report</button>
+  <div class="form-status" id="status"></div>
+
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+/*
+ * Post the report and report back honestly.
+ *
+ * The button is disabled while in flight so a slow connection cannot produce
+ * three copies of the same report -- the usual cause of duplicate submissions.
+ */
+async function send() {
+  const detail = $("detail").value.trim();
+  if (!detail) {
+    show("Tell us what looks wrong first.", true);
+    $("detail").focus();
+    return;
+  }
+
+  $("send").disabled = true;
+  show("Sending\u2026", false);
+
+  try {
+    const res = await fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind:   $("kind").value,
+        page:   $("page").value.trim(),
+        detail: detail,
+        email:  $("email").value.trim()
+      })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      // Show the server's reason. "Something went wrong" teaches the user
+      // nothing and gets the same report re-sent five times.
+      show(data.error || res.statusText, true);
+      $("send").disabled = false;
+      return;
+    }
+
+    show("Thanks \u2014 that's logged. If you left an email we may follow up.", false);
+    $("detail").value = "";
+  } catch (err) {
+    show("Could not reach the server: " + err.message, true);
+    $("send").disabled = false;
+  }
+}
+
+function show(msg, isError) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "form-status show" + (isError ? " error" : "");
+}
+
+$("send").addEventListener("click", send);
+</script>
+</body>
+</html>

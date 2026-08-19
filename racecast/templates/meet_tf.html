@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ header.meet_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ header.meet_name }}</h1>
+    <p class="meta">
+        {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
+        {% if header.state %} · {{ header.state }}{% endif %}
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Event</th>
+                <th>Division</th>
+                <th>Results</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in events %}
+            <tr>
+                <td>
+                    <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}">
+                        {{ e.event_short if e.event_short else "Event " ~ e.event_id }}
+                    </a>
+                </td>
+                <td>{{ e.division if e.division else "—" }}</td>
+                <td>{{ e.n_results }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

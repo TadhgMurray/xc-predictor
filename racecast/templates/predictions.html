@@ -1,0 +1,167 @@
+{# =====================================================================
+  predictions.html -- meet first, then when, then who.
+
+  ★ THE MEET IS THE SUBJECT, NOT A PARAMETER. The previous version asked for
+    an athlete and treated the race as one field among several. But everything
+    that makes a prediction possible comes from the meet: the course and its
+    solved difficulty, the date, and -- for teams -- the field itself. Picking
+    it first lets the rest of the page be built from real data instead of from
+    empty inputs.
+
+  ★ ONLY MEETS THAT HAVE ALREADY HAPPENED. Genuinely upcoming races are not in
+    this database -- `meets` has no date column, so an XC meet with no results
+    yet is invisible. Rather than a picker that quietly shows nothing, the page
+    is built on re-running real editions.
+
+  TWO WAYS TO RE-RUN ONE
+    This year   the same course on the same weekend, run by whoever races now.
+                The date is editable, because meets move.
+    As it ran   that meet, that year, that field, that date. The answer is
+                already in the database, so this is a BACKTEST and the page
+                shows the real result beside the prediction. It is the only way
+                to find out whether the model is any good before trusting it.
+
+  ★ INDIVIDUAL AND TEAM ARE SEPARATE PANELS, NOT ONE FORM WITH FIELDS HIDDEN.
+    They ask different questions and need different inputs -- one wants a
+    person, the other wants a roster you can edit. Sharing a form made both
+    read as half-filled.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% set meta_title = "Predictions" %}
+{% set meta_description =
+   "Re-run a cross country or track meet: predict what an athlete or a team
+    would run today on the same course, or check the model against the real
+    result." %}
+{% set meta_crumbs = [("Predictions", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<div class="predict2" id="predict2">
+
+  <h1>Re-run a meet</h1>
+  <p class="page-lead">
+    Pick a race that has already happened. Predict what would happen if it were
+    run again &mdash; or check the model against what actually did.
+  </p>
+
+  {# ---------------- 1. THE MEET ----------------
+
+     ★ THE CHOSEN MEET STAYS IN STEP 1, AS THAT STEP'S ANSWER. Two earlier
+       versions put it elsewhere: a chip below the search box, which buried it
+       mid-form, and then the page title, which read as a heading rather than
+       a choice AND left step 2 as the first visible step with no step 1 above
+       it. A step that has been answered should show its answer in place --
+       that is what the number is for. #}
+  <section class="step" data-step="meet">
+    <div class="step-head"><span class="step-n">1</span> Which meet</div>
+
+    <div class="meet-search" id="meet-search">
+      <div class="pick-wrap wide">
+        <input id="meet-input" type="search" autocomplete="off"
+               placeholder="Arcadia, Woodbridge, state championships&hellip;">
+        <div id="meet-results" class="pick-results hidden"></div>
+      </div>
+      <p class="hint">Two letters or more. Editions are grouped by year.</p>
+    </div>
+
+    <div class="meet-chosen hidden" id="meet-chosen"></div>
+  </section>
+
+  {# ---------------- 2. WHEN ---------------- #}
+  <section class="step hidden" data-step="when">
+    <div class="step-head"><span class="step-n">2</span> When</div>
+
+    <div class="cards">
+      <button class="card is-on" data-when="thisyear">
+        <span class="card-t">Run it this year</span>
+        <span class="card-d">Same course, same weekend, whoever is racing now</span>
+      </button>
+      <button class="card" data-when="asran">
+        <span class="card-t">As it actually ran</span>
+        <span class="card-d">That year, that field &mdash; scored against the real result</span>
+      </button>
+    </div>
+
+    <div class="when-pane" data-pane="thisyear">
+      <label for="t-date">Date</label>
+      <input id="t-date" type="date">
+      <p class="hint">Defaults to the same month and day. Change it if the meet
+        has moved.</p>
+    </div>
+
+    <div class="when-pane hidden" data-pane="asran">
+      <p class="hint" id="asran-hint"></p>
+    </div>
+  </section>
+
+  {# ---------------- 3. WHO ---------------- #}
+  <section class="step hidden" data-step="who">
+    <div class="step-head"><span class="step-n">3</span> Who</div>
+
+    <div class="cards">
+      <button class="card is-on" data-who="team">
+        <span class="card-t">The whole field</span>
+        <span class="card-d">Team scores and places</span>
+      </button>
+      <button class="card" data-who="individual">
+        <span class="card-t">Specific athletes</span>
+        <span class="card-d">One or several, compared side by side</span>
+      </button>
+    </div>
+
+    {# --- TEAM --- #}
+    <div class="who-pane" data-pane="team">
+      <div class="field-head">
+        <span id="field-summary">Loading the field&hellip;</span>
+        <label class="check">
+          <input type="checkbox" id="head_to_head">
+          <span>Head to head &mdash; score as if only these teams raced</span>
+        </label>
+      </div>
+
+      {# Every team from that meet, seven runners each, editable. Athletes who
+         have not raced this season are listed greyed with an add button rather
+         than hidden: an injured athlete looks identical to a graduated one in
+         the data, and only a person can tell them apart. #}
+      <div id="field" class="field-grid"></div>
+
+      <div class="pick-wrap">
+        <input id="school-input" type="search" autocomplete="off"
+               placeholder="Add/Remove a team">
+        <div id="school-results" class="pick-results hidden"></div>
+      </div>
+    </div>
+
+    {# --- INDIVIDUAL --- #}
+    <div class="who-pane hidden" data-pane="individual">
+      <div class="pick-wrap">
+        <input id="athlete-input" type="search" autocomplete="off"
+               placeholder="Search for an athlete">
+        <div id="athlete-results" class="pick-results hidden"></div>
+      </div>
+      <p class="hint">Anyone, whether or not they ran this meet. Add several
+        to compare them at the same race.</p>
+      <div class="chosen hidden" id="athlete-chosen"></div>
+    </div>
+  </section>
+
+  <div class="actions hidden" id="actions">
+    <button class="go" id="predict">Predict</button>
+    <span class="predict-status" id="status"></span>
+  </div>
+
+  <div id="output"></div>
+
+</div>
+
+<script src="{{ url_for('static', filename='predictions.js') }}"></script>
+</body>
+</html>

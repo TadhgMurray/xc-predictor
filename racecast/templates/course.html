@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ course_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ course_name }}</h1>
+    <p class="meta">
+        Difficulty:
+        {{ "%+.3f"|format(header.difficulty) if header and header.difficulty is not none else "—" }}
+        {% if header %}
+            · {{ "{:,}".format(header.n_results) }} results
+            · {{ "{:,}".format(header.n_athletes) }} athletes
+        {% endif %}
+    </p>
+
+    <div class="placeholder-slot">
+        Team records — coming later
+    </div>
+
+    <h2>All-time bests</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Athlete</th>
+                <th>Time</th>
+                <th>Dist</th>
+                <th>Grade</th>
+                <th>School</th>
+                <th>Meet</th>
+                <th>Date</th>
+                <th>Rating</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in bests %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.name if row.name else "Unknown" }}
+                    {% endif %}
+                </td>
+                <td>{{ row.display_time }}</td>
+                <td>{{ row.distance|int if row.distance else "—" }}m</td>
+                <td>{{ row.grade if row.grade else "—" }}</td>
+                <td>{{ row.school if row.school else "—" }}</td>
+                <td><a href="/race/xc/{{ row.meet_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
+                <td>{{ row.date }}</td>
+                <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Meets held here</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Meet</th>
+                <th>Last held</th>
+                <th>Distance</th>
+                <th>Results</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in meets %}
+            <tr>
+                <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
+                <td>{{ m.last_date }}</td>
+                <td>
+                    {% if m.distances %}
+                        {% for d in m.distances %}{{ d|int }}m{% if not loop.last %}, {% endif %}{% endfor %}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>{{ "{:,}".format(m.n_results) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Distances raced here</h2>
+    <table>
+        <thead>
+            <tr><th>Distance</th><th>Results</th><th>First</th><th>Last</th></tr>
+        </thead>
+        <tbody>
+            {% for d in distances %}
+            <tr>
+                <td>{{ d.distance|int }}m</td>
+                <td>{{ "{:,}".format(d.n_results) }}</td>
+                <td>{{ d.first_date }}</td>
+                <td>{{ d.last_date }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

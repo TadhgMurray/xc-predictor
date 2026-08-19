@@ -1,0 +1,106 @@
+location_id	state	guess	query	source	low_conf	lat	lon
+138170	MS	AAA Varsity District Track & Field Championship	AAA Varsity District Track & Field Championship, MS, USA	miss			
+141903	KY	KY	KY, KY, USA	census/nominatim	1	36.662	-88.310
+141795	MN	Minnesota Junior Olympic	Minnesota Junior Olympic, MN, USA	miss			
+138213	VA	BWSP Queens	BWSP Queens, VA, USA	miss			
+140576	MO	SLPS-	SLPS-, MO, USA	miss	1		
+141237	MN	Blaze	Blaze, MN, USA	census/nominatim		44.130	-93.993
+140734	IA	State	State, IA, USA	census/nominatim		41.681	-93.246
+142470	NH	NHWTL	NHWTL, NH, USA	miss	1		
+113007	TX	5A Meet	5A Meet, TX, USA	miss			
+141173	NC	Johnson Riley	Johnson Riley, NC, USA	census/nominatim		37.041	-88.350
+138176	OH	Ohio State	Ohio State, OH, USA	census/nominatim		40.006	-83.029
+141811	MS	Coastal Mississippi Challenge	Coastal Mississippi Challenge, MS, USA	miss			
+141950	VA	Virginia North	Virginia North, VA, USA	census/nominatim		38.897	-77.072
+138318	MS	Velma Jackson	Velma Jackson, MS, USA	census/nominatim		32.776	-89.867
+142047	IL	Central	Central, IL, USA	census/nominatim		41.887	-87.766
+142045	VA	Cannonball Cooper	Cannonball Cooper, VA, USA	miss			
+141187	NE	Boone Central	Boone Central, NE, USA	census/nominatim		41.688	-98.003
+141229	PA	George	George, PA, USA	census/nominatim		41.621	-79.670
+140778	NC	Mid-South	Mid-South, NC, USA	census/nominatim		35.790	-82.241
+140571	MO	Clayton	Clayton, MO, USA	census/nominatim		38.650	-90.336
+141062	PA	East Stroudsburg South	East Stroudsburg South, PA, USA	census/nominatim		40.998	-75.184
+141228	PA	ESN	ESN, PA, USA	miss	1		
+141063	PA	Stroudsburg	Stroudsburg, PA, USA	census/nominatim		40.986	-75.195
+142032	Texas	Region	Region, TX, USA	census/nominatim		30.266	-97.650
+141106	IA	Perry	Perry, IA, USA	census/nominatim		41.839	-94.107
+141869	NC	Ken Roberts Panther Elite	Ken Roberts Panther Elite, NC, USA	miss			
+141483	IA	Mt Ayr	Mt Ayr, IA, USA	census/nominatim		40.715	-94.238
+142509	TX	Afterburners Track	Afterburners Track, TX, USA	miss			
+140583	MO	Troy	Troy, MO, USA	census/nominatim		38.979	-90.981
+141194	IA	DSM Valley	DSM Valley, IA, USA	census/nominatim		41.571	-93.709
+142742	CA	Beaumont	Beaumont, CA, USA	census/nominatim		33.930	-116.976
+141159	IA	Newton	Newton, IA, USA	census/nominatim		41.700	-93.054
+141122	IA	Clarke	Clarke, IA, USA	census/nominatim		41.015	-93.784
+140575	MO	Pacific	Pacific, MO, USA	census/nominatim		38.482	-90.742
+141448	PA	Garnet Valley	Garnet Valley, PA, USA	census/nominatim		39.843	-75.537
+139744	IL	Minooka	Minooka, IL, USA	census/nominatim		41.455	-88.262
+141583	IA	DSM Christian	DSM Christian, IA, USA	miss			
+142494	PA	Indoor	Indoor, PA, USA	census/nominatim		41.395	-75.261
+140544	MO	Nortwest	Nortwest, MO, USA	census/nominatim		38.280	-93.395
+142743	CA	Los Al	Los Al, CA, USA	census/nominatim		38.630	-121.441
+141078	PA	Lock Haven Bald Eagle	Lock Haven Bald Eagle, PA, USA	census/nominatim		41.114	-77.482
+140512	MO	AAA	AAA, MO, USA	census/nominatim	1	39.260	-94.658
+141830	NC	1A/3A Outdoor State	1A/3A Outdoor State, NC, USA	miss	1		
+140551	IL	Minooka	Minooka, IL, USA	census/nominatim		41.455	-88.262
+141389	IA	CN Robinson	CN Robinson, IA, USA	census/nominatim		42.342	-91.579
+140716	IL	Bloomington/Normal Intercity	Bloomington/Normal Intercity, IL, USA	miss	1		
+141447	PA	GFS	GFS, PA, USA	census/nominatim	1	40.033	-75.172
+141449	PA	Westtown	Westtown, PA, USA	census/nominatim		39.931	-75.552
+141231	PA	FC	FC, PA, USA	census/nominatim	1	39.963	-75.153
+142702	IL	Glenbard East Rams	Glenbard East Rams, IL, USA	miss			
+141593	NE	CRC	CRC, NE, USA	census/nominatim	1	40.724	-96.773
+113006	KS	Syracuse HPL	Syracuse HPL, KS, USA	miss			
+141568	NE	4 Districts	4 Districts, NE, USA	miss			
+141514	IA	Martensdale	Martensdale, IA, USA	census/nominatim		41.374	-93.739
+141341	PA	Germantown Academy	Germantown Academy, PA, USA	census/nominatim		40.138	-75.220
+141873	PA	Area I	Area I, PA, USA	census/nominatim		41.665	-80.488
+141599	NE	Fairbury JH	Fairbury JH, NE, USA	miss			
+142732	OH	Central	Central, OH, USA	census/nominatim		41.494	-81.655
+142458	NY	Section 7 CVAC League Meets # 3A	Section 7 CVAC League Meets # 3A, NY, USA	miss			
+113000	OR	Reedsport	Reedsport, OR, USA	census/nominatim		43.702	-124.097
+141156	NY	Iona/Ursuline	Iona/Ursuline, NY, USA	miss	1		
+140577	MO	Eureka	Eureka, MO, USA	census/nominatim		38.503	-90.628
+138150	FL	Lightning Sprint Out	Lightning Sprint Out, FL, USA	miss			
+142376	NC	GC	GC, NC, USA	census/nominatim	1	36.005	-78.933
+141704	PA	Malvern Prep	Malvern Prep, PA, USA	miss			
+142555	IL	Akinosun	Akinosun, IL, USA	miss			
+113002	MA	EMASS D1	EMASS D1, MA, USA	miss	1		
+140585	MO	FZE	FZE, MO, USA	miss	1		
+140586	MO	Grain Valley	Grain Valley, MO, USA	census/nominatim		39.019	-94.198
+141304	IA	Collins-Maxwell	Collins-Maxwell, IA, USA	census/nominatim		41.890	-93.396
+140588	MO	Suburban	Suburban, MO, USA	census/nominatim		37.331	-89.557
+140582	MO	Battle	Battle, MO, USA	census/nominatim		38.938	-92.350
+140746	MO	Bob Thorpe	Bob Thorpe, MO, USA	miss			
+141891	WI	Portage	Portage, WI, USA	census/nominatim		44.460	-89.511
+141589	PA	ESS Cavalier	ESS Cavalier, PA, USA	miss			
+141698	MO	State Track	State Track, MO, USA	census/nominatim		32.278	-106.748
+141294	PA	Spring Ford	Spring Ford, PA, USA	census/nominatim		40.208	-75.527
+141719	WI	Cashton	Cashton, WI, USA	census/nominatim		43.743	-90.779
+141354	IL	10	10, IL, USA	census/nominatim	1	41.699	-87.586
+141791	IA	LHC	LHC, IA, USA	miss	1		
+141817	PA	Inter-Ac	Inter-Ac, PA, USA	miss			
+141468	NE	Platteview	Platteview, NE, USA	census/nominatim		41.126	-101.736
+141747	NE	5 District Championships	5 District Championships, NE, USA	miss			
+140754	NE	Coaches Legacy	Coaches Legacy, NE, USA	miss			
+141590	NE	L&C	L&C, NE, USA	miss	1		
+142528	NC	Falcon	Falcon, NC, USA	census/nominatim		35.190	-78.648
+140942	NC	Union Pines Viking	Union Pines Viking, NC, USA	census/nominatim		35.318	-79.347
+141252	NY	Rondout Valley	Rondout Valley, NY, USA	census/nominatim		41.815	-74.188
+142634	IL	Proviso East 14th	Proviso East 14th, IL, USA	miss			
+113001	ID	Northside	Northside, ID, USA	census/nominatim		43.593	-116.572
+142352	AZ	AZ	AZ, AZ, USA	census/nominatim	1	32.161	-110.891
+141281	IA	Dordt	Dordt, IA, USA	census/nominatim		43.081	-96.164
+141019	IA	Graceland	Graceland, IA, USA	census/nominatim		40.617	-93.926
+141943	NE	Midwest Night of Stars	Midwest Night of Stars, NE, USA	miss			
+142644	MI	AQ MITS	AQ MITS, MI, USA	miss	1		
+140322	CA	Heritage	Heritage, CA, USA	census/nominatim		38.773	-121.390
+140572	MO	Rockwood	Rockwood, MO, USA	census/nominatim		36.903	-93.081
+141450	PA	Lower Merion	Lower Merion, PA, USA	census/nominatim		40.025	-75.277
+142562	IL	Clinton	Clinton, IL, USA	census/nominatim		38.590	-89.420
+140957	PA	Garnet Valley	Garnet Valley, PA, USA	census/nominatim		39.843	-75.537
+141702	PA	Notre Dame	Notre Dame, PA, USA	census/nominatim		40.319	-75.180
+141784	PA	Strath Haven	Strath Haven, PA, USA	census/nominatim		39.895	-75.372
+113004	OH	Adena	Adena, OH, USA	census/nominatim		40.218	-80.873
+142000	CA	Time Trial	Time Trial, CA, USA	census/nominatim		47.107	-88.556
+141912	NJ	Tri-State Games	Tri-State Games, NJ, USA	miss			

@@ -210,6 +210,11 @@ def buildTFRRSResultRow(parsed: dict, meet_meta: dict,
         "meet_id":       meet_id,
         "event_id":      event_id,
         "event_short":   event_short,
+        # div_id: the per-meet linear division number stamped on the parsed row by
+        # applyDivisions (run in _processXCMeet before this build). Copied through
+        # here so _rowToTupleXC can write it into results.div_id. None for TF rows
+        # or any row that wasn't stamped (harmless — stays NULL as before).
+        "div_id":        parsed.get("div_id"),
         "date":          meet_meta.get("date"),      # first day (parser convention)
  
         # the result itself
@@ -432,9 +437,10 @@ def saveTFRRSMeetMeta(conn, meta: dict, meet_id, sport) -> None:
             meet_id, sport, meet_name, date, date_end,
             venue_name, city, state, location_raw, host,
             director, timing, referee, is_championship,
-            gps_lat, gps_long, source, native_id
+            gps_lat, gps_long, source, native_id,
+            division_distances
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (meet_id, sport) DO UPDATE SET
             meet_name    = EXCLUDED.meet_name,
             date         = EXCLUDED.date,
@@ -447,7 +453,10 @@ def saveTFRRSMeetMeta(conn, meta: dict, meet_id, sport) -> None:
             director     = EXCLUDED.director,
             timing       = EXCLUDED.timing,
             referee      = EXCLUDED.referee,
-            is_championship = EXCLUDED.is_championship
+            is_championship = EXCLUDED.is_championship,
+            -- refresh the division->distance blob on re-scrape (atomic with the
+            -- result rows, so div_ids and blob stay in sync).
+            division_distances = EXCLUDED.division_distances
             -- gps_lat/gps_long intentionally NOT refreshed: a geocoding backfill
             -- fills them after the scrape; don't let a re-scrape null them out.
     """, (
@@ -469,5 +478,118 @@ def saveTFRRSMeetMeta(conn, meta: dict, meet_id, sport) -> None:
         meta.get("gps_long"),              # None now; geocoding fills later
         TFRRS_SOURCE,                      # 'tfrrs' — NOT NULL
         meet_id,                           # native_id = the tfrrs meet id
+        # division_distances: wrap the dict as Json so psycopg2 sends it to the
+        # jsonb column. None-safe: Json(None) stores SQL NULL, which is fine for
+        # a meet with no parsed divisions.
+        psycopg2.extras.Json(meta.get("division_distances")),
     ))
+
+# _rowToTupleXC
+# Purpose: Turn one normalized TFRRS row into the positional tuple for the
+#          `results` (XC) INSERT below, in EXACT column order. The XC analogue of
+#          _rowToTuple, dropping every TF-only field `results` doesn't have and
+#          deriving the two fields `results` needs that the TF tuple didn't carry
+#          (has_splits, school_source).
+# Arguments:
+#           row:        a normalized dict from buildTFRRSResultRow (sport=XC).
+#           scraped_at: one batch timestamp shared by every row in the batch.
+# Output:   a tuple in the INSERT's column order (see saveTFRRSResultsXCBulk).
+def _rowToTupleXC(row: dict, scraped_at) -> tuple:
+    # splits: store the JSONB blob when present; has_splits is the 1/0 flag the
+    # `results` table carries (derived here since the normalized row has only the
+    # raw splits list, not a precomputed flag).
+    splits_value = psycopg2.extras.Json(row["splits"]) if row.get("splits") else None
+    has_splits   = 1 if row.get("splits") else 0
  
+    # school + school_source mirror anet's saveResultsBulk convention: a real
+    # school -> 'scraped'; no school -> NULL marks the row as a re-scrape target.
+    school        = row.get("school") or "Unknown"
+    school_source = "scraped" if row.get("school") else None
+ 
+    return (
+        _mintResultId(row),          # result_id — same content-hash mint as TF
+        row["athlete_id"],           # NULL until identity resolution (FK skips NULL)
+        row["person_id"],            # NULL until identity resolution
+        row["source"],               # 'tfrrs'
+        row["id_system"],            # 'tfrrs' (XC namespace)
+        row["native_id"],            # tfrrs athlete id
+        row["athlete_name"],         # the always-kept handle
+        row["meet_id"],
+        row.get("div_id"),           # per-meet linear division id (None if unstamped)
+        row["time_seconds"],         # XC is always a running time
+        row["grade"],
+        row["date"],
+        school,
+        school_source,
+        row["place"],
+        row["score"],
+        has_splits,
+        scraped_at,
+        splits_value,
+    )
+ 
+ 
+# saveTFRRSResultsXCBulk
+# Purpose: Bulk-upsert normalized TFRRS XC rows into `results` (NOT results_tf).
+#          The XC twin of saveTFRRSResultsBulk: same mint, same dedup, same
+#          "refresh capture columns on conflict, COALESCE school" stance — just
+#          the `results` column set. Conn-taking; the CALLER commits.
+# Arguments:
+#           conn: open connection from the pool (caller owns commit).
+#           rows: list of normalized dicts from buildTFRRSResultRows (XC meet).
+# Output:   None. One upserted `results` row per input row.
+def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
+    if not rows:
+        return
+ 
+    import datetime
+    scraped_at = datetime.datetime.now(datetime.timezone.utc)
+ 
+    tuples = [_rowToTupleXC(r, scraped_at) for r in rows]
+ 
+    # Dedup by result_id (tuple[0]) before execute_values: Postgres can't run
+    # DO UPDATE against the same conflict target twice in one statement. Last
+    # write wins, same as the TF saver.
+    deduped = {}
+    for t in tuples:
+        deduped[t[0]] = t
+    tuples = list(deduped.values())
+ 
+    cursor = conn.cursor()
+    # Column list MUST match _rowToTupleXC's order. ON CONFLICT refreshes the
+    # capture columns (so a re-scrape repairs them) and COALESCE-protects school
+    # so a re-scrape can't null a good value back out.
+    try:
+        psycopg2.extras.execute_values(cursor, """
+            INSERT INTO results (
+                result_id, athlete_id, person_id, source, id_system, native_id,
+                athlete_name, meet_id, div_id, time_seconds, grade, date,
+                school, school_source, place, score, has_splits,
+                scraped_at, splits_json
+            )
+            VALUES %s
+            ON CONFLICT (result_id) DO UPDATE SET
+                time_seconds  = EXCLUDED.time_seconds,
+                place         = EXCLUDED.place,
+                score         = EXCLUDED.score,
+                has_splits    = EXCLUDED.has_splits,
+                native_id     = EXCLUDED.native_id,
+                -- div_id MUST be refreshed on conflict: re-scraped rows mint the
+                -- SAME result_id, so they take the DO UPDATE path. Without this
+                -- line, an existing row's div_id (NULL from before the fix) is
+                -- kept and the freshly-computed local div_id is discarded — the
+                -- exact bug that left div_id NULL while the blob landed.
+                div_id        = EXCLUDED.div_id,
+                athlete_name  = COALESCE(EXCLUDED.athlete_name, results.athlete_name),
+                school        = COALESCE(EXCLUDED.school, results.school),
+                school_source = COALESCE(EXCLUDED.school_source, results.school_source),
+                scraped_at    = EXCLUDED.scraped_at,
+                splits_json   = EXCLUDED.splits_json
+        """, tuples)
+    except Exception as e:
+        # `results` may constrain athlete_id (NOT NULL / FK) differently from
+        # results_tf, which happily takes NULL. If this fires on a test rescrape,
+        # that's the signal the column needs to be made nullable to match
+        # results_tf. Surface it loudly instead of silently failing the meet.
+        print(f"[XC-SAVE-FAIL] {type(e).__name__}: {e}", flush=True)
+        raise

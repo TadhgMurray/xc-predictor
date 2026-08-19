@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ athlete.name }} — Racecast</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='athlete-charts.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{# ===================================================================== #}
+{#  FLAG DICTIONARY -- the single source of every flag's words.          #}
+{#                                                                       #}
+{#  TITLES SPELL OUT THE ABBREVIATION -- CSR is COURSE SEASON RECORD, and #}
+{#  the tooltip says exactly that. A title that paraphrases instead of     #}
+{#  expanding ("Course season best") leaves the reader still guessing what #}
+{#  the letters stand for, which is the whole reason they hovered.         #}
+{#                                                                       #}
+{#  A starred flag is an all-time record; the title says "(Overall)" and   #}
+{#  the blurb does not repeat it. Unstarred means it was a record when it  #}
+{#  was set. Season flags never star -- a season best is already bounded.  #}
+{#                                                                       #}
+{#  To reword a flag, edit it here. The markup below renders from this    #}
+{#  and nowhere else.                                                     #}
+{# ===================================================================== #}
+{% set FLAG_INFO = {
+  'pr': {
+    'code': 'PR', 'css': 'pr',
+    'title': 'Personal Record',
+    'title_current': 'Personal Record (Overall)',
+    'blurb': 'Their fastest time at this distance when this race was run.',
+    'blurb_current': 'Their fastest time at this distance across their whole career.'
+  },
+  'cpr': {
+    'code': 'CR', 'css': 'cpr',
+    'title': 'Course Record',
+    'title_current': 'Course Record (Overall)',
+    'blurb': 'Their fastest run on this particular course at the time. Cross country only, since track courses do not differ the same way.',
+    'blurb_current': 'Their fastest run on this particular course across their whole career.'
+  },
+  'rpr': {
+    'code': 'R', 'css': 'rpr',
+    'title': 'Rating Record',
+    'title_current': 'Rating Record (Overall)',
+    'blurb': 'Their highest speed rating at the time. Unlike a time, a rating is comparable across distances, courses and conditions.',
+    'blurb_current': 'Their highest speed rating across their whole career — their best race anywhere, at any distance.'
+  },
+  'sr': {
+    'code': 'SR', 'css': 'sr',
+    'title': 'Season Record',
+    'title_current': 'Season Record',
+    'blurb': 'Their fastest time at this distance in this season.',
+    'blurb_current': 'Their fastest time at this distance in this season.'
+  },
+  'csr': {
+    'code': 'CSR', 'css': 'csr',
+    'title': 'Course Season Record',
+    'title_current': 'Course Season Record',
+    'blurb': 'Their fastest run on this course in this season.',
+    'blurb_current': 'Their fastest run on this course in this season.'
+  },
+  'rsr': {
+    'code': 'RSR', 'css': 'rsr',
+    'title': 'Rating Season Record',
+    'title_current': 'Rating Season Record',
+    'blurb': 'Their highest speed rating in this season — their best race of the year once the course is accounted for.',
+    'blurb_current': 'Their highest speed rating in this season — their best race of the year once the course is accounted for.'
+  }
+} %}
+
+{# One flag. `current` adds the star and swaps in the still-standing wording.
+
+   tabindex="0" is what makes this work without a mouse: it puts the flag in
+   the tab order, and the stylesheet shows the tooltip on :focus as well as
+   :hover. aria-label carries the same words, so a screen reader gets them
+   whether or not the tooltip ever appears. #}
+{% macro flag(key, current=False) %}
+    {%- set f = FLAG_INFO[key] -%}
+    {%- set title = f.title_current if current else f.title -%}
+    {%- set blurb = f.blurb_current if current else f.blurb -%}
+    <span class="flag flag--{{ f.css }}{{ ' is-current' if current else '' }}"
+          tabindex="0"
+          data-title="{{ title }}"
+          data-blurb="{{ blurb }}"
+          aria-label="{{ title }}. {{ blurb }}">{{ '★' if current else '' }}{{ f.code }}</span>
+{%- endmacro %}
+
+{% macro season_block(year, sport, season) %}
+    <div class="season" id="{{ year }}-{{ sport }}">
+        {# The rating is IN the heading, not buried in the meta line below it:
+           it is the number the section is about, and the sidebar links here
+           showing the same figure. #}
+        <h3 class="season-head">
+            {{ year }} {{ sport }}
+            <span class="season-rating">{{ "%.1f"|format(season.rating) if season.rating else "—" }}</span>
+        </h3>
+        <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Meet</th>
+                    <th>Event</th>
+                    <th>Result</th>
+                    <th>Rating</th>
+                    <th>Difficulty</th>
+                    <th>PR/SR Flags</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for race in season.races %}
+                <tr id="race-{{ race.result_id }}">
+                    <td>{{ race.date }}</td>
+                    <td>
+                        {% if race.sport == 'XC' and race.meet_id %}
+                            {% if race.meet %}
+                                <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
+                                   title="{{ race.meet }}">{{ race.meet }}</a>
+                            {% else %}
+                                <span class="muted">Unlinked meet</span>
+                            {% endif %}
+                        {% elif race.sport == 'TF' and race.meet_id %}
+                            {% if race.meet %}
+                                <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}"
+                                   title="{{ race.meet }}">{{ race.meet }}</a>
+                            {% else %}
+                                <span class="muted">Unlinked meet</span>
+                            {% endif %}
+                        {% else %}
+                            {{ race.meet }}
+                        {% endif %}
+                    </td>
+                    <td>{{ race.event }}</td>
+                    <td>{{ race.result }}</td>
+                    <td>{{ "%.1f"|format(race.speed_rating) if race.speed_rating else "—" }}</td>
+                    <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
+                    {# Same nine conditions as before -- only the rendering moved
+                       into the flag() macro, so each badge now carries its own
+                       explanation. #}
+                    <td class="flags">
+                        {% if race.is_pr %}{{ flag('pr', race.is_star_pr) }}{% endif %}
+                        {% if race.is_course_pr and race.sport == 'XC' %}{{ flag('cpr', race.is_star_course) }}{% endif %}
+                        {% if race.is_rating_pr %}{{ flag('rpr', race.is_star_rating) }}{% endif %}
+                        {% if race.is_sr %}{{ flag('sr') }}{% endif %}
+                        {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
+                        {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endmacro %}
+
+    <h1>{{ athlete.name }}</h1>
+    <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }}</p>
+
+    <nav class="sport-toggle">
+        <a href="#xc">Cross Country</a>
+        <a href="#tf">Track &amp; Field</a>
+    </nav>
+
+    <div class="page-layout">
+
+        <main class="main-col">
+
+            {#
+              CAREER CHART -- every rated race, both sports, in date order.
+
+              It sits ABOVE the sport sections rather than inside either,
+              because it belongs to neither: speed_rating is 5K-equivalent and
+              difficulty-adjusted, so an XC 5k and a TF 1600m are directly
+              comparable and this is the one view of a whole career.
+
+              data-bysport="1" colours the dots by sport and adds the legend.
+              The LINE stays one colour -- it is one athlete's progression, not
+              two separate series.
+
+              Chart slots carry no placeholder text: athlete-charts.js replaces
+              their contents and renders its own "no data" state. Text here
+              would flash before the script runs.
+            #}
+            <div class="chart-slot chart-wide"
+                 data-chart="all_rating" data-kind="rating" data-bysport="1"
+                 data-title="Speed rating — all races"></div>
+
+            {% if xc_seasons %}
+            <section class="sport-section" id="xc">
+                <h2>Cross Country</h2>
+
+                <div class="chart-slot chart-wide"
+                     data-chart="xc_rating" data-kind="rating"
+                     data-title="XC speed rating">
+                </div>
+
+                <nav class="season-jump">
+                    {% for (year, sport), season in xc_seasons %}
+                        <a href="#{{ year }}-{{ sport }}">{{ year }}</a>
+                    {% endfor %}
+                </nav>
+
+                {% for (year, sport), season in xc_seasons %}
+                    {{ season_block(year, sport, season) }}
+                {% endfor %}
+            </section>
+            {% endif %}
+
+            {% if tf_seasons %}
+            <section class="sport-section" id="tf">
+                <h2>Track &amp; Field</h2>
+
+                <div class="chart-slot chart-wide"
+                     data-chart="tf_rating" data-kind="rating"
+                     data-title="TF speed rating">
+                </div>
+
+                <nav class="season-jump">
+                    {% for (year, sport), season in tf_seasons %}
+                        <a href="#{{ year }}-{{ sport }}">{{ year }}</a>
+                    {% endfor %}
+                </nav>
+
+                {% for (year, sport), season in tf_seasons %}
+                    {{ season_block(year, sport, season) }}
+                {% endfor %}
+            </section>
+            {% endif %}
+
+        </main>
+
+        <aside class="sidebar">
+
+            {#
+              ALL-TIME BESTS.
+
+              Top of the sidebar because it answers the first question anyone
+              has about an athlete. The career rating leads, then the best
+              single race across BOTH sports underneath it -- those two are
+              different quantities and sitting them together makes the
+              difference legible: the first is an ability averaged over a
+              career, the second is one day.
+            #}
+            <div class="bests-panel">
+                <h3>All-Time Bests</h3>
+
+                <div class="rating-head">
+                    <div class="stat">
+                        <span class="label">Athlete rating</span>
+                        <span class="value">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+                    </div>
+                    {% if alltime.rating %}
+                    <div class="stat">
+                        <span class="label">Best race</span>
+                        <span class="value">
+                            <a href="#race-{{ alltime.rating.result_id }}">{{ "%.1f"|format(alltime.rating.speed_rating) }}</a>
+                        </span>
+                        <span class="note">{{ alltime.rating.sport }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                {#
+                  One block per sport. Rendered only when that sport has
+                  something, so an XC-only athlete gets no empty TF heading.
+                #}
+                {% for sport in ["XC", "TF"] %}
+                    {% set bucket = alltime[sport] %}
+                    {% if bucket.rating or bucket.events %}
+                    <div class="bests-sport">
+                        <h5>{{ sport }}</h5>
+                        <ul>
+                            {# Ratings first: they are the figures comparable
+                               across every distance, so they head the list
+                               rather than trailing it. #}
+                            {% if bucket.rating %}
+                            <li class="is-rating">
+                                <span class="ev">Best rating</span>
+                                <a href="#race-{{ bucket.rating.result_id }}">{{ "%.1f"|format(bucket.rating.speed_rating) }}</a>
+                            </li>
+                            {% endif %}
+
+                            {% if bucket.avg_rating %}
+                            {# Not a link -- it is a summary of many races,
+                               not one of them. #}
+                            <li class="is-rating">
+                                <span class="ev">Average rating</span>
+                                <span>{{ "%.1f"|format(bucket.avg_rating) }}</span>
+                            </li>
+                            {% endif %}
+
+                            {# Then every distance, fastest time in each. #}
+                            {% for event, race in bucket.events.items() %}
+                            <li>
+                                <span class="ev">{{ event }}</span>
+                                <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+
+            {#
+              SEASON BESTS, flattened.
+
+              One heading per (year, sport) -- "2026 TF" -- rather than a year
+              heading with sports nested under it. That was one level deeper
+              than the content needed, and it made the sport unclickable.
+
+              The heading links to that season's table (#2026-TF) and carries
+              the engine's rating for the season on the right.
+            #}
+            <div class="pr-panel">
+                <h3>Season Bests</h3>
+                {% for (year, sport), bests in season_bests %}
+                    <a class="season-head-link" href="#{{ year }}-{{ sport }}">
+                        <span>{{ year }} {{ sport }}</span>
+                        <span class="rating">{{ "%.1f"|format(bests.season_rating) if bests.season_rating else "—" }}</span>
+                    </a>
+                    <ul>
+                        {% if bests.rating %}
+                        <li class="is-rating">
+                            <span class="ev">Best rating</span>
+                            <a href="#race-{{ bests.rating.result_id }}">{{ "%.1f"|format(bests.rating.speed_rating) }}</a>
+                        </li>
+                        {% endif %}
+                        {% for event, race in bests.events.items() %}
+                        <li>
+                            <span class="ev">{{ event }}</span>
+                            <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% endfor %}
+            </div>
+
+            {# Own guard: the sidebar sits OUTSIDE the TF section, so it cannot
+               inherit that section's {% if tf_seasons %}. Without this, an
+               XC-only athlete gets an empty chart panel. #}
+            {% if tf_dists %}
+            <div class="chart-panel">
+                <h3>TF Distances</h3>
+                {% for dist in tf_dists %}
+                    <div class="chart-slot"
+                         data-chart="tf_dist.{{ dist }}" data-kind="time"
+                         data-title="{{ dist }}"></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </aside>
+
+    </div>
+<script type="application/json" id="chart-data">{{ chart_data|tojson }}</script>
+<script src="{{ url_for('static', filename='athlete-charts.js') }}"></script>
+
+</body>
+</html>

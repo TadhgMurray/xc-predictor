@@ -1,0 +1,145 @@
+{# ===================================================================== #}
+{#  about.html -- what a rating is, and what it is not.                  #}
+{#                                                                       #}
+{#  ★ THE LIMITATIONS SECTION IS THE POINT OF THIS PAGE. Anyone can       #}
+{#    publish numbers. The reason to read this page is to find out when   #}
+{#    not to trust them -- and a site that says so is more credible than  #}
+{#    one that doesn't, not less. The per-state offset is already         #}
+{#    surfaced on /rankings via national_bias; this explains it.          #}
+{#                                                                       #}
+{#  Figures come from homepage_meta, the same bag the landing page reads, #}
+{#  so they cannot go stale independently of the boards.                  #}
+{# ===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% set meta_title = "About" %}
+{% set meta_description =
+   "How Racecast ratings work: every cross country and track result put on one
+    comparable scale, and an honest account of where that scale is still
+    wrong." %}
+{% set meta_crumbs = [("About", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page">
+
+  <h1>About</h1>
+  <p class="page-lead">
+    Racecast puts every cross country and track result on one comparable
+    scale, so a 5K on a muddy course in Minnesota and a 3200 on a fast track
+    in California can be read as the same kind of number.
+  </p>
+
+  <h2>What a rating is</h2>
+  <p>
+    A <strong>speed rating</strong> is a race, corrected for everything about
+    it that was not the athlete, and expressed against the field the athlete
+    competes in. <strong>100 is the mean of that pool</strong>; higher is
+    faster. Real values run roughly 30 to 170.
+  </p>
+  <p>
+    Because the scale is pool-relative, a rating is only meaningful
+    <em>within</em> its pool. A 140 in high school boys and a 140 in middle
+    school boys are not the same performance — each is measured against its
+    own field.
+  </p>
+
+  <h2>How a result becomes a rating</h2>
+  <ol class="page-steps">
+    <li>
+      <strong>Distance.</strong> Every time is converted to a 5K-equivalent,
+      using a curve fitted per pool rather than a fixed formula. This is because
+      older runners are a lot better at longer distances than younger runners. However,
+      this does lead to some less than ideal conversions for longer distances.
+    </li>
+    <li>
+      <strong>Geometry.</strong> Track results are corrected for the track
+      itself: length, banking, indoor or outdoor. These corrections do not
+      show in course difficulty, although they may show a residual affect.
+    </li>
+    <li>
+      <strong>Era.</strong> Times drift across decades due to shoes, surfaces,
+      and training. The era correction is what lets a 2010 season sit beside a
+      2026 one.
+    </li>
+    <li>
+      <strong>Weather.</strong> Heat and wind are corrected where the
+      conditions are known.
+    </li>
+    <li>
+      <strong>The course.</strong> Every venue gets a
+      difficulty solved from athletes who raced both there and elsewhere,
+      the whole corpus at once, not course by course. This is what makes two
+      races on different courses comparable at all. Courses with not enough
+      links are forced to a rating of 0.0. The average XC rating is about
+      +0.01, and for TF about -0.015.
+    </li>
+  </ol>
+
+  <h2>Where it is still wrong</h2>
+
+  <h3>One race is not a season</h3>
+  <p>
+    The same athlete, at the same venue, in the same season, varies by about
+    <strong>3.3%</strong> race to race — roughly 4 rating points. That is not
+    measurement error; it is what racing is like. It is why the default board
+    ranks athletes by their <em>season average</em> and the single-race board
+    is labelled <em>performances</em> rather than <em>athletes</em>.
+  </p>
+  <p>
+    A great race by an ordinary athlete will outrank an ordinary race by a
+    great one. On a performance board that is correct. As a ranking of
+    athletes it would be wrong, which is why they are two different boards.
+  </p>
+
+  <h3>Thin courses get a default</h3>
+  <p>
+    A venue that hosted one race, with athletes who race nowhere else, does
+    not contain enough information to solve a difficulty for. Those get the
+    sport's average rather than a confidently wrong number.
+  </p>
+
+  <h3>Some athletes are in the wrong pool</h3>
+  <p>
+    Level is inferred from grade, school and the races an athlete actually
+    ran. Where those disagree — a ninth grader at a K-12 school, an eighth
+    grader running varsity, a high school senior on a college start list —
+    the inference can land on the wrong side. Since the scale is pool
+    relative, a wrong pool means a number on the wrong scale. If you spot
+    one, <a href="{{ url_for('report_page') }}">tell us</a>.
+  </p>
+
+  <h2>The data</h2>
+  <p>
+    Over 200 million stored results, with
+    {% if meta.get('fact_results') %}{{ meta.fact_results }}{% else %}Tens of
+    millions of{% endif %} rated results across
+    {% if meta.get('fact_courses') %}{{ meta.fact_courses }}{% else %}tens of
+    thousands of{% endif %} courses and
+    {% if meta.get('fact_years') %}{{ meta.fact_years }}{% else %}three
+    decades{% endif %} years, from middle school through college. Results are
+    aggregated from public results databases and re-rated from scratch on
+    every run — the ratings here are not taken from anywhere, they are
+    computed. 
+  </p>
+  {% if meta.get('built_at') %}
+    <p class="page-meta">Ratings last rebuilt {{ meta.built_at[:10] }}.</p>
+  {% endif %}
+
+  <h2>Found something wrong?</h2>
+  <p>
+    Wrong ratings are the most useful thing you can report, and specific ones
+    are more useful than general ones.
+    <a href="{{ url_for('report_page') }}">Report an issue</a>.
+  </p>
+
+</main>
+</body>
+</html>

@@ -745,7 +745,7 @@ def saveResult(conn, resultData: dict, meetData: dict, school: str = None):
         -- update them.
         ON CONFLICT (result_id) DO UPDATE SET
             school        = EXCLUDED.school,
-            school_source = EXCLUDED.school_source
+            school_source = EXCLUDED.school_source,
             scraped_at    = now()
         WHERE results.school_source IS NULL
     """, (
@@ -1063,6 +1063,7 @@ def saveAthletesBulk(conn, athletes: list):
             _resolveSchool(a) or "Unknown",
             "anet",    # source
             "anet",    # id_system
+            a.get("AthleteID"),   # person_id: seeded = athlete_id AT INSERT
         )
         cleaned = []
         for v in row:
@@ -1080,7 +1081,7 @@ def saveAthletesBulk(conn, athletes: list):
     # id DO NOTHING.
     psycopg2.extras.execute_values(cursor, """
         INSERT INTO athletes (athlete_id, first_name, last_name, gender, school,
-                              source, id_system)
+                              source, id_system, person_id)
         VALUES %s
         ON CONFLICT (athlete_id, school) DO NOTHING
     """, rows)
@@ -1118,8 +1119,13 @@ def saveResultsBulk(conn, results: list):
     scraped_at = datetime.datetime.now(datetime.timezone.utc)
  
     rows = []
-    for resultData, meetData, school in results:
- 
+    # 4-tuple now: div_id rides alongside the result (set by the two XC collectors
+    # from the division's IDMeetDiv). This is the correct, non-NULL division id;
+    # it REPLACES the old resultData.get("IDDiv") read below, which always
+    # returned None for XC (wrong key, and absent on result rows) and is the whole
+    # reason 6M XC rows saved with div_id NULL.
+    for i, (resultData, meetData, school, div_id) in enumerate(results):
+
         # Meet date as YYYY-MM-DD (strip the time half of the ISO string).
         meet_date_raw = meetData.get("MeetDate", "")
         meet_date = meet_date_raw.split("T")[0] if meet_date_raw else ""
@@ -1134,7 +1140,7 @@ def saveResultsBulk(conn, results: list):
             resultData.get("IDResult"),
             resultData.get("AthleteID"),
             meetData.get("ID"),
-            resultData.get("IDDiv"),
+            div_id,                                            # from the 4-tuple (division's IDMeetDiv); replaces broken IDDiv read
             resultData.get("SortValue"),                       # XC time = SortValue (NOT SortInt)
             resultData.get("Grade", ""),
             meet_date,
@@ -1154,6 +1160,7 @@ def saveResultsBulk(conn, results: list):
             resultData.get("AgeGrade"),
             "anet",    # source
             "anet",    # id_system
+            resultData.get("AthleteID"),   # person_id: seeded = athlete_id AT INSERT
         ))
     
     # Insert every athlete this batch references, under the SAME school the
@@ -1171,13 +1178,13 @@ def saveResultsBulk(conn, results: list):
         if pair in seen:
             continue
         seen.add(pair)
-        athlete_rows.append((aid, "", "", "", school, "anet", "anet"))
+        athlete_rows.append((aid, "", "", "", school, "anet", "anet", aid))  # last aid = person_id seed
 
     if athlete_rows:
         acur = conn.cursor()
         psycopg2.extras.execute_values(acur, """
             INSERT INTO athletes (athlete_id, first_name, last_name, gender, school,
-                              source, id_system)
+                              source, id_system, person_id)
             VALUES %s
             ON CONFLICT (athlete_id, school) DO NOTHING
         """, athlete_rows)
@@ -1195,11 +1202,20 @@ def saveResultsBulk(conn, results: list):
                 time_seconds, grade, date, school, school_source, scraped_at,
                 place, score, exhibition, official, team_id,
                 is_pr, is_sr, has_splits, video_count, age_grade,
-                source, id_system
+                source, id_system, person_id
             )
             VALUES %s
             ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
+            -- fill person_id only if missing; NEVER overwrite one dedup wrote
+            person_id     = COALESCE(results.person_id, EXCLUDED.person_id),
+            -- fill div_id only if missing; a re-scrape of an EXISTING orphan row
+            -- (div_id NULL, keyed by result_id) hits this UPDATE path, not the
+            -- INSERT, so without this line the collector/saver div_id fix could
+            -- never reach already-stored rows. COALESCE (not bare EXCLUDED)
+            -- mirrors person_id above: backfill a NULL, but never clobber a good
+            -- stored div_id with a re-scrape that happened to yield NULL.
+            div_id        = COALESCE(results.div_id, EXCLUDED.div_id),
             time_seconds  = EXCLUDED.time_seconds,
             place         = EXCLUDED.place,
             score         = EXCLUDED.score,
@@ -1310,6 +1326,7 @@ def saveResultsTFBulk(conn, results: list):
             result.get("sr"),
             "anet",    # source
             "anet",    # id_system
+            None if is_relay else result.get("AthleteID"),   # person_id: seed at insert; relays have no person
         )
 
 
@@ -1332,10 +1349,12 @@ def saveResultsTFBulk(conn, results: list):
                             exhibition, official, wind, place, score, round,
                             heat, has_splits, is_field, mark, team_id,
                             event_type_id, video_count, age_grade, pr, sr,
-                            source, id_system)
+                            source, id_system, person_id)
         VALUES %s
         ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
+            -- fill person_id only if missing; NEVER overwrite one dedup wrote
+            person_id     = COALESCE(results_tf.person_id, EXCLUDED.person_id),
             time_seconds  = EXCLUDED.time_seconds,
             exhibition    = EXCLUDED.exhibition,
             official      = EXCLUDED.official,
@@ -1721,7 +1740,7 @@ def resetInProgress():
     # of the pool, binds it to the name conn, and returns it to the pool.
     with getConn() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE meet_queue SET scraped = 0 WHERE scraped = 3 AND source = 'anet'")
+        cursor.execute("UPDATE meet_queue SET scraped = 0 WHERE scraped = 2 AND source = 'anet'")
         count = cursor.rowcount
         conn.commit()
     print(f"[DB] Reset {count} in-progress meets to unscraped")

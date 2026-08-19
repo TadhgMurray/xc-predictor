@@ -1,25 +1,205 @@
-# Database — too large for Git, binary file
-data/xc.db
-data/*.db
+# xc-predictor/.gitignore
+#
+# The repository is ~7.8 GB on disk and ~40 MB of it is source. Everything
+# below is either regenerable by a documented command or a snapshot somebody
+# took by hand. The rule applied throughout: IF A SCRIPT WROTE IT, GIT DOES
+# NOT TRACK IT -- because a file the pipeline rewrites every run turns every
+# commit into a diff nobody can read, and its history is a list of timestamps.
+#
+# The two judgement calls are marked ⚠ and are worth reading before adopting.
 
-# Python bytecode — auto-generated, not source code
+
+# ------------------------------------------------------------------ #
+#  1. PYTHON
+# ------------------------------------------------------------------ #
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
 
-# VS Code settings
-.vscode/
+# ! 42 MB OF THIS IS ONE FILE. engine/__pycache__/corrections.cpython-314.pyc
+#   is 42.6 MB because corrections.py is 51 MB of dict literal. Bytecode is
+#   never source, and this one is larger than most repositories.
 
-scripts/config.py
 
-# Secrets (NEVER commit)
-*.conf
+# ------------------------------------------------------------------ #
+#  2. THE DATABASE
+# ------------------------------------------------------------------ #
+data/
+*.db
+*.sqlite
+*.sqlite3
 
-# Runtime state (regenerated every run)
-checkpoints/
+# ! 2.24 GB, and it is not the real database anyway -- the project runs on
+#   PostgreSQL via scripts/database.py. Whatever data/xc.db is, it is either a
+#   stale export or a scratch copy, and neither belongs in version control.
+
+
+# ------------------------------------------------------------------ #
+#  3. FITTER CACHES -- the biggest block, ~4.9 GB
+# ------------------------------------------------------------------ #
+#
+# ★ THESE ARE INPUTS RE-STREAMED FROM THE DB, NOT OUTPUTS. Their whole purpose
+#   is to avoid a re-scan on the next fit, and every one of them names its own
+#   invalidation rule in the fitter that wrote it ("--fresh to re-stream;
+#   delete it after schema changes"). A cache in git is a cache that goes
+#   stale in someone else's checkout.
+engine/data/era_stream_cache/
+engine/data/weather_cache_*.npz
+engine/data/distance_pairs_cache.pkl
+engine/data/pair_solve_cache.npz
+
+# Solver state and per-run artifacts. packed_XC_TF.npz is deleted by hand
+# before every run in the documented pipeline; that alone disqualifies it.
+engine/data/packed_XC_TF.npz
+engine/data/pair_ratings.npz
+engine/data/pair_validated.npz
+engine/data/pair_difficulty.npz
+
+# The geometry clouds are diagnostic dumps, not the fitted model.
+engine/data/geometry_*_cloud.csv
+
+
+# ------------------------------------------------------------------ #
+#  4. ⚠ THE FITTED PICKLES ARE **NOT** IGNORED. THIS IS DELIBERATE.
+# ------------------------------------------------------------------ #
+#
+#   distance_spline.pkl · geometry_spline.pkl · era_curve.pkl ·
+#   weather_correction_XC.pkl · weather_correction_TF.pkl · school_levels.pkl
+#
+#   These are the RULER. normalized_time means nothing without them, and
+#   refitting takes hours -- so a checkout that cannot reproduce a rating is a
+#   checkout that cannot check anything. About 13 MB, and they change only
+#   when somebody deliberately refits.
+#
+# ⚠ IF THEY START CHANGING WEEKLY, MOVE THEM OUT. Binary files bloat history
+#   permanently: git keeps every version forever and you cannot shrink it
+#   later without rewriting history. Git LFS or a versioned data/ directory is
+#   the answer then, not .gitignore.
+#
+#   Their .bak / .OFF / .prebake siblings ARE ignored -- see block 6.
+
+
+# ------------------------------------------------------------------ #
+#  5. GENERATED WORKLISTS, DIAGNOSTICS AND EXPORTS
+# ------------------------------------------------------------------ #
+#
+# Every one of these is written by a script and read by a human once.
+logs/
 *.log
 
-# Scrape debris
-tfrrs_*.html
+suspects_*.txt
+suspects_row_*.tsv
+scripts/UNSAFE_raw_*.txt
+scripts/triage_*.tsv
+scripts/*_worklist_*.tsv
+scripts/scored_row_*.tsv
 
-tfrrs/parser/find
+override_proposals.csv
+distance_proposals.csv
+overrides.tsv
+overrides.sql
+seeds.txt
+poolfor.txt
+college_names.txt
+filelist.txt
+
+# Console captures. run_*.txt is a transcript of one evening.
+run_*.txt
+*_run.txt
+probe_*.log
+
+exports/
+*.parquet
+
+# A rendered page saved for inspection, not a template.
+course_difficulties.html
+
+
+# ------------------------------------------------------------------ #
+#  6. HAND SNAPSHOTS -- the "I am about to break this" pattern
+# ------------------------------------------------------------------ #
+#
+# ★ THIS IS WHAT VERSION CONTROL IS FOR. Once the repository exists these
+#   suffixes should stop being created at all: `git stash` and `git checkout
+#   --` do the same job without leaving 51 MB copies lying around. The
+#   corrections.py.bak pair alone is 102 MB.
+*.bak
+*.bak-*
+*.HOLD
+*.OFF
+*.prebake
+*.pass3-spent
+*.orig
+*.rej
+
+
+# ------------------------------------------------------------------ #
+#  7. ⚠ engine/corrections.py -- TRACKED, AND IT IS A PROBLEM
+# ------------------------------------------------------------------ #
+#
+#   51 MB of Python dict literals: ~4,200 distance overrides plus whatever
+#   audit_overrides and propose_distances have appended. It is SOURCE -- the
+#   normaliser imports it, and dropping it would silently change every
+#   normalized_time in the corpus -- so it cannot be ignored.
+#
+# ⚠ BUT IT IS REWRITTEN BY TOOLS, AND GITHUB WARNS ABOVE 50 MB (hard limit
+#   100 MB). Every audit run commits a fresh 51 MB blob. Ten runs is half a
+#   gigabyte of history that can never be reclaimed.
+#
+#   The fix is not .gitignore -- it is to stop keeping data in a .py file:
+#
+#     a) move the overrides to a table (dist_override already exists) and let
+#        corrections.py hold only the loader, or
+#     b) move them to a compressed .tsv that dump_overrides reads, or
+#     c) Git LFS, which is the least invasive and the least honest.
+#
+#   Until then it is tracked and it will hurt. Decide before the first push,
+#   because history rewriting afterwards is far worse than deciding now.
+
+
+# ------------------------------------------------------------------ #
+#  8. SECRETS AND LOCAL CONFIG
+# ------------------------------------------------------------------ #
+#
+# ⚠ CHECK scripts/database.py BEFORE THE FIRST PUSH. If a password is inline
+#   rather than read from the environment, .gitignore cannot help -- a
+#   credential committed once is public forever and must be rotated, not
+#   deleted.
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+config.local.*
+
+
+# ------------------------------------------------------------------ #
+#  9. EDITOR AND OS
+# ------------------------------------------------------------------ #
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+
+# ------------------------------------------------------------------ #
+#  10. SCRATCH
+# ------------------------------------------------------------------ #
+#
+# One-line probes written to answer a single question. exp.py, exp2.py, g.py,
+# span.py, peek.py, fuck.py are all zero-byte-to-tiny and none is imported by
+# anything.
+exp.py
+exp2.py
+g.py
+span.py
+peek.py
+fuck.py

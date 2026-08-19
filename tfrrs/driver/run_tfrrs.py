@@ -35,7 +35,11 @@ from parse_xc_page import parseXCPage, parseXCTeams
 from parse_tf_page import parseTFPage
 from parse_xc_team import parseXCTeamTable
 from parse_tf_team import parseTFTeams
-from save_tfrrs import buildTFRRSResultRows, saveTFRRSResultsBulk, saveTFRRSResultsBulk, saveTFRRSMeetMeta
+from save_tfrrs import buildTFRRSResultRows, saveTFRRSResultsBulk, saveTFRRSResultsXCBulk, saveTFRRSMeetMeta
+# Division-distance logic (pure helpers): stamps a per-meet linear div_id onto
+# each parsed row and builds the {div_id: {div_name, distance}} blob we store on
+# the meet's meets_tfrrs row. See tfrrs_xc_divisions.py.
+from tfrrs_xc_divisions import applyDivisions
 
 # Sport tags - UPPERCASE to match the meet_queue convention ('XC' / 'TF').
 SPORT_XC = "XC"
@@ -255,6 +259,21 @@ async def _processXCMeet(html, meet_id, page=None):
     meta  = parseXCMeetMeta(html)
     rows  = parseXCPage(html, meet_id)
     teams = parseXCTeams(html, meet_id)
+
+    # --- DIVISION DISTANCES ---------------------------------------------------
+    # The parsed `rows` each carry event_name + distance_meters (attached by the
+    # page parser per race table). applyDivisions:
+    #   (1) STAMPS a per-meet linear div_id (0,1,2...; ordered by distance asc,
+    #       ties broken by event_name) onto each parsed row, and
+    #   (2) returns a blob {str(div_id): {div_name, distance}} for this meet.
+    # We do this BEFORE buildTFRRSResultRows so the div_id rides through the build
+    # onto the normalized result rows (buildTFRRSResultRow copies it). The blob is
+    # stashed on `meta` so saveTFRRSMeetMeta can write it to meets_tfrrs in the
+    # SAME transaction as the results — keeping row div_ids and blob consistent.
+    rows, division_blob = applyDivisions(rows)
+    if meta is not None:
+        meta["division_distances"] = division_blob
+
     results = buildTFRRSResultRows(rows, meta, meet_id)
 
     ok = len(results) > 0
@@ -307,7 +326,10 @@ def _saveBundle(conn, bundle):
 
 
     if SAVE_RESULTS_ENABLED:
-        saveTFRRSResultsBulk(conn, bundle["results"])
+        if bundle["sport"] == SPORT_XC:
+            saveTFRRSResultsXCBulk(conn, bundle["results"])   # -> results  (XC table)
+        else:
+            saveTFRRSResultsBulk(conn, bundle["results"])     # -> results_tf (TF table)
     else:
         return False   # results can't be written yet -> not fully saved
 
@@ -403,6 +425,21 @@ def _printMeetResult(n, bundle):
     print(f"[{n}] [{tag}] {bundle['sport']} {bundle['meet_id']}: "
           f"{n_results} results, {n_teams} teams {note}".rstrip(), flush=True)
     
+import time
+
+# module-level, next to the other constants
+_PHASE = {"claim": 0.0, "process": 0.0, "n": 0}
+
+def _tick(phase, dt):
+    _PHASE[phase] += dt
+    if phase == "process":
+        _PHASE["n"] += 1
+        if _PHASE["n"] % 50 == 0:          # every 50 meets, print the averages
+            n = _PHASE["n"]
+            print(f"[timing] {n} meets | "
+                  f"claim avg {_PHASE['claim']/n*1000:.0f}ms | "
+                  f"process avg {_PHASE['process']/n*1000:.0f}ms", flush=True)
+    
 # _sessionWorker
 # Purpose: One session's drain loop. Claims batches from the shared tfrrs queue
 #          and processes them sequentially at the normal per-meet delay, until the
@@ -421,14 +458,16 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
     conn = await asyncio.to_thread(_borrowConn)
     try:
         while True:
+            t0 = time.perf_counter()
             batch = await asyncio.to_thread(claimTFRRSMeetBatch, CLAIM_BATCH_SIZE)
+            _tick("claim", time.perf_counter() - t0)
             if not batch:
                 break
 
             for meet_id, sport in batch:
                 gen = await rotator.waitForTunnel(session_idx, gen, SESSION_COUNT)
-
                 url = url_for(meet_id, sport)
+                t1 = time.perf_counter()
                 try:
                     bundle = await processMeet(conn, meet_id, sport, url, page=page)
                 except IPBlockedException:
@@ -437,7 +476,8 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
                     await asyncio.to_thread(conn.rollback)
                     await rotator.rotate(f"[S{session_idx}]", "CloudFront IP block")
                     continue
-
+                
+                _tick("process", time.perf_counter() - t1)
                 counter[0] += 1
                 _printMeetResult(counter[0], bundle)
                 await rotator.checkRotation(f"[S{session_idx}]")

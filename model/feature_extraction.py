@@ -32,13 +32,19 @@ import pickle
 import torch
 import psycopg2.extras
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sklearn.preprocessing import LabelEncoder
 import re
+import random
 import statistics
  
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "engine")
 from database import initPool, closePool, getConn
+
+# ★ THE ENGINE'S POOLING DECISION, IMPORTED. buildPool below explains
+#   what it replaces and why a fifth reimplementation was the bug.
+from pool_resolve import resolvePool
 
 # ------------------------------------------------------------------ #
 # CONSTANTS
@@ -61,6 +67,71 @@ MIN_NORMALIZED_TIME = 600
 
 # Number of examples per chunk file.
 CHUNK_SIZE = 10_000
+
+# How many examples to hold before emitting a chunk, so that a chunk is a
+# MIX of athletes rather than a contiguous run of them.
+#
+# ★ WHY THIS EXISTS. train.py batches WITHIN a chunk -- it has to, because a
+#   plain shuffle across chunk files means one 10,000-example file read per
+#   example and training never finishes. That is only equivalent to true
+#   shuffling if a chunk is already a random sample. Written straight out of
+#   groupByAthlete, a chunk is ~one athlete after another, so every batch
+#   would be 64 examples from a handful of athletes -- correlated targets,
+#   and biased gradients if athlete order tracks anything (school, state,
+#   era).
+#
+#   So: fill a buffer SHUFFLE_FACTOR chunks deep, shuffle it, emit ONE
+#   chunk, keep the rest. The standard streaming-shuffle trick. RAM holds
+#   ~SHUFFLE_FACTOR * CHUNK_SIZE examples instead of the whole corpus, and
+#   an athlete's examples end up spread across many chunks.
+#
+# ⚠ IT IS NOT A FULL SHUFFLE. Two examples more than ~SHUFFLE_FACTOR chunks
+#   apart in athlete order can never land in the same chunk. Raise the
+#   factor if RAM allows; 10 (100k examples) already breaks up any
+#   single-athlete run by orders of magnitude.
+SHUFFLE_FACTOR = 10
+
+# Fixed seed so the shuffle is reproducible -- a rerun of extraction gives
+# byte-identical chunk files, which makes "did the data change or the model"
+# answerable.
+SHUFFLE_SEED = 42
+
+# Width of one race's feature vector, and of the target-race context
+# vector. Both are 18; they are separate constants because they describe
+# different things and could diverge.
+#
+# ⚠ THESE MUST MATCH transformer.SEQUENCE_FEATURES / CONTEXT_FEATURES. A
+#   mismatch is not caught here -- it surfaces as a shape error deep inside
+#   the first nn.Linear, long after the extraction has finished writing
+#   gigabytes of chunk files. The padding row below used a hardcoded 18,
+#   which silently desyncs the moment a feature is added.
+SEQUENCE_FEATURES = 21
+CONTEXT_FEATURES  = 20
+
+# ★ THE TWO WIDTHS DIFFER ON PURPOSE, AND THE DIFFERENCE IS `place`.
+#   A prior race's finishing position is field context the model cannot get
+#   from a time alone: a 16:00 that won by 40 seconds and a 16:00 that
+#   finished 40th say different things about how hard the athlete was
+#   pushed. Safe in the sequence -- those races are over and their times are
+#   already in the vector.
+#
+# ⚠ AND IT IS LEAKAGE IN THE CONTEXT. Telling the model "this athlete
+#   finished 3rd" and asking it to predict their time hands it a fact
+#   DETERMINED BY the outcome being predicted. It would learn to lean on a
+#   feature that does not exist at inference -- which shows up as good
+#   validation loss and bad real predictions, the worst failure to diagnose.
+#   Same reasoning excludes `score`, more so since it is team-derived.
+
+# Latitude/longitude are centred and scaled before they reach the network.
+#
+# ★ RAW DEGREES WOULD DOMINATE THE FIRST LINEAR. Every other feature sits
+#   near 0-1 or is a small count; -122.4 and 47.6 are one to two orders of
+#   magnitude larger, so their weights start by drowning everything else and
+#   the net wastes early epochs learning to scale them down. Centring on the
+#   continental US and dividing by ~a state's width puts them in the same
+#   range as the rest.
+GEO_LAT_CENTER, GEO_LAT_SCALE = 39.0, 10.0
+GEO_LON_CENTER, GEO_LON_SCALE = -98.0, 20.0
 
 # TODO: replace with real pass 1 once TF scraping completes and we
 # can check realistic max_len from actual data.
@@ -110,6 +181,10 @@ def loadXCResults() -> list[dict]:
                        
                 -- The value we're trying to predict.
                 r.normalized_time,
+                -- Finishing position. Sequence vector only -- in the
+                -- target's context it would be leakage, since place is
+                -- determined by the outcome being predicted.
+                r.place,
                        
                 -- Per-race features that go into the sequence.
                 r.grade,
@@ -129,6 +204,10 @@ def loadXCResults() -> list[dict]:
                 -- LEFT JOIN means NULL if course not yet rated, which COALESCE
                 -- makes 0.0.
                 COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+                -- The venue's identity, for the embedding. Already
+                -- resolved by the difficulty join above, so this
+                -- costs nothing extra.
+                cc.canonical_id,
                 
                 -- Weather features - NULL if backfill not yet run for this meet.
                 -- COALESCE won't help here since we wanted to know if it's missing.
@@ -148,18 +227,79 @@ def loadXCResults() -> list[dict]:
                 m.altitude_meters,
  
                 -- School name for school encoding.
-                a.school,
+                -- ★ FROM `results`, NOT `athletes`. athletes.school is one row
+                --   per school an athlete ever had; results.school is the
+                --   school they raced for ON THIS DAY, which is what the
+                --   encoding should see. Taking it from the LATERAL would pin
+                --   one alphabetically-chosen school across a whole career.
+                --   Aliased so the downstream dict key is unchanged.
+                r.school AS school,
  
                 -- Flag so the model knows this is an XC result.
+                -- Everything resolvePool reads. person_id, not athlete_id:
+                -- the gate tables are keyed on the person.
+                r.person_id,
+                r.source,
+                COALESCE(asl_s.level, asl_a.level) AS season_level,
+                (gu.person_id IS NOT NULL)  AS grade_untrusted,
+                   gu.grade                    AS fixed_grade,
+                   gu.level                    AS fixed_level,
+                (pas.person_id IS NOT NULL) AS is_pro,
+                cfs.first_date              AS college_first,
+                ufs.first_date              AS upperclass_first,
                 TRUE AS is_xc,
                 FALSE AS is_indoor
         
         FROM results r
-        JOIN athletes a ON r.athlete_id = a.athlete_id
+        -- ★ LATERAL, NOT A PLAIN JOIN. `athletes` PK is (athlete_id, school),
+        --   so an athlete with rows for three schools produced THREE IDENTICAL
+        --   COPIES of every one of their results: a measured 1.070x fan-out,
+        --   concentrated on transfer athletes -- exactly the multi-level
+        --   careers the model most needs to see once each.
+        --
+        --   Duplicates are not free: the athlete is weighted 3x per epoch, and
+        --   if copies land either side of the train/val split the val loss is
+        --   measuring memorisation. That is the number gating every other
+        --   decision, including the W0 weather test.
+        --
+        --   ORDER BY school LIMIT 1 is deterministic, so reruns pick the same
+        --   row. Same shape speed_ratings_db._xcQuery uses.
+        LEFT JOIN LATERAL (
+            SELECT a2.gender
+            FROM   athletes a2
+            WHERE  a2.athlete_id = r.athlete_id
+            ORDER  BY a2.school
+            LIMIT  1
+        ) a ON TRUE
+        -- All THREE key parts. `meets` is disambiguated by source, and tfrrs
+        -- XC div_ids are a per-meet counter starting at 0 -- so joining on
+        -- div_id alone matches a tfrrs row against whatever anet meet happens
+        -- to hold that div_id: wrong course, wrong distance, wrong gps,
+        -- silently. speed_ratings_db._xcQuery joins on all three.
         JOIN meets     m  ON r.div_id       = m.div_id
+                         AND r.meet_id      = m.meet_id
+                         AND r.source       = m.source
                        
         -- LEFT JOIN: keeps result even if no course difficulty yet.
-        LEFT JOIN course_difficulties cd ON m.course_name = cd.course_name
+        --
+        -- The old join was `m.course_name = cd.course_name` and NEVER MATCHED:
+        -- course_difficulties.course_name carries the sport prefix
+        -- ('XC:Idaho State Cross Country Course') and meets.course_name does
+        -- not. Every XC row therefore fell through to COALESCE(...,0.0) and
+        -- the model has been training on a constant zero difficulty.
+        --
+        -- Fixing the prefix alone would not be enough: a name matches every
+        -- distance cell AND every other venue sharing the name (there are 21
+        -- Woodward Parks), which fans out and DUPLICATES training examples.
+        -- The real key is (canonical_id, distance_m), resolved the same way
+        -- the website and the engine resolve it.
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = m.course_name
+              AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+        LEFT JOIN course_difficulties cd
+               ON cd.canonical_id = cc.canonical_id
+              AND cd.distance_m   = (round(m.distance / 100.0) * 100)::int
         
         -- LEFT JOIN weather at the default XC race hour (9am local time).
         -- meet_id matches, hour matches our XC default.
@@ -167,6 +307,45 @@ def loadXCResults() -> list[dict]:
             ON  m.meet_id = w.meet_id
             AND w.hour    = %s
                        
+        -- ★ THE FIVE FACTS resolvePool NEEDS. Byte-for-byte the joins in
+        --   panels.py and build_ranking_results.py: the decision is shared, so
+        --   its inputs have to be identical or the model pools differently from
+        --   the ratings it is trained on.
+        LEFT JOIN athlete_season_level asl_s
+               ON asl_s.person_id = r.person_id
+              AND asl_s.sport = 'XC'
+              AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                                  THEN substring(r.date, 1, 4)::int
+                                  ELSE substring(r.date, 1, 4)::int - 1 END
+        LEFT JOIN athlete_season_level asl_a
+               ON asl_a.person_id = r.person_id
+              AND asl_a.sport = 'ALL'
+              AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                                  THEN substring(r.date, 1, 4)::int
+                                  ELSE substring(r.date, 1, 4)::int - 1 END
+        -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or
+        --   level AND, by its existence, the fact that the recorded grade is
+        --   not the one to use. grade_untrusted holds the same keys, so
+        --   joining it as well would be a second thing to keep in step.
+        LEFT JOIN grade_fix gu
+               ON gu.person_id = r.person_id
+              -- ! THE ACADEMIC SEASON, NOT THE CALENDAR YEAR, AND THE SPORT
+              --   DECIDES WHICH. grade_fix is keyed on the school year: a
+              --   calendar year holds two of them for anyone who graduates.
+              --   Dylan Weniger ran fifteen races as grade 12 through May
+              --   2025, then 2025-12-13 as Fr -- one calendar year, and the
+              --   majority handed his first collegiate race grade 12.
+              --
+              -- ! THE XC RULE, BAKED IN, because this query reads
+              --   `results`. The TF query below uses the TF rule: they roll on
+              --   different months and a shared literal would be wrong for one
+              --   of them, silently.
+              AND gu.season = ((CASE WHEN substring(r.date, 6, 2) <= '02' THEN (substring(r.date, 1, 4)::int - 1)::text ELSE substring(r.date, 1, 4) END))::int
+        LEFT JOIN pro_athlete_season pas
+               ON pas.person_id = r.person_id
+              AND pas.season = substring(r.date, 1, 4)::int
+        LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
+        LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
         WHERE r.normalized_time IS NOT NULL
         -- Makes normalized time be a reasonable value.
         AND   r.normalized_time > %s
@@ -206,6 +385,10 @@ def loadTFResults() -> list[dict]:
                 r.athlete_id,
                 r.date,
                 r.normalized_time,
+                -- Finishing position. Sequence vector only -- in the
+                -- target's context it would be leakage, since place is
+                -- determined by the outcome being predicted.
+                r.place,
                 r.grade,
                 r.time_seconds,
                 a.gender,
@@ -213,14 +396,20 @@ def loadTFResults() -> list[dict]:
                 -- TF meets table has event-level info
                 m.meet_id,
                 m.event_short    AS course_name,
+                m.location_id,
                 m.distance_meters,
                 m.gps_lat,
                 m.gps_long,
                 m.is_indoor,
  
-                -- TF events don't have course difficulties —
-                -- the "course" is a standard track. Use 0.0.
-                0.0              AS course_difficulty,
+                -- TF DOES have course difficulties. The earlier 0.0 assumed
+                -- "a track is a standard course", which is wrong: a track is
+                -- standard in SHAPE only. Altitude, banking, surface and
+                -- 200m-vs-400m are per-venue constants, which is exactly what
+                -- delta is for -- and the engine already fits them. Real TF
+                -- cells run about -0.016 to -0.045, a ~3x spread across
+                -- venues that a constant can never recover.
+                COALESCE(cd.difficulty, 0.0) AS course_difficulty,
  
                 -- Weather at default TF hour (3pm local time).
                 w.temp_c,
@@ -236,22 +425,106 @@ def loadTFResults() -> list[dict]:
                 -- Altitude
                 m.altitude_meters,
  
-                a.school,
+                -- Per-race school; see the XC query's note.
+                r.school AS school,
 
                 -- Creates a new column in the query result not in any table.
                 -- Hardcodes the values FALSE for every TF row.
+                -- Everything resolvePool reads. person_id, not athlete_id:
+                -- the gate tables are keyed on the person.
+                r.person_id,
+                r.source,
+                COALESCE(asl_s.level, asl_a.level) AS season_level,
+                (gu.person_id IS NOT NULL)  AS grade_untrusted,
+                   gu.grade                    AS fixed_grade,
+                   gu.level                    AS fixed_level,
+                (pas.person_id IS NOT NULL) AS is_pro,
+                cfs.first_date              AS college_first,
+                ufs.first_date              AS upperclass_first,
                 FALSE AS is_xc
  
             FROM results_tf r
-            JOIN athletes  a  ON r.athlete_id = a.athlete_id
+            -- LATERAL for the same reason as the XC query above: `athletes`
+            -- PK is (athlete_id, school) and a plain join duplicates a
+            -- transfer athlete's every result once per school.
+            LEFT JOIN LATERAL (
+                SELECT a2.gender
+                FROM   athletes a2
+                WHERE  a2.athlete_id = r.athlete_id
+                ORDER  BY a2.school
+                LIMIT  1
+            ) a ON TRUE
             JOIN meets_tf  m  ON r.meet_id    = m.meet_id
                              AND r.div_id     = m.div_id
                              AND r.event_id   = m.event_id
+
+            -- TF cells are keyed by LOCATION and the indoor flag, not by a
+            -- course name and not by distance:
+            --     TF:loc:<location_id>:<in|out>
+            -- canonical_id and distance_m are NULL on every TF row, so the
+            -- XC-style canonical join does not apply here. The indoor flag is
+            -- part of the key because one facility gets separate cells for
+            -- its indoor and outdoor tracks, and they are different courses.
+            -- ⚠ SENTINEL GUARD. location_id 0 (and NULL) is "no location
+            --   known", not a place. Without this every such meet joins to one
+            --   'TF:loc:0:in' cell whose delta is an average over unrelated
+            --   venues nationwide -- a confident number that means nothing.
+            --   Excluded here so those rows fall through to COALESCE(...,0.0),
+            --   i.e. HONESTLY unknown rather than wrongly specific.
+            LEFT JOIN course_difficulties cd
+                   ON m.location_id IS NOT NULL
+                  AND m.location_id <> 0
+                  AND cd.course_name = 'TF:loc:' || m.location_id || ':'
+                                    -- is_indoor is INTEGER, not boolean, so it
+                                    -- needs an explicit comparison: a bare
+                                    -- `CASE WHEN m.is_indoor` is a type error
+                                    -- in Postgres. COALESCE so an unknown flag
+                                    -- reads as outdoor rather than dropping the
+                                    -- whole CASE to NULL.
+                                    || CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                                            THEN 'in' ELSE 'out' END
  
             LEFT JOIN weather w
                 ON  m.meet_id = w.meet_id
                 AND w.hour    = %s
  
+            -- ★ THE FIVE FACTS resolvePool NEEDS. Byte-for-byte the joins in
+            --   panels.py and build_ranking_results.py: the decision is shared, so
+            --   its inputs have to be identical or the model pools differently from
+            --   the ratings it is trained on.
+            LEFT JOIN athlete_season_level asl_s
+                   ON asl_s.person_id = r.person_id
+                  AND asl_s.sport = 'TF'
+                  AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                                      THEN substring(r.date, 1, 4)::int
+                                      ELSE substring(r.date, 1, 4)::int - 1 END
+            LEFT JOIN athlete_season_level asl_a
+                   ON asl_a.person_id = r.person_id
+                  AND asl_a.sport = 'ALL'
+                  AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                                      THEN substring(r.date, 1, 4)::int
+                                      ELSE substring(r.date, 1, 4)::int - 1 END
+            -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or
+        --   level AND, by its existence, the fact that the recorded grade is
+        --   not the one to use. grade_untrusted holds the same keys, so
+        --   joining it as well would be a second thing to keep in step.
+        LEFT JOIN grade_fix gu
+                   ON gu.person_id = r.person_id
+                  -- ! THE ACADEMIC SEASON, NOT THE CALENDAR YEAR, AND THE SPORT
+                  --   DECIDES WHICH. grade_fix is keyed on the school year: a
+                  --   calendar year holds two of them for anyone who graduates.
+                  --   Dylan Weniger ran fifteen races as grade 12 through May
+                  --   2025, then 2025-12-13 as Fr -- one calendar year, and the
+                  --   majority handed his first collegiate race grade 12.
+                  --
+                  -- ! THE TF RULE, BAKED IN, because this query reads
+                  --   `results_tf`. TF rolls at October and XC at March.
+                  AND gu.season = ((CASE WHEN substring(r.date, 6, 2) >= '10' THEN (substring(r.date, 1, 4)::int + 1)::text ELSE substring(r.date, 1, 4) END))::int
+            LEFT JOIN pro_athlete_season pas
+                   ON pas.person_id = r.person_id
+                  AND pas.season = substring(r.date, 1, 4)::int
+            LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
+            LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
             WHERE r.normalized_time IS NOT NULL
             AND   r.normalized_time > %s
             AND   r.date IS NOT NULL
@@ -426,13 +699,206 @@ def normalizeGrade(grade_str: str) -> str:
 #           grade_str: raw grade value from the DB.
 #           gender: "M" or "F" (or whatever athletes.gender contains).
 # Output: A pool string like "FR-M", "11-F", "Unknown-M".
-def buildPool(grade_str: str, gender: str) -> str:
+# Ordered, because this is the whole reason the feature can be a single float.
+# elem < ms < hs < college < pro is a REAL ordering -- unlike a LabelEncoder's
+# alphabetical accident, which the network would read as a magnitude anyway.
+_LEVEL_RANK = {"elem": 0.0, "ms": 1.0, "hs": 2.0, "college": 3.0, "pro": 4.0}
 
-    grade = normalizeGrade(grade_str)
- 
-    # f-string glues grade and gender together with a dash.
-    # e.g. grade="FR", gender="M" -> "FR-M"
-    return f"{grade}-{gender}"
+# What an unpoolable row gets. -1 rather than 0, so "we could not decide" is
+# distinguishable from "elementary" -- 0 would silently merge the two.
+_LEVEL_UNKNOWN = -1.0
+
+
+def buildPool(row: dict) -> float:
+    """The athlete's LEVEL for this race, as an ordinal float.
+
+    ★ THE ENGINE'S DECISION, NOT A FIFTH IMPLEMENTATION OF IT. The previous
+      version was `f"{normalizeGrade(grade)}-{gender}"` -- grade x gender,
+      which is not a pool at all. Nothing computed on the engine side reached
+      the model: not athlete_season_level's per-sport verdict, not poolFor's
+      grade-vs-race arbitration, not the pro/college/upperclass gates, and not
+      grade_sanity's 3.47M untrusted grades.
+
+    ★ LEVEL ONLY, NOT LEVEL x GENDER. Gender is already its own context
+      feature. Folding it in here encoded it twice and gave the network two
+      partially-redundant channels to reconcile.
+
+    ⚠ RETURNS A NUMBER, NOT A LABEL. The caller no longer passes this through
+      an encoder: a LabelEncoder over pool strings produces an arbitrary
+      integer, and handing that to a Linear layer as a float claims an ordering
+      that does not exist. The rank above is an ordering that does.
+    """
+    pool = resolvePool(
+        row.get("grade"),
+        row.get("gender"),
+        row.get("source"),
+        row.get("school"),
+        # ★ SPORT FROM THE ROW, NOT AN ARGUMENT. Both queries already stamp
+        #   is_xc, so deriving it here removes the one way a caller could pass
+        #   the wrong sport and silently read the wrong season verdict.
+        "XC" if row.get("is_xc") else "TF",
+        season_level=row.get("season_level"),
+        grade_untrusted=bool(row.get("grade_untrusted")),
+                       fixed_grade=row.get("fixed_grade"),
+                       fixed_level=row.get("fixed_level"),
+        is_pro=bool(row.get("is_pro")),
+        college_first=row.get("college_first"),
+        upperclass_first=row.get("upperclass_first"),
+        race_date=_asDate(row.get("date")),
+        merge=True,
+    )
+    if not pool:
+        return _LEVEL_UNKNOWN
+    for level, rank in _LEVEL_RANK.items():
+        if pool.startswith(level + "_"):
+            return rank
+    return _LEVEL_UNKNOWN
+
+
+def _asDate(value):
+    """'YYYY-MM-DD' -> date, for the college and upperclass gates.
+
+    ⚠ THOSE GATES COMPARE BY DATE, NOT YEAR. A senior's spring high-school
+      track season and their first autumn of college share a calendar year;
+      comparing years promoted 288,264 genuine high-school athlete-seasons.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    try:
+        # `date`, not `datetime.date`: this module does
+        # `from datetime import datetime, date`, so `datetime` here is the
+        # CLASS and datetime.date(...) would raise.
+        return date(int(value[:4]), int(value[5:7]), int(value[8:10]))
+    except (ValueError, IndexError):
+        return None
+
+
+# ------------------------------------------------------------------ #
+# FORECAST TWINS
+# ------------------------------------------------------------------ #
+
+# ★ HOW OFTEN A TARGET ALSO GETS A TRUNCATED TWIN.
+#
+#   Not 1.0. Both shapes are real at inference -- "what happens this weekend",
+#   where the history does run up to the target, and "what happens at
+#   nationals", where it does not. Training only on twins would trade one blind
+#   spot for the other.
+#
+#   0.5 keeps the dataset balanced between them without doubling it: a twin is
+#   emitted for about half the targets, so the corpus grows ~50%, not 100%.
+FORECAST_TWIN_RATE = 0.5
+
+# An athlete needs this many prior races before truncating leaves a usable
+# history. Below it, hiding races leaves a sequence too short to say anything.
+MIN_PRIOR_FOR_TWIN = 4
+
+# ...and this many must survive the cut, or the twin is skipped.
+MIN_KEPT_RACES = 2
+
+# ★ THE CUT IS BY DATE, NOT BY RACE COUNT, AND THAT IS THE WHOLE DESIGN.
+#
+#   Nobody asks "predict this race with the last four hidden". They ask "it is
+#   October 1st, what happens at nationals in November". A date cut IS that
+#   question. A count cut is a proxy that gets the gap wrong in both
+#   directions -- hiding three races is six weeks for a championship runner and
+#   four months for someone who races twice a year.
+#
+#   It also keeps the twin coherent with days_since_last_race, which the model
+#   reads: under a count cut that feature took an arbitrary value, under a date
+#   cut it is the gap we chose.
+#
+#   And it removes the truncation cap. A count cap silently limited how deep a
+#   forecast could go -- so the championship case, the one this exists for, was
+#   the one that could not be generated.
+FORECAST_GAP_MIN_WEEKS = 2.0
+FORECAST_GAP_MAX_WEEKS = 40.0
+
+# ★ SKEWED, NOT UNIFORM, AND ONE KNOB RATHER THAN NAMED REGIMES.
+#
+#   Uniform over 2-40 weeks puts half its mass beyond 20 weeks and only ~16% in
+#   the 4-10 week championship band. Weighting by u**SKEW pulls it back.
+#   Measured over 200k draws:
+#
+#       skew   2-4w    4-10w   10-20w  20-40w   median
+#       1.0     5.3%   15.9%   26.3%   52.5%    21.0w
+#       2.0    23.1%   22.9%   22.8%   31.2%    11.5w
+#       3.0    37.6%   22.0%   18.4%   22.1%     6.7w
+#
+#   2.0 gives roughly even coverage of all four bands while staying denser
+#   per-week at short gaps. Named regimes with tuned weights were considered
+#   and rejected: they encode a guess about query mix AS DATA, leave holes
+#   between the regimes, and their only advantage -- targeting -- pays off only
+#   if the guess is right. Revisit once the site can COUNT what people ask.
+FORECAST_GAP_SKEW = 2.0
+
+# ------------------------------------------------------------------ #
+# VENUE VOCABULARY
+# ------------------------------------------------------------------ #
+
+# ★ A VENUE NEEDS THIS MANY RACES BEFORE IT GETS ITS OWN EMBEDDING.
+#
+#   Below it, the venue shares index 0 with every other thin one. The reason is
+#   the same failure the difficulty solver had: a one-day course with its own
+#   free parameter memorises its residual and is confidently wrong. Mission
+#   Concepcion carried delta +0.7585 and produced ratings of 176 on exactly
+#   that mechanism. The solver got cell_days to fix it; the model has neither
+#   shrinkage nor an anchor, so the only defence is refusing to give a thin
+#   venue a parameter at all.
+#
+#   50 races is roughly one full field, or several small ones. Generous on
+#   purpose -- an embedding that memorises is worse than one that is absent.
+MIN_VENUE_RACES = 50
+
+# Index 0 is reserved. Every venue below the threshold, and every row whose
+# venue could not be resolved, lands here and shares one embedding.
+UNKNOWN_VENUE = 0
+
+
+def buildVenueVocab(results: list[dict]) -> dict:
+    """{venue_key: index}, with thin venues left out so they fall to 0.
+
+    The key is whatever the query resolved: canonical_id for XC, location_id
+    for TF, both already namespaced by sport in _venueKey so the two id spaces
+    cannot collide.
+    """
+    from collections import Counter
+
+    counts = Counter(_venueKey(r) for r in results if _venueKey(r) is not None)
+    kept = sorted(k for k, n in counts.items() if n >= MIN_VENUE_RACES)
+
+    thin = len(counts) - len(kept)
+    print(f"  venues: {len(kept):,} with >= {MIN_VENUE_RACES} races, "
+          f"{thin:,} thin ones share index {UNKNOWN_VENUE}")
+
+    # Indices start at 1; 0 is reserved for UNKNOWN_VENUE.
+    return {key: i for i, key in enumerate(kept, start=1)}
+
+
+def _venueKey(row: dict):
+    """A venue's identity, namespaced by sport.
+
+    ⚠ NAMESPACED BECAUSE THE TWO ID SPACES OVERLAP. canonical_id 7 and
+      location_id 7 are different places, and an unnamespaced key would merge
+      a cross country course with a track.
+    """
+    if row.get("is_xc"):
+        cid = row.get("canonical_id")
+        return None if cid is None else ("XC", int(cid))
+    loc = row.get("location_id")
+    # location_id 0 is tfrrs' "not known", not a place -- the difficulty join
+    # already excludes it for the same reason.
+    if loc is None or int(loc) == 0:
+        return None
+    return ("TF", int(loc))
+
+
+def venueIndex(row: dict, vocab: dict) -> int:
+    """The embedding row for this race's venue, or UNKNOWN_VENUE."""
+    key = _venueKey(row)
+    return vocab.get(key, UNKNOWN_VENUE) if key is not None else UNKNOWN_VENUE
+
 
 # ------------------------------------------------------------------ #
 # Encoder fitting
@@ -461,7 +927,8 @@ def _collectValues(results: list[dict]) -> tuple[list, list, list]:
         grades.append(r["grade"])
  
         # pool combines normalized grade + gender, e.g. "FR-M"
-        pools.append(buildPool(r["grade"], r["gender"]))
+        # ⚠ NOT COLLECTED ANY MORE. buildPool returns an ordinal, so there is
+        #   no encoder to fit -- see buildEncoders.
  
         # school name, e.g. "Amherst Regional"
         schools.append(r["school"])
@@ -505,7 +972,11 @@ def buildEncoders(results: list[dict]) -> dict:
     # mapping for later use in Chunk 3 to transform.
     encoders = {
         "grade":  _fitEncoder(grades),
-        "pool":   _fitEncoder(pools),
+        # ⚠ NO POOL ENCODER ANY MORE. buildPool returns an ORDINAL now, so
+        #   there is nothing to fit -- and fitting one would reintroduce the
+        #   arbitrary integer the ordinal exists to replace. Nothing outside
+        #   this file reads it: train.py takes only max_len, total_examples
+        #   and num_chunks from metadata.pkl.
         "school": _fitEncoder(schools),
     }
 
@@ -662,12 +1133,31 @@ def _altitudeDelta(altitude, races_before: list[dict]) -> float:
 #                          (may be empty if prior_result was the
 #                          athlete's first-ever race)
 #           encoders: dict of fitted LabelEncoders from Chunk 2
-# Output: list of 17 floats, in this fixed order:
+# Output: list of SEQUENCE_FEATURES floats, in this fixed order:
 #         [normalized_time, course_difficulty, days_ago,
 #          distance_meters, grade_encoded, is_xc, is_indoor,
 #          temp_c, dew_point_c, humidity, apparent_temp_c,
 #          precipitation_mm, pressure_hpa, cloud_cover,
-#          wind_speed_km, wind_dir, altitude_delta]
+#          wind_speed_km, wind_dir, altitude_delta, altitude,
+#          place, gps_lat, gps_long]
+# _geo
+# Purpose: Centre and scale a venue's latitude/longitude for the network.
+# Arguments: lat, lon — degrees, either may be None.
+# Output: [lat_scaled, lon_scaled]
+#
+# ⚠ MISSING COORDINATES BECOME 0.0, WHICH IS THE CENTRE OF THE SCALE, i.e.
+#   roughly Kansas -- not a neutral "unknown". That is the same compromise
+#   _orZero makes everywhere else in this file, and it is only acceptable
+#   because the network also sees enough other features to tell a real
+#   Kansas race from a missing one. If coordinate coverage turns out to be
+#   poor, this wants an explicit is_missing flag instead.
+def _geo(lat, lon) -> list[float]:
+    return [
+        0.0 if lat is None else (float(lat) - GEO_LAT_CENTER) / GEO_LAT_SCALE,
+        0.0 if lon is None else (float(lon) - GEO_LON_CENTER) / GEO_LON_SCALE,
+    ]
+
+
 def _buildSequenceVector(prior_result: dict, target_date_str: str,
                         races_before_prior: list[dict],
                         encoders: dict) -> list[float]:
@@ -705,6 +1195,14 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
         # model learn the non-linear altitude effect neither expresses
         # alone. _orZero -> 0.0 until the elevation backfill populates it.
         _orZero(prior_result["altitude_meters"]),
+
+        # Finishing position in that race (index 18). Field context a time
+        # alone cannot carry -- see the SEQUENCE_FEATURES note on why this
+        # belongs here and NOT in the target's context vector.
+        _orZero(prior_result["place"]),
+
+        # Where that race was (indices 19-20), centred and scaled.
+        *_geo(prior_result["gps_lat"], prior_result["gps_long"]),
     ]
 
 # buildAthleteExamples
@@ -724,7 +1222,87 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
 #           "target_result": result dict (full, for Chunk 4),
 #           "target":        float (normalized_time to predict),
 #         }
-def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[dict]:
+def _forecastTwin(prior_results, target_result, encoders, rng):
+    """A copy of one example with the last k prior races hidden, or None.
+
+    ⚠ TRUNCATES THE END, NOT THE START. Dropping the OLDEST races would model
+      "we only know their recent form", which is a different and much less
+      useful problem -- and it is not what inference looks like. At inference
+      the missing races are the ones between now and the target, i.e. the most
+      RECENT ones relative to it.
+
+    ⚠ THE SEQUENCE IS REBUILT, NOT SLICED. Every sequence vector carries
+      days_ago relative to the target and features derived from the races
+      before it, so a vector built in the full history is wrong in the
+      truncated one. Slicing the list would keep the old days_ago and quietly
+      teach the model a contradiction.
+    """
+    if len(prior_results) < MIN_PRIOR_FOR_TWIN:
+        return None
+
+    target_date = _asDate(target_result.get("date"))
+    if target_date is None:
+        return None
+
+    # ★ SAMPLE INSIDE THE FEASIBLE WINDOW, NOT BLINDLY.
+    #
+    #   A gap drawn from the full 2-40 week range mostly lands outside what
+    #   this athlete's history can express: too long and nothing survives, too
+    #   short and nothing is hidden. Measured on a 10-race weekly season,
+    #   blind sampling wasted 71% of attempts -- which made the real twin rate
+    #   unpredictable AND season-length dependent, since a sparse racer's
+    #   feasible window is a different shape from a weekly racer's.
+    #
+    #   The window is bounded by the athlete's own races:
+    #       shortest  the gap to their LAST prior race   (hides >= 1)
+    #       longest   the gap to race MIN_KEPT_RACES     (keeps >= 2)
+    #
+    #   Sampling in there produces a twin whenever one is possible, and the
+    #   skew still favours the short end of whatever range that athlete has.
+    dates = [_asDate(p.get("date")) or target_date for p in prior_results]
+    lo_weeks = (target_date - dates[-1]).days / 7.0
+    hi_weeks = (target_date - dates[MIN_KEPT_RACES - 1]).days / 7.0
+
+    # Clip to the range we are willing to train on at all.
+    lo_weeks = max(lo_weeks, FORECAST_GAP_MIN_WEEKS)
+    hi_weeks = min(hi_weeks, FORECAST_GAP_MAX_WEEKS)
+    if hi_weeks <= lo_weeks:
+        return None
+
+    weeks = lo_weeks + (rng.random() ** FORECAST_GAP_SKEW) * (hi_weeks - lo_weeks)
+    cutoff = target_date - timedelta(days=weeks * 7.0)
+
+    # Results arrive chronological, so a date filter yields a PREFIX.
+    kept = [p for p in prior_results
+            if (_asDate(p.get("date")) or target_date) < cutoff]
+
+    # The window makes both of these rare, but a duplicate date or a clip can
+    # still land on an edge -- and a twin identical to its full example would
+    # teach the model that is_forecast means nothing.
+    if len(kept) < MIN_KEPT_RACES or len(kept) == len(prior_results):
+        return None
+
+    sequence = [
+        _buildSequenceVector(prior, target_result["date"], kept[:j], encoders)
+        for j, prior in enumerate(kept)
+    ]
+    return {
+        "sequence": sequence,
+        "prior_results": kept,
+        "target_result": target_result,
+        "target": float(target_result["normalized_time"]),
+        "venue_row": target_result,
+        "is_forecast": True,
+        # Kept for diagnostics only -- NEVER a feature. At inference the number
+        # of hidden races is exactly what nobody knows; a model trained on it
+        # would depend on a value that cannot be supplied.
+        "n_hidden": len(prior_results) - len(kept),
+        "gap_weeks": round(weeks, 1),
+    }
+
+
+def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
+                         rng=None) -> list[dict]:
 
     examples = []
 
@@ -757,7 +1335,26 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[di
             "prior_results": prior_results,
             "target_result": target_result,
             "target": float(target_result["normalized_time"]),
+            # The TARGET race's venue. Sequence races keep only their
+            # difficulty -- an embedding per history race would need the
+            # index concatenated before the input projection, which is a
+            # bigger change than this one.
+            # Resolved to an index in saveAll, once the vocabulary is
+            # built -- the raw row is kept here because the vocab does not
+            # exist yet when this runs.
+            "venue_row": target_result,
+            # The history runs right up to the target: this is "what happens
+            # this weekend", the only shape the model used to see.
+            "is_forecast": False,
+            "n_hidden": 0,
         })
+
+        # ★ AND ITS TWIN. Same target, history cut short, flagged. Emitted
+        #   ALONGSIDE rather than instead of -- both shapes occur at inference.
+        if rng is not None and rng.random() < FORECAST_TWIN_RATE:
+            twin = _forecastTwin(prior_results, target_result, encoders, rng)
+            if twin is not None:
+                examples.append(twin)
 
     return examples
 
@@ -769,7 +1366,13 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict) -> list[di
 #           by_athlete: {athlete_id: [results...]} from groupByAthlete
 #           encoders: dict of fitted LabelEncoders from Chunk 2
 # Output: flat list of example dicts (see buildAthleteExamples)
-def buildAllExamples(by_athlete: dict, encoders: dict):
+def buildAllExamples(by_athlete: dict, encoders: dict, rng=None):
+
+    # Its OWN generator when none is passed, seeded the same way, so this path
+    # is reproducible on its own. saveAll passes its generator instead, since
+    # sharing one keeps a whole run deterministic end to end.
+    if rng is None:
+        rng = random.Random(SHUFFLE_SEED)
 
     all_examples = []
 
@@ -778,7 +1381,8 @@ def buildAllExamples(by_athlete: dict, encoders: dict):
         # .extend() appends every item from this athlete's list
         # onto all_examples, rather than appending the whole list
         # as one nested element.
-        all_examples.extend(buildAthleteExamples(athlete_results, encoders))
+        all_examples.extend(
+            buildAthleteExamples(athlete_results, encoders, rng))
 
     print(f"Built {len(all_examples):,} training examples")
     return all_examples
@@ -883,6 +1487,19 @@ def _maxSequenceLength(examples: list[dict]) -> int:
 #           mask     — list of max_len bools (True=real, False=padding)
 def _padSequence(sequence: list[list[float]], max_len: int):
 
+    # ★ TRUNCATE FIRST, KEEPING THE MOST RECENT RACES. Without this a
+    #   sequence longer than max_len produced a NEGATIVE pad_len, and
+    #   [zero_row] * -3 is [] in Python -- so the row came back at its
+    #   original length while every other row was max_len, and
+    #   torch.tensor() then raised on the ragged nested list. A crash deep
+    #   in _buildTensors, after the whole extraction had run.
+    #
+    #   The last max_len races are the right ones to keep: recency is the
+    #   strongest signal about current ability, and the model reads
+    #   `days_ago` from each row anyway.
+    if len(sequence) > max_len:
+        sequence = sequence[-max_len:]
+
     # Length of this specific raw sequence.
     real_len = len(sequence)
 
@@ -892,7 +1509,7 @@ def _padSequence(sequence: list[list[float]], max_len: int):
 
     # A single zero row — 17 zeros matching the sequence feature width.
     # We build one and reuse it rather than recomputing inside the loop.
-    zero_row = [0.0] * 18
+    zero_row = [0.0] * SEQUENCE_FEATURES
 
      # Concatenate real rows + pad rows.
     # [zero_row] * pad_len creates a list of pad_len zero rows.
@@ -921,6 +1538,7 @@ def _buildTensors(examples: list[dict], max_len: int):
     all_masks     = []
     all_contexts  = []
     all_targets   = []
+    all_venues    = []
 
     # For each example pads it's training sequence and builds
     # it's mask, then appends it to the python lists.
@@ -933,6 +1551,7 @@ def _buildTensors(examples: list[dict], max_len: int):
         all_masks.append(mask)
         all_contexts.append(ex["context"])
         all_targets.append(ex["target"])
+        all_venues.append(ex["venue_idx"])
 
     # torch.tensor() converts a nested Python list into a tensor.
     # dtype=torch.float32 — standard precision for neural net weights.
@@ -941,6 +1560,10 @@ def _buildTensors(examples: list[dict], max_len: int):
     masks_tensor     = torch.tensor(all_masks,     dtype=torch.bool)
     context_tensor   = torch.tensor(all_contexts,  dtype=torch.float32)
     targets_tensor   = torch.tensor(all_targets,   dtype=torch.float32)
+    # ★ int64, NOT float32. This is an index into an embedding table, not a
+    #   measurement -- nn.Embedding requires a long, and a float here would be
+    #   a runtime error rather than a silently wrong number.
+    venues_tensor    = torch.tensor(all_venues,    dtype=torch.long)
 
     # Print shapes so we can sanity-check before saving.
     # e.g. sequences: [2_400_000, 847, 17]
@@ -954,7 +1577,8 @@ def _buildTensors(examples: list[dict], max_len: int):
     print(f"  context   : {list(context_tensor.shape)}")
     print(f"  targets   : {list(targets_tensor.shape)}")
 
-    return sequences_tensor, masks_tensor, context_tensor, targets_tensor
+    return (sequences_tensor, masks_tensor, context_tensor,
+            targets_tensor, venues_tensor)
 
 # _saveTensors
 # Purpose: Saves the four tensors to disk in model/data/.
@@ -1017,7 +1641,12 @@ def _saveEncoders(encoders: dict, output_dir: str) -> None:
 #           encoders: dict of fitted LabelEncoders from Chunk 2.
 #           output_dir: where to save (OUTPUT_DIR constant).
 # Output: None. Saves chunk files + metadata.pkl to output_dir.
-def saveAll(examples: list[dict], encoders: dict, output_dir: str) -> None:
+# ⚠ THE PARAMETER IS by_athlete, NOT examples. The body has always
+#   iterated by_athlete.values(); the signature said `examples`, which is
+#   never defined in this scope -- a NameError on the first call. The
+#   docstring above already names it correctly.
+def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
+            output_dir: str) -> None:
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1029,35 +1658,56 @@ def saveAll(examples: list[dict], encoders: dict, output_dir: str) -> None:
     # Pass 2 — build tensors, pad, save in chunks.
     chunk_idx     = 0
     total_examples = 0
-    buffer        = []  # holds up to CHUNK_SIZE examples before flushing
+    buffer        = []  # holds up to SHUFFLE_FACTOR*CHUNK_SIZE before flushing
+
+    # Local RNG, not random.seed(), so this does not reach out and change
+    # the global random state for anything else in the process.
+    rng = random.Random(SHUFFLE_SEED)
+    hold = SHUFFLE_FACTOR * CHUNK_SIZE
 
     # For each athlete result builds training examples, context, and saves
     # them in chunks.
     for athlete_results in by_athlete.values():
 
         # Builds training examples and context, adds to current buffer.
-        examples = buildAthleteExamples(athlete_results, encoders)
+        examples = buildAthleteExamples(athlete_results, encoders, rng)
         addContextToExamples(examples, encoders)
+
+        # ★ RESOLVED HERE, NOT WHEN THE EXAMPLE WAS BUILT. The vocabulary needs
+        #   every result counted before it knows which venues clear
+        #   MIN_VENUE_RACES, so the example carries the raw row until now and
+        #   swaps it for an index.
+        for ex in examples:
+            ex["venue_idx"] = venueIndex(ex.pop("venue_row"), vocab)
+
         buffer.extend(examples)
 
-        # Flush whenever buffer hits CHUNK_SIZE by saving chunk and
-        # discarding examples.
-        while len(buffer) >= CHUNK_SIZE:
+        # Flush only once the buffer is SHUFFLE_FACTOR chunks deep, and
+        # shuffle before taking a chunk off it -- so the emitted chunk is a
+        # sample from a wide window of athletes rather than a contiguous run.
+        while len(buffer) >= hold:
+            rng.shuffle(buffer)
             _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx, output_dir)
             chunk_idx     += 1
             total_examples += CHUNK_SIZE
             # Discard the flushed examples — this is what keeps RAM flat.
             buffer = buffer[CHUNK_SIZE:]
 
-    # Flush any remaining examples that didn't fill a full chunk.
+    # Drain the tail. Shuffle once more, then emit full chunks and a final
+    # short one -- the last chunk being short is fine, the sampler sizes
+    # batches from the rows it actually holds.
     if buffer:
-        _saveChunk(buffer, max_len, chunk_idx, output_dir)
-        total_examples += len(buffer)
-        chunk_idx += 1
+        rng.shuffle(buffer)
+        while buffer:
+            _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx, output_dir)
+            total_examples += len(buffer[:CHUNK_SIZE])
+            chunk_idx += 1
+            buffer = buffer[CHUNK_SIZE:]
 
     # Save metadata so DataLoader knows how many chunks exist.
     _saveMetadata(max_len, total_examples, chunk_idx, output_dir)
     _saveEncoders(encoders, output_dir)
+    _saveVenueVocab(vocab, output_dir)
 
     print(f"Done. {total_examples:,} examples saved in {chunk_idx} chunks.")
 
@@ -1073,7 +1723,8 @@ def saveAll(examples: list[dict], encoders: dict, output_dir: str) -> None:
 def _saveChunk(examples: list[dict], max_len: int,
                chunk_idx: int, output_dir: str) -> str:
     
-    sequences_t, masks_t, context_t, targets_t = _buildTensors(examples, max_len)
+    (sequences_t, masks_t, context_t,
+     targets_t, venues_t) = _buildTensors(examples, max_len)
 
     path = os.path.join(output_dir, f"chunk_{chunk_idx:04d}.pt")
 
@@ -1083,9 +1734,29 @@ def _saveChunk(examples: list[dict], max_len: int,
         "masks":     masks_t,
         "context":   context_t,
         "targets":   targets_t,
+        # ★ SEPARATE TENSOR, int64. An embedding index is a lookup key, not a
+        #   measurement -- inside the float context the first Linear would
+        #   read venue 4,000 as four thousand times venue 1.
+        "venues":    venues_t,
     }, path)
 
     print(f"  Saved {path} ({len(examples):,} examples)")
+
+def _saveVenueVocab(vocab: dict, output_dir: str) -> None:
+    """The venue vocabulary, beside the encoders.
+
+    ⚠ THE MODEL'S EMBEDDING TABLE IS SIZED FROM THIS, so it must be saved with
+      the chunks. Re-deriving it at training time from a different corpus
+      slice would give a different size and silently reindex every venue --
+      the embedding for Woodward Park would become some other course's.
+    """
+    path = os.path.join(output_dir, "venue_vocab.pkl")
+    with open(path, "wb") as f:
+        pickle.dump({"vocab": vocab,
+                     "n_venues": len(vocab) + 1,      # +1 for UNKNOWN_VENUE
+                     "min_races": MIN_VENUE_RACES}, f)
+    print(f"  Saved {path} ({len(vocab):,} venues + 1 unknown bucket)")
+
 
 # _saveMetadata
 # Purpose: Saves metadata of all chunks so train.py's DataLoader knows
@@ -1137,7 +1808,7 @@ def _dayOfYear(date_str: str) -> int:
 # ------------------------------------------------------------------ #
 
 # _buildContextVector
-# Purpose: Builds the 17-number context vector for ONE example,
+# Purpose: Builds the CONTEXT_FEATURES-number context vector for ONE example,
 #          describing the target race (course, timing, cohort,
 #          weather, altitude). This is the second half of each
 #          training example, alongside the "sequence" from Chunk 3.
@@ -1152,15 +1823,18 @@ def _dayOfYear(date_str: str) -> int:
 #                          to compute the target's altitude_delta
 #                          relative to the athlete's full history
 #           encoders: dict of fitted LabelEncoders from Chunk 2
-# Output: list of 17 floats, in the fixed order documented above
-def _buildContextVector(target_result: dict, sequence: list[list[float]], 
-                        prior_results: list[dict], encoders: dict) -> list[float]:
+# Output: list of CONTEXT_FEATURES floats, in the fixed order documented above
+def _buildContextVector(target_result: dict, sequence: list[list[float]],
+                        prior_results: list[dict], encoders: dict,
+                        is_forecast: bool = False) -> list[float]:
     
-    # pool combines normalized grade + gender. It is applied to the TARGET
-    # race instead of a history race. It encodes it by using the pool
-    # transformation to transform it into a float.
-    pool_str = buildPool(target_result["grade"], target_result["gender"])
-    pool_encoded = float(encoders["pool"].transform([pool_str])[0])
+    # ★ THE ATHLETE'S LEVEL FOR THE TARGET RACE, AS AN ORDINAL. No encoder:
+    #   buildPool already returns elem=0 < ms=1 < hs=2 < college=3 < pro=4,
+    #   which is a real ordering. The previous version ran a LabelEncoder over
+    #   "10-M"/"FR-F" strings and handed the resulting arbitrary integer to a
+    #   Linear layer as a float -- claiming an ordering that did not exist, and
+    #   encoding gender a second time on top of its own feature.
+    pool_encoded = buildPool(target_result)
 
     # School encoder, same "None" substitution pattern as _encodeGrade
     # in Chunk 3 — buildEncoders fit on "None" wherever school was None.
@@ -1179,6 +1853,12 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
     altitude_delta = _altitudeDelta(target_result["altitude_meters"], prior_results)
 
     return [
+        # ★ is_forecast. NOT redundant with days_since_last_race: a real
+        #   six-week gap and a truncated six-week gap produce the same number
+        #   of days and mean opposite things -- one athlete did nothing, the
+        #   other raced four times we are hiding. This is what separates them,
+        #   and without it truncation would make the model worse.
+        1.0 if is_forecast else 0.0,
         float(target_result["course_difficulty"]),
         float(target_result["distance_meters"]),
         float(_dayOfYear(target_result["date"])),
@@ -1202,6 +1882,10 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
         # Absolute altitude of the target race's venue (NEW — index 17).
         # Same pairing rationale as the sequence vector.
         _orZero(target_result["altitude_meters"]),
+
+        # Where the target race is (indices 18-19). Known BEFORE the race,
+        # so unlike `place` this is safe in the context vector.
+        *_geo(target_result["gps_lat"], target_result["gps_long"]),
     ]
 
 def addContextToExamples(examples: list[dict], encoders: dict) -> None:
@@ -1212,6 +1896,7 @@ def addContextToExamples(examples: list[dict], encoders: dict) -> None:
             example["sequence"],
             example["prior_results"],
             encoders,
+            example.get("is_forecast", False),
         )
 
     print(f"Added context vectors to {len(examples):,} examples")
@@ -1237,8 +1922,14 @@ if __name__ == "__main__":
         print("Building encoders...")
         encoders = buildEncoders(results)
 
+        # Built from EVERY result, before chunking: a venue's race count is a
+        # property of the corpus, and counting per chunk would give the same
+        # venue a different index in each file.
+        print("Building venue vocabulary...")
+        vocab = buildVenueVocab(results)
+
         print("Saving chunked tensors...")
-        saveAll(by_athlete, encoders, OUTPUT_DIR)
+        saveAll(by_athlete, encoders, vocab, OUTPUT_DIR)
  
     finally:
         closePool()

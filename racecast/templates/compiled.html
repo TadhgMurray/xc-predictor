@@ -1,0 +1,137 @@
+{# =====================================================================
+  compiled.html -- one compiled race.
+
+  ★ BUILT TO MATCH race.html. Same plain structure: h1, meta lines, one
+    table, no wrapper div and no page-specific classes. A compiled race is a
+    race, and looking like a different kind of page made it read as one.
+
+  ⚠ IT DID NOT HAPPEN, WHICH THE PAGE SAYS PLAINLY. Varsity and JV started
+    separately -- a JV runner never had the chance to sit on a varsity pack.
+    A finishing order that was never contested is a different claim from one
+    that was, and presenting it identically to a real race would be the
+    dishonest version of this feature.
+
+  ★ SCORES HERE ARE COMPUTED, NEVER PUBLISHED. Nothing was published for a
+    race that did not run.
+===================================================================== #}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ header.meet_name }} — Compiled</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else "—" %}
+    <h1>{{ header.meet_name }}</h1>
+    <p class="meta">
+        {% if header.course_name %}
+          <a href="/course/{{ header.course_name }}">{{ header.course_name }}</a> ·
+        {% endif %}
+        {{ group.distance }}m ·
+        {{ g_label }} ·
+        Compiled
+        {% if header.state %} · {{ header.state }}{% endif %}
+    </p>
+    <p class="meta">
+        {{ group.results|length }} runners from
+        {{ group.divisions|length }} division{{ "" if group.divisions|length == 1 else "s" }}
+    </p>
+
+    {# Not a footnote: someone arriving from a link has no other way to know
+       these runners were not on the line together. #}
+    <p class="synthetic">
+        These divisions were run separately. This is how their times compare,
+        not how they finished — the places and scores below were never contested.
+    </p>
+
+    <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
+
+{% if group.scores.teams %}
+    <h2>Team scores</h2>
+    {# ★ ONE COLUMN PER SCORER. Packed into a single cell the numbers do not
+       line up between rows, so comparing two teams' third runners -- which is
+       how a close score is read -- meant counting across.
+       ★ AND EACH PLACE LINKS TO THE ATHLETE: the number is a person. #}
+    <table>
+        <thead>
+            <tr>
+                <th>Place</th>
+                <th>Team</th>
+                <th>Points</th>
+                <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>
+                <th>6</th><th>7</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in group.scores.teams %}
+            <tr>
+                <td>{{ t.place }}</td>
+                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                <td>{{ t.points }}</td>
+                {# 6 and 7 are greyed: they do not score, but they DO displace,
+                   and hiding them makes a deep team look like a top-heavy one. #}
+                {% for i in range(7) %}
+                    {% set r = t.runners[i] if t.runners|length > i else none %}
+                    <td{{ ' class="displacer"'|safe if i >= 5 }}>
+                        {% if r %}<a href="/athlete/{{ r.person_id }}"
+                                     title="{{ r.name }}">{{ r.score_place }}</a>
+                        {% else %}—{% endif %}
+                    </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if group.scores.incomplete %}
+    <p class="meta">
+        Not scored, fewer than five finishers:
+        {% for i in group.scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+{% endif %}
+
+    <h2>Results</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Place</th>
+                <th>Athlete</th>
+                <th>Grade</th>
+                <th>School</th>
+                <th>Time</th>
+                <th>Rating</th>
+                <th>Actual race</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in group.results %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.name if row.name else "Unknown" }}
+                    {% endif %}
+                </td>
+                <td>{{ row.grade if row.grade else "—" }}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% else %}—{% endif %}</td>
+                <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
+                <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+                {# Where they actually finished, and in which race. The gap
+                   between this and the compiled place is why compiling exists.
+                   Derived in meet_compile, NOT read from results.place -- that
+                   column is not a within-division position, which is why
+                   race.html renders Place from loop.index too. #}
+                <td>
+                    <a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}">{{ row.division_place }}</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

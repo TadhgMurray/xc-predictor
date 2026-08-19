@@ -1,0 +1,1261 @@
+/*
+ * rankings.js -- behaviour for the rankings page.
+ *
+ * Goes in racecast/static/. Loaded by templates/rankings.html.
+ *
+ * Talks to /api/rankings, which serves two boards from two tables:
+ *
+ *   ability       athlete_season -- one row per (person, pool, sport, year).
+ *                 Season averages. Averaging kills per-race noise (~3.3%,
+ *                 about 4 rating points), so this is the honest ranking of
+ *                 athletes and it is the default.
+ *
+ *   performance   ranking_results -- one row per rated race. Single races,
+ *                 full noise. Right for "best races", wrong for "best
+ *                 athletes".
+ *
+ * No framework, no build step. Vanilla fetch and template strings.
+ */
+
+"use strict";
+
+const PAGE_SIZE = 50;
+
+/*
+ * Page state.
+ *
+ * `offset` is reset by anything that CHANGES THE QUERY (applying filters,
+ * switching board) and preserved only by the pager. Without that you land on
+ * page 7 of a two-page result and stare at an empty table wondering what broke.
+ */
+const state = {
+  board: "ability",
+  offset: 0,
+  busy: false,
+  // Set by a jump; the row for this person_id is marked once and then
+  // cleared, so it does not stay highlighted as the user pages away.
+  highlight: null,
+  // The sort is HERE, not in a <select>. Clicking a column header sets it;
+  // clicking the same header again flips the direction.
+  sort: "rating",
+  // Set once the user picks a pool, so switching boards stops choosing for
+  // them. See syncBoard.
+  poolTouched: false,
+  dir: ""            // "" = the column's own natural direction
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* ★ TWENTY IS A TRACK NUMBER. An athlete contests several events per meet
+   indoors and out, so twenty rated marks is an ordinary season. A cross
+   country season is eight to twelve races -- one a week for a term -- so the
+   same floor does not raise the bar there, it empties the board.
+
+   rankings.parseFilters applies the same split server-side; this keeps the
+   box agreeing with what the API would do if the box were empty. */
+/* ★ 999999 IS A SENTINEL, NOT A TIME. A DNS or DNF still needs a row and
+   time_seconds is numeric, so the scrapers write 999999 -- 270,166 of them in
+   results alone, against ~17,000 for any real value. The pace band keeps them
+   out of every rating, but the race page renders whatever the number is, and
+   "277:46.6" is a worse lie than saying nothing.
+
+   ⚠ THE ROW IS KEPT, NOT HIDDEN. Somebody looking for an athlete in a race
+     they did not finish should find them, with the reason -- not an absence
+     they have to interpret. */
+/* ⚠ A THRESHOLD, NOT THE VALUE. The sentinel is written as 999999 -- 270,166
+     rows of it against ~17,000 for the commonest real time -- but it lands in
+     a `real` column, and different feeds may round or scale it. Anything past
+     a day is treated as no time: no race is a day long, and a comparison that
+     depends on a float surviving exactly is one that fails silently. */
+const DNF_SENTINEL = 86400;
+
+function isNoTime(sec) {
+  return sec === null || sec === undefined || Number(sec) >= DNF_SENTINEL;
+}
+
+/* A school cell that links through, or a plain one when the name is missing.
+   /school/<path:school_name> takes the raw string, so no id lookup. */
+/* ★ THE TWO RACE ROUTES ARE DIFFERENT SHAPES. XC is
+   /race/xc/<meet>/<div> and TF is /race/tf/<meet>/<event>/<div> -- three
+   parts, because a track meet holds many events under one meet_id and the
+   div alone does not identify a race.
+
+   ⚠ Building the TF link with two parts matched no route at all, so every
+     track link from these boards answered 404. event_id now rides in
+     ranking_results for exactly this. */
+function raceHref(r) {
+  if (r.sport === "XC") return `/race/xc/${r.meet_id}/${r.div_id}`;
+  if (r.event_id === null || r.event_id === undefined) return null;
+  return `/race/tf/${r.meet_id}/${r.event_id}/${r.div_id}`;
+}
+
+/* A cell that links only when there is somewhere to link to -- a dead href is
+   worse than plain text, because it looks live. */
+function maybeLink(href, inner, cls) {
+  const c = cls ? ` class="${cls}"` : "";
+  return href ? `<td${c}><a href="${href}">${inner}</a></td>`
+              : `<td${c}>${inner}</td>`;
+}
+
+function schoolCell(school, state) {
+  const st = state ? ` <span class="state">${esc(state)}</span>` : "";
+  if (!school) return `<td>—${st}</td>`;
+  return `<td><a href="/school/${encodeURIComponent(school)}">`
+       + `${esc(school)}</a>${st}</td>`;
+}
+
+function defaultMinRaces() {
+  return $("sport").value === "TF" ? 20 : 8;
+}
+
+/* Follow the sport unless the user has typed their own. Once they have, the
+   number is theirs and switching sport must not overwrite it. */
+function syncMinRaces() {
+  const box = $("min_races");
+  if (!box.dataset.touched) box.value = defaultMinRaces();
+}
+
+
+/*
+ * Escape before interpolating into innerHTML.
+ *
+ * Athlete and school names are SCRAPED FREE TEXT and genuinely contain & and
+ * <. Without this a school called "Smith & Jones" renders broken, and anything
+ * that looks like a tag disappears.
+ */
+function esc(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+
+/*
+ * Rating to one decimal.
+ *
+ * The engine stores speed_rating as `real` (float32), so the raw JSON value is
+ * 138.66000366210938. One decimal is all the precision the number actually
+ * carries -- a single race is worth about +-4 points of noise.
+ */
+function fmtRating(value) {
+  return (value === null || value === undefined) ? "" : Number(value).toFixed(1);
+}
+
+
+/*
+ * Build the query string from the current controls.
+ *
+ * ONLY SENDS FILTERS THE USER SET. An empty text input would otherwise become
+ * a literal filter on '' and return nothing, which looks exactly like "no
+ * results" rather than "you sent a bad filter".
+ */
+function buildQuery() {
+  const q = new URLSearchParams({
+    board:  state.board,
+    pool:   $("pool").value,
+    sport:  $("sport").value,
+    /* ★ SCOPE IS ALWAYS SENT, INCLUDING THE DEFAULT. The API defaults to
+       "usa" too, but a URL that omits it is a URL whose meaning changes if
+       that default ever moves -- and these URLs get shared. */
+    scope:  $("scope").value,
+    limit:  PAGE_SIZE,
+    offset: state.offset
+  });
+
+  /* The multi-value filters. Several chips become ONE comma-separated
+     parameter -- the API splits it and binds the list as a Postgres array, so
+     "CA,TX" is one bind, not two clauses. An empty combo sends NOTHING, which
+     is what keeps the index usable: an always-true predicate stops Postgres
+     choosing one. */
+  for (const field of ["state", "grade", "year", "school"]) {
+    const vals = combos[field] ? combos[field].values() : [];
+    if (vals.length) q.set(field, vals.join(","));
+  }
+
+  /* Sort. `dir` is only sent when the user overrode it, so the API can apply
+     each column's natural direction -- highest rating, latest date, FASTEST
+     time. Sending "desc" blindly would make the time sort list slowest first. */
+  if (state.sort) q.set("sort", state.sort);
+  /* dir only when the user flipped a header. Left out, the API applies the
+     column's natural direction -- highest rating, latest date, FASTEST time.
+     Sending "desc" blindly would list the slowest times first. */
+  if (state.dir) q.set("dir", state.dir);
+
+  // Board-specific filters. Sending date_from to the ability board is a 400 by
+  // design -- the API refuses rather than silently ignoring it -- so the two
+  // branches must stay aligned with the perf-only/ability-only CSS.
+  if (state.board === "pr") {
+    q.set("distance", $("distance").value);
+    if ($("date_from").value) q.set("date_from", $("date_from").value);
+    if ($("date_to").value)   q.set("date_to",   $("date_to").value);
+  } else if (state.board === "ability") {
+    q.set("min_races", $("min_races").value || defaultMinRaces());
+  } else {
+    if ($("date_from").value) q.set("date_from", $("date_from").value);
+    if ($("date_to").value)   q.set("date_to",   $("date_to").value);
+  }
+
+  return q;
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  FILTER OPTIONS
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ USPS CODES ONLY, NO ALIAS TABLE, AND THAT IS A MEASURED DECISION.
+ *
+ *   athlete_season.state holds four encodings of the same thing: USPS upper
+ *   (14,999,157 rows), FIPS numerics like '06' (22,033), full names like
+ *   'Texas' (18,938), and mixed case like 'Ca' (15,582). California really is
+ *   split across CA / 06 / Ca.
+ *
+ *   But USPS upper is 99.64% of rows, and 06 is 480 against CA's 1,673,484 --
+ *   0.03%. Mapping every state to its aliases would mean a hand-written table
+ *   of 50+ entries that has to stay right forever, to recover an under-count
+ *   far smaller than the +-3 points of noise on a single rating. The API
+ *   upper-cases, which catches Ca/Il/Mi/Ne/Wi for free. The rest is left.
+ *
+ * ⚠ AND A PATTERN TEST WOULD BE WRONG. 77 distinct two-letter uppercase
+ *   values exist for 50 states -- the extras are Canadian provinces (AB, BC,
+ *   ON, QC), Australian (NSW, QLD, ACT) and similar. "Two capitals means
+ *   American" lets Ontario through. Hence an explicit list.
+ */
+const US_STATES = [
+  ["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],
+  ["CA","California"],["CO","Colorado"],["CT","Connecticut"],["DE","Delaware"],
+  /* Abbreviated so it fits a grid column. Every other state name is short
+     enough; this one alone would wrap and make its row twice as tall. */
+  ["DC","Washington D.C."],["FL","Florida"],["GA","Georgia"],
+  ["HI","Hawaii"],["ID","Idaho"],["IL","Illinois"],["IN","Indiana"],
+  ["IA","Iowa"],["KS","Kansas"],["KY","Kentucky"],["LA","Louisiana"],
+  ["ME","Maine"],["MD","Maryland"],["MA","Massachusetts"],["MI","Michigan"],
+  ["MN","Minnesota"],["MS","Mississippi"],["MO","Missouri"],["MT","Montana"],
+  ["NE","Nebraska"],["NV","Nevada"],["NH","New Hampshire"],["NJ","New Jersey"],
+  ["NM","New Mexico"],["NY","New York"],["NC","North Carolina"],
+  ["ND","North Dakota"],["OH","Ohio"],["OK","Oklahoma"],["OR","Oregon"],
+  ["PA","Pennsylvania"],["RI","Rhode Island"],["SC","South Carolina"],
+  ["SD","South Dakota"],["TN","Tennessee"],["TX","Texas"],["UT","Utah"],
+  ["VT","Vermont"],["VA","Virginia"],["WA","Washington"],["WV","West Virginia"],
+  ["WI","Wisconsin"],["WY","Wyoming"],
+  /* Short enough for a grid column. A label that wraps makes its whole grid
+     ROW taller, not just its own cell, so one long name adds a line across
+     four columns -- which is what pushed the panel past its height and put a
+     scrollbar back. */
+  ["PR","Puerto Rico"],["GU","Guam"],["VI","Virgin Islands"],
+  ["AE","Armed Forces EU"],["AP","Armed Forces PAC"]
+];
+
+/* Numeric school grades plus the collegiate class words tfrrs stores. Both
+   appear in the grade column, so both are offered.
+ *
+ * ★ THE GREY COLUMN IS THE LEVEL, NOT THE CODE. For a state, "CA" next to
+ *   "California" is useful -- it is what the data stores and what you might
+ *   type. For a grade, repeating "12" next to "12th" says nothing. The level
+ *   answers the question someone actually has: which board does this grade
+ *   belong to, and will it return anything against the pool I picked.
+ *
+ * ⚠ THE MAPPING IS normalize_distance.GRADE_TO_LEVEL, not a fresh guess:
+ *   1-5 elem, 6-8 ms, 9-12 hs, and the class words college. Grade 5 is listed
+ *   even though no pool in the dropdown is elem-based -- it exists in the
+ *   data, and silently omitting a value that is really there is worse than
+ *   showing one that pairs badly with some pools.
+ *
+ * Ascending, because a grade list that starts at 12 reads backwards. */
+const GRADES = [
+  ["5","5th","elem"],
+  ["6","6th","ms"],["7","7th","ms"],["8","8th","ms"],
+  ["9","9th","hs"],["10","10th","hs"],["11","11th","hs"],["12","12th","hs"],
+  ["Fr","Freshman","college"],["So","Sophomore","college"],
+  ["Jr","Junior","college"],["Sr","Senior","college"]
+];
+
+/* Newest first: the reason to open a year filter is almost always this season
+   or last, and nobody scrolls to 1990 by choice. */
+const YEARS = (() => {
+  const now = new Date().getFullYear() + 1;   // a TF season runs ahead
+  const out = [];
+  for (let y = now; y >= 1990; y--) out.push([String(y), String(y)]);
+  return out;
+})();
+
+const FIELD_OPTIONS = {
+  state:  US_STATES,
+  grade:  GRADES,
+  year:   YEARS,
+  school: []          // searched, not listed -- see SEARCHED below
+};
+
+/*
+ * ★ THE PANEL SHAPE FOLLOWS WHETHER THE OPTION SET IS BOUNDED.
+ *
+ *   Three of these four have a fixed, knowable list, so the panel shows ALL of
+ *   it at once in a grid -- no scrolling. That matters more than it sounds:
+ *   once you have used the state filter twice you know Texas is bottom-right
+ *   and you go straight there. A scroll bar destroys that, because where a row
+ *   sits depends on where you last left the scroll position.
+ *
+ *   School cannot work that way -- 145,247 of them -- so it is a search box
+ *   against the site's existing index instead.
+ *
+ *   cols is the grid width; width is the panel's. Both are per field because
+ *   56 states and 12 grades do not want the same box.
+ *
+ * ★ EVERY LIST FILLS DOWNWARD. Grid's default is row-major -- Alabama,
+ *   Alaska, Arizona, Arkansas ACROSS the top, then Delaware under Alabama.
+ *   That means reading an ordered list requires zig-zagging, and the eye has
+ *   to track four columns at once to stay in sequence. Column-major puts
+ *   A-M down the first column and N-Z down the last, which is how a printed
+ *   index or a phone book reads, and it is the only layout where "scan down
+ *   until you find it" works.
+ *
+ *   It is not free: the row count depends on how many options survive the
+ *   filter, so it has to be recomputed on every render rather than set once.
+ */
+const PANEL = {
+  /* 56 states / 4 columns = 14 rows, which fits without a scrollbar. Three
+     columns needed 19 rows and did not. */
+  state:  { cols: 4, width: 560, flow: "column" },
+  year:   { cols: 4, width: 400, flow: "column" },
+  grade:  { cols: 2, width: 300, flow: "column" },
+  /* Searched, so the option count is unbounded and unknown until it returns.
+     Column-major over a variable-length result list would move every entry
+     each time a letter is typed. One column, top to bottom, is already the
+     reading order. */
+  school: { cols: 1, width: 340, searched: true }
+};
+
+
+/* ------------------------------------------------------------------ *
+ *  COMBOBOX
+ * ------------------------------------------------------------------ */
+
+/*
+ * One implementation, four fields.
+ *
+ * A fixed-size trigger button plus a big scrollable checkbox panel. The button
+ * shows "Any", one name, or "N selected" -- never the list, because listing
+ * the selections is what made the previous version grow and shove the whole
+ * toolbar around as values came and went.
+ *
+ * ★ THE VALUE AND THE LABEL ARE DIFFERENT THINGS. The row reads "California"
+ *   and the query carries "CA". The filter box matches either, which is the
+ *   point of a menu you can also type into.
+ *
+ * ★ FREE TEXT WHERE THERE IS NO LIST. School has ~300k values, so the typed
+ *   string becomes the option -- "Add "Niwot"" -- and already-chosen values
+ *   stay listed so they can be unticked.
+ */
+const combos = {};
+
+function makeCombo(host) {
+  const field = host.dataset.field;
+  const options = FIELD_OPTIONS[field] || [];
+  const cfg = PANEL[field] || { cols: 1, width: 300 };
+  const searched = !!cfg.searched;
+  const chosen = new Set();
+  let dirty = false;
+  let searchTimer = null;
+  let found = [];              // last search results, for searched fields
+
+  host.innerHTML =
+    `<button type="button" class="combo-btn" aria-expanded="false">` +
+      `<span class="combo-btn-label">Any</span>` +
+      `<span class="combo-caret" aria-hidden="true">\u25be</span>` +
+    `</button>` +
+    `<div class="combo-panel hidden" style="width:${cfg.width}px">` +
+      `<div class="combo-search">` +
+        `<input id="${field}-input" class="combo-input" type="text" ` +
+        `autocomplete="off" placeholder="${searched ? "Search schools\u2026" : "Filter\u2026"}">` +
+      `</div>` +
+      `<div class="combo-opts${cfg.flow === "column" ? " flow-col" : ""}" ` +
+      `style="--cols:${cfg.cols}"></div>` +
+      `<div class="combo-foot">` +
+        `<button type="button" class="combo-clear">Clear</button>` +
+        `<button type="button" class="combo-done">Done</button>` +
+      `</div>` +
+    `</div>`;
+
+  const btn = host.querySelector(".combo-btn");
+  const btnLabel = host.querySelector(".combo-btn-label");
+  const panel = host.querySelector(".combo-panel");
+  const input = host.querySelector(".combo-input");
+  const opts = host.querySelector(".combo-opts");
+
+  function labelFor(value) {
+    const hit = options.find((o) => o[0] === value);
+    return hit ? hit[1] : value;
+  }
+
+  /* ★ THE TRIGGER NEVER CHANGES SIZE. Listing the selections on the button is
+     what made an earlier version grow and shove the toolbar around. One name
+     when there is one, a count when there are more. */
+  function renderButton() {
+    const n = chosen.size;
+    btnLabel.textContent =
+      n === 0 ? "Any" : n === 1 ? labelFor([...chosen][0]) : `${n} selected`;
+    host.classList.toggle("has-values", n > 0);
+  }
+
+  function row(value, label, code) {
+    const on = chosen.has(value);
+    return `<label class="combo-opt${on ? " is-on" : ""}">` +
+      `<input type="checkbox" data-v="${esc(value)}"${on ? " checked" : ""}>` +
+      `<span>${esc(label)}</span>` +
+      (code && code !== label ? `<span class="combo-code">${esc(code)}</span>` : "") +
+      `</label>`;
+  }
+
+  function renderOptions() {
+    if (searched) {
+      /* Chosen first so they can always be unticked, then whatever the last
+         search returned. Without the chosen rows, a school you added would
+         vanish from the panel the moment you cleared the box. */
+      const picked = [...chosen].map((v) => row(v, v, null));
+      const hits = found.filter((f) => !chosen.has(f))
+                        .map((f) => row(f, f, null));
+      opts.innerHTML = picked.concat(hits).join("") ||
+        `<div class="combo-none">Type at least two letters</div>`;
+      return;
+    }
+
+    const q = input.value.trim().toLowerCase();
+    const pool = options.filter((o) => !q || o[0].toLowerCase().startsWith(q)
+                                          || o[1].toLowerCase().includes(q));
+
+    /* Column-major needs the row count, and it changes with the filter -- so
+       it is set per render, not once at build time. */
+    if (cfg.flow === "column") {
+      opts.style.setProperty("--rows", Math.ceil(pool.length / cfg.cols) || 1);
+    }
+    /* NOT reordered to put chosen first. With every option visible at once,
+       moving them would shuffle the grid under the cursor and destroy the
+       spatial memory the no-scroll layout exists to give. Ticked rows are
+       highlighted in place instead. */
+    /* o[2] is the grey column where a list defines one (grade -> level);
+       otherwise it falls back to the value itself (state -> "CA"). */
+    opts.innerHTML = pool.map((o) => row(o[0], o[1], o[2] || o[0])).join("") ||
+      `<div class="combo-none">No matches</div>`;
+  }
+
+  /* Debounced search against the site's own index. kind=school so athletes and
+     meets do not crowd out the schools. */
+  async function runSearch() {
+    const q = input.value.trim();
+    if (q.length < 2) { found = []; renderOptions(); return; }
+    try {
+      const res = await fetch("/search/api?kind=school&q=" + encodeURIComponent(q));
+      const rows = await res.json();
+      found = (rows || [])
+        .filter((r) => r.kind === "school")
+        .map((r) => r.label)
+        .filter((v, i, a) => v && a.indexOf(v) === i)
+        .slice(0, 40);
+    } catch (err) {
+      found = [];
+    }
+    renderOptions();
+  }
+
+  function open() {
+    /* One panel at a time -- two overlapping menus is a layout bug waiting to
+       happen and there is never a reason to have both. */
+    document.querySelectorAll(".combo-panel").forEach((p) => p.classList.add("hidden"));
+    document.querySelectorAll(".combo-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
+    panel.classList.remove("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    input.value = "";
+    found = [];
+    renderOptions();
+
+    /* ⚠ A 520px PANEL UNDER A RIGHT-HAND FILTER RUNS OFF THE PAGE. Measured
+       on open rather than guessed from column order, because the filter row
+       wraps at narrow widths and which control is rightmost changes. */
+    panel.classList.remove("flip");
+    if (panel.getBoundingClientRect().right > document.documentElement.clientWidth - 8) {
+      panel.classList.add("flip");
+    }
+    input.focus();
+  }
+
+  /* ★ THE QUERY RUNS ON CLOSE, NOT PER TICK. Ticking eight states would
+     otherwise fire eight requests, seven already stale before they land. */
+  function close() {
+    panel.classList.add("hidden");
+    btn.setAttribute("aria-expanded", "false");
+    if (dirty) {
+      dirty = false;
+      state.offset = 0;
+      load();
+    }
+  }
+
+  btn.addEventListener("click", () => {
+    panel.classList.contains("hidden") ? open() : close();
+  });
+
+  input.addEventListener("input", () => {
+    if (searched) {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(runSearch, 200);
+    } else {
+      renderOptions();
+    }
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { close(); btn.focus(); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const first = opts.querySelector("input[type=checkbox]");
+      if (first) {
+        toggle(first.dataset.v, true);
+        input.value = "";
+        found = [];
+        renderOptions();
+      }
+    }
+  });
+
+  function toggle(value, on) {
+    if (!value) return;
+    if (on) chosen.add(value); else chosen.delete(value);
+    dirty = true;
+    renderButton();
+  }
+
+  opts.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[type=checkbox]");
+    if (!cb) return;
+    toggle(cb.dataset.v, cb.checked);
+    cb.closest(".combo-opt").classList.toggle("is-on", cb.checked);
+  });
+
+  host.querySelector(".combo-clear").addEventListener("click", () => {
+    if (!chosen.size) return;
+    chosen.clear();
+    dirty = true;
+    renderButton();
+    renderOptions();
+  });
+  host.querySelector(".combo-done").addEventListener("click", close);
+
+  /* Clicking away closes AND applies -- a menu dismissed by clicking elsewhere
+     should not quietly discard the ticks. */
+  document.addEventListener("mousedown", (e) => {
+    if (!panel.classList.contains("hidden") && !host.contains(e.target)) close();
+  });
+
+  renderButton();
+
+  const api = {
+    values: () => [...chosen],
+    set: (vals) => { chosen.clear(); (vals || []).forEach((v) => chosen.add(v));
+                     renderButton(); }
+  };
+  combos[field] = api;
+  return api;
+}
+
+document.querySelectorAll(".combo").forEach(makeCombo);
+
+
+/* ------------------------------------------------------------------ *
+ *  SORT OPTIONS
+ * ------------------------------------------------------------------ */
+
+/*
+ * ⚠ MUST MATCH _SORTS_ABILITY / _SORTS_PERFORMANCE IN rankings.py. The API
+ *   validates against its own whitelist and 400s on anything else, so an
+ *   option here that is not there is a broken menu entry, not a silent no-op.
+ *   The lists differ on purpose: a date sort is meaningless on a season
+ *   average, and a races count does not exist on a single performance.
+ */
+/*
+ * The columns, in order, per board.
+ *
+ * `key` is the API's sort key, or null for a column that cannot be sorted --
+ * the row number is a property of the page, not of the athlete, so sorting by
+ * it is meaningless.
+ *
+ * ⚠ EVERY key MUST EXIST IN _SORTS_ABILITY / _SORTS_PERFORMANCE in
+ *   rankings.py. The API validates against its own whitelist and 400s on
+ *   anything else, so a key here that is not there is a header that errors
+ *   when clicked. The lists differ per board on purpose: a date sort is
+ *   meaningless on a season average, and a race count does not exist on a
+ *   single performance.
+ */
+const COLUMNS = {
+  ability: [
+    { key: null,     label: "#" },
+    { key: "name",   label: "Athlete" },
+    { key: "school", label: "School" },
+    { key: "grade",  label: "Grade" },
+    { key: null,     label: "Sport" },
+    { key: "year",   label: "Year" },
+    { key: "rating", label: "Rating" },
+    { key: "best",   label: "Best" },
+    { key: "races",  label: "Races" }
+  ],
+  performance: [
+    { key: null,     label: "#" },
+    { key: "name",   label: "Athlete" },
+    { key: "school", label: "School" },
+    { key: "grade",  label: "Grade" },
+    { key: null,     label: "Sport" },
+    { key: "date",   label: "Date" },
+    { key: "rating", label: "Rating" }
+  ],
+  /* Time first, because it is what this board ranks. Rating is still shown --
+     the gap between a fast time and a modest rating IS the course, and seeing
+     both is how somebody learns that. Pool is shown because "all pools" is an
+     option here and a 5k time alone does not say who ran it. */
+  pr: [
+    { key: null,     label: "#" },
+    { key: "name",   label: "Athlete" },
+    { key: "school", label: "School" },
+    { key: "grade",  label: "Grade" },
+    { key: null,     label: "Pool" },
+    { key: "date",   label: "Date" },
+    { key: "time",   label: "Time" },
+    { key: "rating", label: "Rating" }
+  ]
+};
+
+/* Seconds -> m:ss.d, or h:mm:ss for anything past an hour. A leaderboard of
+   "1183.4" is a leaderboard nobody can read. */
+function fmtTime(sec) {
+  /* ! THE SENTINEL PRINTS AS DNF, NOT AS 277:46.6. See DNF_SENTINEL. */
+  if (isNoTime(sec)) return "DNF";
+  const s = Number(sec);
+  if (!isFinite(s)) return "—";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = s - h * 3600 - m * 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  if (h) return `${h}:${pad(m)}:${pad(Math.round(rest))}`;
+  return `${m}:${rest < 10 ? "0" : ""}${rest.toFixed(1)}`;
+}
+
+const POOL_LABEL = {
+  hs_m: "HS Boys", hs_f: "HS Girls",
+  ms_m: "MS Boys", ms_f: "MS Girls",
+  college_m: "College Men", college_f: "College Women",
+  elem_m: "Elem Boys", elem_f: "Elem Girls"
+};
+
+/*
+ * The header row, with the current sort marked.
+ *
+ * aria-sort, not just an arrow: a screen reader announces the sort state from
+ * it, and the arrow alone would be invisible to one.
+ */
+function renderHead(board) {
+  return "<thead><tr>" + COLUMNS[board].map((c) => {
+    if (!c.key) return `<th>${c.label}</th>`;
+    const active = state.sort === c.key;
+    const dir = active ? (effectiveDir(board, c.key) === "asc" ? "asc" : "desc") : "";
+    const aria = active ? ` aria-sort="${dir === "asc" ? "ascending" : "descending"}"` : "";
+    const arrow = active ? (dir === "asc" ? " \u2191" : " \u2193") : "";
+    return `<th class="sortable${active ? " is-sorted" : ""}"` +
+           ` data-key="${c.key}"${aria}>${c.label}${arrow}</th>`;
+  }).join("") + "</tr></thead>";
+}
+
+/*
+ * Which way a column is actually sorted right now.
+ *
+ * When the user has not overridden it, the direction is the column's natural
+ * one -- highest rating, latest date, but ASCENDING for names and schools,
+ * because alphabetical means A first. Mirrors the per-column defaults in
+ * rankings.py so the arrow never contradicts the data.
+ */
+const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time", "first"]);
+
+function effectiveDir(board, key) {
+  if (state.sort === key && state.dir) return state.dir;
+  return NATURAL_ASC.has(key) ? "asc" : "desc";
+}
+
+/*
+ * Click a header: sort by it, or flip it if it is already the sort.
+ */
+function onHeaderClick(key) {
+  if (state.sort === key) {
+    state.dir = effectiveDir(state.board, key) === "asc" ? "desc" : "asc";
+  } else {
+    state.sort = key;
+    state.dir = "";          // fall back to that column's natural direction
+  }
+  state.offset = 0;
+  load();
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  RENDERING
+ * ------------------------------------------------------------------ */
+
+/*
+ * The ability board.
+ *
+ * `rating` is the season mean; `best` is the single best race that season.
+ * Showing both is deliberate: it makes the difference between the two boards
+ * visible in one row, and a big gap between them says "inconsistent season"
+ * rather than "bad athlete".
+ *
+ * The row number is offset + i + 1 because the API pages server-side and does
+ * not send a rank -- rank is a property of the page, not of the athlete.
+ */
+function renderAbility(rows) {
+  const body = rows.map((r, i) => `
+    <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
+      <td class="rank">${state.offset + i + 1}</td>
+      <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
+      ${schoolCell(r.school, r.state)}
+      <td>${esc(r.grade)}</td>
+      <td>${esc(r.sport)}</td>
+      <td>${r.year}</td>
+      <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(r.rating)}</a></td>
+      <td>${fmtRating(r.best_rating)}</td>
+      <td>${r.n_races}</td>
+    </tr>`).join("");
+
+  return `<table class="rk">${renderHead("ability")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
+/*
+ * The performance board.
+ *
+ * XC and TF race pages are DIFFERENT ROUTES (/race/xc/... and /race/tf/...),
+ * so the link has to branch on the sport. With sport=both a single board holds
+ * rows of each kind, which is exactly why the sport column is shown.
+ *
+ * ★ THE RATING CARRIES THE LINK, NOT THE DATE. The rating is what the row is
+ *   about and where the eye already is; a date is a fact about the race rather
+ *   than a way into it. The times board does the same with its time.
+ */
+function renderPerformance(rows) {
+  const body = rows.map((r, i) => {
+    const href = raceHref(r);
+
+    return `
+    <tr>
+      <td class="rank">${state.offset + i + 1}</td>
+      <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
+      ${schoolCell(r.school, r.state)}
+      <td>${esc(r.grade)}</td>
+      <td>${esc(r.sport)}</td>
+      ${maybeLink(href, esc(r.race_date))}
+      ${maybeLink(href, fmtRating(r.rating), "rating")}
+    </tr>`;
+  }).join("");
+
+  return `<table class="rk">${renderHead("performance")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
+/*
+ * The best-times board.
+ *
+ * One row per athlete -- their fastest at this distance -- so the rank column
+ * is a rank of PEOPLE, not of races. See getPrRankings for why that differs
+ * from the performance board's per-athlete cap.
+ */
+function renderPr(rows) {
+  const body = rows.map((r, i) => {
+    const href = raceHref(r);
+
+    return `
+    <tr>
+      <td class="rank">${state.offset + i + 1}</td>
+      <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
+      ${schoolCell(r.school, r.state)}
+      <td>${esc(r.grade)}</td>
+      <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
+      <td>${esc(r.race_date)}</td>
+      {/* ! A DNF STILL LINKS TO THE RACE. The row is kept deliberately --
+             somebody looking for an athlete in a race they did not finish
+             should find them, with the reason -- and the race page is where
+             the rest of that story is. */}
+      ${maybeLink(href, fmtTime(r.time_seconds),
+                  "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
+      {/* The rating belongs to a race, so it points at the race --
+          the same place the date goes. maybeLink because a TF row
+          without an event_id has no route to offer. */}
+      ${maybeLink(href, fmtRating(r.rating), "rating")}
+    </tr>`;
+  }).join("");
+
+  return `<table class="rk">${renderHead("pr")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  LOADING
+ * ------------------------------------------------------------------ */
+
+/*
+ * Mirror the current filters into the address bar.
+ *
+ * The page READS the query string on load, so without this the URL goes stale
+ * the moment anyone touches a filter -- and a copied address bar would then
+ * describe the board the user arrived at rather than the one they are looking
+ * at. Reading and not writing is the worse half of the feature.
+ *
+ * replaceState, NOT pushState: Apply is cheap and often repeated, so pushState
+ * would make Back walk the user through their own filter edits one at a time
+ * instead of returning them to the page they came from -- usually the home
+ * page they deep-linked from.
+ *
+ * limit and offset are stripped. limit is a constant. offset is dropped
+ * because initFromUrl deliberately does NOT read it, and publishing a
+ * parameter the page ignores on load would make a copied URL lie about which
+ * page it lands on.
+ */
+function syncUrl(query) {
+  const shown = new URLSearchParams(query);
+  shown.delete("limit");
+  shown.delete("offset");
+  try {
+    history.replaceState(null, "", location.pathname + "?" + shown.toString());
+  } catch (err) {
+    /* ⚠ NEVER LET THIS BREAK THE PAGE. replaceState throws on a non-http
+       origin, in some sandboxed frames, and if a browser rate-limits it. The
+       address bar is a convenience; the table is the product. Before this
+       guard the throw escaped load(), state.busy stayed true forever, and
+       Apply was permanently disabled with nothing on screen to explain it. */
+  }
+}
+
+/*
+ * Fetch and render the current page.
+ *
+ * The `busy` guard stops a double-click firing two overlapping requests whose
+ * responses could arrive out of order and render the wrong page.
+ */
+async function load() {
+  if (state.busy) return;
+  state.busy = true;
+  $("apply").disabled = true;
+  /* Loud, not a grey word. A rankings query can take a second or two, and a
+     faint "Loading..." where a table used to be reads as an empty result --
+     people re-click Apply, which the busy guard then swallows, and the page
+     looks broken. Spinner plus a full-height block. */
+  $("results").innerHTML =
+    '<div class="status loading"><span class="spinner"></span>' +
+    '<span>Loading rankings\u2026</span></div>';
+
+  // Built ONCE and used for both the request and the address bar, so the two
+  // cannot disagree about what is being shown.
+  const query = buildQuery();
+
+  try {
+    /* Inside the try, so anything it throws still reaches the finally that
+       clears `busy` -- see the guard in syncUrl for why that matters. */
+    syncUrl(query);
+
+    const res = await fetch("/api/rankings?" + query.toString());
+    const data = await res.json();
+
+    // A 400 carries {"error": "..."}. SHOW IT. An empty table on a bad filter
+    // is indistinguishable from an empty table on a valid one.
+    if (!res.ok) {
+      $("results").innerHTML =
+        `<div class="status error">${esc(data.error || res.statusText)}</div>`;
+      $("pager").classList.add("hidden");
+      return;
+    }
+
+    const rows = data.rows || [];
+
+    /* TWO NOTICES, TWO CONDITIONS, and neither is always on.
+
+       bias-notice  the API sets national_bias when no state filter is
+                    applied. Cross-state ratings carry an unresolved offset of
+                    up to ~9 points, so a national board is not yet a fair
+                    comparison.
+
+       notice       the international caveat, which only applies when the
+                    scope is open. On a USA board there is nothing on the far
+                    side of the linkage graph to warn about, and a warning
+                    that is permanently up is one nobody reads. */
+    $("bias-notice").classList.toggle("show", Boolean(data.national_bias));
+    $("notice").classList.toggle("show", $("scope").value === "all");
+
+    if (rows.length === 0) {
+      $("results").innerHTML =
+        '<div class="status">No results for these filters.</div>';
+      // Keep the pager visible past page 1 so there is a way back.
+      $("pager").classList.toggle("hidden", state.offset === 0);
+    } else {
+      $("results").innerHTML =
+        state.board === "ability"    ? renderAbility(rows)
+        : state.board === "pr"       ? renderPr(rows)
+        :                              renderPerformance(rows);
+      $("pager").classList.remove("hidden");
+    }
+
+    $("prev").disabled = state.offset === 0;
+    // The API sends no total count, so "is there a next page" is INFERRED: a
+    // full page probably has more behind it, a short page is the end. The only
+    // wrong case is a result that is an exact multiple of PAGE_SIZE, which
+    // shows one empty page. Cheaper than a COUNT(*) over 61M rows per request.
+    $("next").disabled = rows.length < PAGE_SIZE;
+    $("pageLabel").textContent =
+      `${state.offset + 1}\u2013${state.offset + rows.length}`;
+
+  } catch (err) {
+    $("results").innerHTML =
+      `<div class="status error">Request failed: ${esc(err.message)}</div>`;
+    $("pager").classList.add("hidden");
+  } finally {
+    state.busy = false;
+    $("apply").disabled = false;
+  }
+}
+
+
+/*
+ * Switch board.
+ *
+ * Sets body[data-board], which is what the CSS reads to show or hide the
+ * date and min-races fields. The JS never touches individual field visibility
+ * -- one attribute, and the stylesheet does the rest.
+ */
+function syncBoard(board) {
+  state.board = board;
+  state.offset = 0;
+  $("rankings").dataset.board = board;
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.setAttribute("aria-selected", String(tab.dataset.board === board));
+  });
+
+  /* A sort the new board does not offer would 400. Fall back rather than
+     sending a key the API will reject. */
+  if (!COLUMNS[board].some((c) => c.key === state.sort)) {
+    /* ! THE FALLBACK IS PER BOARD. Dropping onto "rating" here would open the
+         times board sorted by something other than time, which is the one
+         thing it exists to sort by. */
+    state.sort = board === "pr" ? "time" : "rating";
+    state.dir = "";
+  }
+
+  /* ! 'all' ONLY EXISTS ON THE PR BOARD, so leaving it selected while
+       switching away would send a pool the API rejects with a 400. */
+  const poolSel = $("pool");
+  poolSel.querySelectorAll(".pr-only-opt").forEach((opt) => {
+    opt.hidden = board !== "pr";
+  });
+  /* ⚠ RESET BEFORE ANYTHING ELSE READS IT. Hiding an <option> does not
+       deselect it -- a hidden option that is still current keeps its value and
+       buildQuery sends "all" to a board whose API rejects it, which is a 400
+       on arrival with no obvious cause. */
+  if (board !== "pr" && poolSel.value === "all") {
+    poolSel.value = "hs_m";
+  } else if (board === "pr" && !state.poolTouched) {
+    /* ! ARRIVING AT THE TIMES BOARD DEFAULTS TO ALL POOLS. A time is one
+         scale regardless of who ran it, so "the fastest 5000s" is the
+         question this board is for -- and "all" is the option that exists
+         only here, so landing on hs_m hides the thing that makes it
+         different. Once the user picks a pool, that choice is theirs. */
+    poolSel.value = "all";
+  }
+
+  $("subtitle").textContent =
+    board === "ability"
+      ? "Season ability \u2014 averaged across a season, so one lucky race cannot carry an athlete."
+      : board === "pr"
+      ? "Best times \u2014 each athlete's fastest at one distance. Raw clock, no course correction."
+      : "Single performances \u2014 the best individual races, noise and all.";
+}
+
+
+/*
+ * Switch board in response to a click: sync the UI, then fetch.
+ *
+ * The fetch is split out of syncBoard because the URL bootstrap needs the sync
+ * WITHOUT the fetch -- it sets several controls and then makes ONE request.
+ * Doing sync-and-fetch there would fire a second overlapping request, and
+ * which of the two renders last is not something to leave to chance.
+ */
+function setBoard(board) {
+  syncBoard(board);
+  load();
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  WIRING
+ * ------------------------------------------------------------------ */
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => setBoard(tab.dataset.board));
+});
+
+/* ONE listener on the container, not one per header -- the table is replaced
+   wholesale on every load, so per-header listeners would have to be rebound
+   each time and any missed rebind is a header that silently stops working. */
+$("results").addEventListener("click", (e) => {
+  const th = e.target.closest("th.sortable");
+  if (th) onHeaderClick(th.dataset.key);
+});
+
+// Applying filters returns to page 1; paging keeps the filters.
+/* ! SCOPE RELOADS IMMEDIATELY, unlike the text filters. It is a select with
+     two options and no typing to finish, so waiting for Apply just makes it
+     feel broken -- the same reasoning that has pool and sport reload on
+     change. offset resets because the new board is a different length. */
+$("scope").addEventListener("change", () => { state.offset = 0; load(); });
+
+$("min_races").addEventListener("input", (e) => {
+  e.target.dataset.touched = "1";
+});
+$("sport").addEventListener("change", syncMinRaces);
+
+/* Once touched, the pool is the user's and syncBoard stops overriding it. */
+$("pool").addEventListener("change", () => { state.poolTouched = true; });
+
+$("apply").addEventListener("click", () => { state.offset = 0; load(); });
+
+$("prev").addEventListener("click", () => {
+  state.offset = Math.max(0, state.offset - PAGE_SIZE);
+  load();
+});
+
+$("next").addEventListener("click", () => {
+  state.offset += PAGE_SIZE;
+  load();
+});
+
+// Enter anywhere in the filter bar applies, instead of doing nothing.
+document.querySelectorAll(".filters input").forEach((el) => {
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { state.offset = 0; load(); }
+  });
+});
+
+
+/* ------------------------------------------------------------------ *
+ *  URL BOOTSTRAP
+ *
+ *  The home page deep-links here with board/sport/pool/year (built by the
+ *  rankings_url macro in home.html). Until this existed those parameters were
+ *  DECORATION -- the page booted from the markup defaults and never read the
+ *  query string, so every link landed on HS Boys / Both / ability regardless
+ *  of what it said.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Set a <select>, but only to a value it actually offers.
+ *
+ * Assigning an unknown value to a <select> silently leaves it as "", and
+ * buildQuery would then send an EMPTY pool -- which parseFilters rejects with
+ * a 400. Ignoring junk and keeping the default is the friendlier failure, and
+ * it means a stale bookmark degrades instead of erroring.
+ */
+function setSelectFromUrl(id, value) {
+  if (!value) return;
+  const el = $(id);
+  if (Array.from(el.options).some((opt) => opt.value === value)) {
+    el.value = value;
+  }
+}
+
+
+/*
+ * Set a plain input from a URL parameter.
+ *
+ * Absent or empty leaves the field untouched, so the markup's own default
+ * survives -- min_races stays 4 on a link that does not mention it, rather
+ * than being blanked to "".
+ */
+function setInputFromUrl(id, value) {
+  if (value) $(id).value = value;
+}
+
+
+/*
+ * Hydrate the filter controls from the query string.
+ *
+ * Flat rather than a loop because the element ids happen to match
+ * parseFilters' parameter names one-for-one -- but that is a coincidence worth
+ * stating explicitly rather than encoding in a clever mapping. The two selects
+ * need validation; the free-text inputs do not, because the API validates them
+ * and reports its own 400.
+ *
+ * limit and offset are deliberately NOT read: offset only makes sense in
+ * multiples of PAGE_SIZE, and an arbitrary one from a URL would desync the
+ * pager's arithmetic from the rows on screen.
+ */
+function applyUrlFilters(params) {
+  /* ! 'all' ONLY ON THE PR BOARD, even from a URL. setSelectFromUrl writes
+       whatever it is given, and a stale link carrying pool=all to another
+       board would 400 before the user touched anything. */
+  const askedPool = params.get("pool");
+  setSelectFromUrl("pool",
+    askedPool === "all" && state.board !== "pr" ? null : askedPool);
+  setSelectFromUrl("sport", params.get("sport"));
+  /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
+       defaults to usa in the markup, so without this the one scope worth
+       sharing is the one that does not survive being shared. */
+  setSelectFromUrl("scope", params.get("scope"));
+  setSelectFromUrl("distance", params.get("distance"));
+
+  /* Comma-separated back into chips, so a shared URL restores the exact
+     filter set rather than one blob of text. */
+  for (const field of ["state", "grade", "year", "school"]) {
+    const raw = params.get(field);
+    if (raw && combos[field]) {
+      combos[field].set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+    }
+  }
+
+  const sort = params.get("sort");
+  if (sort && COLUMNS[state.board].some((c) => c.key === sort)) state.sort = sort;
+  const dir = (params.get("dir") || "").toLowerCase();
+  if (dir === "asc" || dir === "desc") state.dir = dir;
+  /* ! A min_races IN THE URL IS THE USER'S, so mark it touched or the next
+       sport change would silently discard what they shared. */
+  const askedMin = params.get("min_races");
+  setInputFromUrl("min_races", askedMin);
+  if (askedMin) $("min_races").dataset.touched = "1";
+  syncMinRaces();
+  setInputFromUrl("date_from", params.get("date_from"));
+  setInputFromUrl("date_to",   params.get("date_to"));
+}
+
+
+/*
+ * Boot from the URL, then make the single initial request.
+ *
+ * board is checked against the two real values rather than passed through.
+ * The home page speaks 'ability' and 'performance' correctly, but a
+ * hand-edited URL saying anything else falls back to the default instead of
+ * sending the API a value it will 400 on -- and note that the home page's own
+ * internal name for this board is 'athlete', so a wrong value here is a
+ * plausible mistake, not an exotic one.
+ */
+function initFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+
+  /* ! THE WHITELIST HAS TO LIST EVERY BOARD. A ternary on one name sent
+       board=pr to the ability board -- which then restored pool=all from the
+       same URL, a pool only the pr board accepts, and the first request 400ed
+       with a message about pools that had nothing to do with the cause. */
+  const asked = params.get("board");
+  syncBoard(["performance", "pr", "ability"].includes(asked) ? asked
+                                                             : "ability");
+  applyUrlFilters(params);
+
+  load();
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  FIND AN ATHLETE ON THIS BOARD
+ * ------------------------------------------------------------------ */
+
+/*
+ * Type a name, pick a suggestion, and the board pages to where that athlete
+ * sits under the CURRENT filters.
+ *
+ * ★ REUSES /search/api RATHER THAN ADDING A LOOKUP. That endpoint already
+ *   returns {kind, label, sublabel, link}, and link is /athlete/<person_id>,
+ *   so the id falls out of a route the site already serves and already has an
+ *   index for.
+ *
+ * ★ THE RANK IS COMPUTED SERVER-SIDE, ONCE. /api/rankings/rank takes the same
+ *   filters and returns the offset that lands on the athlete's page, so this
+ *   is one round trip -- not a walk through pages looking for a name.
+ *
+ * ⚠ ABILITY BOARD ONLY, and the control is hidden on the other one by the
+ *   same ability-only CSS the min-races field uses. The performance board
+ *   bounds its candidate set with LIMIT before deduping, so a rank against it
+ *   would be a rank within that window, not within the corpus.
+ */
+let findTimer = null;
+
+function findStatus(msg, isError) {
+  const el = $("find-status");
+  el.textContent = msg || "";
+  el.className = "find-status" + (msg ? " show" : "") + (isError ? " error" : "");
+}
+
+async function findSuggest() {
+  const q = $("find-input").value.trim();
+  const box = $("find-results");
+  if (q.length < 2) { box.innerHTML = ""; box.classList.add("hidden"); return; }
+
+  try {
+    const res = await fetch("/search/api?q=" + encodeURIComponent(q));
+    const rows = await res.json();
+    // Athletes only: a meet or a course has no position on a rankings board.
+    const people = (rows || []).filter((r) => /^\/athlete\/\d+$/.test(r.link || ""));
+    box.innerHTML = people.slice(0, 8).map((r) =>
+      `<button class="find-opt" data-pid="${r.link.split("/").pop()}" ` +
+      `data-name="${esc(r.label)}">` +
+      `${esc(r.label)}<span class="find-sub">${esc(r.sublabel || "")}</span></button>`
+    ).join("");
+    box.classList.toggle("hidden", people.length === 0);
+  } catch (err) {
+    box.classList.add("hidden");
+  }
+}
+
+async function jumpTo(personId, label) {
+  $("find-results").classList.add("hidden");
+  findStatus("Looking\u2026", false);
+
+  const q = buildQuery();
+  q.set("person_id", personId);
+  q.delete("offset");
+
+  try {
+    const res = await fetch("/api/rankings/rank?" + q.toString());
+    const data = await res.json();
+
+    if (!res.ok) { findStatus(data.error || res.statusText, true); return; }
+    if (!data.found) { findStatus(data.reason, true); return; }
+
+    state.offset = data.offset;
+    state.highlight = String(personId);
+    findStatus(`${label} is #${data.rank.toLocaleString()} on this board.`, false);
+    load();
+  } catch (err) {
+    findStatus("Could not reach the server: " + err.message, true);
+  }
+}
+
+$("find-input").addEventListener("input", () => {
+  clearTimeout(findTimer);
+  // Debounced: a keystroke per request would fire a dozen for one name.
+  findTimer = setTimeout(findSuggest, 180);
+});
+
+$("find-results").addEventListener("mousedown", (e) => {
+  const opt = e.target.closest(".find-opt");
+  if (!opt) return;
+  e.preventDefault();
+  /* data-name, not textContent: the button also contains the sublabel, and
+     textContent would glue them together as "Anders EricksonCarlton-Wrenshall". */
+  $("find-input").value = opt.dataset.name;
+  jumpTo(opt.dataset.pid, opt.dataset.name);
+});
+
+$("find-input").addEventListener("blur", () => {
+  setTimeout(() => $("find-results").classList.add("hidden"), 150);
+});
+
+
+initFromUrl();

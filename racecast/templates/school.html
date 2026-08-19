@@ -1,0 +1,200 @@
+{# =====================================================================
+  school.html: one school's whole history.
+
+  ★ NOT A SEASON PAGE. The school name links here, so this has to answer
+    "who are they" rather than "what happened in one arbitrary year". Current
+    roster on top, then the best athletes and best performances the programme
+    has ever had, then every race it has ever run.
+
+  ★ THE RACE LIST IS TRUNCATED IN THE MARKUP, NOT IN THE QUERY. All of it is
+    already on the page; "show more" reveals the rest with no second request
+    and no JavaScript. A school with twenty years of racing is a long list, and
+    a first screen buried under it is worse than one that starts short.
+
+  Season pages come later; the year links are the entry point for those.
+===================================================================== #}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ school }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ school }}</h1>
+    <p class="meta">
+        {% if header.state %}{{ header.state }} · {% endif %}
+        {{ header.athletes }} athletes ·
+        {{ header.first_year }} to {{ header.last_year }}
+    </p>
+
+    {# ★ A SEGMENTED CONTROL, NOT TWO LINKS WITH A DOT BETWEEN THEM. Bolding
+       the active one and leaving the other a link made them read as two
+       unrelated items; a joined pair with one filled makes the choice and the
+       current state obvious at a glance. #}
+    <div class="seg">
+        {% for s in ['XC', 'TF'] %}
+          <a class="seg-btn{{ ' is-on' if s == sport }}"
+             href="/school/{{ school|urlencode }}?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+        {% endfor %}
+    </div>
+
+    {# The seasons. "All time" is first and is the page the school name links
+       to, so there is always a way back out of a year. #}
+    {% set season_years = years | selectattr('sport', 'equalto', sport)
+                                | map(attribute='year') | list %}
+    {% if season_years %}
+    <div class="yearbar">
+        <a class="yb{{ ' is-on' if not picked }}"
+           href="/school/{{ school|urlencode }}?sport={{ sport }}">All time</a>
+        {% for y in season_years %}
+          <a class="yb{{ ' is-on' if picked == y }}"
+             href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;year={{ y }}">{{ y }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+{% if roster %}
+    {# On the history page this IS the current squad, so say so. Under a year
+       it is that season's, and the year is the useful label. #}
+    <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
+        <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
+                <th>Best</th><th>Races</th><th>Last raced</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in roster %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
+                <td>{{ r.grade if r.grade else "" }}</td>
+                <td>{{ "%.1f"|format(r.mean_rating) if r.mean_rating is not none else "" }}</td>
+                <td>{{ "%.1f"|format(r.best_rating) if r.best_rating is not none else "" }}</td>
+                <td>{{ r.n_races }}</td>
+                <td>{{ r.last_race if r.last_race else "" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+
+{% if top %}
+    <h2>Best athletes</h2>
+    <p class="meta">Best career rating, one row per athlete.</p>
+    <table>
+        <thead>
+            <tr><th>#</th><th>Athlete</th><th>Best</th><th>Seasons</th><th>Years</th></tr>
+        </thead>
+        <tbody>
+            {% for a in top %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/athlete/{{ a.person_id }}">{{ a.name.strip() if a.name and a.name.strip() else "Unknown" }}</a></td>
+                <td>{{ "%.1f"|format(a.best) }}</td>
+                <td>{{ a.seasons }}</td>
+                <td>{{ a.first_year }}{% if a.last_year != a.first_year %} to {{ a.last_year }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+
+{% if best %}
+    <h2>Best performances</h2>
+    {# Every race, not one per athlete. If the same runner owns the top four,
+       that is the school's history. The table above is the per athlete one. #}
+    <table>
+        <thead>
+            <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
+                <th>Season</th><th>Date</th></tr>
+        </thead>
+        <tbody>
+            {% for b in best %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
+                <td>{{ b.grade if b.grade else "" }}</td>
+                <td>{{ "%.1f"|format(b.rating) }}</td>
+                <td>{{ b.year }}</td>
+                <td><a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+
+{% if meets %}
+    <h2>{% if picked %}{{ picked }} races{% else %}Every race{% endif %}</h2>
+    <p class="meta">{{ meets|length }} meets, newest first.</p>
+
+    {# ★ ONE TABLE, WITH THE CONTROL AS ITS LAST ROW. The previous version put
+       the remainder in a separate <details> with its own <thead>, so pressing
+       it produced a second table with a second set of headers directly under
+       the first. A row inside the table reads as part of the list it extends.
+
+       ★ AND IT REVEALS IN TWO STAGES. One press adds twenty more, the next
+         adds everything. Twenty years of racing is several hundred rows, and
+         "all or nothing" makes the first press either useless or enormous.
+
+       All the rows are already here; the button only unhides them. #}
+    <table class="staged" data-step="20">
+        <thead>
+            <tr><th>Date</th><th>Meet</th><th>Runners</th><th>Average</th><th>Best</th></tr>
+        </thead>
+        <tbody>
+            {% for m in meets %}
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 20 }}>
+                <td>{{ m.date }}</td>
+                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ m.meet_id }}/{{ m.div_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a>
+                    {% else %}{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}{% endif %}</td>
+                <td>{{ m.runners }}</td>
+                <td>{{ m.avg_rating if m.avg_rating is not none else "" }}</td>
+                <td>{{ m.best_rating if m.best_rating is not none else "" }}</td>
+            </tr>
+            {% endfor %}
+            {% if meets|length > 20 %}
+            <tr class="more-row">
+                <td colspan="5">
+                    <button type="button" class="more-btn">
+                        Show 20 more <span class="more-left">({{ meets|length - 20 }} left)</span>
+                    </button>
+                </td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+{% endif %}
+
+{# Staged reveal. Inline because it is nine lines and exists only here; a
+   separate file for this would be a fourth static asset to keep in step. #}
+<script>
+document.querySelectorAll("table.staged").forEach(function (table) {
+    var btn = table.querySelector(".more-btn");
+    if (!btn) return;
+    var step = parseInt(table.dataset.step, 10) || 20;
+    var pressed = 0;
+    btn.addEventListener("click", function () {
+        pressed += 1;
+        var hidden = table.querySelectorAll("tr.row-hidden");
+        // Second press reveals the rest: the first is a sample, and after
+        // that the reader has said they want the list.
+        var take = pressed === 1 ? Math.min(step, hidden.length) : hidden.length;
+        for (var i = 0; i < take; i++) hidden[i].classList.remove("row-hidden");
+        var left = table.querySelectorAll("tr.row-hidden").length;
+        if (!left) {
+            table.querySelector(".more-row").remove();
+        } else {
+            btn.querySelector(".more-left").textContent = "(" + left + " left)";
+            btn.childNodes[0].nodeValue = "Show the remaining " + left + " ";
+        }
+    });
+});
+</script>
+
+</body>
+</html>

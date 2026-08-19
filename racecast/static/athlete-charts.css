@@ -1,0 +1,448 @@
+/*
+ * athlete-charts.css -- styles for the athlete page charts.
+ *
+ * Goes in racecast/static/. Loaded by templates/athlete.html AFTER style.css.
+ *
+ * ★ NO BARE ELEMENT SELECTORS. Every rule is keyed on a chart class, or on an
+ *   SVG class inside .chart-slot. Nothing here can match anything elsewhere on
+ *   the site -- an earlier stylesheet with bare `table` and `a` rules got
+ *   pasted into style.css and restyled every page.
+ */
+
+/*
+ * ★ display:block IS THE FIX FOR THE SIDEWAYS TITLE.
+ *
+ *   style.css styles .chart-slot as a flex placeholder box, so the title div
+ *   and the <svg> became flex ITEMS sitting side by side -- the caption
+ *   rendered to the LEFT of the chart, vertically centred. Block stacking puts
+ *   it back on top where a caption belongs.
+ *
+ *   height/min-height are reset for the same reason: the placeholder had a
+ *   fixed height, and a real chart needs to size to its contents.
+ */
+.chart-slot {
+  display: block;
+  position: relative;          /* anchor for the absolutely-positioned tooltip */
+
+  height: auto;
+  min-height: 0;
+
+  padding: 0.5rem 0.25rem 0.25rem;
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+
+  /* The placeholder centred its label; a chart's contents must not inherit
+     that or the title lands in the middle of the box. */
+  text-align: left;
+  color: inherit;
+  font-style: normal;
+}
+
+.chart-slot .chart-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin: 0 0 0.25rem 0.5rem;
+}
+
+/* Height is a CUSTOM PROPERTY so each context sets its own without this file
+   knowing about them -- athlete-charts.js reads --chart-h off the host. */
+.chart-slot { --chart-h: 260px; }
+
+.chart-slot svg {
+  display: block;
+  /* No width/height here. The JS measures the container and sets both
+     attributes in real pixels, which is what keeps text unstretched and dots
+     round. Forcing width:100% would scale that pixel-accurate drawing right
+     back out of shape. */
+  max-width: 100%;
+  overflow: visible;
+}
+
+
+/* ---------------------------------------------------------------- *
+ *  LEGEND (combined chart only)
+ * ---------------------------------------------------------------- */
+
+.chart-slot .legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.chart-slot .legend .k {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: 0.5rem;
+}
+.chart-slot .legend .k--xc { background: #1d4ed8; }
+.chart-slot .legend .k--tf { background: #ea7317; }
+
+
+/* ---------------------------------------------------------------- *
+ *  CHART PARTS
+ * ---------------------------------------------------------------- */
+
+/* vector-effect pins stroke width to screen pixels. Without it,
+   preserveAspectRatio="none" scales x and y unequally and a 1px line comes out
+   thicker in one direction than the other. */
+
+.chart-slot .grid {
+  stroke: #eef0f3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The season divider: a vertical rule between the last race of one year and
+   the first of the next. Dashed and pale so it reads as a boundary rather than
+   as data. */
+.chart-slot .season-div {
+  stroke: #d1d5db;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-slot .line {
+  fill: none;
+  stroke: #1d4ed8;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-slot .dot {
+  fill: #fff;
+  stroke: #1d4ed8;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  /* The invisible .hit circle sits on top and owns the pointer, so the visible
+     dot must not intercept it. */
+  pointer-events: none;
+}
+
+/* Combined chart only: the line stays one colour (it is one athlete's
+   progression) while the dots say which sport each race was. */
+.chart-slot .dot--xc { stroke: #1d4ed8; }
+.chart-slot .dot--tf { stroke: #ea7317; }
+
+/* The hover target: a fat transparent circle over each dot. A 3px dot is a
+   miserable thing to hover; a 12px halo is comfortable and never visible. */
+.chart-slot .hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.chart-slot .axis-y,
+.chart-slot .axis-x {
+  font-size: 10px;
+  fill: #9ca3af;
+}
+
+.chart-slot .axis-x {
+  /* The year labels are the only thing on the x-axis. Slightly heavier than
+     the y ticks because each one heads a whole season. */
+  font-size: 11px;
+  fill: #6b7280;
+}
+
+
+/* ---------------------------------------------------------------- *
+ *  TOOLTIP
+ * ---------------------------------------------------------------- */
+
+.chart-slot .chart-tip {
+  position: absolute;
+  /* The transform is set by the JS, which flips it for points near the top of
+     the chart. This is only the default for the first paint. */
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  z-index: 10;
+
+  /* A long meet name would otherwise make a tooltip wider than the chart, and
+     no amount of clamping fits that. Capping it and allowing wrapping means
+     the horizontal clamp always has room to work with. */
+  max-width: 260px;
+  white-space: normal;
+}
+
+.chart-slot .chart-tip[hidden] { display: none; }
+
+
+/* ---------------------------------------------------------------- *
+ *  EMPTY STATE
+ * ---------------------------------------------------------------- */
+
+/* One or zero races: a line through two points implies a trend two races
+   cannot support, so the chart says so instead of drawing one. The title still
+   renders, so the slot is identifiable. */
+.chart-slot .chart-none {
+  padding: 1.75rem 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+
+/* ---------------------------------------------------------------- *
+ *  FULL-WIDTH COMBINED CHART
+ * ---------------------------------------------------------------- */
+
+/* The overall XC+TF chart sits above the two-up row and gets the whole column,
+   plus a bit more height -- it is the summary of an entire career and needs
+   the room. */
+/* Full-width charts: the career summary and the two per-sport rating charts.
+   380px because at half-screen width the line was a flat thread across the
+   middle of the box -- height is the only lever available, since the width
+   belongs to the browser. */
+.chart-slot.chart-wide { --chart-h: 380px; margin-bottom: 1rem; }
+
+/* Sidebar per-distance charts stay compact: one per event, a reference strip
+   rather than the main view. */
+.chart-panel .chart-slot { --chart-h: 170px; }
+
+
+
+/* ---------------------------------------------------------------- *
+ *  CLICK-THROUGH HIGHLIGHT
+ * ---------------------------------------------------------------- */
+
+/* Clicking a dot scrolls to that race's row. Without a flash the page just
+   moves and it is not obvious which row was the target. */
+.race-flash { animation: race-flash 1.2s ease-out; }
+
+/* ================================================================ *
+ *  SPORT TOGGLE
+ * ================================================================ */
+
+/* Breathing room under the XC / TF links, which otherwise sit flush against
+   the career chart below them. */
+.sport-toggle { margin-bottom: 1.25rem; }
+
+@keyframes race-flash {
+  0%   { background: #fef3c7; }
+  100% { background: transparent; }
+}
+
+
+/* ================================================================ *
+ *  LEFT-ALIGNED Y LABELS
+ * ================================================================ */
+
+/* The numbers start at a fixed x and grow rightward, so a column of them lines
+   up on its LEFT edge. Anchoring at the end (the previous behaviour) lined
+   them up on the right, which reads oddly for a mix of widths like
+   "95" / "137.5" / "5:42/mi". */
+.chart-slot .axis-y { text-anchor: start; }
+
+
+/* ================================================================ *
+ *  ALL-TIME BESTS PANEL
+ * ================================================================ */
+
+.bests-panel { margin-bottom: 1rem; }
+
+/* The career rating, shown big at the top -- it is the single number the whole
+   page is about. */
+.bests-panel .rating-head {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 0.6rem;
+}
+
+.bests-panel .rating-head .label {
+  display: block;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.bests-panel .rating-head .value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Best race sits alongside the career rating at the same weight. They are
+   different quantities -- an ability averaged over a career versus one day --
+   and showing one small under the other implied the second was a footnote. */
+.bests-panel .rating-head {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.bests-panel .rating-head .stat { flex: 1; }
+
+.bests-panel .rating-head .value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.bests-panel .rating-head .value a { text-decoration: none; }
+.bests-panel .rating-head .value a:hover { text-decoration: underline; }
+
+.bests-panel .rating-head .note {
+  font-size: 0.6875rem;
+  color: #9ca3af;
+}
+
+.bests-panel .bests-sport { margin-bottom: 0.75rem; }
+
+.bests-panel .bests-sport h5 {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.bests-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bests-panel li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  font-size: 0.8125rem;
+}
+
+.bests-panel .ev { color: #6b7280; }
+
+/* The rating row sits at the TOP of each list and is emphasised, because it is
+   the one figure comparable across every event. */
+.bests-panel li.is-rating {
+  font-weight: 600;
+  border-bottom: 1px solid #eef0f3;
+  margin-bottom: 0.2rem;
+  padding-bottom: 0.3rem;
+}
+
+
+/* ================================================================ *
+ *  SEASON BESTS -- flattened
+ * ================================================================ */
+
+/* One heading per (year, sport) -- "2026 TF" -- instead of a year heading with
+   sports nested inside it. The heading links to that season's table. */
+.pr-panel .season-head-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+
+  margin: 0.6rem 0 0.2rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pr-panel .season-head-link:hover { text-decoration: underline; }
+
+.pr-panel .season-head-link .rating {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The season rating, promoted into the heading from the meta line. Pushed to
+   the right so a column of season headings shows a readable column of ratings
+   rather than numbers at ragged positions. */
+.season-head .season-rating {
+  float: right;
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+/* ================================================================ *
+ *  SEASON TABLE ALIGNMENT
+ * ================================================================ */
+
+/* style.css right-aligns Result / Rating / Difficulty through
+   td:nth-child(4..6). Left-align them instead so every column starts at the
+   same edge and the eye can scan straight down a season.
+
+   Scoped to .season -- the race and meet pages use the same nth-child rule on
+   their own tables, and those should keep their right alignment. */
+.season table th:nth-child(4),
+.season table th:nth-child(5),
+.season table th:nth-child(6),
+.season table td:nth-child(4),
+.season table td:nth-child(5),
+.season table td:nth-child(6) {
+  text-align: left;
+  /* Fixed-width digits, so 149.3 and 15:01.1 still line up column-wise once
+     the right edge is no longer doing that job. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* ================================================================ *
+ *  SEASON TABLE LAYOUT
+ * ================================================================ */
+
+/* table-layout: fixed makes the browser size columns from the FIRST row and
+   the declared widths, ignoring content. Without it every table is auto-sized
+   to its own longest meet name, so "Brigham Young University" and "Sugar House
+   Park" give two seasons two different layouts and nothing lines up down the
+   page. */
+.season table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* PERCENTAGES, NOT rem. With table-layout:fixed, one `auto` column absorbs
+   whatever is left after the fixed ones -- so Meet ballooned on a wide screen
+   and collapsed to an ellipsis on a narrow one. Percentages make every column
+   scale together, so the proportions hold at any width.
+
+   They must sum to 100. */
+.season table th:nth-child(1) { width: 12%; }   /* Date        */
+.season table th:nth-child(2) { width: 28%; }   /* Meet        */
+.season table th:nth-child(3) { width:  8%; }   /* Event       */
+.season table th:nth-child(4) { width: 11%; }   /* Result      */
+.season table th:nth-child(5) { width:  9%; }   /* Rating      */
+.season table th:nth-child(6) { width: 10%; }   /* Difficulty  */
+.season table th:nth-child(7) { width: 22%; }   /* PR/SR Flags */
+
+/* Meet is the only column with unbounded content. Ellipsis keeps a long name
+   from forcing the row taller; title="" on the link shows the full text on
+   hover. */
+.season table td:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Flags wrap to a second line on narrow screens rather than overflowing. A row
+   with five badges is the widest case and 22% will not always hold it. */
+.season table td:nth-child(7) {
+  white-space: normal;
+  line-height: 1.9;
+}

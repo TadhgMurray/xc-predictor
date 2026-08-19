@@ -1,0 +1,114 @@
+{% macro result_row(r, kind) %}
+<tr class="result-row" data-href="{{ r.link }}">
+    {% if kind == 'athlete' %}
+        <td>{{ r.label }}</td>
+        <td>{{ r.sublabel or '—' }}</td>
+        <td>{{ r.sort_year or '—' }}</td>
+        <td>{{ r.sort_count or '—' }}</td>
+    {% elif kind == 'meet' %}
+        <td>{{ r.label }}</td>
+        <td>{{ r.sort_year or '—' }}</td>
+        <td>{{ r.sort_count or '—' }}</td>
+    {% elif kind == 'course' %}
+        <td>{{ r.label }}</td>
+        <td>{{ r.sort_count or '—' }}</td>
+    {% elif kind == 'venue' %}
+        <td>{{ r.label }}</td>
+        <td>{{ r.sublabel or '—' }}</td>
+        <td>{{ r.sort_count or '—' }}</td>
+    {% elif kind == 'school' %}
+        <td>{{ r.label }}</td>
+        <td>{{ r.sort_count or '—' }}</td>
+    {% else %}  {# all: mixed kinds, uniform columns #}
+        <td>{{ r.label }}</td>
+        <td>{{ r.kind }}</td>
+        <td>{{ r.sublabel or '—' }}</td>
+    {% endif %}
+</tr>
+{% endmacro %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Search: {{ q }} — Racecast</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<section class="search-page">
+    <h1 class="search-heading">Results for "{{ q }}"</h1>
+
+    {# TABS: each links back to /search with a different kind. 'all' has no
+       count of its own -- sum the rest. current tab gets .is-active. #}
+    <nav class="search-tabs">
+        {% set tab_list = [('all','All'), ('athlete','Athletes'),
+                           ('meet','Meets'), ('course','Courses'),
+                           ('venue','Venues'), ('school','Schools')] %}
+        {% for key, lbl in tab_list %}
+            {% set n = counts.values()|sum if key == 'all' else counts.get(key, 0) %}
+            <a class="search-tab {{ 'is-active' if kind == key else '' }}"
+               href="/search?q={{ q|urlencode }}{% if year %}&year={{ year }}{% endif %}&kind={{ key }}">
+                {{ lbl }} <span class="tab-count">{{ n }}</span>
+            </a>
+        {% endfor %}
+    </nav>
+
+    {# YEAR dropdown: reloads with ?year=. 'onchange' submits immediately. #}
+    <form class="year-filter" method="get" action="/search">
+        <input type="hidden" name="q" value="{{ q }}">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <label>Year:
+            <select name="year" onchange="this.form.submit()">
+                <option value="">All years</option>
+                {% for y in years %}
+                    <option value="{{ y }}" {{ 'selected' if year|string == y|string else '' }}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+
+    <table class="results-table">
+        <thead>
+            <tr>
+                {% if kind == 'athlete' %}
+                    <th>Name</th><th>School</th><th>Last Raced</th><th>Races</th>
+                {% elif kind == 'meet' %}
+                    <th>Meet</th><th>Year</th><th>Athletes</th>
+                {% elif kind == 'course' %}
+                    <th>Course</th><th>Results</th>
+                {% elif kind == 'venue' %}
+                    <th>Venue</th><th>Type</th><th>Results</th>
+                {% elif kind == 'school' %}
+                    <th>School</th><th>Athletes</th>
+                {% else %}  {# all #}
+                    <th>Result</th><th>Type</th><th>Detail</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody id="results-body">
+            {% for r in results %}
+                {{ result_row(r, kind) }}
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if results|length == page_size %}
+        {# a full page came back -> there may be more. #}
+        <button id="load-more"
+                data-q="{{ q }}" data-kind="{{ kind }}"
+                data-year="{{ year or '' }}" data-offset="{{ offset + page_size }}">
+            Load More
+        </button>
+    {% endif %}
+
+    {% if not results %}
+        <p class="no-results">No results for "{{ q }}".</p>
+    {% endif %}
+</section>
+
+<script src="{{ url_for('static', filename='search.js') }}"></script>
+</body>
+</html>

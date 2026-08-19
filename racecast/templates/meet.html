@@ -1,0 +1,86 @@
+{# =====================================================================
+  meet.html -- one meet: its races, and its compiled races.
+
+  ★ A SUMMARY, NOT A RESULTS PAGE. Compiled results each live at their own
+    URL -- a compiled result is a race, with a distance, a gender, a field and
+    team scores. Embedding them here rendered several hundred rows per group
+    into a page nobody asked for all of.
+===================================================================== #}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ header.meet_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ header.meet_name }}</h1>
+    <p class="meta">
+        {{ header.course_name if header.course_name else "—" }}
+        {% if header.state %} · {{ header.state }}{% endif %}
+    </p>
+
+    <h2>Races</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Gender</th>
+                <th>Division</th>
+                <th>Distance</th>
+                <th>Results</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in divisions %}
+            <tr>
+                <td>{{ "Boys" if d.gender == 'M' else "Girls" if d.gender == 'F' else "—" }}</td>
+                <td>
+                    <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}">
+                        {{ d.division if d.division else "Division " ~ d.div_id }}
+                    </a>
+                </td>
+                <td>{{ d.distance|int if d.distance else "—" }}m</td>
+                <td>{{ d.n_results }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+{% if compiled %}
+    <h2>Compiled races</h2>
+    <p class="meta">
+        Every division at the same distance, merged and ordered by time. These
+        races were run separately — this is how they compare, not how they
+        finished.
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Gender</th>
+                <th>Distance</th>
+                <th>Runners</th>
+                <th>Divisions</th>
+                <th>Teams scored</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for g in compiled %}
+            <tr>
+                <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "—" }}</td>
+                <td>
+                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}">
+                        {{ g.distance }}m
+                    </a>
+                </td>
+                <td>{{ g.n_results }}</td>
+                <td>{{ g.n_divisions }}</td>
+                <td>{{ g.n_teams if g.n_teams else "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ header.meet_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+    <h1>{{ header.meet_name }}</h1>
+    <p class="meta">
+        <a href="/course/{{ header.course_name }}">{{ header.course_name }}</a> ·
+        {{ header.distance|int if header.distance else "—" }}m ·
+        {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "—" }} ·
+        {{ header.division }} ·
+        {{ race_date if race_date else "—" }}
+        {% if header.state %} · {{ header.state }}{% endif %}
+    </p>
+    <p class="meta">
+        Course difficulty:
+        {{ "%+.3f"|format(header.difficulty) if header.difficulty is not none else "—" }}
+    </p>
+
+    <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
+
+{% if scores is not defined or scores is none %}
+    {# ⚠ THE ROUTE DID NOT PASS scores. Almost always app.py not reloaded --
+       say so rather than rendering nothing, which is indistinguishable from
+       "this race has no scoreable teams". #}
+    <h2>Team scores</h2>
+    <p class="meta">Not available &mdash; the server did not send scores for
+        this race.</p>
+{% elif not scores.teams %}
+    <h2>Team scores</h2>
+    <p class="meta">
+        No team had five finishers, so nothing can be scored.
+        {% if scores.incomplete %}
+            Finishers per team:
+            {% for i in scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+        {% endif %}
+    </p>
+{% else %}
+    {# ★ WHAT THE MEET PUBLISHED, WHERE IT EXISTS. Recomputing would quietly
+       overrule local scoring -- byes, exhibition runners, an incomplete team
+       scored anyway. Only derived when nothing was published, and the note
+       below says which, because a computed number and an official one are
+       different claims. #}
+    <h2>Team scores</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Place</th>
+                <th>Team</th>
+                <th>Points</th>
+                <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>
+                <th>6</th><th>7</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in scores.teams %}
+            <tr>
+                <td>{{ t.place if t.place else loop.index }}</td>
+                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                <td>{{ t.points if t.points is not none else "—" }}</td>
+                {# 6 and 7 are greyed: they do not score, but they DO
+                   displace, and hiding them makes a deep team look like a
+                   top-heavy one. Each place links to the athlete.
+
+                   Shown for published scores too -- those carry points but not
+                   scorers, so the places are computed and grafted on. #}
+                {% for i in range(7) %}
+                  {% set r = t.runners[i] if t.runners and t.runners|length > i else none %}
+                  <td{{ ' class="displacer"'|safe if i >= 5 }}>
+                      {# score_place, not place: scoreRows renumbers after
+                         removing incomplete teams, and `place` is still the
+                         raw finishing position. #}
+                      {% if r %}<a href="/athlete/{{ r.person_id }}"
+                                   title="{{ r.name }}">{{ r.score_place }}</a>
+                      {% else %}—{% endif %}
+                  </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="meta">
+        {% if scores.source == "published" %}
+            As scored by the meet.
+        {% else %}
+            Computed: five scorers, two displacers, incomplete teams removed.
+            {% if scores.incomplete %}
+                Not scored, fewer than five finishers:
+                {% for i in scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+            {% endif %}
+        {% endif %}
+    </p>
+{% endif %}
+
+    <h2>Results</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Place</th>
+                <th>Athlete</th>
+                <th>Grade</th>
+                <th>School</th>
+                <th>Time</th>
+                <th>Rating</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in results %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.name if row.name else "Unknown" }}
+                    {% endif %}
+                </td>
+                <td>{{ row.grade if row.grade else "—" }}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% else %}—{% endif %}</td>
+                <td>{{ row.display_time }}</td>
+                <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

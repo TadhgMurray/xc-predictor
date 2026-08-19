@@ -1,0 +1,306 @@
+{# =====================================================================
+  rankings.html -- the rankings page. MARKUP ONLY.
+
+    site styles      static/style.css      (loaded first, unchanged)
+    page styles      static/rankings.css   (scoped under .rankings-page)
+    behaviour        static/rankings.js
+
+  ★ EVERY FILTER IS A COMBOBOX. Each one is an empty shell here -- a container
+    with a data-field -- and rankings.js fills in the chips, the text input and
+    the option list. The markup does not list the fifty states, the grades or
+    the years, because those belong next to the code that matches typed text
+    against them; splitting a list across two files is how they drift.
+
+  ★ THE WIP BOXES ARE DISABLED AND SAY SO. nation, division, section,
+    conference and region have NO COLUMN in ranking_results or athlete_season.
+    A control that looks live and filters nothing is worse than one that
+    admits it is not built.
+
+  TWO BOARDS, TWO MEANINGS -- the tab is not cosmetic:
+
+    Ability       season averages, from athlete_season. "Who is best?"
+                  Averaging kills per-race noise (~3.3%, about 4 rating
+                  points). The honest ranking, and the default.
+
+    Performance   single races, from ranking_results. "What were the best
+                  races?" Full noise, so a great race by an ordinary athlete
+                  outranks an ordinary race by a great one.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='rankings.css') }}">
+{% set meta_title = "Rankings" %}
+{% set meta_description =
+   "Cross country and track rankings on one comparable scale. Filter by
+    state, grade, year and school; sort by rating, races or date." %}
+{% set meta_crumbs = [("Rankings", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+{# data-board drives the filter-visibility rules in rankings.css. rankings.js
+   keeps it in sync with the selected tab and never touches individual field
+   visibility itself. #}
+<div class="rankings-page" id="rankings" data-board="ability">
+
+  <h1>Rankings</h1>
+  <p class="sub" id="subtitle">
+    Season ability &mdash; averaged across a season.
+  </p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-board="ability"     aria-selected="true">Ability</button>
+    <button class="tab" role="tab" data-board="performance" aria-selected="false">Performances</button>
+    {# ★ A THIRD BOARD, AND IT ANSWERS A DIFFERENT QUESTION. Ability and
+       Performances both rank speed_rating -- difficulty-adjusted and
+       distance-normalised, which is what makes them fair and also what makes
+       them unrecognisable to somebody who just wants the fastest 5k times.
+       This ranks the clock. #}
+    <button class="tab" role="tab" data-board="pr" aria-selected="false">Best times</button>
+  </div>
+
+  <div class="filters">
+
+    {# Single-value selects. Pool and sport are genuinely one-at-a-time: a
+       board mixing HS boys and college women has no meaning, and the API
+       already offers sport=both. #}
+    <div class="field">
+      <label for="pool">Pool</label>
+      <select id="pool">
+        {# ! ALL is PR-ONLY, and rankings.js hides it on the other boards.
+           speed_rating is relative to a pool's own 100 point, so a rating
+           board mixing middle schoolers and collegians puts two scales in one
+           column. A time is one scale by definition. #}
+        <option value="all" class="pr-only-opt">All pools</option>
+        <option value="hs_m">HS Boys</option>
+        <option value="hs_f">HS Girls</option>
+        <option value="ms_m">MS Boys</option>
+        <option value="ms_f">MS Girls</option>
+        <option value="college_m">College Men</option>
+        <option value="college_f">College Women</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="sport">Sport</label>
+      <select id="sport">
+        <option value="both">Both</option>
+        <option value="XC">Cross Country</option>
+        <option value="TF">Track &amp; Field</option>
+      </select>
+    </div>
+
+    {# ★ SCOPE, AND USA IS THE DEFAULT. There is no nation column -- state is
+       the only geography stored -- so this filters on `state IS NOT NULL`,
+       which US meets have and foreign ones do not.
+
+       It defaults to USA because the alternative silently mixes scales: the
+       ratings come from a linkage graph that is overwhelmingly American, so a
+       foreign athlete rides on whatever thin connection their meet happens to
+       have and lands beside a US athlete as though both were measured the
+       same way. #}
+    <div class="field">
+      <label for="scope">Scope</label>
+      <select id="scope">
+        <option value="usa">USA only</option>
+        <option value="all">Everyone</option>
+      </select>
+    </div>
+
+    {# Multi-value comboboxes. Type or pick; Enter adds a token.
+
+       ★ NO PLACEHOLDER TEXT. Grey example text inside an empty filter reads as
+         a value that is already applied -- "CA, or California" looked like the
+         board was filtered to California. The label above says what the box
+         is, and the dropdown shows what it accepts. #}
+    <div class="field wide">
+      <label for="state-input">State</label>
+      <div class="combo" data-field="state"></div>
+    </div>
+
+    <div class="field">
+      <label for="grade-input">Grade</label>
+      <div class="combo" data-field="grade"></div>
+    </div>
+
+    <div class="field">
+      <label for="year-input">Year</label>
+      <div class="combo" data-field="year"></div>
+    </div>
+
+    <div class="field wide">
+      <label for="school-input">School</label>
+      <div class="combo" data-field="school"></div>
+    </div>
+
+    {# ability-only / perf-only: shown and hidden by rankings.css off
+       .rankings-page[data-board]. #}
+    <div class="field ability-only">
+      <label for="min_races">Min races</label>
+      {# ! THE VALUE IS SET BY rankings.js, NOT HERE, because the sensible
+           floor depends on the sport: a track athlete reaches twenty rated
+           marks in a season and a cross country athlete cannot -- eight to
+           twelve races IS an XC campaign. A hardcoded 20 here would send 20
+           for XC and empty the board, which is the bug this replaced. #}
+      <input id="min_races" class="narrow" type="number" min="1" max="200">
+    </div>
+
+    {# The distance to rank. PR-only: the other boards are already
+       distance-normalised, so asking them for "5000 m" would filter the
+       board rather than define it. #}
+    <div class="field pr-only">
+      <label for="distance">Distance</label>
+      <select id="distance">
+        <optgroup label="Sprints">
+          <option value="55">55 m</option>
+          <option value="60">60 m</option>
+          <option value="70">70 m</option>
+          <option value="100">100 m</option>
+          <option value="110">110 m</option>
+          <option value="200">200 m</option>
+          <option value="300">300 m</option>
+          <option value="400">400 m</option>
+          <option value="500">500 m</option>
+          <option value="600">600 m</option>
+        </optgroup>
+        <optgroup label="Middle distance">
+        <option value="800">800 m</option>
+        <option value="1000">1000 m</option>
+        <option value="1500">1500 m</option>
+        <option value="1600">1600 m</option>
+        <option value="1609">1 mile</option>
+        <option value="2000">2000 m</option>
+        <option value="3000">3000 m</option>
+        <option value="3200">3200 m</option>
+        <option value="3218">2 miles</option>
+        </optgroup>
+        <optgroup label="Cross country">
+          {# Imperial distances are the norm for XC across much of the
+             country; 1.5 miles is the whole elementary calendar. #}
+          <option value="2414">1.5 miles</option>
+          <option value="4023">2.5 miles</option>
+          <option value="4828">3 miles</option>
+          <option value="6437">4 miles</option>
+          <option value="8047">5 miles</option>
+        </optgroup>
+        <optgroup label="Distance">
+        <option value="4000">4000 m</option>
+        <option value="5000" selected>5000 m</option>
+        <option value="6000">6000 m</option>
+        <option value="8000">8000 m</option>
+        <option value="10000">10,000 m</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <div class="field perf-only">
+      <label for="date_from">From</label>
+      <input id="date_from" type="date">
+    </div>
+
+    <div class="field perf-only">
+      <label for="date_to">To</label>
+      <input id="date_to" type="date">
+    </div>
+
+    {# ⚠ SAID ON THE BOARD, NOT IN A FOOTNOTE. A times board is the one place
+       on this site where course difficulty is NOT accounted for, and that is
+       deliberate -- correcting it would stop the number being a PR. Somebody
+       reading a leaderboard assumes the numbers are comparable unless told. #}
+    <p class="board-note pr-only">
+      Raw times, uncorrected for course or conditions &mdash; a flat 5k beats
+      the same effort on a hill. For a fair comparison use Ability.
+    </p>
+
+    {# No Sort/Order controls: the column headers are the sort control. Click
+       one to sort by it, click again to reverse. Two ways to do the same thing
+       is one too many, and a header you can click is where people look. #}
+
+    <button class="go" id="apply">Apply</button>
+  </div>
+
+  {# ★ NOT BUILT, AND HONEST ABOUT IT. None of these has a column anywhere in
+     ranking_results or athlete_season. They are disabled rather than absent so
+     the plan is visible, and titled so hovering explains why. #}
+  <details class="wip">
+    <summary>Coming soon</summary>
+    <div class="wip-row">
+      <div class="field">
+        <label>Nation</label>
+        <input disabled placeholder="Not built"
+               title="No nation column exists yet. State is the only geography stored.">
+      </div>
+      <div class="field">
+        <label>Division</label>
+        <input disabled placeholder="Not built"
+               title="Division is per meet, not per athlete-season. Needs a new column.">
+      </div>
+      <div class="field">
+        <label>Section</label>
+        <input disabled placeholder="Not built" title="No section data yet.">
+      </div>
+      <div class="field">
+        <label>Conference</label>
+        <input disabled placeholder="Not built" title="No conference data yet.">
+      </div>
+      <div class="field">
+        <label>Region</label>
+        <input disabled placeholder="Not built" title="No region data yet.">
+      </div>
+    </div>
+  </details>
+
+  {# Jump straight to an athlete's page of the board.
+
+     ★ ON EVERY BOARD NOW. This was ability-only because the result boards
+       bounded their candidate set before deduping, so a rank computed against
+       one was a rank within that window rather than within the corpus. They
+       are ranked by COUNTING instead -- see rankings._rankInResults -- which
+       became possible once the per-athlete cap came off Performances. #}
+  <div class="findme">
+    <label for="find-input">Find an athlete on this board</label>
+    <div class="find-wrap">
+      <input id="find-input" type="search" autocomplete="off"
+             placeholder="Name, or paste an athlete link">
+      <div id="find-results" class="find-results"></div>
+    </div>
+    <div class="find-status" id="find-status"></div>
+  </div>
+
+  {# ⚠ SHOWN ONLY WHEN THE SCOPE IS OPEN. The caveat is about comparing across
+     the linkage graph's edges, which cannot happen on a USA board -- and a
+     warning that is always up is a warning nobody reads. rankings.js toggles
+     the hidden class off scope. #}
+  <div class="notice hidden" id="notice">
+    <strong>International comparison caveat:</strong>
+    Athletes outside the USA sit on the far side of a thin linkage graph, so
+    their ratings can be inflated or deflated by an unknown amount. Switch
+    Scope back to <em>USA only</em> to compare like with like.
+  </div>
+
+  <div class="notice" id="bias-notice">
+    <strong>Cross-state note:</strong>
+    A national board carries a per-state offset of up to about 9 points.
+    Filtering to one state removes it entirely; individual races still carry
+    noise of about 3 points.
+  </div>
+
+  <div id="results"></div>
+
+  <div class="pager hidden" id="pager">
+    <button id="prev">&larr; Prev</button>
+    <span class="page" id="pageLabel"></span>
+    <button id="next">Next &rarr;</button>
+  </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='rankings.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,500 @@
+  199300    798809  ov=  5000.0  PARTIAL      n=  17 +17   -0    clean=0    iqr= 18.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    7938         0  ov=  1820.0  UNIFORM_NEG  n=  95 +0    -95   clean=0    iqr=  2.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   21909         0  ov=  3000.0  UNIFORM_NEG  n=  24 +0    -24   clean=0    iqr=  3.6 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   10064         0  ov=  4000.0  UNIFORM_NEG  n=  54 +0    -54   clean=0    iqr=  2.7 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+    8905         1  ov=  4000.0  UNIFORM_NEG  n=  17 +0    -17   clean=0    iqr=  1.3 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+    8564         0  ov=  5000.0  UNIFORM_NEG  n=  20 +0    -20   clean=0    iqr=  2.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+    8564         2  ov=  5000.0  UNIFORM_NEG  n=  36 +0    -36   clean=0    iqr=  2.3 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   10597         1  ov=  4000.0  UNIFORM_NEG  n=  14 +0    -14   clean=0    iqr=  2.6 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+    8378         1  ov=  4000.0  UNIFORM_NEG  n=  30 +0    -30   clean=0    iqr=  4.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   26359         1  ov= 8046.72  PARTIAL      n=  85 +85   -0    clean=0    iqr= 12.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   57377    245655  ov=  3200.0  UNIFORM_NEG  n=  17 +0    -17   clean=0    iqr=  2.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   26359         0  ov= 8046.72  PARTIAL      n=  70 +70   -0    clean=0    iqr= 12.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    5584         1  ov=  8000.0  UNIFORM_POS  n=  33 +33   -0    clean=0    iqr=  9.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  255603   1016469  ov=  2414.0  PARTIAL      n=  50 +50   -0    clean=0    iqr= 11.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   97735    389486  ov=  2414.0  UNIFORM_POS  n=  37 +37   -0    clean=0    iqr=  9.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  214451    870392  ov=  4828.0  PARTIAL      n=  43 +43   -0    clean=0    iqr= 21.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26359         3  ov= 8046.72  UNIFORM_POS  n=  40 +40   -0    clean=0    iqr=  9.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  186025    756041  ov=  5000.0  PARTIAL      n=  22 +22   -0    clean=0    iqr= 13.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   12545         0  ov=  8000.0  UNIFORM_POS  n=  27 +27   -0    clean=0    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    9064         1  ov=  4000.0  UNIFORM_NEG  n=  16 +0    -16   clean=0    iqr=  5.0 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  233695    933689  ov=  3218.0  PARTIAL      n=  28 +28   -0    clean=0    iqr= 13.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  235271    940956  ov=8046720.0  UNIFORM_NEG  n=  23 +0    -23   clean=0    iqr=  3.7 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   26359         2  ov= 8046.72  PARTIAL      n=  31 +29   -0    clean=2    iqr= 14.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   41563    178604  ov=  1850.0  UNIFORM_NEG  n=  21 +0    -21   clean=0    iqr=  4.7 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   26323         2  ov= 8046.72  PARTIAL      n=  22 +20   -0    clean=2    iqr= 11.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    8664         1  ov=    4180  UNIFORM_NEG  n=  73 +0    -73   clean=0    iqr=  2.9 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  103004    407110  ov=  3000.0  UNIFORM_POS  n=  13 +13   -0    clean=0    iqr=  5.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   97735    389487  ov=  2414.0  UNIFORM_POS  n=  29 +29   -0    clean=0    iqr= 10.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  193001    807098  ov=  5000.0  PARTIAL      n= 394 +4    -213  clean=177  iqr= 61.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26415         0  ov= 8046.72  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26074         0  ov= 8046.72  PARTIAL      n=  34 +32   -0    clean=2    iqr= 14.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  208358    835014  ov=  3218.0  UNIFORM_NEG  n=  14 +0    -14   clean=0    iqr=  4.3 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  260890   1035858  ov=  3200.0  UNIFORM_POS  n=  22 +22   -0    clean=0    iqr=  8.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  247633    982613  ov=  3000.0  PARTIAL      n=  70 +69   -0    clean=1    iqr= 23.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  247121    989911  ov=  3200.0  PARTIAL      n=  26 +26   -0    clean=0    iqr= 11.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  246955    979697  ov=  4828.0  UNIFORM_POS  n=  36 +36   -0    clean=0    iqr=  9.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  197513    791357  ov=  2400.0  PARTIAL      n=  21 +21   -0    clean=0    iqr= 27.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26074         1  ov= 8046.72  PARTIAL      n=  40 +39   -0    clean=1    iqr= 14.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  197513    791358  ov=  2400.0  PARTIAL      n=  19 +19   -0    clean=0    iqr= 36.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   25409         3  ov= 8046.72  PARTIAL      n=  67 +67   -0    clean=0    iqr= 13.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26933         0  ov= 8046.72  PARTIAL      n=  39 +38   -0    clean=1    iqr= 14.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  217913    871664  ov=  3218.0  UNIFORM_POS  n=  42 +42   -0    clean=0    iqr=  7.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    9756         3  ov=5021.15328  UNIFORM_POS  n=  28 +28   -0    clean=0    iqr=  8.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  164853    680324  ov=  2300.0  UNIFORM_NEG  n=  29 +0    -29   clean=0    iqr=  5.3 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   26933         1  ov= 8046.72  PARTIAL      n=  44 +43   -0    clean=1    iqr= 13.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  260890   1035860  ov=  3200.0  UNIFORM_POS  n=  13 +13   -0    clean=0    iqr=  8.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   78732    311476  ov=  3000.0  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr=  6.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   14170         1  ov=  1600.0  PARTIAL      n=  21 +0    -21   clean=0    iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26200         1  ov= 8046.72  PARTIAL      n=  38 +38   -0    clean=0    iqr= 14.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   25409         2  ov= 8046.72  PARTIAL      n=  66 +65   -0    clean=1    iqr= 14.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  142026    594540  ov=  4828.0  UNIFORM_POS  n=  29 +29   -0    clean=0    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   76944    307108  ov=  3200.0  UNIFORM_POS  n=  36 +36   -0    clean=0    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   25409         1  ov= 8046.72  PARTIAL      n=  46 +46   -0    clean=0    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    7589         1  ov=  8000.0  UNIFORM_POS  n=  57 +57   -0    clean=0    iqr=  4.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    6916         1  ov=    6437  UNIFORM_NEG  n=  19 +0    -19   clean=0    iqr=  2.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   59678    255507  ov=  5000.0  UNIFORM_POS  n=  32 +32   -0    clean=0    iqr=  6.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26200         0  ov= 8046.72  PARTIAL      n=  31 +29   -0    clean=2    iqr= 18.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   62885    273791  ov=  2816.0  PARTIAL      n=  41 +36   -1    clean=4    iqr= 30.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26415         1  ov= 8046.72  PARTIAL      n=  20 +20   -0    clean=0    iqr= 15.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  206107    826410  ov=  4000.0  PARTIAL      n=  16 +16   -0    clean=0    iqr= 18.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   92506    365295  ov=   804.0  PARTIAL      n=  26 +0    -22   clean=4    iqr= 15.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   62278    267353  ov=  3000.0  PARTIAL      n=  27 +0    -24   clean=3    iqr= 15.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   51347    218773  ov=  4000.0  UNIFORM_NEG  n=  58 +0    -56   clean=2    iqr=  8.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  259217   1029163  ov=  3218.0  PARTIAL      n=  61 +57   -0    clean=4    iqr= 12.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  194614    789024  ov=  3200.0  PARTIAL      n=  43 +40   -0    clean=3    iqr= 14.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  193224    796892  ov=  3379.0  UNIFORM_POS  n=  15 +15   -0    clean=0    iqr=  6.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  156998    654333  ov=  3218.0  UNIFORM_POS  n=  20 +20   -0    clean=0    iqr=  6.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   87658    348045  ov=  3218.0  PARTIAL      n=  20 +20   -0    clean=0    iqr= 19.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  258411   1026600  ov=  3200.0  UNIFORM_POS  n=  61 +61   -0    clean=0    iqr=  5.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  258411   1026599  ov=  3200.0  UNIFORM_POS  n=  83 +83   -0    clean=0    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  219086    876940  ov=  8000.0  UNIFORM_POS  n= 124 +122  -0    clean=2    iqr=  7.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    9263         1  ov=7998.4396799999995  UNIFORM_POS  n=  57 +57   -0    clean=0    iqr=  6.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  154814    645446  ov=  3000.0  PARTIAL      n= 195 +154  -0    clean=41   iqr= 24.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  116667    467336  ov=  3200.0  PARTIAL      n=  15 +0    -15   clean=0    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    9640         3  ov=4828.032  UNIFORM_POS  n=  60 +60   -0    clean=0    iqr=  8.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    7312         1  ov=  8000.0  UNIFORM_POS  n=  45 +45   -0    clean=0    iqr=  4.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    5337         1  ov=    6000  UNIFORM_NEG  n=  26 +0    -26   clean=0    iqr=  3.7 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   92506    365294  ov=   804.0  PARTIAL      n=  49 +0    -29   clean=20   iqr= 28.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   41184    176798  ov=  3000.0  PARTIAL      n=  23 +23   -0    clean=0    iqr= 13.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    5321         1  ov=7998.4396799999995  UNIFORM_POS  n=  26 +26   -0    clean=0    iqr=  5.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  220601    882786  ov=  8000.0  UNIFORM_POS  n=  65 +63   -0    clean=2    iqr=  9.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  201141    807890  ov=  2414.0  PARTIAL      n=  24 +24   -0    clean=0    iqr= 11.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   86848    344147  ov=  3218.0  PARTIAL      n=  54 +49   -0    clean=5    iqr= 13.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   15980         1  ov=6437.376  UNIFORM_POS  n=  25 +25   -0    clean=0    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    5260         1  ov=    4000  UNIFORM_NEG  n=  27 +0    -27   clean=0    iqr=  3.5 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  271357   1080926  ov=  3218.0  UNIFORM_POS  n=  24 +24   -0    clean=0    iqr=  6.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  243310    988305  ov=  3218.0  PARTIAL      n=  26 +25   -0    clean=1    iqr= 13.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  208394    835124  ov=  6000.0  UNIFORM_POS  n=  29 +29   -0    clean=0    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   85708    337474  ov=  5000.0  UNIFORM_POS  n=  80 +80   -0    clean=0    iqr=  7.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    8383         0  ov=    4000  UNIFORM_NEG  n=  29 +0    -28   clean=1    iqr=  4.0 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  246671    978424  ov=  1609.0  UNIFORM_NEG  n=  37 +0    -37   clean=0    iqr=  6.8 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  220325    881868  ov=  8000.0  UNIFORM_POS  n=  49 +49   -0    clean=0    iqr=  7.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  106672    446458  ov=  1600.0  UNIFORM_NEG  n=  33 +0    -31   clean=2    iqr=  7.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   92506    395634  ov=   804.0  PARTIAL      n=  41 +2    -26   clean=13   iqr= 26.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   85708    337476  ov=  5000.0  UNIFORM_POS  n=  50 +48   -0    clean=2    iqr=  7.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   32841    142494  ov=  3000.0  PARTIAL      n=  22 +22   -0    clean=0    iqr= 13.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  271943   1084499  ov=  2414.0  UNIFORM_POS  n=  41 +38   -0    clean=3    iqr=  6.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250515    996803  ov=  3218.0  UNIFORM_POS  n=  34 +33   -0    clean=1    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  206673    828418  ov=  5000.0  UNIFORM_POS  n=  41 +41   -0    clean=0    iqr=  4.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  203617    816331  ov=  8000.0  UNIFORM_POS  n=  53 +50   -0    clean=3    iqr=  6.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    6055         1  ov=    4000  UNIFORM_NEG  n=  57 +0    -57   clean=0    iqr=  4.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  270993   1079360  ov=  2414.0  PARTIAL      n=  69 +0    -52   clean=17   iqr= 11.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  206323    827104  ov=  5000.0  UNIFORM_POS  n=  25 +25   -0    clean=0    iqr=  6.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   92508    395664  ov=   804.0  PARTIAL      n=  35 +1    -29   clean=5    iqr= 13.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   10481     51504  ov=  4828.0  PARTIAL      n=  31 +0    -28   clean=3    iqr= 14.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  157060    654512  ov=  3200.0  PARTIAL      n=  20 +20   -0    clean=0    iqr= 18.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  127533    517369  ov=  3218.0  PARTIAL      n=  16 +16   -0    clean=0    iqr= 20.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  120781    492779  ov=  2000.0  PARTIAL      n=  19 +19   -0    clean=0    iqr= 13.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  100743    396233  ov=  2896.0  UNIFORM_POS  n=  13 +13   -0    clean=0    iqr=  9.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250011    994097  ov=  3000.0  UNIFORM_POS  n=  30 +30   -0    clean=0    iqr=  5.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   54536    232361  ov=  3000.0  UNIFORM_POS  n=  32 +31   -0    clean=1    iqr=  7.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    9691         2  ov=6356.9088  UNIFORM_POS  n=  23 +23   -0    clean=0    iqr=  6.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  124651    508593  ov=  2400.0  PARTIAL      n=  46 +45   -0    clean=1    iqr= 13.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   92508    395670  ov=   804.0  PARTIAL      n=  54 +0    -37   clean=17   iqr= 32.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  249940    993725  ov=  3218.0  PARTIAL      n=  55 +0    -50   clean=5    iqr= 10.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  196059    796883  ov=     0.0  PARTIAL      n=  28 +28   -0    clean=0    iqr= 15.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  156998    654335  ov=  3218.0  PARTIAL      n=  18 +18   -0    clean=0    iqr= 10.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  154814    645447  ov=  3000.0  PARTIAL      n= 130 +94   -0    clean=36   iqr= 23.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  135439    555162  ov=  3600.0  PARTIAL      n=  26 +26   -0    clean=0    iqr= 15.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  101744    400920  ov=  3000.0  UNIFORM_POS  n=  26 +25   -0    clean=1    iqr=  9.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   76803    305505  ov=  5000.0  UNIFORM_POS  n=  44 +44   -0    clean=0    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  110241    436454  ov=  2500.0  PARTIAL      n=  24 +24   -0    clean=0    iqr= 17.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  234252    936667  ov=  3000.0  PARTIAL      n=  37 +37   -0    clean=0    iqr= 14.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  214067    853965  ov=  8000.0  UNIFORM_POS  n=  99 +96   -0    clean=3    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  174682    716985  ov=  2993.0  PARTIAL      n=  12 +0    -12   clean=0    iqr= 10.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  168268    696272  ov=  6000.0  UNIFORM_POS  n=  60 +60   -0    clean=0    iqr= 10.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  247121    989912  ov=  3200.0  PARTIAL      n=  13 +13   -0    clean=0    iqr= 20.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  243310    988304  ov=  3218.0  UNIFORM_POS  n=  22 +21   -0    clean=1    iqr=  7.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  236734    946744  ov=  5200.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr= 10.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  235938    943753  ov=  6437.0  UNIFORM_POS  n=  83 +80   -0    clean=3    iqr=  9.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  200841    806113  ov=  3000.0  PARTIAL      n=  66 +63   -0    clean=3    iqr= 14.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  185574    754596  ov=  3000.0  UNIFORM_POS  n=  30 +28   -0    clean=2    iqr=  3.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  149010    621665  ov=  2500.0  PARTIAL      n=  12 +12   -0    clean=0    iqr= 14.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  117799    509865  ov=  4828.0  PARTIAL      n=  37 +37   -0    clean=0    iqr= 13.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  107022    435012  ov=  1600.0  PARTIAL      n=  18 +17   -0    clean=1    iqr= 10.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   97642    389106  ov=  3000.0  PARTIAL      n=  73 +68   -0    clean=5    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   79584    329626  ov=  2574.0  PARTIAL      n=  25 +0    -24   clean=1    iqr= 12.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   35440    304735  ov=  5000.0  UNIFORM_POS  n= 115 +111  -0    clean=4    iqr=  6.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   15249         1  ov=    4000  UNIFORM_NEG  n=  32 +0    -32   clean=0    iqr=  3.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  243310    988311  ov=  3218.0  PARTIAL      n=  64 +60   -0    clean=4    iqr= 11.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  153854    640872  ov=  2414.0  UNIFORM_POS  n=  30 +27   -0    clean=3    iqr=  7.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  146305    623113  ov=  3000.0  PARTIAL      n=  65 +64   -0    clean=1    iqr= 16.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  127991    519620  ov=  3200.0  UNIFORM_POS  n=  80 +71   -0    clean=9    iqr=  9.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  127353    516524  ov=  6000.0  PARTIAL      n=  62 +0    -53   clean=9    iqr= 11.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   97416    388176  ov=  3000.0  PARTIAL      n=  55 +50   -0    clean=5    iqr= 15.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   48570    207175  ov=  5000.0  PARTIAL      n=  55 +0    -46   clean=9    iqr= 14.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   13575         0  ov=  3200.0  PARTIAL      n= 157 +0    -137  clean=20   iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  270255   1079573  ov=  4000.0  UNIFORM_POS  n=  33 +33   -0    clean=0    iqr=  9.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   97153    387082  ov=  5000.0  UNIFORM_POS  n=  30 +30   -0    clean=0    iqr=  9.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   76646    304759  ov=  3218.0  UNIFORM_POS  n=  44 +43   -0    clean=1    iqr= 10.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26663    219610  ov=  5000.0  UNIFORM_POS  n=  39 +37   -0    clean=2    iqr=  7.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   11543         2  ov=4828.032  PARTIAL      n=  46 +45   -0    clean=1    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   72762    296344  ov=  1609.0  PARTIAL      n= 165 +0    -121  clean=44   iqr= 11.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   54536    232360  ov=  3000.0  PARTIAL      n=  62 +56   -0    clean=6    iqr= 14.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   46448    198461  ov=  3000.0  PARTIAL      n=  30 +29   -0    clean=1    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    4707         1  ov=    6437  UNIFORM_NEG  n=  76 +0    -72   clean=4    iqr=  5.6 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  234252    936668  ov=  3000.0  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr=  8.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  206323    827103  ov=  5000.0  PARTIAL      n=  17 +17   -0    clean=0    iqr= 11.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   19921     88782  ov=  3000.0  UNIFORM_POS  n=  29 +27   -0    clean=2    iqr=  9.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    5431         5  ov=  8000.0  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr=  2.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    5431         4  ov=  8000.0  UNIFORM_POS  n=  42 +42   -0    clean=0    iqr=  4.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250011    994101  ov=  3000.0  UNIFORM_POS  n=  15 +15   -0    clean=0    iqr=  9.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  142026    594542  ov=  4828.0  PARTIAL      n=  15 +15   -0    clean=0    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  135661    572893  ov=  2500.0  PARTIAL      n=  20 +0    -17   clean=3    iqr= 11.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  100835    396682  ov=  3000.0  UNIFORM_POS  n=  15 +15   -0    clean=0    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   24565         1  ov=  8000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  7.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   12843         1  ov=  8000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  7.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    6327         0  ov= 8046.72  PARTIAL      n= 175 +100  -4    clean=71   iqr= 61.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    5431         6  ov=  8000.0  UNIFORM_POS  n=  19 +19   -0    clean=0    iqr=  3.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  260254   1033611  ov=  3000.0  UNIFORM_POS  n=  25 +25   -0    clean=0    iqr=  5.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250472    996653  ov=  1609.0  UNIFORM_POS  n=  17 +16   -0    clean=1    iqr=  7.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250011    994100  ov=  3000.0  UNIFORM_POS  n=  12 +12   -0    clean=0    iqr=  4.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  244749    974464  ov=  3218.0  PARTIAL      n=  18 +15   -0    clean=3    iqr= 11.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  233869    934482  ov=  5000.0  UNIFORM_POS  n=  13 +12   -0    clean=1    iqr=  8.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  121214    487180  ov=  3000.0  UNIFORM_POS  n=  55 +53   -0    clean=2    iqr= 10.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  110241    436455  ov=  2500.0  PARTIAL      n=  17 +17   -0    clean=0    iqr= 12.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   87320    346496  ov=  4023.0  UNIFORM_POS  n=  15 +15   -0    clean=0    iqr=  5.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   78764    311605  ov=  3000.0  UNIFORM_POS  n=  14 +14   -0    clean=0    iqr=  6.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    9308         1  ov= 10000.0  UNIFORM_POS  n=  37 +36   -0    clean=1    iqr=  8.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  272120   1084660  ov=  2414.0  UNIFORM_POS  n= 141 +129  -0    clean=12   iqr=  9.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  255698   1016832  ov=   800.0  PARTIAL      n=  19 +16   -0    clean=3    iqr= 10.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  246596    987004  ov=  3000.0  UNIFORM_POS  n=  29 +29   -0    clean=0    iqr=  9.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  185574    754597  ov=  3000.0  UNIFORM_POS  n=  21 +21   -0    clean=0    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  154848    645600  ov=  3000.0  PARTIAL      n=  67 +43   -0    clean=24   iqr= 29.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  140767    586858  ov=  4828.0  PARTIAL      n=  32 +29   -0    clean=3    iqr= 14.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   92508    395672  ov=   804.0  PARTIAL      n=  41 +2    -24   clean=15   iqr= 28.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   75397    302493  ov=  5000.0  UNIFORM_POS  n=  42 +40   -0    clean=2    iqr=  7.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  271357   1080908  ov=  3218.0  UNIFORM_POS  n=  28 +28   -0    clean=0    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250011    994096  ov=  3000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  6.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  143215    629133  ov=  3000.0  PARTIAL      n=  59 +53   -0    clean=6    iqr= 11.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  125030    503410  ov=  3000.0  PARTIAL      n=  16 +16   -0    clean=0    iqr= 19.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  124207    499447  ov=  3000.0  PARTIAL      n=  57 +53   -1    clean=3    iqr= 18.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   80583    319210  ov=  2400.0  UNIFORM_NEG  n=  22 +0    -21   clean=1    iqr= 10.3 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   61457    263442  ov=  2414.0  PARTIAL      n=  45 +37   -1    clean=7    iqr= 14.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   58648    251030  ov=  4828.0  PARTIAL      n=  50 +48   -0    clean=2    iqr= 13.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   24704    115844  ov=  3000.0  PARTIAL      n=  13 +13   -0    clean=0    iqr= 18.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   16076         1  ov=  8000.0  UNIFORM_POS  n=  29 +28   -0    clean=1    iqr=  3.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   11177         1  ov=  8000.0  UNIFORM_POS  n=  36 +36   -0    clean=0    iqr=  5.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250011    994098  ov=  3000.0  UNIFORM_POS  n=  15 +14   -0    clean=1    iqr=  7.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  237448   1001577  ov=  3218.0  UNIFORM_POS  n=  21 +19   -0    clean=2    iqr=  7.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  234038    935366  ov=  3000.0  UNIFORM_POS  n=  19 +19   -0    clean=0    iqr=  9.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  234038    935365  ov=  3000.0  PARTIAL      n=  24 +22   -0    clean=2    iqr= 11.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  182341    744453  ov=  2414.0  UNIFORM_NEG  n=  56 +0    -50   clean=6    iqr=  4.9 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  113176    449466  ov=  3218.0  PARTIAL      n=  52 +51   -0    clean=1    iqr= 10.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   90147    355793  ov=  3218.0  PARTIAL      n=  14 +11   -0    clean=3    iqr= 17.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   78764    311604  ov=  3000.0  UNIFORM_POS  n=  13 +13   -0    clean=0    iqr=  7.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   45071    192835  ov=  5000.0  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr=  6.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   34678    301399  ov=  5000.0  UNIFORM_POS  n= 121 +113  -0    clean=8    iqr=  8.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   23699         1  ov=    6437  UNIFORM_NEG  n=  66 +0    -66   clean=0    iqr=  4.5 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  250207    995071  ov=  2816.0  UNIFORM_POS  n=  58 +57   -0    clean=1    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250207    995070  ov=  2816.0  UNIFORM_POS  n=  56 +56   -0    clean=0    iqr=  9.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  241659    964262  ov=  3200.0  PARTIAL      n=  27 +27   -0    clean=0    iqr= 11.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  237514    949530  ov=  1609.0  PARTIAL      n=  52 +46   -1    clean=5    iqr= 14.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  175276    721415  ov=  5000.0  PARTIAL      n=  26 +21   -0    clean=5    iqr= 34.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  148162    623441  ov=  3000.0  PARTIAL      n=  42 +40   -0    clean=2    iqr= 12.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  141947    594059  ov=  3200.0  PARTIAL      n=  55 +50   -0    clean=5    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  140767    586859  ov=  4828.0  PARTIAL      n=  23 +21   -0    clean=2    iqr= 12.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  124651    508597  ov=  2400.0  UNIFORM_POS  n=  29 +27   -0    clean=2    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  100835    396681  ov=  3000.0  PARTIAL      n=  25 +24   -0    clean=1    iqr= 14.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  259217   1029162  ov=  3218.0  PARTIAL      n=  36 +29   -1    clean=6    iqr= 21.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  247066    980281  ov=  3000.0  UNIFORM_POS  n=  20 +19   -0    clean=1    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  231342    929241  ov=  2414.0  UNIFORM_NEG  n=  31 +0    -29   clean=2    iqr=  8.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  197575    791535  ov=  2000.0  UNIFORM_POS  n=  38 +34   -0    clean=4    iqr=  7.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  154848    645601  ov=  3000.0  PARTIAL      n=  68 +42   -0    clean=26   iqr= 25.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  152297    632047  ov=  2255.0  PARTIAL      n=  89 +0    -68   clean=21   iqr= 11.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   95994    382378  ov=  4828.0  UNIFORM_POS  n= 117 +114  -0    clean=3    iqr=  6.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   95614    379722  ov=  3000.0  UNIFORM_POS  n=  17 +17   -0    clean=0    iqr=  5.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   92508    395666  ov=   804.0  PARTIAL      n=  31 +2    -16   clean=13   iqr= 38.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   79220    313513  ov=  1600.0  PARTIAL      n=  61 +1    -49   clean=11   iqr= 10.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   60364    258544  ov=  2414.0  PARTIAL      n=  18 +17   -0    clean=1    iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  268322   1066670  ov=  4184.0  UNIFORM_POS  n=  55 +55   -0    clean=0    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  241937    974582  ov=  3000.0  PARTIAL      n=  46 +43   -0    clean=3    iqr= 14.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  213784    852878  ov=  2000.0  PARTIAL      n=  31 +0    -28   clean=3    iqr= 10.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  150144    622998  ov=  3000.0  PARTIAL      n=  35 +28   -0    clean=7    iqr= 16.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  120729    485093  ov=  4000.0  UNIFORM_POS  n=  27 +26   -0    clean=1    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   73937    299229  ov=  5900.0  UNIFORM_POS  n=  20 +19   -0    clean=1    iqr=  9.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   35433    302759  ov=  5000.0  UNIFORM_POS  n=  33 +28   -0    clean=5    iqr=  7.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   15478     75460  ov=  2896.0  UNIFORM_POS  n=  24 +22   -0    clean=2    iqr=  8.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250472    996659  ov=  3218.0  UNIFORM_POS  n=  21 +19   -0    clean=2    iqr=  9.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  239511    956667  ov=  3000.0  UNIFORM_NEG  n=  70 +0    -60   clean=10   iqr=  8.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  161939    678217  ov=  1609.0  PARTIAL      n=  18 +17   -0    clean=1    iqr= 20.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  148162    623443  ov=  3000.0  PARTIAL      n=  33 +28   -0    clean=5    iqr= 16.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   36945    165839  ov=  2400.0  PARTIAL      n=  20 +20   -0    clean=0    iqr= 12.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   35774    154828  ov=  3000.0  UNIFORM_POS  n=  18 +16   -0    clean=2    iqr=  7.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   27649    120400  ov=  3540.0  PARTIAL      n=  15 +0    -15   clean=0    iqr= 12.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   22401     98814  ov=  6000.0  UNIFORM_POS  n=  44 +43   -0    clean=1    iqr=  4.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   15478     75459  ov=  2896.0  UNIFORM_POS  n=  24 +24   -0    clean=0    iqr=  7.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  268322   1066674  ov=  4184.0  UNIFORM_POS  n=  25 +23   -0    clean=2    iqr=  9.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  260254   1033612  ov=  3000.0  UNIFORM_POS  n=  38 +36   -0    clean=2    iqr=  9.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  232678    928873  ov=  6000.0  PARTIAL      n=  42 +32   -0    clean=10   iqr= 11.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  226868    905470  ov=  3000.0  UNIFORM_POS  n=  43 +42   -0    clean=1    iqr=  9.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  218417    873662  ov=  6000.0  UNIFORM_POS  n=  25 +24   -0    clean=1    iqr=  5.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  136646    576525  ov=  3000.0  UNIFORM_POS  n=  15 +15   -0    clean=0    iqr=  5.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  126565    515855  ov=  3218.0  PARTIAL      n=  35 +28   -0    clean=7    iqr= 16.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   81696    323863  ov=  2500.0  UNIFORM_POS  n=  17 +16   -0    clean=1    iqr=  8.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   60364    258542  ov=  2414.0  PARTIAL      n=  14 +14   -0    clean=0    iqr= 10.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   51683    220068  ov=  3000.0  PARTIAL      n=  15 +15   -0    clean=0    iqr= 17.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   46426    232860  ov=  2414.0  PARTIAL      n=  66 +55   -0    clean=11   iqr= 14.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   32395    140546  ov=  3379.0  PARTIAL      n=  48 +42   -0    clean=6    iqr= 11.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   32395    140545  ov=  3379.0  PARTIAL      n=  79 +72   -0    clean=7    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    8111     37987  ov=  4023.0  PARTIAL      n=  58 +0    -42   clean=16   iqr= 20.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  259692   1031173  ov=  2993.0  PARTIAL      n= 127 +116  -2    clean=9    iqr= 12.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  259399   1029966  ov=  2000.0  UNIFORM_POS  n=  53 +49   -0    clean=4    iqr=  5.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  250679    997616  ov=  3218.0  UNIFORM_NEG  n=  34 +0    -28   clean=6    iqr=  5.5 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  243972    983732  ov=  3200.0  UNIFORM_POS  n=  37 +33   -0    clean=4    iqr=  9.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  243750    971054  ov=  2000.0  UNIFORM_POS  n=  48 +48   -0    clean=0    iqr=  6.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  226868    905474  ov=  3000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  9.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  207559    832298  ov=  3218.0  PARTIAL      n=  50 +39   -0    clean=11   iqr= 12.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  146710    624224  ov=  3218.0  PARTIAL      n=  16 +0    -15   clean=1    iqr= 17.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   70580    292398  ov=  3000.0  UNIFORM_NEG  n=  48 +0    -40   clean=8    iqr= 10.4 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   47437    202473  ov=  2092.0  UNIFORM_POS  n=  28 +26   -0    clean=2    iqr=  8.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   47437    202472  ov=  2092.0  UNIFORM_POS  n=  24 +23   -0    clean=1    iqr=  7.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    2211     10407  ov=  2896.0  UNIFORM_POS  n=  12 +12   -0    clean=0    iqr=  5.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  231084    921991  ov=  3218.0  PARTIAL      n=  60 +0    -41   clean=19   iqr= 10.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  217924    871713  ov=  4000.0  UNIFORM_POS  n=  36 +30   -0    clean=6    iqr=  9.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  208187    872434  ov=  3218.0  UNIFORM_POS  n=  41 +38   -0    clean=3    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  125522    505917  ov=  2011.0  UNIFORM_POS  n=  12 +12   -0    clean=0    iqr=  6.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   90858    358346  ov=  6000.0  UNIFORM_POS  n=  67 +66   -0    clean=1    iqr=  5.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   76806    305517  ov=  5000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  5.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   61390    264687  ov=  2400.0  UNIFORM_POS  n=  13 +11   -0    clean=2    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   16076         0  ov=  6000.0  UNIFORM_POS  n=  32 +31   -0    clean=1    iqr=  5.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   13624         1  ov=3218.688  PARTIAL      n=  27 +0    -27   clean=0    iqr= 12.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  270547   1077394  ov=  3000.0  PARTIAL      n=  38 +36   -0    clean=2    iqr= 14.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  270547   1077392  ov=  3000.0  PARTIAL      n=  61 +56   -0    clean=5    iqr= 14.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  234783    938985  ov=  3200.0  UNIFORM_POS  n=  31 +27   -0    clean=4    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  223131    892648  ov=  2414.0  PARTIAL      n=  68 +54   -0    clean=14   iqr= 14.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  217924    871714  ov=  4000.0  PARTIAL      n=  16 +14   -0    clean=2    iqr= 17.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  206345    827174  ov=  5000.0  UNIFORM_NEG  n=  21 +0    -21   clean=0    iqr=  5.2 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  201141    807899  ov=  2414.0  PARTIAL      n=  25 +25   -0    clean=0    iqr= 17.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  200841    806114  ov=  3000.0  PARTIAL      n=  36 +35   -0    clean=1    iqr= 15.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  177827    728515  ov=  2414.0  PARTIAL      n=  31 +30   -0    clean=1    iqr= 25.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   75627    303624  ov=  5000.0  UNIFORM_POS  n=  89 +86   -0    clean=3    iqr=  6.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   70510    291991  ov=  2400.0  UNIFORM_POS  n=  33 +29   -0    clean=4    iqr=  9.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   46809    199923  ov=  3000.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  9.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   45452    201448  ov=  3000.0  PARTIAL      n=  25 +23   -0    clean=2    iqr= 18.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   24911         0  ov=  5000.0  PARTIAL      n=  20 +0    -15   clean=5    iqr= 12.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   14668         1  ov=  3000.0  PARTIAL      n=  77 +1    -61   clean=15   iqr= 12.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  261165   1036900  ov=  6437.0  UNIFORM_POS  n=  15 +14   -0    clean=1    iqr=  6.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  239277    955785  ov=  2414.0  UNIFORM_POS  n=  54 +46   -0    clean=8    iqr=  7.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  234932    939632  ov=  2000.0  UNIFORM_NEG  n= 174 +2    -130  clean=42   iqr=  8.4 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  206228    826787  ov=  5000.0  PARTIAL      n=  31 +29   -0    clean=2    iqr= 12.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  198746    796443  ov=  2414.0  PARTIAL      n=  15 +14   -0    clean=1    iqr= 18.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  198254    794313  ov=  3000.0  PARTIAL      n=  61 +0    -39   clean=22   iqr= 11.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  177178    725148  ov=  3218.0  PARTIAL      n=  26 +0    -22   clean=4    iqr= 10.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  176011    729359  ov=  2000.0  PARTIAL      n=  59 +0    -38   clean=21   iqr= 14.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  141474    591421  ov=  3000.0  PARTIAL      n=  43 +40   -0    clean=3    iqr= 12.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   44972    192464  ov=  5000.0  UNIFORM_POS  n=  49 +49   -0    clean=0    iqr=  3.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   33119    143743  ov=  2500.0  PARTIAL      n=  15 +13   -0    clean=2    iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   19987    305555  ov=  5000.0  UNIFORM_POS  n= 117 +111  -0    clean=6    iqr=  7.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    4024         0  ov=4747.5648  UNIFORM_NEG  n=  51 +0    -44   clean=7    iqr=  9.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  272120   1084661  ov=  2414.0  PARTIAL      n=  89 +61   -2    clean=26   iqr= 18.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  250011    994099  ov=  3000.0  PARTIAL      n=  12 +12   -0    clean=0    iqr= 11.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  227226    906643  ov=  3218.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  8.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  227226    906642  ov=  3218.0  UNIFORM_POS  n=  13 +13   -0    clean=0    iqr=  4.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  223534    893830  ov=   800.0  PARTIAL      n=  26 +20   -0    clean=6    iqr= 14.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  218376    873520  ov=  6000.0  UNIFORM_POS  n= 101 +91   -0    clean=10   iqr=  7.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  180198    736763  ov=  3200.0  UNIFORM_POS  n=  31 +27   -0    clean=4    iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  150144    623000  ov=  3000.0  PARTIAL      n=  31 +26   -0    clean=5    iqr= 13.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  147075    614737  ov=  4000.0  UNIFORM_POS  n=  14 +9    -0    clean=5    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  136454    560987  ov=  3000.0  PARTIAL      n=  21 +19   -0    clean=2    iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  105689    428676  ov=  6000.0  UNIFORM_POS  n=  18 +18   -0    clean=0    iqr=  6.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   83900    329667  ov=  5000.0  UNIFORM_POS  n=  19 +15   -0    clean=4    iqr=  7.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   46426    232861  ov=  2414.0  PARTIAL      n=  43 +37   -0    clean=6    iqr= 16.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   45094    192887  ov=  6000.0  UNIFORM_POS  n=  56 +55   -0    clean=1    iqr=  4.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   45094    192885  ov=  6000.0  UNIFORM_POS  n= 105 +103  -0    clean=2    iqr=  3.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    5262     38053  ov=  2896.0  UNIFORM_POS  n=  19 +18   -0    clean=1    iqr=  9.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    4289         0  ov=  6000.0  UNIFORM_POS  n=  51 +47   -0    clean=4    iqr=  4.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  226483    904086  ov=  2000.0  PARTIAL      n=  62 +49   -0    clean=13   iqr= 10.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  222970    892045  ov=  5200.0  PARTIAL      n=  33 +23   -0    clean=10   iqr= 11.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  184641    751703  ov=  1931.0  UNIFORM_POS  n=  13 +11   -0    clean=2    iqr=  4.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  130201    556964  ov=  3000.0  PARTIAL      n=  80 +0    -56   clean=24   iqr= 15.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  130013    528847  ov=  5000.0  UNIFORM_POS  n=  84 +75   -0    clean=9    iqr=  7.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  127721    518256  ov=  3000.0  PARTIAL      n=  27 +25   -0    clean=2    iqr= 11.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  117799    509864  ov=  4828.0  PARTIAL      n=  69 +59   -2    clean=8    iqr= 24.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   96420    384137  ov=  4345.0  PARTIAL      n=  35 +0    -24   clean=11   iqr= 10.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   61700    264550  ov=  5005.0  UNIFORM_POS  n=  17 +14   -0    clean=3    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   47672    203484  ov=  5000.0  UNIFORM_POS  n=  27 +24   -0    clean=3    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   46401    198235  ov=  3000.0  PARTIAL      n=  36 +34   -0    clean=2    iqr= 12.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   24565         0  ov=  6000.0  UNIFORM_POS  n=  21 +19   -0    clean=2    iqr=  6.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   15397    112555  ov=  6000.0  UNIFORM_POS  n= 188 +178  -0    clean=10   iqr=  4.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   13624         2  ov=4828.032  UNIFORM_POS  n=  45 +36   -1    clean=8    iqr=  6.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  270255   1079574  ov=  4000.0  PARTIAL      n=  16 +16   -0    clean=0    iqr= 12.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  268322   1066675  ov=  4184.0  UNIFORM_POS  n=  31 +26   -0    clean=5    iqr=  9.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  243750    971052  ov=  2000.0  UNIFORM_POS  n=  65 +60   -0    clean=5    iqr=  6.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  233421    932419  ov=  3000.0  UNIFORM_POS  n=  54 +47   -0    clean=7    iqr=  7.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  232109    926316  ov=  2500.0  UNIFORM_NEG  n=  36 +0    -27   clean=9    iqr=  5.5 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  196607    788618  ov=  4000.0  PARTIAL      n=  31 +17   -0    clean=14   iqr= 13.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  123734    513691  ov=  2400.0  PARTIAL      n=  51 +0    -37   clean=14   iqr= 12.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  114029    465061  ov=  2400.0  UNIFORM_NEG  n=  50 +0    -39   clean=11   iqr=  5.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   94570    374267  ov=  3000.0  UNIFORM_POS  n=  39 +35   -0    clean=4    iqr= 10.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   27354    119184  ov=  6000.0  UNIFORM_POS  n=  24 +24   -0    clean=0    iqr=  4.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   24841    108974  ov=  3218.0  PARTIAL      n=  26 +24   -0    clean=2    iqr= 15.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   17362     77612  ov=  2500.0  UNIFORM_POS  n=  13 +12   -0    clean=1    iqr=  9.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    8318         0  ov=  5000.0  PARTIAL      n=  72 +0    -52   clean=20   iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  269411   1071948  ov=  3379.0  UNIFORM_POS  n=  42 +33   -1    clean=8    iqr=  6.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  259399   1029968  ov=  2000.0  UNIFORM_POS  n=  68 +62   -0    clean=6    iqr=  5.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  256749   1020603  ov=  3200.0  UNIFORM_NEG  n=  29 +0    -26   clean=3    iqr=  4.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  240453    960623  ov=  3200.0  PARTIAL      n=  22 +15   -0    clean=7    iqr= 14.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  228564    911433  ov=  2500.0  UNIFORM_POS  n=  26 +24   -0    clean=2    iqr=  5.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  204371    819879  ov=  5000.0  UNIFORM_POS  n=  17 +15   -0    clean=2    iqr=  7.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  201568    810028  ov=  3218.0  PARTIAL      n=  42 +41   -0    clean=1    iqr= 11.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  195182    784871  ov=  2414.0  PARTIAL      n=  21 +0    -18   clean=3    iqr= 12.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  166363    686959  ov=  5000.0  UNIFORM_POS  n=  30 +28   -0    clean=2    iqr=  5.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  160107    664834  ov=  2414.0  UNIFORM_NEG  n=  77 +0    -57   clean=20   iqr=  8.0 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  141341    593322  ov=  3000.0  PARTIAL      n=  18 +16   -0    clean=2    iqr= 18.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   97642    389107  ov=  3000.0  UNIFORM_POS  n=  52 +43   -0    clean=9    iqr=  8.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   92283    399293  ov=  1609.0  PARTIAL      n=  60 +0    -42   clean=18   iqr= 12.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   68327    289118  ov=  3200.0  UNIFORM_POS  n=  14 +12   -0    clean=2    iqr=  8.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   19944         1  ov=3379.6224  PARTIAL      n=  14 +0    -10   clean=4    iqr= 11.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    9389         2  ov=5021.15328  PARTIAL      n=  22 +19   -0    clean=3    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  270547   1077393  ov=  3000.0  PARTIAL      n=  60 +48   -2    clean=10   iqr= 11.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  259399   1029965  ov=  2000.0  UNIFORM_POS  n=  49 +42   -0    clean=7    iqr=  5.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  247816    989816  ov=  2400.0  PARTIAL      n=  36 +0    -23   clean=13   iqr= 10.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  217687    870479  ov=  3200.0  PARTIAL      n=  33 +28   -0    clean=5    iqr= 13.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  211388    844822  ov=  2000.0  UNIFORM_POS  n=  59 +45   -0    clean=14   iqr= 10.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  196735    797815  ov=  2000.0  PARTIAL      n=  51 +40   -0    clean=11   iqr= 15.9 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  193287    779219  ov=  2500.0  UNIFORM_NEG  n=  32 +0    -23   clean=9    iqr=  6.9 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  159147    661145  ov=  2719.0  UNIFORM_POS  n=  34 +29   -0    clean=5    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  126529    511765  ov=  5000.0  UNIFORM_POS  n=  19 +19   -0    clean=0    iqr=  8.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   87965    349488  ov=  3000.0  UNIFORM_POS  n=  41 +36   -0    clean=5    iqr=  7.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   33116    143724  ov=  5000.0  PARTIAL      n=  20 +0    -19   clean=1    iqr= 25.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   30055    130643  ov=  4023.0  UNIFORM_POS  n=  32 +31   -0    clean=1    iqr=  5.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26663    219611  ov=  5000.0  PARTIAL      n=  26 +23   -0    clean=3    iqr= 14.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   25145    110190  ov=  6000.0  UNIFORM_POS  n=  90 +85   -0    clean=5    iqr=  5.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  248532   1007544  ov=  4000.0  PARTIAL      n=  13 +12   -0    clean=1    iqr= 11.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  232694    928940  ov=  6430.0  UNIFORM_POS  n=  46 +36   -0    clean=10   iqr=  7.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  213391    878724  ov=  4715.0  PARTIAL      n=  68 +53   -0    clean=15   iqr= 10.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  211388    844820  ov=  2000.0  UNIFORM_POS  n=  56 +51   -0    clean=5    iqr=  6.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  207559    852422  ov=  3218.0  UNIFORM_POS  n=  28 +22   -0    clean=6    iqr=  8.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  195806    786322  ov=  3218.0  PARTIAL      n=  28 +25   -0    clean=3    iqr= 11.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  185880    755742  ov=  6000.0  UNIFORM_POS  n=  23 +21   -0    clean=2    iqr=  4.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  178848    731333  ov=  3000.0  UNIFORM_NEG  n=  34 +0    -24   clean=10   iqr=  7.8 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  140904    589872  ov=  3200.0  PARTIAL      n=  20 +17   -0    clean=3    iqr= 16.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  140686    586355  ov=  3218.0  UNIFORM_POS  n=  28 +23   -0    clean=5    iqr=  8.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  113709    451843  ov=  3200.0  UNIFORM_POS  n=  16 +16   -0    clean=0    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  102777    405949  ov=  3200.0  PARTIAL      n=  64 +46   -0    clean=18   iqr= 11.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   57808    273702  ov=  2000.0  PARTIAL      n=  21 +0    -14   clean=7    iqr= 11.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   27124         0  ov=  3000.0  PARTIAL      n=  15 +9    -0    clean=6    iqr= 25.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   26087         0  ov=  5000.0  UNIFORM_NEG  n= 181 +0    -114  clean=67   iqr=  6.4 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  229095    913433  ov=  3200.0  PARTIAL      n= 135 +109  -0    clean=26   iqr= 11.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  225257    907171  ov=  2500.0  PARTIAL      n=  31 +24   -0    clean=7    iqr= 16.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  180543    738225  ov=  2400.0  PARTIAL      n=  23 +0    -23   clean=0    iqr= 11.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  178870    731414  ov=  3200.0  PARTIAL      n=  64 +50   -0    clean=14   iqr= 13.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  169773    701739  ov=  6000.0  UNIFORM_POS  n=  86 +77   -0    clean=9    iqr=  5.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  161692    689587  ov=  3200.0  UNIFORM_POS  n=  72 +60   -0    clean=12   iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  149488    621569  ov=  2414.0  PARTIAL      n=  30 +0    -22   clean=8    iqr= 11.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  144212    605540  ov=  1915.0  PARTIAL      n=  50 +39   -0    clean=11   iqr= 14.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  144212    605535  ov=  1915.0  UNIFORM_POS  n=  44 +35   -0    clean=9    iqr= 10.3 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  140904    589870  ov=  3200.0  UNIFORM_POS  n=  36 +31   -0    clean=5    iqr=  5.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  115455    461047  ov=  3000.0  UNIFORM_POS  n=  71 +65   -0    clean=6    iqr=  5.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  111531    443150  ov=  3218.0  PARTIAL      n=  29 +14   -1    clean=14   iqr= 15.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   92283    399292  ov=  1609.0  PARTIAL      n=  56 +0    -46   clean=10   iqr= 10.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   83103    326488  ov=  2414.0  PARTIAL      n=  34 +26   -0    clean=8    iqr= 13.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   64191    276873  ov=  1609.0  PARTIAL      n=  70 +48   -0    clean=22   iqr= 17.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   25930         1  ov=  5000.0  UNCLEAR      n=  41 +0    -20   clean=21   iqr=  3.0 fan=-  shape ambiguous -> read the full --dump
+   18653         0  ov=  5000.0  UNCLEAR      n= 120 +0    -67   clean=53   iqr=  5.5 fan=-  shape ambiguous -> read the full --dump
+   14365         0  ov=  3200.0  UNIFORM_NEG  n=  66 +0    -48   clean=18   iqr=  9.0 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  265749   1062510  ov=  2400.0  PARTIAL      n=  71 +0    -45   clean=26   iqr= 11.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  226483    904087  ov=  2000.0  PARTIAL      n=  71 +51   -0    clean=20   iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  201752    811228  ov=  3200.0  PARTIAL      n=  33 +24   -0    clean=9    iqr= 12.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  185676    754905  ov=  3379.0  UNIFORM_POS  n=  41 +37   -0    clean=4    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  179432    733770  ov=  2500.0  PARTIAL      n=  23 +19   -0    clean=4    iqr= 16.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  177279    726271  ov=  2414.0  PARTIAL      n=  21 +20   -0    clean=1    iqr= 18.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  152531    633223  ov=  5000.0  PARTIAL      n=  25 +23   -0    clean=2    iqr= 17.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  136931    564049  ov=  3000.0  UNIFORM_POS  n=  13 +10   -0    clean=3    iqr=  9.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   95994    382379  ov=  4828.0  UNIFORM_POS  n= 133 +114  -0    clean=19   iqr=  9.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   90657    357789  ov=  5000.0  UNIFORM_POS  n=  43 +37   -0    clean=6    iqr=  5.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   64191    276872  ov=  1609.0  PARTIAL      n=  44 +25   -0    clean=19   iqr= 19.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   63692    274541  ov=  2414.0  UNIFORM_POS  n=  14 +13   -0    clean=1    iqr=  5.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   52608    223978  ov=  3621.0  PARTIAL      n=  19 +0    -15   clean=4    iqr= 10.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   51899    221012  ov=  4425.0  UNIFORM_POS  n=  82 +70   -0    clean=12   iqr= 10.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   20004         1  ov=  5000.0  UNCLEAR      n=  51 +0    -27   clean=24   iqr=  9.8 fan=-  shape ambiguous -> read the full --dump
+   14858     66874  ov=  4667.0  UNCLEAR      n=  17 +0    -10   clean=7    iqr=  5.9 fan=-  shape ambiguous -> read the full --dump
+   14124     64025  ov=  3218.0  PARTIAL      n=  12 +0    -9    clean=3    iqr= 12.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   13575         5  ov=  5000.0  UNIFORM_NEG  n= 161 +0    -112  clean=49   iqr=  7.4 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+   11987         3  ov=  5000.0  UNCLEAR      n=  86 +0    -46   clean=40   iqr=  6.9 fan=-  shape ambiguous -> read the full --dump
+    6109         0  ov=  5000.0  UNIFORM_POS  n=  37 +33   -0    clean=4    iqr=  3.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+    4678         0  ov=  6000.0  UNIFORM_POS  n=  29 +28   -0    clean=1    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  266686   1059186  ov=  2300.0  UNIFORM_POS  n=  30 +26   -0    clean=4    iqr=  7.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  257916   1025139  ov=  3138.0  UNIFORM_POS  n=  28 +23   -0    clean=5    iqr=  5.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  248821    996039  ov=  3000.0  PARTIAL      n=  30 +27   -0    clean=3    iqr= 15.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  239277    955786  ov=  2414.0  UNIFORM_POS  n=  45 +38   -0    clean=7    iqr=  7.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  235048    940270  ov=  3000.0  UNIFORM_POS  n=  35 +28   -0    clean=7    iqr=  9.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  231342    929238  ov=  2414.0  PARTIAL      n=  16 +0    -13   clean=3    iqr= 12.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  209158    849693  ov=  3218.0  UNIFORM_POS  n=  84 +73   -0    clean=11   iqr=  5.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  200624    805100  ov=  4828.0  PARTIAL      n=  23 +0    -20   clean=3    iqr= 11.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  196735    797814  ov=  2000.0  UNIFORM_POS  n=  39 +31   -0    clean=8    iqr=  7.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  191976    775274  ov=  2253.0  PARTIAL      n=  19 +18   -0    clean=1    iqr= 14.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  153316    637569  ov=  4975.0  UNIFORM_POS  n=  27 +25   -0    clean=2    iqr=  6.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   96695    385262  ov=  5000.0  UNIFORM_POS  n=  15 +12   -0    clean=3    iqr=  6.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   55419    236470  ov=  1200.0  UNCLEAR      n=  34 +0    -17   clean=17   iqr= 10.1 fan=-  shape ambiguous -> read the full --dump
+   51899    237860  ov=  4425.0  PARTIAL      n=  42 +32   -1    clean=9    iqr= 11.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   51899    237859  ov=  4425.0  PARTIAL      n=  83 +61   -0    clean=22   iqr= 11.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   40426    173496  ov=  3218.0  UNCLEAR      n=  32 +0    -17   clean=15   iqr= 10.3 fan=-  shape ambiguous -> read the full --dump
+   36674    158454  ov=  5000.0  UNIFORM_POS  n=  24 +18   -0    clean=6    iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   27064    117857  ov=  1600.0  PARTIAL      n=  20 +17   -0    clean=3    iqr= 21.2 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   15725         0  ov=  5000.0  UNCLEAR      n=  47 +0    -28   clean=19   iqr=  5.2 fan=-  shape ambiguous -> read the full --dump
+   12585     57514  ov=  4000.0  PARTIAL      n=  25 +13   -0    clean=12   iqr= 11.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    9389         5  ov=5021.15328  PARTIAL      n=  45 +0    -36   clean=9    iqr= 11.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+    8954         0  ov=  6000.0  UNIFORM_POS  n=  79 +72   -0    clean=7    iqr=  5.2 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  243713    970985  ov=  3200.0  PARTIAL      n=  40 +29   -0    clean=11   iqr= 12.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  236656    946419  ov=  4000.0  UNCLEAR      n=  24 +0    -14   clean=10   iqr=  4.9 fan=-  shape ambiguous -> read the full --dump
+  235048    940265  ov=  3000.0  UNIFORM_POS  n=  35 +31   -0    clean=4    iqr=  6.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  233991    935165  ov=  5000.0  PARTIAL      n=  54 +35   -0    clean=19   iqr= 19.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  233991    935164  ov=  5000.0  UNIFORM_POS  n=  66 +52   -0    clean=14   iqr= 10.1 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  211388    844821  ov=  2000.0  UNIFORM_POS  n=  66 +53   -0    clean=13   iqr=  7.8 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  200624    805101  ov=  4828.0  PARTIAL      n=  47 +0    -30   clean=17   iqr= 11.5 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  191492    773683  ov=  3218.0  UNCLEAR      n=  80 +0    -42   clean=38   iqr= 10.3 fan=-  shape ambiguous -> read the full --dump
+  178870    731415  ov=  3200.0  UNIFORM_POS  n=  49 +39   -0    clean=10   iqr=  7.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  139632    579793  ov=  3200.0  UNIFORM_POS  n=  20 +18   -0    clean=2    iqr=  9.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  139330    578055  ov=  2414.0  PARTIAL      n=  70 +46   -0    clean=24   iqr= 11.4 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  138287    571695  ov=  1609.0  PARTIAL      n=  26 +0    -15   clean=11   iqr= 12.1 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  136646    576524  ov=  3000.0  UNIFORM_POS  n=  28 +25   -0    clean=3    iqr= 10.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  133921    546624  ov=  3000.0  UNIFORM_POS  n=  34 +26   -0    clean=8    iqr=  8.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  126375    510830  ov=  6000.0  UNIFORM_POS  n=  89 +67   -0    clean=22   iqr=  7.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  121319    487611  ov=  3000.0  UNIFORM_NEG  n=  45 +0    -32   clean=13   iqr=  7.6 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  114655    478478  ov=  1915.0  UNIFORM_POS  n=  38 +36   -0    clean=2    iqr=  9.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  113551    451155  ov=  3000.0  PARTIAL      n=  23 +0    -18   clean=5    iqr= 11.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  109424    433026  ov=  3200.0  PARTIAL      n=  28 +22   -0    clean=6    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  108733    429940  ov=  1609.0  UNIFORM_NEG  n=  40 +0    -29   clean=11   iqr=  7.1 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  106645    436150  ov=  3000.0  PARTIAL      n=  38 +0    -28   clean=10   iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  100797    396537  ov=  2414.0  PARTIAL      n=  49 +32   -1    clean=16   iqr= 12.3 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   81238    321922  ov=  3000.0  UNIFORM_POS  n=  92 +71   -0    clean=21   iqr=  8.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   51318    218641  ov=  3000.0  UNIFORM_POS  n=  13 +10   -0    clean=3    iqr=  7.6 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   47156    201331  ov=  1609.0  UNCLEAR      n=  24 +0    -14   clean=10   iqr=  9.4 fan=-  shape ambiguous -> read the full --dump
+   46401    198236  ov=  3000.0  UNIFORM_POS  n=  23 +22   -0    clean=1    iqr=  9.0 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   30052    130625  ov=  4000.0  UNIFORM_POS  n=  36 +33   -0    clean=3    iqr=  8.4 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26855    116912  ov=  6000.0  UNIFORM_POS  n=  72 +57   -0    clean=15   iqr=  5.5 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+   26381         0  ov=  5000.0  PARTIAL      n=  38 +0    -32   clean=6    iqr= 12.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   19361         1  ov=  5000.0  PARTIAL      n= 166 +0    -106  clean=60   iqr= 11.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   19358         2  ov=  5000.0  PARTIAL      n= 168 +0    -111  clean=57   iqr= 11.6 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+   19358         1  ov=  5000.0  UNIFORM_NEG  n=  63 +0    -38   clean=25   iqr=  8.4 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+    9745         2  ov=  3200.0  PARTIAL      n=  20 +0    -18   clean=2    iqr= 12.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  265034   1052238  ov=  1609.0  PARTIAL      n=  94 +82   -0    clean=12   iqr= 10.8 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  262590   1042030  ov=  3200.0  UNIFORM_POS  n=  20 +18   -0    clean=2    iqr=  5.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  259838   1031732  ov=  2500.0  PARTIAL      n=  34 +25   -0    clean=9    iqr= 10.7 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  243999    971858  ov=    2000  UNIFORM_NEG  n=  58 +0    -42   clean=16   iqr=  7.5 fan=-  wrong snap, label too SHORT -> page-verify drafted value
+  240652    961260  ov=  3200.0  PARTIAL      n= 113 +0    -76   clean=37   iqr= 13.0 fan=FAN  mixed content; label right for clean half -> per-result pins ONLY
+  239276    955783  ov=  3138.0  UNIFORM_POS  n=  19 +15   -0    clean=4    iqr=  9.9 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG
+  236373    945198  ov=   800.0  UNIFORM_POS  n=  17 +13   -0    clean=4    iqr=  5.7 fan=-  check POOL/GENDER first (9308 lesson); else label too LONG

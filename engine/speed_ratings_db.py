@@ -1,278 +1,914 @@
 # Project: xc-predictor
-# Author: Tadhg Murray
-# Subset: Speed Rating Engine
-# Date: 6/3/2026
-# File Title: speed_ratings_db.py
-# Purpose: Database read and write functions for the speed rating engine.
-#          Separate from scripts/database.py which handles scraper writes.
+# Author:  Tadhg Murray
+# Subset:  Speed Rating Engine
+# File:    speed_ratings_db.py
+# Purpose: DB reads/writes for the speed rating engine. BOTH sports, BOTH sources.
+#
+# WHAT THE OLD VERSION SILENTLY DELETED
+#   1. INNER JOIN athletes ON r.athlete_id -- tfrrs XC has athlete_id NULL on
+#      100% of rows, so every tfrrs result vanished before the engine saw it.
+#   2. INNER JOIN meets -- anet-only table; deleted tfrrs again.
+#   3. athlete_id as identity -- person_id is the CROSS-SOURCE id (anet 100%,
+#      tfrrs ~70%). Keyed on athlete_id, an athlete's anet and tfrrs races were
+#      two different people, neither with enough races to rate.
+#   4. grade NOT IN ('1'..'8') -- excluded middle school outright.
+#   5. TF was never loaded at all.
+#
+# WHAT THIS REVISION FIXED (three bugs, all provable from SQL semantics)
+#   A. `LEFT JOIN athletes a ON a.athlete_id = r.athlete_id` FANNED OUT.
+#      athletes' primary key is (athlete_id, school) -- an athlete who changed
+#      schools has several rows. Every one of their results was duplicated, once
+#      per school, and the engine counted each copy as a separate race. Fixed by
+#      joining on the full key. (This is the same composite the FK enforces.)
+#   B. `LEFT JOIN meets_tf ... WHERE m.distance_meters >= 800` was an INNER JOIN
+#      wearing a LEFT JOIN's clothes. A TF row with no meets_tf match has
+#      m.distance_meters NULL; `NULL >= 800` is NULL, not TRUE, so the row was
+#      filtered out. Exactly the failure this file's header says it fixed.
+#   C. That predicate was also REDUNDANT. backfill_normalize._distanceSane gates
+#      [800, 12000] before it writes anything, so `normalized_time IS NOT NULL`
+#      ALREADY implies distance >= 800m. Deleting it removes a bug and a filter.
+#
+# WHAT THIS REVISION MADE FASTER
+#   * COPY, not execute_values, into staging. COPY skips the SQL parser entirely;
+#     execute_values builds and parses a giant multi-row VALUES literal.
+#   * saveResultSpeedRatings no longer does `pairs = list(pairs)` -- 30M Python
+#     tuples is ~2.5GB of RAM for nothing. It streams the generator into COPY in
+#     fixed-size chunks, so peak memory is one chunk.
+#   * The final write is a HEAP REBUILD, not an UPDATE. Measured on this DB: the
+#     UPDATE path costs ~150-290us/row (a new heap tuple plus a random-page
+#     insertion into every index, because fillfactor=100 forbids HOT). Rebuilding
+#     39M rows and sorting each index once took 122 SECONDS. Pass mode="update"
+#     for the old path.
+#
+# WHY TF NEEDS VENUE DIFFICULTY TOO
+#   geometry_spline already corrects track LENGTH and BANKING inside
+#   normalized_time. What it cannot see is altitude, surface compound, wind
+#   exposure, and the rest -- and outdoor tracks genuinely differ on those. So TF
+#   venues get a difficulty exactly like XC courses do. The venue key is the
+#   location, since a track has no "course name".
+#
+# WHY THE TWO SPORTS STAY SEPARATE
+#   Owner's call, and it is the right one: a pool is (level, gender, SPORT). The
+#   distance/era fitters already key their curves `pool|sport`, so keeping the
+#   same convention here means an athlete's XC ability and TF ability are solved
+#   independently and never contaminate each other.
+#
+# WHY TF IS FILTERED TO >= 800m
+#   normalized_time scales a race to a 5k equivalent with (D/5000)^b. That law is
+#   fitted on 800m and up. Apply it to a 100m dash and an 11s sprint becomes a
+#   ~693s "5k" -- inside the sanity band, and complete garbage. Relays and field
+#   events are excluded for the same reason: they are not one runner's race.
 
-import psycopg2 
+import io                        # in-memory buffer for COPY payloads
 import sys
-import psycopg2.extras
+import time
 from datetime import date
+from itertools import islice     # lazy chunking; never materialises the source
 
-# Add scripts folder so we can import DB_PATH from databse.py.
+import psycopg2
+import psycopg2.extras
+
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "engine")
 from database import getConn
+from merge_column import mergeColumn      # heap-rebuild write path (see below)
+
+
+# Column order every loader yields. The engine unpacks by these indices.
+COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
+           "school", "date", "sport", "venue", "gender")
+
 
 # ------------------------------------------------------------------ #
-# LOAD
+# CROSS-SOURCE DEDUP
 # ------------------------------------------------------------------ #
+#
+# At a canon-linked meet the SAME physical race exists twice: an anet row and a
+# tfrrs row. backfill_normalize drops the tfrrs copy as `dedup_twin` and never
+# writes it a normalized_time. But its merge writes
+# `COALESCE(s.nt, r.normalized_time)`, so a twin carrying a STALE
+# normalized_time from an earlier run keeps it and reaches the engine as a
+# second race for the same (person_id, pool): n_races inflated, ability pulled
+# toward a duplicate, and the duplicate votes twice on its venue's difficulty.
+#
+# The rule, identical to the backfill's: at a canon-linked meet where BOTH
+# sources have a row for the same person, KEEP THE ANET COPY. anet is richer --
+# it has athlete_id and grade; tfrrs XC has athlete_id NULL on 100% of rows.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS A PRECOMPUTED TABLE AND NOT A SUBQUERY
+# ---------------------------------------------------------------------------
+# The first version expressed the rule inline:
+#
+#     AND NOT (r.source = 'tfrrs' AND r.canon_meet_id IS NOT NULL
+#              AND EXISTS (SELECT 1 FROM results_tf t WHERE ...))
+#
+# `NOT (A AND B AND EXISTS(...))` is `NOT A OR NOT B OR NOT EXISTS(...)`. That
+# DISJUNCTION blocks Postgres' anti-join transformation: it cannot pull the
+# EXISTS out of an OR. So the planner falls back to a correlated SubPlan and
+# re-executes it ONCE PER ROW -- 34M probes into a 191M-row table that has no
+# index on person_id. Observed: 25 minutes on the FIRST fetch, no progress.
+#
+# The fix is to make the planner see a JOIN. We materialise the twin keys once
+# (one scan + hash aggregate), index them, and LEFT JOIN + `IS NULL`. That is
+# the textbook anti-join shape and the planner hash-joins it.
+#
+# The twin table is UNLOGGED: no WAL, and a crash simply loses a cache we can
+# rebuild. It is dropped when the stream finishes.
 
-# loadResults
-# Purpose: Loads all normalized results from the DB that the engine needs
-#          to compute speed ratings and course difficulties.
-# Arguments: None.
-# Output: Returns a list of dicts, one per result. Each dic has keys:
-#         result_id, athlete_id, course_name, normalized_time, date, pool.
-def loadResults() -> list[dict]:
 
-    # RealDictCursor makes every row come back as a dict instead of a tuple.
-    # Without it: row[0] is result_id, row[1] is athlete_id — hard to read.
-    # With it: row["result_id"] and row["athlete_id"] work instead.
+def _twinTable(sport: str) -> str:
+    return f"sr_twins_{sport.lower()}"
+
+# loadPriorRatings
+# Purpose:   {(person_id, pool): speed_rating} from the LAST engine run.
+# Detail:    The fitness term is a function of rating, and rating is what the
+#            engine solves. Frozen at load time, the correction is a fixed
+#            input for the whole run -- read from the live table inside the
+#            loop, it would chase its own output.
+#            Returns {} on an empty table so a first-ever run still works;
+#            every athlete then falls back to rating 100.
+def loadPriorRatings() -> dict:
     with getConn() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cursor.execute(_buildLoadQuery())
+        with conn.cursor() as cur:
+            cur.execute("SELECT athlete_id, pool, speed_rating "
+                        "FROM athlete_ratings WHERE speed_rating > 0")
+            return {(pid, pool): rating for pid, pool, rating in cur.fetchall()}
 
-        # fetchall() returns all rows at once as a list.
-        # dict(row) converts each RealDictRow to a plain Python dict.
-        rows = [dict(row) for row in cursor.fetchall()]
- 
-    print(f"Loaded {len(rows):,} results from database")
-    return rows
 
-# _buildLoadQuery
-# Purpose: Returns the SQL string for loadResults.
-#          Extracted as a helper so loadResults stays short and readable.
-# Arguments: None.
-# Output: SQL string.
-def _buildLoadQuery() -> str:
-    # JOIN results with meets to get course_name and date.
-    # JOIN with normalize_distance pool classification happens
-    # in Python since pool is computed from grade + gender, not stored in DB.
-    # We load grade and gender here so Python can classify the pool.
-     return """
-        SELECT
-            r.result_id,
-            r.athlete_id,
-            r.normalized_time,
-            r.grade,
-            r.date,
-            m.course_name,
-            a.gender
+# _buildTwinKeys
+# Purpose:   materialise every (person_id, canon_meet_id) that has a row from
+#            BOTH sources carrying a normalized_time.
+# Output:    (table_name, n_rows). n_rows == 0 means there is nothing to dedup
+#            and the caller should skip the join entirely.
+# Syntax:    `count(DISTINCT source) > 1` is the twin test. The GROUP BY runs
+#            over the FILTERED rows only (normalized_time NOT NULL cuts 191M to
+#            ~29M on results_tf), so this is one scan, not a self-join.
+def _buildTwinKeys(table: str, sport: str):
+    tw = _twinTable(sport)
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name=%s
+                  AND column_name='canon_meet_id'
+            """, (table,))
+            if cur.fetchone() is None:
+                print(f"[db] {sport}: {table} has no canon_meet_id -- no dedup")
+                return None, 0
+
+            cur.execute(f"DROP TABLE IF EXISTS {tw}")
+            cur.execute(f"""
+                CREATE UNLOGGED TABLE {tw} AS
+                SELECT person_id, canon_meet_id
+                FROM {table}
+                WHERE normalized_time IS NOT NULL
+                  AND person_id IS NOT NULL
+                  AND canon_meet_id IS NOT NULL
+                GROUP BY person_id, canon_meet_id
+                HAVING count(DISTINCT source) > 1
+            """)
+            cur.execute(f"CREATE INDEX ON {tw} (person_id, canon_meet_id)")
+            cur.execute(f"ANALYZE {tw}")
+            cur.execute(f"SELECT count(*) FROM {tw}")
+            n = cur.fetchone()[0]
+        conn.commit()
+    print(f"[db] {sport}: {n:,} cross-source twin keys "
+          f"({'dedup active' if n else 'nothing to dedup'})")
+    if n == 0:
+        _dropTwinKeys(sport)
+        return None, 0
+    return tw, n
+
+
+def _dropTwinKeys(sport: str) -> None:
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {_twinTable(sport)}")
+        conn.commit()
+
+
+# _dedupJoin / _dedupFilter
+# Purpose:   the anti-join, in the two places SQL needs it.
+# Syntax:    putting `r.source = 'tfrrs'` in the ON clause (not the WHERE) means
+#            an anet row NEVER matches, so `tw.person_id IS NULL` keeps it. A
+#            tfrrs row matches only when it has an anet twin, and the IS NULL
+#            filter then drops it. A tfrrs row with no twin does not match, so it
+#            survives. Exactly the backfill's rule, as a join.
+def _dedupJoin(tw: str) -> str:
+    if not tw:
+        return ""
+    return f"""
+        LEFT JOIN {tw} tw
+               ON r.source = 'tfrrs'
+              AND tw.person_id     = r.person_id
+              AND tw.canon_meet_id = r.canon_meet_id"""
+
+
+def _dedupFilter(tw: str) -> str:
+    return "          AND tw.person_id IS NULL" if tw else ""
+
+# loadCanonicalNames
+# Purpose:   {canonical_id_as_text: canonical_name} for display.
+# Output:    dict, or {} if course_canonical does not exist yet.
+# Detail:    The engine keys XC venues on canonical_id, but course_difficulties
+#            keeps a human-readable course_name so the website and conversions.py
+#            keep working unchanged. This is that lookup.
+#
+#            Keyed by TEXT, not int, because the venue string arriving from the
+#            engine is text ("XC:1234") and converting once here is cheaper and
+#            less error-prone than int() on every save row.
+#
+#            Returns {} rather than raising when the table is missing, so the
+#            engine still runs before the migration -- it just falls back to
+#            name-based display. A missing optional table must degrade, not crash.
+def loadCanonicalNames() -> dict:
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT to_regclass('public.course_canonical') IS NOT NULL
+            """)
+            if not cur.fetchone()[0]:
+                print("[db] course_canonical not found -- display names will "
+                      "fall back to ids. Run build_course_canonical.py --apply.")
+                return {}
+
+            cur.execute("""
+                SELECT DISTINCT canonical_id::text, canonical_name
+                FROM course_canonical
+            """)
+            return dict(cur.fetchall())
+
+
+# ------------------------------------------------------------------ #
+# QUERIES
+# ------------------------------------------------------------------ #
+
+
+# These are not places. They are what a scraper writes when the venue was
+# unknown, and a "difficulty" fitted on them means nothing.
+#
+# WHAT THIS IS NOT FOR. course_canonical keys on (name, lat, lng), so a generic
+# name at many coordinates ALREADY splits into many venues -- 11 distinct "City
+# Park"s stay 11 venues, correctly. Generic-but-real names must therefore stay
+# OFF this list; blocklisting "city park" would discard 436 rows of legitimate
+# course votes. The test is semantic, not statistical: does the string assert
+# that no venue is known?
+#
+# ★ COORDINATE COUNT IS NOT THE TEST. "bye", "pending" and "various locations"
+# each resolve to a single coordinate -- a geocoder fallback, not a place. A low
+# place-count means "not fused", which is a different claim from "real".
+#
+# CONSERVATIVE. A placeholder we miss costs one noisy venue; a real venue we
+# blocklist silently loses every course vote it ever cast. "Encampment" is a
+# Wyoming town, "Midway" and "Liberty" are real schools -- all stay off.
+#
+# Compared lowercase and trimmed, so "TBA" / "tba" / " TBD " all match.
+_PLACEHOLDER_VENUES = frozenset({
+    # junk / empty markers
+    "", "-", "--", "?", "??", "???", "n/a", "na", "none", "null", "y",
+    # venue explicitly not yet known
+    "tba", "tbd", "to be updated later", "pending",
+    "undetermined", "as yet undetermined", "unknown", "unspecified",
+    # venue explicitly not singular
+    "various", "various locations", "multiple locations",
+    "various courses around japan",
+    # venue explicitly not fixed
+    "anywhere", "anywhere in oregon", "open", "bye", "virtual",
+    "test location", "choose your own location & be safe",
+    "your own school", "your track course of choosing",
+    # not venues at all
+    "records", "stats", "districts", "sectionals",
+    "district meet/resource center",
+})
+
+
+# _placeholderSql
+# Purpose:   render the blocklist as a SQL IN-list literal.
+# Output:    "'tba', 'tbd', ..."
+# Detail:    Doubling a single quote is SQL's own escape for a literal quote,
+#            which is what "choose your own location & be safe" needs if it ever
+#            gains an apostrophe. These are hardcoded constants, not user input,
+#            so there is no injection surface -- this is correctness, not safety.
+def _placeholderSql() -> str:
+    return ", ".join("'" + v.replace("'", "''") + "'"
+                     for v in sorted(_PLACEHOLDER_VENUES))
+
+# _xcQuery
+# Purpose:   XC rows. Venue = canonical course id + race distance.
+# Arguments: min_time, max_time -- normalized_time sanity band.
+# Output:    SQL string.
+#
+# VENUE KEY: "<canonical_id>:d<distance>", e.g. "1234:d4800". packResults
+#   prefixes the sport, giving "XC:1234:d4800". The distance is part of the key
+#   because a venue can host many distances and one difficulty cannot cover
+#   them: measured at UCSB Lagoon, per-distance deviation runs +0.13 at 2301m
+#   to -0.03 at 8000m, all currently blended into a single +0.063.
+#
+# LEFT JOINs everywhere. Every INNER JOIN in the old query was a silent tfrrs
+#   delete; anything dropped now is dropped on purpose. A row with no venue
+#   still informs its athlete's ability, it just votes on no course.
+def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
+    return f"""
+        SELECT r.result_id, r.person_id, r.normalized_time,
+               r.grade, r.source, r.school, r.date,
+               'XC' AS sport,
+               CASE WHEN lower(btrim(COALESCE(m.course_name, mt.venue_name)))
+                         IN ({_placeholderSql()})
+                    THEN NULL
+                    WHEN COALESCE(m.course_name, mt.venue_name) IS NULL
+                    THEN NULL
+                    ELSE COALESCE(
+                            cc.canonical_id::text,
+                            'name:' || btrim(COALESCE(m.course_name,
+                                                      mt.venue_name)))
+                         || ':d'
+                         || COALESCE(
+                              (round(COALESCE(
+                                    m.distance,
+                                    -- ★ PER-DIVISION, from the jsonb. tfrrs stores a
+                                    --   distance PER DIVISION in division_distances
+                                    --   and leaves the scalar mt.distance NULL:
+                                    --   measured, 16,402 meets carry the jsonb and ALL
+                                    --   16,402 have a NULL scalar, 15,639 of them with
+                                    --   more than one division.
+                                    --
+                                    --   Reading only the scalar meant a women's 5000 and
+                                    --   a men's 8000 at one meet shared one distance. The
+                                    --   women's times then normalised as if run over 8k
+                                    --   and came out at 895s -- a 14:55 5k -- which put
+                                    --   twelve college_f athletes above every real
+                                    --   performance in the corpus.
+                                    (mt.division_distances -> r.div_id::text
+                                       ->> 'distance')::real,
+                                    mt.distance)
+                                     / 100.0) * 100)::int::text,
+                              'NA')
+               END AS venue,
+               a.gender
         FROM results r
-        -- For every row in results finds the row in meets where the meet_id
-        -- matches and then glue them together into a wider row.
-        -- Use div_id to join results to meets — div_id is the primary key
-        -- of meets so each result matches exactly one row.
-        -- meet_id is NOT unique in meets — one meet has multiple divisions,
-        -- so joining on meet_id multiplies every result by the number of divisions.
-        JOIN meets m ON r.div_id = m.div_id
-        -- For every row in results finds the row in athletes where the athlete_id
-        -- matches and then glue them together into a wider row.
-        JOIN athletes a ON r.athlete_id = a.athlete_id
-        -- Only load results that have been normalized
+        LEFT JOIN meets m
+               ON m.div_id = r.div_id AND m.source = r.source
+        LEFT JOIN meets_tfrrs mt
+               ON r.source = 'tfrrs'
+              AND mt.meet_id = r.meet_id
+              AND mt.sport = 'XC'
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = COALESCE(m.course_name, mt.venue_name)
+              AND round(cc.gps_lat::numeric,  5)
+                = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
+              AND round(cc.gps_long::numeric, 5)
+                = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
+        LEFT JOIN LATERAL (
+               SELECT a.gender FROM athletes a
+               WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                 AND a.gender IN ('M', 'F')
+               ORDER BY a.school
+               LIMIT 1
+        ) a ON TRUE{_dedupJoin(tw)}
         WHERE r.normalized_time IS NOT NULL
-        -- Skip sentinel values and unreasonably large times.
-        -- 3600 seconds is an 1 hour — no real race result.
-        AND r.normalized_time < 3600
-        -- Skips impossible values.
-        AND r.normalized_time > 600
-        -- Only load results with a valid date for decay weighting
-        AND r.date IS NOT NULL
-        AND r.date != ''
-        -- Skips MS as those results are fucked.
-        AND r.grade NOT IN ('1','2','3','4','5','6','7','8','7-8')
-        AND m.course_name IS NOT NULL
-        AND m.course_name != ''
-        -- Order by older dates first.
-        ORDER BY r.date ASC
+          AND r.normalized_time BETWEEN {min_time} AND {max_time}
+          AND r.date IS NOT NULL
+          AND r.person_id IS NOT NULL
+          -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing
+          --   chair covers 1500m far faster than a runner, so its normalized
+          --   time is extreme and the athlete rates ~147 in a youth pool.
+          --   Measured at Pine Cone Classic and USATF Inland NW: division
+          --   reads 'Wheelchair/Seated', '17-18 Wheelchair', '15-16
+          --   Wheelchair', always on its own div_id and never mixed with the
+          --   running divisions -- so this drops the event class without
+          --   touching a single runner.
+          AND COALESCE(m.division, '') !~* '(wheelchair|seated|ambulator)'
+{_dedupFilter(tw)}
     """
 
+
+# _tfQuery
+# Purpose:   TF rows. Venue = the LOCATION (a track has no course name), split by
+#            indoor/outdoor because a 200m indoor oval and an outdoor 400m are
+#            different places even at one address.
+# Arguments: min_time, max_time.
+# Output:    SQL string.
+# Detail:    distance_meters >= 800 keeps the distance law inside its fitted
+#            domain. is_relay / is_field excluded: not one runner's own race.
+def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
+    return f"""
+        SELECT r.result_id, r.person_id, r.normalized_time,
+               r.grade, r.source, r.school, r.date,
+               'TF' AS sport,
+               CASE WHEN m.location_id IS NULL THEN NULL
+                    ELSE 'loc:' || m.location_id::text ||
+                         CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in'
+                              ELSE ':out' END
+               END AS venue,
+               a.gender
+        FROM results_tf r
+        LEFT JOIN meets_tf m
+               ON m.meet_id = r.meet_id AND m.div_id = r.div_id
+              AND m.event_id = r.event_id AND m.source = r.source
+        LEFT JOIN LATERAL (
+               SELECT a.gender FROM athletes a
+               WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                 AND a.gender IN ('M', 'F')
+               ORDER BY a.school
+               LIMIT 1
+        ) a ON TRUE{_dedupJoin(tw)}
+        WHERE r.normalized_time IS NOT NULL
+          AND r.normalized_time BETWEEN {min_time} AND {max_time}
+          AND r.date IS NOT NULL
+          AND r.person_id IS NOT NULL
+          AND COALESCE(r.is_relay, 0) = 0
+          AND COALESCE(r.is_field, 0) = 0
+          -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing
+          --   chair covers 1500m far faster than a runner, so its normalized
+          --   time is extreme and the athlete rates ~147 in a youth pool.
+          --   Measured at Pine Cone Classic and USATF Inland NW: division
+          --   reads 'Wheelchair/Seated', '17-18 Wheelchair', '15-16
+          --   Wheelchair', always on its own div_id and never mixed with the
+          --   running divisions -- so this drops the event class without
+          --   touching a single runner.
+          AND COALESCE(m.division, '') !~* '(wheelchair|seated|ambulator)'
+{_dedupFilter(tw)}
+    """
+
+
 # ------------------------------------------------------------------ #
-# SAVE — COURSE DIFFICULTIES
+# STREAMING LOAD
 # ------------------------------------------------------------------ #
+
+# streamResults
+# Purpose:   yield BATCHES of rows for one sport, never materialising the whole
+#            corpus. results_tf alone is ~121M rows; a Python list of tuples that
+#            size is well over 100GB. A server-side cursor plus batching keeps
+#            peak client memory at one batch.
+# Arguments: sport -- 'XC' | 'TF'; min_time, max_time; batch -- rows per yield.
+# Output:    generator of list[tuple], columns per COLUMNS.
+# Memory:    one batch of Python tuples at a time. 200k x 10 columns is roughly
+#            150-200MB transient; packResults converts each batch to typed numpy
+#            (24 bytes/row) and lets the tuples go. 500k was fine on 64GB but
+#            there is nothing to buy with it -- the server-side cursor is already
+#            doing the streaming, and fetchmany() only controls Python-side churn.
+# ⚠ THE BAND HERE IS GARBAGE-ONLY NOW, AND HAS TO BE. It filters
+#   normalized_time, and since per-pool anchors that number means something
+#   different in every pool: an ms row normalises to 3200 and an hs row to
+#   5000, so the same seconds are a different performance. The old 600 floor
+#   was an hs floor applied to everyone.
+#
+#   Measured cost: Luke Surface, corroborated grade 8, ran six 2025 XC races
+#   normalising to 552-596 -- every one under 600, all six silently excluded,
+#   and he vanished from the middle-school board entirely. 287 rows corpus-wide
+#   sit under the old floor and every one of them is grade 6, 7 or 8. Grades
+#   9-12: zero. The floor was deleting the fastest middle schoolers and
+#   nobody else.
+#
+# ★ THE REAL BAND MOVED TO packResults, where the pool is known and it can be
+#   expressed as a PACE rather than a time. See _POOL_PACE_BAND there.
+def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
+                  batch: int = 200_000):
+    # Materialise the twin keys BEFORE opening the stream. This is one scan and
+    # one hash aggregate; it replaces a correlated SubPlan that the planner would
+    # otherwise re-execute once per row (see CROSS-SOURCE DEDUP above).
+    table = {"XC": "results", "TF": "results_tf"}[sport]
+    tw, _n_tw = _buildTwinKeys(table, sport)
+    tw = tw or ""
+
+    sql = {"XC": _xcQuery, "TF": _tfQuery}[sport](min_time, max_time, tw)
+    total = 0
+    with getConn() as conn:
+        cur = conn.cursor(name=f"speed_ratings_{sport.lower()}")
+        cur.itersize = batch
+        cur.execute(sql)
+        while True:
+            rows = cur.fetchmany(batch)
+            if not rows:
+                break
+            total += len(rows)
+            print(f"[db] {sport}: streamed {total:,}")
+            yield rows
+        cur.close()
+    if tw:
+        _dropTwinKeys(sport)       # scratch; rebuilt on the next run
+    print(f"[db] {sport}: {total:,} rows total")
+
+
+# ------------------------------------------------------------------ #
+# COPY HELPERS  —  the fast, low-memory path into Postgres
+# ------------------------------------------------------------------ #
+
+# _chunks
+# Purpose:   yield an iterable in fixed-size lists, WITHOUT materialising it.
+# Syntax:    islice(it, size) takes the next `size` items lazily; when it comes
+#            back empty the source is exhausted. This is what lets
+#            saveResultSpeedRatings accept a 30M-element GENERATOR and never hold
+#            more than `size` tuples at once.
+def _chunks(iterable, size):
+    it = iter(iterable)
+    while True:
+        block = list(islice(it, size))
+        if not block:
+            return
+        yield block
+
+
+# _field
+# Purpose:   render ONE value for COPY's TEXT format.
+# Detail:    THE BUG THIS FIXES: the old code was `map(str, r)`, and str(None)
+#            is the literal "None". Postgres then rejects it against an integer
+#            column -- "invalid input syntax for type integer: None" -- and the
+#            whole save aborts. COPY's NULL marker is the two characters \N.
+#            Nothing passed None until canonical_id, which is NULL on every TF
+#            row, so this was latent rather than harmless.
+#
+#            Only None is handled here. Free-text values are still escaped by
+#            the CALLERS via _escape, and escaping again here would double every
+#            backslash a course name contains.
+def _field(v):
+    return "\\N" if v is None else str(v)
+
+
+# _copyChunk
+# Purpose:   push one chunk into `table` with a single COPY.
+# Syntax:    COPY's default TEXT format is tab-separated fields, newline-ended
+#            rows, no quoting. `"".join(generator)` builds the payload in ONE
+#            allocation; repeated `s += ...` would be quadratic.
+#            copy_expert reads from a file object, hence io.StringIO.
+# Why COPY:  it bypasses the SQL parser and planner. execute_values builds a
+#            multi-row VALUES literal that Postgres must parse every statement.
+def _copyChunk(cur, table, columns, rows):
+    payload = "".join("\t".join(_field(v) for v in r) + "\n" for r in rows)
+    cur.copy_expert(f"COPY {table} ({', '.join(columns)}) FROM STDIN",
+                    io.StringIO(payload))
+
+
+# _copyInto
+# Purpose:   stream any iterable of tuples into `table`, chunk by chunk.
+# Output:    total rows copied.
+def _copyInto(cur, table, columns, rows, chunk=200_000):
+    total = 0
+    for block in _chunks(rows, chunk):
+        _copyChunk(cur, table, columns, block)
+        total += len(block)
+    return total
+
+
+# _escape
+# Purpose:   make a text value safe for COPY's TEXT format.
+# Detail:    course names are free text and CAN contain a tab or a backslash.
+#            COPY treats backslash as an escape introducer and tab as the field
+#            separator, so both must be doubled/encoded. NULL is the literal \N.
+def _escape(v):
+    if v is None:
+        return "\\N"
+    return (str(v).replace("\\", "\\\\")
+                  .replace("\t", "\\t")
+                  .replace("\n", "\\n")
+                  .replace("\r", "\\r"))
+
+
+# ------------------------------------------------------------------ #
+# SAVE — VENUE (COURSE) DIFFICULTIES
+# ------------------------------------------------------------------ #
+
+# _splitVenueKey
+# Purpose:   one engine venue key -> (display_name, canonical_id, distance_m).
+# Arguments: key   -- "XC:1234:d4800", "XC:name:Some Course:d5000",
+#                     or "TF:loc:44:out".
+#            names -- {canonical_id_text: canonical_name} from loadCanonicalNames.
+# Output:    (course_name_for_db, canonical_id_or_None, distance_m_or_None)
+#
+# Detail:    partition(":") splits on the FIRST colon only, so "TF:loc:44:out"
+#            yields ("TF", "loc:44:out") with the inner colons intact.
+#
+#            rpartition(":d") splits on the LAST occurrence, which matters
+#            because a course name can itself contain ":d" -- "name:Camp:dusk"
+#            must split at the trailing distance tag, not inside the name.
+#
+#            An unrecognised shape passes through untouched rather than raising.
+#            Keys written before this change have no ":d" suffix and must still
+#            load; a save that crashes on old data is worse than one that
+#            carries it forward.
+def _splitVenueKey(key: str, names: dict):
+    sport, _, rest = key.partition(":")
+
+    if sport != "XC":
+        return (key, None, None)                      # TF, untouched
+
+    venuePart, tag, distPart = rest.rpartition(":d")
+
+    if not tag:                                       # pre-split key, no ":d"
+        venuePart, distPart = rest, ""
+
+    distance = int(distPart) if distPart.isdigit() else None
+
+    if venuePart.isdigit():
+        # An id with no name means course_canonical was rebuilt without the
+        # engine re-running. Fall back to the raw id rather than a blank name --
+        # visibly odd beats silently empty.
+        return (f"XC:{names.get(venuePart, venuePart)}", int(venuePart), distance)
+
+    if venuePart.startswith("name:"):
+        return (f"XC:{venuePart[5:]}", None, distance)
+
+    return (f"XC:{venuePart}", None, distance)
+
 
 # saveCourseDifficulties
-# Purpose: Writes computed course difficulties to the DB.
-#          Always does a full replace — deletes all existing rows
-#          then inserts fresh ones, because the engine always recomputes
-#          everything from scratch.
-# Arguments:
-#           difficulties: dict mapping course_name -> dict with keys:
-#                         difficulty (float), n_results (int), n_athletes (int).
-#           e.g. {"Detweiller Park": {"difficulty": 0.03, "n_results": 4200, "n_athletes": 1100}}
-# Output: None.
-def saveCourseDifficulties(difficulties: dict):
- 
-    rows = _buildDifficultyRows(difficulties)
- 
-    with getConn() as conn:
-        cursor = conn.cursor()
-
-        # TRUNCATE drops all rows instantly with no per-row overhead.
-        # Safe here because we always recompute everything from scratch.
-        # RESTART IDENTITY resets any sequences (not needed here but
-        # good practice when truncating).
-        cursor.execute("TRUNCATE course_difficulties")
-
-        psycopg2.extras.execute_values(cursor, """
-            INSERT INTO course_difficulties
-                (course_name, difficulty, n_results, n_athletes, last_updated)
-            VALUES %s
-        """, rows)
-        conn.commit()
- 
-    print(f"Saved {len(rows):,} course difficulties to database")
-
-# _buildDifficultyRows
-# Purpose: Converts the difficulties dict into a list of tuples for
-#          execute_values. Extracted to keep saveCourseDifficulties short.
-# Arguments:
-#           difficulties: same dict as saveCourseDifficulties.
-# Output: List of (course_name, difficulty, n_results, n_athletes, today) tuples.
-def _buildDifficultyRows(difficulties: dict) -> list[tuple]:
+# Purpose:   scoped replace of course_difficulties.
+# Arguments: difficulties -- {venue_key: {"difficulty","n_results","n_athletes"}}
+#            sports       -- the tuple actually solved this run, e.g. ("TF",).
+# Output:    none.
+# Detail:    SCOPED REPLACE, not TRUNCATE. Keys are namespaced ("XC:...",
+#            "TF:loc:44:out"), so deleting only this run's namespace lets
+#            `--sport TF` run without wiping every XC venue.
+#
+#            course_name still holds the namespaced DISPLAY name, unchanged from
+#            before, so app.py and conversions.py keep working. canonical_id is
+#            the engine's real key and is what distinguishes the 18 different
+#            venues that are all called "Central Park".
+#
+#            ⚠ Two rows CAN now share a course_name. That is not a bug -- it is
+#            the collision that was previously being hidden by fusing them into
+#            one difficulty. A consumer selecting by name alone gets several
+#            correct rows where it used to get one wrong one.
+def saveCourseDifficulties(difficulties: dict, sports=("XC", "TF")) -> None:
     today = date.today().isoformat()
-    # Build a list of tuples to insert in one batch.
-    # Each tuples matches the column order in the INSER statement.
-    return [
-        (
-            course_name,
-            data["difficulty"],
-            data["n_results"],
-            data["n_athletes"],
-            today
-        )
-        # .items() returns (key, value) pairs from the dict.
-        for course_name, data in difficulties.items()
-    ]
+    names = loadCanonicalNames()
+
+    rows = []
+    for key, d in difficulties.items():
+        displayName, canonicalId, distanceM = _splitVenueKey(key, names)
+        rows.append((_escape(displayName), canonicalId, distanceM,
+                     d["difficulty"], d["n_results"], d["n_athletes"], today))
+
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            for sp in sports:
+                cur.execute(
+                    "DELETE FROM course_difficulties WHERE course_name LIKE %s",
+                    (f"{sp}:%",))
+                print(f"[db] cleared {cur.rowcount:,} {sp} venues")
+
+            n = _copyInto(cur, "course_difficulties",
+                          ("course_name", "canonical_id", "distance_m",
+                           "difficulty", "n_results", "n_athletes",
+                           "last_updated"), rows)
+        conn.commit()
+
+    n_canon = sum(1 for r in rows if r[1] is not None)
+    print(f"[db] saved {n:,} venue difficulties ({n_canon:,} canonical-keyed)")
+
 
 # ------------------------------------------------------------------ #
 # SAVE — ATHLETE RATINGS
 # ------------------------------------------------------------------ #
 
 # saveAthleteRatings
-# Purpose: Writes compute athlete speed ratings back to the db.
-#          Replaces all existing rows — engine always does a full recompute.
-# Arguments:
-#           ratings: dict mapping (athlete_id, pool) -> dict with values:
-#                    speed_rating, n_races.
-# e.g. {(10234, "college_m"): {"speed_rating": 127.3, "n_races": 14}}
-def saveAthleteRatings(ratings: dict):
-
-    rows = _buildRatingRows(ratings)
- 
-    with getConn() as conn:
-        cursor = conn.cursor()
-
-        # TRUNCATE is significantly faster than DELETE for 4M rows.
-        # Safe because the engine always does a full recompute.
-        cursor.execute("TRUNCATE athlete_ratings")
-
-        psycopg2.extras.execute_values(cursor, """
-            INSERT INTO athlete_ratings
-                (athlete_id, pool, speed_rating, n_races, last_updated)
-            VALUES %s
-        """, rows)
-        conn.commit()
- 
-    print(f"Saved {len(rows):,} athlete ratings to database")
-
-# _buildRatingRows
-# Purpose: Converts the ratings dict into a list of tuples for execute_values.
-# Arguments:
-#           ratings: same dict as saveAthleteRatings.
-# Output: List of (athlete_id, pool, speed_rating, n_races, today) tuples.
-def _buildRatingRows(ratings: dict) -> list[tuple]:
+# Purpose:   scoped replace of athlete_ratings.
+# Arguments: ratings -- {(person_id, pool): {"speed_rating", "n_races"}}
+#            sports  -- the sports this run solved.
+#
+# TWO POOL SHAPES, and the delete has to match the one being written:
+#   per-sport run  -> pools carry a sport suffix ("hs_m|XC"), so deleting
+#                     '%|XC' clears exactly that sport and leaves TF alone.
+#   MERGED run     -> pools are BARE ("hs_m"), because one ability spans both
+#                     sports. '%|XC' then matches NOTHING, the old rows survive,
+#                     and the COPY dies on the primary key.
+#
+# The shape is read off the ratings themselves rather than inferred from
+# `sports`, because `sports` is ("XC","TF") in BOTH cases and cannot tell them
+# apart.
+def saveAthleteRatings(ratings: dict, sports=("XC", "TF")) -> None:
     today = date.today().isoformat()
-    return [
-        (
-            athlete_id,
-            pool,
-            data["speed_rating"],
-            data["n_races"],
-            today
-        )
-        # Key is a tuple (athlete_id, pool) — unpack it directly.
-        for (athlete_id, pool), data in ratings.items()
-    ]
+
+    # Generator over dict keys: short-circuits on the first bare pool, and
+    # never materialises 4.4M rows just to answer a yes/no question.
+    merged = any("|" not in pool for _, pool in ratings.keys())
+
+    rows = ((pid, _escape(pool), d["speed_rating"], d["n_races"], today)
+            for (pid, pool), d in ratings.items())
+
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            if merged:
+                # NOT LIKE '%|%' is the complement of the per-sport pattern, so
+                # a merged run clears every bare-pool row and leaves any
+                # suffixed leftovers from an older per-sport run untouched.
+                cur.execute("DELETE FROM athlete_ratings "
+                            "WHERE pool NOT LIKE '%|%'")
+                print(f"[db] cleared {cur.rowcount:,} merged athlete ratings")
+            else:
+                for sp in sports:
+                    cur.execute("DELETE FROM athlete_ratings WHERE pool LIKE %s",
+                                (f"%|{sp}",))
+                    print(f"[db] cleared {cur.rowcount:,} {sp} athlete ratings")
+
+            n = _copyInto(cur, "athlete_ratings",
+                          ("athlete_id", "pool", "speed_rating",
+                           "n_races", "last_updated"), rows)
+        conn.commit()
+    print(f"[db] saved {n:,} athlete ratings")
+
 
 # ------------------------------------------------------------------ #
 # SAVE — PER-RESULT SPEED RATINGS
 # ------------------------------------------------------------------ #
 
-# saveResultSpeedRatings
-# Purpose: Writes per-result speed ratings back to the results table.
-#          Uses a temp table pattern instead of batched UPDATE loops —
-#          one bulk insert into a temp table, then one single UPDATE
-#          joining against it. Much faster than 400 separate execute_values
-#          UPDATE calls each scanning the full results table.
-# Arguments:
-#           result_ratings: dict mapping result_id -> speed_rating float.
-#           e.g. {10234: 118.4, 10235: 102.1}
-# Output: None.
-def saveResultSpeedRatings(result_ratings: dict):
- 
-    if not result_ratings:
+_SR_STAGING = "sr_staging"
+
+
+# _asPairs
+# Purpose:   accept EITHER an iterable of (result_id, rating) pairs OR a tuple of
+#            two numpy arrays, and yield pairs LAZILY in both cases.
+# Why:       speed_ratings.buildResultRatings used to end with
+#                return list(zip(rid.tolist(), val.tolist()))
+#            which allocates 30M Python ints, 30M Python floats, and 30M tuples
+#            in a list -- roughly 3.7GB, all of it thrown away one row later.
+#            Returning the two numpy arrays instead costs 30M*12 = 360MB, and
+#            this generator walks them without ever building the list.
+# Syntax:    `zip(a.tolist(), b.tolist())` would defeat the point; `map` over the
+#            arrays' .item() keeps one Python object alive at a time. numpy's
+#            iterator yields scalars, and str() of a np.float32 round-trips fine
+#            for COPY.
+def _asPairs(pairs):
+    if isinstance(pairs, tuple) and len(pairs) == 2 and hasattr(pairs[0], "size"):
+        rid, val = pairs
+        for i in range(rid.size):
+            yield int(rid[i]), float(val[i])
         return
+    yield from pairs
 
-    # Convert dict to list of (result_id, speed_rating) tuples.
-    # Note: value first in old version was (speed_rating, result_id) to
-    # match SET/WHERE order — now we use named columns in the temp table
-    # so order doesn't matter, but (result_id, speed_rating) is clearer.
-    all_rows = [
-        (result_id, speed_rating)
-        for result_id, speed_rating in result_ratings.items()
-    ]
- 
-    print(f"Saving {len(all_rows):,} result speed ratings via temp table...")
 
+# _stagingFor
+# Purpose:   one scratch table per sport, so a `both` run cannot collide.
+def _stagingFor(sport: str) -> str:
+    return f"{_SR_STAGING}_{sport.lower()}"
+
+
+# _fillStaging
+# Purpose:   COPY every (result_id, speed_rating) pair into a scratch table.
+# Detail:    UNLOGGED skips the WAL entirely. On a server crash Postgres simply
+#            TRUNCATEs the table, which costs nothing: the engine is rerunnable.
+#            That is the whole safety argument -- it is scratch.
+#            NO INDEX yet: we never look a row up in it here. mergeColumn hash-
+#            joins it once, and the update path indexes it just before use.
+# Output:    rows copied. `pairs` may be a GENERATOR of 30M items; we never
+#            build a list of it.
+def _fillStaging(conn, sport, pairs):
+    table = _stagingFor(sport)
+    with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {table}")
+        cur.execute(f"CREATE UNLOGGED TABLE {table} "
+                    f"(result_id bigint NOT NULL, val real NOT NULL)")
+        n = _copyInto(cur, table, ("result_id", "val"), _asPairs(pairs))
+    conn.commit()
+    print(f"[db] {sport}: COPYed {n:,} ratings into {table}")
+    return table, n
+
+
+# _updateFromStaging
+# Purpose:   the ORIGINAL write path, kept as the reference and the fallback.
+# Cost:      one new heap tuple per row, plus a random-page insertion into EVERY
+#            index (fillfactor=100 forbids a HOT update). ~150-290us/row here,
+#            i.e. 75-100 minutes for 30M rows. Correct, slow, and it touches
+#            nothing but the one column.
+# _tuneForBulkBuild
+# Purpose:   widen the memory Postgres may use for the heap rebuild and the
+#            index builds that follow it.
+# Arguments: conn -- the connection mergeColumn will run on.
+# Output:    None; two session GUCs set.
+#
+# WHY. mergeColumn rebuilds the heap and then recreates every index serially.
+# On results_tf that is 519s of CREATE TABLE plus ~570s of index builds -- about
+# 18 minutes, and by far the largest single block in a full run.
+#
+#   maintenance_work_mem defaults to 64MB. A B-tree build on 27.6M rows needs
+#   far more than that, so it spills the sort to disk and does an external merge.
+#   Giving it 4GB usually keeps the sort in memory.
+#
+#   max_parallel_maintenance_workers defaults to 2 and applies PER INDEX BUILD.
+#
+# ⚠ SESSION-SCOPED, NOT SET LOCAL. `SET LOCAL` would be reverted at the next
+#   COMMIT, and mergeColumn commits between steps -- so LOCAL would silently do
+#   nothing. This lives for the connection and dies with it.
+#
+# ⚠ MEMORY IS PER WORKER. 4GB x (workers + 1) is the worst case for ONE index
+#   build. On a 64GB box that is fine; on a smaller one, lower both numbers.
+def _tuneForBulkBuild(conn):
+    with conn.cursor() as cur:
+        # index-build sort memory; default 64MB spills 27.6M rows to disk
+        cur.execute("SET maintenance_work_mem = '4GB'")
+        # parallel B-tree builds, PER INDEX
+        cur.execute("SET max_parallel_maintenance_workers = 4")
+        # ⚠ WITHOUT THIS THE LINE ABOVE DOES ALMOST NOTHING. Maintenance workers
+        # are drawn from the same shared pool as query workers; if the pool has
+        # no free slots the index build silently runs serially. That is why the
+        # first attempt at this tuning moved the TF index phase only 570s->525s.
+        # (max_worker_processes is the hard ceiling and needs a server restart --
+        # if this still does not help, that is the reason.)
+        cur.execute("SET max_parallel_workers = 8")
+        # the CTAS joins results against sr_staging; more work_mem keeps the
+        # hash table in RAM instead of batching it to disk.
+        cur.execute("SET work_mem = '512MB'")
+        # ★ THE BIG ONE FOR THE HEAP REBUILD. CREATE TABLE AS is WAL-bound, and
+        # synchronous_commit=off stops each commit waiting on an fsync. Safe
+        # here BECAUSE THIS IS A DERIVED TABLE: a crash loses at most the last
+        # few transactions, and the remedy is to re-run the engine, which is
+        # what you would do anyway. Do NOT copy this to scraper writes.
+        cur.execute("SET synchronous_commit = off")
+    conn.commit()
+    print("[db] bulk-build tuning: maintenance_work_mem=4GB, "
+          "parallel_maintenance=4, max_parallel_workers=8, "
+          "work_mem=512MB, synchronous_commit=off")
+
+
+def _updateFromStaging(conn, sport, table, staging):
+    with conn.cursor() as cur:
+        _t = time.time()
+        cur.execute(f"CREATE INDEX ON {staging} (result_id)")
+        cur.execute(f"ANALYZE {staging}")
+        print(f"[db] {sport}: staged; bulk UPDATE (this is the slow path)...")
+        cur.execute(f"""
+            UPDATE {table}
+               SET speed_rating = t.val
+              FROM {staging} t
+             WHERE {table}.result_id = t.result_id
+        """)
+        print(f"[db] {sport}: UPDATE took {time.time() - _t:.0f}s")
+    conn.commit()
+
+
+# saveResultSpeedRatings
+# Purpose:   one speed_rating per result, into the right table for the sport.
+# Arguments: sport -- 'XC' | 'TF'
+#            pairs -- ITERABLE (may be a generator) of (result_id, rating)
+#            mode  -- "rebuild" (default, ~10x faster) or "update"
+# Output:    none.
+#
+# mode="rebuild" rebuilds the heap in one sequential pass and sorts each index
+#   once, instead of scattering ~30M random index insertions. Measured on this
+#   database: 122 seconds for a 39M-row table, against 75-100 minutes for the
+#   UPDATE. It leaves <table>_old behind as an undo copy and REQUIRES exclusive
+#   access -- rows written by the launcher mid-rebuild land in <table>_old and
+#   are LOST. Run with the launcher off.
+#
+# mode="update" is the old path: slower, but concurrent-safe and it leaves no
+#   _old table. Use it if the launcher must keep running.
+def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
+    table = {"XC": "results", "TF": "results_tf"}[sport]
     with getConn() as conn:
+        staging, n = _fillStaging(conn, sport, pairs)
+        if n == 0:
+            print(f"[db] {sport}: nothing to save")
+            return
+        if mode == "rebuild":
+            _tuneForBulkBuild(conn)
 
-        cursor = conn.cursor()
+            # ! CLEAR THE PREVIOUS RUN'S LEFTOVER BEFORE MERGING, NOT ONLY
+            #   AFTER. The drop below runs after a SUCCESSFUL merge, so a run
+            #   that dies anywhere later -- a crash, a killed process, a failure
+            #   in apply_tilt -- leaves <table>_old behind, and the next
+            #   --golive refuses to start because mergeColumn checks for it.
+            #
+            #   That check is right: a swap onto an existing _old fails AFTER
+            #   the rebuild, wasting the fifteen minutes it just spent. But the
+            #   leftover is this function's own output from last time, so this
+            #   is the one place that knows it is safe to discard.
+            #
+            # ⚠ SAFE BECAUSE THE PREVIOUS MERGE COMPLETED. mergeColumn only
+            #   renames the live table aside once the new one is built, so an
+            #   existing _old means last run's swap SUCCEEDED and `table` holds
+            #   its result. A half-finished merge leaves no _old at all.
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT to_regclass('{table}_old')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute(f"DROP TABLE IF EXISTS {table}_old")
+                    print(f"[db] {sport}: dropped a stale {table}_old "
+                          f"from an earlier run")
+            conn.commit()
+            # preserve_unmatched=False: this is a FULL RECOMPUTE. The engine saw
+            # every row and DECLINED to rate some (out-of-band normalized_time,
+            # no venue, pool with no mean). Those must read NULL, not a value an
+            # older engine wrote. COALESCE left 4,216 fossils behind -- rows with
+            # speed_rating 7528 on a normalized_time of 20.6 seconds.
+            mergeColumn(conn, table, "speed_rating", staging,
+                        key="result_id", val="val", preserve_unmatched=False)
+        else:
+            _updateFromStaging(conn, sport, table, staging)
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {staging}")
 
-        # Step 1 — create a temp table to stage the new ratings.
-        # TEMP means it's only visible to this connection — no other
-        # session can see or interfere with it.
-        # ON COMMIT DROP means Postgres destroys it automatically when
-        # the transaction commits, so no cleanup needed even if an
-        # exception fires mid-save.
-        cursor.execute("""
-            CREATE TEMP TABLE tmp_speed_ratings (
-                result_id    BIGINT,
-                speed_rating REAL
-            ) ON COMMIT DROP
-        """)
-
-        # Step 2 — bulk insert all rows into the temp table in one shot.
-        # execute_values sends rows in pages of 50,000 — each page is
-        # one round trip to Postgres. For 20M rows that's 400 inserts
-        # into a tiny temp table with no indexes, which is very fast.
-        # Inserting into a temp table is faster than updating the real
-        # table directly because there are no indexes to maintain and
-        # no MVCC overhead from updating existing rows.
-        psycopg2.extras.execute_values(cursor, """
-            INSERT INTO tmp_speed_ratings (result_id, speed_rating)
-            VALUES %s
-        """, all_rows, page_size=50000)
-
-        print("Temp table loaded — running bulk UPDATE...")
-
-        # Step 3 — single UPDATE joining the temp table to results.
-        # FROM tmp_speed_ratings tells Postgres to join the two tables
-        # and update every results row whose result_id matches a row
-        # in the temp table.
-        # This is ONE pass over the results table instead of 400 separate
-        # UPDATE calls each doing their own full table scan.
-        cursor.execute("""
-            UPDATE results
-            SET speed_rating = t.speed_rating
-            FROM tmp_speed_ratings t
-            WHERE results.result_id = t.result_id
-        """)
-
-        # Step 4 — commit triggers ON COMMIT DROP, destroying the temp
-        # table automatically. The UPDATE is also committed here.
+            # mergeColumn leaves <table>_old behind as an undo copy and never
+            # removes it. On a 34M-row table that is several GB per run, and it
+            # accumulates across runs.
+            #
+            # Dropped only AFTER the swap succeeded. If mergeColumn had failed,
+            # the original table would still be sitting under its _old name and
+            # this line would never be reached.
+            #
+            # ⚠ THIS REMOVES THE ONLY ROLLBACK. If a run produces bad ratings
+            #   the fix is to re-run the engine, not to restore a copy.
+            if mode == "rebuild":
+                cur.execute(f"DROP TABLE IF EXISTS {table}_old")
+                print(f"[db] {sport}: dropped {table}_old")
         conn.commit()
-
-    print(f"Saved {len(all_rows):,} result speed ratings")
+    print(f"[db] {sport}: saved {n:,} result speed ratings ({mode})")

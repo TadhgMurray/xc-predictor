@@ -168,7 +168,7 @@ def _indexByAthleteEvent(results) -> dict:
     # gender, so a man's 5000m never pairs with a woman's.
     groups = {}
     for row in results:
-        key = (row["athlete_id"], row["event_short"], row["gender"])
+        key = (row["athlete_id"], row["event_short"])
         # setdefault returns the existing list for key, or inserts a fresh [] and
         # returns THAT — so .append always has a list to land in, no if-in branch.
         groups.setdefault(key, []).append(row)
@@ -341,6 +341,71 @@ def buildLengthCloud(results, window_days=DEFAULT_WINDOW_DAYS,
         for pair in _closestPerTransition(pairs):
             cloud.append(_emitLengthSample(pair))
     return cloud
+
+# _indexFlatAnnotated
+# Purpose:   PASS 2's lookup table: the annotated rows an assumed row could
+#            pair with — flat, known length, NOT ~400 (an assumed-400 vs an
+#            annotated-400 is same-length: no transition to read).
+# Arguments: results — the annotated row dicts from loadTFGeometryResults.
+# Output:    dict (athlete_id, event_short) -> list of qualifying rows.
+def _indexFlatAnnotated(results) -> dict:
+    index = {}
+    for row in results:
+        if (_isFlat(row["track_type"]) and row["track_length"] is not None
+                and abs(row["track_length"] - 400.0) > 1.0):
+            key = (row["athlete_id"], row["event_short"])
+            index.setdefault(key, []).append(row)
+    return index
+
+
+# _bridgeKey
+# Purpose:   The one-best-pair identity for a bridge candidate: which
+#            athlete/event/transition it is. Mirrors _closestPerTransition's
+#            rule, expressed as a dict key because pass 2 streams (we can't
+#            collect-then-reduce a 70M stream; we reduce AS we stream).
+# Arguments: assumed_row, annotated_row — the two sides.
+# Output:    (athlete_id, event_short, min_len, max_len).
+def _bridgeKey(assumed_row, annotated_row):
+    la, lb = assumed_row["track_length"], annotated_row["track_length"]
+    return (assumed_row["athlete_id"], assumed_row["event_short"],
+            min(la, lb), max(la, lb))
+
+
+# _emitLengthSampleTagged
+# Purpose:   The 5-field sample: the usual 4 plus the assumed tag (1 when
+#            either side is assumed). Replaces _emitLengthSample's output
+#            shape everywhere, so the CSV has ONE schema.
+# Arguments: pair — (row_a, row_b), both flat, lengths differ.
+# Output:    (length_from, length_to, event_distance, ratio, assumed_flag).
+def _emitLengthSampleTagged(pair):
+    lf, lt, dist, ratio = _emitLengthSample(pair)     # reuse the old logic
+    flag = 1 if (pair[0].get("assumed") or pair[1].get("assumed")) else 0
+    return (lf, lt, dist, ratio, flag)
+
+
+# buildAssumedBridge
+# Purpose:   PASS 2, whole: stream assumed rows against the annotated index,
+#            keep the closest-in-time pair per (athlete, event, transition),
+#            emit tagged samples. Memory = the index + one dict entry per
+#            bridging group; the 70M stream itself is never resident.
+# Arguments: annotated_results — pass 1's rows;  window_days — the gate.
+# Output:    list of 5-field samples (all with assumed_flag = 1).
+def buildAssumedBridge(annotated_results, window_days=DEFAULT_WINDOW_DAYS):
+    from geometry_db import streamAssumed400Records
+    index = _indexFlatAnnotated(annotated_results)
+    best = {}                                # key -> (gap_days, pair)
+    for arow in streamAssumed400Records():
+        group = index.get((arow["athlete_id"], arow["event_short"]))
+        if not group:
+            continue                         # semi-join tail: no flat partner
+        for brow in group:
+            gap = _daysApart(arow["date"], brow["date"])
+            if gap > window_days:
+                continue
+            key = _bridgeKey(arow, brow)
+            if key not in best or gap < best[key][0]:
+                best[key] = (gap, (arow, brow))   # streaming reduce: keep best
+    return [_emitLengthSampleTagged(pair) for _gap, pair in best.values()]
 
 
 # ------------------------------------------------------------------ #
@@ -551,55 +616,78 @@ def _writeCloudCSV(path, header, cloud) -> int:
         writer.writerows(cloud)
     return len(cloud)
 
+# _tagAnnotated
+# Purpose:   Append the assumed flag (0 = annotated) to every 4-field length
+#            sample, so annotated and bridge samples share ONE 5-field schema
+#            in the combined CSV. The builders stay untouched — tagging at
+#            the orchestration seam keeps the schema change in one place.
+# Arguments: cloud — 4-field samples (length_from, length_to, dist, ratio).
+# Output:    the same samples as 5-field tuples, flag 0.
+def _tagAnnotated(cloud) -> list:
+    # tuple + tuple concatenates: (a,b,c,d) + (0,) -> (a,b,c,d,0).
+    # The trailing comma in (0,) is what makes it a 1-tuple, not the int 0.
+    return [sample + (0,) for sample in cloud]
+
 
 # runGeometryDiagnostic
-# Purpose:   The whole diagnostic, top to bottom: load results, build both clouds,
-#            print both eyes-first reports, and persist both to CSV. Stays short —
-#            it ORCHESTRATES the builders, reporters, and writer; no measurement
-#            logic lives here.
-# Arguments: window_days        — close-in-time gate for both clouds.
-#            length_tol         — matched-length band for the banking cloud.
-#            min_length_delta_m — minimum real length difference for the length
-#                                 cloud.
-#            output_dir         — where the two CSVs are written.
-# Output:    (length_cloud, banking_cloud) — the raw clouds, also returned so a
-#            caller or test can use them without re-reading the CSVs.
+# Purpose:   The whole diagnostic: load annotated rows, build both clouds,
+#            build the ASSUMED-400 BRIDGE (pass 2), report all three, and
+#            persist — length CSV now 5-field (…, assumed), banking CSV
+#            unchanged (assumed rows are all Flat; they can never enter the
+#            banking cloud, so it has no flag to carry).
+# Arguments: (unchanged from before)
+# Output:    (combined_length_cloud, banking_cloud) — combined = annotated
+#            (flag 0) + bridge (flag 1), the exact rows the CSV holds.
 def runGeometryDiagnostic(window_days=DEFAULT_WINDOW_DAYS,
                           length_tol=DEFAULT_LENGTH_TOLERANCE_M,
                           min_length_delta_m=DEFAULT_MIN_LENGTH_DELTA_M,
                           output_dir=DEFAULT_OUTPUT_DIR):
 
-    # 1. Load — one trip; the loader already filtered + joined geometry.
+    # 1. PASS 1 — load annotated rows; build both clouds exactly as before.
     print("loading TF geometry results...", flush=True)
     results = loadTFGeometryResults()
     print(f"  {len(results):,} results")
-
-    # 2. Build both clouds (raw, continuous).
-    length_cloud = buildLengthCloud(results, window_days, min_length_delta_m)
+    length_cloud  = buildLengthCloud(results, window_days, min_length_delta_m)
     banking_cloud = buildBankingCloud(results, window_days, length_tol)
 
-    # 3. Report — the settings are echoed so a sweep's output is self-labelling.
+    # 2. PASS 2 — stream the assumed-400 candidates against the annotated
+    #    index; emits 5-field samples, every one flagged 1. THE SLOW STEP:
+    #    first run pays the 70M-row semi-join.
+    print("building assumed-400 bridge (streams ~70M candidates)...", flush=True)
+    bridge = buildAssumedBridge(results, window_days)
+
+    # 3. ONE schema: tag the annotated samples 0, concatenate.
+    combined = _tagAnnotated(length_cloud) + bridge
+
+    # 4. Report. _summarizeCloud reads the ratio as sample[-1] — true for
+    #    4-field rows, FALSE for 5-field (the flag is last). Slicing s[:4]
+    #    for display restores that contract without touching the summarizer;
+    #    the clouds themselves keep all 5 fields for the CSV.
     print(f"\n=== geometry diagnostic  (window={window_days}d, "
           f"length_tol={length_tol:g}m, min_length_delta={min_length_delta_m:g}m) ===")
-    _summarizeLengthCloud(length_cloud)
+    _summarizeLengthCloud(length_cloud)              # annotated, 4-field as-is
+    _summarizeCloud("BRIDGE cloud (assumed-400)",
+                    [s[:4] for s in bridge],         # display-slice, see above
+                    key_fn=lambda s: (s[0], s[1]),
+                    label_fn=lambda k: f"{k[0]:g}->{k[1]:g}m")
     _summarizeBankingCloud(banking_cloud)
 
-    # 4. Persist both (spline-ready). makedirs(exist_ok=True) = create the dir if
-    #    missing, no error if it's already there.
+    # 5. Persist — length header gains the 5th column; banking unchanged.
     os.makedirs(output_dir, exist_ok=True)
-    length_path = os.path.join(output_dir, "geometry_length_cloud.csv")
+    length_path  = os.path.join(output_dir, "geometry_length_cloud.csv")
     banking_path = os.path.join(output_dir, "geometry_banking_cloud.csv")
     _writeCloudCSV(length_path,
-                   ["length_from", "length_to", "event_distance", "ratio"],
-                   length_cloud)
+                   ["length_from", "length_to", "event_distance",
+                    "ratio", "assumed"],
+                   combined)
     _writeCloudCSV(banking_path,
                    ["event_distance", "track_length", "ratio"],
                    banking_cloud)
-    print(f"\nwrote {len(length_cloud):,} length samples  -> {length_path}")
+    print(f"\nwrote {len(combined):,} length samples "
+          f"({len(bridge):,} bridge)  -> {length_path}")
     print(f"wrote {len(banking_cloud):,} banking samples -> {banking_path}")
 
-    return length_cloud, banking_cloud
-
+    return combined, banking_cloud
 
 # ------------------------------------------------------------------ #
 # CLI: every tunable is a flag, so a sweep is one command away —
