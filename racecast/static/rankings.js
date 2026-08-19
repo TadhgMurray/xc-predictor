@@ -773,6 +773,19 @@ function renderPr(rows) {
   const body = rows.map((r, i) => {
     const href = raceHref(r);
 
+    /* ! A DNF STILL LINKS TO THE RACE. The row is kept deliberately --
+       somebody looking for an athlete in a race they did not finish should
+       find them, with the reason -- and the race page is where the rest of
+       that story is.
+
+       The rating belongs to a race too, so it points at the same place the
+       time does. maybeLink because a TF row without an event_id has no
+       route to offer.
+
+       ⚠ COMMENTS STAY OUT HERE, ABOVE THE LITERAL. A {slash-star} comment
+       INSIDE the template string is not a comment, it is output -- and raw
+       text is illegal between <tr> cells, so browsers hoist it out of the
+       table and it rendered as junk text above the whole board. */
     return `
     <tr>
       <td class="rank">${state.offset + i + 1}</td>
@@ -781,15 +794,8 @@ function renderPr(rows) {
       <td>${esc(r.grade)}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
-      {/* ! A DNF STILL LINKS TO THE RACE. The row is kept deliberately --
-             somebody looking for an athlete in a race they did not finish
-             should find them, with the reason -- and the race page is where
-             the rest of that story is. */}
       ${maybeLink(href, fmtTime(r.time_seconds),
                   "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
-      {/* The rating belongs to a race, so it points at the race --
-          the same place the date goes. maybeLink because a TF row
-          without an event_id has no route to offer. */}
       ${maybeLink(href, fmtRating(r.rating), "rating")}
     </tr>`;
   }).join("");
@@ -1185,6 +1191,22 @@ function initFromUrl() {
  *   would be a rank within that window, not within the corpus.
  */
 let findTimer = null;
+/* Index of the keyboard-highlighted suggestion, -1 for none. Reset whenever
+   the list re-renders -- a stale index would point at a row that moved. */
+let findActive = -1;
+
+function findOpts() {
+  return $("find-results").querySelectorAll(".find-opt");
+}
+
+function findSetActive(i) {
+  const opts = findOpts();
+  if (!opts.length) { findActive = -1; return; }
+  // Wrap at both ends: arrow-down off the last row returns to the first.
+  findActive = ((i % opts.length) + opts.length) % opts.length;
+  opts.forEach((el, k) => el.classList.toggle("is-active", k === findActive));
+  opts[findActive].scrollIntoView({ block: "nearest" });
+}
 
 function findStatus(msg, isError) {
   const el = $("find-status");
@@ -1195,6 +1217,7 @@ function findStatus(msg, isError) {
 async function findSuggest() {
   const q = $("find-input").value.trim();
   const box = $("find-results");
+  findActive = -1;
   if (q.length < 2) { box.innerHTML = ""; box.classList.add("hidden"); return; }
 
   try {
@@ -1241,6 +1264,29 @@ $("find-input").addEventListener("input", () => {
   clearTimeout(findTimer);
   // Debounced: a keystroke per request would fire a dozen for one name.
   findTimer = setTimeout(findSuggest, 180);
+});
+
+/* Keyboard: arrows walk the suggestions, Enter picks the highlighted one --
+   or the FIRST one when nothing is highlighted, because someone who typed a
+   full name and hit Enter meant the obvious match, not nothing. Escape
+   closes without picking. */
+$("find-input").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!findOpts().length) return;
+    // Stop the caret jumping to the ends of the input on every press.
+    e.preventDefault();
+    findSetActive(findActive + (e.key === "ArrowDown" ? 1 : -1));
+  } else if (e.key === "Enter") {
+    const opts = findOpts();
+    const pick = findActive >= 0 ? opts[findActive] : opts[0];
+    if (!pick) return;
+    e.preventDefault();
+    $("find-input").value = pick.dataset.name;
+    jumpTo(pick.dataset.pid, pick.dataset.name);
+  } else if (e.key === "Escape") {
+    $("find-results").classList.add("hidden");
+    findActive = -1;
+  }
 });
 
 $("find-results").addEventListener("mousedown", (e) => {

@@ -459,7 +459,10 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     color: #222;
     border-bottom: 1px solid #eee;
 }
-.sr-item:hover { background: #f5f5f5; }
+/* .is-active is the keyboard highlight (arrow keys in topbar-search.js);
+   same colour as hover, because it means the same thing. */
+.sr-item:hover, .sr-item.is-active { background: #f5f5f5; }
+.sr-more.is-active { background: #f0f0f0; }
 .sr-kind {
     font-size: 0.7rem;
     text-transform: uppercase;
@@ -705,7 +708,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .sr-scroll { overflow-y: auto; flex: 1; }
 .sr-item { display: flex; gap: 0.5rem; padding: 0.4rem 0.7rem;
            text-decoration: none; color: #222; border-bottom: 1px solid #eee; }
-.sr-item:hover { background: #f5f5f5; }
+.sr-item:hover, .sr-item.is-active { background: #f5f5f5; }
 .sr-more { padding: 0.5rem; text-align: center; background: #fafafa;
            border-top: 1px solid #ddd; text-decoration: none; color: #333; }
 
@@ -1651,7 +1654,10 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     font-size: 0.88rem;
     cursor: pointer;
 }
-.rankings-page .find-opt:hover { background: #f0f0ec; }
+/* .is-active is the keyboard highlight (arrow keys); same colour as hover,
+   because it means the same thing. */
+.rankings-page .find-opt:hover,
+.rankings-page .find-opt.is-active { background: #f0f0ec; }
 .rankings-page .find-sub { display: block; color: #888; font-size: 0.78rem; }
 
 /* ---- not built yet --------------------------------------------------- */

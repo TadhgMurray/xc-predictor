@@ -9,7 +9,11 @@
 {% include "_topbar.html" %}
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
-        <a href="/course/{{ header.course_name }}">{{ header.course_name }}</a> ·
+        {# |urlencode, same as every school link: the name goes into the URL
+           as DATA, so characters that mean something in a URL (& # ? %) must
+           be escaped or the browser reads them as URL structure and the link
+           silently truncates. #}
+        <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
         {{ header.distance|int if header.distance else "—" }}m ·
         {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "—" }} ·
         {{ header.division }} ·
