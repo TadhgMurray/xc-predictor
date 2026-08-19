@@ -110,14 +110,12 @@ def fetch(cur, sql, params=()):
 
 
 def _academicYear(alias="r"):
-    """July onward belongs to the year the season STARTS, matching
-    season_level._academicYearExpr and the grade backfill. Getting this wrong
-    would split each XC season across two labels and halve every year's n."""
-    return f"""
-        CASE WHEN substr({alias}.date, 6, 2)::int >= 7
-             THEN substr({alias}.date, 1, 4)::int
-             ELSE substr({alias}.date, 1, 4)::int - 1
-        END"""
+    """The season a race belongs to -- season_year's seam (August), the same
+    one season_level._academicYearExpr and the grade backfill now use.
+    Getting this wrong would split each XC season across two labels and halve
+    every year's n."""
+    from season_year import seasonYearSqlInt
+    return seasonYearSqlInt(None, f"{alias}.date")
 
 
 # ------------------------------------------------------------------ #

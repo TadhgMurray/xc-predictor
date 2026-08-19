@@ -411,11 +411,12 @@ def loadSeasonLevels():
 
 
 # _academicYear
-# Purpose:   the July-start season label athlete_season_level is keyed on.
-# Detail:    month >= 7 -> the year the season STARTS, else the previous year.
-#            Mirrors season_level._academicYearExpr; kept as a two-line local
-#            rather than an import because that module opens a DB connection
-#            and imports the fitter chain at import time.
+# Purpose:   the season label athlete_season_level is keyed on.
+# Detail:    season_year's academic year (August seam). season_level's
+#            _academicYearExpr writes `ay` from the same module, so the
+#            lookup and the table cannot disagree. season_year is imported
+#            lazily because this function is also called from contexts that
+#            never touch the season tables.
 def _academicYear(race_date):
     """The season a race belongs to. Delegates -- it does not decide.
 

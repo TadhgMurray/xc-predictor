@@ -314,13 +314,19 @@ def loadXCResults() -> list[dict]:
         LEFT JOIN athlete_season_level asl_s
                ON asl_s.person_id = r.person_id
               AND asl_s.sport = 'XC'
-              AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+              AND asl_s.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
+              --   while athlete_season_level moved to the August seam; a
+              --   mismatched seam mis-joins every July race silently.
+              CASE WHEN substring(r.date, 6, 2) >= '08'
                                   THEN substring(r.date, 1, 4)::int
                                   ELSE substring(r.date, 1, 4)::int - 1 END
         LEFT JOIN athlete_season_level asl_a
                ON asl_a.person_id = r.person_id
               AND asl_a.sport = 'ALL'
-              AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+              AND asl_a.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
+              --   while athlete_season_level moved to the August seam; a
+              --   mismatched seam mis-joins every July race silently.
+              CASE WHEN substring(r.date, 6, 2) >= '08'
                                   THEN substring(r.date, 1, 4)::int
                                   ELSE substring(r.date, 1, 4)::int - 1 END
         -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or
@@ -495,13 +501,19 @@ def loadTFResults() -> list[dict]:
             LEFT JOIN athlete_season_level asl_s
                    ON asl_s.person_id = r.person_id
                   AND asl_s.sport = 'TF'
-                  AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                  AND asl_s.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
+              --   while athlete_season_level moved to the August seam; a
+              --   mismatched seam mis-joins every July race silently.
+              CASE WHEN substring(r.date, 6, 2) >= '08'
                                       THEN substring(r.date, 1, 4)::int
                                       ELSE substring(r.date, 1, 4)::int - 1 END
             LEFT JOIN athlete_season_level asl_a
                    ON asl_a.person_id = r.person_id
                   AND asl_a.sport = 'ALL'
-                  AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
+                  AND asl_a.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
+              --   while athlete_season_level moved to the August seam; a
+              --   mismatched seam mis-joins every July race silently.
+              CASE WHEN substring(r.date, 6, 2) >= '08'
                                       THEN substring(r.date, 1, 4)::int
                                       ELSE substring(r.date, 1, 4)::int - 1 END
             -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or

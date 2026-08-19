@@ -136,7 +136,7 @@ _NON_SCHOOL_FRAGMENTS = ("dark sky", "under arm", "under armour", "under armor")
 # the rankings tables disagree about which season a race is in, the home card
 # and the page it links to silently show different sets of athletes.
 sys.path.insert(0, "engine")
-from season_year import seasonYearFromIso, seasonYearSql
+from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 from pool_resolve import resolvePool, inScope
 
 
@@ -648,56 +648,37 @@ _GATE_JOINS = """
     --   decision function now discards.
 """
 
-_SEASON_LEVEL_JOIN_XC = """
-    -- ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
-    --   LEFT JOIN LATERAL (... ORDER BY (sport = 'XC') DESC LIMIT 1), which
-    --   Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
-    --   rows and an athlete_season_level that had just tripled to 61.8M, that
-    --   turned a four-minute panels run into three and a half hours for one
-    --   sport. Both of these hit the (person_id, ay, sport) primary key
-    --   directly, so the planner can hash or index-nested-loop them once.
-    --
-    --   COALESCE below picks the sport-specific verdict when it exists and the
-    --   combined 'ALL' row otherwise -- identical semantics to the LATERAL's
-    --   ORDER BY, without the per-row work.
-    LEFT JOIN athlete_season_level asl_s
-           ON asl_s.person_id = r.person_id
-          AND asl_s.sport = 'XC'
-          AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                            THEN substring(r.date, 1, 4)::int
-                            ELSE substring(r.date, 1, 4)::int - 1 END
-    LEFT JOIN athlete_season_level asl_a
-           ON asl_a.person_id = r.person_id
-          AND asl_a.sport = 'ALL'
-          AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                            THEN substring(r.date, 1, 4)::int
-                            ELSE substring(r.date, 1, 4)::int - 1 END
-"""
+def _seasonLevelJoin(sport):
+    """The athlete_season_level joins for one sport.
 
-_SEASON_LEVEL_JOIN_TF = """
-    -- ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
-    --   LEFT JOIN LATERAL (... ORDER BY (sport = 'XC') DESC LIMIT 1), which
-    --   Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
-    --   rows and an athlete_season_level that had just tripled to 61.8M, that
-    --   turned a four-minute panels run into three and a half hours for one
-    --   sport. Both of these hit the (person_id, ay, sport) primary key
-    --   directly, so the planner can hash or index-nested-loop them once.
-    --
-    --   COALESCE below picks the sport-specific verdict when it exists and the
-    --   combined 'ALL' row otherwise -- identical semantics to the LATERAL's
-    --   ORDER BY, without the per-row work.
+    ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
+      LEFT JOIN LATERAL (... ORDER BY (sport = ...) DESC LIMIT 1), which
+      Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
+      rows and an athlete_season_level that had just tripled to 61.8M, that
+      turned a four-minute panels run into three and a half hours for one
+      sport. Both of these hit the (person_id, ay, sport) primary key
+      directly, so the planner can hash or index-nested-loop them once.
+
+      COALESCE at the SELECT picks the sport-specific verdict when it exists
+      and the combined 'ALL' row otherwise -- identical semantics to the
+      LATERAL's ORDER BY, without the per-row work.
+
+    ! THE SEASON KEY COMES FROM season_year, NOT A LOCAL CASE. This join used
+      to hard-code a JULY seam while the engine looked the same table up on
+      the AUGUST seam (speed_ratings._academicYear -> seasonYearFor).
+      season_level._academicYearExpr now writes `ay` on this expression too,
+      so writer, engine and this join cannot drift again.
+    """
+    ay = seasonYearSqlInt(None, "r.date")
+    return f"""
     LEFT JOIN athlete_season_level asl_s
            ON asl_s.person_id = r.person_id
-          AND asl_s.sport = 'TF'
-          AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                            THEN substring(r.date, 1, 4)::int
-                            ELSE substring(r.date, 1, 4)::int - 1 END
+          AND asl_s.sport = '{sport}'
+          AND asl_s.ay = {ay}
     LEFT JOIN athlete_season_level asl_a
            ON asl_a.person_id = r.person_id
           AND asl_a.sport = 'ALL'
-          AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                            THEN substring(r.date, 1, 4)::int
-                            ELSE substring(r.date, 1, 4)::int - 1 END
+          AND asl_a.ay = {ay}
 """
 
 # ! ONE JOIN INSTEAD OF SIX. ranking_results is written by
@@ -980,7 +961,7 @@ _ATHLETE_SQL_TEMPLATE = """
 
 def _seasonJoinFor(sport):
     """The season-verdict join for one sport, with the combined fallback."""
-    return _SEASON_LEVEL_JOIN_XC if sport == "XC" else _SEASON_LEVEL_JOIN_TF
+    return _seasonLevelJoin(sport)
 
 
 def _athleteSql(sport):
@@ -1257,8 +1238,24 @@ def main():
 
         for sport in sports:
             season_year = _seasonYear(conn, sport)
-            meta[f"season_year_{sport}"] = season_year or ""
-            print(f"[{sport}] season year = {season_year}")
+            # ! THE META CARRIES THE LABEL, NOT THE STORED YEAR. A TF season
+            #   is STORED under the year it opens in (Dec 2025 - Jul 2026 is
+            #   2025) but NAMED year + 1 everywhere a person reads it -- and
+            #   /rankings' year filter takes the label (rankings._yearClause).
+            #   Publishing the stored year here made the home page head a
+            #   season "TF -- 2025" that /rankings calls 2026, and its
+            #   View-all link's year=2025 then filtered the season BEFORE the
+            #   one on screen.
+            #
+            # ⚠ season_year itself stays stored: every query below compares
+            #   it against stored columns. Only what leaves for the reader is
+            #   relabelled.
+            label = season_year
+            if sport == "TF" and season_year:
+                label = str(int(season_year) + 1)
+            meta[f"season_year_{sport}"] = label or ""
+            print(f"[{sport}] season year = {season_year} "
+                  f"(displayed as {label})")
 
             _collectPerformances(conn, sport, season_year, buckets, stats)
             print(f"[{sport}] performances scanned: {stats['perf_seen']:,} "

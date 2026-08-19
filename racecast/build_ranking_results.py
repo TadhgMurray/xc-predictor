@@ -43,7 +43,7 @@ sys.path.insert(0, "engine")
 # reason poolFor is imported rather than reimplemented: if the site and the
 # engine disagree about which season a race is in, every board silently splits
 # the athletes the engine deliberately joined.
-from season_year import seasonYearFromIso, seasonYearSql
+from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 
 try:
     from normalize_distance import poolFor
@@ -247,56 +247,38 @@ def _gateJoins(sport):
     """
     return _GATE_JOINS.replace("{season}", seasonYearSql(sport, "r.date"))
 
-_SEASON_LEVEL_JOIN_XC = """
-        -- ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
-        --   LEFT JOIN LATERAL (... ORDER BY (sport = 'XC') DESC LIMIT 1), which
-        --   Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
-        --   rows and an athlete_season_level that had just tripled to 61.8M, that
-        --   turned a four-minute panels run into three and a half hours for one
-        --   sport. Both of these hit the (person_id, ay, sport) primary key
-        --   directly, so the planner can hash or index-nested-loop them once.
-        --
-        --   COALESCE below picks the sport-specific verdict when it exists and the
-        --   combined 'ALL' row otherwise -- identical semantics to the LATERAL's
-        --   ORDER BY, without the per-row work.
-        LEFT JOIN athlete_season_level asl_s
-               ON asl_s.person_id = r.person_id
-              AND asl_s.sport = 'XC'
-              AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                                THEN substring(r.date, 1, 4)::int
-                                ELSE substring(r.date, 1, 4)::int - 1 END
-        LEFT JOIN athlete_season_level asl_a
-               ON asl_a.person_id = r.person_id
-              AND asl_a.sport = 'ALL'
-              AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                                THEN substring(r.date, 1, 4)::int
-                                ELSE substring(r.date, 1, 4)::int - 1 END
-"""
+def _seasonLevelJoin(sport):
+    """The athlete_season_level joins for one sport.
 
-_SEASON_LEVEL_JOIN_TF = """
-        -- ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
-        --   LEFT JOIN LATERAL (... ORDER BY (sport = 'XC') DESC LIMIT 1), which
-        --   Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
-        --   rows and an athlete_season_level that had just tripled to 61.8M, that
-        --   turned a four-minute panels run into three and a half hours for one
-        --   sport. Both of these hit the (person_id, ay, sport) primary key
-        --   directly, so the planner can hash or index-nested-loop them once.
-        --
-        --   COALESCE below picks the sport-specific verdict when it exists and the
-        --   combined 'ALL' row otherwise -- identical semantics to the LATERAL's
-        --   ORDER BY, without the per-row work.
+    ⚠ TWO EQUALITY JOINS, NOT A LATERAL. The first version used
+      LEFT JOIN LATERAL (... ORDER BY (sport = ...) DESC LIMIT 1), which
+      Postgres executes ONCE PER ROW with a sort each time. Against 39M XC
+      rows and an athlete_season_level that had just tripled to 61.8M, that
+      turned a four-minute panels run into three and a half hours for one
+      sport. Both of these hit the (person_id, ay, sport) primary key
+      directly, so the planner can hash or index-nested-loop them once.
+
+      COALESCE at the SELECT picks the sport-specific verdict when it exists
+      and the combined 'ALL' row otherwise -- identical semantics to the
+      LATERAL's ORDER BY, without the per-row work.
+
+    ! THE SEASON KEY COMES FROM season_year, NOT A LOCAL CASE. This join used
+      to hard-code a JULY seam while grade_fix (three lines up in the same
+      query) joined on AUGUST -- two seams in one statement, and neither
+      matched how the engine looked the table up. season_level._academicYearExpr
+      now writes `ay` on this same expression, so writer, engine and this
+      join cannot drift again.
+    """
+    ay = seasonYearSqlInt(None, "r.date")
+    return f"""
         LEFT JOIN athlete_season_level asl_s
                ON asl_s.person_id = r.person_id
-              AND asl_s.sport = 'TF'
-              AND asl_s.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                                THEN substring(r.date, 1, 4)::int
-                                ELSE substring(r.date, 1, 4)::int - 1 END
+              AND asl_s.sport = '{sport}'
+              AND asl_s.ay = {ay}
         LEFT JOIN athlete_season_level asl_a
                ON asl_a.person_id = r.person_id
               AND asl_a.sport = 'ALL'
-              AND asl_a.ay = CASE WHEN substring(r.date, 6, 2) >= '07'
-                                THEN substring(r.date, 1, 4)::int
-                                ELSE substring(r.date, 1, 4)::int - 1 END
+              AND asl_a.ay = {ay}
 """
 
 # ! XC HAS NO EVENT DIMENSION. Its race page is /race/xc/<meet>/<div>, two
@@ -343,7 +325,7 @@ _SQL = {
         --   corpus has already decided were wrong.
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
-        {_GENDER_JOIN}{_SEASON_LEVEL_JOIN_XC}{_gateJoins("XC")}
+        {_GENDER_JOIN}{_seasonLevelJoin("XC")}{_gateJoins("XC")}
         WHERE r.speed_rating IS NOT NULL
           AND r.person_id IS NOT NULL
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
@@ -383,7 +365,7 @@ _SQL = {
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_GENDER_JOIN}{_SEASON_LEVEL_JOIN_TF}{_gateJoins("TF")}
+        {_GENDER_JOIN}{_seasonLevelJoin("TF")}{_gateJoins("TF")}
         WHERE r.speed_rating IS NOT NULL
           AND r.person_id IS NOT NULL
           AND COALESCE(r.is_relay, 0) = 0

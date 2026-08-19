@@ -83,8 +83,13 @@ def _point(race, value):
 
     rid  the season tables anchor each row as id="race-<result_id>", so a dot
          can scroll to the race it represents.
-    y    the season year. athlete-charts.js draws a divider wherever this
+    y    the season LABEL. athlete-charts.js draws a divider wherever this
          changes and labels the span with it -- that is the whole x-axis.
+         The route stamps season_label (academic year, shown as year+1 for
+         TF, same as the season tables), so a divider can no longer land in
+         the middle of an indoor-plus-outdoor campaign the tables show as
+         one block. _year_of remains only as the fallback for a caller that
+         never stamped labels.
     sp   the sport, so the combined chart can colour XC and TF differently.
     """
     return {
@@ -93,7 +98,7 @@ def _point(race, value):
         "meet": race.get("meet"),
         "result": race.get("result"),
         "rid": race.get("result_id"),
-        "y": _year_of(race["date"]),
+        "y": race.get("season_label") or _year_of(race["date"]),
         "sp": race.get("sport"),
     }
 

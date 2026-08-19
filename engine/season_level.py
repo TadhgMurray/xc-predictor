@@ -76,6 +76,9 @@ from level_graph import _raceKeyExpr
 #   This module is a PRODUCER of season_level and poolFor is its CONSUMER:
 #   two callers of one definition -> import.
 from normalize_distance import arbitrateLevel, levelToPool, POOLABLE_LEVELS
+# ! THE ONE CLOCK. This module used to hard-roll its own July seam; see
+#   _academicYearExpr for why that was a silent mis-join and what to rebuild.
+from season_year import seasonYearSqlInt, seasonYearFromIso, seasonYearFor
 
 
 # ------------------------------------------------------------------ #
@@ -101,21 +104,22 @@ MIN_DECIDED_RACES = 1
 
 def _academicYearExpr(alias="r"):
     """
-    July onward belongs to the year the season STARTS, so fall XC and the
-    following spring TF share one label.
+    The season a race belongs to. Delegates to season_year -- the ONE clock.
 
-    Matches the convention already used by the grade backfill (newest 1.7).
-    Getting this wrong would split every athlete's XC and TF into two seasons
-    and halve the evidence behind each verdict.
+    ⚠ THIS USED TO HARD-CODE ITS OWN JULY SEAM, and it was the last writer
+      off the clock. season_year's seam is AUGUST (July closes the prior
+      season -- outdoor championships and JO finals are a climax, not an
+      opening), and speed_ratings looks athlete_season_level up with
+      seasonYearFor, i.e. August. A table WRITTEN on July and READ on August
+      mis-keys every July race silently: the lookup finds nothing or the
+      wrong season, no error. Same class of bug as the pack's old TF/XC
+      rollover pair, fixed the same way -- one definition, imported.
 
-    substr(date,6,2) is the month: `date` is TEXT in ISO form, so character
-    positions are stable. Cast to int for the comparison.
+    ⚠ REBUILD athlete_season_level AFTER THIS CHANGE. Until it re-runs, the
+      stored table is still on the July seam and this expression will
+      mis-join against it in exactly the way described above.
     """
-    return f"""
-        CASE WHEN substr({alias}.date, 6, 2)::int >= 7
-             THEN substr({alias}.date, 1, 4)::int
-             ELSE substr({alias}.date, 1, 4)::int - 1
-        END"""
+    return seasonYearSqlInt(None, f"{alias}.date")
 
 
 # ------------------------------------------------------------------ #
@@ -438,21 +442,16 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
 
 def academicYearOf(date):
     """
-    Python twin of _academicYearExpr. July onward = the year the season starts.
-
-    ★ THESE TWO MUST AGREE. If the SQL and the Python disagree by one year the
-      lookup silently misses and every override quietly stops firing -- no
-      error, just a no-op. Kept adjacent so a change to one is obvious.
+    Python twin of _academicYearExpr -- both now delegate to season_year, so
+    they cannot disagree with each other OR with speed_ratings' lookup.
 
     Accepts a date/datetime or an ISO 'YYYY-MM-DD' string.
     """
     if date is None:
         return None
     if isinstance(date, str):
-        year, month = int(date[0:4]), int(date[5:7])
-    else:
-        year, month = date.year, date.month
-    return year if month >= 7 else year - 1
+        return seasonYearFromIso(None, date)
+    return seasonYearFor(None, date)
 
 
 def seasonLevelJoinSql(results_alias="r", out="season_level"):
@@ -469,10 +468,7 @@ def seasonLevelJoinSql(results_alias="r", out="season_level"):
     join = f"""
         LEFT JOIN athlete_season_level asl
                ON asl.person_id = {results_alias}.person_id
-              AND asl.ay = CASE WHEN substr({results_alias}.date, 6, 2)::int >= 7
-                                THEN substr({results_alias}.date, 1, 4)::int
-                                ELSE substr({results_alias}.date, 1, 4)::int - 1
-                           END"""
+              AND asl.ay = {seasonYearSqlInt(None, f"{results_alias}.date")}"""
     select = f"asl.level AS {out}"
     return join, select
 

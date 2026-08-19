@@ -4,6 +4,14 @@ import time          # _reportThrottled
 
 sys.path.insert(0, "scripts")
 from database import getConn
+# ! THE ONE CLOCK. The athlete page groups its season tables on the academic
+#   year (August-July, named for the year it opens in) like everything else --
+#   the boards, athlete_season, grade_fix, the packer. It used to slice
+#   date[:4], which split every indoor campaign from its own outdoor half and
+#   disagreed with the season rating the rankings page shows for the same
+#   athlete. See engine/season_year.py.
+sys.path.insert(0, "engine")
+from season_year import seasonYearFromIso
 import psycopg2.extras
 # ! EXPLICIT, NOT RELIED ON. `import psycopg2.extras` binds the package, and
 #   psycopg2 does import .errors itself -- but depending on another module's
@@ -216,20 +224,73 @@ def athlete(person_id):
             if athlete is None:
                 abort(404)
 
-            # NOTE: athlete_ratings is keyed on athlete_id, not person_id, so
-            # tfrrs-only athletes (athlete_id = 0) have no reachable rating.
-            # Known engine gap -- the header just shows blank for those people.
-            cur.execute("""
-                SELECT speed_rating
-                FROM athlete_ratings
-                WHERE athlete_id = %s
-            """, (person_id,))
-            rating = cur.fetchone()
+            # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
+            #   boards rank -- so the number up top is one the athlete can go
+            #   find on /rankings. The old source, athlete_ratings, holds one
+            #   row per POOL with no ORDER BY, so fetchone() could show a
+            #   middle-school number over a college career depending on
+            #   physical row order. Most recent season = current form, which
+            #   is what a header means; the note under it says which season.
+            try:
+                cur.execute("""
+                    SELECT mean_rating, sport, pool, year, n_races
+                    FROM   athlete_season
+                    WHERE  person_id = %s
+                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                              n_races DESC
+                    LIMIT  1
+                """, (person_id,))
+                season_rating = cur.fetchone()
+            except psycopg2.errors.UndefinedTable:
+                # A database that has never run build_ranking_results.
+                conn.rollback()
+                season_rating = None
+
+            # ⚠ THE FALLBACK IS THE OLD TABLE, and it still earns its keep:
+            #   athlete_season is built from ranking_results, which is
+            #   US-scoped and drops unresolved or untrusted seasons, while
+            #   the engine rates them anyway. ORDER BY makes the pick
+            #   deterministic -- the bare fetchone() this replaces returned
+            #   an arbitrary pool's number.
+            rating = None
+            if season_rating is None:
+                cur.execute("""
+                    SELECT speed_rating
+                    FROM   athlete_ratings
+                    WHERE  athlete_id = %s
+                    ORDER  BY n_races DESC NULLS LAST, pool
+                    LIMIT  1
+                """, (person_id,))
+                rating = cur.fetchone()
             races = get_races(cur, person_id)
+
+            # ★ BOARD ELIGIBILITY, per academic season. ranking_results
+            #   silently drops seasons grade_sanity could not place or could
+            #   not corroborate; without this the page shows their ratings
+            #   with no hint they are on no board. _attach_season_verdicts
+            #   turns these rows into the season flags.
+            try:
+                cur.execute("""
+                    SELECT season, method, trust
+                    FROM   grade_fix
+                    WHERE  person_id = %s
+                """, (person_id,))
+                verdicts = cur.fetchall()
+            except psycopg2.errors.UndefinedTable:
+                # A database from before grade_sanity wrote grade_fix. No
+                # markers is the old behaviour, not a broken page.
+                conn.rollback()
+                verdicts = []
 
     # 0. collapse anet/tfrrs copies of the same physical race. MUST come before
     #    the record walk, or every duplicate gets its own PR/SR badge.
     races = dedupe_races(races)
+
+    # 0b. stamp each race with its season -- the academic year, labelled the
+    #     way the boards label it. Stamped ONCE here so the season tables, the
+    #     record flags and the sidebar bests all group on the same value.
+    for race in races:
+        race["season_label"] = season_label(race["sport"], race["date"])
 
     # 1. format times for display
     for race in races:
@@ -239,16 +300,23 @@ def athlete(person_id):
     chart_data = build_chart_data(races)
 
     # 2. define the knobs
+    # ! SEASON KEYS CARRY THE SPORT, because the label alone is ambiguous
+    #   across sports: TF's label is academic year + 1, so "2026 TF" (academic
+    #   2025) and "2026 XC" (academic 2026) are different campaigns wearing the
+    #   same number. Every "season" flag now means exactly one displayed
+    #   season block -- so a TF block's Rating Season Record is the best TF
+    #   race of THAT block, never outranked by an XC race from some calendar
+    #   year.
     by_distance = lambda r: r["event"]
     by_course   = lambda r: (r["meet"], r["event"])
     career_wide = lambda r: "ALL"
-    by_season_d = lambda r: (r["date"][:4], r["event"])
+    by_season_d = lambda r: (r["season_label"], r["sport"], r["event"])
     time_of     = lambda r: r["time_raw"]
     rating_of   = lambda r: r["speed_rating"]
     faster      = lambda new, best: new < best
     higher      = lambda new, best: new > best
-    by_season_course = lambda r: (r["date"][:4], r["meet"], r["event"])
-    by_season        = lambda r: r["date"][:4]
+    by_season_course = lambda r: (r["season_label"], r["sport"], r["meet"], r["event"])
+    by_season        = lambda r: (r["season_label"], r["sport"])
 
     # 3. compute the record sets
     pr_ids        = flag_records(races, by_distance, time_of,   faster)
@@ -278,11 +346,22 @@ def athlete(person_id):
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     seasons = enrich_seasons(seasons)
+    # AFTER enrich_seasons -- it rebuilds the values, so a note attached to
+    # the raw grouping would be thrown away with the list it sat on.
+    _attach_season_verdicts(seasons, verdicts)
     ordered = sorted(seasons.items(), reverse=True)
 
     athlete["grade"]  = _season_grade(races)
     athlete["school"] = _season_school(races) or athlete["school"]
-    athlete["rating"] = rating["speed_rating"] if rating else None
+    if season_rating:
+        athlete["rating"] = season_rating["mean_rating"]
+        # The season label, same rule as everywhere: TF displays year + 1.
+        label = (season_rating["year"] + 1 if season_rating["sport"] == "TF"
+                 else season_rating["year"])
+        athlete["rating_note"] = f"{label} {season_rating['sport']} season"
+    else:
+        athlete["rating"] = rating["speed_rating"] if rating else None
+        athlete["rating_note"] = None
 
     xc_seasons = [(k, v) for k, v in ordered if k[1] == "XC"]
     tf_seasons = [(k, v) for k, v in ordered if k[1] == "TF"]
@@ -556,14 +635,41 @@ def _format_fraction(frac):
     return f".{hundredths:02d}"                  # hundredth -> '.24'
 
 
+def season_label(sport, date_text):
+    """The season a race belongs to, as the string the page displays.
+
+    ★ ACADEMIC YEAR IN, BOARD LABEL OUT. seasonYearFromIso gives the stored
+      season (August-July, named for its opening year); the LABEL is what the
+      boards show -- year + 1 for TF, because nobody calls the Dec 2025 - Jul
+      2026 campaign their 2025 season. Same rule as rankings._YEAR_LABEL, so
+      the season heading here and the year column on /rankings agree.
+
+    ! A STRING, because the old key was date[:4] and the template, anchors
+      (#2026-TF) and tuple sorts all built on strings. The fallback below can
+      only return a string, and one int key beside it would make sorted() raise.
+
+    ⚠ THE FALLBACK IS THE OLD BEHAVIOUR, NOT AN ERROR. get_races has no date
+      regex (unlike build_ranking_results), so a malformed date must not take
+      the whole page down -- it gets the calendar slice, exactly what every
+      race got before this function existed.
+    """
+    try:
+        year = seasonYearFromIso(sport, date_text)
+    except (TypeError, ValueError, IndexError):
+        return (date_text or "")[:4]
+    return str(year + 1) if sport == "TF" else str(year)
+
+
 def group_into_seasons(races):
-    """Turn a flat list of races into a dict keyed by (year, sport),
-    each value being the list of races in that season."""
+    """Turn a flat list of races into a dict keyed by (season label, sport),
+    each value being the list of races in that season.
+
+    Reads race["season_label"], stamped once by the route -- the record flags
+    and the sidebar bests key on the same value, and computing it in one place
+    is what keeps the three from drifting."""
     seasons = {}
     for race in races:
-        year = race["date"][:4]
-        sport = race["sport"]
-        key = (year, sport)
+        key = (race["season_label"], race["sport"])
         seasons.setdefault(key, []).append(race)
     return seasons
 
@@ -580,6 +686,46 @@ def enrich_seasons(seasons):
             "school": _season_school(races),
         }
     return enriched
+
+
+# The verdicts that mean grade_sanity looked and could not place the season.
+# ⚠ MUST MATCH pool_resolve.resolvePool's refusal list -- these four make it
+#   return no pool, which is what drops the season from every board. They are
+#   inlined there rather than named, so this copy is the thing to keep in step.
+_NO_POOL_VERDICTS = ("no_evidence", "contradicted", "thin_field", "lone_word")
+
+
+def _attach_season_verdicts(seasons, verdicts):
+    """Mark each season block the ranking boards exclude, and why.
+
+    ★ THE SILENT DROP, MADE VISIBLE. build_ranking_results skips a row when
+      its season verdict resolves to no pool, or when its trust is 'low'
+      (fewer than two races behind the grade -- grade_sanity rule 7). The
+      rating itself is written separately by the engine, so the athlete page
+      shows a number that appears on no board, with nothing saying so. This
+      attaches season["board_note"] and the template renders the flag.
+
+    ! VERDICT FIRST, TRUST SECOND, same order resolvePool applies them: a
+      season with no pool is off the boards before trust is ever consulted,
+      so "grade unresolved" is the truer message when both hold.
+
+    grade_fix is keyed on the ACADEMIC year; the seasons dict is keyed on the
+    display label, which is academic + 1 for TF. Undo that here, not in the
+    query -- the label is a display rule and the database never sees it.
+    """
+    by_year = {int(v["season"]): v for v in verdicts}
+    for (label, sport), season in seasons.items():
+        try:
+            academic = int(label) - (1 if sport == "TF" else 0)
+        except ValueError:
+            continue                       # malformed-date fallback label
+        v = by_year.get(academic)
+        if v is None:
+            continue
+        if v.get("method") in _NO_POOL_VERDICTS:
+            season["board_note"] = v["method"]
+        elif v.get("trust") == "low":
+            season["board_note"] = "low_trust"
 
 
 def _season_grade(races):
