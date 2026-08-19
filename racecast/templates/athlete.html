@@ -3,7 +3,16 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ athlete.name }} — Racecast</title>
+    {# _meta.html emits <title> (appending "— Racecast" itself) plus the
+       share-card metadata -- athlete links are the most-shared URLs on the
+       site, and without og:* tags they unfurl as bare blue text in every
+       chat app. #}
+    {% set meta_title = athlete.name %}
+    {% set meta_description = "Speed ratings, personal records and the full "
+       "cross country and track history for " ~ athlete.name
+       ~ ((" (" ~ athlete.school ~ ")") if athlete.school else "")
+       ~ ", on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='athlete-charts.css') }}">
 </head>

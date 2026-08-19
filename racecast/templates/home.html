@@ -123,11 +123,8 @@
        two <title> elements is worse than a wrong one, because browsers take
        the first and some scrapers take the last. #}
     {% include "_meta.html" %}
+    {# Favicon comes from _meta.html now, same as every other page. #}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    {# The tick scale alone. The wordmark is wide and short, so at 16px it
-       would be eight illegible smudges; the scale is the only square-ish
-       part of the lockup and stays readable. #}
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 {# ================================================================= #}

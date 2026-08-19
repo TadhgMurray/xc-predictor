@@ -11,7 +11,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ header.meet_name }}</title>
+    {% set meta_title = header.meet_name %}
+    {% set meta_description = "Every race at this meet, with results and "
+       "speed ratings on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>

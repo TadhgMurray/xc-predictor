@@ -3,7 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ label if label else "Venue " ~ location_id }}</title>
+    {% set meta_title = label if label else "Venue " ~ location_id %}
+    {% set meta_description = "Meet and event history at this venue, with "
+       "results and speed ratings on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>

@@ -19,7 +19,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ header.meet_name }} — Compiled</title>
+    {% set meta_title = header.meet_name ~ " — Compiled" %}
+    {% set meta_description = "Every division merged into one field — who "
+       "beats whom when the races at this meet are compiled together." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>

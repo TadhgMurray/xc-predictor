@@ -18,7 +18,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ school }}</title>
+    {% set meta_title = school %}
+    {% set meta_description = "Current roster, all-time best athletes and "
+       "performances, and the full meet history for " ~ school ~ "." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>

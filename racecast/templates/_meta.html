@@ -67,6 +67,14 @@
    box, which throws away most of a 1200x630 design. #}
 <meta name="twitter:card" content="summary_large_image">
 
+{# ---- Favicon --------------------------------------------------------- #}
+{# Here rather than per page, for the same reason as everything else in
+   this file: one page forgetting the tag is a tab with no icon, and this
+   partial is already the head block every page shares. The tick scale
+   alone -- the wordmark is wide and short, so at 16px it would be eight
+   illegible smudges. #}
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+
 {# ---- Structured data: what shapes the RESULT ITSELF ----------------- #}
 {# The og:* tags above control the CARD that chat apps draw. They do almost
    nothing for a Google result. This block is the part that does:
