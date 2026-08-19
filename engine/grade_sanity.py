@@ -1570,7 +1570,8 @@ def resolve(cur, audit=False):
 def write(cur, resolved):
     """grade_fix carries the answer; grade_untrusted keeps consumers working.
 
-    ⚠ `season` HOLDS THE ACADEMIC (JULY-START) YEAR. The column name is
+    ⚠ `season` HOLDS THE ACADEMIC (AUGUST-START, per season_year) YEAR. The
+      column name is
       unchanged because panels.py and build_ranking_results.py already join on
       it academically; renaming it would break correct code. speed_ratings'
       poolOf is the consumer that had to move.
