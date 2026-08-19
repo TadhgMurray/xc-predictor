@@ -2413,3 +2413,29 @@ tr.more-row td { padding: 0; }
 .more-btn:hover { background: #f0f0ec; }
 .more-left { color: #999; }
 .h2-note { color: #999; font-weight: 400; font-size: 0.8em; }
+/* ---- phones, site-wide ------------------------------------------------ *
+ * The result pages now carry a real viewport meta, so this is where their
+ * phone layout is decided. Two calls made here:
+ *
+ *   TABLES KEEP FULL SIZE AND SCROLL SIDEWAYS WITHIN THEMSELVES. A results
+ *   table is the content of these pages, so it stays at 1rem while the
+ *   text around it drops a step -- and display:block + overflow-x keeps a
+ *   wide table from dragging the whole page sideways: the page never
+ *   scrolls horizontally, the table does.
+ *
+ *   THE TOPBAR WRAPS instead of overflowing: nav links flow onto a second
+ *   line and the search box takes a row of its own. */
+@media (max-width: 700px) {
+  body { font-size: 0.9rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.15rem; }
+
+  .topbar { flex-wrap: wrap; gap: 0.5rem 1rem; padding: 0.6rem 1rem; }
+  .topnav { flex-wrap: wrap; row-gap: 0.25rem; }
+  .search-wrap { flex: 1 1 100%; margin-left: 0; }
+
+  table { display: block; overflow-x: auto; font-size: 1rem; }
+  /* Tighter cells: the padding was sized for desktop whitespace, and on a
+     phone it is the difference between four visible columns and six. */
+  th, td { padding: 0.35rem 0.55rem; }
+}

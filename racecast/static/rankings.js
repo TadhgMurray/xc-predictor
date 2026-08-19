@@ -1018,21 +1018,37 @@ $("results").addEventListener("click", (e) => {
 });
 
 // Applying filters returns to page 1; paging keeps the filters.
-/* ! SCOPE RELOADS IMMEDIATELY, unlike the text filters. It is a select with
-     two options and no typing to finish, so waiting for Apply just makes it
-     feel broken -- the same reasoning that has pool and sport reload on
-     change. offset resets because the new board is a different length. */
-$("scope").addEventListener("change", () => { state.offset = 0; load(); });
+/* ★ EVERY SINGLE-CLICK CONTROL APPLIES IMMEDIATELY. One gesture, intention
+   complete: a select that waits for Apply reads as broken next to a scope
+   select that does not -- that was three different rules for one toolbar.
+   The dropdown panels still apply on close (ticking eight states is one
+   query, not eight), and the typed field (min races) applies on a FINISHED
+   edit -- change fires on blur, Enter or a spinner click, never per
+   keystroke, so nobody queries for "1" while typing "15". offset resets
+   because the new board is a different length. */
+function applyNow() { state.offset = 0; load(); }
+
+$("scope").addEventListener("change", applyNow);
+$("distance").addEventListener("change", applyNow);
+/* Date inputs fire change on a completed pick, not per keystroke. */
+$("date_from").addEventListener("change", applyNow);
+$("date_to").addEventListener("change", applyNow);
 
 $("min_races").addEventListener("input", (e) => {
   e.target.dataset.touched = "1";
 });
-$("sport").addEventListener("change", syncMinRaces);
+$("min_races").addEventListener("change", applyNow);
+$("sport").addEventListener("change", () => { syncMinRaces(); applyNow(); });
 
 /* Once touched, the pool is the user's and syncBoard stops overriding it. */
-$("pool").addEventListener("change", () => { state.poolTouched = true; });
+$("pool").addEventListener("change", () => {
+  state.poolTouched = true;
+  applyNow();
+});
 
-$("apply").addEventListener("click", () => { state.offset = 0; load(); });
+/* Kept as an explicit refresh -- it costs nothing and it is where the eye
+   goes when someone wants to be sure the board matches the controls. */
+$("apply").addEventListener("click", applyNow);
 
 $("prev").addEventListener("click", () => {
   state.offset = Math.max(0, state.offset - PAGE_SIZE);

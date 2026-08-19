@@ -1257,8 +1257,24 @@ def main():
 
         for sport in sports:
             season_year = _seasonYear(conn, sport)
-            meta[f"season_year_{sport}"] = season_year or ""
-            print(f"[{sport}] season year = {season_year}")
+            # ! THE META CARRIES THE LABEL, NOT THE STORED YEAR. A TF season
+            #   is STORED under the year it opens in (Dec 2025 - Jul 2026 is
+            #   2025) but NAMED year + 1 everywhere a person reads it -- and
+            #   /rankings' year filter takes the label (rankings._yearClause).
+            #   Publishing the stored year here made the home page head a
+            #   season "TF -- 2025" that /rankings calls 2026, and its
+            #   View-all link's year=2025 then filtered the season BEFORE the
+            #   one on screen.
+            #
+            # ⚠ season_year itself stays stored: every query below compares
+            #   it against stored columns. Only what leaves for the reader is
+            #   relabelled.
+            label = season_year
+            if sport == "TF" and season_year:
+                label = str(int(season_year) + 1)
+            meta[f"season_year_{sport}"] = label or ""
+            print(f"[{sport}] season year = {season_year} "
+                  f"(displayed as {label})")
 
             _collectPerformances(conn, sport, season_year, buckets, stats)
             print(f"[{sport}] performances scanned: {stats['perf_seen']:,} "

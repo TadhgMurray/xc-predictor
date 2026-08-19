@@ -224,15 +224,44 @@ def athlete(person_id):
             if athlete is None:
                 abort(404)
 
-            # NOTE: athlete_ratings is keyed on athlete_id, not person_id, so
-            # tfrrs-only athletes (athlete_id = 0) have no reachable rating.
-            # Known engine gap -- the header just shows blank for those people.
-            cur.execute("""
-                SELECT speed_rating
-                FROM athlete_ratings
-                WHERE athlete_id = %s
-            """, (person_id,))
-            rating = cur.fetchone()
+            # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
+            #   boards rank -- so the number up top is one the athlete can go
+            #   find on /rankings. The old source, athlete_ratings, holds one
+            #   row per POOL with no ORDER BY, so fetchone() could show a
+            #   middle-school number over a college career depending on
+            #   physical row order. Most recent season = current form, which
+            #   is what a header means; the note under it says which season.
+            try:
+                cur.execute("""
+                    SELECT mean_rating, sport, pool, year, n_races
+                    FROM   athlete_season
+                    WHERE  person_id = %s
+                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                              n_races DESC
+                    LIMIT  1
+                """, (person_id,))
+                season_rating = cur.fetchone()
+            except psycopg2.errors.UndefinedTable:
+                # A database that has never run build_ranking_results.
+                conn.rollback()
+                season_rating = None
+
+            # ⚠ THE FALLBACK IS THE OLD TABLE, and it still earns its keep:
+            #   athlete_season is built from ranking_results, which is
+            #   US-scoped and drops unresolved or untrusted seasons, while
+            #   the engine rates them anyway. ORDER BY makes the pick
+            #   deterministic -- the bare fetchone() this replaces returned
+            #   an arbitrary pool's number.
+            rating = None
+            if season_rating is None:
+                cur.execute("""
+                    SELECT speed_rating
+                    FROM   athlete_ratings
+                    WHERE  athlete_id = %s
+                    ORDER  BY n_races DESC NULLS LAST, pool
+                    LIMIT  1
+                """, (person_id,))
+                rating = cur.fetchone()
             races = get_races(cur, person_id)
 
             # ★ BOARD ELIGIBILITY, per academic season. ranking_results
@@ -324,7 +353,15 @@ def athlete(person_id):
 
     athlete["grade"]  = _season_grade(races)
     athlete["school"] = _season_school(races) or athlete["school"]
-    athlete["rating"] = rating["speed_rating"] if rating else None
+    if season_rating:
+        athlete["rating"] = season_rating["mean_rating"]
+        # The season label, same rule as everywhere: TF displays year + 1.
+        label = (season_rating["year"] + 1 if season_rating["sport"] == "TF"
+                 else season_rating["year"])
+        athlete["rating_note"] = f"{label} {season_rating['sport']} season"
+    else:
+        athlete["rating"] = rating["speed_rating"] if rating else None
+        athlete["rating_note"] = None
 
     xc_seasons = [(k, v) for k, v in ordered if k[1] == "XC"]
     tf_seasons = [(k, v) for k, v in ordered if k[1] == "TF"]

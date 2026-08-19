@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ label if label else "Venue " ~ location_id }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-{% include "_topbar.html" %}
 <body>
 {% include "_topbar.html" %}
     <h1>{{ label if label else "Venue " ~ location_id }}</h1>

@@ -300,6 +300,11 @@
                     <div class="stat">
                         <span class="label">Athlete rating</span>
                         <span class="value">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+                        {# WHICH season this number is -- the most recent one,
+                           from athlete_season. Without the note, a number
+                           that changes when a new season starts looks like
+                           drift rather than an update. #}
+                        {% if athlete.rating_note %}<span class="note">{{ athlete.rating_note }}</span>{% endif %}
                     </div>
                     {% if alltime.rating %}
                     <div class="stat">
