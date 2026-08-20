@@ -179,7 +179,10 @@ def solveSubset(course, group, y, n_cells, n_groups, min_degree=2, quiet=True,
         # a tilted solve is a DIFFERENT solve; never share a cache entry
         key += f"_h{float(h.sum()):.4f}"
     if sc is not None:
-        key += f"_sc{float(np.abs(sc).sum()):.2f}_k{ridge:g}"
+        # ⚠ v2 IN THE KEY, BECAUSE THE OPERATOR CHANGED. Entries written before
+        #   sc was re-centred on the subset came from an ASYMMETRIC operator --
+        #   see below -- and a cache hit would hand one straight back.
+        key += f"_sc2{float(np.abs(sc).sum()):.2f}_k{ridge:g}"
     if cache:
         hit = _loadCached(key)
         if hit is not None:
@@ -192,7 +195,22 @@ def solveSubset(course, group, y, n_cells, n_groups, min_degree=2, quiet=True,
                                       min_degree=min_degree)
     c, g, yy = course[mask], group[mask], y[mask]
     hh = None if h is None else h[mask]
-    ss = None if sc is None else sc[mask]
+    # ⚠ sc MUST BE RE-CENTRED ON THE SUBSET, AND MASKING ALONE DOES NOT DO IT.
+    #   sportCentered subtracts each group's MEAN sport indicator, computed
+    #   over every row. informativeMask then drops rows -- 6.4% of the corpus
+    #   on the run that exposed this -- and what is left no longer has group
+    #   mean zero.
+    #
+    # ★ AND THAT BREAKS THE ONE PROPERTY CG NEEDS. The projector is
+    #   (I - Q)M with Q = sc sc'/(sc'sc), and it is symmetric only when
+    #   M sc == sc, which is exactly "sc is centred within group". Off-centre,
+    #   QM != MQ and the operator is not symmetric -- so conjugate gradient is
+    #   not solving anything. Measured on a synthetic corpus thinned to the
+    #   same 93.6%: relative asymmetry 8.8e-02 against 5.6e-15 once re-centred.
+    #
+    #   demeanWithin IS the centring operation, so this is one line and it is
+    #   a no-op whenever the mask keeps every row.
+    ss = None if sc is None else pe.demeanWithin(sc[mask], g, n_groups)
     delta, iters, rel = pe.solveDelta(yy, c, g, n_cells, n_groups,
                                       max_iter=800, h=hh, sc=ss, ridge=ridge)
     if not quiet:

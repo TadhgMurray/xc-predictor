@@ -339,8 +339,50 @@ def _dot(a, b):
 #
 # Syntax: the CG recurrence is standard; `z` is the preconditioned residual and
 # `rz` the residual-preconditioner inner product that replaces r'r.
+# checkSymmetric
+# Purpose:   the one property CG assumes, tested rather than trusted.
+# Output:    relative asymmetry -- 0 for a symmetric operator.
+#
+# ⚠ CG ON AN ASYMMETRIC OPERATOR IS NOT SLOW, IT IS MEANINGLESS, and it does
+#   not announce itself: it presents as a residual that will not fall and then
+#   a non-positive p'Ap, which reads exactly like an ill-conditioned but valid
+#   problem. That cost a pipeline run and a long look at the wrong thing. The
+#   split path lost symmetry because sc arrived off-centre (see
+#   pair_validate.solveSubset); two random vectors would have said so in
+#   seconds.
+#
+# Two applyOperator passes per probe -- seconds against a solve of minutes, and
+# only once per solve.
+def checkSymmetric(course, group, n_cells, n_groups, h=None, sc=None,
+                   ridge=0.0, probes=2, seed=0):
+    rng = np.random.default_rng(seed)
+    worst = 0.0
+    for _ in range(probes):
+        v = rng.standard_normal(n_cells)
+        w = rng.standard_normal(n_cells)
+        Av = applyOperator(v, course, group, n_cells, n_groups, h=h, sc=sc,
+                           ridge=ridge)
+        Aw = applyOperator(w, course, group, n_cells, n_groups, h=h, sc=sc,
+                           ridge=ridge)
+        wAv, vAw = _dot(w, Av), _dot(v, Aw)
+        scale = max(abs(wAv), abs(vAw), 1e-30)
+        worst = max(worst, abs(wAv - vAw) / scale)
+    return worst
+
+
+# Converged enough that an exhausted operator is a finished solve rather than a
+# failed one. tol is 1e-10; six orders of magnitude of slack means a solve that
+# genuinely landed is never called a failure.
+EXHAUSTED_TOL = 1e-4
+
+# The line between rounding and a broken operator. Float64 over 56M rows
+# accumulates around 1e-13; the real defect measured 8.8e-02, twelve orders of
+# magnitude away, so anything in between is still a defect.
+SYMMETRY_TOL = 1e-8
+
+
 def solveDelta(y, course, group, n_cells, n_groups, tol=1e-10, max_iter=500,
-               h=None, sc=None, ridge=0.0):
+               h=None, sc=None, ridge=0.0, check=True):
     """
     ★ h IS THE ABILITY TILT. With h=None this is the plain two-way model, where
       a course multiplies every runner's time by the same factor.
@@ -359,6 +401,19 @@ def solveDelta(y, course, group, n_cells, n_groups, tol=1e-10, max_iter=500,
       Passing h makes the design entry for a row h_r instead of 1, so delta is
       the effect at h = 1 (rating 100) and every row is fitted at its own scale.
     """
+    if check:
+        asym = checkSymmetric(course, group, n_cells, n_groups, h=h, sc=sc,
+                              ridge=ridge)
+        if asym > SYMMETRY_TOL:
+            raise RuntimeError(
+                f"THE OPERATOR IS NOT SYMMETRIC: relative asymmetry {asym:.2e} "
+                f"against a tolerance of {SYMMETRY_TOL:.0e}. Conjugate "
+                f"gradient assumes symmetry, so it would return a delta that "
+                f"solves nothing -- refusing rather than fitting noise. With "
+                f"sc set, the usual cause is a sport indicator that is not "
+                f"centred within group on THESE rows: centre it with "
+                f"demeanWithin after any row subsetting.")
+
     dm = (demeanWithin(y, group, n_groups) if sc is None
           else demeanWithinSport(y, group, sc, n_groups, ridge))
     rhs = np.bincount(course, weights=dm if h is None else h * dm,
@@ -397,9 +452,29 @@ def solveDelta(y, course, group, n_cells, n_groups, tol=1e-10, max_iter=500,
             #   space, which with sc != None means the sport direction is
             #   near-null and delta is only partly determined. Say so loudly:
             #   an unconverged delta silently poisons signalVariance downstream.
-            print(f"    ⚠ CG STOPPED AT ITERATION {it + 1} with relative "
-                  f"residual {rel:.2e} -- the operator is numerically "
-                  f"exhausted, NOT converged.")
+            # ⚠ AND PRINTING THAT AND CARRYING ON WAS THE WRONG ANSWER.
+            #   This used to warn and break, returning a delta the note above
+            #   says "silently poisons signalVariance downstream" -- and on the
+            #   run that exposed it the warning came at iteration 1 with the
+            #   residual still at 1.0, meaning CG had achieved NOTHING. The
+            #   pipeline was one print away from writing that to the database,
+            #   and only a UnicodeEncodeError on this line stopped it. A
+            #   residual this size is a failed solve, so it raises like the
+            #   divergence guard above.
+            if rel > EXHAUSTED_TOL:
+                raise RuntimeError(
+                    f"CG STOPPED AT ITERATION {it + 1} having got nowhere: "
+                    f"relative residual {rel:.2e} against a tolerance of "
+                    f"{EXHAUSTED_TOL:.0e}. The operator is numerically "
+                    f"exhausted, NOT converged, and the delta it would return "
+                    f"is not a solution. With sc set this means the sport "
+                    f"direction is near-null: re-run without --split, or "
+                    f"raise the ridge.")
+            # Converged first, then ran out of range space. Ordinary, and the
+            # delta is good -- but say which iteration, because the count is
+            # how a slow drift in conditioning gets noticed.
+            print(f"    cg stopped at iteration {it + 1}, converged "
+                  f"(relative residual {rel:.2e})")
             break
         a = rz / pAp
         delta += a * p

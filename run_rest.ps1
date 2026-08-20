@@ -1,4 +1,4 @@
-# run_rest.ps1 -- wait for the grade_sanity already running, then do the rest.
+﻿# run_rest.ps1 -- wait for the grade_sanity already running, then do the rest.
 #
 # ★ IT WAITS RATHER THAN RE-RUNS. grade_sanity is an hour of work that is
 #   already in flight; starting a second one would fight the first for the
@@ -8,13 +8,23 @@
 #
 # ⚠ NOT $ErrorActionPreference = "Stop". With it set, `2>&1` turns every
 #   stderr write from python into a TERMINATING error -- and these scripts
+
 #   write ordinary progress and their own warning lines there. The run would
 #   abort on a harmless message. Failure is judged on the EXIT CODE, which is
 #   the only thing that distinguishes a traceback from a warning.
 
 $ErrorActionPreference = "Continue"
+
+# ⚠ UTF-8, OR A PRINT KILLS THE RUN -- and this file already had it while
+#   run_pipeline.ps1 did not, which is why the same engine step printed its ⚠
+#   here and died there. Redirected (`2>&1 | Tee-Object`), python's stdout is a
+#   pipe, so it uses the LOCALE encoding -- cp1252, which has no ⚠ -- instead
+#   of the console API that makes it work by hand. UTF-8 mode overrides that;
+#   the console encoding is set to match so the log reads back rather than
+#   turning into mojibake.
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $dir   = "logs\$stamp"

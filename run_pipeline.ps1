@@ -12,6 +12,29 @@
 
 $ErrorActionPreference = "Continue"
 
+# ------------------------------------------------------------------ #
+#  ⚠ UTF-8, OR A PRINT KILLS THE RUN
+# ------------------------------------------------------------------ #
+#
+#   08_golive died with UnicodeEncodeError: 'charmap' codec can't encode
+#   character '\u26a0' -- on the ⚠ inside a WARNING, six hours in.
+#
+# ★ AND THE REASON IT ONLY HAPPENS HERE IS THE PIPE. Straight to a console,
+#   Python writes through the Windows console API and every ★ and ⚠ in this
+#   project prints. The moment output is redirected -- `2>&1 | Tee-Object`, one
+#   line below -- stdout becomes a pipe and Python falls back to the LOCALE
+#   encoding, which on this machine is cp1252 and has no ⚠. So the same script
+#   that runs by hand dies inside the pipeline, which is exactly the wrong way
+#   round.
+#
+#   PYTHONUTF8=1 is UTF-8 mode: it makes stdout, stderr and every text file
+#   UTF-8 regardless of the locale. The console encoding is set to match so the
+#   log reads back correctly rather than as mojibake.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
+
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $dir   = "logs\$stamp"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -41,6 +64,9 @@ $expect = @{
     "backfill\backfill_normalize.py"  = "_loadGradeFix"
     "racecast\build_ranking_results.py" = "prepareTfStateTemp"
     "racecast\panels.py"              = "THE TWO PROMOTION-GATE JOINS ARE GONE"
+    "engine\pair_engine.py"           = "def checkSymmetric"
+    "engine\pair_validate.py"         = "demeanWithin(sc[mask]"
+    "racecast\build_course_rank.py"   = "def build"
 }
 
 Write-Host "preflight..." -ForegroundColor Cyan
