@@ -21,6 +21,17 @@ caller did not set.
   national board to three states and the ranks read 1, 4, 11 -- that is the
   truth about where those teams stand, and renumbering them 1, 2, 3 would
   invent a championship that was never run.
+
+⚠ WHICH IS EXACTLY WHY A SEASON IS ALWAYS PINNED. team_season holds one
+  scored meet PER YEAR, so a board with no year filter is thirty meets
+  stacked on top of each other -- thirty teams ranked 1st, and since the
+  tie-break is the school name, the best team in the country sorts wherever
+  the alphabet puts it among them. Measured on the first real run: about
+  twenty teams shown in first place and Newbury Park down at twentieth. An
+  unfiltered year is meaningless here in a way it is not on the athlete
+  boards, which rank a continuous number that means the same thing in every
+  season. So when the caller names no year, the newest season present is
+  chosen for them.
 """
 
 from rankings import (US_STATES, POOLS, SPORTS, SCOPES, MAX_LIMIT,
@@ -81,6 +92,9 @@ def parseFilters(args):
         #   national one. See the module docstring.
         "board_scope": states[0] if states and len(states) == 1 else "usa",
         "min_athletes": _boundedInt(args, "min_athletes", 5, 5, 50),
+        # Filled by resolveSeason when the caller named no year. STORED, not
+        # the label -- it comes straight out of the table.
+        "season": None,
         "limit": _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset": _boundedInt(args, "offset", 0, 0, 100000),
     }
@@ -95,6 +109,27 @@ def parseFilters(args):
         return None, "dir must be asc or desc"
     f["dir"] = direction or _SORTS[sort][1]
     return f, None
+
+
+def resolveSeason(cur, f):
+    """Pin the board to a season when the caller named none.
+
+    ★ THE NEWEST SEASON THAT ACTUALLY HAS TEAMS, not the newest on the wall
+      clock. Asking for the current calendar year would serve an empty board
+      every summer, and an empty board reads as "the feature is broken"
+      rather than "that season has not been run yet".
+
+    Sets f["season"] to the STORED year. The caller's own `year` filter, when
+    present, stays in charge -- it arrives as a LABEL and _where converts it.
+    """
+    if f["year"]:
+        return
+    cur.execute("""
+        SELECT max(year) FROM team_season
+        WHERE  scope = %(scope)s AND pool = %(pool)s AND sport = %(sport)s
+    """, {"scope": f["board_scope"], "pool": f["pool"], "sport": f["sport"]})
+    row = cur.fetchone()
+    f["season"] = row[0] if row else None
 
 
 def _where(f, params):
@@ -116,8 +151,14 @@ def _where(f, params):
         parts.append(" AND t.state = ANY(%(states)s)")
 
     if f["school"]:
-        params["schools"] = f["school"]
-        parts.append(" AND t.school = ANY(%(schools)s)")
+        # ⚠ NOT AN EQUALITY. The chips come from /search/api, whose labels are
+        #   the raw scraped school strings -- and the copy stored here is
+        #   mode() over an athlete-season's races, which can differ in case or
+        #   in trailing punctuation from the one the index happened to keep.
+        #   An exact match then returns an empty board and looks like the team
+        #   is missing rather than the string being spelled twice.
+        params["schools"] = [s.strip().lower() for s in f["school"]]
+        parts.append(" AND lower(btrim(t.school)) = ANY(%(schools)s)")
 
     if f["year"]:
         # Two indexable branches, not a CASE per row -- rankings._whereClauses
@@ -126,6 +167,11 @@ def _where(f, params):
         params["year_tf"] = [y - 1 for y in f["year"]]
         parts.append(" AND ((t.sport = 'TF' AND t.year = ANY(%(year_tf)s))"
                      "      OR (t.sport <> 'TF' AND t.year = ANY(%(year)s)))")
+    elif f.get("season") is not None:
+        # ! ALREADY THE STORED YEAR -- resolveSeason read it from the table,
+        #   so it needs no label conversion.
+        params["season"] = f["season"]
+        parts.append(" AND t.year = %(season)s")
 
     params["min_athletes"] = f["min_athletes"]
     parts.append(" AND t.n_athletes >= %(min_athletes)s")
@@ -134,6 +180,7 @@ def _where(f, params):
 
 def getTeamRankings(cur, f):
     """One page of a team board."""
+    resolveSeason(cur, f)
     params = {"limit": f["limit"], "offset": f["offset"]}
     where = _where(f, params)
     expr, _ = _SORTS[f["sort"]]

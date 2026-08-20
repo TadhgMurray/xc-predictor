@@ -91,7 +91,13 @@ _COLUMNS = ("scope", "school", "state", "pool", "sport", "year", "rank",
 #   the whole table. mean_rating is the athlete's season average -- the same
 #   number the athlete board ranks, not a second opinion about the season.
 _SOURCE_SQL = """
-    SELECT sport, year, pool, state, school, person_id,
+    SELECT sport, year, pool,
+           -- ! NORMALISED. A team is keyed (school, state), so 'Ca' and 'CA'
+           --   would be two teams sharing a name and splitting one squad --
+           --   and half a squad cannot field five scorers.
+           upper(btrim(state)) AS state,
+           btrim(school)       AS school,
+           person_id,
            mean_rating AS rating
     FROM   athlete_season
     WHERE  mean_rating IS NOT NULL
@@ -102,6 +108,22 @@ _SOURCE_SQL = """
       AND  (%(sport)s = 'both' OR sport = %(sport)s)
     ORDER  BY sport, year, pool
 """
+
+
+def countingRows(rows, stats):
+    """Pass rows through, counting them.
+
+    ★ SO THE BUILD CAN SAY WHAT IT READ. This finished suspiciously fast on
+      its first real run, and "fast" has two explanations that look identical
+      from outside: the work is genuinely small, or a filter is throwing most
+      of the corpus away before it starts. A row count settles it -- compare
+      it against `SELECT count(*) FROM athlete_season` and the gap IS the
+      filtering.
+    """
+    for row in rows:
+        stats["read"] += 1
+        stats["years"].add(row["year"])
+        yield row
 
 
 def boards(rows):
@@ -177,9 +199,11 @@ def build(conn, sport, since):
             cur.copy_expert(
                 f"COPY team_season_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
 
+    stats = {"read": 0, "years": set(), "teams": 0}
     buf, n_rows, n_boards = io.StringIO(), 0, 0
-    for board in boards(read):
+    for board in boards(countingRows(read, stats)):
         n_boards += 1
+        stats["teams"] += len(board[4])
         for row in toRows(board):
             buf.write("\t".join(copyField(v) for v in row))
             buf.write("\n")
@@ -198,8 +222,23 @@ def build(conn, sport, since):
         cur.execute("DROP TABLE team_season_old")
         cur.execute("ANALYZE team_season")
     conn.commit()
-    print(f"  team_season: {n_rows:,} rows across {n_boards:,} boards "
-          f"in {time.time() - started:.0f}s")
+    span = (f"{min(stats['years'])}-{max(stats['years'])}"
+            if stats["years"] else "none")
+    print(f"  read      {stats['read']:,} athlete-seasons "
+          f"(n_races >= {MIN_RACES}, US states, rankable pools)")
+    print(f"  seasons   {len(stats['years'])} ({span})")
+    print(f"  boards    {n_boards:,}  (one national + one per state, "
+          f"per pool/sport/season)")
+    print(f"  teams     {stats['teams']:,} ranked, {n_rows:,} rows written")
+    print(f"  took      {time.time() - started:.0f}s")
+    # ⚠ COMPARE `read` WITH `SELECT count(*) FROM athlete_season`. A large gap
+    #   is the filters doing their job -- or doing too much of it. The state
+    #   list is the one to suspect: it is an explicit 51-code membership test,
+    #   so an athlete-season whose state is null or oddly cased is dropped,
+    #   and dropping enough of a school's runners drops the team itself below
+    #   the five it needs to score.
+    print("  (compare `read` against SELECT count(*) FROM athlete_season -- "
+          "the gap is the filters)")
 
 
 def main():
