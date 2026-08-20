@@ -203,7 +203,9 @@ Step "07_rankings"  { python racecast\build_ranking_results.py }
 # Team boards: reads athlete_season, which 07 has just rebuilt, and writes
 # team_season. BEFORE panels, so the two never disagree about a season.
 Step "08_teams"     { python racecast\build_team_season.py }
-Step "09_panels"    { python racecast\panels.py }
+# Course board: reads course_difficulties, which 04_pack wrote.
+Step "09_courses"   { python racecast\build_course_rank.py }
+Step "10_panels"    { python racecast\panels.py }
 
 
 # ------------------------------------------------------------------ #

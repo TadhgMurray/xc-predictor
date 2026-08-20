@@ -74,6 +74,7 @@
        season rating, scored with the ordinary rules -- so depth counts and a
        superstar is worth exactly one point, as in life. #}
     <button class="tab" role="tab" data-board="teams" aria-selected="false">Teams</button>
+    <button class="tab" role="tab" data-board="courses" aria-selected="false">Courses</button>
   </div>
 
   <div class="filters">
@@ -81,7 +82,7 @@
     {# Single-value selects. Pool and sport are genuinely one-at-a-time: a
        board mixing HS boys and college women has no meaning, and the API
        already offers sport=both. #}
-    <div class="field">
+    <div class="field not-courses">
       <label for="pool">Pool</label>
       <select id="pool">
         {# ! ALL is PR-ONLY, and rankings.js hides it on the other boards.
@@ -98,7 +99,7 @@
       </select>
     </div>
 
-    <div class="field">
+    <div class="field not-courses">
       <label for="sport">Sport</label>
       <select id="sport">
         <option value="both">Both</option>
@@ -116,7 +117,7 @@
        foreign athlete rides on whatever thin connection their meet happens to
        have and lands beside a US athlete as though both were measured the
        same way. #}
-    <div class="field">
+    <div class="field not-courses">
       <label for="scope">Scope</label>
       <select id="scope">
         <option value="usa">USA only</option>
@@ -135,17 +136,17 @@
       <div class="combo" data-field="state"></div>
     </div>
 
-    <div class="field">
+    <div class="field not-courses">
       <label for="grade-input">Grade</label>
       <div class="combo" data-field="grade"></div>
     </div>
 
-    <div class="field">
+    <div class="field not-courses">
       <label for="year-input">Year</label>
       <div class="combo" data-field="year"></div>
     </div>
 
-    <div class="field wide">
+    <div class="field wide not-courses">
       <label for="school-input">School</label>
       <div class="combo" data-field="school"></div>
     </div>
@@ -157,6 +158,37 @@
     <div class="field teams-only">
       <label for="min_athletes">Min athletes</label>
       <input id="min_athletes" class="narrow" type="number" min="5" max="50" value="5">
+    </div>
+
+    {# ★ COURSES ARE NOT ATHLETES, so almost none of the filter bar applies to
+       them -- there is no pool, no sport, no season, no school. What is left
+       is where the ground is, how far round it, and how much racing is behind
+       the number. #}
+    <div class="field courses-only">
+      <label for="course_distance">Distance</label>
+      <select id="course_distance">
+        <option value="">Any</option>
+        <option value="3000">3000m</option>
+        <option value="3200">3200m</option>
+        <option value="4000">4000m</option>
+        <option value="4828">3 miles</option>
+        <option value="5000">5000m</option>
+        <option value="6000">6000m</option>
+        <option value="6437">4 miles</option>
+        <option value="8000">8000m</option>
+        <option value="8047">5 miles</option>
+        <option value="10000">10000m</option>
+      </select>
+    </div>
+    <div class="field courses-only">
+      <label for="course_name">Course</label>
+      <input id="course_name" type="search" placeholder="name contains…"
+             autocomplete="off">
+    </div>
+    <div class="field courses-only">
+      <label for="course_min_results">Min results</label>
+      <input id="course_min_results" class="narrow" type="number" min="0"
+             step="100" value="0">
     </div>
 
     <div class="field ability-only">
@@ -243,6 +275,16 @@
        shows before the first response lands. #}
     <p class="board-note teams-only" id="teams-note">
       Ranked by racing every team's top seven in one hypothetical meet.
+    </p>
+
+    {# ⚠ THE SIGN IS THE THING PEOPLE GET BACKWARDS, so the note leads with it
+       rather than trusting a + to carry the meaning. #}
+    <p class="board-note courses-only" id="courses-note">
+      <strong>Positive is harder.</strong> +0.050 means a field runs about 5%
+      slower here than the same field would on neutral ground &mdash; and
+      because difficulty is applied <em>after</em> distance is normalised, a
+      5k and an 8k belong in one list. Ratings already give the difference
+      back, so a slow time on a hard course is not a slow performance.
     </p>
 
     <p class="board-note pr-only">

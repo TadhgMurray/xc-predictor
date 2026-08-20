@@ -848,6 +848,27 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
  * It ranks a precomputed meet, so most of the other boards' controls have
  * nothing to act on: min-races is per athlete, the dates and the distance
  * belong to single races, and sport=both cannot be one field. */
+/* ★ COURSES SHARE THE TEAMS PATTERN: its own filters, and everything that
+   belongs to an athlete board hidden. A course has no pool, no sport, no
+   season and no school, so showing those controls would offer filters that
+   silently do nothing. */
+.rankings-page .courses-only { display: none; }
+.rankings-page[data-board="courses"] .courses-only { display: flex; }
+.rankings-page[data-board="courses"] p.board-note.courses-only { display: block; }
+.rankings-page[data-board="courses"] .ability-only { display: none; }
+.rankings-page[data-board="courses"] .perf-only    { display: none; }
+.rankings-page[data-board="courses"] .teams-only   { display: none; }
+/* ! STATE IS NOT IN HERE ON PURPOSE. A course is somewhere, so the state
+   filter means exactly what it says on this board; pool, sport, scope,
+   grade, year and school describe an athlete and would do nothing. */
+.rankings-page[data-board="courses"] .not-courses  { display: none; }
+/* Finding an ATHLETE on a board of ground is not a question with an answer --
+   the same reason it is off on teams. And "Coming soon" lists nation,
+   division and the rest: unbuilt filters for ATHLETE boards, which read on
+   this one as promises about courses that nobody has made. */
+.rankings-page[data-board="courses"] .findme     { display: none; }
+.rankings-page[data-board="courses"] .wip        { display: none; }
+
 .rankings-page .teams-only { display: none; }
 .rankings-page[data-board="teams"] .teams-only   { display: flex; }
 .rankings-page[data-board="teams"] .ability-only { display: none; }
@@ -2875,3 +2896,22 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
      phone it is the difference between four visible columns and six. */
   th, td { padding: 0.35rem 0.55rem; }
 }
+
+
+/* ---- courses board ------------------------------------------------------ */
+/* ! THE SENSE WORD IS THE POINT, not decoration. A reader who sees only
+   "+0.050" has to remember which way the sign runs; "harder" beside it means
+   they never have to. It is small and muted so the number still leads. */
+.rankings-page .rk td .sense {
+    display: inline-block;
+    margin-left: 0.35rem;
+    font-size: 0.74em;
+    font-weight: 400;
+    color: var(--muted);
+    text-transform: lowercase;
+}
+/* ⚠ COLOUR IS A SECOND CHANNEL, NEVER THE ONLY ONE. The word carries the
+   meaning; these only reinforce it, so the board still reads correctly in
+   greyscale and for anyone who cannot separate the two hues. */
+.rankings-page .rk td.hard { color: #9a3412; }
+.rankings-page .rk td.easy { color: #14532d; }

@@ -22,6 +22,8 @@ from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from teams import parseFilters as parseTeamFilters, serveBoard
+from courses import (parseFilters as parseCourseFilters,
+                     getCourseRankings, countCourses)
 
 
 # ===================================================================== #
@@ -2217,6 +2219,48 @@ def api_teams():
                     "board_scope": f["board_scope"],
                     "national_bias": f["board_scope"] == "usa",
                     **info, "rows": rows})
+
+
+@app.route("/api/courses")
+def api_courses():
+    """One page of the course board.
+
+    ★ THE NUMBER IS THE ENGINE'S OWN. course_rank is built from
+      course_difficulties, which the solve re-centres to mean zero every
+      iteration -- so difficulty reads as "harder than an average course" and
+      not as a score anybody chose. See build_course_rank.py.
+
+    ⚠ AND IT IS ALREADY DISTANCE-NEUTRAL, applied after normalisation, which
+      is the only reason 5k and 8k courses can share one ranking.
+    """
+    f, err = parseCourseFilters(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                rows = getCourseRankings(cur, f)
+                total = countCourses(cur, f)
+            except psycopg2.errors.UndefinedTable:
+                # ! THE HONEST 400 THE OTHER BOARDS ALREADY LEARNED TO GIVE.
+                #   Unhandled, Flask answers with its debug PAGE and the
+                #   frontend reports "Unexpected token '<'" -- an error about
+                #   JSON parsing, which sends the reader the wrong way.
+                conn.rollback()
+                return jsonify({"error": "Course rankings have not been built "
+                                         "yet \u2014 run "
+                                         "racecast/build_course_rank.py after "
+                                         "the engine writes "
+                                         "course_difficulties."}), 400
+            except Exception:
+                conn.rollback()
+                app.logger.exception("/api/courses failed")
+                return jsonify({"error": "Course rankings failed to load. The "
+                                         "server log has the traceback."}), 500
+
+    return jsonify({"filters": f, "count": len(rows), "total": total,
+                    "rows": rows})
 
 
 @app.route("/api/rankings/rank")

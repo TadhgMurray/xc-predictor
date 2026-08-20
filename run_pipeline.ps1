@@ -166,7 +166,13 @@ Step "10_rankings"     { python racecast\build_ranking_results.py }
 #   pipeline rebuilt every board except the team one, which then served a
 #   season older than everything around it.
 Step "11_teams"        { python racecast\build_team_season.py }
-Step "12_panels"       { python racecast\panels.py }
+# ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
+#   that step touches it, so this only has to be after the pack -- but it sits
+#   here with the other board builders because that is where somebody looks
+#   for it, and because a course count printed next to the athlete counts is
+#   how a collapsed one gets noticed.
+Step "12_courses"      { python racecast\build_course_rank.py }
+Step "13_panels"       { python racecast\panels.py }
 
 
 # ------------------------------------------------------------------ #
