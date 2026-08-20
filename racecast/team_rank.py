@@ -60,6 +60,25 @@ def splitKey(key):
     return school, (state or None)
 
 
+def _raceField(entries):
+    """[(rating, key, tie, extra)] -> scoreRows output.
+
+    ★ THE ONE PLACE THE FIELD IS ORDERED AND SCORED. Both callers race the
+      same meet -- rankTeams from athlete rows, raceStored from a board that
+      was already scored once -- and a second copy of "sort by rating, then
+      score" is how the live board and the built one start disagreeing about
+      who won.
+
+    ! THE TIE-BREAK IS EXPLICIT, NOT chance. Two entrants on the same rating
+      must not swap places between runs, or a team's points move when nothing
+      about it changed. Key first, then the caller's stable id.
+    """
+    entries.sort(key=lambda t: (-t[0], t[1], t[2]))
+    rows = [{"school": key, "place": i, "rating": rating, **extra}
+            for i, (rating, key, _tie, extra) in enumerate(entries, start=1)]
+    return scoreRows(rows)
+
+
 def rankTeams(athletes):
     """[{school, state, rating, person_id, name}] -> ranked teams.
 
@@ -87,18 +106,11 @@ def rankTeams(athletes):
     for key, members in squads.items():
         members.sort(key=lambda m: -float(m["rating"]))
         for m in members[:SQUAD]:
-            field.append((float(m["rating"]), key, m))
+            field.append((float(m["rating"]), key, str(m.get("person_id")),
+                          {"person_id": m.get("person_id"),
+                           "name": m.get("name")}))
 
-    # ! THE TIE-BREAK IS THE KEY, NOT chance. Two athletes on the same rating
-    #   must not swap places between runs, or a team's points move when
-    #   nothing about it changed.
-    field.sort(key=lambda t: (-t[0], t[1], str(t[2].get("person_id"))))
-
-    rows = [{"school": key, "place": i, "person_id": m.get("person_id"),
-             "name": m.get("name"), "rating": rating}
-            for i, (rating, key, m) in enumerate(field, start=1)]
-
-    scored = scoreRows(rows)
+    scored = _raceField(field)
 
     out = []
     for t in scored["teams"]:
@@ -117,11 +129,79 @@ def rankTeams(athletes):
             "top5_mean": round(sum(top5) / len(top5), 2) if top5 else None,
             "fifth_rating": round(top5[-1], 2) if len(top5) == SCORERS else None,
             "best_rating": round(top5[0], 2) if top5 else None,
+            # ★ THE SEVEN RATINGS THAT ENTERED THE MEET, kept so the board can
+            #   be RE-raced later against a different field -- several seasons
+            #   at once, say. Seven and not more because an eighth runner
+            #   cannot affect any score; see SQUAD.
+            "ratings": [round(float(m["rating"]), 2) for m in members[:SQUAD]],
             "scorers": [{"person_id": r.get("person_id"), "name": r.get("name"),
                          "place": r["score_place"],
                          "rating": round(float(r["rating"]), 2)}
                         for r in t["runners"][:SQUAD]],
         })
+    return out
+
+
+def raceStored(rows):
+    """Re-race an already-built board against ITSELF.
+
+    ★ THIS IS WHAT MAKES "ONE FIRST PLACE" TRUE RATHER THAN DRAWN. team_season
+      holds one scored meet per season, so a board showing three years holds
+      three rank-1 rows -- each true about its own year, and useless as an
+      ordering. The fix is not to renumber the rows 1, 2, 3, which would
+      invent a championship nobody ran. It is to RUN one: take every team the
+      filter selected, enter the same top seven again, and score the field
+      they actually make together. Then there is one winner because a meet
+      was held, not because a loop counted.
+
+    ⚠ IT IS ONLY MEANINGFUL BECAUSE RATINGS ARE ERA-ADJUSTED. 100 is the pool
+      mean in 1998 and in 2025, so a 2003 squad and a 2025 squad can be put
+      in the same field and the comparison means something. Racing raw times
+      across twenty years would not be.
+
+    ⚠ EVERY ROW IS ITS OWN TEAM, INCLUDING TWO ROWS WITH THE SAME NAME.
+      Newbury Park 2024 and Newbury Park 2025 are two entries in this meet,
+      not one squad of fourteen -- so the key is the ROW, not (school,
+      state). Keying on the name would let a school that appears in thirty
+      seasons field its thirty best runners as one team and win by a mile.
+
+    ! THE SCHOOL NAME STAYS AT THE FRONT OF THE KEY so scoreRows' isTeam test
+      still sees a school name -- the same trick rankTeams uses, and the
+      reason Unattached cannot sneak back in through this path.
+
+    Returns rows in raced order, each carrying:
+        rank, points        this meet's result -- what the board shows
+        season_rank/_points what the row scored in its own season, kept
+                            because "won its year" is worth not losing
+
+    Returns None if any row has no stored ratings, which means the table
+    predates the column and the caller must fall back to the stored board.
+    """
+    entries, by_key = [], {}
+    for i, row in enumerate(rows):
+        ratings = row.get("ratings")
+        if not ratings:
+            return None
+        key = f"{row.get('school') or ''}{_SEP}{i}"
+        by_key[key] = row
+        # Sorted rather than trusted: the column is written sorted, but a
+        # board that silently mis-scores because a builder changed is worse
+        # than one line of defence here.
+        for j, rating in enumerate(sorted((float(r) for r in ratings),
+                                          reverse=True)[:SQUAD]):
+            entries.append((rating, key, f"{i:08d}-{j}", {}))
+
+    scored = _raceField(entries)
+
+    out = []
+    for t in scored["teams"]:
+        row = by_key[t["school"]]
+        out.append({**row,
+                    "rank": t["place"],
+                    "points": t["points"],
+                    "season_rank": row.get("rank"),
+                    "season_points": row.get("points")})
+    out.sort(key=lambda r: r["rank"])
     return out
 
 
@@ -183,6 +263,73 @@ def _selfCheck():
                       + squad("La Salle", [130, 129, 128, 127, 126], state="PA"))
     check("two rows", len(twins), 2)
     check("distinct states", sorted(t["state"] for t in twins), ["IL", "PA"])
+
+    # ---- re-racing an already-built board ------------------------------
+    print("\nracing several seasons produces exactly one winner")
+
+    def season(year, squads, state="CA"):
+        """One season's team_season rows, scored the way the builder does --
+        every team in that year racing each other, and nobody else."""
+        athletes = []
+        for school, ratings in squads:
+            athletes += squad(school, ratings, state=state)
+        return [{**t, "year": year, "sport": "XC", "pool": "hs_m",
+                 "scope": "usa"} for t in rankTeams(athletes)]
+
+    # Three seasons of a two-team board, each scored on its own -- so the
+    # board holds three rank-1 rows, which is the whole problem.
+    board = (
+        season(2025, [("Newbury Park", [152, 151, 150, 149, 148, 147, 146]),
+                      ("Great Oak",    [150, 148, 146, 145, 144, 143, 142])])
+        + season(2024, [("Newbury Park", [148, 147, 146, 145, 144, 143, 142]),
+                        ("Great Oak",    [149, 147, 145, 144, 143, 142, 141])])
+        + season(2023, [("Newbury Park", [140, 139, 138, 137, 136, 135, 134]),
+                        ("Great Oak",    [141, 139, 137, 136, 135, 134, 133])]))
+    check("the stored board really does hold three first places",
+          sum(1 for r in board if r["rank"] == 1), 3)
+
+    raced = raceStored(board)
+    check("one first place after racing",
+          sum(1 for r in raced if r["rank"] == 1), 1)
+    check("six teams, six distinct places",
+          sorted(r["rank"] for r in raced), [1, 2, 3, 4, 5, 6])
+    check("the strongest season wins",
+          (raced[0]["school"], raced[0]["year"]), ("Newbury Park", 2025))
+    check("the season each row won is not lost",
+          sum(1 for r in raced if r["season_rank"] == 1), 3)
+
+    # ⚠ WITHIN ONE SEASON THE HEAD-TO-HEAD IS UNCHANGED HERE -- derived from
+    #   the fixture, not asserted from the ratings, because the pack wins two
+    #   of these three years and eyeballing the top runner gets it backwards.
+    #
+    #   It is NOT a law: adding teams to a field can reverse a close result,
+    #   since a rival's sixth and seventh runners displace your scorers. That
+    #   is the sport, not a bug -- and it is exactly why the board re-races
+    #   rather than renumbering a sort, which could never show it at all.
+    raced_at = {(r["school"], r["year"]): r["rank"] for r in raced}
+    stored_at = {(r["school"], r["year"]): r["rank"] for r in board}
+    def agrees(year):
+        rows = [k for k in stored_at if k[1] == year]
+        a, b = sorted(rows, key=lambda k: stored_at[k])
+        return raced_at[a] < raced_at[b]
+    check("each season's own 1-2 survives the cross-year race",
+          [agrees(y) for y in (2023, 2024, 2025)], [True, True, True])
+
+    # ---- the same school in two seasons is two teams --------------------
+    print("\nthe same school twice is two entries, not one deep squad")
+    twice = raceStored(
+        season(2025, [("Ridge", [140, 139, 138, 137, 136, 135, 134])])
+        + season(2024, [("Ridge", [141, 140, 139, 138, 137, 136, 135])]))
+    check("two rows out", len(twice), 2)
+    check("distinct years", sorted(r["year"] for r in twice), [2024, 2025])
+    # Fourteen runners keyed as one squad would score 1..5 = 15 and leave the
+    # other row unscoreable; two teams of seven score 1-3-5-7-9 and 2-4-6-8-10.
+    check("scored as two teams of seven",
+          sorted(r["points"] for r in twice), [25, 30])
+
+    # ---- and it refuses rather than guessing ---------------------------
+    print("\nno ratings stored means no race, not a wrong one")
+    check("returns None", raceStored([{"school": "X", "rank": 1}]), None)
 
     print("\nall cases pass" if not bad else f"\n{bad} FAILURES")
     return bad

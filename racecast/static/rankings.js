@@ -192,23 +192,17 @@ function buildQuery() {
      single-race filters: a date range or a distance belongs to one race,
      and min_races is a fact about one athlete. */
   if (state.board === "teams") {
-    /* ★ THE SORT FOLLOWS THE YEAR FILTER until the user overrides it.
-       Points are only comparable inside one season -- every season has its
-       own first place -- so an all-seasons board ranks on the top-5 average,
-       which is pool-relative and era-adjusted and therefore travels. Pick
-       exactly one year and points ascending becomes the right order, because
-       now every team on screen raced the same field.
+    /* ★ THE SORT IS THE SERVER'S CHOICE UNTIL SOMEBODY CLICKS A HEADER, and
+       until then this sends none. The right default depends on whether the
+       filtered field is small enough to be raced as one meet -- which takes
+       a row count to know -- so the rule lives in teams.serveBoard, on the
+       side that can answer it. load() adopts what comes back, so the header
+       arrow lands on the column the board is actually sorted by.
 
-       ! SET ON `state` RATHER THAN JUST SENT, so renderHead marks the column
-         the server is actually going to sort by. Sending one and drawing the
-         arrow on another is worse than either alone. */
-    if (!state.sortTouched) {
-      const years = combos.year ? combos.year.values() : [];
-      state.sort = years.length === 1 ? "rank" : "rating";
-      state.dir = "";
-      q.set("sort", state.sort);
-      q.delete("dir");
-    }
+       ! AND A URL WITHOUT sort= IS THE BETTER URL TO SHARE: it means "the
+         right order for these filters" rather than freezing today's rule
+         into a link somebody opens in a year. */
+    if (!state.sortTouched) { q.delete("sort"); q.delete("dir"); }
     q.set("min_athletes", $("min_athletes").value || 5);
     return q;
   }
@@ -853,6 +847,57 @@ function renderPr(rows) {
 }
 
 
+/* 1 -> "1st". Used in the tooltip that keeps a team's own season visible
+   when the board has been re-raced across several of them. */
+function ordinal(n) {
+  const t = n % 100;
+  const suffix = (t >= 11 && t <= 13) ? "th"
+               : ["th", "st", "nd", "rd"][n % 10] || "th";
+  return `${n}${suffix}`;
+}
+
+
+/*
+ * What the rank column means, which is not the same sentence every time.
+ *
+ * ★ WRITTEN FROM THE RESPONSE, NOT FROM THE FILTERS. Whether the field was
+ *   raced depends on how many teams matched, which only the server knows --
+ *   and a note that says "raced" over a board that fell back is worse than
+ *   no note at all.
+ */
+function teamsNote(data) {
+  const note = $("teams-note");
+  if (!note) return;
+  const n = (data.field_size || 0).toLocaleString();
+
+  if (data.raced) {
+    note.innerHTML =
+      `<strong>${n} teams raced against each other</strong> in one meet &mdash; `
+      + "every squad's top seven entered, sorted by season rating and scored "
+      + "the ordinary way. One first place, and the points are this field's. "
+      + "Squads from different years are separate entries; hover a rank to "
+      + "see where that squad finished in its own season.";
+  } else if (data.reason === "unbuilt") {
+    /* ⚠ NOT "NARROW YOUR FILTER". No filter fixes a table with no ratings
+       column, and sending somebody to fiddle with the year chips over a
+       rebuild is how a five-minute fix turns into an afternoon. */
+    note.innerHTML =
+      "<strong>Showing each squad's place in its own season.</strong> "
+      + "Racing several seasons against each other needs the stored squad "
+      + "ratings, which this table was built without &mdash; rebuild with "
+      + "<code>racecast/build_team_season.py</code> to turn it on.";
+  } else {
+    note.innerHTML =
+      `<strong>${n} teams is too many to race</strong> in one meet `
+      + `(the ceiling is ${(data.race_cap || 0).toLocaleString()}), so this `
+      + "shows each squad's place in <em>its own season</em>, ordered by top-5 "
+      + "average rating &mdash; the one column comparable between years. "
+      + "Narrow it to a state, or to a year or two, and the teams race each "
+      + "other for a single first place.";
+  }
+}
+
+
 /*
  * The teams board.
  *
@@ -862,7 +907,9 @@ function renderPr(rows) {
 function renderTeams(rows) {
   const body = rows.map((r) => `
     <tr>
-      <td class="rank">${r.rank}</td>
+      <td class="rank"${r.season_rank
+        ? ` title="${ordinal(r.season_rank)} in the ${r.year} season, ` +
+          `on ${r.season_points} points"` : ""}>${r.rank}</td>
       <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${r.year}</td>
@@ -974,6 +1021,17 @@ async function load() {
     $("bias-notice").classList.toggle("show", Boolean(data.national_bias));
     $("notice").classList.toggle("show", $("scope").value === "all");
 
+    /* ★ ADOPT THE SORT THAT WAS SERVED, before anything renders. The teams
+       board lets the server choose (see buildQuery), and renderHead draws
+       the arrow from `state` -- so without this the arrow marks whatever was
+       last on screen while the rows are ordered by something else. */
+    if (state.board === "teams" && data.filters) {
+      state.sort = data.filters.sort;
+      state.dir = data.filters.sort_explicit
+        ? (data.filters.dir || "").toLowerCase() : "";
+      teamsNote(data);
+    }
+
     if (rows.length === 0) {
       $("results").innerHTML =
         '<div class="status">No results for these filters.</div>';
@@ -993,7 +1051,11 @@ async function load() {
     // full page probably has more behind it, a short page is the end. The only
     // wrong case is a result that is an exact multiple of PAGE_SIZE, which
     // shows one empty page. Cheaper than a COUNT(*) over 61M rows per request.
-    $("next").disabled = rows.length < PAGE_SIZE;
+    /* A raced board was scored in memory, so its size is known exactly and
+       the guess below is not needed. Everything else still infers. */
+    $("next").disabled = Number.isInteger(data.total)
+      ? state.offset + rows.length >= data.total
+      : rows.length < PAGE_SIZE;
     $("pageLabel").textContent =
       `${state.offset + 1}\u2013${state.offset + rows.length}`;
 
@@ -1244,7 +1306,14 @@ function applyUrlFilters(params) {
   }
 
   const sort = params.get("sort");
-  if (sort && COLUMNS[state.board].some((c) => c.key === sort)) state.sort = sort;
+  /* ! A SORT IN THE URL COUNTS AS CHOSEN. Without this the teams board would
+       drop it on the first request and re-sort itself, so a shared link to
+       "these teams by fifth runner" would open on a different order than the
+       one that was shared. */
+  if (sort && COLUMNS[state.board].some((c) => c.key === sort)) {
+    state.sort = sort;
+    state.sortTouched = true;
+  }
   const dir = (params.get("dir") || "").toLowerCase();
   if (dir === "asc" || dir === "desc") state.dir = dir;
   /* ! A min_races IN THE URL IS THE USER'S, so mark it touched or the next

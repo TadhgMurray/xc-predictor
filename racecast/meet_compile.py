@@ -234,10 +234,19 @@ def scoreRows(rows):
     #   about incomplete teams answers a question nobody asked. Their
     #   runners are then skipped by the renumbering loop below, which lifts
     #   them out of the scoring order exactly as an incomplete team's are.
-    counts = {}
+    # ! ASKED ONCE PER SCHOOL, NOT ONCE PER RUNNER. isTeam is a regex with
+    #   nine alternatives; a real meet has 300 finishers and 40 schools, and
+    #   the hypothetical national meet the team board races has 140,000
+    #   entrants and 20,000 -- where the difference is a third of the total
+    #   time. The answer cannot vary between two runners for the same school.
+    counts, real = {}, {}
     for r in rows:
-        if isTeam(r.get("school")):
-            counts[r["school"]] = counts.get(r["school"], 0) + 1
+        school = r.get("school")
+        ok = real.get(school)
+        if ok is None:
+            ok = real[school] = isTeam(school)
+        if ok:
+            counts[school] = counts.get(school, 0) + 1
     full = {s for s, n in counts.items() if n >= SCORERS}
 
     scoring, place = {}, 0

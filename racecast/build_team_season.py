@@ -80,12 +80,26 @@ CREATE TABLE IF NOT EXISTS team_season (
     top5_mean    real,
     fifth_rating real,
     best_rating  real,
+    -- ★ THE SEVEN RATINGS THAT RACED, so the board can be raced AGAIN
+    --   against a different field. The site does that whenever a filter
+    --   selects teams from more than one season: three seasons of stored
+    --   boards hold three first places, and the only honest way to get one
+    --   is to hold another meet. See team_rank.raceStored and teams.py.
+    --   Seven because an eighth runner cannot affect any score.
+    ratings      real[],
     PRIMARY KEY (scope, school, state, pool, sport, year)
 );
 """
 
 _COLUMNS = ("scope", "school", "state", "pool", "sport", "year", "rank",
-            "points", "n_athletes", "top5_mean", "fifth_rating", "best_rating")
+            "points", "n_athletes", "top5_mean", "fifth_rating",
+            "best_rating", "ratings")
+
+# ! FOR A TABLE THAT ALREADY EXISTS. CREATE TABLE IF NOT EXISTS is a no-op on
+#   one built before the column, and the shadow table is created with LIKE --
+#   so without this the COPY names a column the table does not have and the
+#   whole build dies on the first flush.
+_MIGRATE = "ALTER TABLE team_season ADD COLUMN IF NOT EXISTS ratings real[]"
 
 # ! ORDERED BY THE GROUP so one pass can be cut into boards without holding
 #   the whole table. mean_rating is the athlete's season average -- the same
@@ -159,12 +173,25 @@ def _boardsFor(key, athletes):
         yield (state, pool, sport, year, rankTeams(members))
 
 
+def arrayLiteral(values):
+    """[1.5, 2.5] -> '{1.5,2.5}', the TEXT form COPY wants for a real[].
+
+    ! NO QUOTING NEEDED AND NONE DONE. These are floats formatted by repr, so
+      they cannot contain a brace, a comma, a quote or a backslash -- the
+      four things an array literal would need escaping for. The same is
+      emphatically NOT true of the school column beside it, which is why
+      every field still goes through copyField afterwards.
+    """
+    return "{" + ",".join(repr(round(float(v), 2)) for v in values) + "}"
+
+
 def toRows(board):
     scope, pool, sport, year, teams = board
     for t in teams:
         yield (scope, t["school"], t["state"], pool, sport, year,
                t["rank"], t["points"], t["n_athletes"],
-               t["top5_mean"], t["fifth_rating"], t["best_rating"])
+               t["top5_mean"], t["fifth_rating"], t["best_rating"],
+               arrayLiteral(t["ratings"]))
 
 
 def build(conn, sport, since):
@@ -178,6 +205,7 @@ def build(conn, sport, since):
     started = time.time()
     with conn.cursor() as cur:
         cur.execute(_DDL)
+        cur.execute(_MIGRATE)
         cur.execute("DROP TABLE IF EXISTS team_season_new")
         cur.execute("CREATE TABLE team_season_new (LIKE team_season "
                     "INCLUDING ALL)")

@@ -21,8 +21,7 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
-from teams import (parseFilters as parseTeamFilters,
-                   getTeamRankings)
+from teams import parseFilters as parseTeamFilters, serveBoard
 
 
 # ===================================================================== #
@@ -2162,11 +2161,18 @@ def api_rankings():
 def api_teams():
     """One page of a team board.
 
-    ★ THE RANKING IS ALREADY SCORED. team_season holds the finish order of a
+    ★ THE RANKING IS A MEET. team_season holds the finish order of a
       hypothetical meet per (scope, pool, sport, season) -- every team's top
       seven entered, sorted by season rating, scored with the ordinary rules.
-      This route picks a board and slices it. See team_rank.py for why the
-      teams are raced rather than having their ratings averaged.
+      See team_rank.py for why the teams are raced rather than having their
+      ratings averaged.
+
+    ★ AND WHEN A FILTER SPANS SEASONS, ANOTHER MEET IS RUN. Three seasons of
+      stored boards hold three first places; the only honest way to get one
+      is to race the selected teams against each other, which teams.serveBoard
+      does whenever the field fits under its ceiling. `raced` in the response
+      says whether that happened, so the page can explain what its rank
+      column means instead of guessing at the rule a second time.
 
     national_bias is louder here than on the athlete boards on purpose: the
     per-state offset lands on all five scorers at once and pushes them the
@@ -2179,7 +2185,7 @@ def api_teams():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             try:
-                rows = getTeamRankings(cur, f)
+                rows, info = serveBoard(cur, f)
             except psycopg2.errors.UndefinedTable:
                 # ! THE HONEST 400 THE RANKINGS ROUTE ALREADY LEARNED TO GIVE.
                 #   Unhandled, Flask answers with its debug PAGE and the
@@ -2203,10 +2209,14 @@ def api_teams():
                 return jsonify({"error": "Team rankings failed to load. The "
                                          "server log has the traceback."}), 500
 
+    # ! f IS SENT BACK AFTER serveBoard, NOT BEFORE. It picks the sort, and
+    #   the page draws its header arrow from what came back -- so a response
+    #   describing the filters it was asked for rather than the ones it
+    #   served would put the arrow on a column the board is not sorted by.
     return jsonify({"filters": f, "count": len(rows),
                     "board_scope": f["board_scope"],
                     "national_bias": f["board_scope"] == "usa",
-                    "rows": rows})
+                    **info, "rows": rows})
 
 
 @app.route("/api/rankings/rank")

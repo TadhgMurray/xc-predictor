@@ -235,12 +235,14 @@
        particular field, so the same squad scores differently in its state's
        meet than in the national one. The RANK travels between boards; the
        points explain it. #}
-    <p class="board-note teams-only">
-      Ranked by racing every team's top seven in one hypothetical meet, one
-      meet per season. Every season is shown, so each has its own winner
-      &mdash; the list is ordered by top-5 average rating, which is
-      comparable across years. <strong>Pick a Year</strong> to rank a single
-      season by points, lowest first.
+    {# ★ FILLED BY rankings.js ON EVERY LOAD, because the sentence is not the
+       same every time: when the filtered field is small enough it is RACED as
+       one meet and there is a single first place, and when it is not the
+       board falls back to each squad's place in its own season. Only the
+       response knows which happened -- see teamsNote. The text below is what
+       shows before the first response lands. #}
+    <p class="board-note teams-only" id="teams-note">
+      Ranked by racing every team's top seven in one hypothetical meet.
     </p>
 
     <p class="board-note pr-only">
