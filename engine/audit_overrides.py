@@ -391,22 +391,66 @@ def writeProposals(props):
               f"snap {p['snap_err']:+.1%}  n={p['n']:<5} {p['meet_name'][:30]}")
 
 
-def stripLines(text, keys):
-    """Delete every `(meet, div): dist,` line whose key is condemned.
+# ★ ENTRY-SHAPED, NOT LINE-SHAPED, and NOT anchored to the start of a line.
+#   corrections.py mostly writes one override per line, but not always -- 14
+#   entries in the current file share a line with a neighbour:
+#
+#       (26284, 0): 5000.0,   (26284, 1): 5000.0,   # NLC Round #1 both 5k
+#
+#   An anchored line pattern gets both of those wrong at once. It cannot SEE
+#   the second entry, so condemning it removes nothing and the override stays
+#   live; and if it condemns the first it deletes the whole line, taking an
+#   innocent override with it. One failure is silent, the other is worse than
+#   silent.
+_ENTRY = re.compile(r"\((\d+),\s*(\d+)\)\s*:\s*[\d.]+\s*,")
 
-    ⚠ LINE-BASED, AND THAT IS THE POINT. corrections.py holds the same key in
-      many dict literals -- measured at 7.2 copies each. Leaving one behind
-      leaves the override live, and which copy wins is decided by position in
-      the file.
+# What may remain on a line once its entries are gone before the line itself
+# is dropped: whitespace, or whitespace and a trailing comment.
+_LEFTOVER = re.compile(r"^\s*(#.*)?$")
+
+
+def stripLines(text, keys):
+    """Delete every `(meet, div): dist,` ENTRY whose key is condemned.
+
+    ⚠ EVERY COPY, WHEREVER IT SITS. corrections.py holds the same key in many
+      dict literals -- audit_overrides measured 7.2 copies each -- and the
+      later one wins, so leaving a single copy behind leaves the override
+      live and which one decides is a matter of file position.
+
+    ! A LINE IS ONLY DELETED WHEN NOTHING BUT A COMMENT IS LEFT ON IT. An
+      entry sharing a line with a neighbour is cut out of the line and the
+      neighbour stays exactly where it was.
+
+    Returns (text, n_entries_removed).
     """
-    pat = re.compile(r"^\s*\((\d+),\s*(\d+)\)\s*:\s*[\d.]+\s*,")
     kept, dropped = [], 0
+
+    def cut(line):
+        nonlocal dropped
+        n_before = len(_ENTRY.findall(line))
+        if not n_before:
+            return line
+        removed = []
+
+        def sub(m):
+            if (int(m.group(1)), int(m.group(2))) in keys:
+                removed.append(m.group(0))
+                return ""
+            return m.group(0)
+
+        out = _ENTRY.sub(sub, line)
+        if not removed:
+            return line
+        dropped += len(removed)
+        # Nothing but whitespace and maybe a comment survived -> drop the line.
+        if _LEFTOVER.match(out.strip("\r\n")):
+            return ""
+        return out
+
     for line in text.splitlines(keepends=True):
-        m = pat.match(line)
-        if m and (int(m.group(1)), int(m.group(2))) in keys:
-            dropped += 1
-            continue
-        kept.append(line)
+        out = cut(line)
+        if out:
+            kept.append(out)
     return "".join(kept), dropped
 
 
