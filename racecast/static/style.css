@@ -2658,10 +2658,11 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 }
 
 /* ---- home -------------------------------------------------------------- */
-/* ⚠ THE HERO WAS 880px OF A 900px VIEWPORT, so the entire first screen was
-   photographs and no ranking was visible until you scrolled. 16/7 leaves
-   the boards peeking above the fold. */
-.hero-mosaic { aspect-ratio: 16 / 7; }
+/* ! THE MURAL'S OWN aspect-ratio: 16 / 11 STANDS, and is not to be overridden
+   here. A 16/7 override was added to get the boards above the fold; it
+   squashed the band the outer rows were sized for, which is the thing that
+   block's comment exists to protect. Above-the-fold is not worth cropping
+   the photographs for. */
 
 /* ★ TWO KINDS OF CONTROL THAT LOOKED IDENTICAL. The sport and scope groups
    are PICK ONE; the pool chips are TOGGLE OFF -- and an "on" chip was

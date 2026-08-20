@@ -1,4 +1,4 @@
-# run_pipeline.ps1 -- the full rebuild, logged, with a preflight that refuses
+﻿# run_pipeline.ps1 -- the full rebuild, logged, with a preflight that refuses
 # to start on a stale checkout.
 #
 # ⚠ $ErrorActionPreference IS DELIBERATELY *NOT* "Stop".
@@ -160,7 +160,13 @@ Step "09_tilt"         { python engine\apply_tilt.py --refresh --write }
 
 # ---- the site -------------------------------------------------------- #
 Step "10_rankings"     { python racecast\build_ranking_results.py }
-Step "11_panels"       { python racecast\panels.py }
+# ! AFTER RANKINGS, BEFORE PANELS. build_team_season reads athlete_season,
+#   which build_ranking_results writes -- run it first and it races last
+#   run's athletes. It was in run_rest.ps1 and missing here, so a full
+#   pipeline rebuilt every board except the team one, which then served a
+#   season older than everything around it.
+Step "11_teams"        { python racecast\build_team_season.py }
+Step "12_panels"       { python racecast\panels.py }
 
 
 # ------------------------------------------------------------------ #

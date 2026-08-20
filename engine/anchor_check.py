@@ -124,6 +124,12 @@ def whichPool(time_seconds, distance, stored_nt, pools, sport=None):
 #  THE AUDIT
 # ------------------------------------------------------------------ #
 
+# ⚠ ranking_results.distance IS NULL ON BOTH SPORTS, not just track. The TF
+#   fix parsed the distance out of the event name; cross country has no event
+#   name to parse, so it needs the same join the backfill itself uses --
+#   dist_override first, then the meets column. Reading k.distance found
+#   400,000 of 400,000 rows unanswerable on XC as well, and the second time
+#   the message at least said which.
 _SQL = """
     SELECT k.pool, k.sport, r.result_id, r.person_id,
            r.time_seconds, {dist} AS distance, {event} AS event_short,
@@ -131,10 +137,20 @@ _SQL = """
     FROM   {table} r
     JOIN   ranking_results k ON k.result_id = r.result_id
                             AND k.sport = %(sport)s
+    {joins}
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
       AND  r.time_seconds > 0
       {person}
     LIMIT  %(scan)s
+"""
+
+# The same precedence backfill_normalize applies: a hand-verified override
+# beats the scraped column.
+_XC_JOINS = """
+    LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id
+                               AND dov.div_id = r.div_id
+    LEFT JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
+                     AND m.source = r.source
 """
 
 _POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "hs_m", "hs_f",
@@ -158,8 +174,11 @@ def main():
     table = "results_tf" if args.sport == "TF" else "results"
     # ! TRACK CARRIES NO DISTANCE COLUMN WORTH READING. k.distance is null on
     #   every TF row, so the distance is parsed out of the event name below.
-    dist = "NULL::float" if args.sport == "TF" else "k.distance"
-    event = "r.event_short" if args.sport == "TF" else "NULL::text"
+    is_tf = args.sport == "TF"
+    dist = ("NULL::float" if is_tf
+            else "COALESCE(dov.distance, m.distance)")
+    event = "r.event_short" if is_tf else "NULL::text"
+    joins = "" if is_tf else _XC_JOINS
 
     from database import getConn
     import psycopg2.extras
@@ -172,7 +191,7 @@ def main():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(_SQL.format(
-                table=table, dist=dist, event=event,
+                table=table, dist=dist, event=event, joins=joins,
                 person=("AND r.person_id = %(person)s" if args.person else "")),
                 {"sport": args.sport, "scan": args.scan,
                  **({"person": args.person} if args.person else {})})
