@@ -672,21 +672,32 @@ _MERGED_SQL = """
 #   Bounded to one division at a time, so the correlated median that would be
 #   ruinous corpus-wide costs nothing here: cheap filter first, exact test
 #   second.
+# ⚠ MATERIALISED ONCE, NOT ONCE PER CANDIDATE. The first version computed
+#   this scale inline inside the verify query, which made it a full aggregate
+#   over every rated row in `results` -- and then ran it 320 times, once per
+#   candidate division. That is not slow, it is a different program. Built
+#   here as a table with an index, each verify becomes a lookup.
+_SCALE_TABLE = """
+    DROP TABLE IF EXISTS ovr_scale;
+    CREATE UNLOGGED TABLE ovr_scale AS
+        SELECT person_id,
+               percentile_cont(0.5) WITHIN GROUP
+                   (ORDER BY speed_rating * normalized_time) AS k
+        FROM   results
+        WHERE  speed_rating > 0 AND normalized_time > 0
+          AND  person_id IS NOT NULL
+        GROUP  BY 1;
+    CREATE INDEX ON ovr_scale (person_id);
+    ANALYZE ovr_scale;
+"""
+
 _VERIFY_MERGED = """
     WITH here AS (
         SELECT r.person_id, substring(r.date, 1, 4)::int AS yr,
                COALESCE(r.speed_rating,
                         sc.k / NULLIF(r.normalized_time, 0)) AS rating
         FROM   results r
-        JOIN   (
-            SELECT person_id,
-                   percentile_cont(0.5) WITHIN GROUP
-                       (ORDER BY speed_rating * normalized_time) AS k
-            FROM   results
-            WHERE  speed_rating > 0 AND normalized_time > 0
-              AND  person_id IS NOT NULL
-            GROUP  BY 1
-        ) sc ON sc.person_id = r.person_id
+        JOIN   ovr_scale sc ON sc.person_id = r.person_id
         WHERE  r.meet_id = %(m)s AND r.div_id = %(d)s
           AND  r.person_id IS NOT NULL
     ), elsewhere AS (
@@ -743,6 +754,9 @@ def reportMerged(cur, limit=40):
     cur.execute(_MERGED_SQL, {"min_rows": MIN_ROWS, "iqr": MERGED_IQR,
                               "lim": limit * 8})
     candidates = cur.fetchall()
+    print(f"\n[dist] building the per-athlete scale table for the verify "
+          f"pass...")
+    cur.execute(_SCALE_TABLE)
     print(f"\n\n[dist] DIVISIONS THAT LOOK LIKE TWO RACES "
           f"(q75/q25 > {MERGED_IQR})\n")
     print(f"    {len(candidates):,} candidates from the cheap pass; each is "
@@ -750,7 +764,10 @@ def reportMerged(cur, limit=40):
           f"meets.\n")
 
     kept, dropped = [], 0
-    for meet_id, div_id, _n, _a, _b, _c in candidates:
+    for i, (meet_id, div_id, _n, _a, _b, _c) in enumerate(candidates, start=1):
+        if i % 25 == 0 or i == len(candidates):
+            print(f"    verified {i:,}/{len(candidates):,} "
+                  f"({len(kept)} kept)")
         got = verifyMerged(cur, meet_id, div_id)
         if got is None:
             dropped += 1
