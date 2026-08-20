@@ -192,7 +192,7 @@
                             {{ race.meet }}
                         {% endif %}
                     </td>
-                    <td>{{ race.event }}</td>
+                    <td>{{ race.event|event_label }}</td>
                     <td>{{ race.result }}</td>
                     <td>{{ "%.1f"|format(race.speed_rating) if race.speed_rating else "—" }}</td>
                     <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
@@ -358,7 +358,7 @@
                             {# Then every distance, fastest time in each. #}
                             {% for event, race in bucket.events.items() %}
                             <li>
-                                <span class="ev">{{ event }}</span>
+                                <span class="ev">{{ event|event_label }}</span>
                                 <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
                             </li>
                             {% endfor %}
@@ -394,7 +394,7 @@
                         {% endif %}
                         {% for event, race in bests.events.items() %}
                         <li>
-                            <span class="ev">{{ event }}</span>
+                            <span class="ev">{{ event|event_label }}</span>
                             <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
                         </li>
                         {% endfor %}

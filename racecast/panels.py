@@ -713,6 +713,10 @@ _PERF_SQL_XC = f"""
            r.meet_id, r.div_id,
            COALESCE(m.meet_name, mt.meet_name)   AS meet_name,
            m.course_name,
+           -- ! FOR _perfDetail. The board shows the time and what it was run
+           --   over; without this the XC half could only show the clock.
+           --   No new join: the difficulty ON clause below already reads it.
+           m.distance,
            -- Geography for tfrrs rows, which `meets` cannot supply at all.
            COALESCE(m.state, mt.state)           AS state,
            cd.difficulty,
@@ -810,12 +814,75 @@ def _tilted(row):
     return raw if d is None else float(_ratingFor(raw, d))
 
 
+def _fmtTime(seconds):
+    """Seconds -> m:ss.d, keeping only the precision the value carries.
+
+    ⚠ A DISPLAY TWIN OF app.format_time, AND THEY MUST AGREE. This runs at
+      build time and writes text into homepage_panels, so the site cannot
+      reformat it later -- but a reader comparing the home board with a race
+      page is comparing these two functions. Change one, change the other.
+      Kept local rather than imported because app.py builds a Flask app at
+      import time and this is a pipeline script.
+    """
+    if seconds is None:
+        return None
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0 or value >= DNF_SENTINEL:
+        return None
+    whole = int(value)
+    hundredths = round((value - whole) * 100)
+    tail = ("" if hundredths == 0
+            else f".{hundredths // 10}" if hundredths % 10 == 0
+            else f".{hundredths:02d}")
+    if value < 60:
+        return f"{whole}{tail}"
+    hours, minutes, secs = whole // 3600, (whole % 3600) // 60, whole % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
+    return f"{minutes}:{secs:02d}{tail}"
+
+
 def _perfDetail(sport, row):
-    """The one-line context shown next to the rating."""
-    meet = row.get("meet_name") or "Unknown meet"
+    """The one-line context shown next to the rating on the home board.
+
+    ★ THE TIME AND WHAT IT WAS RUN OVER -- NOT THE MEET NAME. This used to
+      read "{meet} ({course})", and a meet name does not fit the column: the
+      grid gives it about one twelfth of the board, so "Chile Pepper Cross
+      Country Festival (Agri Park)" rendered as a truncated fragment on every
+      row. A board headed "Best Performances" that cannot show the
+      performance is the wrong trade -- and the row already links to the
+      race, where the meet, course and full field are.
+
+    ⚠ THE DISTANCE STAYS, AND IT IS NOT DECORATION. A time is meaningless
+      without knowing what it was run over: an XC board mixes 3000m through
+      8000m and a TF board mixes 800m through 3200m, so "15:21.0" alone
+      cannot be compared with the row above it.
+
+    Falls back to the bare time when the distance is unknown, and to the meet
+    name when there is no usable time at all -- an empty cell says less than
+    either.
+    """
+    time_text = _fmtTime(row.get("time_seconds"))
+    if time_text is None:
+        return row.get("meet_name") or "Unknown meet"
+
     if sport == "XC":
-        return f"{meet} ({row.get('course_name') or '?'})"
-    return f"{meet} ({row.get('event_short') or '?'})"
+        # ⚠ THE JUNK DISTANCES ARE REAL: `meets` carries 0, 1 and 5 among the
+        #   honest values, and "15:21.0 · 1m" is worse than no distance.
+        #   Same 400m floor athlete_chart_data uses, for the same reason.
+        try:
+            metres = float(row.get("distance"))
+        except (TypeError, ValueError):
+            metres = 0.0
+        if metres >= 400:
+            return f"{time_text} \u00b7 {round(metres)}m"
+        return time_text
+
+    event = (row.get("event_short") or "").strip()
+    return f"{time_text} \u00b7 {event}" if event else time_text
 
 
 def _collectPerformances(conn, sport, season_year, buckets, stats):

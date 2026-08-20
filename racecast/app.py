@@ -660,6 +660,34 @@ def season_label(sport, date_text):
     return str(year + 1) if sport == "TF" else str(year)
 
 
+@app.template_filter("event_label")
+def event_label(event):
+    """A bare number is a distance in metres, so give it its unit.
+
+    XC stores the race distance AS the event ("5000"), so the athlete page
+    printed a naked number in a column headed Event. TF's event_short already
+    carries one ("1600m", "4X400") and comes back untouched.
+
+    ! THE TEST IS "IS THIS ONLY A NUMBER", NOT THE SPORT. A TF row stored as a
+      bare 5000 is 5000 metres too, and keying on sport would leave it naked
+      while dressing the identical XC value.
+
+    ⚠ ROUNDED TO WHOLE METRES. The stored distance is whatever the meet
+      recorded, so a five-mile race arrives as 8046.72 and a 5000 can read
+      4988.9663 -- printing those verbatim in a table cell claims a precision
+      nobody measured. Same reasoning as PR_DISTANCE_TOL in rankings.py.
+    """
+    if event is None:
+        return ""
+    text = str(event).strip()
+    if not text:
+        return ""
+    try:
+        return f"{round(float(text))}m"
+    except (TypeError, ValueError):
+        return text
+
+
 def group_into_seasons(races):
     """Turn a flat list of races into a dict keyed by (season label, sport),
     each value being the list of races in that season.
