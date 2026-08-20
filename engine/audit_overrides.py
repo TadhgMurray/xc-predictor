@@ -114,48 +114,16 @@ _DISTANCES = """
 """
 
 
-_BUILD_SHIFT = """
-    -- ★ speed_rating, NOT normalized_time -- AND THE DIFFERENCE IS THE WHOLE
-    --   MEASUREMENT.
-    --
-    --   normalized_time is the raw time with distance, geometry, era and
-    --   weather applied and NO difficulty; difficulty enters afterwards, in
-    --   rating = 100 * pool_mean * exp(delta) / normalized_time. So a
-    --   division at a hard course has a slow normalized_time, and a shift
-    --   built on it reads that as "these people ran slow" -- which is exactly
-    --   what a wrong distance looks like. The two are indistinguishable in
-    --   that quantity, and this tool exists to tell them apart.
-    --
-    --   speed_rating already has the difficulty divided out. An athlete at a
-    --   correctly measured race on a brutal course rates the same as they do
-    --   anywhere else; only a WRONG DISTANCE moves them. That isolates the
-    --   thing being measured.
-    --
-    -- ⚠ AND THE RATIO INVERTS. A rating is HIGH when the time is fast, so the
-    --   athlete's median rating goes on top: median / this is > 1 when they
-    --   underperformed here, which preserves the old sense where a shift
-    --   above 1 meant "slow for this distance". Every threshold and the
-    --   (d_old/d_new)^K prediction downstream keep their signs.
-    DROP TABLE IF EXISTS ovr_shift;
-    CREATE TABLE ovr_shift AS
-    WITH med AS (
-        SELECT person_id, substring(date, 1, 4)::int AS yr,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
-        FROM   results
-        WHERE  speed_rating IS NOT NULL AND speed_rating > 0
-          AND  person_id IS NOT NULL
-        GROUP  BY 1, 2
-    )
-    SELECT r.meet_id, r.div_id, count(*) AS n,
-           avg(m.med / r.speed_rating) AS field_shift
-    FROM   results r
-    JOIN   med m ON m.person_id = r.person_id
-                AND m.yr = substring(r.date, 1, 4)::int
-    WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0 AND m.med > 0
-    GROUP  BY 1, 2;
-    CREATE INDEX ON ovr_shift (meet_id, div_id);
-    ANALYZE ovr_shift;
-"""
+# ★ IMPORTED, NOT A SECOND COPY. This tool and propose_distances judge the
+#   same divisions against the same quantity; two texts of the same SQL is how
+#   a removal starts disagreeing with a proposal about what a field shift is.
+#
+#   It also carries the fix that made both tools able to see a badly wrong
+#   distance at all: rows the engine's sanity band suppressed are given a
+#   shadow rating from the athlete's own rated races, so a division is judged
+#   on all of its finishers rather than the handful whose times survived the
+#   error. See _BUILD_SHIFT in propose_distances.
+from propose_distances import _BUILD_SHIFT
 
 # EVERY division, overridden or not -- the baselines are computed over all of
 # them, so a class describes the population rather than the suspects.
@@ -163,7 +131,7 @@ _LOAD = f"""
     SELECT s.meet_id, s.div_id, d.meet_name,
            d.distance   AS stored,
            o.distance   AS override,
-           s.n, s.field_shift
+           s.n, s.n_shadow, s.field_shift
     FROM   ovr_shift s
     JOIN   dist_override o ON o.meet_id = s.meet_id AND o.div_id = s.div_id
     LEFT   JOIN div_distance d ON d.meet_id = s.meet_id AND d.div_id = s.div_id
