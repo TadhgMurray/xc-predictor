@@ -770,10 +770,21 @@ def verifyMerged(cur, meet_id, div_id):
         if d > gap:
             gap_at, gap = i, d
     left, right = shifts[:gap_at + 1], shifts[gap_at + 1:]
+    if not right:
+        return None
     small_side = min(len(left), len(right)) / n
-    lo_mid = left[len(left) // 2]
-    hi_mid = right[len(right) // 2] if right else lo_mid
-    return n, q25, q50, q75, small_side, lo_mid, hi_mid, len(left), gap
+
+    # ⚠ WHICH SIDE IS THE ANOMALY IS NOT ALWAYS THE LOW ONE, and assuming so
+    #   inverted the answer. The LARGER group is the reference -- it is the
+    #   race the label describes, and its shift should sit near 1.0 -- and the
+    #   SMALLER group is the one that ran something else. On 132074/563039
+    #   the two readings give 338m and 4313m for the same division; only one
+    #   of those is a distance.
+    if len(left) <= len(right):
+        anom, ref = left[len(left) // 2], right[len(right) // 2]
+    else:
+        anom, ref = right[len(right) // 2], left[len(left) // 2]
+    return n, q25, q75, small_side, anom, ref, gap
 
 
 def reportMerged(cur, limit=40):
@@ -799,16 +810,16 @@ def reportMerged(cur, limit=40):
                 print(f"    verified {i:,}/{len(candidates):,} "
                       f"({len(kept)} kept)")
             continue
-        n, q25, q50, q75, small, lo_mid, hi_mid, n_left, gap = got
-        if (q25 <= 0 or lo_mid <= 0 or q75 / q25 <= MERGED_IQR
+        n, q25, q75, small, anom, ref, gap = got
+        if (q25 <= 0 or ref <= 0 or anom <= 0 or q75 / q25 <= MERGED_IQR
                 or small < MERGED_MIN_SIDE):
             dropped += 1
             if i % 25 == 0 or i == len(candidates):
                 print(f"    verified {i:,}/{len(candidates):,} "
                       f"({len(kept)} kept)")
             continue
-        kept.append((hi_mid / lo_mid, meet_id, div_id, n, small,
-                     lo_mid, hi_mid, n_left, gap))
+        kept.append((max(anom / ref, ref / anom), meet_id, div_id, n,
+                     small, anom, ref, gap))
         # ! PRINTED AFTER THE VERIFY, not before it. Reporting progress at the
         #   top of the loop counts the item it has not done yet, so the last
         #   line said "3/3 (2 kept)" over a table of three.
@@ -834,22 +845,39 @@ def reportMerged(cur, limit=40):
     #       stored * (lo_mid / hi_mid) ** (1/K)
     #   -- and "42% of this 8000m field ran about 5100m" is something a
     #   results page settles in ten seconds.
-    print(f"    {'meet/div':<18}{'n':>5}{'small':>7}{'their':>8}{'rest':>8}"
-          f"{'gap':>7}{'stored':>8}{'they ran':>10}  meet")
-    for _r, meet_id, div_id, n, small, lo_mid, hi_mid, n_left, gap \
-            in kept[:limit]:
-        cur.execute("SELECT meet_name, distance FROM meets "
-                    "WHERE meet_id = %s AND div_id = %s LIMIT 1",
-                    (meet_id, div_id))
+    print("    `ref` is the LARGER group -- the race the label describes, so "
+          "it should\n    sit near 1.00. Far from it means the whole "
+          "division is off, not half.\n")
+    print(f"    {'meet/div':<18}{'n':>5}{'small':>7}{'anom':>8}{'ref':>7}"
+          f"{'stored':>8}{'they ran':>10}  meet")
+    for _r, meet_id, div_id, n, small, anom, ref, gap in kept[:limit]:
+        # ! div_distance, NOT meets. It unions anet's column with the tfrrs
+        #   JSON blob, and reading `meets` alone printed "-" for every tfrrs
+        #   division -- exactly the ones with no distance column to read.
+        # ! div_distance HAS course_name, NOT meet_name -- see _DISTANCES.
+        #   The meet name comes from `meets`, which only covers anet, so the
+        #   course name is the fallback and a tfrrs division still gets a
+        #   label rather than a blank.
+        cur.execute("""
+            SELECT d.distance, COALESCE(m.meet_name, d.course_name)
+            FROM   div_distance d
+            LEFT   JOIN meets m ON m.meet_id = d.meet_id
+                                AND m.div_id = d.div_id
+            WHERE  d.meet_id = %s AND d.div_id = %s
+            LIMIT  1
+        """, (meet_id, div_id))
         got = cur.fetchone()
-        name = (got[0] if got else "") or ""
-        stored = float(got[1]) if got and got[1] else None
-        implied = (stored * (lo_mid / hi_mid) ** (1.0 / K)
-                   if stored and hi_mid else None)
-        print(f"    {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
-              f"{lo_mid:>8.3f}{hi_mid:>8.3f}{gap:>7.3f}"
+        stored = float(got[0]) if got and got[0] else None
+        name = (got[1] if got else "") or ""
+        implied = stored * (anom / ref) ** (1.0 / K) if stored else None
+        flag = " " if 0.9 <= ref <= 1.1 else "!"
+        print(f"  {flag} {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
+              f"{anom:>8.3f}{ref:>7.3f}"
               f"{(f'{stored:.0f}' if stored else '-'):>8}"
               f"{(f'{implied:.0f}' if implied else '-'):>10}  {name[:28]}")
+    print("\n    ! marks a division whose reference group is itself more than "
+          "10% from\n      1.00 -- read those as 'this whole division is "
+          "wrong', not 'half of it'.")
 
 
 def main(rebuild=True, write=False, explain_keys=(),
