@@ -47,6 +47,7 @@ from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 
 try:
     from normalize_distance import poolFor
+    from anchor_check import mismatch as anchorMismatch
     from pool_resolve import resolvePool, inScope
 except ImportError as exc:
     raise SystemExit(
@@ -291,6 +292,11 @@ _SQL = {
     "XC": f"""
         SELECT r.result_id, r.person_id, r.speed_rating, r.date,
                r.grade, r.source, r.school, r.time_seconds,
+               -- ! FOR THE ANCHOR GATE IN poolOf. Without this column the
+               --   check reads None on every row and silently never fires,
+               --   which is worse than not having it: the build would report
+               --   a gate that is not gating.
+               r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
                COALESCE(dov.distance, m.distance) AS distance,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
@@ -334,6 +340,11 @@ _SQL = {
     "TF": f"""
         SELECT r.result_id, r.person_id, r.speed_rating, r.date,
                r.grade, r.source, r.school, r.time_seconds,
+               -- ! FOR THE ANCHOR GATE IN poolOf. Without this column the
+               --   check reads None on every row and silently never fires,
+               --   which is worse than not having it: the build would report
+               --   a gate that is not gating.
+               r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
                COALESCE(dov.distance, m.distance) AS distance,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
@@ -541,6 +552,38 @@ def prepareRow(row, sport):
     #   column existed ranks everything exactly as it used to rather than
     #   ranking nothing.
     if row.get("grade_trust") == "low":
+        return None
+
+    # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
+    #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
+    #
+    #   normalized_time was written by the backfill with the pool it decided
+    #   THEN; speed_rating divides by the pool mean of the pool the solve
+    #   decided LATER. Those two are computed by different code from facts
+    #   that can change in between -- a grade_fix verdict, a season_level
+    #   verdict, a school that acquired a level -- and until now nothing
+    #   checked they agree.
+    #
+    # ⚠ THE ANCHOR IS PER POOL, so disagreeing is not a rounding difference.
+    #   normalize_distance.targetFor anchors ms at 3200m and hs at 5000m, so a
+    #   3200m-anchored ability over a 5000m-anchored mean is inflated about
+    #   1.64x. Person 29346285, an eighth grader with no recorded grade, rated
+    #   187 in hs_m on races his own exponents place squarely at the ms
+    #   anchor; on one scale he is a 112.
+    #
+    # ! CHECKED BY RECOMPUTING, NOT BY INFERRING. normalizeTime is
+    #   deterministic given the row's own time and distance, so running it
+    #   with the pool the row is RATED in and comparing settles it -- no
+    #   exponent recovered, no anchor guessed. See engine/anchor_check.py,
+    #   which is the same function and can measure the corpus before this
+    #   drops anything.
+    #
+    # ! AND IT DROPS FROM THE BOARDS ONLY, exactly like grade_trust='low'
+    #   above. results.speed_rating is untouched, so the athlete's own page
+    #   still shows what the engine computed; what is refused is a place in a
+    #   national ranking built on a scale the row was never measured on.
+    if anchorMismatch(row.get("time_seconds"), row.get("distance"),
+                      row.get("normalized_time"), pool, sport)[0]:
         return None
 
     rating = float(row["speed_rating"])
