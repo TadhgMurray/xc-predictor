@@ -41,6 +41,9 @@ const state = {
   // Set once the user picks a pool, so switching boards stops choosing for
   // them. See syncBoard.
   poolTouched: false,
+  // Set once the user clicks a column header. Until then the teams board
+  // picks its own sort, which depends on whether one season is on screen.
+  sortTouched: false,
   dir: ""            // "" = the column's own natural direction
 };
 
@@ -189,6 +192,23 @@ function buildQuery() {
      single-race filters: a date range or a distance belongs to one race,
      and min_races is a fact about one athlete. */
   if (state.board === "teams") {
+    /* ★ THE SORT FOLLOWS THE YEAR FILTER until the user overrides it.
+       Points are only comparable inside one season -- every season has its
+       own first place -- so an all-seasons board ranks on the top-5 average,
+       which is pool-relative and era-adjusted and therefore travels. Pick
+       exactly one year and points ascending becomes the right order, because
+       now every team on screen raced the same field.
+
+       ! SET ON `state` RATHER THAN JUST SENT, so renderHead marks the column
+         the server is actually going to sort by. Sending one and drawing the
+         arrow on another is worse than either alone. */
+    if (!state.sortTouched) {
+      const years = combos.year ? combos.year.values() : [];
+      state.sort = years.length === 1 ? "rank" : "rating";
+      state.dir = "";
+      q.set("sort", state.sort);
+      q.delete("dir");
+    }
     q.set("min_athletes", $("min_athletes").value || 5);
     return q;
   }
@@ -709,6 +729,7 @@ function effectiveDir(board, key) {
  * Click a header: sort by it, or flip it if it is already the sort.
  */
 function onHeaderClick(key) {
+  state.sortTouched = true;
   if (state.sort === key) {
     state.dir = effectiveDir(state.board, key) === "asc" ? "desc" : "asc";
   } else {
@@ -1018,10 +1039,13 @@ function syncBoard(board) {
          times board sorted by something other than time, which is the one
          thing it exists to sort by. */
     state.sort = board === "pr" ? "time"
-               : board === "teams" ? "rank"
+               : board === "teams" ? "rating"
                : "rating";
     state.dir = "";
   }
+  // Arriving at a board hands the sort back to it; buildQuery then picks
+  // the teams default from the year filter on every load.
+  if (board !== previous) state.sortTouched = false;
 
   /* ⚠ NO sport='both' ON A BOARD OF MEETS. One hypothetical race cannot hold
      cross country and track teams at once, so the API refuses it -- and a

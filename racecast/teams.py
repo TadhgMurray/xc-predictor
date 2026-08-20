@@ -22,16 +22,28 @@ caller did not set.
   truth about where those teams stand, and renumbering them 1, 2, 3 would
   invent a championship that was never run.
 
-⚠ WHICH IS EXACTLY WHY A SEASON IS ALWAYS PINNED. team_season holds one
-  scored meet PER YEAR, so a board with no year filter is thirty meets
-  stacked on top of each other -- thirty teams ranked 1st, and since the
-  tie-break is the school name, the best team in the country sorts wherever
-  the alphabet puts it among them. Measured on the first real run: about
-  twenty teams shown in first place and Newbury Park down at twentieth. An
-  unfiltered year is meaningless here in a way it is not on the athlete
-  boards, which rank a continuous number that means the same thing in every
-  season. So when the caller names no year, the newest season present is
-  chosen for them.
+★ POINTS ONLY MEAN SOMETHING INSIDE ONE SEASON, AND THE SORT KNOWS IT.
+  team_season holds one scored meet per year, so a board showing every
+  season shows one rank-1 per season -- which is TRUE, each of those teams
+  did win its own year, and hiding them would be hiding the history. What
+  is not true is ordering them by that rank: it puts thirty first-places at
+  the top in alphabetical order, which is how the best team in the country
+  landed twentieth.
+
+  So the default sort depends on the question being asked:
+
+    every season      TOP-5 AVERAGE RATING, descending. It is the only
+                      column comparable across years -- pool-relative and
+                      era-adjusted, 100 is the pool mean in 1998 and in
+                      2025. The rank column then reads as "where this team
+                      finished in its own season", which is what it is.
+
+    one season chosen POINTS, ascending, which is rank order. Now every
+                      team on screen raced the same field, so the lowest
+                      score really is first.
+
+  Neither is a filter change: every season is shown unless the caller
+  names years, exactly like the athlete boards.
 """
 
 from rankings import (US_STATES, POOLS, SPORTS, SCOPES, MAX_LIMIT,
@@ -92,14 +104,15 @@ def parseFilters(args):
         #   national one. See the module docstring.
         "board_scope": states[0] if states and len(states) == 1 else "usa",
         "min_athletes": _boundedInt(args, "min_athletes", 5, 5, 50),
-        # Filled by resolveSeason when the caller named no year. STORED, not
-        # the label -- it comes straight out of the table.
-        "season": None,
         "limit": _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset": _boundedInt(args, "offset", 0, 0, 100000),
     }
 
-    sort = args.get("sort") or "rank"
+    # ! THE DEFAULT DEPENDS ON WHETHER ONE SEASON IS ON SCREEN. See the
+    #   module docstring: rank is only meaningful within a season, and the
+    #   top-5 average is the only column that travels between them.
+    sort = args.get("sort") or ("rank" if f["year"] and len(f["year"]) == 1
+                                else "rating")
     if sort not in _SORTS:
         return None, f"sort must be one of {sorted(_SORTS)}"
     f["sort"] = sort
@@ -109,37 +122,6 @@ def parseFilters(args):
         return None, "dir must be asc or desc"
     f["dir"] = direction or _SORTS[sort][1]
     return f, None
-
-
-def resolveSeason(cur, f):
-    """Pin the board to a season when the caller named none.
-
-    ★ THE NEWEST SEASON THAT ACTUALLY HAS TEAMS, not the newest on the wall
-      clock. Asking for the current calendar year would serve an empty board
-      every summer, and an empty board reads as "the feature is broken"
-      rather than "that season has not been run yet".
-
-    Sets f["season"] to the STORED year. The caller's own `year` filter, when
-    present, stays in charge -- it arrives as a LABEL and _where converts it.
-
-    ⚠ AND IT MUST NOT ASSUME A CURSOR TYPE. The route hands in a
-      RealDictCursor, so fetchone() returns a MAPPING -- row[0] raises
-      KeyError there, which Flask answers with its HTML debug page, which the
-      frontend reports as "Unexpected token '<' ... is not valid JSON". An
-      error about JSON parsing, for a cursor mistake. Hence the alias and the
-      isinstance test: this works under either cursor.
-    """
-    if f["year"]:
-        return
-    cur.execute("""
-        SELECT max(year) AS season FROM team_season
-        WHERE  scope = %(scope)s AND pool = %(pool)s AND sport = %(sport)s
-    """, {"scope": f["board_scope"], "pool": f["pool"], "sport": f["sport"]})
-    row = cur.fetchone()
-    if row is None:
-        f["season"] = None
-    else:
-        f["season"] = row["season"] if isinstance(row, dict) else row[0]
 
 
 def _where(f, params):
@@ -177,11 +159,6 @@ def _where(f, params):
         params["year_tf"] = [y - 1 for y in f["year"]]
         parts.append(" AND ((t.sport = 'TF' AND t.year = ANY(%(year_tf)s))"
                      "      OR (t.sport <> 'TF' AND t.year = ANY(%(year)s)))")
-    elif f.get("season") is not None:
-        # ! ALREADY THE STORED YEAR -- resolveSeason read it from the table,
-        #   so it needs no label conversion.
-        params["season"] = f["season"]
-        parts.append(" AND t.year = %(season)s")
 
     params["min_athletes"] = f["min_athletes"]
     parts.append(" AND t.n_athletes >= %(min_athletes)s")
@@ -190,14 +167,19 @@ def _where(f, params):
 
 def getTeamRankings(cur, f):
     """One page of a team board."""
-    resolveSeason(cur, f)
     params = {"limit": f["limit"], "offset": f["offset"]}
     where = _where(f, params)
     expr, _ = _SORTS[f["sort"]]
     # A stable unique tail, for the reason rankings._orderBy gives: with
     # OFFSET paging a tie has no defined order, so a team can appear on two
     # pages while another appears on none.
-    order = f"{expr} {f['dir']} NULLS LAST, t.rank ASC, t.school ASC"
+    # ! THE TIE-BREAK IS POINTS THEN RANK, NOT rank ALONE. Sorting an
+    #   all-seasons board by rank first is precisely the bug this file's
+    #   docstring describes; as a TIE-break it is harmless and keeps paging
+    #   stable, but points comes first so equal ratings order by how the
+    #   teams actually scored.
+    order = (f"{expr} {f['dir']} NULLS LAST, "
+             "t.points ASC, t.rank ASC, t.year DESC, t.school ASC")
 
     cur.execute(f"""
         SELECT t.school, t.state, t.pool, t.sport,

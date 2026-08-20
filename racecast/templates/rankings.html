@@ -1,9 +1,15 @@
 {# =====================================================================
   rankings.html -- the rankings page. MARKUP ONLY.
 
-    site styles      static/style.css      (loaded first, unchanged)
-    page styles      static/rankings.css   (scoped under .rankings-page)
+    styles           static/style.css      -- the page's own rules live at
+                     the bottom of it, scoped under .rankings-page
     behaviour        static/rankings.js
+
+  ! THERE IS NO rankings.css. This file used to link one; the file was never
+    in the tree, so every rankings page load spent a round trip on a 404 and
+    the rules it was supposed to carry were already in style.css. The filter
+    visibility rules referenced below are the .rankings-page[data-board=...]
+    block near the end of style.css.
 
   ★ EVERY FILTER IS A COMBOBOX. Each one is an empty shell here -- a container
     with a data-field -- and rankings.js fills in the chips, the text input and
@@ -32,7 +38,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='rankings.css') }}">
 {% set meta_title = "Rankings" %}
 {% set meta_description =
    "Cross country and track rankings on one comparable scale. Filter by
@@ -44,7 +49,7 @@
 <body>
 {% include "_topbar.html" %}
 
-{# data-board drives the filter-visibility rules in rankings.css. rankings.js
+{# data-board drives the filter-visibility rules in style.css. rankings.js
    keeps it in sync with the selected tab and never touches individual field
    visibility itself. #}
 <div class="rankings-page" id="rankings" data-board="ability">
@@ -145,7 +150,7 @@
       <div class="combo" data-field="school"></div>
     </div>
 
-    {# ability-only / perf-only: shown and hidden by rankings.css off
+    {# ability-only / perf-only: shown and hidden by style.css off
        .rankings-page[data-board]. #}
     {# Teams-only: how many rated athletes a squad needs before it is
        ranked at all. Five is not a preference, it is the scoring rule. #}
@@ -231,9 +236,11 @@
        meet than in the national one. The RANK travels between boards; the
        points explain it. #}
     <p class="board-note teams-only">
-      Ranked by racing every team's top seven in one hypothetical meet.
-      Points are scored against that field only &mdash; compare ranks
-      between boards, not points.
+      Ranked by racing every team's top seven in one hypothetical meet, one
+      meet per season. Every season is shown, so each has its own winner
+      &mdash; the list is ordered by top-5 average rating, which is
+      comparable across years. <strong>Pick a Year</strong> to rank a single
+      season by points, lowest first.
     </p>
 
     <p class="board-note pr-only">
