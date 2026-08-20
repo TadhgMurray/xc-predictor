@@ -477,7 +477,106 @@ def appendCorrections(props, path=os.path.join("engine", "corrections.py")):
 
 
 
-def main(rebuild=True, write=False):
+
+def explain(key, rows, base, by_course, by_meet, cur):
+    """Why was this division not proposed? Walk every gate out loud.
+
+    ★ A TOOL THAT REPORTS 1,760 FINDINGS AND MISSES THE ONE YOU CAME FOR IS
+      NOT INFORMATIVE, IT IS FRUSTRATING. Every bar here is defensible on its
+      own and any of them can be the one that quietly excluded the division
+      you already know is wrong. This prints them in order, with the numbers,
+      so the answer is "MIN_CORROBORATE, by one" rather than silence.
+    """
+    meet_id, div_id = key
+    print(f"\n{'=' * 68}\nWHY NOT {meet_id}/{div_id}\n{'=' * 68}")
+
+    cur.execute("""
+        SELECT count(*) AS n,
+               count(r.speed_rating) AS rated,
+               count(DISTINCT r.person_id) AS people,
+               min(r.time_seconds) AS best,
+               max(d.distance) AS stored, max(d.course_name) AS course
+        FROM   results r
+        LEFT   JOIN div_distance d ON d.meet_id = r.meet_id
+                                  AND d.div_id = r.div_id AND d.source = r.source
+        WHERE  r.meet_id = %(m)s AND r.div_id = %(d)s
+    """, {"m": meet_id, "d": div_id})
+    raw = cur.fetchone()
+    if not raw or not raw[0]:
+        print("  no results rows at all for this (meet_id, div_id)")
+        return
+    n, rated, people, best, stored, course = raw
+    print(f"  results          {n:,} rows, {rated:,} rated by the engine, "
+          f"{people:,} with a person_id")
+    print(f"  stored distance  {stored}   course {course!r}")
+    print(f"  fastest raw      {best}")
+
+    cur.execute("SELECT n, n_shadow, field_shift FROM ovr_shift "
+                "WHERE meet_id = %(m)s AND div_id = %(d)s",
+                {"m": meet_id, "d": div_id})
+    shift_row = cur.fetchone()
+    if not shift_row:
+        print(f"\n  ⛔ NOT IN ovr_shift. Every row needs a person_id, a median "
+              f"rating\n     for that person-year, and >= 3 rated races to "
+              f"scale a shadow\n     rating from. Nothing here cleared that.")
+        return
+    sn, sshadow, sshift = shift_row
+    print(f"\n  ovr_shift        n={sn:,} ({sshadow:,} shadow-rated), "
+          f"field_shift={float(sshift):.4f}")
+    if sn < MIN_ROWS:
+        print(f"  ⛔ STOPPED: n < MIN_ROWS ({sn} < {MIN_ROWS}). The division "
+              f"is not loaded at all.")
+        return
+
+    r = next((x for x in rows if (x["meet_id"], x["div_id"]) == key), None)
+    if r is None:
+        print("  ⛔ STOPPED: not in the loaded set (no sane stored distance?)")
+        return
+
+    used = r["used"]
+    baseline = baselineFor(used, base)
+    err = abs(r["field_shift"] / baseline - 1)
+    print(f"  class baseline   {baseline:.4f} for {used:.0f}m")
+    print(f"  err vs class     {err:.4f}   (OUTLIER bar {OUTLIER})")
+    if err <= OUTLIER:
+        print(f"  ⛔ STOPPED: this field is NORMAL for its class. A shift of "
+              f"{r['field_shift']:.3f}\n     against a {used:.0f}m baseline of "
+              f"{baseline:.3f} is not an anomaly.")
+        return
+
+    implied = used * (r["field_shift"] / baseline) ** (1.0 / K)
+    print(f"  implied distance {implied:.1f}m")
+
+    pool = {}
+    for src, weight in ((by_meet.get(r["meet_id"], {}), "meet"),
+                        (by_course.get(r["course_name"], {}), "course")):
+        for d, cnt in src.items():
+            pool.setdefault(d, (cnt, weight))
+    if not pool:
+        print("  ⛔ STOPPED: no other division at this meet or course has any "
+              "distance.")
+        return
+
+    print(f"\n  candidates already raced here (need >= {MIN_CORROBORATE} "
+          f"divisions, within {MATCH_TOL:.0%} of implied,\n  differing "
+          f">= {MIN_CHANGE:.0%} from what is in use, and gaining "
+          f">= {MIN_GAIN}):")
+    print(f"    {'dist':>7}{'divs':>7}{'where':>8}{'off implied':>13}"
+          f"{'err after':>11}  verdict")
+    for d, (cnt, where) in sorted(pool.items()):
+        after = abs(r["field_shift"] * (used / d) ** K / baselineFor(d, base) - 1)
+        off = abs(implied / d - 1)
+        why = ("same as in use" if abs(d / used - 1) < MIN_CHANGE
+               else f"only {cnt} division{'' if cnt == 1 else 's'}"
+               if cnt < MIN_CORROBORATE
+               else f"implied is {off:.1%} away" if off > MATCH_TOL
+               else f"gain {err - after:.3f} < {MIN_GAIN}"
+               if err - after < MIN_GAIN else "ACCEPTED")
+        print(f"    {d:>7.0f}{cnt:>7}{where:>8}{off:>12.1%}{after:>11.3f}"
+              f"  {why}")
+
+
+def main(rebuild=True, write=False, explain_keys=()):
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
@@ -514,6 +613,16 @@ def main(rebuild=True, write=False):
     print(f"[dist] {len(base)} distance classes")
 
     by_course, by_meet = candidateSets(rows)
+
+    if explain_keys:
+        # ! ITS OWN EXIT. Explaining is a question about specific divisions,
+        #   not a run that also happens to print some -- writing corrections
+        #   as a side effect of asking "why not" would be a nasty surprise.
+        with getConn() as conn, conn.cursor() as cur:
+            for key in explain_keys:
+                explain(key, rows, base, by_course, by_meet, cur)
+        return
+
     props = [p for v, _, p in (judge(r, base, by_course, by_meet) for r in rows)
              if v == "propose"]
 
@@ -555,6 +664,17 @@ def main(rebuild=True, write=False):
         appendCorrections(props)
 
 
+def _explainArgs(argv):
+    """--explain 25930/7 --explain 900/1 -> [(25930, 7), (900, 1)]"""
+    out = []
+    for i, a in enumerate(argv):
+        if a == "--explain" and i + 1 < len(argv):
+            meet, _, div = argv[i + 1].partition("/")
+            out.append((int(meet), int(div or 0)))
+    return tuple(out)
+
+
 if __name__ == "__main__":
     main(rebuild="--no-rebuild" not in sys.argv,
-         write="--write" in sys.argv)
+         write="--write" in sys.argv,
+         explain_keys=_explainArgs(sys.argv))

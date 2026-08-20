@@ -447,7 +447,50 @@ def loadRows(cur, conn, rebuild):
     return rows
 
 
-def main(write=False, rebuild=False, propose=False):
+def explainRemoval(key, rows, baselines, cur):
+    """Why was this override not condemned? Walk the removal bar out loud."""
+    meet_id, div_id = key
+    print(f"\n{'=' * 68}\nWHY NOT REMOVED: {meet_id}/{div_id}\n{'=' * 68}")
+
+    cur.execute("SELECT distance FROM dist_override "
+                "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
+    ov = cur.fetchone()
+    if not ov:
+        print("  ⛔ THERE IS NO OVERRIDE on this division. Nothing to remove --\n"
+              "     if its distance is wrong, that is a PROPOSAL, and\n"
+              "     propose_distances.py --explain is the tool.")
+        return
+    cur.execute("SELECT distance, course_name FROM div_distance "
+                "WHERE meet_id = %s AND div_id = %s LIMIT 1", (meet_id, div_id))
+    stored = cur.fetchone()
+    print(f"  override         {float(ov[0]):.0f}m")
+    print(f"  stored distance  "
+          + (f"{float(stored[0]):.0f}m   course {stored[1]!r}" if stored
+             else "NONE -- there is no scraped value to fall back to"))
+
+    cur.execute("SELECT n, n_shadow, field_shift FROM ovr_shift "
+                "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
+    sr = cur.fetchone()
+    if not sr:
+        print("  ⛔ STOPPED: not in ovr_shift -- no row here has a person_id "
+              "with\n     a median rating and >= 3 rated races to scale from.")
+        return
+    n, n_shadow, shift = sr
+    print(f"  ovr_shift        n={n:,} ({n_shadow:,} shadow-rated), "
+          f"field_shift={float(shift):.4f}")
+    if n < MIN_ROWS:
+        print(f"  ⛔ STOPPED: n < MIN_ROWS ({n} < {MIN_ROWS}).")
+        return
+
+    r = next((x for x in rows if (x["meet_id"], x["div_id"]) == key), None)
+    if r is None:
+        print("  ⛔ STOPPED: not in the loaded set.")
+        return
+    verdict, reason = judgeRemoval(r, baselines)[:2]
+    print(f"\n  verdict          {verdict}: {reason}")
+
+
+def main(write=False, rebuild=False, propose=False, explain_keys=()):
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
@@ -459,6 +502,13 @@ def main(write=False, rebuild=False, propose=False):
 
     baselines = classBaselines(rows)
     reportBaselines(baselines)
+
+    if explain_keys:
+        # Its own exit: asking "why not" must never write corrections.
+        with getConn() as conn, conn.cursor() as cur:
+            for key in explain_keys:
+                explainRemoval(key, rows, baselines, cur)
+        return
 
     verdicts = [(*judgeRemoval(r, baselines), r) for r in have]
     keys = reportRemovals(verdicts)
@@ -486,6 +536,15 @@ def main(write=False, rebuild=False, propose=False):
 
 
 if __name__ == "__main__":
+    def _keys(argv):
+        out = []
+        for i, a in enumerate(argv):
+            if a == "--explain" and i + 1 < len(argv):
+                meet, _, div = argv[i + 1].partition("/")
+                out.append((int(meet), int(div or 0)))
+        return tuple(out)
+
     main(write="--write" in sys.argv,
          rebuild="--rebuild" in sys.argv,
+         explain_keys=_keys(sys.argv),
          propose="--propose" in sys.argv)
