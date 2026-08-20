@@ -377,12 +377,30 @@ def stripDeadBlocks(text):
       did not do. Two tools disagreeing about which lines are live is worse
       than either being wrong alone.
 
-    Returns (text, n_blocks, n_lines).
+    ⚠ AND EVERY LINE THAT MENTIONS THE NAME GOES WITH IT, not just the dict.
+      The first version of this removed the literal and left behind whatever
+      followed it -- and at least one copy of the file carried a hand-written
+
+          _DISTANCE_OVERRIDES_XC.update(DIST_PROPOSED)
+
+      after the block. Deleting the dict under a live reference does not
+      produce a dead block, it produces a NameError on import, and
+      corrections.py is imported by dump_overrides and the whole backfill.
+      Cleaning up half a thing is worse than leaving it alone.
+
+    Returns (text, n_blocks, n_lines, n_orphans).
     """
-    out, blocks, dropped = [], 0, 0
+    out, blocks, dropped, orphans = [], 0, 0, 0
     lines = text.splitlines(keepends=True)
     i = 0
     while i < len(lines):
+        # An orphaned reference: `X.update(DIST_PROPOSED)`, `del DIST_PROPOSED`.
+        stripped = lines[i].strip()
+        if "DIST_PROPOSED" in stripped and not stripped.startswith("#") \
+                and not stripped.startswith("DIST_PROPOSED = {"):
+            orphans += 1
+            i += 1
+            continue
         if lines[i].startswith("DIST_PROPOSED = {"):
             blocks += 1
             # Walk back over the generated-by comment that introduces it.
@@ -400,7 +418,7 @@ def stripDeadBlocks(text):
             continue
         out.append(lines[i])
         i += 1
-    return "".join(out), blocks, dropped
+    return "".join(out), blocks, dropped, orphans
 
 
 def appendCorrections(props, path=os.path.join("engine", "corrections.py")):
@@ -444,11 +462,12 @@ def appendCorrections(props, path=os.path.join("engine", "corrections.py")):
     # ! CLEARED BEFORE APPENDING. Runs of the broken version left dead
     #   DIST_PROPOSED literals behind; leaving them would keep the file
     #   claiming corrections nothing applies. See stripDeadBlocks.
-    text, dead_blocks, dead_lines = stripDeadBlocks(text)
-    if dead_blocks:
+    text, dead_blocks, dead_lines, dead_orphans = stripDeadBlocks(text)
+    if dead_blocks or dead_orphans:
         io.open(path, "w", encoding="utf-8", newline="").write(text)
-        print(f"[dist] removed {dead_blocks} dead DIST_PROPOSED block(s) "
-              f"({dead_lines:,} proposals) that were never applied to anything")
+        print(f"[dist] removed {dead_blocks} DIST_PROPOSED block(s) "
+              f"({dead_lines:,} proposals) and {dead_orphans} orphaned "
+              f"reference(s)")
 
     lines = [f"\n\n{MARKER}",
              f"# {len(safe)} divisions, each corroborated by at least "
@@ -802,7 +821,29 @@ def reportMerged(cur, limit=40):
 
 
 def main(rebuild=True, write=False, explain_keys=(),
-         merged=False):
+         merged=False, repair=False):
+    if repair:
+        # ★ ITS OWN COMMAND, because the file is currently unimportable and
+        #   the ordinary --write path would have to import nothing but still
+        #   appends proposals. A repair should repair.
+        path = os.path.join("engine", "corrections.py")
+        text = io.open(path, encoding="utf-8", newline="").read()
+        fixed, blocks, lines_, orphans = stripDeadBlocks(text)
+        if fixed == text:
+            print("[dist] corrections.py has no DIST_PROPOSED left to clean.")
+            return
+        io.open(path + ".bak", "w", encoding="utf-8", newline="").write(text)
+        io.open(path, "w", encoding="utf-8", newline="").write(fixed)
+        print(f"[dist] removed {blocks} DIST_PROPOSED block(s) "
+              f"({lines_:,} proposal lines) and {orphans} orphaned "
+              f"reference(s) to the name")
+        print(f"       backup at {path}.bak")
+        print("       corrections.py should import again -- verify with "
+              "`python -c \"import sys; sys.path.insert(0,'engine'); "
+              "import corrections\"`")
+        return
+
+
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
@@ -910,4 +951,5 @@ if __name__ == "__main__":
     main(rebuild="--no-rebuild" not in sys.argv,
          write="--write" in sys.argv,
          explain_keys=_explainArgs(sys.argv),
-         merged="--merged" in sys.argv)
+         merged="--merged" in sys.argv,
+         repair="--repair" in sys.argv)
