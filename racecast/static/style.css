@@ -494,7 +494,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 }
 .search-tab.is-active .tab-count { background: rgba(255,255,255,0.2); }
 
-.results-table { width: 100%; border-collapse: collapse; }
+.results-table { width: 100%; border-collapse: separate; border-spacing: 0; }
 .results-table th, .results-table td {
     padding: 0.5rem 0.9rem;
     border-bottom: 1px solid #eee;
@@ -648,7 +648,9 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* ---- the result tables: same look as the leaderboard tables ---- */
 .conv-table {
     width: 100%;
-    border-collapse: collapse;
+    /* separate, so the shared radius clips -- see SITE FOUNDATION. */
+    border-collapse: separate;
+    border-spacing: 0;
 }
 .conv-table th,
 .conv-table td {
@@ -908,7 +910,11 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 
 .rankings-page table.rk {
   width: 100%;
-  border-collapse: collapse;
+  /* ! separate, NOT collapse -- see the table rules in SITE FOUNDATION.
+     A collapsed table cannot clip its own rounded corners, so this board
+     would be the one table on the site with square ones. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.875rem;
 }
 
@@ -2413,6 +2419,128 @@ tr.more-row td { padding: 0; }
 .more-btn:hover { background: #f0f0ec; }
 .more-left { color: #999; }
 .h2-note { color: #999; font-weight: 400; font-size: 0.8em; }
+
+/* ======================================================================= *
+ *  SITE FOUNDATION
+ *
+ *  ★ THIS SECTION SUPERSEDES EARLIER RULES ON PURPOSE. It is last in the
+ *    file (bar the phone block) so it wins on source order without needing
+ *    !important or inflated selectors. Where it contradicts something
+ *    above -- the full cell grid on tables, most obviously -- the rule
+ *    above is the one being replaced, not a rule being fought.
+ * ======================================================================= */
+
+/* ---- tokens ----------------------------------------------------------- *
+ * These already existed, declared on .rankings-page so they could not
+ * collide with anything. Same values, at :root, because every page wants
+ * them and a second palette per page is how two greys appear. */
+:root {
+  --ink:    #111418;
+  --muted:  #6b7280;
+  --line:   #e5e7eb;
+  --line-2: #cbd0d6;
+  --accent: #1d4ed8;
+  --zebra:  #fafbfc;
+  --hover:  #f3f6fa;
+  --gold:   #a97a12;
+}
+
+/* ---- the typeface ------------------------------------------------------ *
+ * ⚠ THERE WAS NONE. This file declared font-family exactly once, on form
+ *   controls, so every page rendered in the browser's default serif at
+ *   default sizes -- which is most of why the site read as an unstyled
+ *   document rather than a product.
+ *
+ * A system stack: nothing to fetch, no CDN to depend on, and it is the
+ * face the reader's own OS already renders best. tabular figures are the
+ * point for a results site -- without them a column of times jitters,
+ * because 1 is narrower than 0 in most proportional faces. */
+body, input, select, button, textarea {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+}
+body {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5 { letter-spacing: -0.015em; color: var(--ink); }
+h1 { font-size: 2rem;    font-weight: 700; }
+h2 { font-size: 1.35rem; font-weight: 650; margin-top: 2rem; }
+h3 { font-size: 1.05rem; font-weight: 650; }
+
+/* ---- links ------------------------------------------------------------- *
+ * ⚠ THERE WAS NO `a` RULE EITHER, so every link on the site outside .page
+ *   was browser-default blue and underlined. On the rankings board that was
+ *   three of nine columns shouting, and the rating -- the number the site
+ *   exists to produce -- could not compete with it.
+ *
+ * ! PROSE KEEPS ITS UNDERLINE. Dark text plus no underline is an invisible
+ *   link in a paragraph, so the underline only comes off where the ROW is
+ *   the link and the context already says so: tables, the board grid, nav,
+ *   the sidebar panels. Hover puts it back everywhere. */
+a { color: var(--ink);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: var(--line-2); }
+a:hover { text-decoration-color: currentColor; }
+
+table a, .board-grid a, .topnav a, .brand,
+.bests-panel a, .pr-panel a, .season-jump a, .sport-toggle a,
+.pool-more, .seg-btn, .yb, .meet-link, .tabs a, .find-opt {
+  text-decoration: none;
+}
+table a:hover, .board-grid a:hover, .topnav a:hover,
+.bests-panel a:hover, .pr-panel a:hover, .season-jump a:hover {
+  text-decoration: underline;
+}
+.topnav a { color: #374151; }
+.topnav a:hover { color: var(--ink); }
+
+/* ---- tables ------------------------------------------------------------ *
+ * The outer frame stays, so a table reads as one object; the internal
+ * verticals go, because a full cell grid makes a results list look like a
+ * spreadsheet. Rules plus a zebra do the separating.
+ *
+ * ⚠ border-collapse MUST BE `separate` FOR THE RADIUS TO CLIP. With
+ *   `collapse` the corners stay square however you round them -- the
+ *   borders belong to the cells, not the table. Zero spacing keeps the
+ *   collapsed look. */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+th, td { border: 0; border-bottom: 1px solid var(--line); }
+thead th {
+  background: #f7f8fa;
+  border-bottom: 1px solid var(--line-2);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.5rem 0.7rem;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:nth-child(even) { background: var(--zebra); }
+tbody tr:hover { background: var(--hover); }
+
+/* ---- focus ------------------------------------------------------------- *
+ * ! REQUIRED BY THE LINK CHANGE ABOVE. The browser default focus ring is
+ *   drawn against the link's own colour; now that links are near-black on
+ *   white it is close to invisible, and keyboard users lose their place. */
+a:focus-visible, button:focus-visible,
+input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* ---- phones, site-wide ------------------------------------------------ *
  * The result pages now carry a real viewport meta, so this is where their
  * phone layout is decided. Two calls made here:
