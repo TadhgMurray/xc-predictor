@@ -121,15 +121,25 @@ def resolveSeason(cur, f):
 
     Sets f["season"] to the STORED year. The caller's own `year` filter, when
     present, stays in charge -- it arrives as a LABEL and _where converts it.
+
+    ⚠ AND IT MUST NOT ASSUME A CURSOR TYPE. The route hands in a
+      RealDictCursor, so fetchone() returns a MAPPING -- row[0] raises
+      KeyError there, which Flask answers with its HTML debug page, which the
+      frontend reports as "Unexpected token '<' ... is not valid JSON". An
+      error about JSON parsing, for a cursor mistake. Hence the alias and the
+      isinstance test: this works under either cursor.
     """
     if f["year"]:
         return
     cur.execute("""
-        SELECT max(year) FROM team_season
+        SELECT max(year) AS season FROM team_season
         WHERE  scope = %(scope)s AND pool = %(pool)s AND sport = %(sport)s
     """, {"scope": f["board_scope"], "pool": f["pool"], "sport": f["sport"]})
     row = cur.fetchone()
-    f["season"] = row[0] if row else None
+    if row is None:
+        f["season"] = None
+    else:
+        f["season"] = row["season"] if isinstance(row, dict) else row[0]
 
 
 def _where(f, params):

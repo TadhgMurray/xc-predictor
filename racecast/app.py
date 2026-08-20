@@ -2190,6 +2190,18 @@ def api_teams():
                                          "yet \u2014 run "
                                          "racecast/build_team_season.py after "
                                          "build_ranking_results.py."}), 400
+            except Exception:
+                # ★ AND A JSON-SHAPED 500 FOR EVERYTHING ELSE, because this
+                #   endpoint is only ever read by fetch(). A KeyError here
+                #   reached the browser as "Unexpected token '<' ... is not
+                #   valid JSON" -- a message about parsing, for a cursor
+                #   mistake, which is exactly the wrong direction to send
+                #   somebody. The traceback still goes to the server log
+                #   where it belongs; the client gets a sentence.
+                conn.rollback()
+                app.logger.exception("/api/teams failed")
+                return jsonify({"error": "Team rankings failed to load. The "
+                                         "server log has the traceback."}), 500
 
     return jsonify({"filters": f, "count": len(rows),
                     "board_scope": f["board_scope"],
