@@ -494,7 +494,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 }
 .search-tab.is-active .tab-count { background: rgba(255,255,255,0.2); }
 
-.results-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.results-table { width: 100%; border-collapse: collapse; }
 .results-table th, .results-table td {
     padding: 0.5rem 0.9rem;
     border-bottom: 1px solid #eee;
@@ -648,9 +648,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* ---- the result tables: same look as the leaderboard tables ---- */
 .conv-table {
     width: 100%;
-    /* separate, so the shared radius clips -- see SITE FOUNDATION. */
-    border-collapse: separate;
-    border-spacing: 0;
+    border-collapse: collapse;
 }
 .conv-table th,
 .conv-table td {
@@ -738,7 +736,11 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
      cannot collide with variables in style.css. */
   --rk-muted:   #6b7280;
   --rk-line:    #e5e7eb;
-  --rk-accent:  #1d4ed8;
+  /* ! ONE BLUE ON THE SITE. This was #1d4ed8 -- which is, precisely,
+     Tailwind's default blue-700, and a palette lifted from a framework's
+     defaults is a large part of what makes a page look generated. The
+     buttons now sit in the same navy family as the links. */
+  --rk-accent:  #14477d;
   --rk-warn-bg: #fef3c7;
   --rk-warn-fg: #78350f;
   --rk-error:   #b91c1c;
@@ -910,11 +912,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 
 .rankings-page table.rk {
   width: 100%;
-  /* ! separate, NOT collapse -- see the table rules in SITE FOUNDATION.
-     A collapsed table cannot clip its own rounded corners, so this board
-     would be the one table on the site with square ones. */
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   font-size: 0.875rem;
 }
 
@@ -2439,10 +2437,16 @@ tr.more-row td { padding: 0; }
   --muted:  #6b7280;
   --line:   #e5e7eb;
   --line-2: #cbd0d6;
-  --accent: #1d4ed8;
+  --accent: #14477d;   /* the same navy as --link; see --rk-accent */
   --zebra:  #fafbfc;
   --hover:  #f3f6fa;
   --gold:   #a97a12;
+  /* ! LINKS NEED A COLOUR OF THEIR OWN. Near-black links with a hairline
+     underline were, correctly, reported as impossible to spot -- in a table
+     they were indistinguishable from the text beside them. This is a deep
+     navy: unmistakably a link, without the 1996 blue that made the board
+     shout. */
+  --link:   #14477d;
 }
 
 /* ---- the typeface ------------------------------------------------------ *
@@ -2480,11 +2484,11 @@ h3 { font-size: 1.05rem; font-weight: 650; }
  *   link in a paragraph, so the underline only comes off where the ROW is
  *   the link and the context already says so: tables, the board grid, nav,
  *   the sidebar panels. Hover puts it back everywhere. */
-a { color: var(--ink);
+a { color: var(--link);
     text-underline-offset: 2px;
     text-decoration-thickness: 1px;
-    text-decoration-color: var(--line-2); }
-a:hover { text-decoration-color: currentColor; }
+    text-decoration-color: currentColor; }
+a:hover { text-decoration-thickness: 2px; }
 
 table a, .board-grid a, .topnav a, .brand,
 .bests-panel a, .pr-panel a, .season-jump a, .sport-toggle a,
@@ -2503,17 +2507,16 @@ table a:hover, .board-grid a:hover, .topnav a:hover,
  * verticals go, because a full cell grid makes a results list look like a
  * spreadsheet. Rules plus a zebra do the separating.
  *
- * ⚠ border-collapse MUST BE `separate` FOR THE RADIUS TO CLIP. With
- *   `collapse` the corners stay square however you round them -- the
- *   borders belong to the cells, not the table. Zero spacing keeps the
- *   collapsed look. */
+ * ! SQUARE CORNERS, DELIBERATELY. A rounded results table reads as a
+ *   dashboard widget rather than a results table -- the look every
+ *   generated site arrives with. Every reference this site actually sits
+ *   beside (TFRRS, Athletic.net, MileSplit) sets dense square tables, and
+ *   that is the idiom of the thing being displayed. No radius also means
+ *   border-collapse can stay `collapse`, which is the simpler mechanism. */
 table {
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   width: 100%;
   border: 1px solid var(--line-2);
-  border-radius: 8px;
-  overflow: hidden;
 }
 th, td { border: 0; border-bottom: 1px solid var(--line); }
 thead th {
@@ -2529,6 +2532,13 @@ thead th {
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:nth-child(even) { background: var(--zebra); }
 tbody tr:hover { background: var(--hover); }
+
+/* In a table the colour carries it and the underline is noise -- but the
+   colour has to be doing real work, which is what --link is for. The
+   RATING stays ink-black: it is a number the row is ranked by, and weight
+   says that better than colour. */
+table a, .board-grid a { color: var(--link); }
+table td.rating a, .board-grid .c-rating a { color: var(--ink); }
 
 /* ---- focus ------------------------------------------------------------- *
  * ! REQUIRED BY THE LINK CHANGE ABOVE. The browser default focus ring is
@@ -2565,7 +2575,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     display: inline-block;
     padding: 0.45rem 0.8rem;
     border: 1px solid var(--line-2);
-    border-radius: 6px;
+    border-radius: 3px;
     font-size: 0.875rem;
     font-weight: 600;
     background: #fff;
@@ -2588,17 +2598,30 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .rankings-page .field input {
     border-color: #ccc;
     padding: 0.42rem 0.55rem;
-    border-radius: 4px;
+    border-radius: 3px;
     font-size: 0.9rem;
-    height: 34px;
+    /* ⚠ NO EXPLICIT HEIGHT. A fixed height PLUS vertical padding leaves a
+       native <select> laying its text out against a content box smaller
+       than the line it is drawing, and the label rides high in the box --
+       visibly off-centre next to the flex-centred combo buttons. Padding
+       alone sizes both to the same height and lets the control centre its
+       own text. */
     min-width: 6.25rem;
 }
+/* ! ONE LINE-HEIGHT ACROSS ALL THREE CONTROL KINDS. Without it a <select>,
+   a text input and the flex combo button each derive their own content
+   height from `normal` -- the button's caret glyph makes it the tallest --
+   and the row ends up 3-4px out of step. Same padding plus the same line
+   box is the only way they come out identical without a fixed height. */
+.rankings-page .field select,
+.rankings-page .field input,
+.rankings-page .combo-btn { line-height: 1.25; }
 .rankings-page .field input.narrow { min-width: 4rem; }
 .rankings-page .field label { font-size: 0.65rem; }
 /* ⚠ THE SANS STACK IS WIDER THAN THE SERIF IT REPLACED, and the row was
    sized for the serif -- Apply wrapped onto a second line. Trimming the
    controls puts the whole bar back on one row at 1280. */
-.rankings-page .combo-btn { width: 132px; height: 34px; }
+.rankings-page .combo-btn { width: 132px; border-radius: 3px; }
 
 /* The rating is what the board ranks, so it leads the row. */
 .rankings-page table.rk td.rating { font-weight: 700; font-size: 1.02rem; }
@@ -2630,36 +2653,56 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 /* ★ TWO KINDS OF CONTROL THAT LOOKED IDENTICAL. The sport and scope groups
    are PICK ONE; the pool chips are TOGGLE OFF -- and an "on" chip was
    drawn exactly like an unselected mode button, so nothing said which was
-   which. The chips now read as checkboxes. */
+   which.
+   ! SQUARE, NOT PILLS, AND NO TICK GLYPHS. The pill-with-a-checkmark is
+     the generic component every template ships; a filter that is plainly
+     on or plainly greyed says the same thing in this site's own idiom.
+     The difference is now carried by weight and ink, not by decoration. */
 .pool-chips .chip {
     opacity: 1;
     background: #fff;
-    color: var(--muted);
+    color: #9aa1a9;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 3px;
+    text-decoration: line-through;
+    text-decoration-color: #c9ced4;
 }
-.pool-chips .chip::before { content: "\2715\00a0"; font-size: 0.7em; color: #9ca3af; }
 .pool-chips .chip.is-on {
-    background: #eef2ff;
-    border-color: #c7d2fe;
-    color: #1e3a8a;
+    background: #fff;
+    border-color: #9aa1a9;
+    color: var(--ink);
     font-weight: 600;
+    text-decoration: none;
 }
-.pool-chips .chip.is-on::before { content: "\2713\00a0"; color: var(--accent); }
 
-/* The board grid is divs, not a table, so it needs the treatment spelled
-   out rather than inherited. */
-.board-grid .cell { border-left: 0; border-right: 0; }
+/* The board grid is divs, not a table, so every part of the table
+   treatment has to be spelled out -- and half-doing it is what made this
+   board hard to read: the cells lost their verticals while the header
+   kept them, the header lost its background, and nothing striped, so ten
+   rows of near-black text ran together.
+   ⚠ ZEBRA ON A CSS GRID IS ARITHMETIC, NOT :nth-child(even). There are no
+     row elements -- five header divs, then five cells per row -- so a row
+     is a span of five children and the stripe is a modulo over ten. */
+.board-grid .cell, .board-grid .head { border-left: 0; border-right: 0; }
 .board-grid .head {
-    background: transparent;
+    background: #f2f4f6;
     border-bottom: 1px solid var(--line-2);
     text-transform: uppercase;
     font-size: 0.68rem;
     letter-spacing: 0.05em;
-    color: var(--muted);
+    color: #4b5563;
 }
+.board-grid .cell {
+    padding: 0.3rem 0.7rem;          /* denser: ten rows should read as a list */
+    border-bottom: 1px solid var(--line);
+}
+.board-grid .cell:nth-child(10n+6),
+.board-grid .cell:nth-child(10n+7),
+.board-grid .cell:nth-child(10n+8),
+.board-grid .cell:nth-child(10n+9),
+.board-grid .cell:nth-child(10n+10) { background: var(--zebra); }
 .board-grid .c-rating { font-weight: 700; font-variant-numeric: tabular-nums; }
-.board-grid .cell:nth-child(5n+1) { color: var(--muted); }
+.board-grid .cell:nth-child(5n+1) { color: var(--muted); font-variant-numeric: tabular-nums; }
 .board-scope-label { font-size: 1.05rem; }
 
 /* ⚠ THE WIDER FONT CLIPPED SCHOOL NAMES ("Springdale Har-..."). School gets
@@ -2675,7 +2718,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .sport-toggle {
     display: inline-flex;
     border: 1px solid var(--line-2);
-    border-radius: 6px;
+    border-radius: 3px;
     overflow: hidden;
     margin: 0.6rem 0 1.2rem;
 }
@@ -2691,9 +2734,10 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 
 /* All-Time Bests sat in a card and Season Bests did not, so two equivalent
    panels read as different kinds of thing. */
+/* ! SQUARE, like the tables. A stack of 8px-rounded white cards is the
+   look this site is trying not to have. */
 .bests-panel, .pr-panel, .chart-panel {
     border: 1px solid var(--line);
-    border-radius: 8px;
     padding: 0.9rem 1rem 1rem;
     margin-bottom: 1.1rem;
     background: #fff;
@@ -2751,15 +2795,17 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 
 /* The header stat strip: the page's headline numbers, which used to live
    only in the sidebar. */
+/* ! ONE RULE UNDER IT, NOT A BOX AROUND IT. Big numbers over tiny
+   uppercase labels inside a bordered band is the dashboard-hero pattern;
+   the numbers are worth having, the packaging is not. */
 .stat-strip {
     display: flex;
     flex-wrap: wrap;
-    gap: 2.2rem;
+    gap: 2rem;
     align-items: baseline;
-    padding: 0.9rem 0 1rem;
-    border-top: 1px solid var(--line);
+    padding: 0.5rem 0 0.8rem;
     border-bottom: 1px solid var(--line);
-    margin: 0.6rem 0 0.2rem;
+    margin: 0.4rem 0 0.2rem;
 }
 .stat-strip .s-lab {
     display: block;
@@ -2769,7 +2815,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     color: var(--muted);
 }
 .stat-strip .s-val {
-    font-size: 1.55rem;
+    font-size: 1.3rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
