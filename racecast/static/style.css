@@ -844,6 +844,19 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    board wants a distance and, being one row per athlete, has no race count to
    filter on. Driven off data-board like the rules above, so rankings.js never
    touches individual field visibility. */
+/* ---- the teams board ---------------------------------------------- *
+ * It ranks a precomputed meet, so most of the other boards' controls have
+ * nothing to act on: min-races is per athlete, the dates and the distance
+ * belong to single races, and sport=both cannot be one field. */
+.rankings-page .teams-only { display: none; }
+.rankings-page[data-board="teams"] .teams-only   { display: flex; }
+.rankings-page[data-board="teams"] .ability-only { display: none; }
+.rankings-page[data-board="teams"] .perf-only    { display: none; }
+.rankings-page[data-board="teams"] .pr-only      { display: none; }
+/* Finding an ATHLETE on a board of teams is not a question with an answer. */
+.rankings-page[data-board="teams"] .findme       { display: none; }
+.rankings-page[data-board="teams"] p.board-note.teams-only { display: block; }
+
 .rankings-page .pr-only { display: none; }
 .rankings-page[data-board="pr"] .pr-only      { display: flex; }
 .rankings-page[data-board="pr"] .ability-only { display: none; }

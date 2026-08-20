@@ -185,6 +185,14 @@ function buildQuery() {
   // Board-specific filters. Sending date_from to the ability board is a 400 by
   // design -- the API refuses rather than silently ignoring it -- so the two
   // branches must stay aligned with the perf-only/ability-only CSS.
+  /* ! THE TEAMS BOARD TAKES A DIFFERENT SET, and sends none of the
+     single-race filters: a date range or a distance belongs to one race,
+     and min_races is a fact about one athlete. */
+  if (state.board === "teams") {
+    q.set("min_athletes", $("min_athletes").value || 5);
+    return q;
+  }
+
   if (state.board === "pr") {
     q.set("distance", $("distance").value);
     if ($("date_from").value) q.set("date_from", $("date_from").value);
@@ -608,6 +616,23 @@ const COLUMNS = {
     { key: "date",   label: "Date" },
     { key: "rating", label: "Rating" }
   ],
+  /* ★ THE ONLY BOARD THAT RANKS A GROUP. The other three rank a number
+     each row already carries; this one ranks the finish order of a
+     hypothetical meet -- every team's top seven, sorted by season rating,
+     scored with the ordinary rules.
+     ! # IS THE BOARD'S OWN RANK, NOT THE ROW NUMBER. Filter the national
+       board to three states and it reads 1, 4, 11, which is the truth about
+       where those teams stand; renumbering would invent a championship. */
+  teams: [
+    { key: "rank",     label: "#" },
+    { key: "school",   label: "Team" },
+    { key: "state",    label: "State" },
+    { key: "year",     label: "Year" },
+    { key: "points",   label: "Points" },
+    { key: "rating",   label: "Top 5 avg" },
+    { key: "fifth",    label: "5th runner" },
+    { key: "athletes", label: "Runners" }
+  ],
   /* Time first, because it is what this board ranks. Rating is still shown --
      the gap between a fast time and a modest rating IS the course, and seeing
      both is how somebody learns that. Pool is shown because "all pools" is an
@@ -672,7 +697,8 @@ function renderHead(board) {
  * because alphabetical means A first. Mirrors the per-column defaults in
  * rankings.py so the arrow never contradicts the data.
  */
-const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time", "first"]);
+const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time",
+                             "first", "rank", "points"]);
 
 function effectiveDir(board, key) {
   if (state.sort === key && state.dir) return state.dir;
@@ -806,6 +832,31 @@ function renderPr(rows) {
 }
 
 
+/*
+ * The teams board.
+ *
+ * The rank is served, not computed from the page position -- see COLUMNS.
+ * The school links to its own page, which is already the team's page.
+ */
+function renderTeams(rows) {
+  const body = rows.map((r) => `
+    <tr>
+      <td class="rank">${r.rank}</td>
+      <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td><span class="state">${esc(r.state)}</span></td>
+      <td>${r.year}</td>
+      <td class="rating">${r.points}</td>
+      <td>${fmtRating(r.top5_mean)}</td>
+      <td>${fmtRating(r.fifth_rating)}</td>
+      <td>${r.n_athletes}</td>
+    </tr>`).join("");
+
+  return `<table class="rk">${renderHead("teams")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
 /* ------------------------------------------------------------------ *
  *  LOADING
  * ------------------------------------------------------------------ */
@@ -870,7 +921,11 @@ async function load() {
        clears `busy` -- see the guard in syncUrl for why that matters. */
     syncUrl(query);
 
-    const res = await fetch("/api/rankings?" + query.toString());
+    /* The teams board is served by its own route: it reads a
+       precomputed table with a different shape, and folding it into
+       /api/rankings would mean one route answering two questions. */
+    const endpoint = state.board === "teams" ? "/api/teams" : "/api/rankings";
+    const res = await fetch(endpoint + "?" + query.toString());
     const data = await res.json();
 
     // A 400 carries {"error": "..."}. SHOW IT. An empty table on a bad filter
@@ -907,6 +962,7 @@ async function load() {
       $("results").innerHTML =
         state.board === "ability"    ? renderAbility(rows)
         : state.board === "pr"       ? renderPr(rows)
+        : state.board === "teams"    ? renderTeams(rows)
         :                              renderPerformance(rows);
       $("pager").classList.remove("hidden");
     }
@@ -939,6 +995,7 @@ async function load() {
  * -- one attribute, and the stylesheet does the rest.
  */
 function syncBoard(board) {
+  const previous = state.board;
   state.board = board;
   state.offset = 0;
   $("rankings").dataset.board = board;
@@ -948,14 +1005,31 @@ function syncBoard(board) {
   });
 
   /* A sort the new board does not offer would 400. Fall back rather than
-     sending a key the API will reject. */
-  if (!COLUMNS[board].some((c) => c.key === state.sort)) {
+     sending a key the API will reject.
+
+     ⚠ AND ARRIVING AT TEAMS ALWAYS RESETS, even though the key survives the
+       test. "rating" exists on both boards and means two different things --
+       an athlete's season average there, a squad's top-five average here --
+       so a sort carried over from the athlete board opens the team board
+       sorted by something other than the finish it exists to show. */
+  if (!COLUMNS[board].some((c) => c.key === state.sort)
+      || (board === "teams" && previous !== "teams")) {
     /* ! THE FALLBACK IS PER BOARD. Dropping onto "rating" here would open the
          times board sorted by something other than time, which is the one
          thing it exists to sort by. */
-    state.sort = board === "pr" ? "time" : "rating";
+    state.sort = board === "pr" ? "time"
+               : board === "teams" ? "rank"
+               : "rating";
     state.dir = "";
   }
+
+  /* ⚠ NO sport='both' ON A BOARD OF MEETS. One hypothetical race cannot hold
+     cross country and track teams at once, so the API refuses it -- and a
+     select left on "Both" would 400 on arrival with no obvious cause, the
+     same trap the hidden pool=all option sprang. */
+  const sportSel = $("sport");
+  sportSel.querySelector('option[value="both"]').hidden = board === "teams";
+  if (board === "teams" && sportSel.value === "both") sportSel.value = "XC";
 
   /* ! 'all' ONLY EXISTS ON THE PR BOARD, so leaving it selected while
        switching away would send a pool the API rejects with a 400. */
@@ -983,6 +1057,8 @@ function syncBoard(board) {
       ? "Season ability \u2014 averaged across a season, so one lucky race cannot carry an athlete."
       : board === "pr"
       ? "Best times \u2014 each athlete's fastest at one distance. Raw clock, no course correction."
+      : board === "teams"
+      ? "Teams \u2014 every squad's top seven raced against each other, scored the ordinary way."
       : "Single performances \u2014 the best individual races, noise and all.";
 }
 
@@ -1176,7 +1252,7 @@ function initFromUrl() {
        same URL, a pool only the pr board accepts, and the first request 400ed
        with a message about pools that had nothing to do with the cause. */
   const asked = params.get("board");
-  syncBoard(["performance", "pr", "ability"].includes(asked) ? asked
+  syncBoard(["performance", "pr", "ability", "teams"].includes(asked) ? asked
                                                              : "ability");
   applyUrlFilters(params);
 

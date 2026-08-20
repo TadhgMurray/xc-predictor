@@ -21,6 +21,8 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
+from teams import (parseFilters as parseTeamFilters,
+                   getTeamRankings)
 
 
 # ===================================================================== #
@@ -2155,6 +2157,45 @@ def api_rankings():
                     "national_bias": (f["state"] is None
                                       and f["board"] != "pr"),
                     "rows": rows})
+
+@app.route("/api/teams")
+def api_teams():
+    """One page of a team board.
+
+    ★ THE RANKING IS ALREADY SCORED. team_season holds the finish order of a
+      hypothetical meet per (scope, pool, sport, season) -- every team's top
+      seven entered, sorted by season rating, scored with the ordinary rules.
+      This route picks a board and slices it. See team_rank.py for why the
+      teams are raced rather than having their ratings averaged.
+
+    national_bias is louder here than on the athlete boards on purpose: the
+    per-state offset lands on all five scorers at once and pushes them the
+    same way, instead of being one athlete's error.
+    """
+    f, err = parseTeamFilters(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                rows = getTeamRankings(cur, f)
+            except psycopg2.errors.UndefinedTable:
+                # ! THE HONEST 400 THE RANKINGS ROUTE ALREADY LEARNED TO GIVE.
+                #   Unhandled, Flask answers with its debug PAGE and the
+                #   frontend reports "Unexpected token '<'" -- an error about
+                #   JSON parsing, which sends the reader entirely the wrong way.
+                conn.rollback()
+                return jsonify({"error": "Team rankings have not been built "
+                                         "yet \u2014 run "
+                                         "racecast/build_team_season.py after "
+                                         "build_ranking_results.py."}), 400
+
+    return jsonify({"filters": f, "count": len(rows),
+                    "board_scope": f["board_scope"],
+                    "national_bias": f["board_scope"] == "usa",
+                    "rows": rows})
+
 
 @app.route("/api/rankings/rank")
 def api_rankings_rank():

@@ -63,6 +63,12 @@
        them unrecognisable to somebody who just wants the fastest 5k times.
        This ranks the clock. #}
     <button class="tab" role="tab" data-board="pr" aria-selected="false">Best times</button>
+    {# ★ A FOURTH BOARD, AND THE ONLY ONE THAT RANKS A GROUP. The other three
+       rank a number each row already has. This one ranks the finish order of
+       a meet that never happened: every team's top seven entered, sorted by
+       season rating, scored with the ordinary rules -- so depth counts and a
+       superstar is worth exactly one point, as in life. #}
+    <button class="tab" role="tab" data-board="teams" aria-selected="false">Teams</button>
   </div>
 
   <div class="filters">
@@ -141,6 +147,13 @@
 
     {# ability-only / perf-only: shown and hidden by rankings.css off
        .rankings-page[data-board]. #}
+    {# Teams-only: how many rated athletes a squad needs before it is
+       ranked at all. Five is not a preference, it is the scoring rule. #}
+    <div class="field teams-only">
+      <label for="min_athletes">Min athletes</label>
+      <input id="min_athletes" class="narrow" type="number" min="5" max="50" value="5">
+    </div>
+
     <div class="field ability-only">
       <label for="min_races">Min races</label>
       {# ! THE VALUE IS SET BY rankings.js, NOT HERE, because the sensible
@@ -213,6 +226,16 @@
        on this site where course difficulty is NOT accounted for, and that is
        deliberate -- correcting it would stop the number being a PR. Somebody
        reading a leaderboard assumes the numbers are comparable unless told. #}
+    {# ⚠ SAID ON THE BOARD. Points are a finishing score against a
+       particular field, so the same squad scores differently in its state's
+       meet than in the national one. The RANK travels between boards; the
+       points explain it. #}
+    <p class="board-note teams-only">
+      Ranked by racing every team's top seven in one hypothetical meet.
+      Points are scored against that field only &mdash; compare ranks
+      between boards, not points.
+    </p>
+
     <p class="board-note pr-only">
       Raw times, uncorrected for course or conditions &mdash; a flat 5k beats
       the same effort on a hill. For a fair comparison use Ability.
