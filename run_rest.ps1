@@ -200,7 +200,10 @@ Step "05_golive"    { python engine\linkage_check.py --golive }
 
 Step "06_tilt"      { python engine\apply_tilt.py --refresh --write }
 Step "07_rankings"  { python racecast\build_ranking_results.py }
-Step "08_panels"    { python racecast\panels.py }
+# Team boards: reads athlete_season, which 07 has just rebuilt, and writes
+# team_season. BEFORE panels, so the two never disagree about a season.
+Step "08_teams"     { python racecast\build_team_season.py }
+Step "09_panels"    { python racecast\panels.py }
 
 
 # ------------------------------------------------------------------ #
