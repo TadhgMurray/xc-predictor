@@ -70,6 +70,28 @@ _NOT_A_TEAM = re.compile(r"""
     | ^independent$
     | \bunattached\b
     | \bunaffiliated\b
+
+    # ★ A NATIONAL TEAM IS NOT A SCHOOL TEAM. At an international meet the
+    #   school column holds the country, and five athletes wearing USA are a
+    #   selection from the whole country -- the same argument as Unattached,
+    #   only stronger: nobody attends it.
+    #
+    # ⚠ AND BARE COUNTRY NAMES ARE OFF LIMITS, however tempting. American
+    #   towns are named after countries and their high schools take the name:
+    #   Denmark, Peru, Cuba, Poland, Norway, Lebanon, Mexico and China Spring
+    #   are all real US schools -- pro_flag's own header cites "Denmark High
+    #   School" as the string that broke a simpler rule. So the test needs a
+    #   TEAM MARKER, not a place: "Team Canada" is a national team, "Canada"
+    #   is a village in New York.
+    #
+    # ! USA ALONE IS THE ONE EXCEPTION, whole-string only. No American school
+    #   is named "USA" -- but "USA" is a substring of nothing safe either
+    #   ("Sausalito", "Susa"), which is why this is anchored and the ones
+    #   above are not.
+    | ^u\.?s\.?a\.?$
+    | ^united\s+states$
+    | ^team\s+[a-z][a-z.\s'-]{2,}$
+    | \bnational\s+team\b
 """, re.IGNORECASE | re.VERBOSE)
 
 

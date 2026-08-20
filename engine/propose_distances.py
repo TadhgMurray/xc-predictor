@@ -295,14 +295,75 @@ def writable(p):
             and p["corroborated_by"] >= EXTREME_CORROBORATE)
 
 
+def stripDeadBlocks(text):
+    """Remove the DIST_PROPOSED literals earlier versions of this tool wrote.
+
+    ★ SAFE BY CONSTRUCTION, BECAUSE THEY WERE NEVER LIVE. Nothing reads a name
+      called DIST_PROPOSED -- that is the bug appendCorrections now fixes --
+      so deleting these blocks changes no distance, no rating and no board. It
+      only stops the file claiming corrections it was not applying.
+
+    ⚠ AND THEY ARE NOT INERT CLUTTER. audit_overrides.stripLines deletes any
+      line shaped `(meet, div): dist,` wherever it appears, so a dead block
+      absorbs removals aimed at real overrides -- the audit reports work it
+      did not do. Two tools disagreeing about which lines are live is worse
+      than either being wrong alone.
+
+    Returns (text, n_blocks, n_lines).
+    """
+    out, blocks, dropped = [], 0, 0
+    lines = text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("DIST_PROPOSED = {"):
+            blocks += 1
+            # Walk back over the generated-by comment that introduces it.
+            while out and (out[-1].lstrip().startswith("#") or
+                           not out[-1].strip()):
+                out.pop()
+            # ! TO THE CLOSING BRACE AT COLUMN ZERO, not to the first "}".
+            #   Every entry is indented; a dict literal's own close is the
+            #   only unindented one.
+            i += 1
+            while i < len(lines) and not lines[i].startswith("}"):
+                dropped += 1
+                i += 1
+            i += 1                      # the closing brace itself
+            continue
+        out.append(lines[i])
+        i += 1
+    return "".join(out), blocks, dropped
+
+
 def appendCorrections(props, path=os.path.join("engine", "corrections.py")):
     """Append a fresh dict of the safe subset, and back the file up first.
 
-    ★ APPENDED AS ITS OWN DICT, NOT MERGED INTO AN EXISTING ONE. corrections.py
-      holds the same key in several literals -- audit_overrides measured 2.8
-      copies each -- and the later one wins. A block at the end therefore
-      overrides whatever came before it, which is what a correction should do,
-      and it can be deleted whole without touching a hand-written line.
+    ★ APPENDED AS ITS OWN DICT AND THEN MERGED. corrections.py holds the same
+      key in several literals -- audit_overrides measured 2.8 copies each --
+      and the later one wins, so a block at the end overrides whatever came
+      before it and can be deleted whole without touching a hand-written line.
+
+    ⚠ THE MERGE LINE IS THE WHOLE POINT, AND IT USED TO BE MISSING. This wrote
+
+          DIST_PROPOSED = { (meet, div): distance, ... }
+
+      and stopped. Nothing in the codebase reads a name called DIST_PROPOSED.
+      The consumers read _DISTANCE_OVERRIDES_BY_SPORT, built from
+      _DISTANCE_OVERRIDES_XC / _TF, so every proposal --write had ever
+      produced sat in the file as decoration: the tool reported success, the
+      corrections were visibly in corrections.py, and not one of them was
+      applied to a single race.
+
+      Every other generated block in that file already got this right --
+      `_RESULT_DROP_XC.update(_RESULT_DROP_ADDITIONS)` and friends. This one
+      wrote the dict and skipped the update.
+
+    ⚠ _DISTANCE_OVERRIDES_XC, NOT _TF, AND THAT IS NOT A DEFAULT. The whole
+      tool is cross country: ovr_shift is built `FROM results`, and results_tf
+      is a different table it never reads. corrections.py's header calls a
+      cross-sport merge "the 2026-07-13 incident" and distanceOverrideSQL
+      raises rather than guess a sport; writing into the wrong dict here would
+      apply cross country distances to track races.
     """
     safe = [p for p in props if writable(p)]
     if not safe:
@@ -312,20 +373,38 @@ def appendCorrections(props, path=os.path.join("engine", "corrections.py")):
     text = io.open(path, encoding="utf-8", newline="").read()
     io.open(path + ".bak", "w", encoding="utf-8", newline="").write(text)
 
+    # ! CLEARED BEFORE APPENDING. Runs of the broken version left dead
+    #   DIST_PROPOSED literals behind; leaving them would keep the file
+    #   claiming corrections nothing applies. See stripDeadBlocks.
+    text, dead_blocks, dead_lines = stripDeadBlocks(text)
+    if dead_blocks:
+        io.open(path, "w", encoding="utf-8", newline="").write(text)
+        print(f"[dist] removed {dead_blocks} dead DIST_PROPOSED block(s) "
+              f"({dead_lines:,} proposals) that were never applied to anything")
+
     lines = [f"\n\n{MARKER}",
              f"# {len(safe)} divisions, each corroborated by at least "
              f"{WRITE_MIN_CORROBORATE} other divisions",
              "# racing the proposed distance at the same meet or course.",
-             "DIST_PROPOSED = {"]
+             "# XC only -- ovr_shift is built FROM results. See appendCorrections.",
+             "_DISTANCE_OVERRIDES_ADDITIONS = {"]
     for p in sorted(safe, key=lambda x: (x["meet_id"], x["div_id"])):
         lines.append(f"    ({p['meet_id']}, {p['div_id']}): {p['proposed']},"
                      f"  # was {p['in_use']}, {p['corroborated_by']} on the "
                      f"same {p['corroboration']}, err {p['err_before']:.3f}"
                      f" -> {p['err_after']:.3f}")
     lines.append("}")
+    # ! WITHOUT THESE TWO LINES THE DICT ABOVE IS DECORATION. See the docstring.
+    lines.append("_DISTANCE_OVERRIDES_XC.update(_DISTANCE_OVERRIDES_ADDITIONS)")
+    lines.append("del _DISTANCE_OVERRIDES_ADDITIONS")
     io.open(path, "a", encoding="utf-8", newline="").write("\n".join(lines) + "\n")
     print(f"[dist] appended {len(safe):,} of {len(props):,} proposals to {path}")
     print(f"       backup at {path}.bak")
+    # ★ SAID OUT LOUD, because the last version of this reported exactly the
+    #   same success while applying nothing. A caller who reads "appended"
+    #   has no way to tell a live merge from a dead literal.
+    print("       merged into _DISTANCE_OVERRIDES_XC -- live on the next "
+          "normalise/rating rebuild")
     return len(safe)
 
 

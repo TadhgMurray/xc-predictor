@@ -32,7 +32,7 @@ ranks them second, by 22 points.
 Run `python racecast/team_rank.py` for the self-check.
 """
 
-from meet_compile import scoreRows, SCORERS, DISPLACERS
+from meet_compile import scoreRows, isTeam, SCORERS, DISPLACERS
 
 # Seven runners: the five who score and the two who displace. Taking more
 # would change nothing -- an eighth runner cannot affect any score.
@@ -86,19 +86,27 @@ def rankTeams(athletes):
     database, no globals, so the whole ranking rule is testable without a
     corpus.
 
-    ! THE SCORING IS scoreRows, NOT A SECOND COPY OF THE RULES. That function
-      already handles the things this would get wrong on its own -- teams too
-      short to score are lifted out and the places renumber around them,
-      Unattached is not a team, ties break on the sixth runner. Passing the
-      team KEY as `school` is what lets a shared function do the work: it
-      never inspects the value beyond grouping and the isTeam test, and the
-      key carries the real school name as its first field so that test still
-      sees a school name.
+    ! THE SCORING IS scoreRows, NOT A SECOND COPY OF THE RULES. Teams too
+      short to score are lifted out and the places renumber around them, and
+      ties break on the sixth runner -- all of it already written once.
+
+    ⚠ BUT THE isTeam TEST IS DONE HERE, ON THE REAL SCHOOL NAME, AND NOT LEFT
+      TO scoreRows. It used to be: this passed the team KEY as `school` on the
+      theory that the key carries the school name as its first field, so the
+      test would still see one. That is true for the SUBSTRING rules and
+      false for every ANCHORED one -- and _NOT_A_TEAM is mostly anchored.
+      "Unattached" matched (\bunattached\b needs no anchor) while "N/A",
+      "Individual", "none", "0", "---" and "USA" all sailed through, because
+      the string being tested was "N/A\x1fNY" and $ never matched.
+
+      Half a rule working is worse than none: it looked handled, and the
+      cases it missed are exactly the ones nobody would notice -- a team
+      called "N/A" quietly holding a rank on a national board.
     """
     squads = {}
     for a in athletes:
         rating = a.get("rating")
-        if rating is None:
+        if rating is None or not isTeam(a.get("school")):
             continue
         squads.setdefault(teamKey(a.get("school"), a.get("state")), []).append(a)
 
@@ -165,9 +173,12 @@ def raceStored(rows):
       state). Keying on the name would let a school that appears in thirty
       seasons field its thirty best runners as one team and win by a mile.
 
-    ! THE SCHOOL NAME STAYS AT THE FRONT OF THE KEY so scoreRows' isTeam test
-      still sees a school name -- the same trick rankTeams uses, and the
-      reason Unattached cannot sneak back in through this path.
+    ! AND THE isTeam TEST IS ON THE SCHOOL NAME, NOT ON THE KEY, for the
+      reason rankTeams spells out: _NOT_A_TEAM is mostly anchored patterns,
+      and a key with the state appended never matches one. Rows in
+      team_season were already filtered at build time, so this is a second
+      line of defence -- but a board is not the place to rely on somebody
+      else having done it.
 
     Returns rows in raced order, each carrying:
         rank, points              this meet's result -- what the board shows
@@ -188,6 +199,8 @@ def raceStored(rows):
         ratings = row.get("ratings")
         if not ratings:
             return None
+        if not isTeam(row.get("school")):
+            continue
         key = f"{row.get('school') or ''}{_SEP}{i}"
         by_key[key] = row
         # Sorted rather than trusted: the column is written sorted, but a
@@ -262,6 +275,35 @@ def _selfCheck():
     check("no team too short to score", "Short" in names, False)
     check("the real team scores 1-5 despite finishing behind them",
           next(t["points"] for t in mixed if t["school"] == "Real"), 15)
+
+    # ---- a national team is not a school team ---------------------------
+    print("\nnational teams are excluded; schools named after countries are not")
+    from meet_compile import isTeam
+    excluded = ["USA", "U.S.A.", "usa", "United States", "Team USA",
+                "Team Canada", "Team Great Britain", "Kenya National Team"]
+    # ⚠ EVERY ONE OF THESE IS A REAL US SCHOOL. American towns are named
+    #   after countries, so a bare country name cannot be the test -- see the
+    #   comment beside _NOT_A_TEAM. pro_flag's header cites Denmark High
+    #   School as the string that broke a simpler rule than this one.
+    kept = ["Denmark High School", "Peru Central", "Cuba-Rushford",
+            "Poland Seminary", "Norway-Paris", "Lebanon", "Mexico High School",
+            "China Spring", "Canada", "Jamaica High School", "Teaneck",
+            "India Hook Elementary"]
+    check("no national team survives",
+          [n for n in excluded if isTeam(n)], [])
+    check("no school named after a country is lost",
+          [n for n in kept if not isTeam(n)], [])
+
+    # And it survives the scoring path, not just the predicate.
+    intl = rankTeams(squad("Fayetteville", [140, 139, 138, 137, 136], state="AR")
+                     + squad("USA", [165, 164, 163, 162, 161], state="AR")
+                     + squad("Denmark High School", [130, 129, 128, 127, 126],
+                             state="SC"))
+    names = {t["school"] for t in intl}
+    check("USA does not score", "USA" in names, False)
+    check("Denmark High School does", "Denmark High School" in names, True)
+    check("and the real school wins despite finishing behind USA",
+          next(t["points"] for t in intl if t["school"] == "Fayetteville"), 15)
 
     # ---- same name, two states ------------------------------------------
     print("\nsame name in two states is two teams")
