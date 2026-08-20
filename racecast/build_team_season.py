@@ -39,6 +39,16 @@ sys.path.insert(0, "racecast")
 from database import getConn
 from team_rank import rankTeams, SQUAD
 
+# ★ THE ESCAPER, IMPORTED, NOT REWRITTEN. COPY's TEXT format treats tab,
+#   newline, carriage return and backslash as structure, and school names are
+#   scraped free text that contains all four -- "Chicago Lakeside Rabbits"
+#   carries a literal tab, which arrives as an extra column and aborts the
+#   whole COPY. build_ranking_results already solved this; its copyField
+#   docstring says in as many words that school names contain all three
+#   separators. A second hand-rolled version of it is how the same bug gets
+#   fixed once and shipped twice.
+from build_ranking_results import copyField
+
 # ! THE SAME 51 CODES rankings.py USES, and for the same reason: there is no
 #   nation column anywhere, state is the only geography stored, and a null
 #   test would keep exactly the foreign meets it is meant to exclude (a
@@ -159,15 +169,19 @@ def build(conn, sport, since):
     read.execute(_SOURCE_SQL, params)
 
     def flush(buf):
+        # ! copy_expert WITH AN EXPLICIT COLUMN LIST, matching the rankings
+        #   builder. copy_from's `columns=` does the same thing, but keeping
+        #   one form means one place to look when a COPY misbehaves.
         buf.seek(0)
         with conn.cursor() as cur:
-            cur.copy_from(buf, "team_season_new", columns=_COLUMNS)
+            cur.copy_expert(
+                f"COPY team_season_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
 
     buf, n_rows, n_boards = io.StringIO(), 0, 0
     for board in boards(read):
         n_boards += 1
         for row in toRows(board):
-            buf.write("\t".join("\\N" if v is None else str(v) for v in row))
+            buf.write("\t".join(copyField(v) for v in row))
             buf.write("\n")
             n_rows += 1
         if buf.tell() > (8 << 20):
