@@ -134,7 +134,22 @@ def parseFilters(args):
     return f, None
 
 
-def _where(f, params):
+def _fieldWhere(f, params):
+    """The predicates that say WHO IS IN THE MEET.
+
+    ⚠ SCHOOL IS NOT ONE OF THEM, and the distinction is the whole reason this
+      is two functions. A state and a season describe a POPULATION of teams
+      that could plausibly line up together, so narrowing them narrows the
+      field and the race is still a race. A school name is a SUBJECT: asking
+      for Newbury Park is asking where Newbury Park stands, and that question
+      presupposes a field for them to stand in.
+
+      Race the school filter and every school on the site comes first. Filter
+      to one team and only their own seasons enter, so their best year wins a
+      meet of three and the board reads #1 -- for a squad that might have
+      been fortieth in the country. That is not a subtle error; it is the
+      board confidently saying the opposite of the truth.
+    """
     parts = []
     params["scope"] = f["board_scope"]
     parts.append(" AND t.scope = %(scope)s")
@@ -152,16 +167,6 @@ def _where(f, params):
         params["states"] = f["state"]
         parts.append(" AND t.state = ANY(%(states)s)")
 
-    if f["school"]:
-        # ⚠ NOT AN EQUALITY. The chips come from /search/api, whose labels are
-        #   the raw scraped school strings -- and the copy stored here is
-        #   mode() over an athlete-season's races, which can differ in case or
-        #   in trailing punctuation from the one the index happened to keep.
-        #   An exact match then returns an empty board and looks like the team
-        #   is missing rather than the string being spelled twice.
-        params["schools"] = [s.strip().lower() for s in f["school"]]
-        parts.append(" AND lower(btrim(t.school)) = ANY(%(schools)s)")
-
     if f["year"]:
         # Two indexable branches, not a CASE per row -- rankings._whereClauses
         # explains why. A TF season is named for the year it ENDS in.
@@ -173,6 +178,41 @@ def _where(f, params):
     params["min_athletes"] = f["min_athletes"]
     parts.append(" AND t.n_athletes >= %(min_athletes)s")
     return "".join(parts)
+
+
+def _subjectWhere(f, params):
+    """The predicates that say WHICH OF THEM TO SHOW. See _fieldWhere."""
+    if not f["school"]:
+        return ""
+    # ⚠ NOT AN EQUALITY. The chips come from /search/api, whose labels are the
+    #   raw scraped school strings taken from results/results_tf -- and the
+    #   copy stored here is mode() over an athlete-season's races, which can
+    #   differ in case or in trailing punctuation from the one the index
+    #   happened to keep. An exact match then returns an empty board, which
+    #   looks like the team is missing rather than the string being spelled
+    #   twice.
+    params["schools"] = [s.strip().lower() for s in f["school"]]
+    return " AND lower(btrim(t.school)) = ANY(%(schools)s)"
+
+
+def matchesSubject(row, f):
+    """The Python twin of _subjectWhere, for a board raced in memory.
+
+    ! ONE NORMALISATION, WRITTEN TWICE, WHICH IS A RISK -- so keep them
+      identical: lower, then strip. A board that answers a school search
+      differently depending on whether the field was raced is worse than one
+      that gets it wrong consistently.
+    """
+    if not f["school"]:
+        return True
+    wanted = {s.strip().lower() for s in f["school"]}
+    return (row.get("school") or "").strip().lower() in wanted
+
+
+def _where(f, params):
+    """Both halves, for the stored path -- which slices a board rather than
+    racing one, so there is no field to protect."""
+    return _fieldWhere(f, params) + _subjectWhere(f, params)
 
 
 def getTeamRankings(cur, f):
@@ -238,7 +278,7 @@ def countField(cur, f):
       going to be the slowest.
     """
     params = {}
-    where = _where(f, params)
+    where = _fieldWhere(f, params)
     cur.execute("SELECT count(*) AS n" + _FIELD_SQL_TAIL.format(where=where),
                 params)
     row = cur.fetchone()
@@ -256,7 +296,7 @@ def getTeamField(cur, f):
     instead of the field, and the winner of page two comes out first.
     """
     params = {"cap": RACE_CAP}
-    where = _where(f, params)
+    where = _fieldWhere(f, params)
     cur.execute(f"""
         SELECT t.school, t.state, t.pool, t.sport,
                (CASE WHEN t.sport = 'TF' THEN t.year + 1
@@ -353,8 +393,14 @@ def serveBoard(cur, f):
         else:
             if not f["sort_explicit"]:
                 f["sort"], f["dir"] = "rank", "ASC"
-            rows, total = sortAndPage(raced, f)
+            # ★ RACED FIRST, FILTERED SECOND. The whole field runs the meet
+            #   and only then are the searched schools picked out of it, so
+            #   the rank a search returns is the rank in the field -- not the
+            #   rank among the rows that happened to match the search.
+            shown = [r for r in raced if matchesSubject(r, f)]
+            rows, total = sortAndPage(shown, f)
             return rows, {"raced": True, "field_size": len(raced),
+                          "shown_of_field": len(shown),
                           "reason": None, "total": total,
                           "race_cap": RACE_CAP,
                           # Teams that entered but could not score -- fewer
@@ -365,5 +411,6 @@ def serveBoard(cur, f):
     if not f["sort_explicit"]:
         f["sort"], f["dir"] = "rating", "DESC"
     return getTeamRankings(cur, f), {"raced": False, "field_size": size,
+                                     "shown_of_field": None,
                                      "reason": reason, "total": None,
                                      "race_cap": RACE_CAP, "unscored": 0}

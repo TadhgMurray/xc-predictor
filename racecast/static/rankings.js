@@ -870,7 +870,19 @@ function teamsNote(data) {
   if (!note) return;
   const n = (data.field_size || 0).toLocaleString();
 
-  if (data.raced) {
+  if (data.raced && Number.isInteger(data.shown_of_field)
+      && data.shown_of_field !== data.field_size) {
+    /* ★ A SCHOOL SEARCH IS A LOOKUP, NOT A SMALLER MEET. The searched teams
+       raced the whole field and are being picked out of it, so # is their
+       place among all ${n} -- which is the number somebody searching a team
+       wants. Said out loud because a board showing three rows numbered 1, 2
+       and 4 otherwise looks like it lost some. */
+    note.innerHTML =
+      `<strong>Showing ${data.shown_of_field.toLocaleString()} of ${n} teams</strong>`
+      + ` that raced each other in one meet. The # is their place in that `
+      + "full field, not among the rows shown &mdash; clear the School filter "
+      + "to see everyone. Hover a rank for that squad's own season.";
+  } else if (data.raced) {
     note.innerHTML =
       `<strong>${n} teams raced against each other</strong> in one meet &mdash; `
       + "every squad's top seven entered, sorted by season rating and scored "
