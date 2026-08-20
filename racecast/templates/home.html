@@ -79,7 +79,7 @@
                     {# ! THE HEADING NAMES WHAT THE COLUMN HOLDS. "Detail" described
                        two different things: a race count on the athlete board and
                        the performance itself on the other. #}
-                    <div class="head">{{ 'Time' if board_type == 'performance' else 'Races' }}</div>
+                    <div class="head">{{ 'Result' if board_type == 'performance' else 'Races' }}</div>
                     {% for r in rows %}
                         {% if r is none %}
                             {# padding row -> six blank cells keep the grid line #}
@@ -106,7 +106,12 @@
                                 {% else %}—{% endif %}
                             </div>
                             <div class="cell c-rating">{{ '%.1f'|format(r.rating) if r.rating is not none else '—' }}</div>
-                            <div class="cell c-detail">
+                            {# ! title CARRIES THE WHOLE STRING, because this
+                               cell ellipsises. The time always fits; a long
+                               meet name runs out of room, and hovering is
+                               then the only way to read it. Costs nothing --
+                               the text is already in the row. #}
+                            <div class="cell c-detail" title="{{ r.detail }}">
                                 {% if board_type == 'performance' and r.link %}
                                     <a href="{{ r.link }}">{{ r.detail or '—' }}</a>
                                 {% else %}{{ r.detail or '—' }}{% endif %}

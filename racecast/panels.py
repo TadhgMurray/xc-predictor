@@ -848,41 +848,36 @@ def _fmtTime(seconds):
 def _perfDetail(sport, row):
     """The one-line context shown next to the rating on the home board.
 
-    ★ THE TIME AND WHAT IT WAS RUN OVER -- NOT THE MEET NAME. This used to
-      read "{meet} ({course})", and a meet name does not fit the column: the
-      grid gives it about one twelfth of the board, so "Chile Pepper Cross
-      Country Festival (Agri Park)" rendered as a truncated fragment on every
-      row. A board headed "Best Performances" that cannot show the
-      performance is the wrong trade -- and the row already links to the
-      race, where the meet, course and full field are.
+    ★ THE TIME AND THE MEET. Both, in that order, and the order is the whole
+      design: the time is short and fixed-width so it always survives, and
+      the meet name takes whatever room is left and ellipsises. A board
+      headed "Best Performances" has to show the performance, and a person
+      reading it wants to know where it happened.
 
-    ⚠ THE DISTANCE STAYS, AND IT IS NOT DECORATION. A time is meaningless
-      without knowing what it was run over: an XC board mixes 3000m through
-      8000m and a TF board mixes 800m through 3200m, so "15:21.0" alone
-      cannot be compared with the row above it.
+    ⚠ THIS COLUMN HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS. It read
+      "{meet} ({course})" and showed a truncated fragment of a meet name and
+      no performance at all. It was then cut to the time and the distance,
+      which fits perfectly and throws away the one thing people recognise a
+      race by. Neither end of that trade is right: put the fixed-width thing
+      first and let the variable-width thing run out of room.
 
-    Falls back to the bare time when the distance is unknown, and to the meet
-    name when there is no usable time at all -- an empty cell says less than
-    either.
+    ! THE COURSE IS THE PART THAT GOES. It is the least identifying of the
+      three -- a meet name usually implies its course, and the race page one
+      click away carries both. The distance goes with it: the RATING sits in
+      the very next column and is the distance-normalised comparison, which
+      is what the distance was there to enable.
+
+    Falls back to the bare time when there is no meet name, and to the meet
+    name when there is no usable time -- an empty cell says less than either.
     """
+    meet = (row.get("meet_name") or "").strip()
     time_text = _fmtTime(row.get("time_seconds"))
+
     if time_text is None:
-        return row.get("meet_name") or "Unknown meet"
-
-    if sport == "XC":
-        # ⚠ THE JUNK DISTANCES ARE REAL: `meets` carries 0, 1 and 5 among the
-        #   honest values, and "15:21.0 · 1m" is worse than no distance.
-        #   Same 400m floor athlete_chart_data uses, for the same reason.
-        try:
-            metres = float(row.get("distance"))
-        except (TypeError, ValueError):
-            metres = 0.0
-        if metres >= 400:
-            return f"{time_text} \u00b7 {round(metres)}m"
+        return meet or "Unknown meet"
+    if not meet:
         return time_text
-
-    event = (row.get("event_short") or "").strip()
-    return f"{time_text} \u00b7 {event}" if event else time_text
+    return f"{time_text} \u00b7 {meet}"
 
 
 def _collectPerformances(conn, sport, season_year, buckets, stats):

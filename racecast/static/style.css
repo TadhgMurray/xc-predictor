@@ -2721,13 +2721,21 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 /* ⚠ THE WIDER FONT CLIPPED SCHOOL NAMES ("Springdale Har-..."), so school
    took the slack, the rank column gave some back and a three-digit rating
    stopped needing 5rem.
-   ! 1.05fr, NOT 1.2 AND NOT 0.95, AND THE NUMBER WAS MEASURED. Across the
-     480 school cells on a full board, 1.2 and 1.05 clip nothing while 0.95
-     clips 12 and 0.85 clips 36 -- so 1.05 is as narrow as this column goes
-     before it starts eating "Fort Smith Northside". The space returns to
-     the athlete name, which is what people scan. */
+   ! EVERY RATIO HERE WAS MEASURED, and the margins are ONE PIXEL wide.
+     "Fort Smith Northside" overflows by exactly 1px at school 1.1fr and the
+     browser draws an ellipsis for it; the athlete names start doing the
+     same the moment school passes 1.15fr. 0.88 / 1.15 / 1.17 is the only
+     swept combination where neither clips at all.
+   ⚠ SO MEASURE STRICTLY IF YOU CHANGE THESE. An earlier pass allowed a 1px
+     tolerance, reported "nothing clipped", and shipped a visibly truncated
+     school column -- scrollWidth > clientWidth by ANY amount is a clip.
+   ! THE RESULT COLUMN IS THE ONE THAT MAY RUN OUT, by design: it holds a
+     time and a meet name, and about a quarter of meet names fit nowhere
+     ("Chile Pepper Cross Country Festival"). That is why the time is
+     written FIRST -- the fixed-width half always survives -- and why the
+     cell carries the full string in a title attribute. */
 :root {
-    --cols: 2.5rem minmax(0, 1fr) minmax(0, 1.05fr) 4.25rem minmax(0, 0.95fr);
+    --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 4.25rem minmax(0, 1.17fr);
 }
 
 /* ---- athlete ----------------------------------------------------------- */
