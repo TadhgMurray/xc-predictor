@@ -13,6 +13,7 @@
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {# |urlencode, same as every school link: the name goes into the URL
@@ -138,5 +139,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

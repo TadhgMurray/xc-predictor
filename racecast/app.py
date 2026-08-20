@@ -363,6 +363,22 @@ def athlete(person_id):
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
 
+    # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
+    #   below the fold, or not at all -- while the header carried just a name
+    #   and a grey line. They are derived here rather than in the template so
+    #   the season span is computed once from the same keys the blocks use.
+    #
+    # ! SEASONS COUNTS YEARS, NOT BLOCKS. `seasons` is keyed (label, sport),
+    #   so an athlete running both sports in one year holds two entries for
+    #   one season of their life -- "5 seasons" for four years of school
+    #   would be wrong in the way nobody would think to check.
+    labels = sorted({label for label, _sport in seasons})
+    athlete["n_races"] = len(races)
+    athlete["n_seasons"] = len(labels)
+    athlete["season_span"] = (f"{labels[0]} — {labels[-1]}"
+                              if len(labels) > 1 else
+                              labels[0] if labels else None)
+
     xc_seasons = [(k, v) for k, v in ordered if k[1] == "XC"]
     tf_seasons = [(k, v) for k, v in ordered if k[1] == "TF"]
     tf_dists = tf_distances(races)

@@ -12,6 +12,7 @@
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
@@ -41,5 +42,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

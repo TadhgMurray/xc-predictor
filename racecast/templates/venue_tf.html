@@ -11,6 +11,7 @@
 </head>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ label if label else "Venue " ~ location_id }}</h1>
     <p class="meta">
         {{ "Indoor" if is_indoor else "Outdoor" }} ·
@@ -78,5 +79,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

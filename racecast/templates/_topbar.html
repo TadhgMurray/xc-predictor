@@ -14,11 +14,20 @@
        route is renamed, instead of silently 404ing in production. The two
        that are still hardcoded are the ones whose endpoints I have not
        confirmed; Predictions has no route at all yet. #}
+    {# ★ YOU-ARE-HERE, DERIVED RATHER THAN PASSED. The bar gave no clue which
+       page you were on. `here` is read off request.path, so not one of the
+       ~20 routes has to learn about a nav argument -- and a route that is
+       renamed cannot forget to update its own highlight.
+
+       startswith, not equality: /rankings and /athlete/123 both want their
+       section lit, and an exact test would leave every detail page with a
+       blank bar. #}
+    {% set here = request.path %}
     <nav class="topnav">
-        <a href="/rankings">Rankings</a>
-        <a href="/conversions">Conversions</a>
-        <a href="{{ url_for('predictions_page') }}">Predictions</a>
-        <a href="{{ url_for('about_page') }}">About</a>
+        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
+        <a href="/conversions" class="{{ 'is-here' if here.startswith('/conversions') }}">Conversions</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
         {# Muted, and last. The topbar is the only element on EVERY page, so
            it is the only place a report link gets site-wide reach -- but it
            is not a destination, so it should not compete with the sections. #}

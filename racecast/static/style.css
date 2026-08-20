@@ -2541,6 +2541,241 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
   border-radius: 3px;
 }
 
+
+/* ======================================================================= *
+ *  PER-PAGE POLISH  (rests on SITE FOUNDATION above)
+ * ======================================================================= */
+
+/* ---- result pages get a measure ---------------------------------------- *
+ * race / meet / course / school / venue / compiled had no container at all,
+ * so at 1280 the h1 sat 8px from the window edge and the results table
+ * stretched the full width -- the eye travelling the whole monitor from a
+ * runner's name to their time. .page-wide is the wrapper those templates
+ * now use; .page (68ch) stays the prose measure for About. */
+.page-wide {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 1.6rem 1.5rem 3rem;
+}
+.page-wide > .meta:first-of-type { font-size: 0.95rem; color: #374151; }
+.page-wide > .meta a { font-weight: 600; }
+
+/* "View full meet" was a bare link on its own line; it is an action. */
+.meet-link {
+    display: inline-block;
+    padding: 0.45rem 0.8rem;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    background: #fff;
+}
+.meet-link:hover { background: var(--hover); }
+
+/* ---- you-are-here ------------------------------------------------------ *
+ * The topbar gave no indication which page you were on. _topbar.html sets
+ * the class from request.path, so no route had to learn about it. */
+.topnav a.is-here {
+    color: var(--ink);
+    font-weight: 650;
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* ---- rankings ---------------------------------------------------------- */
+/* The native selects and the custom combo buttons disagreed on border,
+   height and radius, so the filter row read as two toolbars. */
+.rankings-page .field select,
+.rankings-page .field input {
+    border-color: #ccc;
+    padding: 0.42rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    height: 34px;
+    min-width: 6.25rem;
+}
+.rankings-page .field input.narrow { min-width: 4rem; }
+.rankings-page .field label { font-size: 0.65rem; }
+/* ⚠ THE SANS STACK IS WIDER THAN THE SERIF IT REPLACED, and the row was
+   sized for the serif -- Apply wrapped onto a second line. Trimming the
+   controls puts the whole bar back on one row at 1280. */
+.rankings-page .combo-btn { width: 132px; height: 34px; }
+
+/* The rating is what the board ranks, so it leads the row. */
+.rankings-page table.rk td.rating { font-weight: 700; font-size: 1.02rem; }
+.rankings-page table.rk tbody tr:nth-child(-n+3) td.rank {
+    color: var(--gold);
+    font-weight: 700;
+}
+
+/* ⚠ THIS NOTICE IS PERMANENT ON A NATIONAL BOARD, which is the default, so
+   it is the first thing above the table on essentially every visit -- the
+   fate the international caveat was deliberately spared. A rule and small
+   text says the same thing without being the loudest object on the page. */
+.rankings-page .notice {
+    background: transparent;
+    border: 0;
+    border-left: 3px solid #d9b168;
+    border-radius: 0;
+    color: #57534e;
+    font-size: 0.8125rem;
+    padding: 0.4rem 0 0.4rem 0.7rem;
+}
+
+/* ---- home -------------------------------------------------------------- */
+/* ⚠ THE HERO WAS 880px OF A 900px VIEWPORT, so the entire first screen was
+   photographs and no ranking was visible until you scrolled. 16/7 leaves
+   the boards peeking above the fold. */
+.hero-mosaic { aspect-ratio: 16 / 7; }
+
+/* ★ TWO KINDS OF CONTROL THAT LOOKED IDENTICAL. The sport and scope groups
+   are PICK ONE; the pool chips are TOGGLE OFF -- and an "on" chip was
+   drawn exactly like an unselected mode button, so nothing said which was
+   which. The chips now read as checkboxes. */
+.pool-chips .chip {
+    opacity: 1;
+    background: #fff;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+}
+.pool-chips .chip::before { content: "\2715\00a0"; font-size: 0.7em; color: #9ca3af; }
+.pool-chips .chip.is-on {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+    color: #1e3a8a;
+    font-weight: 600;
+}
+.pool-chips .chip.is-on::before { content: "\2713\00a0"; color: var(--accent); }
+
+/* The board grid is divs, not a table, so it needs the treatment spelled
+   out rather than inherited. */
+.board-grid .cell { border-left: 0; border-right: 0; }
+.board-grid .head {
+    background: transparent;
+    border-bottom: 1px solid var(--line-2);
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+}
+.board-grid .c-rating { font-weight: 700; font-variant-numeric: tabular-nums; }
+.board-grid .cell:nth-child(5n+1) { color: var(--muted); }
+.board-scope-label { font-size: 1.05rem; }
+
+/* ⚠ THE WIDER FONT CLIPPED SCHOOL NAMES ("Springdale Har-..."). School gets
+   the slack; the rank column gives some back and a three-digit rating does
+   not need 5rem. */
+:root {
+    --cols: 2.5rem minmax(0, 1fr) minmax(0, 1.2fr) 4.25rem minmax(0, 0.95fr);
+}
+
+/* ---- athlete ----------------------------------------------------------- */
+/* The XC/TF switcher was two bare links run together, which read as one
+   string. school.html already had a segmented control; this is it. */
+.sport-toggle {
+    display: inline-flex;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 0.6rem 0 1.2rem;
+}
+.sport-toggle a {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+    border-right: 1px solid var(--line-2);
+}
+.sport-toggle a:last-child { border-right: 0; }
+.sport-toggle a:hover { background: var(--hover); text-decoration: none; }
+
+/* All-Time Bests sat in a card and Season Bests did not, so two equivalent
+   panels read as different kinds of thing. */
+.bests-panel, .pr-panel, .chart-panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.9rem 1rem 1rem;
+    margin-bottom: 1.1rem;
+    background: #fff;
+}
+.bests-panel h3, .pr-panel h3, .chart-panel h3 {
+    margin: 0 0 0.7rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    font-weight: 650;
+}
+/* ! NO BOX INSIDE A BOX. Now that the panel is a card, rating-head's own
+   frame is a second border 8px inside the first -- and the width it stole
+   wrapped "2026 TF season" onto two lines. */
+.bests-panel .rating-head {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    padding: 0 0 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.bests-panel .rating-head .note { white-space: nowrap; }
+.pr-panel ul { list-style: none; padding-left: 0; margin: 0.2rem 0 1rem; }
+.pr-panel li {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.15rem 0;
+    font-size: 0.875rem;
+}
+.pr-panel .season-head-link {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 650;
+    padding: 0.5rem 0 0.25rem;
+    border-top: 1px solid var(--line);
+    margin-top: 0.5rem;
+}
+.pr-panel .season-head-link:first-of-type { border-top: 0; margin-top: 0; }
+
+/* The season and its rating are the two facts in the heading, so they sit
+   at the two ends of one line. The rating was the faintest thing in it. */
+.season-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    border-bottom: 1px solid var(--line-2);
+    padding-bottom: 0.35rem;
+    margin-bottom: 0.2rem;
+}
+.season-rating { font-weight: 700; font-variant-numeric: tabular-nums; }
+.season-meta { color: var(--muted); font-size: 0.85rem; margin: 0.35rem 0 0.6rem; }
+
+/* The header stat strip: the page's headline numbers, which used to live
+   only in the sidebar. */
+.stat-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2.2rem;
+    align-items: baseline;
+    padding: 0.9rem 0 1rem;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    margin: 0.6rem 0 0.2rem;
+}
+.stat-strip .s-lab {
+    display: block;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+}
+.stat-strip .s-val {
+    font-size: 1.55rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.stat-strip .s-sub { font-size: 0.75rem; color: var(--muted); margin-left: 0.4rem; }
+
 /* ---- phones, site-wide ------------------------------------------------ *
  * The result pages now carry a real viewport meta, so this is where their
  * phone layout is decided. Two calls made here:

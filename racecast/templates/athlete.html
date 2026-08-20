@@ -217,6 +217,40 @@
     <h1>{{ athlete.name }}</h1>
     <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }}</p>
 
+    {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
+       sidebar, so the page's own subject was the one thing the top of the
+       page did not say. Each figure links where it can: the best race
+       scrolls to its own row. #}
+    <div class="stat-strip">
+        <div>
+            <span class="s-lab">Athlete rating</span>
+            <span class="s-val">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+            {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
+        </div>
+        {% if alltime.rating %}
+        <div>
+            <span class="s-lab">Best race</span>
+            <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ "%.1f"|format(alltime.rating.speed_rating) }}</a></span>
+            <span class="s-sub">{{ alltime.rating.sport }}</span>
+        </div>
+        {% endif %}
+        {# Guarded like the others: a caller that does not set this should
+           drop the cell, not render a label over an empty space. #}
+        {% if athlete.n_races %}
+        <div>
+            <span class="s-lab">Races</span>
+            <span class="s-val">{{ athlete.n_races }}</span>
+        </div>
+        {% endif %}
+        {% if athlete.n_seasons %}
+        <div>
+            <span class="s-lab">Seasons</span>
+            <span class="s-val">{{ athlete.n_seasons }}</span>
+            {% if athlete.season_span %}<span class="s-sub">{{ athlete.season_span }}</span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
     <nav class="sport-toggle">
         <a href="#xc">Cross Country</a>
         <a href="#tf">Track &amp; Field</a>

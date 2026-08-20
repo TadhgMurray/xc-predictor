@@ -27,6 +27,7 @@
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ school }}</h1>
     <p class="meta">
         {% if header.state %}{{ header.state }} · {% endif %}
@@ -201,5 +202,6 @@ document.querySelectorAll("table.staged").forEach(function (table) {
 });
 </script>
 
+</main>
 </body>
 </html>
