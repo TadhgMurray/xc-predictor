@@ -534,7 +534,12 @@ function renderTeam(d) {
       <td>${t.score === null ? esc(t.note || "incomplete") : t.score}</td>
       ${scored ? `<td class="actual">${t.actual_score ?? "\u2014"}</td>` : ""}
       <td class="runners">${(t.runners || []).map((r) =>
-        `<span class="runner">${r.place}. ${esc(r.name || "")}` +
+        /* ! score_place, NOT place -- the number the points are summed from.
+             A complete team's displayed places have to add up to its own
+             score, and they only do once unattached runners and incomplete
+             teams are lifted out. An incomplete team has no scoring place,
+             so it falls back to where its runners finish. */
+        `<span class="runner">${r.score_place || r.place}. ${esc(r.name || "")}` +
         ` <em>${fmtTime(r.seconds)}</em></span>`).join("")}</td>
     </tr>`).join("");
 
