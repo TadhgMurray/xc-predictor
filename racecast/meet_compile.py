@@ -32,6 +32,63 @@ TEAM SCORES, TWO WAYS
 """
 
 import json
+import os
+import re
+import sys
+
+# ★ WHY THIS IS NOT level_graph._JUNK, WHICH ANSWERS THE SAME QUESTION.
+#   The engine's pattern carries `^unat` -- an unanchored PREFIX, so it also
+#   swallows Unatego Central, a real school district in New York. In the
+#   level graph that costs one node out of ~100k and nobody can see it. In
+#   team scoring it deletes a team that actually raced from the results
+#   page, which is the most visible kind of wrong this file can produce.
+#
+#   The two patterns want different error trades -- the graph would rather
+#   drop a real school than admit a fake one, and scoring would rather show
+#   a fake team than hide a real one -- so they are deliberately separate,
+#   and this comment is the link between them. Keep them in step in SPIRIT,
+#   not character for character.
+#
+# ! WHICH TOKENS MAY MATCH ANYWHERE, AND WHICH MUST BE THE WHOLE STRING:
+#     unattached / unaffiliated   anywhere. No school is named with them,
+#                                 and the corpus writes "Unattached - Nike".
+#     individual / independent    WHOLE STRING ONLY. "Individual Learning
+#                                 Academy" and "Independence HS" are schools;
+#                                 a bare "Individual" is a placeholder.
+#     una / unat / unatt          WHOLE STRING ONLY, for the same reason
+#                                 Unatego exists.
+_NOT_A_TEAM = re.compile(r"""
+      ^\s*$                      # blank, and the scrapers do write blanks
+    | ^0$                        # the team_id=0 sentinel, as a string
+    | ^-+$                       # a dash standing in for "none"
+    | ^\?+$                      # ???
+    | ^n/?a$                     # n/a, na
+    | ^none$
+    | ^no\s+school$
+    | ^una?t{0,2}\.?$            # UNA, UNAT, UNATT, with an optional dot
+    | ^individuals?$
+    | ^independent$
+    | \bunattached\b
+    | \bunaffiliated\b
+""", re.IGNORECASE | re.VERBOSE)
+
+
+def isTeam(school):
+    """Is this school string a real team, or a placeholder for having none?
+
+    ★ UNATTACHED IS NOT A TEAM, AND FIVE UNATTACHED RUNNERS ARE NOT A SQUAD.
+      They share one string because none of them has a school -- not because
+      they represent the same one -- so scoring them together invents a team
+      out of exactly the runners who have none, and at a big open meet that
+      invented team can beat real ones.
+
+    ⚠ THE SAME STRING IS LEFT ALONE ELSEWHERE ON PURPOSE. panels._NON_SCHOOL
+      deliberately omits 'Unattached' because for POOLING these are real kids
+      at open meets whose grade still says what level they are. Being a real
+      athlete and being a team are different questions; this answers only
+      the second.
+    """
+    return bool(school and school.strip()) and not _NOT_A_TEAM.search(school)
 
 # Standard cross country scoring.
 SCORERS = 5
@@ -172,9 +229,14 @@ def scoreRows(rows):
       and everyone behind them moves up. Scoring against raw finishing places
       instead inflates every complete team's total.
     """
+    # ! NON-TEAMS ARE NEVER COUNTED, so they can neither score nor be
+    #   reported as short of runners -- "Unattached (7)" under a heading
+    #   about incomplete teams answers a question nobody asked. Their
+    #   runners are then skipped by the renumbering loop below, which lifts
+    #   them out of the scoring order exactly as an incomplete team's are.
     counts = {}
     for r in rows:
-        if r.get("school"):
+        if isTeam(r.get("school")):
             counts[r["school"]] = counts.get(r["school"], 0) + 1
     full = {s for s, n in counts.items() if n >= SCORERS}
 

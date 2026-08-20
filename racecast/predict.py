@@ -34,6 +34,8 @@ TEAM SCORING IS NOT A SEPARATE MODEL
 
 import os
 
+from meet_compile import isTeam
+
 # Where train.py writes its checkpoint. Absent until the model is trained.
 MODEL_PATH = os.environ.get("RACECAST_MODEL", "model/checkpoint.pt")
 
@@ -166,7 +168,18 @@ def _score(field, preds):
     for runner, pred in order:
         place += 1
         team = runner.get("school")
-        if not team:
+        # ! UNATTACHED IS NOT A TEAM. Five runners who share that string
+        #   share it because none of them has a school, so scoring them
+        #   together invents a squad out of exactly the athletes who have
+        #   none. Same test the race page's scoreRows uses.
+        #
+        # ⚠ THEY STILL TAKE PLACES HERE, and that differs from scoreRows,
+        #   which renumbers after lifting non-scorers out. This function has
+        #   never renumbered -- incomplete teams do not displace either --
+        #   so changing it would move every predicted score, which is a
+        #   methodology decision rather than this fix. Named, not silently
+        #   half-done.
+        if not isTeam(team):
             continue
         by_team.setdefault(team, []).append(
             {"person_id": runner["person_id"], "name": runner.get("name"),
