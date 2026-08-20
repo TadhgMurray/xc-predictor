@@ -53,7 +53,18 @@ K = 1.06
 
 MIN_ROWS      = 15     # a division needs this many results to testify
 MIN_CLASS     = 20     # a distance class needs this many divisions to be one
-OUTLIER       = 0.12   # |shift / baseline - 1| past this = removal candidate
+# ★ MEASURED, NOT CHOSEN. --sweep prices every candidate against the whole
+#   corpus, and the curve is almost flat: 0.12 condemns 85 overrides of 3,569
+#   and 0.04 condemns 91. Six divisions separate the strictest bar from the
+#   loosest, because MIN_GAIN and "a sane stored distance to fall back to" are
+#   doing the real work -- this gate only decides whether to look.
+#
+#   0.12 was excluding Thetford 25930/7 by 0.0033: a 6000m override on a 5000m
+#   race, shift 0.8777 against a 6000m class baseline of 0.9936, whose removal
+#   was independently confirmed correct and would have taken its error from
+#   0.117 to 0.066. A bar that misses a case you can verify by hand, at a cost
+#   of three divisions, is set wrong.
+OUTLIER       = 0.08   # |shift / baseline - 1| past this = removal candidate
 MIN_GAIN      = 0.05   # a removal must close at least this much of the gap
 SANE_DISTANCE = (500, 20000)
 

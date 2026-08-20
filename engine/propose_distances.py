@@ -660,30 +660,128 @@ _MERGED_SQL = """
 """
 
 
+
+# ⚠ AN ATHLETE WHOSE ONLY RATED RACE IS THIS ONE AGREES WITH THEMSELVES BY
+#   CONSTRUCTION. Their median IS this race's rating, so their shift is
+#   exactly 1.000 -- and a division full of them reads as perfectly
+#   consistent no matter how wrong it is. It shows in the first pass as
+#   quartiles landing on exactly 1.000, which is not a coincidence and not
+#   data.
+#
+# ★ SO THE CANDIDATES ARE VERIFIED AGAINST EACH ATHLETE'S RACES ELSEWHERE.
+#   Bounded to one division at a time, so the correlated median that would be
+#   ruinous corpus-wide costs nothing here: cheap filter first, exact test
+#   second.
+_VERIFY_MERGED = """
+    WITH here AS (
+        SELECT r.person_id, substring(r.date, 1, 4)::int AS yr,
+               COALESCE(r.speed_rating,
+                        sc.k / NULLIF(r.normalized_time, 0)) AS rating
+        FROM   results r
+        JOIN   (
+            SELECT person_id,
+                   percentile_cont(0.5) WITHIN GROUP
+                       (ORDER BY speed_rating * normalized_time) AS k
+            FROM   results
+            WHERE  speed_rating > 0 AND normalized_time > 0
+              AND  person_id IS NOT NULL
+            GROUP  BY 1
+        ) sc ON sc.person_id = r.person_id
+        WHERE  r.meet_id = %(m)s AND r.div_id = %(d)s
+          AND  r.person_id IS NOT NULL
+    ), elsewhere AS (
+        -- ! THE SAME YEAR, AT ANY OTHER MEET. Excluding only this DIVISION
+        --   would leave the athlete's other races at the same meet in, and a
+        --   merged meet is usually merged in every one of its divisions.
+        SELECT h.person_id,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY o.speed_rating)
+                   AS med
+        FROM   here h
+        JOIN   results o ON o.person_id = h.person_id
+                        AND o.meet_id <> %(m)s
+                        AND substring(o.date, 1, 4)::int = h.yr
+        WHERE  o.speed_rating > 0
+        GROUP  BY 1
+        HAVING count(*) >= 2
+    )
+    SELECT h.person_id, e.med / NULLIF(h.rating, 0) AS shift
+    FROM   here h
+    JOIN   elsewhere e ON e.person_id = h.person_id
+    WHERE  h.rating > 0 AND e.med > 0
+"""
+
+
+def verifyMerged(cur, meet_id, div_id):
+    """Re-measure a candidate against races the athletes ran elsewhere.
+
+    Returns (n, q25, q50, q75, small_side) or None when too few athletes have
+    a career outside this meet to say anything.
+    """
+    cur.execute(_VERIFY_MERGED, {"m": meet_id, "d": div_id})
+    shifts = sorted(float(r[1]) for r in cur.fetchall() if r[1])
+    if len(shifts) < MIN_ROWS:
+        return None
+    n = len(shifts)
+    q = lambda f: shifts[min(n - 1, int(f * n))]
+    q25, q50, q75 = q(0.25), q(0.50), q(0.75)
+
+    # ★ AND BOTH SIDES HAVE TO BE A CROWD. Split at the widest gap in the
+    #   middle of the distribution; a real second race is a large minority,
+    #   while three odd runners are three odd runners.
+    lo, hi = int(0.2 * n), max(int(0.8 * n), int(0.2 * n) + 1)
+    gap_at, gap = lo, 0.0
+    for i in range(lo, min(hi, n - 1)):
+        d = shifts[i + 1] - shifts[i]
+        if d > gap:
+            gap_at, gap = i, d
+    small_side = min(gap_at + 1, n - gap_at - 1) / n
+    return n, q25, q50, q75, small_side
+
+
 def reportMerged(cur, limit=40):
     """Divisions whose own athletes do not agree about the distance."""
     cur.execute(_MERGED_SQL, {"min_rows": MIN_ROWS, "iqr": MERGED_IQR,
-                              "lim": limit})
-    rows = cur.fetchall()
+                              "lim": limit * 8})
+    candidates = cur.fetchall()
     print(f"\n\n[dist] DIVISIONS THAT LOOK LIKE TWO RACES "
           f"(q75/q25 > {MERGED_IQR})\n")
-    if not rows:
-        print("    none -- every division's athletes agree with each other "
-              "about\n    how far they ran.")
+    print(f"    {len(candidates):,} candidates from the cheap pass; each is "
+          f"now re-measured\n    against races its athletes ran at OTHER "
+          f"meets.\n")
+
+    kept, dropped = [], 0
+    for meet_id, div_id, _n, _a, _b, _c in candidates:
+        got = verifyMerged(cur, meet_id, div_id)
+        if got is None:
+            dropped += 1
+            continue
+        n, q25, q50, q75, small = got
+        if q25 <= 0 or q75 / q25 <= MERGED_IQR or small < MERGED_MIN_SIDE:
+            dropped += 1
+            continue
+        kept.append((q75 / q25, meet_id, div_id, n, q25, q50, q75, small))
+
+    print(f"    {dropped:,} fell away on the second look -- most of them were "
+          f"athletes\n    whose only rated race IS this one, who agree with "
+          f"themselves by\n    construction and read as a shift of exactly "
+          f"1.000.\n")
+    if not kept:
+        print("    Nothing survived. No division's athletes disagree with "
+              "their own\n    form elsewhere about how far they ran here.")
         return
     print("    ⚠ These need a PER-RESULT split, not a distance. One number "
           "cannot\n      fix a division that held two races. See "
           "_RESULT_OVERRIDE_XC.\n")
-    print(f"    {'meet/div':<20}{'n':>6}{'q25':>8}{'median':>8}{'q75':>8}"
-          f"{'spread':>9}  meet")
-    for meet_id, div_id, n, q25, q50, q75 in rows:
+    kept.sort(reverse=True)
+    print(f"    {'meet/div':<20}{'n':>5}{'q25':>8}{'median':>8}{'q75':>8}"
+          f"{'spread':>8}{'split':>7}  meet")
+    for spread, meet_id, div_id, n, q25, q50, q75, small in kept[:limit]:
         cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1",
                     (meet_id,))
         got = cur.fetchone()
         name = (got[0] if got else "") or ""
-        print(f"    {f'{meet_id}/{div_id}':<20}{n:>6}{float(q25):>8.3f}"
-              f"{float(q50):>8.3f}{float(q75):>8.3f}"
-              f"{float(q75) / float(q25):>9.3f}  {name[:34]}")
+        print(f"    {f'{meet_id}/{div_id}':<20}{n:>5}{q25:>8.3f}{q50:>8.3f}"
+              f"{q75:>8.3f}{spread:>8.3f}{small:>6.0%}  {name[:32]}")
 
 
 def main(rebuild=True, write=False, explain_keys=(),

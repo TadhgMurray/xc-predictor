@@ -53,6 +53,14 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 
 from normalize_distance import normalizeTime, targetFor
+# ★ THE SAME RESOLVER THE BACKFILL USES. ranking_results.distance is only
+#   populated for cross country -- 400,000 of 400,000 track rows came back
+#   with none, which is why this reported nothing at all on TF. Track keeps
+#   its distance in the event name, and event_parse is where that is read;
+#   its own header says the 12-entry exact-match dict silently dropped
+#   7,157,445 tfrrs rows, so a second copy of that logic here would be a
+#   third way to get it wrong.
+from event_parse import distanceFromEventShort
 
 # A refit moves every row a little; a pool mismatch moves one row a lot. The
 # smallest real mismatch in this corpus is ms(3200) against hs(5000), which
@@ -118,8 +126,8 @@ def whichPool(time_seconds, distance, stored_nt, pools, sport=None):
 
 _SQL = """
     SELECT k.pool, k.sport, r.result_id, r.person_id,
-           r.time_seconds, {dist} AS distance, r.normalized_time,
-           r.speed_rating
+           r.time_seconds, {dist} AS distance, {event} AS event_short,
+           r.normalized_time, r.speed_rating
     FROM   {table} r
     JOIN   ranking_results k ON k.result_id = r.result_id
                             AND k.sport = %(sport)s
@@ -148,7 +156,10 @@ def main():
         print(f"    {p:<12}{targetFor(p, args.sport):>8.0f} m")
 
     table = "results_tf" if args.sport == "TF" else "results"
-    dist = "k.distance" if args.sport == "TF" else "k.distance"
+    # ! TRACK CARRIES NO DISTANCE COLUMN WORTH READING. k.distance is null on
+    #   every TF row, so the distance is parsed out of the event name below.
+    dist = "NULL::float" if args.sport == "TF" else "k.distance"
+    event = "r.event_short" if args.sport == "TF" else "NULL::text"
 
     from database import getConn
     import psycopg2.extras
@@ -161,21 +172,26 @@ def main():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(_SQL.format(
-                table=table, dist=dist,
+                table=table, dist=dist, event=event,
                 person=("AND r.person_id = %(person)s" if args.person else "")),
                 {"sport": args.sport, "scan": args.scan,
                  **({"person": args.person} if args.person else {})})
             fetched = cur.fetchall()
             for r in fetched:
+                d = r["distance"]
+                if d is None and r["event_short"]:
+                    # ! (distance, gender) -- only the first is wanted here.
+                    got = distanceFromEventShort(r["event_short"])
+                    d = got[0] if isinstance(got, (tuple, list)) else got
                 is_bad, expected, ratio = mismatch(
-                    r["time_seconds"], r["distance"], r["normalized_time"],
+                    r["time_seconds"], d, r["normalized_time"],
                     r["pool"], r["sport"])
                 if ratio is None:
                     # ! COUNTED BY REASON. "No checkable rows" told me nothing
                     #   about whether the query returned nothing or returned
                     #   400,000 rows that all lacked a distance -- two very
                     #   different problems with the same message.
-                    why = ("no distance" if r["distance"] in (None, 0)
+                    why = ("no distance" if d in (None, 0)
                            else "no time" if not r["time_seconds"]
                            else "no stored normalized_time"
                            if not r["normalized_time"]
@@ -187,7 +203,7 @@ def main():
                 slot[0] += 1
                 if is_bad:
                     slot[1] += 1
-                    was, _ = whichPool(r["time_seconds"], r["distance"],
+                    was, _ = whichPool(r["time_seconds"], d,
                                        r["normalized_time"], _POOLS, r["sport"])
                     bad.append((abs(ratio - 1.0), r, expected, ratio, was))
 
