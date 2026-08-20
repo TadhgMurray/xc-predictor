@@ -755,17 +755,25 @@ def verifyMerged(cur, meet_id, div_id):
     q = lambda f: shifts[min(n - 1, int(f * n))]
     q25, q50, q75 = q(0.25), q(0.50), q(0.75)
 
-    # ★ AND BOTH SIDES HAVE TO BE A CROWD. Split at the widest gap in the
-    #   middle of the distribution; a real second race is a large minority,
-    #   while three odd runners are three odd runners.
+    # ★ THE SPLIT ITSELF, NOT THE QUARTILES. Quartiles cannot tell two races
+    #   from one race with a long tail: the Bengal Invite, which is verified
+    #   merged, reads q25 0.604 / median 0.964 / q75 0.994 -- the same shape
+    #   as a division with a slow tail, because its smaller race is 44% of
+    #   the field so the median lands inside the larger one. What separates
+    #   them is whether there is a HOLE between the two groups.
+    #
+    #   So: split at the widest gap in the middle, and report both sides.
     lo, hi = int(0.2 * n), max(int(0.8 * n), int(0.2 * n) + 1)
     gap_at, gap = lo, 0.0
     for i in range(lo, min(hi, n - 1)):
         d = shifts[i + 1] - shifts[i]
         if d > gap:
             gap_at, gap = i, d
-    small_side = min(gap_at + 1, n - gap_at - 1) / n
-    return n, q25, q50, q75, small_side
+    left, right = shifts[:gap_at + 1], shifts[gap_at + 1:]
+    small_side = min(len(left), len(right)) / n
+    lo_mid = left[len(left) // 2]
+    hi_mid = right[len(right) // 2] if right else lo_mid
+    return n, q25, q50, q75, small_side, lo_mid, hi_mid, len(left), gap
 
 
 def reportMerged(cur, limit=40):
@@ -784,18 +792,29 @@ def reportMerged(cur, limit=40):
 
     kept, dropped = [], 0
     for i, (meet_id, div_id, _n, _a, _b, _c) in enumerate(candidates, start=1):
-        if i % 25 == 0 or i == len(candidates):
-            print(f"    verified {i:,}/{len(candidates):,} "
-                  f"({len(kept)} kept)")
         got = verifyMerged(cur, meet_id, div_id)
         if got is None:
             dropped += 1
+            if i % 25 == 0 or i == len(candidates):
+                print(f"    verified {i:,}/{len(candidates):,} "
+                      f"({len(kept)} kept)")
             continue
-        n, q25, q50, q75, small = got
-        if q25 <= 0 or q75 / q25 <= MERGED_IQR or small < MERGED_MIN_SIDE:
+        n, q25, q50, q75, small, lo_mid, hi_mid, n_left, gap = got
+        if (q25 <= 0 or lo_mid <= 0 or q75 / q25 <= MERGED_IQR
+                or small < MERGED_MIN_SIDE):
             dropped += 1
+            if i % 25 == 0 or i == len(candidates):
+                print(f"    verified {i:,}/{len(candidates):,} "
+                      f"({len(kept)} kept)")
             continue
-        kept.append((q75 / q25, meet_id, div_id, n, q25, q50, q75, small))
+        kept.append((hi_mid / lo_mid, meet_id, div_id, n, small,
+                     lo_mid, hi_mid, n_left, gap))
+        # ! PRINTED AFTER THE VERIFY, not before it. Reporting progress at the
+        #   top of the loop counts the item it has not done yet, so the last
+        #   line said "3/3 (2 kept)" over a table of three.
+        if i % 25 == 0 or i == len(candidates):
+            print(f"    verified {i:,}/{len(candidates):,} "
+                  f"({len(kept)} kept)")
 
     print(f"    {dropped:,} fell away on the second look -- most of them were "
           f"athletes\n    whose only rated race IS this one, who agree with "
@@ -809,15 +828,28 @@ def reportMerged(cur, limit=40):
           "cannot\n      fix a division that held two races. See "
           "_RESULT_OVERRIDE_XC.\n")
     kept.sort(reverse=True)
-    print(f"    {'meet/div':<20}{'n':>5}{'q25':>8}{'median':>8}{'q75':>8}"
-          f"{'spread':>8}{'split':>7}  meet")
-    for spread, meet_id, div_id, n, q25, q50, q75, small in kept[:limit]:
-        cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1",
-                    (meet_id,))
+    # ★ AND THE SMALL GROUP'S IMPLIED DISTANCE, which turns a spread into a
+    #   claim you can check by eye. Their shift sits at lo_mid where the rest
+    #   of the field sits at hi_mid, so they ran
+    #       stored * (lo_mid / hi_mid) ** (1/K)
+    #   -- and "42% of this 8000m field ran about 5100m" is something a
+    #   results page settles in ten seconds.
+    print(f"    {'meet/div':<18}{'n':>5}{'small':>7}{'their':>8}{'rest':>8}"
+          f"{'gap':>7}{'stored':>8}{'they ran':>10}  meet")
+    for _r, meet_id, div_id, n, small, lo_mid, hi_mid, n_left, gap \
+            in kept[:limit]:
+        cur.execute("SELECT meet_name, distance FROM meets "
+                    "WHERE meet_id = %s AND div_id = %s LIMIT 1",
+                    (meet_id, div_id))
         got = cur.fetchone()
         name = (got[0] if got else "") or ""
-        print(f"    {f'{meet_id}/{div_id}':<20}{n:>5}{q25:>8.3f}{q50:>8.3f}"
-              f"{q75:>8.3f}{spread:>8.3f}{small:>6.0%}  {name[:32]}")
+        stored = float(got[1]) if got and got[1] else None
+        implied = (stored * (lo_mid / hi_mid) ** (1.0 / K)
+                   if stored and hi_mid else None)
+        print(f"    {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
+              f"{lo_mid:>8.3f}{hi_mid:>8.3f}{gap:>7.3f}"
+              f"{(f'{stored:.0f}' if stored else '-'):>8}"
+              f"{(f'{implied:.0f}' if implied else '-'):>10}  {name[:28]}")
 
 
 def main(rebuild=True, write=False, explain_keys=(),
