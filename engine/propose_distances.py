@@ -576,7 +576,118 @@ def explain(key, rows, base, by_course, by_meet, cur):
               f"  {why}")
 
 
-def main(rebuild=True, write=False, explain_keys=()):
+
+# ==================================================================== #
+#  MERGED DIVISIONS: TWO RACES UNDER ONE LABEL
+# ==================================================================== #
+#
+# ★ A DIVISION IS ASSUMED TO BE ONE RACE, AND SOMETIMES IT IS TWO. The Bengal
+#   Invite 2025 (26785/0) is stored as one 8000m girls division holding 134
+#   finishers: places 1-59 are women between 18:07 and 24:08, and places
+#   60-134 are men between 24:48 and 36:34. Those are a women's 5k and a
+#   men's 8k, scraped into one table.
+#
+# ⚠ AND EVERY TOOL HERE IS BLIND TO IT BY CONSTRUCTION. field_shift is a MEAN
+#   over the division. The men ran the stored distance and sit at 1.0; the
+#   women ran 5000 and are scored as 8000, so they sit near 0.8. The average
+#   came out 1.0057 and the division was called "normal for its class" --
+#   which it is, on average, while half of it is wrong.
+#
+# ★ SO THE TEST IS SPREAD, NOT CENTRE. Ask whether the division's own
+#   athletes agree with each other. A real race has one distance, so its
+#   shifts cluster; two races under one label make two clusters, and the
+#   quartiles come apart even when the mean is perfect.
+#
+# ⚠ AND THE ANSWER IS NOT A DISTANCE. No single number fixes a division that
+#   held two races -- correcting it to 5000 breaks the men and leaving it at
+#   8000 breaks the women. It needs a per-result split, which corrections.py
+#   already has a facility for: _RESULT_OVERRIDE_XC carries "9889 div 4:
+#   combined 'JV Women 5K + Men 5 Mile' ... women -> 5000/F; men -> M". This
+#   finds the divisions that need one; it does not write them.
+
+# How far apart the quartiles may be before a division is not one race.
+# Ordinary race-to-race noise is about 3-5% per athlete, so a healthy
+# division lands near 1.08. Two races 20% apart in distance push it past 1.2.
+MERGED_IQR = 1.18
+
+# And both halves have to be real. A division where 3 of 130 runners are odd
+# is not two races, it is three odd runners.
+MERGED_MIN_SIDE = 0.20
+
+_MERGED_SQL = """
+    WITH per_athlete AS (
+        SELECT s.meet_id, s.div_id,
+               m.med / NULLIF(COALESCE(r.speed_rating,
+                                       sc.k / NULLIF(x.nt, 0)), 0) AS shift
+        FROM   ovr_shift s
+        JOIN   results r ON r.meet_id = s.meet_id AND r.div_id = s.div_id
+        JOIN   LATERAL (
+                   SELECT COALESCE(r.normalized_time, 0) AS nt
+               ) x ON TRUE
+        JOIN   (
+            SELECT person_id, substring(date, 1, 4)::int AS yr,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+                       AS med
+            FROM   results
+            WHERE  speed_rating > 0 AND person_id IS NOT NULL
+            GROUP  BY 1, 2
+        ) m ON m.person_id = r.person_id
+           AND m.yr = substring(r.date, 1, 4)::int
+        JOIN   (
+            SELECT person_id,
+                   percentile_cont(0.5) WITHIN GROUP
+                       (ORDER BY speed_rating * normalized_time) AS k
+            FROM   results
+            WHERE  speed_rating > 0 AND normalized_time > 0
+              AND  person_id IS NOT NULL
+            GROUP  BY 1
+        ) sc ON sc.person_id = r.person_id
+        WHERE  s.n >= %(min_rows)s AND m.med > 0
+    )
+    SELECT meet_id, div_id, count(*) AS n,
+           percentile_cont(0.25) WITHIN GROUP (ORDER BY shift) AS q25,
+           percentile_cont(0.50) WITHIN GROUP (ORDER BY shift) AS q50,
+           percentile_cont(0.75) WITHIN GROUP (ORDER BY shift) AS q75
+    FROM   per_athlete
+    WHERE  shift > 0
+    GROUP  BY 1, 2
+    HAVING count(*) >= %(min_rows)s
+       AND percentile_cont(0.75) WITHIN GROUP (ORDER BY shift)
+           > %(iqr)s * percentile_cont(0.25) WITHIN GROUP (ORDER BY shift)
+    ORDER  BY percentile_cont(0.75) WITHIN GROUP (ORDER BY shift)
+            / percentile_cont(0.25) WITHIN GROUP (ORDER BY shift) DESC
+    LIMIT  %(lim)s
+"""
+
+
+def reportMerged(cur, limit=40):
+    """Divisions whose own athletes do not agree about the distance."""
+    cur.execute(_MERGED_SQL, {"min_rows": MIN_ROWS, "iqr": MERGED_IQR,
+                              "lim": limit})
+    rows = cur.fetchall()
+    print(f"\n\n[dist] DIVISIONS THAT LOOK LIKE TWO RACES "
+          f"(q75/q25 > {MERGED_IQR})\n")
+    if not rows:
+        print("    none -- every division's athletes agree with each other "
+              "about\n    how far they ran.")
+        return
+    print("    ⚠ These need a PER-RESULT split, not a distance. One number "
+          "cannot\n      fix a division that held two races. See "
+          "_RESULT_OVERRIDE_XC.\n")
+    print(f"    {'meet/div':<20}{'n':>6}{'q25':>8}{'median':>8}{'q75':>8}"
+          f"{'spread':>9}  meet")
+    for meet_id, div_id, n, q25, q50, q75 in rows:
+        cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1",
+                    (meet_id,))
+        got = cur.fetchone()
+        name = (got[0] if got else "") or ""
+        print(f"    {f'{meet_id}/{div_id}':<20}{n:>6}{float(q25):>8.3f}"
+              f"{float(q50):>8.3f}{float(q75):>8.3f}"
+              f"{float(q75) / float(q25):>9.3f}  {name[:34]}")
+
+
+def main(rebuild=True, write=False, explain_keys=(),
+         merged=False):
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
@@ -613,6 +724,12 @@ def main(rebuild=True, write=False, explain_keys=()):
     print(f"[dist] {len(base)} distance classes")
 
     by_course, by_meet = candidateSets(rows)
+
+    if merged:
+        # Its own exit: this is a question, and it names a different remedy.
+        with getConn() as conn, conn.cursor() as cur:
+            reportMerged(cur)
+        return
 
     if explain_keys:
         # ! ITS OWN EXIT. Explaining is a question about specific divisions,
@@ -677,4 +794,5 @@ def _explainArgs(argv):
 if __name__ == "__main__":
     main(rebuild="--no-rebuild" not in sys.argv,
          write="--write" in sys.argv,
-         explain_keys=_explainArgs(sys.argv))
+         explain_keys=_explainArgs(sys.argv),
+         merged="--merged" in sys.argv)

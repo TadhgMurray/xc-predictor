@@ -86,21 +86,29 @@ def mismatch(time_seconds, distance, stored_nt, pool, sport=None):
 
 
 def whichPool(time_seconds, distance, stored_nt, pools, sport=None):
-    """Which of `pools` the row was ACTUALLY normalised on, if any.
+    """Which (pool, sport) the row was ACTUALLY normalised on, if any.
 
-    ! FOR THE REPORT, NOT FOR THE GATE. Naming the pool a row came from turns
-      "this row is wrong" into "this row was normalised as ms and rated as
-      hs", which is the difference between a count and a cause.
+    ! FOR THE REPORT, NOT FOR THE GATE. Naming what a row came from turns
+      "this row is wrong" into "this row was normalised as ms XC and rated as
+      hs TF", which is the difference between a count and a cause.
+
+    ⚠ THE SPORT IS SEARCHED TOO, AND THAT IS NOT PADDING. targetFor keys on
+      "pool|SPORT" and the two tables are nothing alike -- ms_m anchors at
+      1600m for track and 3200m for cross country, hs_m at 1600 and 5000. A
+      row normalised with the wrong SPORT is off by as much as one normalised
+      with the wrong pool, and searching only pools would report the nearest
+      pool in the right sport and name the wrong cause with confidence.
     """
     best, best_off = None, None
-    for p in pools:
-        _, expected, ratio = mismatch(time_seconds, distance, stored_nt, p,
-                                      sport)
-        if ratio is None:
-            continue
-        off = abs(ratio - 1.0)
-        if best_off is None or off < best_off:
-            best, best_off = p, off
+    for sp in ("XC", "TF", None):
+        for p in pools:
+            _, _expected, ratio = mismatch(time_seconds, distance, stored_nt,
+                                           p, sp)
+            if ratio is None:
+                continue
+            off = abs(ratio - 1.0)
+            if best_off is None or off < best_off:
+                best, best_off = f"{p}|{sp or 'none'}", off
     return best, best_off
 
 
@@ -148,6 +156,8 @@ def main():
     seen = 0
     bad = []
     by_pool = {}
+    skipped = {}
+    fetched = []
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(_SQL.format(
@@ -155,11 +165,22 @@ def main():
                 person=("AND r.person_id = %(person)s" if args.person else "")),
                 {"sport": args.sport, "scan": args.scan,
                  **({"person": args.person} if args.person else {})})
-            for r in cur.fetchall():
+            fetched = cur.fetchall()
+            for r in fetched:
                 is_bad, expected, ratio = mismatch(
                     r["time_seconds"], r["distance"], r["normalized_time"],
                     r["pool"], r["sport"])
                 if ratio is None:
+                    # ! COUNTED BY REASON. "No checkable rows" told me nothing
+                    #   about whether the query returned nothing or returned
+                    #   400,000 rows that all lacked a distance -- two very
+                    #   different problems with the same message.
+                    why = ("no distance" if r["distance"] in (None, 0)
+                           else "no time" if not r["time_seconds"]
+                           else "no stored normalized_time"
+                           if not r["normalized_time"]
+                           else "normalizeTime returned nothing")
+                    skipped[why] = skipped.get(why, 0) + 1
                     continue
                 seen += 1
                 slot = by_pool.setdefault(r["pool"], [0, 0])
@@ -171,8 +192,17 @@ def main():
                     bad.append((abs(ratio - 1.0), r, expected, ratio, was))
 
     if not seen:
-        print("\nNo checkable rows. Does ranking_results carry a distance?")
+        print(f"\nNo checkable rows out of {len(fetched):,} fetched.")
+        for why, n in sorted(skipped.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:>10,}  {why}")
+        if not fetched:
+            print("    The query returned nothing -- check the "
+                  "ranking_results join and the sport filter.")
         return
+    if skipped:
+        print("\n  skipped, not counted as findings:")
+        for why, n in sorted(skipped.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:>10,}  {why}")
 
     print(f"\n\nROWS WHOSE STORED normalized_time DOES NOT MATCH THEIR POOL")
     print(f"  ({args.sport}, {seen:,} rows checked, tolerance "
