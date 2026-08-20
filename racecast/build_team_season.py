@@ -55,6 +55,14 @@ from build_ranking_results import copyField
 #   Canadian meet reads QC/ON/BC). Imported rather than retyped.
 from rankings import US_STATES, POOLS
 
+# ★ THE CEILING THAT KEEPS A PROFESSIONAL CLUB OFF THE HIGH SCHOOL BOARD.
+#   Oregon Track Club topped the all-time hs_m board on a top-five average of
+#   180, in years when the best real high school squad reached about 140 --
+#   a pro club that pro_flag had not seen at enough seeded meets, published
+#   as the best team in history. See pool_ceiling for why one global rail
+#   cannot catch it and why the ceilings RISE as the pool gets weaker.
+from pool_ceiling import withinPool, POOL_CEILING
+
 # ⚠ A ONE-RACE SEASON IS A PERFORMANCE WEARING A SEASON'S NAME, and its mean
 #   is that one race's noise -- about 3.3%, four rating points. Two is the
 #   floor grade_sanity's rule 7 already uses to call a grade corroborated, so
@@ -133,6 +141,29 @@ _SOURCE_SQL = """
       AND  (%(sport)s = 'both' OR sport = %(sport)s)
     ORDER  BY sport, year, pool
 """
+
+
+def eligibleRows(rows, stats):
+    """Pass rows through, dropping the ones no pool could have produced.
+
+    ⚠ THE GRAIN IS THE ATHLETE, NOT THE TEAM, and that is the whole reason
+      this works as a filter rather than as a post-hoc deletion. Drop the
+      implausible RUNNERS and a club made entirely of them loses every
+      entrant and stops being a team at all -- scoreRows lifts out anything
+      that cannot field five. A real school with one mis-pooled transfer
+      loses that one runner and still scores, on the six who are really
+      theirs.
+
+    ! COUNTED PER POOL AND PRINTED. A ceiling is a guess until somebody
+      measures it, and a guess that is quietly deleting four thousand real
+      high school seasons looks exactly like a guess that is working.
+    """
+    for row in rows:
+        if withinPool(row["pool"], row["rating"]):
+            yield row
+        else:
+            stats["dropped"][row["pool"]] = (
+                stats["dropped"].get(row["pool"], 0) + 1)
 
 
 def countingRows(rows, stats):
@@ -289,9 +320,9 @@ def build(conn, sport, since):
             cur.copy_expert(
                 f"COPY team_season_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
 
-    stats = {"read": 0, "years": set(), "teams": 0}
+    stats = {"read": 0, "years": set(), "teams": 0, "dropped": {}}
     buf, n_rows, n_boards = io.StringIO(), 0, 0
-    for board in boards(countingRows(read, stats)):
+    for board in boards(eligibleRows(countingRows(read, stats), stats)):
         n_boards += 1
         stats["teams"] += len(board[4])
         for row in toRows(board):
@@ -349,6 +380,17 @@ def build(conn, sport, since):
     print(f"  boards    {n_boards:,}  (one national + one per state, "
           f"per pool/sport/season)")
     print(f"  teams     {stats['teams']:,} ranked, {n_rows:,} rows written")
+    n_dropped = sum(stats["dropped"].values())
+    if n_dropped:
+        detail = ", ".join(f"{pool} {n:,} (>{POOL_CEILING.get(pool, '?')})"
+                           for pool, n in sorted(stats["dropped"].items()))
+        print(f"  ceiling   {n_dropped:,} athlete-seasons dropped as "
+              f"implausible for their pool -- {detail}")
+        print("            (see pool_ceiling.py; run audit_pool_ceilings.py "
+              "before trusting these numbers)")
+    else:
+        print("  ceiling   0 athlete-seasons dropped -- either the pools are "
+              "clean or the ceilings are too high")
     print(f"  alltime   {at_boards:,} boards, {at_rows:,} rows "
           f"({at_took:.0f}s) -- every season of a pool in one field")
     print(f"  took      {time.time() - started:.0f}s")
