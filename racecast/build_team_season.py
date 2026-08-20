@@ -37,7 +37,7 @@ import argparse
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "racecast")
 from database import getConn
-from team_rank import rankTeams, SQUAD
+from team_rank import rankTeams, raceStored, SQUAD
 
 # ★ THE ESCAPER, IMPORTED, NOT REWRITTEN. COPY's TEXT format treats tab,
 #   newline, carriage return and backslash as structure, and school names are
@@ -66,8 +66,25 @@ from rankings import US_STATES, POOLS
 #   still on the team.
 MIN_RACES = 2
 
+# ★ ONE SHAPE, WRITTEN ONCE, USED FOR BOTH THE REAL TABLE AND THE SHADOW.
+#   The shadow used to be built with `LIKE team_season INCLUDING ALL`, which
+#   copies whatever shape is already in the database -- so adding a column
+#   here needed a hand-written ALTER beside it, and forgetting one meant a
+#   COPY naming a column the shadow did not have. Building both from the same
+#   text makes the schema in this file the only schema there is.
 _DDL = """
-CREATE TABLE IF NOT EXISTS team_season (
+CREATE TABLE IF NOT EXISTS {name} (
+    -- ★ WHICH MEET THIS ROW'S rank AND points COME FROM.
+    --     'season'   the team's own year: every squad that raced in 2025,
+    --                scored against each other. One winner per season.
+    --     'alltime'  every squad of every season in ONE field. One winner,
+    --                full stop -- and the only board that can answer "who
+    --                was the best team" without picking a year first.
+    --
+    --   ⚠ BOTH ARE TRUE AND NEITHER REPLACES THE OTHER. Mixing them in one
+    --     query is what put thirty first places on the same screen, so every
+    --     query names a span; teams.py picks which.
+    span         text    NOT NULL DEFAULT 'season',
     scope        text    NOT NULL,
     school       text    NOT NULL,
     state        text,
@@ -87,19 +104,13 @@ CREATE TABLE IF NOT EXISTS team_season (
     --   is to hold another meet. See team_rank.raceStored and teams.py.
     --   Seven because an eighth runner cannot affect any score.
     ratings      real[],
-    PRIMARY KEY (scope, school, state, pool, sport, year)
+    PRIMARY KEY (span, scope, school, state, pool, sport, year)
 );
 """
 
-_COLUMNS = ("scope", "school", "state", "pool", "sport", "year", "rank",
-            "points", "n_athletes", "top5_mean", "fifth_rating",
+_COLUMNS = ("span", "scope", "school", "state", "pool", "sport", "year",
+            "rank", "points", "n_athletes", "top5_mean", "fifth_rating",
             "best_rating", "ratings")
-
-# ! FOR A TABLE THAT ALREADY EXISTS. CREATE TABLE IF NOT EXISTS is a no-op on
-#   one built before the column, and the shadow table is created with LIKE --
-#   so without this the COPY names a column the table does not have and the
-#   whole build dies on the first flush.
-_MIGRATE = "ALTER TABLE team_season ADD COLUMN IF NOT EXISTS ratings real[]"
 
 # ! ORDERED BY THE GROUP so one pass can be cut into boards without holding
 #   the whole table. mean_rating is the athlete's season average -- the same
@@ -188,8 +199,58 @@ def arrayLiteral(values):
 def toRows(board):
     scope, pool, sport, year, teams = board
     for t in teams:
-        yield (scope, t["school"], t["state"], pool, sport, year,
+        yield ("season", scope, t["school"], t["state"], pool, sport, year,
                t["rank"], t["points"], t["n_athletes"],
+               t["top5_mean"], t["fifth_rating"], t["best_rating"],
+               arrayLiteral(t["ratings"]))
+
+
+# ! READ BACK FROM THE SHADOW, NOT ACCUMULATED IN MEMORY DURING PASS ONE.
+#   Keeping every board of every season around to race at the end means
+#   holding the whole table; reading it back one group at a time holds the
+#   largest group. The rows are already written and already correct, so the
+#   second pass costs one sequential scan.
+_ALLTIME_SQL = """
+    SELECT scope, pool, sport, school, state, year, ratings, n_athletes,
+           top5_mean, fifth_rating, best_rating
+    FROM   team_season_new
+    WHERE  span = 'season'
+    ORDER  BY scope, pool, sport
+"""
+
+
+def alltimeBoards(rows):
+    """Season rows -> (scope, pool, sport, raced teams), one board per group.
+
+    ★ EVERY SEASON IN ONE FIELD. A 2003 squad and a 2025 squad line up
+      together, which is a comparison that means something only because the
+      ratings are era-adjusted: 100 is the pool mean in either year.
+
+    ⚠ ONE ROW PER TEAM-SEASON, so a school that was good for thirty years
+      enters thirty times -- which is right. Its 2011 squad and its 2012
+      squad are different teams and the board is a ranking of squads, not of
+      programmes.
+
+    `rows` must arrive ordered by (scope, pool, sport); the query does that,
+    and grouping without it would hold the whole table at once.
+    """
+    group, key = [], None
+    for row in rows:
+        this = (row["scope"], row["pool"], row["sport"])
+        if key is not None and this != key:
+            yield key + (raceStored(group),)
+            group = []
+        key = this
+        group.append(row)
+    if group:
+        yield key + (raceStored(group),)
+
+
+def toAlltimeRows(board):
+    scope, pool, sport, teams = board
+    for t in teams:
+        yield ("alltime", scope, t["school"], t["state"], pool, sport,
+               t["year"], t["rank"], t["points"], t["n_athletes"],
                t["top5_mean"], t["fifth_rating"], t["best_rating"],
                arrayLiteral(t["ratings"]))
 
@@ -204,11 +265,12 @@ def build(conn, sport, since):
     import psycopg2.extras
     started = time.time()
     with conn.cursor() as cur:
-        cur.execute(_DDL)
-        cur.execute(_MIGRATE)
+        # The real table only has to EXIST, for the rename at the end to
+        # have something to rename; the shadow is where this run's rows go
+        # and it is built to this file's shape, not to the old table's.
+        cur.execute(_DDL.format(name="team_season"))
         cur.execute("DROP TABLE IF EXISTS team_season_new")
-        cur.execute("CREATE TABLE team_season_new (LIKE team_season "
-                    "INCLUDING ALL)")
+        cur.execute(_DDL.format(name="team_season_new"))
     conn.commit()
 
     params = {"min_races": MIN_RACES, "pools": sorted(POOLS),
@@ -242,6 +304,34 @@ def build(conn, sport, since):
     read.close()
     if buf.tell():
         flush(buf)
+    conn.commit()
+
+    # ---- pass two: every season in one field -------------------------- #
+    # ★ THE BOARD THE SITE OPENS ON. Without it "all seasons" can only be
+    #   served as thirty stacked per-season boards, each with its own first
+    #   place -- and no live race can fix that at national scale, because the
+    #   field is a quarter of a million squads. Precomputing it is the only
+    #   way the front page of this board has a #1 on it.
+    at_started = time.time()
+    at_read = conn.cursor("team_alltime",
+                          cursor_factory=psycopg2.extras.RealDictCursor)
+    at_read.itersize = 50000
+    at_read.execute(_ALLTIME_SQL)
+
+    buf, at_rows, at_boards = io.StringIO(), 0, 0
+    for board in alltimeBoards(at_read):
+        at_boards += 1
+        for row in toAlltimeRows(board):
+            buf.write("\t".join(copyField(v) for v in row))
+            buf.write("\n")
+            at_rows += 1
+        if buf.tell() > (8 << 20):
+            flush(buf)
+            buf = io.StringIO()
+    at_read.close()
+    if buf.tell():
+        flush(buf)
+    at_took = time.time() - at_started
 
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS team_season_old")
@@ -250,14 +340,17 @@ def build(conn, sport, since):
         cur.execute("DROP TABLE team_season_old")
         cur.execute("ANALYZE team_season")
     conn.commit()
-    span = (f"{min(stats['years'])}-{max(stats['years'])}"
-            if stats["years"] else "none")
+    # Named years, not `span` -- that word means the season/alltime column now.
+    years = (f"{min(stats['years'])}-{max(stats['years'])}"
+             if stats["years"] else "none")
     print(f"  read      {stats['read']:,} athlete-seasons "
           f"(n_races >= {MIN_RACES}, US states, rankable pools)")
-    print(f"  seasons   {len(stats['years'])} ({span})")
+    print(f"  seasons   {len(stats['years'])} ({years})")
     print(f"  boards    {n_boards:,}  (one national + one per state, "
           f"per pool/sport/season)")
     print(f"  teams     {stats['teams']:,} ranked, {n_rows:,} rows written")
+    print(f"  alltime   {at_boards:,} boards, {at_rows:,} rows "
+          f"({at_took:.0f}s) -- every season of a pool in one field")
     print(f"  took      {time.time() - started:.0f}s")
     # ⚠ COMPARE `read` WITH `SELECT count(*) FROM athlete_season`. A large gap
     #   is the filters doing their job -- or doing too much of it. The state

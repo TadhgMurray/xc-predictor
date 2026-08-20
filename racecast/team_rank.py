@@ -170,9 +170,15 @@ def raceStored(rows):
       reason Unattached cannot sneak back in through this path.
 
     Returns rows in raced order, each carrying:
-        rank, points        this meet's result -- what the board shows
-        season_rank/_points what the row scored in its own season, kept
-                            because "won its year" is worth not losing
+        rank, points              this meet's result -- what the board shows
+        board_rank, board_points  what the row scored in the board it came
+                                  from, kept because "won its year" (or
+                                  "third all-time") is worth not losing
+
+    ! DELIBERATELY NOT CALLED season_rank. The rows can come from a season
+      board or from the all-time one, and only the caller knows which -- a
+      name that asserts the wrong one is how a tooltip ends up confidently
+      labelling an all-time rank as a season finish.
 
     Returns None if any row has no stored ratings, which means the table
     predates the column and the caller must fall back to the stored board.
@@ -199,8 +205,8 @@ def raceStored(rows):
         out.append({**row,
                     "rank": t["place"],
                     "points": t["points"],
-                    "season_rank": row.get("rank"),
-                    "season_points": row.get("points")})
+                    "board_rank": row.get("rank"),
+                    "board_points": row.get("points")})
     out.sort(key=lambda r: r["rank"])
     return out
 
@@ -296,7 +302,7 @@ def _selfCheck():
     check("the strongest season wins",
           (raced[0]["school"], raced[0]["year"]), ("Newbury Park", 2025))
     check("the season each row won is not lost",
-          sum(1 for r in raced if r["season_rank"] == 1), 3)
+          sum(1 for r in raced if r["board_rank"] == 1), 3)
 
     # ⚠ WITHIN ONE SEASON THE HEAD-TO-HEAD IS UNCHANGED HERE -- derived from
     #   the fixture, not asserted from the ratings, because the pack wins two

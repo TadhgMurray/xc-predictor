@@ -43,14 +43,32 @@ caller did not set.
     pool mean in 1998 and in 2025, so a 2003 squad and a 2025 squad in one
     field is a comparison that means something.
 
-⚠ THE RACE HAS A CEILING, AND THE BOARD SAYS SO WHEN IT HITS IT. Scoring is
-  linear in entrants but the constant is real -- about 600ms for 15,000
-  teams, and an unfiltered national board across thirty seasons is far more
-  than that. Past RACE_CAP the stored per-season board is served instead,
-  ordered by top-5 average rating (the one column comparable between
-  years), with the response saying raced=false so the page can explain
-  itself. Falling back is not a loss of truth: those ranks are real, they
-  just answer "where in its own season" instead of "where in this field".
+★ SO THERE ARE TWO STORED MEETS, AND EVERY QUERY NAMES ONE. team_season's
+  `span` column says which:
+
+    span='season'   the squad's own year, scored against that year's field.
+                    One winner per season -- thirty of them across the
+                    table, each true about its own year.
+
+    span='alltime'  every squad of every season of a pool in ONE field,
+                    raced at build time. One winner, full stop.
+
+  ⚠ AND MIXING THEM IS THE BUG THIS COLUMN EXISTS TO PREVENT. A query that
+    forgets the span reads thirty seasons of per-season boards stacked on
+    top of each other, which is thirty rows numbered 1 -- the exact
+    complaint that started all of this.
+
+  The choice is mechanical: name exactly one year and the season board is
+  the answer; otherwise the all-time board is, because it is the only
+  stored ranking that puts different years in one order.
+
+⚠ THE LIVE RACE IS AN IMPROVEMENT ON THAT, NOT THE SOURCE OF IT. Filtering
+  the all-time board to three seasons gives ranks like 1, 6, 23 -- a true
+  order with honest gaps, since the other twenty are simply not shown. When
+  the filtered field is small enough (RACE_CAP), the teams are raced again
+  as their own meet so the ranks read 1, 2, 3 and the points are that
+  field's. Above the ceiling the stored board serves, and raced=false tells
+  the page which sentence to print. Both are true; only one is contiguous.
 """
 
 from team_rank import raceStored
@@ -116,6 +134,15 @@ def parseFilters(args):
         "offset": _boundedInt(args, "offset", 0, 0, 100000),
     }
 
+    # ★ ONE YEAR MEANS THAT YEAR'S MEET; ANYTHING ELSE MEANS THE ALL-TIME
+    #   ONE. Not a preference -- the season boards cannot be stacked (thirty
+    #   first places) and the all-time board answers a single-season question
+    #   with the wrong field. See the module docstring.
+    # ! `or ()` BECAUSE _multiInt RETURNS None, NOT AN EMPTY LIST, when the
+    #   parameter is absent -- which is every default page load, so len() on
+    #   it raised a TypeError on the one request that has to work.
+    f["span"] = "season" if len(f["year"] or ()) == 1 else "alltime"
+
     # ! THE DEFAULT IS NOT KNOWN YET -- it depends on whether the field
     #   turns out to be raceable, which takes a row count. serveBoard picks
     #   it; this only records that the caller left the choice open, so a
@@ -151,6 +178,13 @@ def _fieldWhere(f, params):
       board confidently saying the opposite of the truth.
     """
     parts = []
+    # ! FIRST AND ALWAYS. Every other predicate here narrows a board; this one
+    #   chooses which board is being read at all, and leaving it out reads
+    #   both at once -- thirty per-season winners interleaved with the
+    #   all-time ranking, which is nonsense in a way that still renders.
+    params["span"] = f["span"]
+    parts.append(" AND t.span = %(span)s")
+
     params["scope"] = f["board_scope"]
     parts.append(" AND t.scope = %(scope)s")
 
@@ -365,15 +399,12 @@ def serveBoard(cur, f):
       was, and the sort that was used -- and the page renders from that
       rather than guessing at the same rule a second time in JavaScript.
 
-    ⚠ THE SORT IS DECIDED AFTER THE COUNT, because the two paths want
-      different defaults and only a count can tell them apart:
-
-        raced      RANK, ascending. Every team on screen was in the same
-                   field, so the finish order is the board.
-
-        stored     TOP-5 AVERAGE RATING, descending -- the only column
-                   comparable between seasons. The rank column then reads
-                   "where this team finished in its own year".
+    ⚠ THE SORT IS RANK EITHER WAY, and that is only safe because both
+      stored spans are single rankings -- see the module docstring. When the
+      stack of per-season boards was being served as one board, rank order
+      meant thirty first places sorted alphabetically, and the default had
+      to be top-5 average rating to avoid it. The span column removed the
+      reason for that workaround.
 
       A sort the user clicked is never overridden; see parseFilters.
     """
@@ -400,7 +431,7 @@ def serveBoard(cur, f):
             shown = [r for r in raced if matchesSubject(r, f)]
             rows, total = sortAndPage(shown, f)
             return rows, {"raced": True, "field_size": len(raced),
-                          "shown_of_field": len(shown),
+                          "shown_of_field": len(shown), "span": f["span"],
                           "reason": None, "total": total,
                           "race_cap": RACE_CAP,
                           # Teams that entered but could not score -- fewer
@@ -408,9 +439,14 @@ def serveBoard(cur, f):
                           # out loud so it is noticed if it ever is not.
                           "unscored": size - len(raced)}
 
+    # ! RANK, ASCENDING, ON BOTH STORED BOARDS -- which it could not be
+    #   before there was an all-time one. Sorting a stack of per-season
+    #   boards by rank is what put thirty first places at the top in
+    #   alphabetical order; a span is a single ranking, so its own order is
+    #   the right one. Filtering it leaves gaps, and gaps are the truth.
     if not f["sort_explicit"]:
-        f["sort"], f["dir"] = "rating", "DESC"
+        f["sort"], f["dir"] = "rank", "ASC"
     return getTeamRankings(cur, f), {"raced": False, "field_size": size,
-                                     "shown_of_field": None,
+                                     "shown_of_field": None, "span": f["span"],
                                      "reason": reason, "total": None,
                                      "race_cap": RACE_CAP, "unscored": 0}

@@ -869,19 +869,31 @@ function teamsNote(data) {
   const note = $("teams-note");
   if (!note) return;
   const n = (data.field_size || 0).toLocaleString();
+  const subset = Number.isInteger(data.shown_of_field)
+              && data.shown_of_field !== data.field_size;
 
-  if (data.raced && Number.isInteger(data.shown_of_field)
-      && data.shown_of_field !== data.field_size) {
+  if (data.reason === "unbuilt") {
+    /* ⚠ NOT "NARROW YOUR FILTER". No filter fixes a table built without the
+       ratings column, and sending somebody to fiddle with the year chips
+       over a rebuild is how a five-minute fix becomes an afternoon. */
+    note.innerHTML =
+      "<strong>Showing each squad's place in its own season.</strong> "
+      + "Racing seasons against each other needs the stored squad ratings, "
+      + "which this table was built without &mdash; rebuild with "
+      + "<code>racecast/build_team_season.py</code> to turn it on.";
+
+  } else if (data.raced && subset) {
     /* ★ A SCHOOL SEARCH IS A LOOKUP, NOT A SMALLER MEET. The searched teams
        raced the whole field and are being picked out of it, so # is their
-       place among all ${n} -- which is the number somebody searching a team
-       wants. Said out loud because a board showing three rows numbered 1, 2
-       and 4 otherwise looks like it lost some. */
+       place among all of them -- the number somebody searching a team
+       wants. Said out loud because rows numbered 1, 2 and 4 otherwise look
+       like the board lost some. */
     note.innerHTML =
       `<strong>Showing ${data.shown_of_field.toLocaleString()} of ${n} teams</strong>`
-      + ` that raced each other in one meet. The # is their place in that `
-      + "full field, not among the rows shown &mdash; clear the School filter "
-      + "to see everyone. Hover a rank for that squad's own season.";
+      + " that raced each other in one meet. The # is their place in that "
+      + "full field, not among the rows shown &mdash; clear the filters to "
+      + "see everyone. Hover a rank for that squad's own season.";
+
   } else if (data.raced) {
     note.innerHTML =
       `<strong>${n} teams raced against each other</strong> in one meet &mdash; `
@@ -889,23 +901,23 @@ function teamsNote(data) {
       + "the ordinary way. One first place, and the points are this field's. "
       + "Squads from different years are separate entries; hover a rank to "
       + "see where that squad finished in its own season.";
-  } else if (data.reason === "unbuilt") {
-    /* ⚠ NOT "NARROW YOUR FILTER". No filter fixes a table with no ratings
-       column, and sending somebody to fiddle with the year chips over a
-       rebuild is how a five-minute fix turns into an afternoon. */
+
+  } else if (data.span === "alltime") {
+    /* The board the page opens on. Ranks come from a meet run at build time
+       over every season at once, so they are a single ranking -- and a
+       filtered view of one has gaps, which is the honest answer rather than
+       a renumbering that would invent a championship. */
     note.innerHTML =
-      "<strong>Showing each squad's place in its own season.</strong> "
-      + "Racing several seasons against each other needs the stored squad "
-      + "ratings, which this table was built without &mdash; rebuild with "
-      + "<code>racecast/build_team_season.py</code> to turn it on.";
+      `<strong>Every squad of every season in one field</strong> &mdash; `
+      + `all ${n} of them, raced when the board was built and scored the `
+      + "ordinary way. One first place. A squad's year is its own; filter "
+      + "to a single Year to rank that season on its own instead.";
+
   } else {
     note.innerHTML =
-      `<strong>${n} teams is too many to race</strong> in one meet `
-      + `(the ceiling is ${(data.race_cap || 0).toLocaleString()}), so this `
-      + "shows each squad's place in <em>its own season</em>, ordered by top-5 "
-      + "average rating &mdash; the one column comparable between years. "
-      + "Narrow it to a state, or to a year or two, and the teams race each "
-      + "other for a single first place.";
+      "<strong>One season's own meet</strong> &mdash; every squad that raced "
+      + `that year, all ${n} of them, scored against each other. Clear the `
+      + "Year filter to put every season in one field instead.";
   }
 }
 
@@ -916,12 +928,18 @@ function teamsNote(data) {
  * The rank is served, not computed from the page position -- see COLUMNS.
  * The school links to its own page, which is already the team's page.
  */
-function renderTeams(rows) {
+function renderTeams(rows, span) {
+  /* ⚠ THE LABEL DEPENDS ON WHICH BOARD THE ROW CAME FROM. board_rank is the
+     rank it carried BEFORE this race -- that is a season finish when one Year
+     is selected and an all-time placing otherwise, and calling the second one
+     a season finish would be a confident lie in a tooltip. */
+  const where = (r) => span === "season"
+    ? `in the ${r.year} season` : "all-time";
   const body = rows.map((r) => `
     <tr>
-      <td class="rank"${r.season_rank
-        ? ` title="${ordinal(r.season_rank)} in the ${r.year} season, ` +
-          `on ${r.season_points} points"` : ""}>${r.rank}</td>
+      <td class="rank"${r.board_rank
+        ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
+          `on ${r.board_points} points"` : ""}>${r.rank}</td>
       <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${r.year}</td>
@@ -1053,7 +1071,7 @@ async function load() {
       $("results").innerHTML =
         state.board === "ability"    ? renderAbility(rows)
         : state.board === "pr"       ? renderPr(rows)
-        : state.board === "teams"    ? renderTeams(rows)
+        : state.board === "teams"    ? renderTeams(rows, data.span)
         :                              renderPerformance(rows);
       $("pager").classList.remove("hidden");
     }
