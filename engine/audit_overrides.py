@@ -460,7 +460,11 @@ def explainRemoval(key, rows, baselines, cur):
               "     if its distance is wrong, that is a PROPOSAL, and\n"
               "     propose_distances.py --explain is the tool.")
         return
-    cur.execute("SELECT distance, course_name FROM div_distance "
+    # ! `venue`, NOT `course_name`. This tool's div_distance aliases the anet
+    #   column to venue so the tfrrs half can union into it; propose_distances
+    #   builds the same table under the other name. Two texts of one table is
+    #   how a column that exists in one tool is missing in the other.
+    cur.execute("SELECT distance, venue FROM div_distance "
                 "WHERE meet_id = %s AND div_id = %s LIMIT 1", (meet_id, div_id))
     stored = cur.fetchone()
     print(f"  override         {float(ov[0]):.0f}m")
@@ -486,11 +490,68 @@ def explainRemoval(key, rows, baselines, cur):
     if r is None:
         print("  ⛔ STOPPED: not in the loaded set.")
         return
-    verdict, reason = judgeRemoval(r, baselines)[:2]
-    print(f"\n  verdict          {verdict}: {reason}")
+    verdict, reason, err_now, err_after = judgeRemoval(r, baselines)
+    base_ov = baselineFor(r["override"], baselines)
+    print(f"\n  class baseline   {base_ov:.4f} for the OVERRIDE "
+          f"({r['override']:.0f}m)")
+    print(f"  err vs class     {err_now:.4f}   (OUTLIER bar {OUTLIER})")
+    if err_after is not None:
+        base_st = baselineFor(r["stored"], baselines)
+        print(f"  if removed       shift "
+              f"{predictAfterRemoval(r):.4f} vs {base_st:.4f} for "
+              f"{r['stored']:.0f}m  -> err {err_after:.4f}")
+        print(f"  gain             {err_now - err_after:.4f}   "
+              f"(MIN_GAIN {MIN_GAIN})")
+    else:
+        # ★ SHOWN EVEN WHEN THE FIRST GATE STOPPED IT. "normal for its class"
+        #   is the verdict, but what somebody wants to know next is what
+        #   removal WOULD have done -- and refusing to compute it because the
+        #   bar already said no is how a near miss stays invisible.
+        if sane(r["stored"]):
+            would = abs(predictAfterRemoval(r)
+                        / baselineFor(r["stored"], baselines) - 1)
+            print(f"  if removed       err would be {would:.4f} "
+                  f"(gain {err_now - would:+.4f}) -- not evaluated, the "
+                  f"OUTLIER gate stopped first")
+    print(f"\n  verdict          {verdict.upper()}: {reason}")
+    if verdict == "keep" and err_now <= OUTLIER:
+        print(f"  ⛔ It missed the OUTLIER bar by {OUTLIER - err_now:.4f}. "
+              f"Run --sweep to see\n     what a different bar would condemn "
+              f"across the whole corpus.")
 
 
-def main(write=False, rebuild=False, propose=False, explain_keys=()):
+def sweep(rows, baselines):
+    """What each OUTLIER bar would condemn, across the whole corpus.
+
+    ★ BECAUSE 0.12 IS A GUESS AND THETFORD MISSES IT BY 0.004. A bar that
+      excludes a case you can verify by hand is either the wrong bar or the
+      right bar with a wrong case behind it, and a count per candidate is the
+      only way to tell which without reading 3,569 divisions.
+
+    ⚠ READ THE CLASS SPREAD FIRST. reportBaselines shows every class sitting
+      between about 0.96 and 1.03, so a division 12% from its class is far
+      outside the natural spread -- and the question is not whether 0.116 is
+      an anomaly but how many ordinary divisions come with it if the bar
+      moves down to catch it.
+    """
+    global OUTLIER
+    original = OUTLIER
+    print("\n[audit] WHAT EACH OUTLIER BAR WOULD CONDEMN\n")
+    print(f"    {'bar':>6}{'condemned':>12}{'% of overrides':>16}")
+    print("    " + "-" * 34)
+    for bar in (0.04, 0.06, 0.08, 0.10, 0.12, 0.15, 0.20, 0.30):
+        OUTLIER = bar
+        n = sum(1 for r in rows if judgeRemoval(r, baselines)[0] == "kill")
+        mark = " *" if abs(bar - original) < 1e-9 else ""
+        print(f"    {bar:>6.2f}{n:>12,}{100.0 * n / max(len(rows), 1):>15.1f}%"
+              f"{mark}")
+    OUTLIER = original
+    print("\n    * the bar in force. Every one of these still has to clear "
+          "MIN_GAIN\n      and have a sane stored distance to fall back to.")
+
+
+def main(write=False, rebuild=False, propose=False, explain_keys=(),
+         do_sweep=False):
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
@@ -502,6 +563,10 @@ def main(write=False, rebuild=False, propose=False, explain_keys=()):
 
     baselines = classBaselines(rows)
     reportBaselines(baselines)
+
+    if do_sweep:
+        sweep(rows, baselines)
+        return
 
     if explain_keys:
         # Its own exit: asking "why not" must never write corrections.
@@ -547,4 +612,5 @@ if __name__ == "__main__":
     main(write="--write" in sys.argv,
          rebuild="--rebuild" in sys.argv,
          explain_keys=_keys(sys.argv),
+         do_sweep="--sweep" in sys.argv,
          propose="--propose" in sys.argv)

@@ -246,6 +246,73 @@ QUERIES = [
         JOIN   m ON m.pool = a.pool
         WHERE  a.person_id = %(person_text)s
     """),
+    dict(n=8, title="★ ANCHOR MISMATCH: rated against another pool's scale",
+         reading="★ THE CONFIRMED BUG. An athlete's rows are normalised to "
+                 "one pool's anchor (ms 3200m, hs 5000m) but the solve puts "
+                 "the athlete-season in another pool and divides by THAT "
+                 "pool's mean. A 3200m-anchored ability over a "
+                 "5000m-anchored mean is inflated by about 1.64x, for free.\n"
+                 "    Person 29346285: ability 675.2s, hs_m mean 1236.4s, "
+                 "rating 187. Both his races recover an exponent of 1.11 at "
+                 "a 3200m anchor and an impossible 0.70-0.85 at 5000m -- so "
+                 "he was normalised as ms and rated as hs. On one anchor he "
+                 "rates about 112.\n"
+                 "    ⚠ The fingerprint is an ability far BELOW what its pool "
+                 "can produce -- too fast to be real, because it is measured "
+                 "over a shorter distance. Read the count: a handful is a "
+                 "pooling edge case, thousands is a systematic seam.",
+         sql="""
+        WITH b AS (
+            SELECT pool,
+                   percentile_cont(0.001) WITHIN GROUP (ORDER BY ability)
+                       AS floor_001,
+                   percentile_cont(0.50) WITHIN GROUP (ORDER BY ability)
+                       AS median
+            FROM   pair_athlete_season
+            WHERE  ability IS NOT NULL AND ability > 0
+            GROUP  BY pool
+        )
+        SELECT a.pool,
+               count(*)                                   AS impossible,
+               round(min(a.ability)::numeric, 0)          AS fastest,
+               round(max(b.floor_001)::numeric, 0)        AS pool_p001,
+               round(max(b.median)::numeric, 0)           AS pool_median,
+               round(max(a.rating_seasonal)::numeric, 1)  AS worst_rating
+        FROM   pair_athlete_season a
+        JOIN   b ON b.pool = a.pool
+        WHERE  a.ability IS NOT NULL AND a.ability > 0
+          -- ! BELOW THE POOL'S OWN 0.1st PERCENTILE, not below a number
+          --   somebody chose. Each pool sets its own floor, so this needs no
+          --   opinion about how fast a middle schooler can be.
+          AND  a.ability < b.floor_001
+        GROUP  BY a.pool
+        ORDER  BY count(*) DESC
+    """),
+
+    dict(n=9, title="The worst of them, by name",
+         reading="Each of these is an athlete-season whose ability is faster "
+                 "than the 0.1st percentile of its own pool. Check one on the "
+                 "site: if their races are short TF events and their grade is "
+                 "blank, it is the anchor seam.",
+         sql="""
+        WITH b AS (
+            SELECT pool, percentile_cont(0.001) WITHIN GROUP
+                   (ORDER BY ability) AS floor_001
+            FROM   pair_athlete_season
+            WHERE  ability IS NOT NULL AND ability > 0
+            GROUP  BY pool
+        )
+        SELECT a.person_id, a.pool, a.season, a.races,
+               round(a.ability::numeric, 1)         AS ability,
+               round(b.floor_001::numeric, 0)       AS pool_floor,
+               round(a.rating_seasonal::numeric, 1) AS rating
+        FROM   pair_athlete_season a
+        JOIN   b ON b.pool = a.pool
+        WHERE  a.ability IS NOT NULL AND a.ability > 0
+          AND  a.ability < b.floor_001
+        ORDER  BY a.rating_seasonal DESC NULLS LAST
+        LIMIT  25
+    """),
 ]
 
 
