@@ -206,11 +206,16 @@ class ChunkedRaceDataset(Dataset):
 # collateRagged
 # Purpose: turn a list of ragged examples into one padded batch.
 #
-# ★ PAD TO THE BATCH, NOT TO THE CORPUS. The cap is 64, but the median
-#   athlete has three races, so a batch drawn from ordinary athletes has a
-#   longest sequence of maybe six. Attention is O(L^2) and the encoder runs
-#   over whatever L it is handed, so padding to the batch max instead of 64
-#   is not bookkeeping -- it is most of the compute.
+# ★ PAD TO THE BATCH, NOT TO THE CORPUS. Attention is O(L^2) and the encoder
+#   runs over whatever L it is handed.
+#
+# ⚠ AND ON A SHUFFLED BATCH THAT BUYS ALMOST NOTHING. The batch max is the
+#   ~98th percentile of example lengths, so a shuffled batch of 64 pads to
+#   64.0 on average against a cap of 64 -- one long athlete sets L for
+#   everyone beside them. It is length-SORTED batching that collects the
+#   saving: mean padded width 18.2 instead of 64.0, and 174ms per step
+#   against 591ms. This function is what makes that possible; it is not what
+#   delivers it. See ChunkAwareBatchSampler.
 #
 # ! THE MASK IS BUILT HERE, IN THE POLARITY THE ENCODER EXPECTS: True = a
 #   real step. transformer.forward inverts it into src_key_padding_mask,

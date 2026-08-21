@@ -1602,9 +1602,20 @@ def _buildTensors(examples: list[dict], max_len: int):
     #   Storing the sequences end to end with an offset per example writes
     #   only the rows that exist -- about 23 GB for the same data -- and the
     #   padding is rebuilt per BATCH in train.collateRagged, to that batch's
-    #   own longest sequence rather than the global cap. That shrinks
-    #   attention a second time at training: most batches attend over four to
-    #   eight positions instead of sixty-four.
+    #   own longest sequence rather than the global cap.
+    #
+    # ⚠ THE DISK SAVING IS THE WHOLE SAVING UNTIL BATCHES ARE LENGTH-SORTED.
+    #   Per-batch padding sounds like it should shrink attention too, and with
+    #   a SHUFFLED batch of 64 it does almost nothing: the batch max is the
+    #   ~98th percentile of example lengths, so 95% of batches pad to the cap
+    #   anyway. Measured mean padded width, cap 64:
+    #
+    #       shuffled batch of  64 -> 64.0        bucketed -> 18.2
+    #       shuffled batch of 512 -> 64.0        bucketed -> 18.2
+    #
+    #   One long athlete sets L for everyone sharing their batch. Sorting by
+    #   length within a chunk is what turns this into the 3.4x it looks like
+    #   (measured: 591ms/step at L=64 against 174ms at L=18).
     #
     # ! THE MASK IS NOT STORED AT ALL. It is a function of the length, so
     #   saving it costs a byte per padded step to record something the
