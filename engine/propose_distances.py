@@ -929,11 +929,27 @@ def verifyMerged(cur, meet_id, div_id):
     #   SMALLER group is the one that ran something else. On 132074/563039
     #   the two readings give 338m and 4313m for the same division; only one
     #   of those is a distance.
-    if len(left) <= len(right):
-        anom, ref = left[len(left) // 2], right[len(right) // 2]
+    #
+    # ⚠ AND AT AN EXACT 50/50 THE SIZE RULE IS A COIN FLIP, which it lost on
+    #   Detweiller Park. 12740/0 splits 19-19, so `len(left) <= len(right)`
+    #   handed `anom` to the LOW side and reported the division as having run
+    #   2,900m. Its three siblings at the same course on the same day --
+    #   12741, 12742, 12743, none of them exactly halved -- all said 8,03xm,
+    #   and the per-row splitter says 8046.7m for 12740 too. One tie-break
+    #   inverted one division out of four identical ones.
+    #
+    #   On a tie, fall back on the invariant this report already prints:
+    #   `ref` is the group the label describes, so it is the one sitting
+    #   NEARER 1.00. Size still wins whenever the sides differ.
+    lm, rm = left[len(left) // 2], right[len(right) // 2]
+    tie = len(left) == len(right)
+    if tie:
+        anom, ref = (lm, rm) if abs(rm - 1.0) <= abs(lm - 1.0) else (rm, lm)
+    elif len(left) < len(right):
+        anom, ref = lm, rm
     else:
-        anom, ref = right[len(right) // 2], left[len(left) // 2]
-    return n, q25, q75, small_side, anom, ref, gap
+        anom, ref = rm, lm
+    return n, q25, q75, small_side, anom, ref, gap, tie
 
 
 def reportMerged(cur, limit=40, pairs_out=None):
@@ -974,7 +990,7 @@ def reportMerged(cur, limit=40, pairs_out=None):
                 print(f"    verified {i:,}/{len(candidates):,} "
                       f"({len(kept)} kept)")
             continue
-        n, q25, q75, small, anom, ref, gap = got
+        n, q25, q75, small, anom, ref, gap, tie = got
         if (q25 <= 0 or ref <= 0 or anom <= 0 or q75 / q25 <= MERGED_IQR
                 or small < MERGED_MIN_SIDE):
             dropped += 1
@@ -983,7 +999,7 @@ def reportMerged(cur, limit=40, pairs_out=None):
                       f"({len(kept)} kept)")
             continue
         kept.append((max(anom / ref, ref / anom), meet_id, div_id, n,
-                     small, anom, ref, gap))
+                     small, anom, ref, gap, tie))
         # ! PRINTED AFTER THE VERIFY, not before it. Reporting progress at the
         #   top of the loop counts the item it has not done yet, so the last
         #   line said "3/3 (2 kept)" over a table of three.
@@ -1013,7 +1029,7 @@ def reportMerged(cur, limit=40, pairs_out=None):
                      "propose_distances --merged\n")
             fh.write("# feed to: python scripts/triage_split_divisions.py "
                      "--sport XC --pairs-file <this>\n")
-            for _r, meet_id, div_id, n, small, anom, ref, gap in kept:
+            for _r, meet_id, div_id, n, small, anom, ref, gap, _t in kept:
                 fh.write(f"{meet_id} {div_id}\n")
         print(f"    -> {len(kept):,} divisions written to {pairs_out}\n"
               f"       feed it to scripts/triage_split_divisions.py "
@@ -1027,9 +1043,35 @@ def reportMerged(cur, limit=40, pairs_out=None):
     print("    `ref` is the LARGER group -- the race the label describes, so "
           "it should\n    sit near 1.00. Far from it means the whole "
           "division is off, not half.\n")
+    # ★ THE LABEL THE RATINGS WERE BUILT WITH, NOT THE ONE IN THE TABLE.
+    #   This is the same error this file already documents at impliedUsed():
+    #   a shift measured in one state multiplied by a distance from another.
+    #   `anom / ref` is measured against ratings, and those ratings were
+    #   normalised with the OVERRIDE where one exists -- div_distance is what
+    #   the override was put there to overrule. Reading div_distance made this
+    #   report disagree with the per-row splitter, which does consult the
+    #   override:
+    #
+    #       207252/831141   div_distance 3218 -> "they ran 1949"
+    #                       override     5000 -> "they ran 3030"
+    #                       splitter, independently:       3218.7
+    #
+    #   The second one agrees with the splitter to 6%; the first is 40% out.
+    #   Divisions whose label came from an override are marked with a *.
+    #
+    # ! IMPORTED HERE, NOT AT THE TOP. corrections.py is 1.45M lines and takes
+    #   ~13s to import cold; a --merged run is minutes of SQL, so it is free
+    #   here and would be 13s of nothing on every other subcommand.
+    try:
+        from corrections import _DISTANCE_OVERRIDES_XC as _ovr
+    except Exception:                                    # noqa: BLE001
+        _ovr = {}
+        print("    (corrections.py would not import -- falling back to "
+              "div_distance, so\n     any division with an override reads "
+              "against the wrong label)\n")
     print(f"    {'meet/div':<18}{'n':>5}{'small':>7}{'anom':>8}{'ref':>7}"
-          f"{'stored':>8}{'they ran':>10}  meet")
-    for _r, meet_id, div_id, n, small, anom, ref, gap in kept[:limit]:
+          f"{'label':>9}{'they ran':>10}  meet")
+    for _r, meet_id, div_id, n, small, anom, ref, gap, tie in kept[:limit]:
         # ! div_distance, NOT meets. It unions anet's column with the tfrrs
         #   JSON blob, and reading `meets` alone printed "-" for every tfrrs
         #   division -- exactly the ones with no distance column to read.
@@ -1048,15 +1090,24 @@ def reportMerged(cur, limit=40, pairs_out=None):
         got = cur.fetchone()
         stored = float(got[0]) if got and got[0] else None
         name = (got[1] if got else "") or ""
-        implied = stored * (anom / ref) ** (1.0 / K) if stored else None
-        flag = " " if 0.9 <= ref <= 1.1 else "!"
+        pinned = _ovr.get((meet_id, div_id))
+        label = float(pinned) if pinned else stored
+        mark = "*" if pinned else ""
+        implied = label * (anom / ref) ** (1.0 / K) if label else None
+        flag = ("!" if not 0.9 <= ref <= 1.1 else " ") + ("?" if tie else " ")
         print(f"  {flag} {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
               f"{anom:>8.3f}{ref:>7.3f}"
-              f"{(f'{stored:.0f}' if stored else '-'):>8}"
+              f"{(f'{label:.0f}{mark}' if label else '-'):>9}"
               f"{(f'{implied:.0f}' if implied else '-'):>10}  {name[:28]}")
     print("\n    ! marks a division whose reference group is itself more than "
           "10% from\n      1.00 -- read those as 'this whole division is "
           "wrong', not 'half of it'.")
+    print("    ? marks an EXACT 50/50 split, where which side is the anomaly "
+          "was decided\n      by whichever sits nearer 1.00 and not by size. "
+          "Check those by hand.")
+    print("    * marks a label taken from dist_override rather than "
+          "div_distance --\n      the number the ratings were actually built "
+          "with.")
 
 
 def main(rebuild=True, write=False, explain_keys=(),
