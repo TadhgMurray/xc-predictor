@@ -134,15 +134,46 @@ _MILE = 1609.34
 def _rows(cur, table, meet, div):
     """Same population as the classifier/--dump, plus result_id and raw time
     so verdicts land on rows and physics can see the clock."""
+    # ★ THE SAME RATING EXPRESSION --merged USES, FALLBACK AND ALL. Requiring
+    #   speed_rating > 0 here made this tool mute on 63 of the 222 divisions
+    #   --merged had just handed it -- and every one of those 63 reported the
+    #   SAME reason, "results, none rated", over fields of 19 to 308 runners.
+    #   That was not 63 edge cases, it was one expression.
+    #
+    #   propose_distances reads COALESCE(speed_rating, k / normalized_time),
+    #   where k is the athlete's own median of speed_rating * normalized_time.
+    #   A division whose rows were never rated still HAS normalized times, and
+    #   an athlete who races anywhere else has a k, so the row's rating can be
+    #   reconstructed on exactly the scale the comparison needs. Reading it any
+    #   other way meant one tool could see a division and the other could not.
+    #
+    # ! THE REFERENCE STAYS ON REAL RATINGS. Only the rows HERE are
+    #   reconstructed; own_med is still the athlete's median speed_rating at
+    #   other meets, which is what --merged's `elsewhere` does too. Rebuilding
+    #   both sides from the same k would compare a number with itself.
     cur.execute(f"""
-        WITH here AS (
-            SELECT r.result_id, r.time_seconds,
+        WITH raw AS (
+            SELECT r.result_id, r.time_seconds, r.date,
                    COALESCE(r.person_id, r.athlete_id) AS ident,
-                   r.speed_rating AS sr_here, r.date
+                   r.speed_rating, r.normalized_time
             FROM {table} r
             WHERE r.meet_id = %s AND r.div_id = %s
-              AND r.speed_rating > 0
               AND COALESCE(r.person_id, r.athlete_id) IS NOT NULL
+        ), scale AS (
+            SELECT COALESCE(r2.person_id, r2.athlete_id) AS ident,
+                   percentile_cont(0.5) WITHIN GROUP
+                       (ORDER BY r2.speed_rating * r2.normalized_time) AS k
+            FROM {table} r2
+            WHERE COALESCE(r2.person_id, r2.athlete_id)
+                      IN (SELECT ident FROM raw)
+              AND r2.speed_rating > 0 AND r2.normalized_time > 0
+            GROUP BY 1
+        ), here AS (
+            SELECT w.result_id, w.time_seconds, w.ident, w.date,
+                   COALESCE(w.speed_rating,
+                            s.k / NULLIF(w.normalized_time, 0)) AS sr_here
+            FROM raw w
+            LEFT JOIN scale s ON s.ident = w.ident
         )
         SELECT h.result_id, h.time_seconds, h.sr_here,
                (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY r2.speed_rating)
@@ -150,6 +181,7 @@ def _rows(cur, table, meet, div):
                 WHERE COALESCE(r2.person_id, r2.athlete_id) = h.ident
                   AND r2.speed_rating > 0 AND r2.date <> h.date) AS own_med
         FROM here h
+        WHERE h.sr_here > 0
     """, (meet, div))
     out = []
     for rid, t, sr, om in cur.fetchall():
@@ -173,25 +205,41 @@ def _rows(cur, table, meet, div):
 #   divisions that had something to say.
 def _whyEmpty(cur, table, meet, div):
     cur.execute(f"""
+        WITH raw AS (
+            SELECT COALESCE(r.person_id, r.athlete_id) AS ident,
+                   r.speed_rating, r.normalized_time, r.time_seconds
+            FROM {table} r
+            WHERE r.meet_id = %s AND r.div_id = %s
+        ), scale AS (
+            SELECT COALESCE(r2.person_id, r2.athlete_id) AS ident
+            FROM {table} r2
+            WHERE COALESCE(r2.person_id, r2.athlete_id)
+                      IN (SELECT ident FROM raw WHERE ident IS NOT NULL)
+              AND r2.speed_rating > 0 AND r2.normalized_time > 0
+            GROUP BY 1
+        )
         SELECT count(*),
-               count(*) FILTER (WHERE r.speed_rating > 0),
-               count(*) FILTER (WHERE COALESCE(r.person_id, r.athlete_id)
-                                      IS NOT NULL),
-               count(*) FILTER (WHERE r.time_seconds IS NOT NULL)
-        FROM {table} r
-        WHERE r.meet_id = %s AND r.div_id = %s
+               count(*) FILTER (WHERE w.ident IS NOT NULL),
+               count(*) FILTER (WHERE w.speed_rating > 0),
+               count(*) FILTER (WHERE w.speed_rating IS NULL
+                                  AND w.normalized_time > 0
+                                  AND s.ident IS NOT NULL),
+               count(*) FILTER (WHERE w.time_seconds IS NOT NULL)
+        FROM raw w LEFT JOIN scale s ON s.ident = w.ident
     """, (meet, div))
-    total, rated, ident, timed = cur.fetchone()
+    total, ident, rated, rebuilt, timed = cur.fetchone()
     if not total:
         return "no results at all under this meet/div"
-    if not rated:
-        return f"{total} results, none rated"
     if not ident:
-        return f"{total} results, {rated} rated, none linked to a person"
+        return f"{total} results, none linked to a person"
+    if not rated and not rebuilt:
+        return (f"{total} results, none rated, and none of their athletes has "
+                f"a rated race anywhere else to rebuild a rating from")
     if not timed:
-        return f"{total} results, {rated} rated, no clock on any of them"
-    return (f"{total} results ({rated} rated, {ident} linked) but no athlete "
-            f"has a rated race on another date to be compared against")
+        return f"{total} results, no clock on any of them"
+    return (f"{total} results ({rated} rated, {rebuilt} rebuilt from the "
+            f"athlete's own scale) but none has a rated race on another date "
+            f"to be compared against")
 
 
 # ================================================================== #
