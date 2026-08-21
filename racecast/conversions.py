@@ -629,9 +629,38 @@ def convert_spread(source, xc_targets, tf_targets):
             })
         return out
 
+    # ★ PACES AND VDOT ARE THE SAME normalized_time IN TWO MORE CONTEXTS, so
+    #   they belong here rather than in the route: every caller of this
+    #   function gets them, and none has to know how they are derived.
+    #
+    # ⚠ VDOT IS ANCHORED ON THE POOL'S OWN RACE DISTANCE, NOT ON WHATEVER THE
+    #   USER TYPED. Daniels' percentage-of-VO2max curve is a function of
+    #   DURATION, and our distance curve is a different function -- so a 1600m
+    #   time and its own 5K equivalent do not yield the same VDOT. Reading it
+    #   off one fixed distance makes it a property of the athlete, like the
+    #   rating beside it, instead of a number that moves when you retype the
+    #   same fitness a different way.
+    # ⚠ ALWAYS THE XC ANCHOR, WHATEVER SPORT THE SOURCE WAS. targetFor is
+    #   per sport -- hs is 5000m for XC and 1600m for TF -- so reading it off
+    #   source["sport"] gave the SAME athlete two different VDOTs depending on
+    #   whether they typed a 1600 time or a 5K time (72.5 against 75.7). A
+    #   fitness measure that moves when you restate the same fitness is not a
+    #   fitness measure. Paces are likewise a running quantity, not an XC or a
+    #   TF one, and paces.FIT_MAX_XC is an XC domain cap in any case.
+    from paces import trainingPaces, vdot          # noqa: E402
+    from normalize_distance import targetFor       # noqa: E402
+    sport = "XC"
+    ref_d = targetFor(_bare(pool), sport) or 5000.0
+    ref_t = normalized_to_time(norm, {"distance": ref_d, "pool": pool,
+                                      "sport": sport})
+
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
+        "paces": trainingPaces(norm, pool, sport,
+                               to_time=normalized_to_time),
+        "vdot": vdot(ref_t, ref_d, pool),
+        "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),
         "tf": _cells(tf_targets, "TF"),
     }
