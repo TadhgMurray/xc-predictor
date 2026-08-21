@@ -121,6 +121,13 @@ class ChunkedRaceDataset(Dataset):
         self._cached_idx  = -1
         self._cached_data = None
 
+        # ★ EVERY EXAMPLE'S LENGTH, WRITTEN BY feature_extraction._saveLengths.
+        #   ChunkAwareBatchSampler sorts on this. Absent for chunks written
+        #   before ragged storage, in which case the sampler falls back to
+        #   plain shuffling and simply runs slower.
+        lp = os.path.join(data_dir, "lengths.pt")
+        self.lengths = (torch.load(lp) if os.path.exists(lp) else None)
+
      # __len__
     # Purpose: Tell the DataLoader the total number of examples. It uses
     #          this to know how many batches make one epoch.
@@ -301,17 +308,52 @@ class ChunkAwareBatchSampler:
         for i in self.indices:
             self.by_chunk.setdefault(i // self.chunk_size, []).append(i)
 
+        # ★ AND SORT EACH CHUNK'S INDICES BY SEQUENCE LENGTH, which is what
+        #   makes per-batch padding worth anything.
+        #
+        # ⚠ A BATCH PADS TO ITS LONGEST MEMBER, so one 300-race athlete drags
+        #   63 three-race athletes up to L=300 with them. Drawn at random, the
+        #   longest of 64 examples is about the 98th percentile of all
+        #   lengths, so 95% of shuffled batches pad to the cap and the ragged
+        #   storage buys nothing at training time. Sorting first puts long
+        #   with long and short with short:
+        #
+        #       shuffled batch of 64  -> 64.0 wide     591 ms/step
+        #       length-sorted         -> 18.2 wide     174 ms/step
+        #
+        # ! THE RANDOMNESS MOVES UP A LEVEL, IT IS NOT LOST. Chunks are
+        #   already shuffled corpus-wide when written, so each is a random
+        #   sample; sorting inside one groups similar lengths drawn from that
+        #   random sample, and __iter__ then shuffles the BATCH order every
+        #   epoch. What an epoch loses is the freedom to put a 3-race and a
+        #   300-race athlete in the same batch -- which is the thing that was
+        #   costing 3.4x.
+        self.bucketed = False
+        lengths = getattr(base, "lengths", None)
+        if shuffle and lengths is not None:
+            for cid, rows in self.by_chunk.items():
+                rows.sort(key=lambda i: int(lengths[i]))
+            self.bucketed = True
+
     def __iter__(self):
         import random
         chunk_ids = list(self.by_chunk)
         if self.shuffle:
             random.shuffle(chunk_ids)
+        # ! BATCHES ARE BUILT FIRST, THEN THEIR ORDER IS SHUFFLED. Shuffling
+        #   the rows instead would undo the length sort the constructor did.
+        #   When there are no lengths to sort on, this is the old behaviour
+        #   exactly: shuffle rows, cut into batches.
+        batches = []
         for cid in chunk_ids:
             rows = list(self.by_chunk[cid])
-            if self.shuffle:
+            if self.shuffle and not self.bucketed:
                 random.shuffle(rows)
             for start in range(0, len(rows), self.batch_size):
-                yield rows[start:start + self.batch_size]
+                batches.append(rows[start:start + self.batch_size])
+        if self.shuffle and self.bucketed:
+            random.shuffle(batches)
+        yield from batches
 
     def __len__(self) -> int:
         # Number of BATCHES, not examples -- DataLoader reports this as

@@ -133,23 +133,41 @@ CONTEXT_FEATURES  = 20
 GEO_LAT_CENTER, GEO_LAT_SCALE = 39.0, 10.0
 GEO_LON_CENTER, GEO_LON_SCALE = -98.0, 20.0
 
-# ★ THE SEQUENCE CAP, MEASURED. Was a placeholder of 500 with a TODO. The
-#   corpus says (60.3M rated races over 7.1M per-source athlete ids):
+# ★ A SAFETY RAIL, NOT A TUNING KNOB -- AND THAT IS A CHANGE. This was 500
+#   as a placeholder, then 64 as a real cap, and is now high enough to
+#   truncate nobody. Two changes made truncating pointless:
 #
-#       median 3 races    p90 22    p99 70    p99.9 120    max 331
+#     ragged chunks       the cap no longer costs disk. A three-race athlete
+#                         stores three rows whether this says 64 or 512.
+#     length-sorted       the cap no longer costs a shuffled batch. Long
+#     batching            athletes now batch WITH each other, so their L is
+#                         paid by the few batches that hold them instead of
+#                         by every batch one of them lands in.
 #
-#   so 500 was padding ~99.9% of every example with nothing. Attention is
-#   O(L^2) and the saved tensor is [N, L, 21], so that placeholder cost 61x
-#   the attention of a 64 cap and 2.7 TB of chunk files.
+#   What removing the cap actually costs, measured against the fitted step
+#   time (33 + 7.51L + 0.0190L^2 ms at batch 64) over the real length
+#   distribution, with batches length-sorted:
 #
-# ⚠ 64 IS A TRUNCATION, AND IT TRUNCATES THE OLDEST RACES. 1.3% of athletes
-#   have more than 64, and they keep their most recent 64 -- the half of a
-#   career that predicts the next race. A freshman's results are weak evidence
-#   about a senior. 96.6% of all races survive untouched.
+#       cap    truncated   mean padded L   epoch
+#        64        4.80%            18.0    1.00x
+#       128        0.95%            19.3    1.08x
+#       256        0.10%            19.9    1.13x
+#       331        0.00%            19.9    1.13x
 #
-# ! THE REAL MAX IS STILL MEASURED AND PRINTED at save time; this is a bound
-#   on it, not a substitute for looking. See saveAll.
-MAX_SEQ_LEN = 64
+#   13% of an epoch to stop throwing away the longest careers in the corpus,
+#   which are the multi-year athletes with XC and TF merged -- exactly the
+#   histories a sequence model has the most to learn from.
+#
+# ⚠ IT IS STILL A BOUND, AND ON PURPose. The longest athlete_id had 331
+#   races; person_id merging concatenates careers scraped from two sources,
+#   so the real maximum is higher and unknown until saveAll prints it. 512
+#   sits above any plausible career and still stops one corrupt row -- an
+#   identity collision merging thousands of results onto one person -- from
+#   allocating a batch nobody can hold.
+#
+# ! _padSequence STILL TRUNCATES TO THE LAST max_len when it does bite: the
+#   most recent races are the ones that predict the next one.
+MAX_SEQ_LEN = 512
 
 # ------------------------------------------------------------------ #
 # CHUNK 1 — DATABASE QUERIES
@@ -1693,6 +1711,25 @@ def _saveTensors(sequences_tensor, masks_tensor,
         torch.save(tensor, path)
         print(f"  Saved {path}")
 
+# _saveLengths
+# Purpose: every example's sequence length, in the same global order the
+#          chunks are indexed in.
+#
+# ★ WHAT LENGTH-SORTED BATCHING READS. ChunkAwareBatchSampler groups a batch
+#   out of similar-length examples so the batch pads to 18 rather than to the
+#   cap, and it needs the lengths BEFORE it can do that. The only other way
+#   to get them is to torch.load() every chunk file at startup to read its
+#   offsets -- tens of GB, to recover a number this function already has.
+#
+# ! int32, not int16. 331 fits in either, but the cap is a constant somebody
+#   will raise, and a silent wrap at 32,767 would corrupt the sort rather
+#   than fail.
+def _saveLengths(lengths: list, output_dir: str) -> None:
+    path = os.path.join(output_dir, "lengths.pt")
+    torch.save(torch.tensor(lengths, dtype=torch.int32), path)
+    print(f"  Saved {path} ({len(lengths):,} lengths)")
+
+
 # _saveEncoders
 # Purpose: Saves the fitted LabelEncoders to disk using pickle.
 #          At inference time, the Flask app loads these to transform
@@ -1758,6 +1795,7 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
     # Pass 2 — build tensors, pad, save in chunks.
     chunk_idx     = 0
     total_examples = 0
+    all_lengths   = []
     buffer        = []  # holds up to SHUFFLE_FACTOR*CHUNK_SIZE before flushing
 
     # Local RNG, not random.seed(), so this does not reach out and change
@@ -1787,7 +1825,9 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
         # sample from a wide window of athletes rather than a contiguous run.
         while len(buffer) >= hold:
             rng.shuffle(buffer)
-            _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx, output_dir)
+            all_lengths.extend(
+                _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx,
+                           output_dir))
             chunk_idx     += 1
             total_examples += CHUNK_SIZE
             # Discard the flushed examples — this is what keeps RAM flat.
@@ -1799,10 +1839,19 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
     if buffer:
         rng.shuffle(buffer)
         while buffer:
-            _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx, output_dir)
+            all_lengths.extend(
+                _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx,
+                           output_dir))
             total_examples += len(buffer[:CHUNK_SIZE])
             chunk_idx += 1
             buffer = buffer[CHUNK_SIZE:]
+
+    # ★ EVERY EXAMPLE'S SEQUENCE LENGTH, IN GLOBAL ORDER. Written here because
+    #   this is the only place that knows them for free; the alternative is
+    #   the sampler torch.load()ing all ~8,000 chunk files at startup just to
+    #   read their offsets. int32 at ~80M examples is 320 MB, which loads in
+    #   seconds and is what makes length-sorted batching possible.
+    _saveLengths(all_lengths, output_dir)
 
     # Save metadata so DataLoader knows how many chunks exist.
     _saveMetadata(max_len, total_examples, chunk_idx, output_dir)
@@ -1822,10 +1871,11 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
 #           output_dir: directory to save into.
 # Output: None.
 def _saveChunk(examples: list[dict], max_len: int,
-               chunk_idx: int, output_dir: str) -> str:
+               chunk_idx: int, output_dir: str) -> list[int]:
     
     (sequences_t, offsets_t, context_t,
      targets_t, venues_t) = _buildTensors(examples, max_len)
+    lengths = (offsets_t[1:] - offsets_t[:-1]).tolist()
 
     path = os.path.join(output_dir, f"chunk_{chunk_idx:04d}.pt")
 
@@ -1842,6 +1892,11 @@ def _saveChunk(examples: list[dict], max_len: int,
     }, path)
 
     print(f"  Saved {path} ({len(examples):,} examples)")
+
+    # ! RETURNED, so saveAll can accumulate them without a second pass. The
+    #   sampler needs every length in global order; this is the only place
+    #   that has them.
+    return lengths
 
 def _saveVenueVocab(vocab: dict, output_dir: str) -> None:
     """The venue vocabulary, beside the encoders.
