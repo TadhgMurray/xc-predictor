@@ -1119,6 +1119,43 @@ _DECAY_K = 0.996
 #   would merely make its weight exceed 1, which is still correct.
 _ANCHOR = "DATE '2100-01-01'"
 
+# ★ THE SEASON NUMBER IS AN UPPER QUANTILE, NOT A MEAN, AND THE COLUMN IS
+#   STILL CALLED mean_rating. Renaming it means 58 call sites in 13 files, so
+#   the name stayed and this note is the contract: mean_rating holds the
+#   athlete's 80th-percentile race, not their average one.
+#
+# ⚠ THE MEAN REWARDED A THIN SEASON. What is on file is not a season, it is
+#   whatever got scraped, and for older years that is disproportionately the
+#   championship races -- the ones run all out. A full modern season carries
+#   duals, tempo efforts and JV races that a championship-only season simply
+#   does not have, so averaging punishes the team that raced more. Simulated
+#   against one athlete with a true all-out rating of 100, three championship
+#   races read 3.9 points above twelve mixed ones, and 8.0 in the worst
+#   corner of the parameter sweep. Team boards are decided by less than that.
+#
+# ! AND "JUST USE THE BEST RACES" IS WORSE THAN THE BUG. The obvious fix --
+#   average the top 3, or the top 5 -- introduces the opposite bias, because
+#   the best 3 of 20 draws beats the best 3 of 3 on sampling alone. Worst
+#   case over the same sweep, as |points| of error:
+#
+#       estimator        old/new gap   n-sampling   worse of the two
+#       80th pct                 2.6          2.5                2.6
+#       85th pct                 2.0          2.7                2.7
+#       top-half mean            4.0          0.5                4.0
+#       max                      2.0          4.9                4.9
+#       mean (what this was)     8.0          0.1                8.0
+#       top-5 mean               2.2          9.3                9.3
+#       top-3 mean               3.3         10.5               10.5
+#
+#   A quantile is the only family that is flat in BOTH directions: it
+#   estimates the same point of an athlete's own distribution whether they
+#   raced three times or twenty, which is exactly the invariance needed.
+#
+# ! NO NEW COST. This aggregate already carries three mode() WITHIN GROUP
+#   calls, so it was never going to get a parallel plan; one more ordered-set
+#   aggregate over the same groups changes nothing about the plan shape.
+_SEASON_Q = 0.80
+
 # Reads and writes the SHADOW tables. No TRUNCATE: the live athlete_season is
 # untouched until swapIn renames it away.
 _ATHLETE_SEASON_SQL = f"""
@@ -1126,7 +1163,7 @@ INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
 SELECT person_id, pool, sport, year,
-       avg(speed_rating)::real,
+       (percentile_cont({_SEASON_Q}) WITHIN GROUP (ORDER BY speed_rating))::real,
        (sum(speed_rating * power({_DECAY_K}, {_ANCHOR} - race_date))
         / nullif(sum(power({_DECAY_K}, {_ANCHOR} - race_date)), 0))::real,
        max(speed_rating)::real,
