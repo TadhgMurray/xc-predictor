@@ -134,7 +134,8 @@ _DISTANCES = """
 #   shadow rating from the athlete's own rated races, so a division is judged
 #   on all of its finishers rather than the handful whose times survived the
 #   error. See _BUILD_SHIFT in propose_distances.
-from propose_distances import _BUILD_SHIFT, staleness, impliedUsed
+from propose_distances import (_BUILD_SHIFT, staleness, impliedUsed,
+                               shiftColumns)
 
 # ★ THE SIGNATURE A CLASS BASELINE CANNOT SEE, AND THE ONE THE SITE SHOWS.
 #
@@ -206,7 +207,7 @@ _LOAD = f"""
     SELECT s.meet_id, s.div_id, d.meet_name,
            d.distance   AS stored,
            o.distance   AS override,
-           s.n, s.n_shadow, s.field_shift, s.t_over_nt, s.pool,
+           s.n, s.n_shadow, s.field_shift, {{extra}},
            g.n_rated, g.n_unrated, g.med_rating, g.med_time_rated,
            g.med_time_unrated, g.fastest_time
     FROM   ovr_shift s
@@ -586,7 +587,18 @@ def loadRows(cur, conn, rebuild):
         print("[audit] rebuilding ovr_shift from current ratings...")
         cur.execute(_BUILD_SHIFT)
         conn.commit()
-    cur.execute(_LOAD)
+    # ⚠ THE CACHE CAN PREDATE THIS CODE. See propose_distances.shiftColumns:
+    #   an ovr_shift built before the staleness check has no t_over_nt, and
+    #   naming it kills a tool somebody ran to fix something else.
+    extra, fresh_cache = shiftColumns(cur)
+    if not fresh_cache:
+        print("[audit] ⚠ ovr_shift predates the staleness check -- no "
+              "t_over_nt/pool, so\n"
+              "        'built at' will read unknown. The suppressed-head "
+              "verdict does not\n"
+              "        use it and is unaffected; rebuild with --rebuild for "
+              "the rest.")
+    cur.execute(_LOAD.format(extra=extra))
     cols = [c[0] for c in cur.description]
     rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     for r in rows:

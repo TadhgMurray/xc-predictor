@@ -259,9 +259,35 @@ _BUILD_SHIFT = """
     ANALYZE ovr_shift;
 """.format(k=K, min_rated=3)
 
+# ⚠ ovr_shift IS A CACHE, AND A CACHE CAN PREDATE THE CODE THAT READS IT.
+#   t_over_nt and pool were added for the staleness check; a table built
+#   before that has neither, and naming them is an UndefinedColumn error on a
+#   tool the user ran to fix something else. Asked, not assumed -- the same
+#   mistake as `m.distance` against a table without one, one file over.
+_SHIFT_EXTRA = ("t_over_nt", "pool")
+
+_HAS_SHIFT_COLUMN = """
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_name = 'ovr_shift' AND column_name = ANY(%s)
+"""
+
+
+def shiftColumns(cur):
+    """('s.t_over_nt, s.pool', True) when the cache has them, NULLs when not."""
+    try:
+        cur.execute(_HAS_SHIFT_COLUMN, (list(_SHIFT_EXTRA),))
+        row = cur.fetchone()
+        n = int(row["count"] if isinstance(row, dict) else row[0])
+    except Exception:                                   # noqa: BLE001
+        n = 0
+    if n >= len(_SHIFT_EXTRA):
+        return "s.t_over_nt, s.pool", True
+    return "NULL::float AS t_over_nt, NULL::text AS pool", False
+
+
 _LOAD = f"""
     SELECT s.meet_id, s.div_id, s.n, s.n_shadow, s.field_shift,
-           s.t_over_nt, s.pool,
+           {{extra}},
            d.course_name,
            COALESCE(o.distance, d.distance) AS used,
            d.distance   AS stored,
@@ -1033,7 +1059,14 @@ def main(rebuild=True, write=False, explain_keys=(),
             cur.execute(_BUILD_SHIFT)
             conn.commit()
 
-        cur.execute(_LOAD)
+        extra, fresh_cache = shiftColumns(cur)
+        if not fresh_cache:
+            print("[dist] ⚠ ovr_shift predates the staleness check -- it has "
+                  "no t_over_nt/pool.\n"
+                  "       Every division will report 'could not be checked'. "
+                  "Rebuild to get it\n"
+                  "       (drop --no-rebuild, or run with --rebuild).")
+        cur.execute(_LOAD.format(extra=extra))
         cols = [c[0] for c in cur.description]
         rows = [dict(zip(cols, x)) for x in cur.fetchall()]
 
