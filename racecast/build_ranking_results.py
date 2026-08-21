@@ -592,8 +592,16 @@ def prepareRow(row, sport):
     #
     #   merge=True: this table stores the pool WITHOUT the sport suffix, since
     #   `sport` is already its own column.
+    # ★ THE SEASON, COMPUTED ONCE AND USED TWICE. resolvePool needs it for the
+    #   hand-listed professionals (see pool_resolve._PRO_SEASONS, which is per
+    #   athlete-season now, not per person), and the row's own `year` column
+    #   is the same number. seasonYearFromIso is memoised, so this is a dict
+    #   hit rather than a second parse.
+    season = seasonYearFromIso(sport, row.date)
+
     pool = resolvePool(row.grade, row.gender, row.source, school,
                        sport,
+                       season=season,
                        season_level=row.season_level,
                        grade_untrusted=bool(row.grade_untrusted),
                        fixed_grade=row.fixed_grade,
@@ -736,7 +744,7 @@ def prepareRow(row, sport):
             # engine's grouping. athlete_season's GROUP BY ... year inherits
             # it, which is what stops one real season showing as two rows on
             # the boards. XC is unaffected -- see season_year.py.
-            seasonYearFromIso(sport, date_text),
+            season,
             row.state,
             school,
             row.grade,

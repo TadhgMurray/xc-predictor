@@ -662,9 +662,13 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         fixed_grade=fixed_grade,
         fixed_level=fixed_level,
         grade_verdict=grade_verdict,
-        # ! FOR _PRO_PEOPLE, the hand-listed professionals whose school string
-        #   is shared with a youth club and so cannot identify them.
+        # ! FOR _PRO_SEASONS, the hand-listed professionals whose school
+        #   string is shared with a youth club and so cannot identify them.
+        #   The SEASON goes with the person now: the list is per athlete-
+        #   season, so a high school career before somebody turned
+        #   professional stays a high school career.
         person_id=pid,
+        season=ay,
         is_pro=pro,
         college_first=None if pid is None else loadCollegeFirst().get(pid),
         upperclass_first=None if pid is None else loadUpperclassFirst().get(pid),

@@ -378,11 +378,20 @@ def _poolOf(row, sport):
     #
     #   merge=True: the boards are already per sport, so the pool key carries
     #   no sport suffix.
+    # The season, for the hand-listed professionals -- per athlete-season now.
+    # A row with no parseable date simply does not narrow the span.
+    try:
+        season = seasonYearFromIso(sport, row.get("date"))
+    except (TypeError, ValueError, IndexError):
+        season = None
+
     return resolvePool(row.get("grade"),
                        row.get("gender"),
                        row.get("source"),
                        row.get("school"),
                        sport,
+                       season=season,
+                       person_id=row.get("person_id"),
                        season_level=row.get("season_level"),
                        grade_untrusted=bool(row.get("grade_untrusted")),
                        fixed_grade=row.get("fixed_grade"),
