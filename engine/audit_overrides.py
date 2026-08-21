@@ -599,6 +599,137 @@ def loadRows(cur, conn, rebuild):
     return rows
 
 
+# ★ WHERE THE REFERENCE COMES FROM, WHICH IS THE QUESTION "HOW WAS THIS
+#   CREATED" ACTUALLY ASKS.
+#
+#   field_shift is athlete-by-athlete, exactly as it should be: every row is
+#   compared against that athlete's own median rating for the year. So a
+#   division only looks wrong when the SAME athletes rate differently
+#   elsewhere -- which is the right test.
+#
+# ⚠ BUT THE REFERENCE IS BUILT FROM RATINGS, AND RATINGS ALREADY CONTAIN
+#   EVERY OVERRIDE. If some of an athlete's other races sit at divisions that
+#   are themselves wrongly overridden to 8000m, their median comes out on the
+#   8000m scale -- and this division, at its true distance, then looks slow by
+#   exactly (8000/true)^K. Which is what the corpus shows:
+#
+#       Detweiller  field_shift 1.6944   (8000/4828)^1.06 = 1.708
+#       SEC-HS      field_shift 1.6536   (8000/5000)^1.06 = 1.646
+#
+#   A shift that equals the distance ratio to within 1% is not a field that
+#   ran slow. It is a reference that has already moved, and the proposal then
+#   "corrects" this division onto the same wrong scale. One bad override
+#   recruits the next through the athletes they share.
+#
+# ! SO THE DIAGNOSTIC SPLITS THE REFERENCE IN TWO: the same shift measured
+#   against every one of the athlete's other races, and against only those at
+#   divisions carrying NO override. If those two numbers disagree, the shift
+#   is measuring the overrides rather than the race.
+_WHY_SHIFT = """
+    WITH here AS (
+        SELECT r.person_id,
+               substring(r.date, 1, 4)::int AS yr,
+               r.speed_rating
+        FROM   results r
+        WHERE  r.meet_id = %(meet)s AND r.div_id = %(div)s
+          AND  r.person_id IS NOT NULL
+    ), ref AS (
+        SELECT h.person_id, r.speed_rating,
+               (o.meet_id IS NOT NULL) AS overridden
+        FROM   here h
+        JOIN   results r
+                 ON r.person_id = h.person_id
+                AND substring(r.date, 1, 4)::int = h.yr
+                AND NOT (r.meet_id = %(meet)s AND r.div_id = %(div)s)
+        LEFT   JOIN dist_override o
+                 ON o.meet_id = r.meet_id AND o.div_id = r.div_id
+        WHERE  r.speed_rating > 0
+    )
+    SELECT count(*)                                      AS n_ref,
+           count(*) FILTER (WHERE overridden)             AS n_over,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+                                                          AS med_all,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+               FILTER (WHERE NOT overridden)              AS med_clean
+    FROM   ref
+"""
+
+# The same split, per athlete, so the aggregate can be disbelieved.
+_WHY_SHIFT_WHO = """
+    WITH here AS (
+        SELECT r.person_id, substring(r.date, 1, 4)::int AS yr,
+               r.speed_rating AS rating_here
+        FROM   results r
+        WHERE  r.meet_id = %(meet)s AND r.div_id = %(div)s
+          AND  r.person_id IS NOT NULL AND r.speed_rating > 0
+    )
+    SELECT h.person_id, h.rating_here,
+           count(r.*)                                     AS n_ref,
+           count(r.*) FILTER (WHERE o.meet_id IS NOT NULL) AS n_over,
+           round(percentile_cont(0.5) WITHIN GROUP
+                 (ORDER BY r.speed_rating)::numeric, 1)    AS med_all,
+           round(percentile_cont(0.5) WITHIN GROUP
+                 (ORDER BY r.speed_rating)
+                 FILTER (WHERE o.meet_id IS NULL)::numeric, 1) AS med_clean
+    FROM   here h
+    JOIN   results r
+             ON r.person_id = h.person_id
+            AND substring(r.date, 1, 4)::int = h.yr
+            AND NOT (r.meet_id = %(meet)s AND r.div_id = %(div)s)
+    LEFT   JOIN dist_override o
+             ON o.meet_id = r.meet_id AND o.div_id = r.div_id
+    WHERE  r.speed_rating > 0
+    GROUP  BY h.person_id, h.rating_here
+    HAVING count(r.*) >= 3
+    ORDER  BY count(r.*) DESC
+    LIMIT  %(lim)s
+"""
+
+
+def whyShift(key, cur, ratio=None, limit=8):
+    """Print where this division's reference ratings come from."""
+    meet_id, div_id = key
+    params = {"meet": meet_id, "div": div_id}
+    cur.execute(_WHY_SHIFT, params)
+    n_ref, n_over, med_all, med_clean = cur.fetchone()
+    if not n_ref:
+        print("\n  reference        none: nobody in this division has another "
+              "rated race that year, so field_shift has nothing to compare "
+              "against")
+        return
+    print(f"\n  reference        {n_ref:,} other rated races by these "
+          f"athletes that year")
+    print(f"                   {n_over:,} of them "
+          f"({100.0 * n_over / n_ref:.1f}%) are at divisions that ALSO carry "
+          f"an override")
+    if med_all:
+        print(f"  their median     {float(med_all):.1f} over everything"
+              + (f", {float(med_clean):.1f} over the un-overridden races only"
+                 if med_clean else ", and NONE of it is un-overridden"))
+    if med_all and med_clean and float(med_clean) > 0:
+        drift = float(med_all) / float(med_clean)
+        # ! drift - 1, NOT drift. A ratio of 1.32 is 32% off, and printing it
+        #   as +132% is the kind of number somebody acts on.
+        print(f"  ⚠ the reference itself sits {drift - 1:+.1%} above its "
+              f"clean part" if abs(drift - 1) > 0.02 else
+              f"  the reference agrees with its clean part ({drift:.3f})")
+    if ratio:
+        print(f"  ! field_shift {ratio:.4f} against a distance ratio of "
+              f"{(8000 / 4828) ** K:.4f}-ish: a shift that equals the ratio "
+              f"is a moved REFERENCE, not a slow field")
+
+    cur.execute(_WHY_SHIFT_WHO, {**params, "lim": limit})
+    who = cur.fetchall()
+    if who:
+        print(f"\n  {'person':>11}{'here':>7}{'refs':>6}{'ovr':>5}"
+              f"{'median':>8}{'clean':>8}   ratio here")
+        for pid, here, n_r, n_o, m_all, m_clean in who:
+            r_all = float(m_all) / float(here) if here else 0
+            clean = f"{float(m_clean):>8.1f}" if m_clean else f"{'--':>8}"
+            print(f"  {pid:>11}{float(here):>7.1f}{n_r:>6}{n_o:>5}"
+                  f"{float(m_all):>8.1f}{clean}   {r_all:>5.2f}")
+
+
 def explainRemoval(key, rows, baselines, cur):
     """Why was this override not condemned? Walk the removal bar out loud."""
     meet_id, div_id = key
@@ -659,6 +790,8 @@ def explainRemoval(key, rows, baselines, cur):
               f"({r['fastest_time']:.1f}s), rail {ENGINE_RAIL:.0f}")
         if head_after:
             print(f"  if removed       {head_after:.0f}")
+
+    whyShift(key, cur, ratio=r["field_shift"])
 
     base_ov = baselineFor(r["override"], baselines)
     print(f"\n  class baseline   {base_ov:.4f} for the OVERRIDE "
