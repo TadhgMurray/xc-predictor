@@ -93,7 +93,12 @@ def labelDistance(cur, sport, meet, div, overrides):
     if row and row[0]:
         return float(row[0]), "the distance tables"
     return None, "no distance on file anywhere"
-_B = {"XC": 1.00, "TF": 1.10}          # distance-law exponent stand-ins (7/12 doc)
+# ⚠ THE DISTANCE-LAW EXPONENT, AND XC'S USED TO BE 1.00. The normaliser uses
+#   K = 1.06 everywhere else -- propose_distances.K, audit_overrides.K, the
+#   anchor arithmetic -- so a 1.00 here made this tool disagree with every
+#   other estimator in the project. TF's true exponent is per pool (1.06-1.22
+#   fitted); 1.10 is the stand-in it has always used.
+_B = {"XC": 1.06, "TF": 1.10}
 
 _SPIKE = 15.0                          # |gap%| beyond which a row is "spiked"
 _SNAP_TOL = 0.06                       # 6% snap gate, same as pass-2 triage
@@ -158,13 +163,41 @@ def _rows(cur, table, meet, div):
 # ================================================================== #
 
 # _impliedPerRow
-# Purpose : one row's implied true distance from its own swing. First-order,
-#           same law the pass-2 proposals used: rated g% fast => the label
-#           overstates distance by ~(1+g); slow => understates. b tempers the
-#           TF nonlinearity (XC b=1 is exact-enough at these magnitudes).
+# Purpose : one row's implied true distance from its own swing.
+#
+# ★ THE EXACT INVERSION, NOT THE FIRST-ORDER ONE. Derived from the same chain
+#   everything else uses:
+#
+#       nt     = t * (anchor / d) ^ K
+#       rating = M / nt = (M / t) * (d / anchor) ^ K
+#
+#   so running d_true while the label says d_label scales the rating by
+#   (d_label / d_true)^K, and inverting gives
+#
+#       d_true = d_label * (rating_true / rating_here) ^ (1/K)
+#              = d_label * (1 / (1 + gap)) ^ (1/K)
+#
+# ⚠ THE OLD FORM WAS label * (1 + |gap|) ON THE SLOW SIDE, and that is a
+#   different function, not a rounding of this one. 1/(1-g) against (1+g)
+#   agree to a percent at small swings and diverge fast:
+#
+#       gap -15%    correct  5628 m    old  5552 m     -1.3%
+#       gap -25%    correct  6333 m    old  6035 m     -4.7%
+#       gap -42%    correct  8071 m    old  6856 m    -15.1%
+#       gap -60%    correct 11460 m    old  7725 m    -32.6%
+#
+#   Which is why the four Detweiller Park divisions -- whose own athletes say
+#   they ran about 8,040 m -- were being snapped to 7000. The FAST side was
+#   never more than 2.8% out over the same range, because there the old
+#   expression was already label / (1+g)^(1/b) -- algebraically this one. All
+#   that changed for it is b, 1.00 -> 1.06. Only the slow branch was a
+#   different function.
+#
+# ! A gap at or below -100% is not a slower race, it is a broken row. Clamped
+#   rather than allowed to divide by zero.
 def _impliedPerRow(label_m, gap_pct, b):
-    factor = (1.0 + abs(gap_pct) / 100.0) ** (1.0 / b)
-    return label_m * factor if gap_pct < 0 else label_m / factor
+    g = max(float(gap_pct), -99.0) / 100.0
+    return label_m * (1.0 / (1.0 + g)) ** (1.0 / b)
 
 
 def _snap(implied):
