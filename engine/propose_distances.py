@@ -218,11 +218,22 @@ _BUILD_SHIFT = """
                    r.normalized_time,
                    r.time_seconds * power(5000.0 / NULLIF(d.distance, 0), {k})
                ) AS nt,
-               r.speed_rating
+               r.speed_rating,
+               -- ★ FOR THE STALENESS CHECK. nt = t * (anchor/d)^K, so t/nt
+               --   recovers the distance the stored value was BUILT with --
+               --   which is not always the distance div_distance now reports.
+               --   See impliedUsed().
+               r.time_seconds AS t,
+               k2.pool        AS pool
         FROM   results r
         LEFT   JOIN div_distance d ON d.meet_id = r.meet_id
                                   AND d.div_id = r.div_id
                                   AND d.source = r.source
+        -- ! LEFT, AND ONLY FOR THE ANCHOR. A division whose rows were all
+        --   dropped from the boards has no pool here, and then the staleness
+        --   check reports "unknown" instead of guessing one.
+        LEFT   JOIN ranking_results k2 ON k2.result_id = r.result_id
+                                      AND k2.sport = 'XC'
         WHERE  r.person_id IS NOT NULL
     )
     SELECT x.meet_id, x.div_id,
@@ -230,7 +241,12 @@ _BUILD_SHIFT = """
            -- ! REPORTED, so a division carried entirely by shadow ratings is
            --   visible as such rather than looking like ordinary evidence.
            count(*) FILTER (WHERE x.speed_rating IS NULL) AS n_shadow,
-           avg(m.med / COALESCE(x.speed_rating, s.k / x.nt)) AS field_shift
+           avg(m.med / COALESCE(x.speed_rating, s.k / x.nt)) AS field_shift,
+           -- The median t/nt, and the pool whose anchor it must be read
+           -- against. Both only for impliedUsed(); neither affects the shift.
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY x.t / NULLIF(x.nt, 0))
+               AS t_over_nt,
+           mode() WITHIN GROUP (ORDER BY x.pool) AS pool
     FROM   rated x
     JOIN   med m ON m.person_id = x.person_id
                 AND m.yr = substring(x.date, 1, 4)::int
@@ -245,6 +261,7 @@ _BUILD_SHIFT = """
 
 _LOAD = f"""
     SELECT s.meet_id, s.div_id, s.n, s.n_shadow, s.field_shift,
+           s.t_over_nt, s.pool,
            d.course_name,
            COALESCE(o.distance, d.distance) AS used,
            d.distance   AS stored,
@@ -254,6 +271,66 @@ _LOAD = f"""
     LEFT   JOIN dist_override o ON o.meet_id = s.meet_id AND o.div_id = s.div_id
     WHERE  s.n >= {MIN_ROWS}
 """
+
+
+# ★ THE DISTANCE THE STORED normalized_time WAS ACTUALLY BUILT WITH, WHICH IS
+#   NOT ALWAYS THE ONE div_distance REPORTS -- AND THAT GAP IS HOW AN 8000m
+#   OVERRIDE GETS WRITTEN ONTO A THREE-MILE COURSE.
+#
+#       nt = t * (anchor / d) ^ K      so      d = anchor * (t / nt) ^ (1/K)
+#
+#   First to the Finish 2025 at Detweiller Park, reconstructed from what the
+#   corpus now holds:
+#
+#       field_shift measured           1.6944
+#       the athletes' own medians      98.7, and 0% of those races overridden
+#       so the rows rated              98.7 / 1.694 = 58 when it was measured
+#       which needs                    nt built at about 3,218m -- a 2-mile
+#       but div_distance said          4,828m
+#       implied = 4828 * 1.694^(1/K) = 7,940  ->  snapped to the 8000 rung
+#
+#   The shift was measured in one state and multiplied by a distance from
+#   another. Every part of that arithmetic is correct; the two inputs simply
+#   do not describe the same corpus. Had the shift been applied to the 3,218m
+#   the ratings were actually built on, it would have proposed 5,292 -- the
+#   5000 rung, and roughly right.
+#
+# ⚠ THE ANCHOR IS PER POOL, so t/nt alone cannot give a distance. ms anchors
+#   at 3200m and hs at 5000m for cross country, so the same stored value reads
+#   56% long if the pool is guessed wrong. The pool comes from
+#   ranking_results, and a division with no ranked rows returns None rather
+#   than a number built on an assumed anchor.
+STALE_TOL = 0.05
+
+
+def impliedUsed(row):
+    """The distance the stored normalized_time was built with, or None."""
+    tn, pool = row.get("t_over_nt"), row.get("pool")
+    if not tn or not pool:
+        return None
+    try:
+        from normalize_distance import targetFor
+        anchor = targetFor(pool, "XC")
+    except Exception:                                   # noqa: BLE001
+        return None
+    if not anchor:
+        return None
+    return float(anchor) * float(tn) ** (1.0 / K)
+
+
+def staleness(row):
+    """(is_stale, implied_distance). A division whose ratings and whose
+    distance table disagree about what race was run.
+
+    ! NOT A VERDICT ABOUT THE DISTANCE. It says the two INPUTS disagree, so
+      nothing computed from both can be trusted -- neither a proposal nor a
+      removal. The cure is to re-normalise, not to write another override.
+    """
+    implied = impliedUsed(row)
+    used = row.get("used")
+    if not implied or not used:
+        return False, implied
+    return abs(implied / float(used) - 1.0) > STALE_TOL, implied
 
 
 def classBaselines(rows):
@@ -298,6 +375,21 @@ def judge(r, base, by_course, by_meet):
     used = r["used"]
     if not used or not SANE[0] <= used <= SANE[1]:
         return "skip", "no sane distance in use", None
+
+    # ⚠ FIRST, BEFORE ANY ARITHMETIC: DO THE TWO INPUTS DESCRIBE THE SAME
+    #   CORPUS? field_shift comes from ratings, which come from
+    #   normalized_time; `used` comes from the distance tables. When those
+    #   disagree the proposal multiplies a shift measured in one world by a
+    #   distance from another, and the answer is wrong by exactly their gap.
+    #   That is how Detweiller Park -- a three-mile course -- was given an
+    #   8000m override. See impliedUsed.
+    stale, implied_built = staleness(r)
+    if stale:
+        return ("skip",
+                f"STALE: normalized_time was built at "
+                f"{implied_built:.0f}m but the distance tables say "
+                f"{used:.0f}m -- re-normalise before proposing anything here",
+                None)
 
     err = abs(r["field_shift"] / baselineFor(used, base) - 1)
     if err <= OUTLIER:
@@ -553,6 +645,28 @@ def explain(key, rows, base, by_course, by_meet, cur):
         return
 
     used = r["used"]
+
+    # ★ THE FRESHNESS GATE, FIRST, because everything below it is arithmetic
+    #   on two numbers that have to come from the same corpus.
+    stale, implied_built = staleness(r)
+    if implied_built:
+        print(f"\n  built at         {implied_built:.0f}m -- what the stored "
+              f"normalized_time implies, read against the {r.get('pool')} "
+              f"anchor")
+        print(f"  tables say       {used:.0f}m")
+    else:
+        print("\n  built at         unknown -- no ranked rows here, so no "
+              "pool, so no anchor to read t/nt against")
+    if stale:
+        print(f"  ⛔ STOPPED: STALE by {implied_built / used - 1:+.1%}. The "
+              f"ratings and the distance\n     tables disagree about which "
+              f"race this was. Any proposal from here\n     multiplies a "
+              f"shift measured at {implied_built:.0f}m by a distance of "
+              f"{used:.0f}m -- which is\n     exactly how this corpus "
+              f"acquired 8000m overrides on three-mile\n     courses. "
+              f"Re-normalise, then ask again.")
+        return
+
     baseline = baselineFor(used, base)
     err = abs(r["field_shift"] / baseline - 1)
     print(f"  class baseline   {baseline:.4f} for {used:.0f}m")
@@ -927,6 +1041,8 @@ def main(rebuild=True, write=False, explain_keys=(),
         r["field_shift"] = float(r["field_shift"])
         for k in ("used", "stored", "override"):
             r[k] = float(r[k]) if r[k] is not None else None
+        r["t_over_nt"] = (float(r["t_over_nt"])
+                          if r.get("t_over_nt") is not None else None)
 
     n_helped = sum(1 for r in rows if (r.get("n_shadow") or 0) > 0)
     n_only = sum(1 for r in rows if (r.get("n_shadow") or 0) >= r["n"])
@@ -936,6 +1052,17 @@ def main(rebuild=True, write=False, explain_keys=(),
     #   distances -- a division nobody could rate is the signature.
     print(f"       {n_helped:,} of them include rows the engine never rated; "
           f"{n_only:,} consist only of those")
+    # ⚠ HOW MUCH OF THE CORPUS CANNOT BE PROPOSED FROM AT ALL, said before
+    #   any proposal is made. A stale division is one where the ratings and
+    #   the distance tables disagree about which race was run -- see
+    #   impliedUsed -- and a proposal built from both is wrong by their gap.
+    n_stale = sum(1 for r in rows if staleness(r)[0])
+    n_unknown = sum(1 for r in rows if impliedUsed(r) is None)
+    print(f"[dist] {n_stale:,} divisions are STALE (normalized_time was built "
+          f"at a distance the tables no longer report) and are skipped")
+    print(f"       {n_unknown:,} could not be checked -- no ranked rows, so "
+          f"no pool, so no anchor to read t/nt against")
+
     base = classBaselines(rows)
     print(f"[dist] {len(base)} distance classes")
 

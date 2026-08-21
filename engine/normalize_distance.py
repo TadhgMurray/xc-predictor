@@ -917,12 +917,17 @@ def targetFor(pool, sport=None):
       stages write and read on different scales -- the exact failure that put
       Luke Surface's 552-second normalized times under a 600-second floor.
     """
-    targets = _SPLINES.get("pool_targets", {})
+    # ! NO ARTIFACT IS NOT AN EXCEPTION. _SPLINES is None until the pickle
+    #   loads, and every other reader in this module already degrades to a
+    #   no-op rather than raising -- this one raised AttributeError, so a
+    #   caller reasoning about SCALE crashed on a machine that simply had not
+    #   built the splines yet. The documented fallback is the global target.
+    targets = (_SPLINES or {}).get("pool_targets", {})
     base = (pool or "").split("|")[0]
     sp = sport or ((pool or "").split("|")[1] if "|" in (pool or "") else None)
     if sp and f"{base}|{sp}" in targets:
         return float(targets[f"{base}|{sp}"])
-    return float(targets.get(base) or _SPLINES.get("target", 5000.0))
+    return float(targets.get(base) or (_SPLINES or {}).get("target", 5000.0))
 
 
 def _normalizeWithPotential(time_seconds, distance_meters, pool, sport=None):

@@ -134,7 +134,7 @@ _DISTANCES = """
 #   shadow rating from the athlete's own rated races, so a division is judged
 #   on all of its finishers rather than the handful whose times survived the
 #   error. See _BUILD_SHIFT in propose_distances.
-from propose_distances import _BUILD_SHIFT
+from propose_distances import _BUILD_SHIFT, staleness, impliedUsed
 
 # ★ THE SIGNATURE A CLASS BASELINE CANNOT SEE, AND THE ONE THE SITE SHOWS.
 #
@@ -206,7 +206,7 @@ _LOAD = f"""
     SELECT s.meet_id, s.div_id, d.meet_name,
            d.distance   AS stored,
            o.distance   AS override,
-           s.n, s.n_shadow, s.field_shift,
+           s.n, s.n_shadow, s.field_shift, s.t_over_nt, s.pool,
            g.n_rated, g.n_unrated, g.med_rating, g.med_time_rated,
            g.med_time_unrated, g.fastest_time
     FROM   ovr_shift s
@@ -592,7 +592,7 @@ def loadRows(cur, conn, rebuild):
     for r in rows:
         r["field_shift"] = float(r["field_shift"])
         for k in ("med_rating", "med_time_rated", "med_time_unrated",
-                  "fastest_time"):
+                  "fastest_time", "t_over_nt"):
             r[k] = float(r[k]) if r.get(k) is not None else None
         r["stored"] = float(r["stored"]) if r["stored"] is not None else None
         r["override"] = float(r["override"]) if r["override"] is not None else None
@@ -790,6 +790,22 @@ def explainRemoval(key, rows, baselines, cur):
               f"({r['fastest_time']:.1f}s), rail {ENGINE_RAIL:.0f}")
         if head_after:
             print(f"  if removed       {head_after:.0f}")
+
+    # ★ IS THE SHIFT EVEN MEASURING THIS CORPUS? staleness compares the
+    #   distance the stored normalized_time was built with against the one
+    #   the distance tables report. When they differ, field_shift describes a
+    #   state that no longer exists -- and the suppressed-head verdict below,
+    #   which reads only the clock, is the one to trust.
+    r["used"] = r["override"] or r["stored"]
+    stale, implied_built = staleness(r)
+    if implied_built:
+        print(f"\n  built at         {implied_built:.0f}m -- what the stored "
+              f"normalized_time implies, read against the {r.get('pool')} "
+              f"anchor")
+        print(f"  tables say       {r['used']:.0f}m in use"
+              + (f"   ⚠ STALE by {implied_built / r['used'] - 1:+.1%}: "
+                 f"field_shift is measuring a corpus that no longer exists"
+                 if stale else ""))
 
     whyShift(key, cur, ratio=r["field_shift"])
 
