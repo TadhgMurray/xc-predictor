@@ -4,7 +4,7 @@
 --          placeholder of 500 with a TODO beside it.
 --
 -- ⚠ ATTENTION IS O(L^2) AND THE TENSORS ARE PADDED TO L. Every example is
---   saved as [L, 17] float32, so L=500 costs 34 KB per example on disk and
+--   saved as [L, 21] float32, so L=500 costs 42 KB per example on disk and
 --   250,000 attention cells per head whether or not the athlete has 500
 --   races. If the real 99th percentile is 60, that is ~70x the compute and
 --   ~8x the disk for padding.
@@ -55,8 +55,13 @@ SELECT c.cap,
        round(100.0 * count(*) FILTER (WHERE a.n > c.cap)
              / count(*), 2)                                  AS pct_truncated,
        round(100.0 * sum(least(a.n, c.cap)) / sum(a.n), 1)   AS pct_races_kept,
-       -- disk for the sequence tensor alone: cap * 17 features * 4 bytes
-       pg_size_pretty((count(*) * c.cap * 17 * 4)::bigint)    AS seq_tensor,
+       -- ⚠ SIZED BY ATHLETE, NOT BY EXAMPLE, so this UNDERSTATES the real
+       --   cost by ~11x: the extractor emits one example per race AFTER an
+       --   athlete's first, plus FORECAST_TWIN_RATE more. Kept as a relative
+       --   guide between caps. Since the ragged-chunk change this is moot
+       --   anyway -- nothing is padded to disk.
+       -- cap * 21 features * 4 bytes
+       pg_size_pretty((count(*) * c.cap * 21 * 4)::bigint)    AS seq_tensor,
        -- attention cells per example per head, relative to the 500 placeholder
        round((c.cap::numeric / 500) ^ 2, 4)                  AS attn_vs_500
 FROM per_athlete a CROSS JOIN caps c

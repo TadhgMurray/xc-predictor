@@ -139,7 +139,7 @@ GEO_LON_CENTER, GEO_LON_SCALE = -98.0, 20.0
 #       median 3 races    p90 22    p99 70    p99.9 120    max 331
 #
 #   so 500 was padding ~99.9% of every example with nothing. Attention is
-#   O(L^2) and the saved tensor is [N, L, 17], so that placeholder cost 61x
+#   O(L^2) and the saved tensor is [N, L, 21], so that placeholder cost 61x
 #   the attention of a 64 cap and 2.7 TB of chunk files.
 #
 # ⚠ 64 IS A TRUNCATION, AND IT TRUNCATES THE OLDEST RACES. 1.3% of athletes
@@ -1503,9 +1503,11 @@ def _encodeGender(gender: str) -> float:
 #     False = padding  (ignore this)
 #
 #   Final output — 5 files saved to model/data/:
-#     sequences.pt  — shape [N, max_seq_len, 17]  (float32)
+#     sequences.pt  — shape [total_steps, 21]     (float32, RAGGED: every
+#                     sequence end to end, sliced by offsets.pt)
+#     offsets.pt    — shape [N + 1]                (int64)
 #     masks.pt      — shape [N, max_seq_len]       (bool)
-#     context.pt    — shape [N, 17]                (float32)
+#     context.pt    — shape [N, 21]                (float32)
 #     targets.pt    — shape [N]                    (float32)
 #     encoders.pkl  — fitted LabelEncoders (for inference)
 #
@@ -1585,20 +1587,39 @@ def _buildTensors(examples: list[dict], max_len: int):
     # We'll convert these to tensors in one shot at the end,
     # which is faster than calling torch.tensor() in a loop.
     all_sequences = []
-    all_masks     = []
     all_contexts  = []
     all_targets   = []
     all_venues    = []
 
     # For each example pads it's training sequence and builds
     # it's mask, then appends it to the python lists.
+    # ★ RAGGED, NOT PADDED, AND THIS IS WHAT MAKES THE CORPUS FIT ON A DISK.
+    #   Padding every example to max_len writes a [N, 64, 21] float32 block:
+    #   at ~80M examples (one per race after an athlete's first, plus 50%
+    #   forecast twins) that is 347 GB of chunk files. The median athlete has
+    #   THREE races, so for half the corpus a 64-wide row is ~95% zeros.
+    #
+    #   Storing the sequences end to end with an offset per example writes
+    #   only the rows that exist -- about 23 GB for the same data -- and the
+    #   padding is rebuilt per BATCH in train.collateRagged, to that batch's
+    #   own longest sequence rather than the global cap. That shrinks
+    #   attention a second time at training: most batches attend over four to
+    #   eight positions instead of sixty-four.
+    #
+    # ! THE MASK IS NOT STORED AT ALL. It is a function of the length, so
+    #   saving it costs a byte per padded step to record something the
+    #   offsets already say. collateRagged builds it, in the same polarity
+    #   the encoder expects (True = real; transformer.forward inverts it).
+    offsets = [0]
     for ex in examples:
+        # Still truncated here, and still to the LAST max_len races -- see
+        # _padSequence for why recency is the half worth keeping.
+        seq = ex["sequence"]
+        if len(seq) > max_len:
+            seq = seq[-max_len:]
 
-        # Pad this example's sequence and build its mask.
-        padded, mask = _padSequence(ex["sequence"], max_len)
-
-        all_sequences.append(padded)
-        all_masks.append(mask)
+        all_sequences.extend(seq)
+        offsets.append(len(all_sequences))
         all_contexts.append(ex["context"])
         all_targets.append(ex["target"])
         all_venues.append(ex["venue_idx"])
@@ -1607,7 +1628,9 @@ def _buildTensors(examples: list[dict], max_len: int):
     # dtype=torch.float32 — standard precision for neural net weights.
     # dtype=torch.bool    — True/False mask, no gradient needed.
     sequences_tensor = torch.tensor(all_sequences, dtype=torch.float32)
-    masks_tensor     = torch.tensor(all_masks,     dtype=torch.bool)
+    # ⚠ int64. An offset indexes a tensor with tens of millions of rows per
+    #   chunk-set; int32 would overflow silently on a large corpus.
+    offsets_tensor   = torch.tensor(offsets,       dtype=torch.long)
     context_tensor   = torch.tensor(all_contexts,  dtype=torch.float32)
     targets_tensor   = torch.tensor(all_targets,   dtype=torch.float32)
     # ★ int64, NOT float32. This is an index into an embedding table, not a
@@ -1616,18 +1639,18 @@ def _buildTensors(examples: list[dict], max_len: int):
     venues_tensor    = torch.tensor(all_venues,    dtype=torch.long)
 
     # Print shapes so we can sanity-check before saving.
-    # e.g. sequences: [2_400_000, 847, 17]
-    #      masks:     [2_400_000, 847]
-    #      context:   [2_400_000, 17]
+    # e.g. sequences: [10_100_000, 21]  (ragged; 2.4M examples)
+    #      context:   [2_400_000, 21]
     #      targets:   [2_400_000]
     # This prints as [depth, rows, columns], i.e. # of examples,
     # steps, features.
-    print(f"  sequences : {list(sequences_tensor.shape)}")
-    print(f"  masks     : {list(masks_tensor.shape)}")
+    print(f"  sequences : {list(sequences_tensor.shape)} (ragged, "
+          f"{len(offsets) - 1:,} examples)")
+    print(f"  offsets   : {list(offsets_tensor.shape)}")
     print(f"  context   : {list(context_tensor.shape)}")
     print(f"  targets   : {list(targets_tensor.shape)}")
 
-    return (sequences_tensor, masks_tensor, context_tensor,
+    return (sequences_tensor, offsets_tensor, context_tensor,
             targets_tensor, venues_tensor)
 
 # _saveTensors
@@ -1778,8 +1801,9 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
     print(f"Done. {total_examples:,} examples saved in {chunk_idx} chunks.")
 
 # _saveChunk
-# Purpose: Pads one buffer of examples to max_len, converts to tensors,
-#          saves to chunk_NNNN.pt.
+# Purpose: Converts one buffer of examples to ragged tensors and saves them
+#          to chunk_NNNN.pt. Padding happens per batch at training time, not
+#          here -- see _buildTensors.
 # Arguments:
 #           examples:   list of up to CHUNK_SIZE example dicts.
 #           max_len:    padded sequence length.
@@ -1789,7 +1813,7 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
 def _saveChunk(examples: list[dict], max_len: int,
                chunk_idx: int, output_dir: str) -> str:
     
-    (sequences_t, masks_t, context_t,
+    (sequences_t, offsets_t, context_t,
      targets_t, venues_t) = _buildTensors(examples, max_len)
 
     path = os.path.join(output_dir, f"chunk_{chunk_idx:04d}.pt")
@@ -1797,7 +1821,7 @@ def _saveChunk(examples: list[dict], max_len: int,
     # Saves tensors for this chunk to file specified in path.
     torch.save({
         "sequences": sequences_t,
-        "masks":     masks_t,
+        "offsets":   offsets_t,
         "context":   context_t,
         "targets":   targets_t,
         # ★ SEPARATE TENSOR, int64. An embedding index is a lookup key, not a
