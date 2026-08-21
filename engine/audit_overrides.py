@@ -136,16 +136,83 @@ _DISTANCES = """
 #   error. See _BUILD_SHIFT in propose_distances.
 from propose_distances import _BUILD_SHIFT
 
+# ★ THE SIGNATURE A CLASS BASELINE CANNOT SEE, AND THE ONE THE SITE SHOWS.
+#
+#   First to the Finish 2025 at Detweiller Park -- a three-mile course, 4828m
+#   in `meets` -- carried a dist_override of 8000. The whole field was
+#   normalised against 8000, so the two stages AGREED and the anchor gate
+#   passed every row: both used the same wrong number. What reached the board
+#   was twenty-five 21:30s rated 157-159.
+#
+#   The class baseline could not condemn it, because a division normalised at
+#   8000 is compared against other divisions at 8000, and enough bad 8000
+#   overrides define their own normal.
+#
+# ⚠ BUT THE RACE PAGE SHOWED THE TELL: the FASTEST runners had no rating at
+#   all and only the slowest sixteen did. A wrong-long distance inflates the
+#   entire field, so the head goes past the engine's 20..200 rail and is
+#   suppressed, while the tail lands at 150-163 and is published. SEC-HS
+#   Jamboree 1: 17:14 through 24:45 unrated, 24:52 through 27:01 rated
+#   149-163.
+#
+# ★ SO THE TEST IS "ARE THE UNRATED RUNNERS FASTER THAN THE RATED ONES". No
+#   race does that. It needs no pool, no baseline and no distance -- only the
+#   times, which are the one thing an override cannot change.
+#
+#   And within one division rating is inversely proportional to TIME (same
+#   distance, same course, same difficulty), so the head's missing rating can
+#   be reconstructed:
+#
+#       implied_head = median_rating * median_time_rated / fastest_time
+#
+#   SEC-HS: 157 * 1545 / 1034 = 235, which is why it is not on the page.
+#   Removing the override multiplies every rating by (stored/override)^K =
+#   (5000/8000)^1.06 = 0.60, putting the head at 141 and inside the rail.
+_RATING_STATS = """
+    DROP TABLE IF EXISTS ovr_ratings;
+    CREATE UNLOGGED TABLE ovr_ratings AS
+    WITH rows AS (
+        SELECT r.meet_id, r.div_id, r.time_seconds, r.speed_rating
+        FROM   results r
+        JOIN   dist_override o
+                 ON o.meet_id = r.meet_id AND o.div_id = r.div_id
+        WHERE  r.time_seconds > 0
+        UNION ALL
+        SELECT r.meet_id, r.div_id, r.time_seconds, r.speed_rating
+        FROM   results_tf r
+        JOIN   dist_override o
+                 ON o.meet_id = r.meet_id AND o.div_id = r.div_id
+        WHERE  r.time_seconds > 0
+    )
+    SELECT meet_id, div_id,
+           count(*) FILTER (WHERE speed_rating IS NOT NULL)  AS n_rated,
+           count(*) FILTER (WHERE speed_rating IS NULL)      AS n_unrated,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+               FILTER (WHERE speed_rating IS NOT NULL)       AS med_rating,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY time_seconds)
+               FILTER (WHERE speed_rating IS NOT NULL)       AS med_time_rated,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY time_seconds)
+               FILTER (WHERE speed_rating IS NULL)           AS med_time_unrated,
+           min(time_seconds)                                 AS fastest_time
+    FROM   rows
+    GROUP  BY meet_id, div_id;
+    CREATE INDEX ON ovr_ratings (meet_id, div_id);
+    ANALYZE ovr_ratings;
+"""
+
 # EVERY division, overridden or not -- the baselines are computed over all of
 # them, so a class describes the population rather than the suspects.
 _LOAD = f"""
     SELECT s.meet_id, s.div_id, d.meet_name,
            d.distance   AS stored,
            o.distance   AS override,
-           s.n, s.n_shadow, s.field_shift
+           s.n, s.n_shadow, s.field_shift,
+           g.n_rated, g.n_unrated, g.med_rating, g.med_time_rated,
+           g.med_time_unrated, g.fastest_time
     FROM   ovr_shift s
     JOIN   dist_override o ON o.meet_id = s.meet_id AND o.div_id = s.div_id
     LEFT   JOIN div_distance d ON d.meet_id = s.meet_id AND d.div_id = s.div_id
+    LEFT   JOIN ovr_ratings g ON g.meet_id = s.meet_id AND g.div_id = s.div_id
     WHERE  s.n >= {MIN_ROWS} AND o.distance > 0
 """
 
@@ -201,9 +268,69 @@ def predictAfterRemoval(row):
     return row["field_shift"] * (row["override"] / row["stored"]) ** K
 
 
+# A suppressed head needs enough of both groups to be a pattern rather than
+# two runners, and the unrated group has to be clearly faster -- not a second
+# apart, which is just the rail's edge falling between two finishers.
+SUPPRESS_MIN   = 5      # rated rows, and unrated rows, before this can fire
+SUPPRESS_GAP   = 0.05   # the unrated median must be this much faster
+ENGINE_RAIL    = 200.0  # speed_ratings' own upper rail, which is what suppresses
+
+
+def suppressedHead(row):
+    """(is_inverted, implied_head_before, implied_head_after) for a division.
+
+    ★ WITHIN ONE DIVISION, RATING IS INVERSELY PROPORTIONAL TO TIME. Same
+      course, same distance, same difficulty for every runner in it -- so the
+      only thing separating two of their ratings is the clock. That makes the
+      missing head reconstructable from the surviving tail, with no model:
+
+          implied_head = med_rating * med_time_rated / fastest_time
+
+    ⚠ AND THE INVERSION IS THE FINDING, NOT THE ARITHMETIC. A division where
+      the runners WITHOUT a rating are FASTER than the runners with one has
+      had its whole field inflated past the engine's rail, head first. No
+      race does that on its own.
+    """
+    n_r, n_u = row.get("n_rated") or 0, row.get("n_unrated") or 0
+    med_r, med_t = row.get("med_rating"), row.get("med_time_rated")
+    med_u, fastest = row.get("med_time_unrated"), row.get("fastest_time")
+    if (n_r < SUPPRESS_MIN or n_u < SUPPRESS_MIN
+            or not med_r or not med_t or not med_u or not fastest):
+        return False, None, None
+    inverted = float(med_u) < float(med_t) * (1.0 - SUPPRESS_GAP)
+    head = float(med_r) * float(med_t) / float(fastest)
+    after = head * (row["stored"] / row["override"]) ** K if row["stored"] else None
+    return inverted, head, after
+
+
 def judgeRemoval(row, baselines):
-    """(verdict, reason, err_before, err_after) for one existing override."""
+    """(verdict, reason, err_before, err_after) for one existing override.
+
+    TWO INDEPENDENT WAYS TO CONDEMN AN OVERRIDE, because the first one has a
+    blind spot the corpus walked into. The class test compares a division
+    against others at the SAME distance -- so an override that moves a field
+    to 8000m is judged against the 8000m class, and enough wrong 8000m
+    overrides make that class their own normal. The second test never looks
+    at another division.
+    """
+    inverted, head, head_after = suppressedHead(row)
     err_now = abs(row["field_shift"] / baselineFor(row["override"], baselines) - 1)
+
+    # ★ THE SUPPRESSED HEAD, FIRST, because it is the stronger evidence: it
+    #   rests on this division's own clock rather than on a population.
+    if inverted and sane(row["stored"]) and head and head > ENGINE_RAIL:
+        if head_after and head_after < ENGINE_RAIL:
+            return ("kill",
+                    f"the unrated runners are FASTER than the rated ones; "
+                    f"head implies {head:.0f}, and removal brings it to "
+                    f"{head_after:.0f}",
+                    err_now, err_now)
+        return ("keep",
+                f"head implies {head:.0f} but removal would leave it at "
+                f"{head_after or 0:.0f} -- the distance is not the whole "
+                f"story here",
+                err_now, None)
+
     if err_now <= OUTLIER:
         return "keep", "normal for its class", err_now, None
     if not sane(row["stored"]):
@@ -336,15 +463,20 @@ def reportBaselines(baselines):
 
 def reportRemovals(verdicts):
     kills = [v for v in verdicts if v[0] == "kill"]
-    print(f"\n[audit] REMOVE: {len(kills)} overrides condemned")
+    heads = [v for v in kills if "unrated runners" in v[1]]
+    print(f"\n[audit] REMOVE: {len(kills)} overrides condemned "
+          f"({len(heads)} of them by a suppressed head)")
     if kills:
         print(f"    {'meet/div':<22}{'stored':>8}{'ovr':>8}{'shift':>8}"
               f"{'err':>7}{'after':>7}  meet")
-    for _, _, e0, e1, row in sorted(kills, key=lambda v: -(v[2] - v[3])):
+    for _, why, e0, e1, row in sorted(kills,
+                                      key=lambda v: -(v[2] - (v[3] or 0))):
         print(f"    {row['meet_id']}/{row['div_id']:<14}"
               f"{row['stored']:>8.0f}{row['override']:>8.0f}"
-              f"{row['field_shift']:>8.3f}{e0:>7.3f}{e1:>7.3f}"
+              f"{row['field_shift']:>8.3f}{e0:>7.3f}{(e1 or 0):>7.3f}"
               f"  {(row['meet_name'] or '')[:36]}")
+        if "unrated runners" in why:
+            print(f"        ⚠ {why}")
     return {(v[4]["meet_id"], v[4]["div_id"]) for v in kills}
 
 
@@ -444,6 +576,12 @@ def loadRows(cur, conn, rebuild):
     for src, n in cur.fetchall():
         print(f"    {src}: {n:,} divisions with a distance")
 
+    # ! ALWAYS REBUILT TOO, AND CHEAP: it reads only the divisions that have
+    #   an override, not the corpus.
+    print("[audit] measuring what each override's field actually rates...")
+    cur.execute(_RATING_STATS)
+    conn.commit()
+
     if rebuild:
         print("[audit] rebuilding ovr_shift from current ratings...")
         cur.execute(_BUILD_SHIFT)
@@ -453,6 +591,9 @@ def loadRows(cur, conn, rebuild):
     rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     for r in rows:
         r["field_shift"] = float(r["field_shift"])
+        for k in ("med_rating", "med_time_rated", "med_time_unrated",
+                  "fastest_time"):
+            r[k] = float(r[k]) if r.get(k) is not None else None
         r["stored"] = float(r["stored"]) if r["stored"] is not None else None
         r["override"] = float(r["override"]) if r["override"] is not None else None
     return rows
@@ -502,6 +643,23 @@ def explainRemoval(key, rows, baselines, cur):
         print("  ⛔ STOPPED: not in the loaded set.")
         return
     verdict, reason, err_now, err_after = judgeRemoval(r, baselines)
+
+    # ★ THE DIVISION'S OWN CLOCK, BEFORE ANY POPULATION IS CONSULTED. This is
+    #   the test that caught First to the Finish and SEC-HS Jamboree, which
+    #   the class baseline called normal.
+    inverted, head, head_after = suppressedHead(r)
+    print(f"\n  rated / unrated  {r.get('n_rated') or 0:,} rated, "
+          f"{r.get('n_unrated') or 0:,} unrated")
+    if r.get("med_time_rated") and r.get("med_time_unrated"):
+        print(f"  median time      {r['med_time_rated']:.1f}s rated  vs  "
+              f"{r['med_time_unrated']:.1f}s unrated"
+              + ("   ⚠ THE UNRATED ARE FASTER" if inverted else ""))
+    if head:
+        print(f"  implied head     {head:.0f} at the fastest time "
+              f"({r['fastest_time']:.1f}s), rail {ENGINE_RAIL:.0f}")
+        if head_after:
+            print(f"  if removed       {head_after:.0f}")
+
     base_ov = baselineFor(r["override"], baselines)
     print(f"\n  class baseline   {base_ov:.4f} for the OVERRIDE "
           f"({r['override']:.0f}m)")
