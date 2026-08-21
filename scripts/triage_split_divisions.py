@@ -158,6 +158,42 @@ def _rows(cur, table, meet, div):
     return out
 
 
+# _whyEmpty
+# Purpose : say why a division produced nothing, instead of printing rows=0 and
+#           moving on.
+#
+# ⚠ rows=0 IS NOT "THIS DIVISION IS FINE". It means this tool could not form an
+#   opinion, which reads identically to "no anomaly found" in the output and is
+#   the opposite claim. --merged flags a division from a GROUP shift measured
+#   against a pool; this tool needs each athlete's OWN other races. A division
+#   can be genuinely merged and still be mute here -- unlinked athletes, a
+#   one-race field, nothing rated. Those want a different tool, not a shrug.
+#
+# ! Only ever called on the empty ones, so the extra scan costs nothing on the
+#   divisions that had something to say.
+def _whyEmpty(cur, table, meet, div):
+    cur.execute(f"""
+        SELECT count(*),
+               count(*) FILTER (WHERE r.speed_rating > 0),
+               count(*) FILTER (WHERE COALESCE(r.person_id, r.athlete_id)
+                                      IS NOT NULL),
+               count(*) FILTER (WHERE r.time_seconds IS NOT NULL)
+        FROM {table} r
+        WHERE r.meet_id = %s AND r.div_id = %s
+    """, (meet, div))
+    total, rated, ident, timed = cur.fetchone()
+    if not total:
+        return "no results at all under this meet/div"
+    if not rated:
+        return f"{total} results, none rated"
+    if not ident:
+        return f"{total} results, {rated} rated, none linked to a person"
+    if not timed:
+        return f"{total} results, {rated} rated, no clock on any of them"
+    return (f"{total} results ({rated} rated, {ident} linked) but no athlete "
+            f"has a rated race on another date to be compared against")
+
+
 # ================================================================== #
 # CHUNK 2 -- INVERSION + SNAP (per row)
 # ================================================================== #
@@ -305,7 +341,7 @@ def main():
 
     overrides = _importByPath(args.corrections, "_corr") \
         ._DISTANCE_OVERRIDES_BY_SPORT[args.sport]
-    n_skipped = 0
+    n_skipped = n_mute = 0
     table, b = _TABLE[args.sport], _B[args.sport]
 
     pins, drop_queue = {}, []
@@ -320,6 +356,10 @@ def main():
             rows = _rows(cur, table, meet, div)
             print(f"\n== {meet}/{div}  label={label} (from {whence})  "
                   f"rows={len(rows)} ==")
+            if not rows:
+                print(f"  MUTE: {_whyEmpty(cur, table, meet, div)}")
+                n_mute += 1
+                continue
             div_pins = 0
             for side in ("fast", "slow"):
                 verdict, snap, members, votes = _subgroup(rows, label, b, side)
@@ -352,7 +392,10 @@ def main():
     print(f"\nTOTAL: {len(pins)} per-row pins proposed; "
           f"{len(drop_queue)} subgroups to the human queue"
           + (f"; {n_skipped} divisions skipped for want of a distance"
-             if n_skipped else ""))
+             if n_skipped else "")
+          + (f"; {n_mute} divisions MUTE -- this tool could form no opinion, "
+             f"which is not the same as finding them clean"
+             if n_mute else ""))
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 
