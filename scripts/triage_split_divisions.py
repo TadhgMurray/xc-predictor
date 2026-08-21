@@ -150,13 +150,24 @@ _FLAT_SPREAD = 1.02
 #   the line called it sane.
 _WIDE_SPREAD = 2.0
 
-# ⚠ AND WHEN THE CLEAN ROWS ARE A MINORITY, THE LABEL IS WRONG, NOT A SUBSET.
-#   This tool splits a division into "the race the label describes" plus
-#   anomalies. 8614/0 has 2 clean rows out of 18 and got 13 pinned -- the
-#   label describes almost nobody, so the fix is a new label for the whole
-#   division, not per-row pins around a two-row reference. propose_distances
-#   flags the same condition from the other side with its `!` marker.
-_LABEL_CLEAN = 0.50
+# ⚠ AND THE TEST IS NOT "ARE THE CLEAN ROWS A MINORITY". That was the first
+#   version of this flag and it fired on the divisions per-row pinning handles
+#   BEST. 9705/0 holds three races -- 44 rows at 5000m, 65 at its 6000m label,
+#   33 at 7000m -- so its clean share is 44% by construction, and nothing is
+#   wrong with the label: it describes the largest race in the division.
+#
+#   What matters is whether the label's own race is still the MAIN one. If a
+#   subgroup that ran something else outnumbers the rows that match the label,
+#   the label is describing a minority race and the division needs a new
+#   distance, not pins hung off a small reference:
+#
+#       9705/0   clean 65   biggest anomaly 44   -- label is the main race, fine
+#       5803/0   clean  7   biggest anomaly 16   -- label describes 7 of 38
+#       8614/0   clean  2   biggest anomaly  7   -- pins hung off two rows
+#
+#   propose_distances flags the same condition from the other side with its
+#   `!` marker, and for the same reason.
+_LABEL_MINOR = 1.0                     # flag when biggest anomaly / clean > this
 
 
 # ================================================================== #
@@ -441,7 +452,7 @@ def main():
                 print(f"  MUTE: {_whyEmpty(cur, table, meet, div)}")
                 n_mute += 1
                 continue
-            div_pins = 0
+            div_pins = biggest = 0
             for side in ("fast", "slow"):
                 verdict, snap, members, votes = _subgroup(rows, label, b, side)
                 if verdict == "TOO_SMALL":
@@ -478,16 +489,18 @@ def main():
                 print(f"  {side:<5} {verdict} -> {snap}m for {len(members)} rows "
                       f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi, {spread:.2f}x, "
                       f"sane){extra}")
+                biggest = max(biggest, len(members))
                 for rid, _ in members:
                     pins[rid] = (snap, meet, div, side)
                     div_pins += 1
             clean = sum(1 for _, _, g in rows if abs(g) <= _SPIKE)
             frac = clean / len(rows)
             note = ""
-            if div_pins and frac < _LABEL_CLEAN:
-                note = (f"  <- LABEL? only {frac:.0%} of this division matches "
-                        f"its own label; it needs a new distance, not "
-                        f"{div_pins} row pins")
+            if div_pins and biggest > _LABEL_MINOR * clean:
+                note = (f"  <- LABEL? {biggest} rows ran something else against "
+                        f"{clean} that match the label; the label is the "
+                        f"minority race here, so this wants a new division "
+                        f"distance, not {div_pins} row pins")
                 minority += div_pins
             print(f"  clean rows untouched: {clean}/{len(rows)} ({frac:.0%})"
                   f"   pinned here: {div_pins}{note}")
@@ -509,9 +522,10 @@ def main():
             print(f"    {wide:>6}  from groups spanning more than "
                   f"{_WIDE_SPREAD:.0f}x in pace -- CHECK these")
         if minority:
-            print(f"    {minority:>6}  in divisions where the label already "
-                  f"describes a minority --\n            those want a new "
-                  f"division distance, not row pins")
+            print(f"    {minority:>6}  in divisions where a subgroup that ran "
+                  f"something else\n            OUTNUMBERS the rows matching "
+                  f"the label -- those want a new\n            division "
+                  f"distance, not row pins")
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 
