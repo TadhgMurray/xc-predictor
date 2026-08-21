@@ -153,8 +153,14 @@ def getCourseRankings(cur, f):
         SELECT row_number() OVER (ORDER BY {expr} {f['dir']} NULLS LAST,
                                   c.n_results DESC, lower(c.course_name) ASC)
                    AS rank,
-               c.course_name, c.state, c.distance_m, c.difficulty,
-               c.n_results, c.n_athletes, c.n_meets
+               c.course_name, c.canonical_id, c.state, c.distance_m,
+               c.difficulty,
+               c.n_results, c.n_athletes, c.n_meets,
+               -- ! WHEN TWO VENUES ANSWER TO ONE NAME, THE PAGE SAYS SO.
+                --   Otherwise the board shows "Firth Mud Run" twice with two
+                --   different difficulties and no explanation, which reads as
+                --   a bug in the ranking rather than as two real courses.
+               c.n_same_name
         FROM   course_rank c
         WHERE  TRUE {where}
         ORDER  BY {expr} {f['dir']} NULLS LAST,

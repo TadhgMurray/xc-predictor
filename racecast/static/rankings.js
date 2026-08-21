@@ -976,7 +976,13 @@ function renderCourses(rows) {
       <td class="rating ${d > 0 ? "hard" : "easy"}"
           title="${sense} than an average course">${d >= 0 ? "+" : ""}${d.toFixed(3)}
         <span class="sense">${sense}</span></td>
-      <td><a href="/course/${encodeURIComponent(r.course_name)}">${esc(r.course_name)}</a></td>
+      <td><a href="/course/${encodeURIComponent(r.course_name)}">${esc(r.course_name)}</a>${
+        r.n_same_name > 1
+          ? `<span class="sense" title="${r.n_same_name} different venues are `
+            + `called this. The engine keeps them apart by location; the state `
+            + `and meet count are left blank because they cannot be told apart `
+            + `by name.">1 of ${r.n_same_name} by this name</span>`
+          : ""}</td>
       <td><span class="state">${esc(r.state || "—")}</span></td>
       <td>${r.distance_m ? r.distance_m.toLocaleString() + "m" : "—"}</td>
       <td>${(r.n_results || 0).toLocaleString()}</td>

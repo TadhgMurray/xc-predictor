@@ -48,6 +48,10 @@ from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 try:
     from normalize_distance import poolFor
     from anchor_check import mismatch as anchorMismatch
+    # ★ THE SAME READER THE ENGINE AND anchor_check USE. Track keeps its
+    #   distance in the event name and event_parse is where that is read; a
+    #   second copy of that logic here would be a third way to get it wrong.
+    from event_parse import distanceFromEventShort
     from pool_resolve import resolvePool, inScope
 except ImportError as exc:
     raise SystemExit(
@@ -346,7 +350,23 @@ _SQL = {
                --   a gate that is not gating.
                r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
-               COALESCE(dov.distance, m.distance) AS distance,
+               -- ⚠ NO m.distance ON THIS SIDE. `m` here is tmp_tf_state, a
+               --   collapse of meets_tf on (meet, div, source) -- and it
+               --   cannot carry a distance even in principle, because on
+               --   track the distance belongs to the EVENT, not the meeting.
+               --   The 800 and the 3200 at one meet are one row of
+               --   tmp_tf_state and two distances. This query asked for
+               --   m.distance anyway and had done since that collapse landed;
+               --   it failed the first time a TF build ran afterwards, with
+               --   "column m.distance does not exist".
+               --
+               -- ★ SO TRACK TAKES ITS DISTANCE FROM THE EVENT NAME, which is
+               --   where track keeps it. event_parse.distanceFromEventShort
+               --   is the one reader of that -- anchor_check already uses it
+               --   for exactly this reason -- and prepareRow calls it below,
+               --   memoised on the event string.
+               dov.distance AS distance,
+               r.event_short,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -414,6 +434,27 @@ except ImportError:
 
     def _is_dodea(school):
         return False
+
+
+# ! MEMOISED ON THE EVENT STRING, NOT PER ROW. distanceFromEventShort is a
+#   dict lookup and then a parse; there are a few thousand distinct event
+#   names against ~24M track rows, so caching turns 24M parses into a few
+#   thousand. The cache is keyed on exactly what the query returns, including
+#   None, which resolves to None once rather than being re-parsed forever.
+_TF_DISTANCE = {}
+
+
+def _tfDistance(event_short):
+    """Metres for a track event name, or None. See event_parse."""
+    if event_short in _TF_DISTANCE:
+        return _TF_DISTANCE[event_short]
+    metres = None
+    if event_short:
+        got = distanceFromEventShort(event_short)
+        # ! (distance, gender) -- only the first is wanted here.
+        metres = got[0] if isinstance(got, (tuple, list)) else got
+    _TF_DISTANCE[event_short] = metres
+    return metres
 
 
 def _asDate(text):
@@ -582,7 +623,15 @@ def prepareRow(row, sport):
     #   above. results.speed_rating is untouched, so the athlete's own page
     #   still shows what the engine computed; what is refused is a place in a
     #   national ranking built on a scale the row was never measured on.
-    if anchorMismatch(row.get("time_seconds"), row.get("distance"),
+    # ★ TRACK'S DISTANCE COMES FROM THE EVENT NAME, and it has to be resolved
+    #   BEFORE the gate below, which cannot check a row whose distance is
+    #   None -- it would return "not a finding" on every TF row and the gate
+    #   would silently never fire. A hand-corrected override still wins.
+    distance = row.get("distance")
+    if distance is None and sport == "TF":
+        distance = _tfDistance(row.get("event_short"))
+
+    if anchorMismatch(row.get("time_seconds"), distance,
                       row.get("normalized_time"), pool, sport)[0]:
         return None
 
@@ -611,7 +660,7 @@ def prepareRow(row, sport):
             row["div_id"],
             row["canon_meet_id"],
             row["time_seconds"],
-            row.get("distance"),
+            distance,
             row.get("event_id"))
 
 
@@ -695,6 +744,18 @@ def buildSport(conn, sport, since, stats):
                 stats[f"{sport}_written"] += len(buffer)
 
     stats[f"{sport}_read"] = seen
+    # ⚠ SAY HOW MUCH OF TRACK GOT A DISTANCE AT ALL. It now comes from the
+    #   event name, and an event name the parser does not recognise leaves the
+    #   row with no distance -- which silently costs it a place on the
+    #   distance-filtered PR boards AND makes the anchor gate unanswerable for
+    #   it. A number here is how that gets noticed; event_parse's own header
+    #   records 7.1M rows once dropped by a narrower reader.
+    if sport == "TF" and _TF_DISTANCE:
+        unknown = sorted(k for k, v in _TF_DISTANCE.items() if v is None and k)
+        print(f"    TF distances: {len(_TF_DISTANCE) - len(unknown):,} of "
+              f"{len(_TF_DISTANCE):,} distinct event names parsed"
+              + (f" -- unparsed: {', '.join(unknown[:6])}"
+                 f"{' ...' if len(unknown) > 6 else ''}" if unknown else ""))
     print(f"    {sport}: {seen:,} read, {stats[f'{sport}_written']:,} written, "
           f"{stats[f'{sport}_dropped']:,} dropped")
 
