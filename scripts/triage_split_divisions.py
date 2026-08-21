@@ -404,6 +404,8 @@ def main():
     ap.add_argument("--corrections",
                     default=os.path.join("engine", "corrections.py"))
     ap.add_argument("--dir", default="scripts")
+    ap.add_argument("--exclude-flagged", action="store_true",
+                    help="write only pins carrying no WIDE or LABEL? flag")
     ap.add_argument("--write", action="store_true",
                     help="emit result_override_<sport>.py (default: report only)")
     args = ap.parse_args()
@@ -453,6 +455,7 @@ def main():
                 n_mute += 1
                 continue
             div_pins = biggest = 0
+            here_rows = []
             for side in ("fast", "slow"):
                 verdict, snap, members, votes = _subgroup(rows, label, b, side)
                 if verdict == "TOO_SMALL":
@@ -491,8 +494,10 @@ def main():
                       f"sane){extra}")
                 biggest = max(biggest, len(members))
                 for rid, _ in members:
-                    pins[rid] = (snap, meet, div, side)
+                    pins[rid] = [snap, meet, div, side,
+                                 "WIDE" if spread > _WIDE_SPREAD else ""]
                     div_pins += 1
+                    here_rows.append(rid)
             clean = sum(1 for _, _, g in rows if abs(g) <= _SPIKE)
             frac = clean / len(rows)
             note = ""
@@ -502,6 +507,8 @@ def main():
                         f"minority race here, so this wants a new division "
                         f"distance, not {div_pins} row pins")
                 minority += div_pins
+                for rid in here_rows:
+                    pins[rid][4] = (pins[rid][4] + "+LABEL?").lstrip("+")
             print(f"  clean rows untouched: {clean}/{len(rows)} ({frac:.0%})"
                   f"   pinned here: {div_pins}{note}")
         conn.rollback()
@@ -529,6 +536,14 @@ def main():
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 
+    # ⚠ THE FLAGS HAVE TO GATE THE WRITE, not just the printout. A run that
+    #   names 384 doubtful pins and then writes them anyway has told the
+    #   reader something and done the opposite.
+    if args.exclude_flagged:
+        held = {r for r, v in pins.items() if v[4]}
+        pins = {r: v for r, v in pins.items() if not v[4]}
+        print(f"\n  --exclude-flagged: holding {len(held)} flagged pins, "
+              f"writing {len(pins)}")
     if args.write and pins:
         path = os.path.join(args.dir, f"result_override_{args.sport.lower()}.py")
         with open(path, "w", encoding="utf-8") as f:
@@ -538,10 +553,10 @@ def main():
                     "# guarded. Merge into _RESULT_OVERRIDE_"
                     f"{args.sport}.\n"
                     "_RESULT_OVERRIDE_ADDITIONS = {\n")
-            for rid, (snap, meet, div, side) in sorted(pins.items()):
+            for rid, (snap, meet, div, side, flag) in sorted(pins.items()):
                 f.write(f"    {rid}: ({snap}, None),  "
-                        f"# {side} subgroup, meet/div {meet}/{div}, "
-                        f"split 7/14\n")
+                        f"# {side} subgroup, meet/div {meet}/{div}"
+                        f"{'  ' + flag if flag else ''}\n")
             f.write("}\n")
         print(f"wrote {path}")
     elif args.write:
