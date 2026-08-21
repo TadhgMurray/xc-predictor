@@ -44,6 +44,55 @@ sys.path.insert(0, "scripts")
 from database import getConn, initPool
 
 _TABLE = {"XC": "results", "TF": "results_tf"}
+
+# ★ THE LABEL DISTANCE, FROM WHEREVER IT ACTUALLY LIVES.
+#
+#   This tool used to read the label out of _DISTANCE_OVERRIDES only, and skip
+#   any division without one -- "this lane is for overridden zoo divisions".
+#   That was true when the zoo WAS the overridden set. propose_distances
+#   --merged now finds merged divisions across the whole corpus, and 222 of
+#   the 320 it verified have no override at all: they are merged at their
+#   SCRAPED distance. Skipping those left the tool unable to fix the cases it
+#   was built for.
+#
+# ⚠ THE ORDER MATTERS AND IT IS THE BACKFILL'S ORDER. A hand-written override
+#   beats the scraped column, because that is what normalisation used, and the
+#   swing being inverted here was measured against exactly that number. Read
+#   them in any other order and every implied distance is wrong by their ratio.
+#
+# ! tfrrs KEEPS ITS DISTANCE IN A JSON BLOB keyed by div_id as a STRING, and
+#   every college cross country meet is tfrrs. Without this half, the college
+#   side of the sport reports "no distance on file" and is skipped.
+_LABEL_SQL = {
+    "XC": """
+        SELECT COALESCE(
+            (SELECT m.distance FROM meets m
+              WHERE m.meet_id = %(meet)s AND m.div_id = %(div)s
+                AND m.distance IS NOT NULL LIMIT 1),
+            (SELECT (mt.division_distances -> %(divtext)s ->> 'distance')::float
+               FROM meets_tfrrs mt
+              WHERE mt.meet_id = %(meet)s AND mt.sport = 'XC' LIMIT 1)
+        )
+    """,
+    # Track carries its distance in the event name, not a column, and this
+    # tool has no event parser. TF divisions still need an override.
+    "TF": None,
+}
+
+
+def labelDistance(cur, sport, meet, div, overrides):
+    """(metres, where_it_came_from) for a division, or (None, why not)."""
+    pinned = overrides.get((meet, div))
+    if pinned:
+        return float(pinned), "dist_override"
+    sql = _LABEL_SQL.get(sport)
+    if sql is None:
+        return None, "no override, and TF has no distance column to fall back on"
+    cur.execute(sql, {"meet": meet, "div": div, "divtext": str(div)})
+    row = cur.fetchone()
+    if row and row[0]:
+        return float(row[0]), "the distance tables"
+    return None, "no distance on file anywhere"
 _B = {"XC": 1.00, "TF": 1.10}          # distance-law exponent stand-ins (7/12 doc)
 
 _SPIKE = 15.0                          # |gap%| beyond which a row is "spiked"
@@ -201,28 +250,43 @@ def main():
 
     pairs = list(map(tuple, args.pair or []))
     if args.pairs_file:
-        for line in open(args.pairs_file, encoding="utf-8"):
-            if line.strip():
-                m, d = line.split()
-                pairs.append((int(m), int(d)))
+        # ⚠ COMMENTS AND TRAILING FIELDS BOTH HAVE TO SURVIVE. The old parser
+        #   did `m, d = line.split()` on every non-blank line, so a work list
+        #   with a header -- which is what propose_distances --pairs-out
+        #   writes, naming the command that consumes it -- died on line 1 with
+        #   a ValueError about unpacking. A file somebody can read has to be a
+        #   file this can read.
+        for lineno, line in enumerate(open(args.pairs_file, encoding="utf-8"),
+                                      start=1):
+            text = line.split("#", 1)[0].strip()
+            if not text:
+                continue
+            bits = text.split()
+            if len(bits) < 2:
+                print(f"  {args.pairs_file}:{lineno}: not a 'meet div' pair, "
+                      f"skipped: {line.strip()!r}")
+                continue
+            pairs.append((int(bits[0]), int(bits[1])))
     if not pairs:
         sys.exit("no divisions given: --pair or --pairs-file")
 
     overrides = _importByPath(args.corrections, "_corr") \
         ._DISTANCE_OVERRIDES_BY_SPORT[args.sport]
+    n_skipped = 0
     table, b = _TABLE[args.sport], _B[args.sport]
 
     pins, drop_queue = {}, []
     initPool()
     with getConn() as conn, conn.cursor() as cur:
         for meet, div in pairs:
-            label = overrides.get((meet, div))
+            label, whence = labelDistance(cur, args.sport, meet, div, overrides)
             if label is None:
-                print(f"{meet}/{div}: no override on file -- skipped "
-                      f"(this lane is for overridden zoo divisions)")
+                print(f"{meet}/{div}: skipped -- {whence}")
+                n_skipped += 1
                 continue
             rows = _rows(cur, table, meet, div)
-            print(f"\n== {meet}/{div}  label={label}  rows={len(rows)} ==")
+            print(f"\n== {meet}/{div}  label={label} (from {whence})  "
+                  f"rows={len(rows)} ==")
             div_pins = 0
             for side in ("fast", "slow"):
                 verdict, snap, members, votes = _subgroup(rows, label, b, side)
@@ -253,7 +317,9 @@ def main():
         conn.rollback()
 
     print(f"\nTOTAL: {len(pins)} per-row pins proposed; "
-          f"{len(drop_queue)} subgroups to the human queue")
+          f"{len(drop_queue)} subgroups to the human queue"
+          + (f"; {n_skipped} divisions skipped for want of a distance"
+             if n_skipped else ""))
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 

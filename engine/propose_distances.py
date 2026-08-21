@@ -32,9 +32,18 @@ from somewhere other than the times.
   no wild change in magnitude. Everything else stays in the CSV for a human.
 
 Usage:
-    python tools/propose_distances.py                 # rebuild shifts, propose
-    python tools/propose_distances.py --no-rebuild    # reuse ovr_shift
-    python tools/propose_distances.py --write         # append the safe subset
+    python engine/propose_distances.py                 # rebuild shifts, propose
+    python engine/propose_distances.py --no-rebuild    # reuse ovr_shift
+    python engine/propose_distances.py --write         # append the safe subset
+    python engine/propose_distances.py --merged        # divisions holding TWO races
+    python engine/propose_distances.py --merged --pairs-out merged.txt
+                                                       # ... and the work list
+
+★ A MERGED DIVISION IS NOT A DISTANCE PROBLEM AND --merged DOES NOT PROPOSE
+  ONE. Two races in one bucket have two true distances, so any single number
+  is wrong for half the field. The remedy is a per-ROW split, and the tool for
+  that already exists -- scripts/triage_split_divisions.py, built for the
+  9889/9888 surgery. --pairs-out writes the file it reads.
 """
 import csv, io, math, os, statistics, sys
 
@@ -927,8 +936,23 @@ def verifyMerged(cur, meet_id, div_id):
     return n, q25, q75, small_side, anom, ref, gap
 
 
-def reportMerged(cur, limit=40):
-    """Divisions whose own athletes do not agree about the distance."""
+def reportMerged(cur, limit=40, pairs_out=None):
+    """Divisions whose own athletes do not agree about the distance.
+
+    ★ AND IT CAN HAND THE LIST STRAIGHT TO THE SPLITTER. There is already a
+      per-row splitter -- scripts/triage_split_divisions.py, built for the
+      9889/9888 surgery -- and the only thing between it and these divisions
+      was that nobody could get the list out of here without retyping 222
+      meet/div pairs. --pairs-out writes the file it takes:
+
+          python engine/propose_distances.py --merged --pairs-out merged.txt
+          python scripts/triage_split_divisions.py --sport XC \
+                 --pairs-file merged.txt
+
+    ! EVERY VERIFIED DIVISION IS WRITTEN, not just the ones printed. The
+      table is capped at `limit` because a screen is a screen; the file is
+      the work list.
+    """
     cur.execute(_MERGED_SQL, {"min_rows": MIN_ROWS, "iqr": MERGED_IQR,
                               "lim": limit * 8})
     candidates = cur.fetchall()
@@ -979,6 +1003,21 @@ def reportMerged(cur, limit=40):
           "cannot\n      fix a division that held two races. See "
           "_RESULT_OVERRIDE_XC.\n")
     kept.sort(reverse=True)
+
+    if pairs_out:
+        # ⚠ THE SPLITTER READS "meet div" AND NOTHING ELSE, so the numbers
+        #   come first and the evidence goes behind a #. Its parser splits on
+        #   whitespace and takes two fields.
+        with io.open(pairs_out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# meet div -- verified merged divisions from "
+                     "propose_distances --merged\n")
+            fh.write("# feed to: python scripts/triage_split_divisions.py "
+                     "--sport XC --pairs-file <this>\n")
+            for _r, meet_id, div_id, n, small, anom, ref, gap in kept:
+                fh.write(f"{meet_id} {div_id}\n")
+        print(f"    -> {len(kept):,} divisions written to {pairs_out}\n"
+              f"       feed it to scripts/triage_split_divisions.py "
+              f"--pairs-file\n")
     # ★ AND THE SMALL GROUP'S IMPLIED DISTANCE, which turns a spread into a
     #   claim you can check by eye. Their shift sits at lo_mid where the rest
     #   of the field sits at hi_mid, so they ran
@@ -1021,7 +1060,7 @@ def reportMerged(cur, limit=40):
 
 
 def main(rebuild=True, write=False, explain_keys=(),
-         merged=False, repair=False):
+         merged=False, repair=False, pairs_out=None):
     if repair:
         # ★ ITS OWN COMMAND, because the file is currently unimportable and
         #   the ordinary --write path would have to import nothing but still
@@ -1104,7 +1143,7 @@ def main(rebuild=True, write=False, explain_keys=(),
     if merged:
         # Its own exit: this is a question, and it names a different remedy.
         with getConn() as conn, conn.cursor() as cur:
-            reportMerged(cur)
+            reportMerged(cur, pairs_out=pairs_out)
         return
 
     if explain_keys:
@@ -1168,8 +1207,17 @@ def _explainArgs(argv):
 
 
 if __name__ == "__main__":
+    def _after(flag, default=None):
+        """The value after a flag, or `default` when it is absent or last."""
+        if flag in sys.argv:
+            i = sys.argv.index(flag)
+            if i + 1 < len(sys.argv):
+                return sys.argv[i + 1]
+        return default
+
     main(rebuild="--no-rebuild" not in sys.argv,
          write="--write" in sys.argv,
          explain_keys=_explainArgs(sys.argv),
          merged="--merged" in sys.argv,
-         repair="--repair" in sys.argv)
+         repair="--repair" in sys.argv,
+         pairs_out=_after("--pairs-out"))
