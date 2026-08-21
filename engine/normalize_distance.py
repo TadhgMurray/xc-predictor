@@ -426,7 +426,50 @@ def loadGraphLevels():
     return _GRAPH_LEVELS
 
 
+# ★ A SCHOOL THAT NAMES ITSELF A UNIVERSITY IN ANY LANGUAGE BUT ENGLISH IS A
+#   UNIVERSITY. Guillaume Tremblay's feed writes "Université Laval Rouge et
+#   Or" with grades 5, 6 and 7 -- a Québec programme year, which the grade
+#   machinery reads as a middle schooler running 1:54 for 800m. The school
+#   string says what the grade cannot, and it says it unambiguously.
+#
+# ⚠ AND THAT IS EXACTLY WHY PLAIN ENGLISH "University" IS NOT IN HERE. The
+#   corpus is full of high schools called University High School -- Normal
+#   (University), Urbana (University) and Chicago (University) were all on the
+#   Illinois boards last week -- and "Hidalgo Early College" is a Texas high
+#   school. An English word-match would move hundreds of teenagers into the
+#   college pool to rescue a handful of Québécois, which is the wrong trade.
+#   The accented and foreign forms carry no such collision.
+#
+# ! CÉGEP IS IN, and is the same case one level down: a Québec CEGEP is
+#   post-secondary, and "Cegep de Saint-Laurent" was sitting in ms_m.
+_FOREIGN_UNIVERSITY = re.compile(
+    r"\b("
+    r"universit[ée]s?"          # French   (université, universites)
+    r"|universidad(es)?"        # Spanish
+    r"|universidade"            # Portuguese
+    r"|universit[àa]"           # Italian
+    r"|universiteit"            # Dutch
+    r"|universit[äa]t"          # German
+    r"|uniwersytet"             # Polish
+    r"|c[ée]gep"                # Québec CEGEP
+    r")\b",
+    re.IGNORECASE)
+
+
+def isForeignUniversity(school):
+    """True when the school NAMES itself a university in a language that has
+    no high-school collision. See _FOREIGN_UNIVERSITY."""
+    return bool(school) and bool(_FOREIGN_UNIVERSITY.search(str(school)))
+
+
 def levelForSchool(school):
+    # ! BEFORE THE LOOKUPS, because neither the graph nor the pickle has ever
+    #   seen these schools -- they are foreign, so no US grade feed describes
+    #   them, which is the whole reason their athletes were being pooled by a
+    #   grade that means something else.
+    if isForeignUniversity(school):
+        return "college"
+
     key = normSchoolKey(school)
     if not key:
         return None
@@ -744,6 +787,18 @@ def poolFor(grade, gender, source, school=None, season_level=None):
     #   every anet row. That is deliberate: poolFor is imported by both fitters,
     #   and a silent divergence between them and the backfill is the precise
     #   failure this SSOT exists to prevent.
+    # ★ A FOREIGN UNIVERSITY OUTRANKS THE GRADE, AND ONLY THIS DOES.
+    #   Everything else here treats the grade as the strongest evidence, for
+    #   good reason. But "Université Laval Rouge et Or" with grade 7 is not a
+    #   seventh grader: the number is a Québec programme year, and the school
+    #   string is the one field in the row that says so. A US high school is
+    #   never called université, so nothing else can be caught by this.
+    #
+    #   isForeignUniversity is deliberately narrow -- no English "University",
+    #   because University High School is a real and common name. See it.
+    if isForeignUniversity(school):
+        return levelToPool("college", gender)
+
     grade_level = GRADE_TO_LEVEL.get(normalizeGrade(grade))
     # grade is passed too: guard 2 needs the raw grade, because 9 and 12
     # both map to 'hs' and only one of them may be demoted.
