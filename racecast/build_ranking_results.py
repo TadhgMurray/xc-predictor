@@ -53,6 +53,7 @@ try:
     #   second copy of that logic here would be a third way to get it wrong.
     from event_parse import distanceFromEventShort
     from dbfast import tuneSession
+    from pool_ceiling import ceilingFor
     from pool_resolve import resolvePool, inScope
 except ImportError as exc:
     raise SystemExit(
@@ -513,6 +514,31 @@ _COPY_ESCAPES = str.maketrans({
 })
 
 
+# How much higher a SINGLE RACE may rate than the pool's season ceiling.
+# A season mean averages an athlete's good days with their bad ones, so one
+# race legitimately sits above it -- but not by half again, which is what a
+# mis-anchored row does. 10 points is about 7% at these ceilings.
+#
+# ⚠ NOT MEASURED YET, AND SAYING SO. The season ceilings in pool_ceiling.py
+#   were set from audit_pool_ceilings against the corpus; this margin is a
+#   first guess on top of them. audit_pool_ceilings --races prints the
+#   single-race distribution and the athletes each candidate would drop, and
+#   this number should be set from that the same way the others were.
+RACE_MARGIN = 10.0
+
+
+def raceCeiling(pool):
+    """The highest rating one RACE may carry and still reach a board."""
+    return ceilingFor(pool) + RACE_MARGIN
+
+
+# What the two rails did, per sport, so a build that stops gating says so.
+_GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
+                "outside_pool": 0},
+         "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
+                "outside_pool": 0}}
+
+
 def isRankablePool(pool):
     """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a board."""
     return bool(pool) and not pool.endswith("_unknown_gender")
@@ -644,12 +670,57 @@ def prepareRow(row, sport):
         #   lists drifting apart again.
         distance = _tfDistance(getattr(row, "event_short", None))
 
-    if anchorMismatch(row.time_seconds, distance,
-                      row.normalized_time, pool, sport)[0]:
+    # ⚠ AND IT COUNTS WHAT IT COULD NOT CHECK. mismatch() returns "not a
+    #   finding" when the row has no distance -- the honest answer to an
+    #   unanswerable question, but it means the row is PUBLISHED UNCHECKED.
+    #   Cross country takes its distance from dist_override or meets, and
+    #   where neither has one the gate is silently inert for that row. A
+    #   build that cannot check a third of its rows and does not say so is
+    #   the "gate that is not gating" this file's own comment warns about, so
+    #   the counts are printed per sport at the end of buildSport.
+    is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
+                                              row.normalized_time, pool, sport)
+    if ratio is None:
+        _GATE[sport]["unchecked"] += 1
+    elif is_bad:
+        _GATE[sport]["mismatched"] += 1
         return None
+    else:
+        _GATE[sport]["checked"] += 1
 
     rating = float(row.speed_rating)
     if not (_RATING_MIN <= rating <= _RATING_MAX):
+        return None
+
+    # ★ AND A RATING OUTSIDE ITS OWN POOL IS A POOLING ERROR, NOT A RECORD.
+    #   The rail above is a FOSSIL: 20..200 exists to catch a speed_rating of
+    #   7528 on a 20-second time, and 159 sails through it in every pool
+    #   because 159 is a real number for somebody -- just not for a high
+    #   schooler running 21:32 for three miles.
+    #
+    # ⚠ THE BOARDS WERE FULL OF EXACTLY THAT. The whole top-25 of the 2025
+    #   hs_m XC board was one meet, times 21:32 to 21:55, every one rated
+    #   157-159. A 21:32 three-mile normalised on its own pool's anchor rates
+    #   92. The same athlete's page showed 14:28.1 and 14:45.9 over the SAME
+    #   3219m course rated 177.2 and 108.1 -- a ratio of 1.639, which is the
+    #   ms-against-hs anchor ratio and nothing else. The anchor gate above is
+    #   meant to catch that, and cannot when the row has no distance to
+    #   recompute with.
+    #
+    # ! SO THIS IS THE RAIL THAT DOES NOT NEED A DISTANCE. It is the same
+    #   ceiling build_team_season applies per athlete-season and the same one
+    #   audit_pool_ceilings measures, applied per RACE -- and it drops from
+    #   the BOARDS only, exactly like grade_trust='low' and the anchor gate.
+    #   The athlete's own page still shows what the engine computed.
+    #
+    # ⚠ A SEASON MEAN AND A SINGLE RACE ARE NOT THE SAME DISTRIBUTION, which
+    #   is why this is not simply ceilingFor(pool). One race can beat a
+    #   season average, so the line sits RACE_MARGIN above it. Measure the
+    #   single-race distribution with audit_pool_ceilings --races before
+    #   moving it, and read the names it drops: a real athlete above the line
+    #   means the line is wrong.
+    if rating > raceCeiling(pool):
+        _GATE[sport]["outside_pool"] += 1
         return None
 
     date_text = row.date
@@ -770,6 +841,17 @@ def buildSport(conn, sport, since, stats):
               f"{len(_TF_DISTANCE):,} distinct event names parsed"
               + (f" -- unparsed: {', '.join(unknown[:6])}"
                  f"{' ...' if len(unknown) > 6 else ''}" if unknown else ""))
+    g = _GATE[sport]
+    total = g["checked"] + g["mismatched"] + g["unchecked"]
+    if total:
+        print(f"    anchor gate: {g['checked']:,} checked, "
+              f"{g['mismatched']:,} dropped as mis-anchored, "
+              f"{g['unchecked']:,} UNCHECKED "
+              f"({100.0 * g['unchecked'] / total:.1f}% -- no distance, so the "
+              f"gate could not fire on them)")
+    if g["outside_pool"]:
+        print(f"    pool ceiling: {g['outside_pool']:,} races dropped as "
+              f"implausible for their pool (see RACE_MARGIN)")
     print(f"    {sport}: {seen:,} read, {stats[f'{sport}_written']:,} written, "
           f"{stats[f'{sport}_dropped']:,} dropped")
 
@@ -1078,13 +1160,28 @@ def refreshAthleteSeason(conn):
 # ------------------------------------------------------------------ #
 
 def main():
+    global RACE_MARGIN
     parser = argparse.ArgumentParser(
         description="Fill ranking_results and athlete_season. "
                     "Run after every engine run.")
     parser.add_argument("--sport", choices=["XC", "TF", "both"], default="both")
     parser.add_argument("--since", default="1990-01-01",
                         help="earliest race date to include")
+    # ! SO THE RAIL CAN BE MEASURED. audit_pool_ceilings --races can only see
+    #   what this build admitted, which is circular while the rail is on. One
+    #   pass with a huge margin publishes everything, and then the
+    #   distribution above the line is visible and RACE_MARGIN can be set from
+    #   it rather than guessed.
+    parser.add_argument("--race-margin", type=float, default=RACE_MARGIN,
+                        help=f"how far above its pool's season ceiling one "
+                             f"race may rate (default {RACE_MARGIN:.0f}; pass "
+                             f"1000 to disable the rail for a measuring run)")
     args = parser.parse_args()
+
+    RACE_MARGIN = args.race_margin
+    if args.race_margin > 100:
+        print(f"  ⚠ RACE MARGIN {args.race_margin:.0f} -- the pool rail is "
+              f"effectively OFF for this run. Measure, then set it back.")
 
     sports = ("XC", "TF") if args.sport == "both" else (args.sport,)
     stats = {f"{s}_{k}": 0

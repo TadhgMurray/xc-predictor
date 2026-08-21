@@ -98,6 +98,101 @@ _TAIL_SCHOOLS_SQL = """
 """
 
 
+_RACE_DIST_SQL = """
+    SELECT pool,
+           count(*)                                            AS n,
+           round(percentile_cont(0.99) WITHIN GROUP
+                 (ORDER BY best_rating)::numeric, 1)           AS p99,
+           round(percentile_cont(0.999) WITHIN GROUP
+                 (ORDER BY best_rating)::numeric, 1)           AS p999,
+           round(percentile_cont(0.9999) WITHIN GROUP
+                 (ORDER BY best_rating)::numeric, 1)           AS p9999,
+           round(max(best_rating)::numeric, 1)                 AS top
+    FROM   athlete_season
+    WHERE  best_rating IS NOT NULL
+      AND  pool = ANY(%(pools)s)
+      AND  state = ANY(%(states)s)
+      AND  year >= %(since)s
+      AND  (%(sport)s = 'both' OR sport = %(sport)s)
+    GROUP  BY pool
+    ORDER  BY pool
+"""
+
+_RACE_TOP_SQL = """
+    SELECT school, state, year, sport,
+           round(best_rating::numeric, 1) AS rating,
+           round(mean_rating::numeric, 1) AS season, n_races
+    FROM   athlete_season
+    WHERE  pool = %(pool)s AND best_rating IS NOT NULL
+      AND  state = ANY(%(states)s) AND year >= %(since)s
+      AND  (%(sport)s = 'both' OR sport = %(sport)s)
+    ORDER  BY best_rating DESC
+    LIMIT  %(lim)s
+"""
+
+
+def _races(args):
+    """The single-race distribution, for RACE_MARGIN.
+
+    ⚠ THIS SEES ONLY WHAT THE RAIL ALREADY ADMITTED, and that is circular by
+      construction: athlete_season is built from ranking_results, and
+      ranking_results has already dropped every race above the current line.
+      So this can tell you whether the line is cutting REAL athletes -- read
+      the names -- but it cannot show you what sits above it.
+
+      To see above it, run one build with the rail effectively off:
+
+          python racecast/build_ranking_results.py --race-margin 1000
+
+      then measure, set RACE_MARGIN, and rebuild. That is the same loop the
+      season ceilings were set with, one level down.
+    """
+    import psycopg2.extras
+    from build_ranking_results import RACE_MARGIN, raceCeiling
+
+    base = {"pools": sorted(POOLS), "states": list(US_STATES),
+            "since": args.since, "sport": args.sport}
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(_RACE_DIST_SQL, base)
+            dist = cur.fetchall()
+            print(f"\nBEST SINGLE RACE PER ATHLETE-SEASON, sport="
+                  f"{args.sport}, since={args.since}")
+            print(f"  (the race rail sits at the season ceiling + "
+                  f"RACE_MARGIN = {RACE_MARGIN:.0f})\n")
+            print(f"  {'pool':<12}{'n':>10}{'p99':>8}{'p99.9':>8}"
+                  f"{'p99.99':>9}{'max':>8}{'season':>9}{'race':>8}")
+            print("  " + "-" * 72)
+            for r in dist:
+                print(f"  {r['pool']:<12}{r['n']:>10,}{r['p99']:>8}"
+                      f"{r['p999']:>8}{r['p9999']:>9}{r['top']:>8}"
+                      f"{ceilingFor(r['pool']):>9.0f}"
+                      f"{raceCeiling(r['pool']):>8.0f}")
+
+            print("\n\nTHE FASTEST SINGLE RACES, BY NAME")
+            print("  ⚠ A real athlete at the top means the margin is too "
+                  "tight. Counts cannot tell you this.\n")
+            for r in dist:
+                pool = r["pool"]
+                line = raceCeiling(pool)
+                cur.execute(_RACE_TOP_SQL, {**base, "pool": pool,
+                                            "lim": args.names})
+                print(f"  {pool}  (race line {line:.0f})")
+                for row in cur.fetchall():
+                    flag = "AT LINE" if row["rating"] >= line - 5 else "       "
+                    print(f"    {flag}  {row['rating']:>6}  "
+                          f"(season {row['season']:>6})  "
+                          f"{(row['school'] or '?')[:32]:<32} "
+                          f"{row['state'] or '--':<3} {row['year']} "
+                          f"{row['sport']}")
+                print()
+
+    print("Set RACE_MARGIN in racecast/build_ranking_results.py from the "
+          "above, then rerun that build.")
+    print(_races.__doc__.split("To see above it")[1].split("then measure")[0]
+          .strip())
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Measure each pool's rating distribution, so "
@@ -108,7 +203,20 @@ def main():
                     help="match build_team_season.MIN_RACES (default 2)")
     ap.add_argument("--names", type=int, default=12,
                     help="how many top athlete-seasons to name per pool")
+    # ★ THE SINGLE-RACE DISTRIBUTION, WHICH IS A DIFFERENT DISTRIBUTION.
+    #   build_ranking_results now drops a RACE whose rating is implausible for
+    #   its pool, at ceilingFor(pool) + RACE_MARGIN -- and a season mean is
+    #   not a race. One race legitimately beats a season average, so the two
+    #   lines cannot be the same number and this is how the second one gets
+    #   measured instead of guessed.
+    ap.add_argument("--races", action="store_true",
+                    help="measure best single races (athlete_season."
+                         "best_rating) instead of season means, for "
+                         "build_ranking_results.RACE_MARGIN")
     args = ap.parse_args()
+
+    if args.races:
+        return _races(args)
 
     base = {"min_races": args.min_races, "pools": sorted(POOLS),
             "states": list(US_STATES), "since": args.since,
