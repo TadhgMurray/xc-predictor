@@ -133,9 +133,23 @@ CONTEXT_FEATURES  = 20
 GEO_LAT_CENTER, GEO_LAT_SCALE = 39.0, 10.0
 GEO_LON_CENTER, GEO_LON_SCALE = -98.0, 20.0
 
-# TODO: replace with real pass 1 once TF scraping completes and we
-# can check realistic max_len from actual data.
-MAX_SEQ_LEN_PLACEHOLDER = 500
+# ★ THE SEQUENCE CAP, MEASURED. Was a placeholder of 500 with a TODO. The
+#   corpus says (60.3M rated races over 7.1M per-source athlete ids):
+#
+#       median 3 races    p90 22    p99 70    p99.9 120    max 331
+#
+#   so 500 was padding ~99.9% of every example with nothing. Attention is
+#   O(L^2) and the saved tensor is [N, L, 17], so that placeholder cost 61x
+#   the attention of a 64 cap and 2.7 TB of chunk files.
+#
+# ⚠ 64 IS A TRUNCATION, AND IT TRUNCATES THE OLDEST RACES. 1.3% of athletes
+#   have more than 64, and they keep their most recent 64 -- the half of a
+#   career that predicts the next race. A freshman's results are weak evidence
+#   about a senior. 96.6% of all races survive untouched.
+#
+# ! THE REAL MAX IS STILL MEASURED AND PRINTED at save time; this is a bound
+#   on it, not a substitute for looking. See saveAll.
+MAX_SEQ_LEN = 64
 
 # ------------------------------------------------------------------ #
 # CHUNK 1 — DATABASE QUERIES
@@ -584,14 +598,38 @@ def loadAllResults() -> list[dict]:
 # Arguments:
 #           results: flat list of result dicts from loadAllResults.
 # Output: {athlete_id: [result, result, ...]} sorted by date.
+# _identity
+# Purpose: the key a sequence is grouped under -- one runner, one history.
+#
+# ⚠ athlete_id IS NOT A PERSON. It is a per-SOURCE id: the same runner scraped
+#   from anet and from tfrrs carries two of them, and grouping on it hands the
+#   model two people with half a career each. Every other consumer in this
+#   project resolves identity as COALESCE(person_id, athlete_id) -- the
+#   linkage pass exists precisely so that person_id ties those copies
+#   together -- and the extractor was the one place that did not.
+#
+#   The damage is worst exactly where the model needs history most: a senior
+#   with four years of racing split across two sources looks like two
+#   two-year athletes, so every example built from them sees half the
+#   sequence it should.
+#
+# ! TAGGED, NOT COALESCED. person_id and athlete_id are separate id spaces, so
+#   a bare COALESCE can collide a person_id with an unrelated athlete_id. The
+#   tag keeps them apart; the key is opaque to every consumer, which only ever
+#   iterates .items() for the value.
+def _identity(row):
+    pid = row.get("person_id")
+    return ("p", pid) if pid is not None else ("a", row["athlete_id"])
+
+
 def groupByAthlete(results: list) -> dict:
  
     # defaultdict(list) creates an empty list for any new key automatically.
     by_athlete = defaultdict(list)
- 
+
     for r in results:
-        by_athlete[r["athlete_id"]].append(r)
- 
+        by_athlete[_identity(r)].append(r)
+
     print(f"Grouped into {len(by_athlete):,} athletes")
     return by_athlete
 
@@ -1642,9 +1680,9 @@ def _saveEncoders(encoders: dict, output_dir: str) -> None:
     print(f"  Saved {path}")
 
 # saveAll
-# Purpose: Two-pass chunked save. Pass 1 finds max_len (placeholder
-#          for now — TODO: replace with real pass once we know realistic
-#          sequence lengths from actual data). Pass 2 builds examples
+# Purpose: Two-pass chunked save. Pass 1 measures the real sequence-length
+#          distribution and applies the MAX_SEQ_LEN cap, printing both so the
+#          cap can be checked rather than trusted. Pass 2 builds examples
 #          in batches of CHUNK_SIZE, pads each batch to max_len, saves
 #          each chunk to model/data/chunk_NNNN.pt immediately, then
 #          discards it — keeps memory flat regardless of dataset size.
@@ -1662,10 +1700,26 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # TODO: Pass 1 — iterate all athletes to find real max_len.
-    # For now use placeholder.
-    max_len = MAX_SEQ_LEN_PLACEHOLDER
-    print(f"Using placeholder max_len: {max_len} (TODO: fit from data)")
+    # PASS 1 — the real distribution, then the cap. Counting is cheap
+    # (one len() per athlete) and it is the only way to know whether the cap
+    # is doing what the comment on MAX_SEQ_LEN claims.
+    lengths = sorted(len(v) for v in by_athlete.values())
+    n = len(lengths)
+    def pct(f):
+        return lengths[min(n - 1, int(f * n))] if n else 0
+    longest = lengths[-1] if n else 0
+    over = sum(1 for L in lengths if L > MAX_SEQ_LEN)
+    kept = sum(min(L, MAX_SEQ_LEN) for L in lengths)
+    total = sum(lengths)
+    max_len = min(longest, MAX_SEQ_LEN)
+    print(f"  sequence lengths over {n:,} athletes: "
+          f"median {pct(.50)}  p90 {pct(.90)}  p99 {pct(.99)}  "
+          f"max {longest}")
+    print(f"  cap {MAX_SEQ_LEN}: truncating {over:,} athletes "
+          f"({100.0 * over / max(n, 1):.2f}%), keeping "
+          f"{100.0 * kept / max(total, 1):.1f}% of all races")
+    if max_len < MAX_SEQ_LEN:
+        print(f"  no athlete reaches the cap -- padding to {max_len} instead")
 
     # Pass 2 — build tensors, pad, save in chunks.
     chunk_idx     = 0
