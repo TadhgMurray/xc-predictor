@@ -58,8 +58,17 @@ _SQL = {
                dov.distance                       AS override_distance,
                m3.distance                        AS meets3_distance,
                m2.distance                        AS meets2_distance,
-               COALESCE(m3.meet_name, m2.meet_name) AS meet_name,
-               COALESCE(m3.course_name, m2.course_name) AS course_name,
+               -- ★ tfrrs KEEPS THE DISTANCE IN A JSON BLOB, keyed by the
+               --   per-meet div_id as a STRING. audit_overrides reads the
+               --   same field the same way; without it every college XC row
+               --   here reported "no distance from any source", which is a
+               --   false accusation rather than a finding.
+               (mt.division_distances -> r.div_id::text ->> 'distance')::float
+                                                  AS tfrrs_distance,
+               COALESCE(m3.meet_name, m2.meet_name,
+                        mt.meet_name, mt.venue_name)  AS meet_name,
+               COALESCE(m3.course_name, m2.course_name,
+                        mt.venue_name)                AS course_name,
                NULL::text                         AS event_short,
                k.pool                             AS rated_pool,
                (k.result_id IS NOT NULL)          AS on_the_boards
@@ -78,6 +87,11 @@ _SQL = {
                    WHERE  div_id = r.div_id AND source = r.source
                    LIMIT  1
                ) m2 ON TRUE
+        -- The tfrrs side, guarded in the ON clause so an anet row keeps its
+        -- own `meets` data and simply never matches here.
+        LEFT   JOIN meets_tfrrs mt
+                 ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                AND mt.sport = 'XC'
         LEFT   JOIN ranking_results k
                  ON k.result_id = r.result_id AND k.sport = 'XC'
         WHERE  {where}
@@ -91,6 +105,7 @@ _SQL = {
                dov.distance              AS override_distance,
                NULL::real                AS meets3_distance,
                NULL::real                AS meets2_distance,
+               NULL::float               AS tfrrs_distance,
                mt.meet_name              AS meet_name,
                NULL::text                AS course_name,
                r.event_short             AS event_short,
@@ -116,10 +131,31 @@ _SQL = {
 # A meet is named in `meets`, which the results table does not carry -- so a
 # name search resolves to meet_ids first and then explains those rows.
 _FIND_MEET = {
+    # ⚠ `meets` IS ANET-ONLY, AND EVERY COLLEGE MEET IS tfrrs. Searching it
+    #   alone reported "No XC meet matches 'Stockton University'" for a race
+    #   with 162 finishers, and matched four Illinois middle-school meets for
+    #   "Bengal Invite" while missing the Idaho State one entirely. Both
+    #   tables, or the tool answers about the wrong sport of racing.
+    #
+    # ! venue_name TOO. meets_tfrrs.meet_name is sometimes the venue and
+    #   venue_name is sometimes the meet -- app.py's own comment says the
+    #   column is sparse and confused -- so a name search that reads one of
+    #   them finds half of what it should.
     "XC": """
-        SELECT DISTINCT m.meet_id, m.meet_name, m.state, count(*) OVER () AS n
-        FROM   meets m
-        WHERE  m.meet_name ILIKE %(name)s
+        SELECT meet_id, meet_name, state, count(*) OVER () AS n FROM (
+            SELECT DISTINCT m.meet_id, m.meet_name, m.state
+            FROM   meets m
+            WHERE  m.meet_name ILIKE %(name)s
+            UNION
+            SELECT DISTINCT mt.meet_id,
+                   COALESCE(mt.meet_name, mt.venue_name) AS meet_name,
+                   NULL::text AS state
+            FROM   meets_tfrrs mt
+            WHERE  mt.sport = 'XC'
+              AND  (mt.meet_name ILIKE %(name)s OR mt.venue_name ILIKE %(name)s)
+        -- ! NOT `both`: it is a reserved word (TRIM(BOTH ...)) and Postgres
+        --   rejects it as an alias.
+        ) hits
         LIMIT  20
     """,
     "TF": """
@@ -149,6 +185,9 @@ def distances(row):
     if row["meets3_distance"]:
         out.append(("meets (meet+div+source, what the website joins on)",
                     float(row["meets3_distance"])))
+    if row.get("tfrrs_distance"):
+        out.append(("meets_tfrrs.division_distances",
+                    float(row["tfrrs_distance"])))
     if row["event_short"]:
         got = distanceFromEventShort(row["event_short"])
         metres = got[0] if isinstance(got, (tuple, list)) else got
