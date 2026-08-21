@@ -1502,7 +1502,8 @@ def school_page(school_name):
       one of them.
     """
     from school import (schoolHeader, schoolYears, schoolRoster, schoolMeets,
-                        schoolBest, schoolTopAthletes, currentSeason)
+                        schoolBest, schoolTopAthletes, currentSeason,
+                        seasonLabel, storedYear)
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
@@ -1521,17 +1522,24 @@ def school_page(school_name):
             #   on top. With one, the roster and the race list narrow to that
             #   season while the all-time tables stay put: the year is a filter
             #   on the history, not a different page.
+            # ⚠ THE URL CARRIES THE LABEL, THE QUERIES TAKE THE STORED YEAR.
+            #   A track season is stored under the year it opens in and named
+            #   year + 1, so ?year=2026 on TF means stored 2025. Converting
+            #   once here is what keeps the year bar, the roster and the meet
+            #   list all describing the same season -- see school.py's header.
             raw = request.args.get("year")
             picked = int(raw) if raw and raw.isdigit() else None
+            picked_stored = storedYear(sport, picked)
 
-            year   = picked or currentSeason(cur, school_name, sport)
+            year   = picked_stored or currentSeason(cur, school_name, sport)
             roster = schoolRoster(cur, school_name, year, sport) if year else []
-            meets  = schoolMeets(cur, school_name, sport, year=picked)
+            meets  = schoolMeets(cur, school_name, sport, year=picked_stored)
             best   = schoolBest(cur, school_name, sport)
             top    = schoolTopAthletes(cur, school_name, sport, limit=25)
 
     return render_template("school.html", school=school_name, header=header,
-                           years=years, year=year, sport=sport,
+                           years=years, year=seasonLabel(sport, year),
+                           sport=sport,
                            roster=roster, meets=meets, best=best, top=top,
                            picked=picked)
 

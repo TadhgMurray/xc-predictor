@@ -48,8 +48,11 @@
 
     {# The seasons. "All time" is first and is the page the school name links
        to, so there is always a way back out of a year. #}
+    {# ! label, NOT year. The stored value for a track season is the year it
+       OPENS in; the label is what everybody calls it, and it is what the
+       link has to carry so the page comes back to the same season. #}
     {% set season_years = years | selectattr('sport', 'equalto', sport)
-                                | map(attribute='year') | list %}
+                                | map(attribute='label') | list %}
     {% if season_years %}
     <div class="yearbar">
         <a class="yb{{ ' is-on' if not picked }}"
