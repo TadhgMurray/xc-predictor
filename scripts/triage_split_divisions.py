@@ -126,6 +126,38 @@ _WINNER_FLOOR = 230.0
 _TAIL_CEIL = 1020.0
 _MILE = 1609.34
 
+# ⚠ THE RAILS ONLY SEE THE EXTREMES, so "sane" has been printed over groups
+#   that are plainly not one race. Two more shape tests on the SAME pace
+#   numbers physics already computes -- they cost nothing and they separate a
+#   pin worth trusting from a pin worth checking.
+#
+# ! A GROUP WITH NO SPREAD AT ALL IS DUPLICATED TIMES, NOT A RACE. Five to
+#   fourteen finishers never share a pace to three digits:
+#
+#       48570/207175   14 rows, pace 8.75-8.75 min/mi
+#       142354/596509   8 rows, pace 5.75-5.76
+#       221706/887270   7 rows, pace 6.08-6.09
+#       11784/0         6 rows, pace 6.76-6.77
+#       159142/661129   5 rows, pace 5.93-5.94
+#
+#   Whatever distance is pinned onto a placeholder time is meaningless, so
+#   these are refused rather than flagged.
+_FLAT_SPREAD = 1.02
+
+# ! AND A GROUP SPANNING MORE THAN 2x IS TOO BROAD TO BE ONE RACE -- flagged,
+#   not refused, because a middle-school open race with stragglers can get
+#   close. 201083/807557 pinned 49 rows spanning 6.73-16.36 min/mi (2.4x) and
+#   the line called it sane.
+_WIDE_SPREAD = 2.0
+
+# ⚠ AND WHEN THE CLEAN ROWS ARE A MINORITY, THE LABEL IS WRONG, NOT A SUBSET.
+#   This tool splits a division into "the race the label describes" plus
+#   anomalies. 8614/0 has 2 clean rows out of 18 and got 13 pinned -- the
+#   label describes almost nobody, so the fix is a new label for the whole
+#   division, not per-row pins around a two-row reference. propose_distances
+#   flags the same condition from the other side with its `!` marker.
+_LABEL_CLEAN = 0.50
+
 
 # ================================================================== #
 # CHUNK 1 -- EVIDENCE: per-row gaps WITH result ids and raw times
@@ -393,6 +425,7 @@ def main():
     table, b = _TABLE[args.sport], _B[args.sport]
 
     pins, drop_queue = {}, []
+    tight = wide = minority = 0
     initPool()
     with getConn() as conn, conn.cursor() as cur:
         for meet, div in pairs:
@@ -424,17 +457,40 @@ def main():
                           f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi) -- NOT pinned")
                     drop_queue.append((meet, div, side, "PHYSICS_FAIL"))
                     continue
+                spread = hi / lo if lo > 0 else float("inf")
+                if spread < _FLAT_SPREAD:
+                    print(f"  {side:<5} snap {snap} REFUSED: {len(members)} "
+                          f"rows inside {(spread - 1) * 100:.1f}% of one pace "
+                          f"({lo/60:.2f} min/mi) -- duplicated times, not a "
+                          f"race")
+                    drop_queue.append((meet, div, side, "FLAT_TIMES"))
+                    continue
                 extra = ""
                 if verdict == "MAJORITY":
                     extra = (f" [MAJORITY: {votes['of'] - votes['agree']} "
                              f"outliers left flagged for next pass]")
+                if spread > _WIDE_SPREAD:
+                    extra += (f" [WIDE: {spread:.1f}x pace spread -- too broad "
+                              f"for one race, CHECK]")
+                    wide += len(members)
+                else:
+                    tight += len(members)
                 print(f"  {side:<5} {verdict} -> {snap}m for {len(members)} rows "
-                      f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi, sane){extra}")
+                      f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi, {spread:.2f}x, "
+                      f"sane){extra}")
                 for rid, _ in members:
                     pins[rid] = (snap, meet, div, side)
                     div_pins += 1
             clean = sum(1 for _, _, g in rows if abs(g) <= _SPIKE)
-            print(f"  clean rows untouched: {clean}   pinned here: {div_pins}")
+            frac = clean / len(rows)
+            note = ""
+            if div_pins and frac < _LABEL_CLEAN:
+                note = (f"  <- LABEL? only {frac:.0%} of this division matches "
+                        f"its own label; it needs a new distance, not "
+                        f"{div_pins} row pins")
+                minority += div_pins
+            print(f"  clean rows untouched: {clean}/{len(rows)} ({frac:.0%})"
+                  f"   pinned here: {div_pins}{note}")
         conn.rollback()
 
     print(f"\nTOTAL: {len(pins)} per-row pins proposed; "
@@ -444,6 +500,18 @@ def main():
           + (f"; {n_mute} divisions MUTE -- this tool could form no opinion, "
              f"which is not the same as finding them clean"
              if n_mute else ""))
+    # ★ AND WHAT THE PINS ARE WORTH, not just how many there are. A count of
+    #   1,877 reads as 1,877 findings; it is really three piles.
+    if pins:
+        print(f"\n  of those {len(pins)} pins:")
+        print(f"    {tight:>6}  from groups tight enough to be one race")
+        if wide:
+            print(f"    {wide:>6}  from groups spanning more than "
+                  f"{_WIDE_SPREAD:.0f}x in pace -- CHECK these")
+        if minority:
+            print(f"    {minority:>6}  in divisions where the label already "
+                  f"describes a minority --\n            those want a new "
+                  f"division distance, not row pins")
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 
