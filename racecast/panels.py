@@ -18,6 +18,7 @@ import datetime
 import argparse
 import itertools
 from collections import defaultdict, Counter
+from functools import lru_cache
 
 import psycopg2.extras
 
@@ -138,6 +139,7 @@ _NON_SCHOOL_FRAGMENTS = ("dark sky", "under arm", "under armour", "under armor")
 sys.path.insert(0, "engine")
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 from pool_resolve import resolvePool, inScope
+from dbfast import dictRows, tuneSession
 
 
 # ===================================================================== #
@@ -176,11 +178,21 @@ _DODEA_SCHOOLS = frozenset(s.lower() for s in {
 })
 
 
+# ★ CACHED, BECAUSE THESE ARE ASKED THE SAME QUESTION MILLIONS OF TIMES.
+#   build_ranking_results calls both on EVERY ONE of 61.6M rows, and there are
+#   only a few hundred thousand distinct school names behind them --
+#   _is_non_school in particular walks a fragment list with a substring test
+#   per fragment, which is the most expensive single thing in that loop, for a
+#   value that cannot change. Pure functions of one string, so the cache is
+#   exact. Bounded rather than unbounded: a corrupt corpus with millions of
+#   distinct school strings should get slower, not run out of memory.
+@lru_cache(maxsize=1 << 18)
 def _is_dodea(school):
     """Exact match against the Far East DoDEA list. See the warning above."""
     return bool(school) and school.strip().lower() in _DODEA_SCHOOLS
 
 
+@lru_cache(maxsize=1 << 18)
 def _is_non_school(school):
     if not school:
         return False
@@ -203,7 +215,11 @@ def _streamingCursor(conn, name):
     the Postgres side and arrive in batches of `itersize`, so memory stays
     flat no matter how big the query is.
 
-    RealDictCursor to match app.py, so rows are dicts and row["col"] works.
+    ★ A PLAIN CURSOR, WRAPPED BY dbfast.dictRows. The rows are still dicts and
+      row["col"] still works -- but RealDictCursor builds an ordered-dict
+      subclass per row, and over the 39M rows this function exists for that is
+      minutes. Measured on 2M rows: 11.8s against 4.3s. Callers iterate
+      dictRows(cur), never the cursor itself.
 
     ★ cursor_tuple_fraction = 1.0 IS THE POINT OF THIS FUNCTION NOW.
       A named cursor is planned as DECLARE CURSOR, and Postgres plans that for
@@ -225,8 +241,7 @@ def _streamingCursor(conn, name):
     with conn.cursor() as setup:
         setup.execute("SET LOCAL cursor_tuple_fraction = 1.0")
 
-    cur = conn.cursor(name=name,
-                      cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor(name=name)
     cur.itersize = FETCH_BATCH
     return cur
 
@@ -896,7 +911,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
     cur = _streamingCursor(conn, f"perf_{sport.lower()}")
     cur.execute(sql, params)
     try:
-        for row in cur:
+        for row in dictRows(cur):
             stats["perf_seen"] += 1
             # Already resolved, by build_ranking_results, from the same
             # resolvePool this loop used to call 101M times.
@@ -1055,7 +1070,7 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
     cur = _streamingCursor(conn, f"ath_{sport.lower()}")
     cur.execute(_athleteSql(sport), params)
     try:
-        for row in cur:
+        for row in dictRows(cur):
             stats["ath_seen"] += 1
             # Already resolved, by build_ranking_results, using the same
             # resolvePool this file used to call 15.8M times.
@@ -1291,6 +1306,10 @@ def main():
     meta = {}
 
     with getConn() as conn:                      # app.py's helper, app.py's style
+        # Room to work: the aggregates and the temp-table build below are
+        # ordinary statements and can use parallel workers. The streaming
+        # cursors cannot -- see dbfast.
+        tuneSession(conn)
         # ★ ONCE, BEFORE THE SPORT LOOP. `ath` is session-scoped, so it must be
         #   built on the SAME connection every query below uses -- and it must
         #   be built before the first query, not lazily, so a failure surfaces

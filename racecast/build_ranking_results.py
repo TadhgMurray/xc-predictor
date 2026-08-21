@@ -52,6 +52,7 @@ try:
     #   distance in the event name and event_parse is where that is read; a
     #   second copy of that logic here would be a third way to get it wrong.
     from event_parse import distanceFromEventShort
+    from dbfast import tuneSession
     from pool_resolve import resolvePool, inScope
 except ImportError as exc:
     raise SystemExit(
@@ -520,6 +521,14 @@ def isRankablePool(pool):
 def prepareRow(row, sport):
     """One DB row -> one COPY tuple, or None to drop it.
 
+    ★ `row` IS A NAMEDTUPLE, NOT A DICT, AND THAT IS WORTH MINUTES. Measured
+      over 2M rows from a real server-side cursor: RealDictCursor 11.8s,
+      DictCursor 9.9s, NamedTupleCursor 3.3s, a bare tuple 2.9s. At 61.6M rows
+      the dict version spends about five minutes of the build building one
+      dictionary per row and throwing it away. The namedtuple keeps the field
+      names -- row.school still reads as row.school -- for 0.4s over the
+      fastest option there is.
+
     DROPS, and why none of them is silent data loss:
       non-school       grade is untrustworthy, so the pool would be WRONG
                        rather than missing.
@@ -534,7 +543,7 @@ def prepareRow(row, sport):
     EXTRACT(year FROM race_date) IS NO LONGER EQUIVALENT to this column; any
     SQL that assumes it is will be wrong for TF by one year.
     """
-    school = row["school"]
+    school = row.school
     if _isNonSchoolCached(school):
         return None
     # Hidden, not corrected -- see panels._DODEA_SCHOOLS.
@@ -548,7 +557,7 @@ def prepareRow(row, sport):
     #
     #   inScope keeps anything it cannot PROVE is foreign, including a null
     #   state, so this removes only what the data is explicit about.
-    if not inScope(row.get("state")):
+    if not inScope(row.state):
         return None
 
     # ★ THE ENGINE'S DECISION, NOT A REIMPLEMENTATION OF IT. resolvePool is
@@ -557,16 +566,16 @@ def prepareRow(row, sport):
     #
     #   merge=True: this table stores the pool WITHOUT the sport suffix, since
     #   `sport` is already its own column.
-    pool = resolvePool(row["grade"], row["gender"], row["source"], school,
+    pool = resolvePool(row.grade, row.gender, row.source, school,
                        sport,
-                       season_level=row.get("season_level"),
-                       grade_untrusted=bool(row.get("grade_untrusted")),
-                       fixed_grade=row.get("fixed_grade"),
-                       fixed_level=row.get("fixed_level"),
-                       grade_verdict=row.get("grade_verdict"),
+                       season_level=row.season_level,
+                       grade_untrusted=bool(row.grade_untrusted),
+                       fixed_grade=row.fixed_grade,
+                       fixed_level=row.fixed_level,
+                       grade_verdict=row.grade_verdict,
                        # ! FOR _PRO_PEOPLE -- see pool_resolve.
-                       person_id=row.get("person_id"),
-                       is_pro=bool(row.get("is_pro")),
+                       person_id=row.person_id,
+                       is_pro=bool(row.is_pro),
                        # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
                        #   readers were the two promotion gates, now gone. This
                        #   call was already lazy about building the date; now
@@ -592,7 +601,7 @@ def prepareRow(row, sport):
     # ⚠ COALESCE'd TO 'high' IN THE QUERY, so a grade_fix written before this
     #   column existed ranks everything exactly as it used to rather than
     #   ranking nothing.
-    if row.get("grade_trust") == "low":
+    if row.grade_trust == "low":
         return None
 
     # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
@@ -627,23 +636,27 @@ def prepareRow(row, sport):
     #   BEFORE the gate below, which cannot check a row whose distance is
     #   None -- it would return "not a finding" on every TF row and the gate
     #   would silently never fire. A hand-corrected override still wins.
-    distance = row.get("distance")
+    distance = row.distance
     if distance is None and sport == "TF":
-        distance = _tfDistance(row.get("event_short"))
+        # ! getattr, NOT row.event_short: the XC query does not select it, and
+        #   a namedtuple has no attribute it was not given. The TF guard is
+        #   already there; this is belt and braces against the two SELECT
+        #   lists drifting apart again.
+        distance = _tfDistance(getattr(row, "event_short", None))
 
-    if anchorMismatch(row.get("time_seconds"), distance,
-                      row.get("normalized_time"), pool, sport)[0]:
+    if anchorMismatch(row.time_seconds, distance,
+                      row.normalized_time, pool, sport)[0]:
         return None
 
-    rating = float(row["speed_rating"])
+    rating = float(row.speed_rating)
     if not (_RATING_MIN <= rating <= _RATING_MAX):
         return None
 
-    date_text = row["date"]
+    date_text = row.date
 
     return (sport,
-            row["result_id"],
-            row["person_id"],
+            row.result_id,
+            row.person_id,
             pool,
             rating,
             date_text,                 # Postgres parses YYYY-MM-DD directly
@@ -653,15 +666,15 @@ def prepareRow(row, sport):
             # it, which is what stops one real season showing as two rows on
             # the boards. XC is unaffected -- see season_year.py.
             seasonYearFromIso(sport, date_text),
-            row["state"],
+            row.state,
             school,
-            row["grade"],
-            row["meet_id"],
-            row["div_id"],
-            row["canon_meet_id"],
-            row["time_seconds"],
+            row.grade,
+            row.meet_id,
+            row.div_id,
+            row.canon_meet_id,
+            row.time_seconds,
             distance,
-            row.get("event_id"))
+            row.event_id)
 
 
 # ------------------------------------------------------------------ #
@@ -697,8 +710,9 @@ def copyRows(cur, rows):
     "".join(...) builds the payload in ONE allocation; repeated `s += ...`
     would be quadratic in the batch size.
     """
-    payload = "".join("\t".join(copyField(v) for v in row) + "\n"
-                      for row in rows)
+    # map, not a generator expression: 401k rows/s against 341k, measured over
+    # 200k rows of the real shape. Identical bytes; one less frame per row.
+    payload = "".join("\t".join(map(copyField, row)) + "\n" for row in rows)
     cur.copy_expert(
         f"COPY {_LOAD_TABLE} ({', '.join(_COLUMNS)}) FROM STDIN",
         io.StringIO(payload))
@@ -719,7 +733,7 @@ def buildSport(conn, sport, since, stats):
     seen = 0
 
     with conn.cursor(name=f"rank_src_{sport.lower()}",
-                     cursor_factory=psycopg2.extras.RealDictCursor) as src:
+                     cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
         src.execute(_SQL[sport], {"since": since})
 
@@ -976,16 +990,44 @@ def swapIn(conn):
 # needed. That was the point of materializing it.
 #
 # THE DECAY MATCHES THE ENGINE. speed_ratings.py weights races by
-# DECAY_K ** days_ago when solving ability; this does the same, anchored to the
-# athlete's LAST race of that season. So decayed_rating means "form at season's
-# end" while mean_rating means "the season as a whole".
+# DECAY_K ** days_ago when solving ability; this does the same. decayed_rating
+# still means "form at season's end" and mean_rating "the season as a whole" --
+# see _ANCHOR for why the season's end no longer has to be computed to say so.
 #
-# season_end - race_date is integer days: subtracting two dates in Postgres
-# yields int, not an interval, so power() takes it directly.
+# Subtracting two dates in Postgres yields int days, not an interval, so
+# power() takes it directly.
 #
 # state/school/grade are the MODE, not an arbitrary row: an athlete can change
 # school mid-season, and mode() picks what they mostly were.
 _DECAY_K = 0.996
+
+# ★ THE ANCHOR CANCELS, SO THE WINDOW FUNCTION WAS NEVER NEEDED.
+#
+#       decayed = sum(r * k^(end - d)) / sum(k^(end - d))
+#               = sum(r * k^end * k^-d) / sum(k^end * k^-d)
+#
+#   and k^end is CONSTANT WITHIN THE GROUP, so it divides out of both sums.
+#   Any anchor gives the same number -- the athlete's own last race, or a
+#   fixed date, or none at all. This used to compute the per-group maximum
+#   with `max(race_date) OVER (PARTITION BY person_id, pool, sport, year)`,
+#   which sorts 61.6M rows before the GROUP BY that then re-aggregates them.
+#
+#   Measured on 3M rows: 4.0s with the window, 2.2s without.
+#
+# ⚠ AND THE TWO ARE THE SAME NUMBER, THOUGH NOT ALWAYS THE SAME BITS. Summing
+#   the same terms in a different order can land on a different last bit:
+#   across 80,000 athlete-seasons of 7 races each, 2 of them moved, by
+#   7.6e-06 on a scale of 100 -- which IS float4's resolution there, so it is
+#   the smallest difference the column is able to hold. Every other group was
+#   identical. The claim is "equal to the precision this column stores", not
+#   "byte-identical", because the second one would be false.
+#
+# ! A FIXED FUTURE DATE, so every exponent is positive and every weight is at
+#   most 1. Anchoring at 1990 instead would make them k^-d, which grows, and
+#   a wide --since would eventually overflow. This direction shrinks: even a
+#   1900 race lands at 1e-127, comfortably inside float8. A race after 2100
+#   would merely make its weight exceed 1, which is still correct.
+_ANCHOR = "DATE '2100-01-01'"
 
 # Reads and writes the SHADOW tables. No TRUNCATE: the live athlete_season is
 # untouched until swapIn renames it away.
@@ -995,8 +1037,8 @@ INSERT INTO {{season_table}}
      n_races, first_race, last_race, state, school, grade)
 SELECT person_id, pool, sport, year,
        avg(speed_rating)::real,
-       (sum(speed_rating * power({_DECAY_K}, season_end - race_date))
-        / nullif(sum(power({_DECAY_K}, season_end - race_date)), 0))::real,
+       (sum(speed_rating * power({_DECAY_K}, {_ANCHOR} - race_date))
+        / nullif(sum(power({_DECAY_K}, {_ANCHOR} - race_date)), 0))::real,
        max(speed_rating)::real,
        count(*),
        min(race_date),
@@ -1004,12 +1046,7 @@ SELECT person_id, pool, sport, year,
        mode() WITHIN GROUP (ORDER BY state),
        mode() WITHIN GROUP (ORDER BY school),
        mode() WITHIN GROUP (ORDER BY grade)
-FROM (
-    SELECT *,
-           max(race_date) OVER (
-               PARTITION BY person_id, pool, sport, year) AS season_end
-    FROM {{load_table}}
-) base
+FROM {{load_table}} base
 GROUP BY person_id, pool, sport, year;
 
 ANALYZE {{load_table}};
@@ -1066,6 +1103,11 @@ def main():
         #   and the live tables are replaced in one atomic step at the end.
         # Built BEFORE the shadow load: the streaming queries join it, and a
         # temp table lives for the session, so it must exist first.
+        # ★ ROOM TO WORK, BEFORE ANY OF IT STARTS. The index builds after the
+        #   COPY and the athlete_season aggregate both want memory and
+        #   workers; the streaming cursors cannot use workers at all, which is
+        #   a property of cursors rather than of this query. See dbfast.
+        tuneSession(conn)
         prepareGenderTemp(conn)
         prepareTfStateTemp(conn)
 

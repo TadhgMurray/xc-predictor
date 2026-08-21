@@ -50,6 +50,7 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "racecast")
 from database import getConn
 from build_ranking_results import copyField
+from dbfast import tuneSession
 
 # ⚠ THE SAME 51 CODES THE OTHER BOARDS USE, and for the same reason: state is
 #   the only geography stored, and a null test would keep exactly the foreign
@@ -198,6 +199,7 @@ def build(conn, min_results):
     """
     import psycopg2.extras
     started = time.time()
+    tuneSession(conn)
     with conn.cursor() as cur:
         cur.execute(_DDL.format(name="course_rank"))
         cur.execute("DROP TABLE IF EXISTS course_rank_new")
@@ -212,7 +214,7 @@ def build(conn, min_results):
 
     buf = io.StringIO()
     for r in rows:
-        buf.write("\t".join(copyField(v) for v in toRow(r)))
+        buf.write("\t".join(map(copyField, toRow(r))))
         buf.write("\n")
     buf.seek(0)
     with conn.cursor() as cur:

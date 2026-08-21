@@ -31,6 +31,7 @@ WHY THIS EXISTS
 """
 
 import re
+from functools import lru_cache
 
 from normalize_distance import poolFor
 
@@ -84,6 +85,8 @@ US_NAMES = frozenset("""
 }
 
 
+# ! FIFTY-ONE POSSIBLE ANSWERS, ASKED ONCE PER ROW. Cached.
+@lru_cache(maxsize=4096)
 def inScope(state):
     """True when this result belongs on a US board.
 
@@ -257,6 +260,11 @@ _PUNCT = re.compile(r"[^a-z0-9 ]+")
 _SPACE = re.compile(r"\s+")
 
 
+# ! TWO REGEX SUBSTITUTIONS PER CALL, AND resolvePool CALLS IT ON EVERY ROW.
+#   Over 61.6M rows that is 123M regex passes to answer a question with a few
+#   hundred thousand distinct answers. Pure, so caching changes nothing but
+#   the clock.
+@lru_cache(maxsize=1 << 18)
 def _normSchool(school):
     """Casefold, drop punctuation, collapse spaces. 'HOKA ONE ONE' -> the
     same key as 'Hoka One One'."""

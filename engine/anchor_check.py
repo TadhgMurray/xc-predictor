@@ -86,11 +86,42 @@ def mismatch(time_seconds, distance, stored_nt, pool, sport=None):
     if t <= 0 or d <= 0 or nt <= 0:
         return False, None, None
 
-    expected = normalizeTime(t, d, pool, sport)
+    expected = _expected(t, d, pool, sport)
     if not expected or expected <= 0:
         return False, None, None
     ratio = nt / expected
     return abs(ratio - 1.0) > TOLERANCE, expected, ratio
+
+
+# ★ THE NORMALISATION IS A MULTIPLIER, SO ONLY THE MULTIPLIER IS COMPUTED.
+#   normalizeTime(t, d, pool, sport) is t * factor(d, pool, sport) -- the
+#   factor is already cached inside normalize_distance, but reaching it costs
+#   a key build, a lookup, a multiply and a round on EVERY ROW, and
+#   build_ranking_results now calls this 61.6M times per build.
+#
+#   The factor is asked for once per (rounded distance, pool, sport) instead
+#   -- a few hundred combinations against tens of millions of rows.
+#
+# ⚠ THE DISTANCE IS ROUNDED TO THE METRE FOR THE KEY, and that is not a
+#   liberty: normalizeTime itself rounds the distance when it builds its own
+#   cache key, so this is the same granularity. Against a tolerance of 10%, a
+#   sub-metre difference is fourteen orders of magnitude from mattering.
+_FACTOR = {}
+
+
+def _expected(t, d, pool, sport):
+    key = (round(d), pool, sport)
+    factor = _FACTOR.get(key)
+    if factor is None:
+        # 1000 seconds, then divided back out: normalizeTime rounds its
+        # RESULT to two decimals, so asking with a large t keeps the factor
+        # accurate to eight digits instead of five.
+        got = normalizeTime(1000.0, d, pool, sport)
+        if not got:
+            return None
+        factor = got / 1000.0
+        _FACTOR[key] = factor
+    return t * factor
 
 
 def whichPool(time_seconds, distance, stored_nt, pools, sport=None):

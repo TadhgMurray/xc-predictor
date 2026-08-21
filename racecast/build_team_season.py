@@ -48,6 +48,7 @@ from team_rank import rankTeams, raceStored, SQUAD
 #   separators. A second hand-rolled version of it is how the same bug gets
 #   fixed once and shipped twice.
 from build_ranking_results import copyField
+from dbfast import dictRows, tuneSession
 
 # ! THE SAME 51 CODES rankings.py USES, and for the same reason: there is no
 #   nation column anywhere, state is the only geography stored, and a null
@@ -295,6 +296,7 @@ def build(conn, sport, since):
     """
     import psycopg2.extras
     started = time.time()
+    tuneSession(conn)
     with conn.cursor() as cur:
         # The real table only has to EXIST, for the rename at the end to
         # have something to rename; the shadow is where this run's rows go
@@ -307,9 +309,15 @@ def build(conn, sport, since):
     params = {"min_races": MIN_RACES, "pools": sorted(POOLS),
               "states": list(US_STATES), "since": since, "sport": sport}
 
-    read = conn.cursor("team_src", cursor_factory=psycopg2.extras.RealDictCursor)
+    # ★ A PLAIN CURSOR, TURNED INTO DICTS BY dbfast.dictRows. team_rank takes
+    #   dicts and its self-check is written in dicts, so the rows still have
+    #   to BE dicts -- but RealDictCursor builds an ordered-dict subclass per
+    #   row and dict(zip(...)) does not. Measured over 2M rows: 11.8s against
+    #   4.3s, and this build reads 10.7M of them.
+    read = conn.cursor("team_src")
     read.itersize = 50000
     read.execute(_SOURCE_SQL, params)
+    read_rows = dictRows(read)
 
     def flush(buf):
         # ! copy_expert WITH AN EXPLICIT COLUMN LIST, matching the rankings
@@ -322,11 +330,13 @@ def build(conn, sport, since):
 
     stats = {"read": 0, "years": set(), "teams": 0, "dropped": {}}
     buf, n_rows, n_boards = io.StringIO(), 0, 0
-    for board in boards(eligibleRows(countingRows(read, stats), stats)):
+    for board in boards(eligibleRows(countingRows(read_rows, stats), stats)):
         n_boards += 1
         stats["teams"] += len(board[4])
         for row in toRows(board):
-            buf.write("\t".join(copyField(v) for v in row))
+            # map, not a generator expression: 401k rows/s against 341k,
+            # measured over 200k rows. Same bytes out, one less frame per row.
+            buf.write("\t".join(map(copyField, row)))
             buf.write("\n")
             n_rows += 1
         if buf.tell() > (8 << 20):
@@ -344,16 +354,15 @@ def build(conn, sport, since):
     #   field is a quarter of a million squads. Precomputing it is the only
     #   way the front page of this board has a #1 on it.
     at_started = time.time()
-    at_read = conn.cursor("team_alltime",
-                          cursor_factory=psycopg2.extras.RealDictCursor)
+    at_read = conn.cursor("team_alltime")
     at_read.itersize = 50000
     at_read.execute(_ALLTIME_SQL)
 
     buf, at_rows, at_boards = io.StringIO(), 0, 0
-    for board in alltimeBoards(at_read):
+    for board in alltimeBoards(dictRows(at_read)):
         at_boards += 1
         for row in toAlltimeRows(board):
-            buf.write("\t".join(copyField(v) for v in row))
+            buf.write("\t".join(map(copyField, row)))
             buf.write("\n")
             at_rows += 1
         if buf.tell() > (8 << 20):
