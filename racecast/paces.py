@@ -40,7 +40,8 @@ import math
 import sys
 
 sys.path.insert(0, "engine")
-from normalize_distance import targetFor          # noqa: E402
+# (targetFor is no longer needed here: the convention paces anchor on the
+# mile, which is a fixed distance, not a per-pool one.)
 
 MILE_M = 1609.344
 
@@ -74,21 +75,47 @@ DEFAULT_FIT_MAX_XC = 8000
 #   coaching numbers are all stated as "percent effort", which is a speed.
 #   Applying them to seconds-per-mile would invert every one of them.
 _DURATION_PACES = (
-    ("interval", "Interval",  600,  "10-minute race effort — around vVO2max"),
-    ("tempo",    "Tempo",    1200,  "20-minute race effort"),
+    ("interval", "Interval", 600,
+     "10-minute race effort — about 3K race pace, where VO2max work sits"),
 )
 
-# ⚠ EVERY NUMBER BELOW IS A COACHING CONVENTION AND SHOULD BE CHECKED
-#   AGAINST A SOURCE BEFORE IT IS SHOWN TO ANYBODY. They are in the range
-#   commonly prescribed (threshold ~20-25 s/mile slower than 5K pace for a
-#   high schooler; easy roughly three quarters of threshold speed), and they
-#   are the part of this file with no evidence behind it.
-_THRESHOLD_OF_RACE_SPEED = 0.94     # of the pool's own race-distance speed
-_RATIO_PACES = (
-    ("threshold", "Threshold", 1.00,
-     "sustainable ~40-60 min effort; conventional, not derived"),
-    ("steady",    "Steady",    0.92, "conventional fraction of threshold"),
-    ("easy",      "Easy",      0.76, "conventional fraction of threshold"),
+# ⚠ A TEMPO RUN IS NOT A 20-MINUTE RACE, AND THIS FILE USED TO SAY IT WAS.
+#   The first version derived "Tempo" as 20-minute race pace off the spline:
+#   for a 4:10 miler that is 4:34/mile, which is a correct 7K race pace and a
+#   wildly wrong tempo. Coaches prescribe tempo near THRESHOLD, an effort you
+#   hold for the better part of an hour -- and an hour of racing is 2.2x
+#   beyond the fitted domain, which is why it cannot be derived at all.
+#
+#   Race-equivalent pace and workout pace are different quantities. Only the
+#   first is ours to compute.
+#
+# ★ CALIBRATED TO A COACHING RULE, NOT TO A TEXTBOOK: tempo is mile race pace
+#   plus 60-80 seconds per mile. That is one high-school coach's rule for
+#   competitive runners, offered by this project's author, and it is a better
+#   source than a percentage lifted from a book about trained adults -- but it
+#   is one rule from one coach and the constants below should move if a
+#   better source turns up.
+#
+# ⚠ AN OFFSET, NOT A RATIO, AND THAT IS DELIBERATE. A fixed fraction of race
+#   speed cannot fit this: the coach's rule implies 0.85-0.90 of 5K speed for
+#   a 4:10 miler and 0.92-0.96 for a 6:00 miler, because a fast miler races
+#   the mile much further above threshold than a slow one does. A single
+#   ratio fit the slow end and ran 11-31 s/mile fast at the top, which is the
+#   end that matters on a leaderboard.
+#
+# ! AND IT IS ANCHORED ON THE MILE because that is the distance the rule is
+#   stated in. Restating it against the 5K equivalent would bake this
+#   project's own distance curve into a number that came from outside it.
+_MILE_ANCHOR_M = 1609.344
+_TEMPO_OFFSET = (60.0, 80.0)        # seconds per mile, from mile race pace
+_STEADY_OFFSET = (30.0, 45.0)       # further seconds per mile, from tempo
+_EASY_OFFSET = (90.0, 130.0)        # further seconds per mile, from tempo
+
+_OFFSET_PACES = (
+    ("tempo", "Tempo / Threshold", _TEMPO_OFFSET,
+     "mile race pace + 60-80 s/mi — a coaching rule, not derived"),
+    ("steady", "Steady", _STEADY_OFFSET, "conventional, off tempo"),
+    ("easy", "Easy", _EASY_OFFSET, "conventional, off tempo"),
 )
 
 
@@ -165,18 +192,28 @@ def trainingPaces(norm, pool, sport="XC", to_time=None):
                     "basis": "your distance curve", "note": note,
                     "equivalent_race_m": round(d)})
 
-    # The convention paces hang off the pool's OWN race distance -- the one
-    # targetFor names and the one the spline is dense at.
-    ref_d = targetFor(bare, sport) or 5000.0
-    ref_t = to_time(norm, {"distance": ref_d, "pool": pool, "sport": sport})
-    if ref_t:
-        ref_speed = (ref_d / MILE_M) / ref_t          # miles per second
-        thr_speed = ref_speed * _THRESHOLD_OF_RACE_SPEED
-        for key, label, frac, note in _RATIO_PACES:
-            pm, pk = _paceStrings(1.0 / (thr_speed * frac))
-            out.append({"key": key, "label": label, "per_mile": pm,
-                        "per_km": pk, "basis": "coaching convention",
-                        "note": note, "anchored_on_m": round(ref_d)})
+    # The convention paces hang off MILE RACE PACE, which is where the rule
+    # they come from is stated.
+    mile_t = to_time(norm, {"distance": _MILE_ANCHOR_M, "pool": pool,
+                            "sport": sport})
+    if mile_t:
+        tempo_lo = mile_t + _TEMPO_OFFSET[0]
+        tempo_hi = mile_t + _TEMPO_OFFSET[1]
+        for key, label, off, note in _OFFSET_PACES:
+            if key == "tempo":
+                lo, hi = tempo_lo, tempo_hi
+            else:
+                lo, hi = tempo_lo + off[0], tempo_hi + off[1]
+            # ! A RANGE, BECAUSE THE RULE IS A RANGE. Collapsing it to a
+            #   midpoint would present a coach's band of judgement as a
+            #   computed number.
+            out.append({"key": key, "label": label,
+                        "per_mile": f"{_paceStrings(lo)[0]}-"
+                                    f"{_paceStrings(hi)[0]}",
+                        "per_km": f"{_paceStrings(lo)[1]}-"
+                                  f"{_paceStrings(hi)[1]}",
+                        "basis": "coaching convention", "note": note,
+                        "anchored_on_m": round(_MILE_ANCHOR_M)})
 
     return out
 

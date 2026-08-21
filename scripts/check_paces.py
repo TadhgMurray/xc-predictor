@@ -55,9 +55,11 @@ def main():
     by = {p["key"]: p for p in paces}
     check("interval comes from our own curve",
           by["interval"]["basis"], "your distance curve")
-    check("tempo does too", by["tempo"]["basis"], "your distance curve")
-    check("threshold does NOT",
-          by["threshold"]["basis"], "coaching convention")
+    # ⚠ TEMPO IS NO LONGER DERIVED. It used to be 20-minute race pace, which
+    #   for a 4:10 miler is 4:34/mile -- a correct 7K race pace and a wildly
+    #   wrong tempo. A tempo run sits near threshold, and an hour of racing is
+    #   past the fit.
+    check("tempo does NOT", by["tempo"]["basis"], "coaching convention")
     check("nor does easy", by["easy"]["basis"], "coaching convention")
     check("and the derived ones say which race they are equivalent to",
           by["interval"]["equivalent_race_m"] < P.FIT_MAX_XC["hs_m"], True)
@@ -66,22 +68,40 @@ def main():
     for p in paces:
         eq = (f"  (= a {p['equivalent_race_m']:,}m race)"
               if p.get("equivalent_race_m") else "")
-        print(f"       {p['label']:<11}{str(p['per_mile']):>7}/mi"
-              f"{str(p['per_km']):>7}/km   {p['basis']}{eq}")
+        print(f"       {p['label']:<18}{str(p['per_mile']):>12}/mi"
+              f"{str(p['per_km']):>12}/km   {p['basis']}{eq}")
 
     print("\n  AND THEY HAVE TO BE IN THE RIGHT ORDER")
-    def secs(k):
-        mm, ss = by[k]["per_mile"].split(":")
+    def secs(k, end=0):
+        """seconds/mile for a pace; convention paces are ranges, end=1 picks
+        the slow end."""
+        part = by[k]["per_mile"].split("-")[end if "-" in by[k]["per_mile"]
+                                           else 0]
+        mm, ss = part.split(":")
         return int(mm) * 60 + int(ss)
     check("interval is faster than tempo", secs("interval") < secs("tempo"),
           True)
-    check("tempo is faster than threshold",
-          secs("tempo") < secs("threshold"), True)
-    check("threshold is faster than steady",
-          secs("threshold") < secs("steady"), True)
+    check("tempo is faster than steady", secs("tempo") < secs("steady"), True)
     check("steady is faster than easy", secs("steady") < secs("easy"), True)
-    check("and easy is not absurd (6:30-8:30 for this runner)",
-          390 < secs("easy") < 510, True)
+    check("and easy is not absurd (6:30-9:00 for this runner)",
+          390 < secs("easy") < 540, True)
+
+    print("\n  THE COACHING RULE IT IS CALIBRATED TO")
+    # tempo = mile race pace + 60-80 s/mi, checked against the actual rule
+    # rather than against my own restatement of it.
+    for t1600, label in ((250.0, "4:10"), (310.0, "5:10")):
+        norm = t1600 * (5000.0 / 1600.0) ** 1.06
+        pc = {p["key"]: p for p in
+              P.trainingPaces(norm, "hs_m", "XC", to_time=fakeToTime)}
+        mile_t = fakeToTime(norm, {"distance": P._MILE_ANCHOR_M})
+        lo, hi = pc["tempo"]["per_mile"].split("-")
+        def sec(x):
+            mm, ss = x.split(":")
+            return int(mm) * 60 + int(ss)
+        check(f"a {label} 1600 gets tempo at mile +60 to +80",
+              (round(sec(lo) - mile_t), round(sec(hi) - mile_t)), (60, 80))
+        print(f"       {label} 1600 -> mile {int(mile_t)//60}:"
+              f"{int(mile_t)%60:02d}, tempo {pc['tempo']['per_mile']}/mi")
 
     print("\n  NOTHING REAL IS EXTRAPOLATED...")
     # ⚠ A SLOWER ATHLETE'S 20-MINUTE RACE IS SHORTER, NOT LONGER -- they cover
@@ -103,16 +123,19 @@ def main():
     # tighten the cap rather than invent an athlete: this tests the branch,
     # not a story about who might trip it.
     real = P.FIT_MAX_XC["hs_m"]
-    P.FIT_MAX_XC["hs_m"] = 3000
+    P.FIT_MAX_XC["hs_m"] = 2000
     tight = {p["key"]: p for p in
              P.trainingPaces(960.0, "hs_m", "XC", to_time=fakeToTime)}
     P.FIT_MAX_XC["hs_m"] = real
-    check("tempo is refused rather than extrapolated",
-          tight["tempo"]["basis"], "out of range")
+    # ! INTERVAL, NOT TEMPO. Tempo stopped being derived when it stopped
+    #   pretending to be a 20-minute race; interval is the only pace left
+    #   that consults the curve, so it is the only one the guard can protect.
+    check("interval is refused rather than extrapolated",
+          tight["interval"]["basis"], "out of range")
     check("and says how far past the fit it would have gone",
-          "past the 3,000m" in tight["tempo"]["note"], True)
+          "past the 2,000m" in tight["interval"]["note"], True)
     check("with no pace attached to a refusal",
-          tight["tempo"]["per_mile"], None)
+          tight["interval"]["per_mile"], None)
     check("while the convention paces still resolve",
           tight["easy"]["per_mile"] is not None, True)
 
