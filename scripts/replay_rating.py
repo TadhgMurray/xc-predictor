@@ -35,13 +35,94 @@ import speed_ratings_db as srdb                    # noqa: E402
 import speed_ratings as sr                         # noqa: E402
 
 
+
+# ★ IS THIS RACE SPECIAL, OR IS THE IDENTITY FALSE EVERYWHERE? The engine
+#   computes rating = 100 * pool_mean * (1 + difficulty) / normalized_time, and
+#   both factors are constant within a division, so
+#
+#       speed_rating * normalized_time
+#
+#   must be constant across every division in the corpus. At Gans Creek it
+#   spans 4.53% with one pool and one venue key -- which the code says is
+#   impossible. Either that division is special, or the formula is not what
+#   actually wrote the column. One sample answers it.
+#
+# ⚠ THIS IS NOT A HUNT FOR BAD MEETS. It is a check on whether the identity
+#   holds at all. A high failure rate does not mean thousands of broken races;
+#   it means the thing I have been reasoning from is wrong.
+_SCAN = """
+    WITH d AS (
+        SELECT meet_id, div_id
+        FROM   results
+        WHERE  speed_rating > 0 AND normalized_time > 0
+        GROUP  BY 1, 2
+        HAVING count(*) >= 10
+        ORDER  BY random()
+        LIMIT  %(n)s
+    )
+    SELECT r.meet_id, r.div_id, count(*) AS n,
+           round((stddev_pop(r.speed_rating * r.normalized_time)
+                  / nullif(avg(r.speed_rating * r.normalized_time), 0)
+                  * 100)::numeric, 3) AS pct_spread
+    FROM   results r JOIN d USING (meet_id, div_id)
+    WHERE  r.speed_rating > 0 AND r.normalized_time > 0
+    GROUP  BY 1, 2
+    ORDER  BY pct_spread DESC
+"""
+
+
+def scan(n):
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(_SCAN, {"n": n})
+            rows = cur.fetchall()
+    if not rows:
+        print("  no divisions sampled.")
+        return 0
+    holds = [r for r in rows if float(r["pct_spread"] or 0) < 0.01]
+    print(f"\n  IDENTITY CHECK on {len(rows)} random divisions "
+          f"(>= 10 rated rows each)\n")
+    print(f"    speed_rating * normalized_time must be CONSTANT within a "
+          f"division.\n")
+    print(f"    holds (< 0.01% spread):  {len(holds):>5} / {len(rows)}")
+    print(f"    fails:                   {len(rows) - len(holds):>5} / "
+          f"{len(rows)}\n")
+    print(f"    {'spread%':>9} {'n':>5}  meet/div")
+    for r in rows[:15]:
+        print(f"    {r['pct_spread']:>9} {r['n']:>5}  "
+              f"{r['meet_id']}/{r['div_id']}")
+    print()
+    if len(holds) == len(rows):
+        print("  -> the identity holds everywhere sampled. Gans Creek is "
+              "special, and the\n     question is what is different about "
+              "that division's rows.")
+    elif not holds:
+        print("  -> the identity holds NOWHERE. rating is not "
+              "100*pool_mean*(1+d)/norm on\n     stored data, so one of the "
+              "two columns was written by a different run\n     than the "
+              "other -- and the engine's formula is not the thing to debug.")
+    else:
+        print("  -> mixed. The identity holds for some divisions and not "
+              "others, so it IS\n     the formula in use and something "
+              "per-division breaks it.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Replay the engine's per-row rating inputs for one race.")
-    ap.add_argument("--meet", type=int, required=True)
-    ap.add_argument("--div", type=int, required=True)
+    ap.add_argument("--meet", type=int)
+    ap.add_argument("--div", type=int)
     ap.add_argument("--limit", type=int, default=40)
+    ap.add_argument("--sample", type=int, default=0,
+                    help="instead of one race, check the identity on N random "
+                         "divisions and report how many hold")
     args = ap.parse_args()
+
+    if args.sample:
+        return scan(args.sample)
+    if args.meet is None or args.div is None:
+        ap.error("give --meet and --div, or --sample N")
 
     # The engine's own query, unmodified, wrapped so we can filter to one race.
     # ! tw="" TURNS OFF THE CROSS-SOURCE TWIN DEDUP the real run uses. That
