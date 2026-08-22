@@ -104,9 +104,30 @@ def main():
           by["critical_speed"]["source"], "derived")
     check("threshold names its one imported number",
           "1.08" in by["threshold"]["basis"], True)
-    check("and the unbacked ones say so",
+    check("steady and easy now cite a source",
           [by[k]["source"] for k in ("steady", "easy")],
-          ["unbacked", "unbacked"])
+          ["literature", "literature"])
+
+    print("\n  AGAINST PUBLISHED DANIELS ROWS -- the code has never seen these")
+    # ★ A TEST THAT CAN FAIL. Two rows from Daniels' own tables. The ratios in
+    #   paces.py were taken from his ZONE PERCENTAGES, not from these rows, so
+    #   reproducing them is corroboration rather than circularity.
+    for thr_txt, easy_txt, m_txt in (("6:51", "7:52-9:26", "7:15"),
+                                     ("7:33", "8:55-9:15", None)):
+        thr = s(thr_txt)
+        lo = thr * P._EASY_OF_THRESHOLD[0]
+        hi = thr * P._EASY_OF_THRESHOLD[1]
+        d_lo, d_hi = (s(x) for x in easy_txt.split("-"))
+        print(f"       threshold {thr_txt}: Daniels easy {easy_txt}, "
+              f"ours {P._fmt(lo)}-{P._fmt(hi)}")
+        check(f"  easy fast end within 20s of Daniels at T={thr_txt}",
+              abs(lo - d_lo) <= 20, True)
+        if m_txt:
+            got_m = thr * P._STEADY_OF_THRESHOLD
+            print(f"       threshold {thr_txt}: Daniels marathon {m_txt}, "
+                  f"ours {P._fmt(got_m)}")
+            check("  marathon within 10s of Daniels",
+                  abs(got_m - s(m_txt)) <= 10, True)
 
     print("\nVO2 MAX")
     v = P.vdot(960.0, 5000.0, "hs_m")

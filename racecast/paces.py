@@ -76,12 +76,32 @@ _INTERVAL_FASTER = 0.035        # CS + 3-4% in speed          (Running Writings)
 _THRESHOLD_OF_CS = 1.08         # CS pace x 1.08 = MLSS pace   (EJAP 2021)
 _TEMPO_OVER_10K = (15.0, 20.0)  # 10K pace + 15-20 s/mi        (Running Writings)
 
-# ⚠ NOTHING BACKS THESE TWO. Every number above is one figure from one source;
-#   these are round numbers that produce sane-looking output, which is not the
-#   same thing. Named so they are easy to replace and labelled "unbacked" on
-#   every row they produce.
-_STEADY_OVER_THRESHOLD = (25.0, 40.0)    # further s/mi, off threshold
-_EASY_OVER_THRESHOLD = (85.0, 125.0)
+# ★ STEADY AND EASY AS RATIOS OF THRESHOLD PACE, FROM DANIELS' OWN ZONES.
+#   These were round offsets in seconds per mile with nothing behind them.
+#   Daniels prescribes his zones as percentages of VDOT velocity -- E 65-78%,
+#   M ~84%, T 86-92%, I 95-100% -- which are SPEED fractions, so expressed
+#   against threshold they are pace RATIOS:
+#
+#       E/T   65/92 to 78/86 in speed  =  1.10-1.41 in pace
+#       M/T   84/88 in speed           =  1.05 in pace
+#
+# ⚠ AND AN OFFSET IN SECONDS CANNOT DO THIS JOB, which is the second time that
+#   lesson has cost a rewrite here. Checked against two published Daniels
+#   rows, the ratio reproduces them and the offset does not:
+#
+#       threshold   Daniels easy   ratio 1.15-1.38   offset +85-125s
+#         6:51       7:52-9:26       7:53-9:27        8:16-8:56
+#         7:33       8:55-9:15       8:41-10:25       8:58-9:38
+#
+#   The ratio lands within a second on the VDOT 50 row. The offset is too
+#   narrow there and runs 38 s/mile slow at the fast end of the corpus, where
+#   a fixed number of seconds is a much larger share of the pace.
+#
+# ! THE BAND IS WIDE BECAUSE DANIELS' IS. E spans 65-78% of VDOT velocity; a
+#   slow easy day and a brisk one are both easy days, and narrowing that to
+#   look precise would be inventing precision.
+_STEADY_OF_THRESHOLD = 1.05              # Daniels M against T
+_EASY_OF_THRESHOLD = (1.15, 1.38)        # Daniels E against T
 
 # The coach's rule, retained for the ONE-RACE case only: it needs nothing but
 # a mile time, which is exactly the situation where CS cannot be computed.
@@ -185,12 +205,21 @@ def trainingPaces(races):
                 "per_mile": pm, "per_km": pk, "basis": basis,
                 "source": "literature", "spread_s_per_mile": round(hi - lo)})
     thr = hi                      # the slow end anchors steady and easy
-    for key, label, off in (("steady", "Steady", _STEADY_OVER_THRESHOLD),
-                            ("easy", "Easy", _EASY_OVER_THRESHOLD)):
-        pm, pk = _pair(thr + off[0], thr + off[1])
-        out.append({"key": key, "label": label, "per_mile": pm, "per_km": pk,
-                    "basis": "conventional, off threshold",
-                    "source": "unbacked"})
+    # ! ANCHORED ON CS x 1.08 SPECIFICALLY, not on the slow end of the band
+    #   above. That figure is the MLSS estimate, and MLSS is what Daniels' T
+    #   zone is; anchoring on the 10K-derived end would mix two definitions.
+    anchor = cs_pace * _THRESHOLD_OF_CS
+    st_pace = anchor * _STEADY_OF_THRESHOLD
+    out.append({"key": "steady", "label": "Steady / Marathon",
+                "per_mile": _fmt(st_pace),
+                "per_km": _fmt(st_pace * 1000.0 / MILE_M),
+                "basis": "threshold pace x 1.05 (Daniels M against T)",
+                "source": "literature"})
+    pm, pk = _pair(anchor * _EASY_OF_THRESHOLD[0],
+                   anchor * _EASY_OF_THRESHOLD[1])
+    out.append({"key": "easy", "label": "Easy", "per_mile": pm, "per_km": pk,
+                "basis": "threshold pace x 1.15-1.38 (Daniels E against T)",
+                "source": "literature"})
     return out
 
 
