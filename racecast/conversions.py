@@ -640,25 +640,34 @@ def convert_spread(source, xc_targets, tf_targets):
     #   off one fixed distance makes it a property of the athlete, like the
     #   rating beside it, instead of a number that moves when you retype the
     #   same fitness a different way.
-    # ⚠ ALWAYS THE XC ANCHOR, WHATEVER SPORT THE SOURCE WAS. targetFor is
-    #   per sport -- hs is 5000m for XC and 1600m for TF -- so reading it off
-    #   source["sport"] gave the SAME athlete two different VDOTs depending on
-    #   whether they typed a 1600 time or a 5K time (72.5 against 75.7). A
-    #   fitness measure that moves when you restate the same fitness is not a
-    #   fitness measure. Paces are likewise a running quantity, not an XC or a
-    #   TF one, and paces.FIT_MAX_XC is an XC domain cap in any case.
-    from paces import trainingPaces, vdot          # noqa: E402
-    from normalize_distance import targetFor       # noqa: E402
-    sport = "XC"
-    ref_d = targetFor(_bare(pool), sport) or 5000.0
+    # ⚠ TRAINING PACES NEED TWO RACES AND THIS TOOL TAKES ONE. Critical speed
+    #   is the slope of an athlete's distance-time line, so a single
+    #   performance cannot produce it: three athletes with the same 4:10 1600
+    #   and 3200s of 8:45, 8:58 and 9:20 have critical speeds 35 s/mile apart.
+    #   Rather than manufacture a second race off our own distance curve --
+    #   which would make the answer a restatement of this project's exponent
+    #   instead of a measurement of the athlete -- the spread carries the one
+    #   rule that needs only a mile, clearly labelled, and says what a second
+    #   race would buy.
+    #
+    # ⚠ VDOT ANCHORS ON THE XC DISTANCE WHATEVER SPORT THE SOURCE WAS.
+    #   targetFor is per sport -- hs is 5000m for XC and 1600m for TF -- so
+    #   reading it off source["sport"] gave the SAME athlete two different
+    #   VDOTs depending on how they typed the same fitness: 72.5 against 75.7.
+    from paces import coachRuleTempo, vdot, MILE_M     # noqa: E402
+    from normalize_distance import targetFor           # noqa: E402
+    ref_d = targetFor(_bare(pool), "XC") or 5000.0
     ref_t = normalized_to_time(norm, {"distance": ref_d, "pool": pool,
-                                      "sport": sport})
+                                      "sport": "XC"})
+    mile_t = normalized_to_time(norm, {"distance": MILE_M, "pool": pool,
+                                       "sport": "XC"})
 
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
-        "paces": trainingPaces(norm, pool, sport,
-                               to_time=normalized_to_time),
+        "paces": [p for p in [coachRuleTempo(mile_t)] if p],
+        "paces_note": ("training paces need two races at different distances "
+                       "— one result cannot tell a miler from a 5K runner"),
         "vdot": vdot(ref_t, ref_d, pool),
         "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),

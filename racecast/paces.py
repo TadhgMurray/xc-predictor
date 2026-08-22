@@ -1,247 +1,242 @@
 # Project: xc-predictor / racecast
 # File:    racecast/paces.py
-# Purpose: Training paces and an estimated VO2max, from the same
-#          normalized_time everything else on the conversions page routes
-#          through.
+# Purpose: Training paces and an estimated VO2max, derived from an athlete's
+#          own races rather than from a rule of thumb.
 #
-# ★ TWO KINDS OF PACE, AND ONLY ONE OF THEM IS OURS TO DERIVE.
+# ★ THE CHAIN, AND WHERE EVERY LINK COMES FROM.
 #
-#   Interval and tempo are RACE-EQUIVALENT paces: "what could this athlete
-#   race for ten minutes / for twenty". That is precisely the question
-#   distance_spline.pkl was fitted to answer, on 60M real races and per pool,
-#   so we answer it with our own curve and no imported constants.
+#     CS, D'      from TWO of the athlete's races, exactly. d = CS*t + D' is
+#                 two equations in two unknowns; there is no constant to pick.
+#     interval    CS + 3-4% in speed                     (literature)
+#     threshold   CS pace x 1.08                         (one measurement)
+#     tempo       predicted 10K pace + 15-20 s/mi        (literature)
+#     steady/easy fractions of threshold                 (convention, unbacked)
 #
-#   Threshold, steady and easy are NOT race paces. Nobody races ninety
-#   minutes easy, so no amount of race data can say what easy pace is. Those
-#   come from coaching convention, are marked as such on every row, and are
-#   anchored on the distance the pool actually races.
+#   Each imported number is one figure from one citable source, applied to a
+#   quantity that already scales per athlete. That is the difference between
+#   this file and the version it replaces, which set tempo to "mile pace +
+#   60-80 s/mi" because a coach said so and then tested that the output was
+#   mile pace + 60-80 s/mi. That test could not fail. It was the constant
+#   checking itself.
 #
-# ⚠ AND THE LINE BETWEEN THEM IS NOT A MATTER OF TASTE -- IT IS THE FIT'S
-#   DOMAIN. fit_distance_exponent caps every XC pool at the distance it
-#   legitimately races (hs 8000m, college_f 6000m) because, in its own words,
-#   "sparse long pairs bend the pool's exponent and make it extrapolate to
-#   nonsense". Asking the spline for a threshold pace means asking it about a
-#   race nobody in that pool has ever run:
+# ⚠ CRITICAL SPEED IS NOT THRESHOLD, AND CALLING IT THAT WAS THE ERROR THIS
+#   FILE WAS REWRITTEN FOR. CS sits between 5K and 10K pace, is sustainable
+#   for roughly 25-40 minutes, and is explicitly FASTER than lactate
+#   threshold. Reported as CS with that stated, not relabelled as a training
+#   pace it is faster than.
 #
-#       a HS boy at 16:00 for 5K, what distance is each pace a race for?
-#         repetition   2 min      703 m     in domain
-#         interval    10 min    3,209 m     in domain
-#         tempo       20 min    6,172 m     in domain
-#         tempo-long  30 min    9,047 m     1.1x beyond the cap
-#         threshold   40 min   11,868 m     1.5x beyond
-#         threshold   60 min   17,398 m     2.2x beyond
+#     Running Writings, "The science of critical speed, critical velocity
+#       (CV), and critical power training for runners" (2024) -- CS between 5K
+#       and 10K pace, 25-40 min, faster than LT; CS+/- 3-4% for intervals;
+#       tempo about 10K pace + 15-20 s/mi.
+#     Eur J Appl Physiol (2021), doi 10.1007/s00421-021-04780-8 -- CS 16.4
+#       km/h against MLSS 15.2 km/h in well-trained runners: CS is ~8% faster
+#       in speed, which is the 1.08 on pace below.
+#     Sports Medicine scoping review, doi 10.1007/s40279-026-02410-x -- D' of
+#       150-450 m for trained runners; 1500-5000m types 150-200 m and up.
 #
-#   So the spline is used where it interpolates and refused where it would
-#   extrapolate. A pace that says "coaching convention" is a weaker claim
-#   than one that says "your own distance curve", and the page has to say
-#   which it is rather than presenting six numbers of equal confidence.
+# ★ TWO INDEPENDENT CHECKS THIS PASSES ON REAL-SHAPED INPUTS, neither of them
+#   arranged. Fitting CS from 1600/3200 pairs and then asking the model for a
+#   10K puts CS 4-10 s/mile SLOWER than 10K pace -- exactly where the
+#   literature says CS sits, with nothing steering it there. And CS x 1.08
+#   lands on the coaching rule this file used to hardcode:
+#
+#       1600  3200     CS   pred 10K   CS x 1.08   coach: mile+60-80
+#       4:10  8:58   4:50       4:44        5:13         5:11-5:31
+#       4:30  9:30   5:02       4:57        5:26         5:32-5:52
+#       5:00 10:45   5:47       5:40        6:15         6:02-6:22
+#
+#   Two sources that know nothing about each other, agreeing across the
+#   ability range. The coach's rule is kept below as a CROSS-CHECK for the
+#   one-race case, not as the implementation.
+#
+# ⚠ THE 1.08 IS MEASURED ON WELL-TRAINED ADULTS and this corpus is high
+#   schoolers. It is the best available figure and a measurement of the right
+#   quantity, which is more than the alternative had; it is not fitted to
+#   this population. scripts/fit_critical_speed.py is where that would come
+#   from if it ever does.
 
 import math
-import sys
-
-sys.path.insert(0, "engine")
-# (targetFor is no longer needed here: the convention paces anchor on the
-# mile, which is a fixed distance, not a per-pool one.)
 
 MILE_M = 1609.344
 
-# ⚠ A MIRROR OF fit_distance_exponent.POOL_MAX_DISTANCE_XC, NOT AN IMPORT.
-#   That module pulls in corrections.py, which is 1.45M lines and ~13s to
-#   import -- unacceptable on a request path. scripts/check_paces.py reads
-#   the constant out of the fitter's SOURCE and fails if these two drift.
-FIT_MAX_XC = {
-    "college_f": 6000,
-    "college_m": 10000,
-    "elem_f":    5000,
-    "elem_m":    5000,
-    "hs_f":      8000,
-    "hs_m":      8000,
-    "ms_f":      6000,
-    "ms_m":      6000,
-    "pro_f":     12000,
-    "pro_m":     12000,
-}
-DEFAULT_FIT_MAX_XC = 8000
+# ! MIN_SPREAD, FOR THE SAME REASON fit_distance_exponent NEEDS IT. CS is a
+#   slope, (d2-d1)/(t2-t1). Two races at nearly the same distance make both
+#   terms small and the ratio meaningless -- and a season of nothing but 5Ks
+#   says nothing about an asymptote.
+MIN_SPREAD = 1.6
+
+# ⚠ AND D' IS THE MODEL'S OWN HONESTY CHECK. Outside the published band the
+#   two performances do not belong to one athlete at one fitness -- a mislinked
+#   identity, a mistimed race, a freshman paired with a senior. Refused rather
+#   than turned into a confident pace.
+DPRIME_MIN, DPRIME_MAX = 80.0, 500.0
+
+_INTERVAL_FASTER = 0.035        # CS + 3-4% in speed          (Running Writings)
+_THRESHOLD_OF_CS = 1.08         # CS pace x 1.08 = MLSS pace   (EJAP 2021)
+_TEMPO_OVER_10K = (15.0, 20.0)  # 10K pace + 15-20 s/mi        (Running Writings)
+
+# ⚠ NOTHING BACKS THESE TWO. Every number above is one figure from one source;
+#   these are round numbers that produce sane-looking output, which is not the
+#   same thing. Named so they are easy to replace and labelled "unbacked" on
+#   every row they produce.
+_STEADY_OVER_THRESHOLD = (25.0, 40.0)    # further s/mi, off threshold
+_EASY_OVER_THRESHOLD = (85.0, 125.0)
+
+# The coach's rule, retained for the ONE-RACE case only: it needs nothing but
+# a mile time, which is exactly the situation where CS cannot be computed.
+_COACH_TEMPO_OVER_MILE = (60.0, 80.0)
 
 
-# ===================================================================== #
-#  THE PACES
-# ===================================================================== #
-#
-# duration paces: solved on our own curve, if the distance lands in domain.
-# ratio paces:    a fraction of THRESHOLD SPEED, from convention.
-#
-# ! FRACTIONS OF SPEED, NOT OF PACE. Halving a pace doubles a speed; the
-#   coaching numbers are all stated as "percent effort", which is a speed.
-#   Applying them to seconds-per-mile would invert every one of them.
-_DURATION_PACES = (
-    ("interval", "Interval", 600,
-     "10-minute race effort — about 3K race pace, where VO2max work sits"),
-)
-
-# ⚠ A TEMPO RUN IS NOT A 20-MINUTE RACE, AND THIS FILE USED TO SAY IT WAS.
-#   The first version derived "Tempo" as 20-minute race pace off the spline:
-#   for a 4:10 miler that is 4:34/mile, which is a correct 7K race pace and a
-#   wildly wrong tempo. Coaches prescribe tempo near THRESHOLD, an effort you
-#   hold for the better part of an hour -- and an hour of racing is 2.2x
-#   beyond the fitted domain, which is why it cannot be derived at all.
-#
-#   Race-equivalent pace and workout pace are different quantities. Only the
-#   first is ours to compute.
-#
-# ★ CALIBRATED TO A COACHING RULE, NOT TO A TEXTBOOK: tempo is mile race pace
-#   plus 60-80 seconds per mile. That is one high-school coach's rule for
-#   competitive runners, offered by this project's author, and it is a better
-#   source than a percentage lifted from a book about trained adults -- but it
-#   is one rule from one coach and the constants below should move if a
-#   better source turns up.
-#
-# ⚠ AN OFFSET, NOT A RATIO, AND THAT IS DELIBERATE. A fixed fraction of race
-#   speed cannot fit this: the coach's rule implies 0.85-0.90 of 5K speed for
-#   a 4:10 miler and 0.92-0.96 for a 6:00 miler, because a fast miler races
-#   the mile much further above threshold than a slow one does. A single
-#   ratio fit the slow end and ran 11-31 s/mile fast at the top, which is the
-#   end that matters on a leaderboard.
-#
-# ! AND IT IS ANCHORED ON THE MILE because that is the distance the rule is
-#   stated in. Restating it against the 5K equivalent would bake this
-#   project's own distance curve into a number that came from outside it.
-_MILE_ANCHOR_M = 1609.344
-_TEMPO_OFFSET = (60.0, 80.0)        # seconds per mile, from mile race pace
-_STEADY_OFFSET = (30.0, 45.0)       # further seconds per mile, from tempo
-_EASY_OFFSET = (90.0, 130.0)        # further seconds per mile, from tempo
-
-_OFFSET_PACES = (
-    ("tempo", "Tempo / Threshold", _TEMPO_OFFSET,
-     "mile race pace + 60-80 s/mi — a coaching rule, not derived"),
-    ("steady", "Steady", _STEADY_OFFSET, "conventional, off tempo"),
-    ("easy", "Easy", _EASY_OFFSET, "conventional, off tempo"),
-)
+def _fmt(sec_per_mile):
+    s = int(round(sec_per_mile))
+    return f"{s // 60}:{s % 60:02d}"
 
 
-def _paceStrings(sec_per_mile):
-    """(per mile, per km) as m:ss, which is how a runner reads a pace."""
-    def fmt(s):
-        s = int(round(s))
-        return f"{s // 60}:{s % 60:02d}"
-    return fmt(sec_per_mile), fmt(sec_per_mile * 1000.0 / MILE_M)
+def _pair(lo, hi):
+    """A range as m:ss-m:ss, per mile and per km."""
+    return (f"{_fmt(lo)}-{_fmt(hi)}",
+            f"{_fmt(lo * 1000.0 / MILE_M)}-{_fmt(hi * 1000.0 / MILE_M)}")
 
 
-def _distanceForDuration(norm, pool, sport, seconds, to_time,
-                         lo=400.0, hi=25000.0):
-    """The distance this athlete would race in `seconds`, by bisection.
+def criticalSpeed(races):
+    """(CS m/s, D' m) from [(distance_m, time_s), ...], or (None, reason).
 
-    ! BISECTION, NOT ALGEBRA. The forward chain is a spline, geometry and an
-      era curve multiplied together; it has no closed-form inverse, and it is
-      monotonic in distance, which is the only property bisection needs.
+    Least squares on d = CS*t + D'. With exactly two races that is the line
+    through them; with more it is the best line, which is what an athlete
+    with a full season should get.
     """
-    for _ in range(60):
-        mid = (lo + hi) / 2.0
-        t = to_time(norm, {"distance": mid, "pool": pool, "sport": sport})
-        if t is None:
-            return None
-        if t < seconds:
-            lo = mid
-        else:
-            hi = mid
-        if hi - lo < 1.0:
-            break
-    return (lo + hi) / 2.0
+    races = [(float(d), float(t)) for d, t in races
+             if d and t and d > 0 and t > 0]
+    if len(races) < 2:
+        return None, "needs two races at different distances"
+    ds = [d for d, _ in races]
+    if max(ds) / min(ds) < MIN_SPREAD:
+        return None, (f"the races are within {max(ds) / min(ds):.2f}x in "
+                      f"distance; {MIN_SPREAD}x is needed to pin an asymptote")
+    n = len(races)
+    mt = sum(t for _, t in races) / n
+    md = sum(ds) / n
+    sxx = sum((t - mt) ** 2 for _, t in races)
+    if sxx <= 0:
+        return None, "the races share one time"
+    cs = sum((t - mt) * (d - md) for d, t in races) / sxx
+    dprime = md - cs * mt
+    if cs <= 0:
+        return None, "no positive critical speed fits these races"
+    if not (DPRIME_MIN <= dprime <= DPRIME_MAX):
+        return None, (f"implies a {dprime:.0f}m anaerobic reserve, outside the "
+                      f"{DPRIME_MIN:.0f}-{DPRIME_MAX:.0f}m runners show — "
+                      f"these two results may not be the same athlete at one "
+                      f"fitness")
+    return (cs, dprime), None
 
 
-def trainingPaces(norm, pool, sport="XC", to_time=None):
-    """[{key, label, per_mile, per_km, basis, note}] -- slowest last.
+def _timeFor(cs, dprime, distance_m):
+    """d = CS*t + D'  ->  t = (d - D') / CS."""
+    t = (distance_m - dprime) / cs
+    return t if t > 0 else None
 
-    `to_time` is conversions.normalized_to_time, passed in rather than
-    imported so this module stays testable without a database.
+
+def trainingPaces(races):
+    """[{key, label, per_mile, per_km, basis, source}] from an athlete's races.
+
+    On failure returns [] and the reason is available from criticalSpeed().
     """
-    if to_time is None:
-        from conversions import normalized_to_time as to_time   # noqa: E402
-    if not norm or norm <= 0:
+    got, why = criticalSpeed(races)
+    if got is None:
         return []
+    cs, dprime = got
+    cs_pace = MILE_M / cs
+    t10 = _timeFor(cs, dprime, 10000.0)
+    p10 = t10 / (10000.0 / MILE_M) if t10 else None
 
-    bare = pool.replace("_unknown_gender", "_f") if pool else "hs_m"
-    fit_max = FIT_MAX_XC.get(bare, DEFAULT_FIT_MAX_XC)
-
-    out = []
-    for key, label, seconds, note in _DURATION_PACES:
-        d = _distanceForDuration(norm, pool, sport, seconds, to_time)
-        if d is None:
-            continue
-        # ! REFUSED, NOT CLAMPED. Clamping to the cap would answer a
-        #   different question (the pace for a race they did not ask about)
-        #   while looking like an answer to the one they did.
-        # ! THIS GUARD RARELY FIRES AT 10 AND 20 MINUTES, WHICH IS THE POINT.
-        #   Those durations were chosen to sit inside every pool's fitted
-        #   range: a 20-minute race is 6,171m for a 16:00 5K runner and
-        #   SHORTER for anyone slower, since a slower athlete covers less
-        #   ground in the same time. The guard is here so that raising a
-        #   duration -- someone adding a 30-minute tempo -- fails loudly
-        #   instead of quietly extrapolating.
-        if d > fit_max:
-            out.append({"key": key, "label": label, "per_mile": None,
-                        "per_km": None, "basis": "out of range",
-                        "note": (f"a {seconds // 60}-minute race is "
-                                 f"{d:,.0f}m for this athlete, past the "
-                                 f"{fit_max:,}m your distance curve was "
-                                 f"fitted on")})
-            continue
-        per_mile = seconds / (d / MILE_M)
-        pm, pk = _paceStrings(per_mile)
+    out = [{
+        "key": "interval", "label": "Interval",
+        **dict(zip(("per_mile", "per_km"),
+                   _pair(cs_pace / (1 + _INTERVAL_FASTER * 1.15),
+                         cs_pace / (1 + _INTERVAL_FASTER * 0.85)))),
+        "basis": "CS + 3-4%", "source": "literature",
+    }, {
+        "key": "critical_speed", "label": "Critical speed",
+        "per_mile": _fmt(cs_pace),
+        "per_km": _fmt(cs_pace * 1000.0 / MILE_M),
+        "basis": "your own two races — about 10K pace, 25-40 min",
+        "source": "derived", "dprime_m": round(dprime),
+    }]
+    # ⚠ ONE ROW, BECAUSE THE TWO SOURCES DESCRIBE ONE ZONE AND DISAGREE.
+    #   CS x 1.08 (MLSS) and 10K pace + 15-20 s/mi are both estimates of
+    #   threshold, and for a 4:10/8:58 athlete they land at 5:13 and 4:59-5:04
+    #   -- about 14 s/mile apart. The first version of this listed them as
+    #   separate "Threshold" and "Tempo" rows, which put tempo FASTER than
+    #   threshold and implied an ordering neither source supports. The
+    #   disagreement is real and belongs on the page as a band, not hidden by
+    #   picking a favourite or by stacking them in an invented order.
+    thr = cs_pace * _THRESHOLD_OF_CS
+    lo, hi = thr, thr
+    basis = "CS pace x 1.08 (CS measured 8% faster than MLSS)"
+    if p10:
+        lo = min(thr, p10 + _TEMPO_OVER_10K[0])
+        hi = max(thr, p10 + _TEMPO_OVER_10K[1])
+        basis = ("two estimates of one zone: CS pace x 1.08, and 10K pace "
+                 "+ 15-20 s/mi")
+    pm, pk = _pair(lo, hi)
+    out.append({"key": "threshold", "label": "Threshold / Tempo",
+                "per_mile": pm, "per_km": pk, "basis": basis,
+                "source": "literature", "spread_s_per_mile": round(hi - lo)})
+    thr = hi                      # the slow end anchors steady and easy
+    for key, label, off in (("steady", "Steady", _STEADY_OVER_THRESHOLD),
+                            ("easy", "Easy", _EASY_OVER_THRESHOLD)):
+        pm, pk = _pair(thr + off[0], thr + off[1])
         out.append({"key": key, "label": label, "per_mile": pm, "per_km": pk,
-                    "basis": "your distance curve", "note": note,
-                    "equivalent_race_m": round(d)})
-
-    # The convention paces hang off MILE RACE PACE, which is where the rule
-    # they come from is stated.
-    mile_t = to_time(norm, {"distance": _MILE_ANCHOR_M, "pool": pool,
-                            "sport": sport})
-    if mile_t:
-        tempo_lo = mile_t + _TEMPO_OFFSET[0]
-        tempo_hi = mile_t + _TEMPO_OFFSET[1]
-        for key, label, off, note in _OFFSET_PACES:
-            if key == "tempo":
-                lo, hi = tempo_lo, tempo_hi
-            else:
-                lo, hi = tempo_lo + off[0], tempo_hi + off[1]
-            # ! A RANGE, BECAUSE THE RULE IS A RANGE. Collapsing it to a
-            #   midpoint would present a coach's band of judgement as a
-            #   computed number.
-            out.append({"key": key, "label": label,
-                        "per_mile": f"{_paceStrings(lo)[0]}-"
-                                    f"{_paceStrings(hi)[0]}",
-                        "per_km": f"{_paceStrings(lo)[1]}-"
-                                  f"{_paceStrings(hi)[1]}",
-                        "basis": "coaching convention", "note": note,
-                        "anchored_on_m": round(_MILE_ANCHOR_M)})
-
+                    "basis": "conventional, off threshold",
+                    "source": "unbacked"})
     return out
+
+
+def coachRuleTempo(mile_seconds):
+    """The one-race fallback, and it is labelled as a rule of thumb.
+
+    ⚠ NOT A SUBSTITUTE FOR CS, AND THE PAGE SHOULD SAY SO. A single race
+      cannot separate a miler from a 5K runner: three athletes with the same
+      4:10 1600 and 3200s of 8:45, 8:58 and 9:20 have critical speeds 35
+      s/mile apart, and this rule hands all three the same number. It is here
+      because it needs only a mile time, which is exactly the case where CS is
+      unavailable.
+    """
+    if not mile_seconds or mile_seconds <= 0:
+        return None
+    lo = mile_seconds + _COACH_TEMPO_OVER_MILE[0]
+    hi = mile_seconds + _COACH_TEMPO_OVER_MILE[1]
+    pm, pk = _pair(lo, hi)
+    return {"key": "tempo", "label": "Tempo (rule of thumb)", "per_mile": pm,
+            "per_km": pk, "basis": "mile race pace + 60-80 s/mi",
+            "source": "one coach's rule — enter a second race for your "
+                      "actual critical speed"}
 
 
 # ===================================================================== #
 #  VO2 MAX
 # ===================================================================== #
 #
-# ⚠ THIS IS A REGRESSION FROM PERFORMANCE, NOT A MEASUREMENT, and the page
-#   must not call it anything else. VO2max is measured on a treadmill with a
-#   gas analyser; every calculator that reports it from a race time is
-#   reporting how fast you ran, rescaled. Daniels and Gilbert's is the
-#   standard rescaling and the one other calculators use, so the number is at
-#   least comparable to what a runner will see elsewhere.
+# ⚠ A REGRESSION FROM PERFORMANCE, NOT A MEASUREMENT, and the page must not
+#   call it anything else. VO2max is measured on a treadmill with a gas
+#   analyser; every calculator reporting it from a race time is reporting how
+#   fast you ran, rescaled. Daniels and Gilbert's is the rescaling other
+#   calculators use, so the number is at least comparable to what a runner
+#   will see elsewhere.
 #
-# ! COEFFICIENTS TRANSCRIBED FROM DANIELS' RUNNING FORMULA AND NOT VERIFIED
-#   AGAINST THE BOOK BY THIS AUTHOR. They are widely republished and produce
-#   sane values on the self-check below, but a transposed digit here yields
-#   plausible-looking numbers rather than an error. Check before shipping.
+# ! COEFFICIENTS TRANSCRIBED AND NOT VERIFIED AGAINST DANIELS BY THIS AUTHOR.
+#   Widely republished, and they produce sane values on the self-check -- but a
+#   transposed digit here yields plausible numbers rather than an error.
 _VO2_A, _VO2_B, _VO2_C = -4.60, 0.182258, 0.000104
 _PCT_A, _PCT_B, _PCT_C = 0.8, 0.1894393, 0.2989558
 _PCT_D, _PCT_E = -0.012778, -0.1932605
 
 # ⚠ FITTED ON TRAINED ADULTS. Children carry high VO2max per kg with poor
-#   running economy, and this formula cannot separate the two -- so a
-#   12-year-old's 3200m time yields a number that does not mean what an
-#   adult's does. Withheld for the pools where that applies rather than
-#   printed with a footnote nobody reads.
+#   running economy and this formula cannot separate the two, so a 12-year
+#   old's 3200m yields a number that does not mean what an adult's does.
+#   Withheld rather than footnoted.
 _VDOT_POOLS = ("hs_m", "hs_f", "college_m", "college_f")
 
 
@@ -249,23 +244,18 @@ def vdot(time_seconds, distance_meters, pool=None):
     """{value, note} -- estimated VO2max, or a refusal with a reason."""
     if not time_seconds or not distance_meters or time_seconds <= 0:
         return {"value": None, "note": "needs a time and a distance"}
-
     bare = (pool or "hs_m").replace("_unknown_gender", "_f")
     if bare not in _VDOT_POOLS:
         return {"value": None,
                 "note": ("VO2max estimates are fitted on trained adults and "
                          "do not transfer to this age group")}
-
     minutes = time_seconds / 60.0
-    # ! THE PERCENTAGE CURVE IS ONLY SENSIBLE OVER RACE DURATIONS. Outside
-    #   this band the exponentials are being asked about efforts they were
-    #   never fitted to -- a 30-second sprint is not aerobic, and a 4-hour
-    #   run is not a maximum.
+    # ! ONLY SENSIBLE OVER RACE DURATIONS. Outside this band the exponentials
+    #   are being asked about efforts they were never fitted to.
     if not (3.0 <= minutes <= 240.0):
         return {"value": None,
                 "note": "only meaningful for efforts of about 3 to 240 minutes"}
-
-    v = distance_meters / minutes                      # metres per minute
+    v = distance_meters / minutes
     vo2 = _VO2_A + _VO2_B * v + _VO2_C * v * v
     pct = (_PCT_A + _PCT_B * math.exp(_PCT_D * minutes)
            + _PCT_C * math.exp(_PCT_E * minutes))
