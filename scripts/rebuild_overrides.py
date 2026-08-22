@@ -120,7 +120,23 @@ T2_SIGMA = 2.5          # pass 2, between the two halves
 T3_SIGMA = 7.5          # pass 3, on one row
 T3_VS_FIELD_SIGMA = 5.0  # pass 3, that row against its own division
 UNANIMITY = 0.75        # pass 1: share of the field on the same side
-MIN_FIELD = 8           # pass 1/2: rated rows needed to judge a division
+# ⚠ 4, NOT 8, AND THE BAR MOVES INSTEAD. A flat minimum field is the same
+#   class of gate that hid 26359/0 from every earlier tool: that division has
+#   108 finishers and SIX ratings, because the other 102 were dropped upstream
+#   for being impossible. Requiring 8 RATED rows re-created the exact blind
+#   spot this rebuild exists to close.
+#
+#   The fix is to make the threshold depend on the evidence rather than
+#   refusing to look. SE of a field median is 1.25*sigma/sqrt(N), so
+#
+#       bar(N) = max(absolute_bar, SE_K * 1.25 * sigma / sqrt(N))
+#
+#   holds the false positive count near-constant across every field size --
+#   at SE_K=4 it is about 31 divisions out of 493,029 whether N is 4 or 100.
+#   Small fields need a bigger gap to clear it, which is exactly right: they
+#   carry less evidence.
+MIN_FIELD = 4           # pass 1/2: rated rows needed to judge a division
+SE_K = 4.0              # ...and the gap must also clear this many SEs
 MIN_MINORITY = 5        # pass 2: rated rows needed in the smaller half
 MIN_OWN_RACES = 3       # races an athlete needs for their median to mean this
 # ! 0.03, NOT 0.06, BECAUSE THE LADDER IS DENSER THAN THAT. 1931 / 2000 /
@@ -297,13 +313,20 @@ def impliedDistance(label, base, gap):
     return float(label) * (base / (base + gap)) ** (1.0 / K)
 
 
+def barFor(n, sigma, t1):
+    """The gap a field of n has to clear: the absolute bar, or SE_K standard
+    errors of ITS OWN median, whichever is larger."""
+    import math
+    se = 1.25 * sigma / math.sqrt(max(n, 1))
+    return max(t1 * sigma, SE_K * se)
+
+
 def pass1(rows, sigma, t1, unanimity):
     """(condemned, routed_to_2, skipped) for the whole-division pass."""
-    bar = t1 * sigma
     condemned, routed, skipped = [], [], []
     for r in rows:
         gap = float(r["med_gap"])
-        if abs(gap) <= bar:
+        if abs(gap) <= barFor(r["n"], sigma, t1):
             skipped.append((r, "within the bar"))
             continue
         # ★ THE UNANIMITY GATE IS THE ROUTER. A division split between two
@@ -397,11 +420,38 @@ def pass2(halves, sigma, t2, min_minority):
                                      f"{implied:.0f} snaps poorly "
                                      f"({err:+.1%})"))
                 continue
+            # ! THE HALF THAT IS ALREADY RIGHT GETS NOTHING. In a split
+            #   division one half usually sits at gap ~0 -- it ran the
+            #   labelled race -- and implies its own label straight back.
+            #   The first run pinned those: 53464/227519 F, 11 rows at gap
+            #   +3.5, written as 2400 against a 2414 label. A redundant pin
+            #   is not harmless, because it also fixes a GENDER on rows whose
+            #   gender was never in question.
+            if abs(snapped / float(side["distance"]) - 1) < 0.02:
+                skipped.append((key, f"{side['gender']} implies its own "
+                                     f"label back -- it ran the labelled "
+                                     f"race, nothing to pin"))
+                continue
             out.append({"meet_id": key[0], "div_id": key[1],
                         "gender": side["gender"], "n": side["n"],
                         "distance": snapped, "split": split,
                         "med_gap": float(side["med_gap"]),
                         "result_ids": side["result_ids"]})
+    # ⚠ A DIVISION THAT EMITS ONE HALF IS REPORTED, NOT SHIPPED. If the M
+    #   half snapped and the F half did not, the half still carrying the
+    #   fault is the one that got dropped -- and pinning only its partner
+    #   moves rows that were already correct while leaving the broken race
+    #   exactly as it was. The first run did this on 44609/191385 (F only)
+    #   and 47213/201553 (M only).
+    from collections import Counter
+    per_div = Counter((o["meet_id"], o["div_id"]) for o in out)
+    lone = {k for k, c in per_div.items() if c < 2}
+    if lone:
+        out = [o for o in out if (o["meet_id"], o["div_id"]) not in lone]
+        for k in lone:
+            skipped.append((k, "only one half cleared the gates -- pinning "
+                               "it alone would move the correct race and "
+                               "leave the broken one"))
     return out, skipped
 
 
@@ -490,7 +540,8 @@ def stagePriorPasses(cur, fixed, pinned):
           f"and {len(pinned):,} rows already pinned by pass 2")
 
 
-def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3, max_frac=0.05):
+def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3,
+          max_frac=0.05, max_per_ath=2):
     cur.execute(_PASS3_SQL, {"bar": t3 * sigma,
                              "vs_field": vs_field * sigma, "limit": limit})
     rows = cur.fetchall()
@@ -513,14 +564,36 @@ def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3, max_frac=0.05):
     #   and hides a group fault the earlier passes should own.
     from collections import Counter
     per_div = Counter((r["meet_id"], r["div_id"]) for r in rows)
+    # ! THE FRACTION ONLY APPLIES WHERE A FRACTION MEANS SOMETHING. On a
+    #   division of 11, one row is 9% and trips a 5% gate on its own -- which
+    #   would route every single genuinely corrupt row in a small field into
+    #   the group report and drop nothing, ever. Below 20 rated rows the
+    #   count gate alone governs.
     clustered = {k for k, c in per_div.items()
                  if c > max_per_div
-                 or (div_n.get(k) and c / div_n[k] > max_frac)}
+                 or (div_n.get(k, 0) >= 20 and c / div_n[k] > max_frac)}
 
-    drops, saves, groups = [], [], []
+    # ★ AND THE SAME LOGIC ONE LEVEL DOWN: AN ATHLETE, NOT A DIVISION.
+    #
+    #   The gap is measured against the athlete's own median, so a broken
+    #   MEDIAN condemns that athlete's GOOD races. The first run dropped rows
+    #   at Luther College, Saratoga Spa, Van Cortlandt, Houghton and
+    #   Letchworth -- five different meets -- all against an own-median of
+    #   174-178. No cross-country career medians 175. The median was the
+    #   broken thing and the races being deleted were the real ones.
+    #
+    #   One athlete appearing once is a bad race. The same athlete appearing
+    #   three times, in three unrelated divisions, is a bad median.
+    per_ath = Counter(r["ident"] for r in rows)
+    bad_median = {a for a, c in per_ath.items() if c > max_per_ath}
+
+    drops, saves, groups, medians = [], [], [], []
     for r in rows:
         if (r["meet_id"], r["div_id"]) in clustered:
             groups.append(r)
+            continue
+        if r["ident"] in bad_median:
+            medians.append(r)
             continue
         implied = impliedDistance(r["distance"], float(r["med"]),
                                   float(r["gap"]))
@@ -536,7 +609,7 @@ def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3, max_frac=0.05):
             saves.append({**r, "distance_fix": witness})
         else:
             drops.append(r)
-    return drops, saves, groups
+    return drops, saves, groups, medians
 
 
 # ------------------------------------------------------------------ #
@@ -582,6 +655,10 @@ def sweep1(rows, sigma, unanimity, min_field):
               f"{z:>6.2f} {noise:>8,.0f} {npct:>7.1f}%{mark}")
     print("\n    noise  = divisions this bar would condemn if NOTHING were "
           "wrong.")
+    print("             Computed at the SMALLEST field, while the real bar "
+          "now scales as")
+    print(f"             max(bar, {SE_K:.0f}*SE(N)) per division -- so this "
+          "column overstates it.")
     print("    noise% = that as a share of what it does condemn -- the "
           "false positive")
     print("             rate, upper bound. Take the lowest bar whose noise% "
@@ -635,6 +712,11 @@ def main():
                     help="pass 3: more rows than this over the bar in one "
                          "division is a GROUP fault, not corruption -- "
                          "reported, not dropped (default 3)")
+    ap.add_argument("--max-per-athlete", type=int, default=2,
+                    dest="max_per_ath",
+                    help="pass 3: more rows than this from ONE athlete means "
+                         "their median is what is broken, not their races "
+                         "(default 2)")
     ap.add_argument("--max-drop-frac", type=float, default=0.05,
                     dest="max_drop_frac",
                     help="pass 3: or more than this share of the division "
@@ -749,10 +831,10 @@ def main():
                          for r in got1 if r["distance"]]
                 pinned = [rid for side in got2 for rid in side["result_ids"]]
                 stagePriorPasses(cur, fixed, pinned)
-                drops, saves, groups = pass3(
+                drops, saves, groups, medians = pass3(
                     cur, args.sigma, args.t3, args.vs_field, args.limit,
-                    args.max_per_div, args.max_drop_frac)
-                report3(drops, saves, groups, args)
+                    args.max_per_div, args.max_drop_frac, args.max_per_ath)
+                report3(drops, saves, groups, medians, args)
                 if args.out:
                     dl = [f"{r['result_id']},  # {r['speed_rating']:.1f} vs "
                           f"own median {r['med']:.1f} ({r['gap']:+.1f}), "
@@ -815,7 +897,7 @@ def report2(got, skipped, args):
     print()
 
 
-def report3(drops, saves, groups, args):
+def report3(drops, saves, groups, medians, args):
     print(f"\n  PASS 3 -- {len(drops):,} rows to DROP, {len(saves):,} savable "
           f"(bar {args.t3 * args.sigma:.0f} points, and "
           f"{args.vs_field * args.sigma:.0f} from the division median)\n")
@@ -845,6 +927,20 @@ def report3(drops, saves, groups, args):
             print(f"      {c:>6} {n:>6}  {meet}/{div}")
         if len(per) > 30:
             print(f"      ... and {len(per) - 30:,} more divisions")
+
+    if medians:
+        from collections import Counter
+        per = Counter(r["ident"] for r in medians)
+        print(f"\n    NOT DROPPED -- {len(medians):,} rows from {len(per):,} "
+              f"athletes who are over the bar in")
+        print(f"    more than {args.max_per_ath} unrelated divisions. The gap "
+              f"is measured against their")
+        print(f"    own median, so what is broken is the MEDIAN, and these "
+              f"are their good races.\n")
+        print(f"      {'rows':>6} {'own med':>9}  athlete")
+        for ident, c in per.most_common(20):
+            med = next(r["med"] for r in medians if r["ident"] == ident)
+            print(f"      {c:>6} {med:>9.1f}  {ident}")
 
     if saves:
         print(f"\n    SAVABLE -- these snap to a distance raced elsewhere at "
