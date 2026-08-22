@@ -65,8 +65,19 @@ def _loadOverrides(path):
     spec = importlib.util.spec_from_file_location("corrections", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    print(f"  [ok] {len(mod._DISTANCE_OVERRIDES)} overrides loaded from {path}")
-    return dict(mod._DISTANCE_OVERRIDES)
+    # ⚠ THE NAME WAS SPLIT PER SPORT AND THIS WAS NOT UPDATED. corrections.py
+    #   has held _DISTANCE_OVERRIDES_XC / _TF for a long time; the unsuffixed
+    #   name has not existed, so this script died on an AttributeError before
+    #   reading a single row. Falls back to the old name so a corrections.py
+    #   predating the split still loads.
+    table = getattr(mod, "_DISTANCE_OVERRIDES_XC", None)
+    if table is None:
+        table = getattr(mod, "_DISTANCE_OVERRIDES", None)
+    if table is None:
+        sys.exit(f"{path} has neither _DISTANCE_OVERRIDES_XC nor "
+                 f"_DISTANCE_OVERRIDES")
+    print(f"  [ok] {len(table)} overrides loaded from {path}")
+    return dict(table)
 
 
 # ================================================================== #
