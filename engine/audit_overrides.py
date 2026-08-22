@@ -211,10 +211,32 @@ _LOAD = f"""
            g.n_rated, g.n_unrated, g.med_rating, g.med_time_rated,
            g.med_time_unrated, g.fastest_time
     FROM   ovr_shift s
-    JOIN   dist_override o ON o.meet_id = s.meet_id AND o.div_id = s.div_id
+    -- ⚠ LEFT, AND THIS WAS THE WHOLE BUG. It was an INNER join with
+    --   `o.distance > 0` in the WHERE, so a division with no override could
+    --   not survive the query -- and main() then computed
+    --       none = [r for r in rows if not r["override"]]
+    --   which was therefore ALWAYS EMPTY. The census printed "4,673
+    --   overridden, 0 not" and PROPOSE reported "nothing clears the bar"
+    --   because it had nothing to judge. judgeProposal has been fully
+    --   implemented and unreachable: this tool has never once been able to
+    --   propose an override for a division that did not already have one.
+    --
+    --   26359/0 -- Ox Bow Park, JV Minutemen Classic, labelled 8046m -- is
+    --   exactly that shape. ovr_shift HAS it: that table is built over the
+    --   whole corpus with no dist_override filter, and it reconstructs a
+    --   shadow rating (k/nt) for rows the engine never rated, which is what
+    --   a division like this is made of. propose_distances reads 455,420
+    --   divisions out of the same table. The evidence was always there.
+    --
+    --   The distance test moves into the join so a NULL override means "no
+    --   override" instead of dropping the row.
+    LEFT   JOIN dist_override o ON o.meet_id = s.meet_id
+                               AND o.div_id = s.div_id
+                               AND o.distance > 0
     LEFT   JOIN div_distance d ON d.meet_id = s.meet_id AND d.div_id = s.div_id
     LEFT   JOIN ovr_ratings g ON g.meet_id = s.meet_id AND g.div_id = s.div_id
-    WHERE  s.n >= {MIN_ROWS} AND o.distance > 0
+    WHERE  s.n >= {MIN_ROWS}
+      AND  (o.distance > 0 OR {{want_all}})
 """
 
 
@@ -566,7 +588,7 @@ def stripLines(text, keys):
     return "".join(kept), dropped
 
 
-def loadRows(cur, conn, rebuild):
+def loadRows(cur, conn, rebuild, propose=False):
     # ! ALWAYS REBUILT, EVEN WITHOUT --rebuild. It scans the meet tables, not
     #   results, and a stale copy would judge overrides against last run's
     #   distances without saying so.
@@ -598,7 +620,11 @@ def loadRows(cur, conn, rebuild):
               "verdict does not\n"
               "        use it and is unaffected; rebuild with --rebuild for "
               "the rest.")
-    cur.execute(_LOAD.format(extra=extra))
+    # Only pay for the corpus when something is going to read it: the
+    # removal path judges overrides, and loading 450k rows to do that
+    # would be a large cost for no verdict.
+    cur.execute(_LOAD.format(extra=extra,
+                             want_all="TRUE" if propose else "FALSE"))
     cols = [c[0] for c in cur.description]
     rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     for r in rows:
@@ -885,11 +911,14 @@ def main(write=False, rebuild=False, propose=False, explain_keys=(),
     from database import getConn
 
     with getConn() as conn, conn.cursor() as cur:
-        rows = loadRows(cur, conn, rebuild)
+        rows = loadRows(cur, conn, rebuild, propose)
     have = [r for r in rows if r["override"]]
     none = [r for r in rows if not r["override"]]
     print(f"[audit] {len(rows):,} divisions with >= {MIN_ROWS} results "
           f"({len(have):,} overridden, {len(none):,} not)")
+    if not propose:
+        print("[audit] un-overridden divisions NOT loaded -- pass --propose "
+              "to judge them")
 
     baselines = classBaselines(rows)
     reportBaselines(baselines)
