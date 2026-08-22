@@ -59,8 +59,14 @@ def main():
     if not db:
         sys.exit("no rated rows for that race")
 
+    # ! THE ENGINE'S OWN READER. np.load alone does not reconstruct this pack:
+    #   loadCols opens it with allow_pickle=False and pulls everything that is
+    #   not an array -- athlete_keys and course_keys among them -- out of a
+    #   "__scalars__" literal. Reading the archive directly raises KeyError on
+    #   exactly the two keys this tool needs.
+    from speed_ratings import loadCols
     print(f"  loading {args.pack} ...", flush=True)
-    z = np.load(args.pack, allow_pickle=True)
+    z = loadCols(args.pack)
     rid = z["result_id"]
     athlete = z["athlete"]
     course = z["course"]
