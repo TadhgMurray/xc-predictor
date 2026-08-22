@@ -42,6 +42,7 @@ def main():
     ap.add_argument("--div", type=int, required=True)
     ap.add_argument("--pack", default=_DEFAULT)
     ap.add_argument("--limit", type=int, default=40)
+    ap.add_argument("--sport", choices=["XC", "TF"], default="XC")
     args = ap.parse_args()
 
     if not os.path.exists(args.pack):
@@ -74,8 +75,15 @@ def main():
     c_keys = z["course_keys"]
     norm = z["norm"]
 
+    # ⚠ FILTER BY SPORT. result_id is a PER-TABLE sequence: 20,020,032 ids
+    #   exist in both results and results_tf, so matching on the id alone pulls
+    #   in unrelated track rows from other meets. The pack carries scode
+    #   (0=XC, 1=TF) for exactly this -- packResults calls it "the merged
+    #   result split". Without it this tool reported 268 pack rows for a
+    #   234-row race and called the extras a collision bug.
     want = np.fromiter(db.keys(), dtype=np.int64)
-    idx = np.nonzero(np.isin(rid, want))[0]
+    is_xc = np.asarray(z["sport"]) == (0 if args.sport == "XC" else 1)
+    idx = np.nonzero(np.isin(rid, want) & is_xc)[0]
     print(f"  {len(idx):,} of this race's {len(db):,} rated rows are in the "
           f"pack\n")
     if len(idx) == 0:
