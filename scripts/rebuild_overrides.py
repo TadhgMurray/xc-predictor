@@ -506,19 +506,51 @@ def pass3(cur, sigma, t3, vs_field, limit):
 #  SWEEP -- what each bar would condemn, so it is chosen on evidence
 # ------------------------------------------------------------------ #
 
-def sweep1(rows, sigma, unanimity):
-    print("\n  PASS 1 -- WHAT EACH BAR CONDEMNS\n")
-    print(f"    {'sigma':>6} {'points':>7} {'divisions':>11} {'% of all':>10}")
-    print("    " + "-" * 36)
-    for t in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0, 12.0):
+def sweep1(rows, sigma, unanimity, min_field):
+    """The count curve, next to the count NOISE ALONE would produce.
+
+    ★ THE COUNT CURVE ON ITS OWN CANNOT PICK A BAR. A heavy-tailed mixture of
+      "mostly fine, with noise" and "genuinely broken" has no break in it, so
+      reading the curve for a shoulder finds whatever you were hoping for.
+      What decides the bar is how many of those divisions would be there if
+      nothing were wrong at all.
+
+      The standard error of a field median is 1.25*sigma/sqrt(N). Taking N at
+      MIN_FIELD is the WORST case -- every larger division has a tighter SE
+      and contributes fewer false positives -- so `noise` is an upper bound.
+
+    ⚠ AND IT IS A LOOSE ONE, because these counts are already past the snap
+      gate. A division that is merely noisy implies a distance between the
+      rungs and is thrown out before it reaches this table, so the true false
+      positive rate is below what `noise%` says.
+    """
+    import math
+    se = 1.25 * sigma / math.sqrt(max(min_field, 1))
+    print(f"\n  PASS 1 -- WHAT EACH BAR CONDEMNS, AGAINST WHAT NOISE WOULD")
+    print(f"  sigma {sigma:.2f}, worst-case field of {min_field} -> SE of a "
+          f"field median {se:.2f}\n")
+    print(f"    {'sigma':>6} {'points':>7} {'divisions':>11} {'% of all':>9} "
+          f"{'SE':>6} {'noise':>8} {'noise%':>8}")
+    print("    " + "-" * 60)
+    for t in (1.0, 1.5, 1.8, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0, 12.0):
         got, _routed, _sk = pass1(rows, sigma, t, unanimity)
+        bar = t * sigma
+        z = bar / se if se else 0.0
+        pval = math.erfc(z / math.sqrt(2)) if z else 1.0
+        noise = pval * len(rows)
         pct = 100.0 * len(got) / max(len(rows), 1)
+        npct = 100.0 * noise / max(len(got), 1)
         mark = " *" if abs(t - T1_SIGMA) < 1e-9 else ""
-        print(f"    {t:>6.1f} {t * sigma:>7.0f} {len(got):>11,} "
-              f"{pct:>9.2f}%{mark}")
-    print("\n    * the bar in force. Read the curve, not the number: a bar "
-          "sitting on a\n      flat stretch is robust, one on a cliff is "
-          "fitting the corpus.\n")
+        print(f"    {t:>6.1f} {bar:>7.1f} {len(got):>11,} {pct:>8.2f}% "
+              f"{z:>6.2f} {noise:>8,.0f} {npct:>7.1f}%{mark}")
+    print("\n    noise  = divisions this bar would condemn if NOTHING were "
+          "wrong.")
+    print("    noise% = that as a share of what it does condemn -- the "
+          "false positive")
+    print("             rate, upper bound. Take the lowest bar whose noise% "
+          "you can live")
+    print("             with; every point lower is real faults you are "
+          "leaving in.\n")
 
 
 # ------------------------------------------------------------------ #
@@ -580,7 +612,7 @@ def main():
                 print(f"  {len(rows):,} divisions with >= {args.min_field} "
                       f"rated rows")
                 if args.sweep:
-                    sweep1(rows, args.sigma, args.unanimity)
+                    sweep1(rows, args.sigma, args.unanimity, args.min_field)
                     return 0
                 got, routed, skipped = pass1(rows, args.sigma, args.t1,
                                              args.unanimity)
