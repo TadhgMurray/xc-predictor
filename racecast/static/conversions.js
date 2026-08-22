@@ -457,7 +457,11 @@
         }
 
         var bits = [];
-        if (rows.length) {
+        // ! KEYED ON A FITTED ROW, NOT ON HAVING ANY ROWS. The projected
+        //   ladder has rows and no critical speed in it, so claiming one was
+        //   fitted would be describing a row that is not on the page.
+        var fitted = rows.some(function (p) { return p.source === 'derived'; });
+        if (fitted) {
             bits.push('Critical speed is fitted from this athlete\'s own ' +
                       'races. Every other row applies a published ' +
                       'relationship to it.');

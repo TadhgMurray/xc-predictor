@@ -55,20 +55,6 @@ except ImportError as exc:                    # fail loudly, not silently
 # ===================================================================== #
 
 TOP_N       = 25     # rows SHOWN per board
-# ⚠ HOW MANY SLOTS ONE PERSON MAY HOLD ON A PERFORMANCE BOARD.
-#
-#   _drainRanked has carried this cap, and the reason for it, since one
-#   middle-school girl held 12 of 25 TF slots -- but _writePanels passed None
-#   for every board except "athlete", so the performance boards ran uncapped
-#   and the exact thing the cap was written for came back: Luke Surface held
-#   12 of 25 MS boys slots and Brianna Reilly 12 of 25 MS girls, because an
-#   800, a 1500 and a 3000 are three rated performances by one runner.
-#
-#   Each of those rows is a real result and belongs on the site. What it does
-#   not belong to is a list of 25 whose job is to say who the best are. Two
-#   keeps a genuinely dominant athlete visibly dominant without letting them
-#   BE the board.
-PERF_PER_PERSON = 2
 COLLECT_N   = 250    # rows COLLECTED before thinning -- must exceed TOP_N by
                      # enough that capping per athlete can't leave the board short      # rows kept per board / scope / sport / pool
 SEASON_MIN_RACES   = 4       # race floor for a season average to be listed
@@ -1285,9 +1271,7 @@ def _writePanels(conn, buckets, meta):
     snapshot or the whole new one, never a half-empty front page mid-write."""
     rows = []
     for (board, scope, sport, pool), heap in buckets.items():
-        # "athlete" is one row per person by definition; a performance
-        # board is many per person, capped. See PERF_PER_PERSON.
-        cap = 1 if board == "athlete" else PERF_PER_PERSON
+        cap = 1 if board == "athlete" else None
         for entry in _drainRanked(heap, max_per_person=cap):
             note    = SUPPRESSED_BOARDS.get((board, scope))
             visible = note is None

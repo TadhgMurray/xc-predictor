@@ -293,3 +293,83 @@ def vdot(time_seconds, distance_meters, pool=None):
     return {"value": round(vo2 / pct, 1),
             "note": "from race performance (Daniels–Gilbert), "
                     "not a lab measurement"}
+
+
+# ===================================================================== #
+#  THE ONE-RACE LADDER
+# ===================================================================== #
+#
+# ★ WHAT A SINGLE PERFORMANCE CAN AND CANNOT BUY.
+#
+#   It cannot buy critical speed. CS is the SLOPE of an athlete's
+#   distance-time line and one point has no slope: three athletes with the
+#   same 4:10 1600 and 3200s of 8:45, 8:58 and 9:20 have critical speeds 35
+#   s/mile apart. That row stays absent, and the page says why.
+#
+#   It CAN buy a 10K pace, and that is not a guess. This project's distance
+#   curve -- normalized_time = t * (anchor / d) ** K -- is fitted on 60M
+#   results; projecting one race to 10,000m is the same operation the
+#   conversion table on this page already performs, and the user is looking
+#   at its output in the next table over. Every published relationship below
+#   hangs off that 10K pace, so each row names a real source:
+#
+#       threshold   10K pace + 15-20 s/mi        (Running Writings)
+#       interval    3-4% faster in speed         (Running Writings)
+#       steady      threshold x 1.05             (Daniels, M against T)
+#       easy        threshold x 1.15-1.38        (Daniels, E against T)
+#
+#   THIS IS NOT THE COACH'S RULE UNDER A NEW NAME. mile + 60-80 s/mi is a
+#   CONSTANT: it hands the same answer to a miler and a 5K runner because
+#   nothing in it knows the difference. A projected 10K pace is a
+#   MEASUREMENT of this performance against 60M others at that distance, so
+#   the three athletes above get three different ladders -- as they should.
+#
+# ⚠ IT IS STILL WEAKER THAN THE FITTED LADDER AND MUST SAY SO. The projection
+#   assumes this athlete's distance curve is the CORPUS curve. A true miler
+#   and a true 10K runner with the same 1600 do not share one, which is
+#   exactly the difference two races would reveal. Every row here is marked
+#   `modeled`, against `derived` for a fitted critical speed.
+
+def projectedPaces(mile_seconds, pace_10k_seconds):
+    """The ladder from one race, anchored on a projected 10K pace.
+
+    mile_seconds       -- this performance expressed at 1609.34m
+    pace_10k_seconds   -- this performance expressed at 10,000m, per mile
+
+    Returns the same row shape trainingPaces does, minus the critical speed
+    row, or [] if the projection is unusable.
+    """
+    if not pace_10k_seconds or pace_10k_seconds <= 0:
+        return []
+    p10 = float(pace_10k_seconds)
+
+    lo = p10 + _TEMPO_OVER_10K[0]
+    hi = p10 + _TEMPO_OVER_10K[1]
+    thr = (lo + hi) / 2.0                 # anchors steady and easy
+    pm, pk = _pair(lo, hi)
+
+    out = []
+    # Interval is set off the 10K pace, not off threshold: the published
+    # figure is against CS, and 10K pace is the closer stand-in for CS of the
+    # two -- CS sits between 5K and 10K pace.
+    ipm, ipk = _pair(p10 / (1 + _INTERVAL_FASTER * 1.15),
+                     p10 / (1 + _INTERVAL_FASTER * 0.85))
+    out.append({"key": "interval", "label": "Interval",
+                "per_mile": ipm, "per_km": ipk,
+                "basis": "3–4% faster than projected 10K pace",
+                "source": "modeled"})
+    out.append({"key": "threshold", "label": "Threshold / Tempo",
+                "per_mile": pm, "per_km": pk,
+                "basis": "projected 10K pace + 15–20 s/mi",
+                "source": "modeled"})
+    st = thr * _STEADY_OF_THRESHOLD
+    out.append({"key": "steady", "label": "Steady / Marathon",
+                "per_mile": _fmt(st), "per_km": _fmt(st * 1000.0 / MILE_M),
+                "basis": "threshold pace × 1.05 (Daniels, M against T)",
+                "source": "modeled"})
+    epm, epk = _pair(thr * _EASY_OF_THRESHOLD[0], thr * _EASY_OF_THRESHOLD[1])
+    out.append({"key": "easy", "label": "Easy",
+                "per_mile": epm, "per_km": epk,
+                "basis": "threshold pace × 1.15–1.38 (Daniels, E against T)",
+                "source": "modeled"})
+    return out

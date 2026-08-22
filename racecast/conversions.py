@@ -724,11 +724,19 @@ def convert_spread(source, xc_targets, tf_targets):
     #   targetFor is per sport -- hs is 5000m for XC and 1600m for TF -- so
     #   reading it off source["sport"] gave the SAME athlete two different
     #   VDOTs depending on how they typed the same fitness: 72.5 against 75.7.
-    from paces import vdot                             # noqa: E402
+    from paces import vdot, projectedPaces, MILE_M     # noqa: E402
     from normalize_distance import targetFor           # noqa: E402
     ref_d = targetFor(_bare(pool), "XC") or 5000.0
     ref_t = normalized_to_time(norm, {"distance": ref_d, "pool": pool,
                                       "sport": "XC"})
+    # ★ THE SAME PROJECTION THE TABLE BELOW IS ALREADY SHOWING, reused as the
+    #   pace anchor. Expressing this performance at 10,000m is what the
+    #   conversion tool does; the paces just read the answer off it.
+    mile_t = normalized_to_time(norm, {"distance": MILE_M, "pool": pool,
+                                       "sport": "TF"})
+    t10 = normalized_to_time(norm, {"distance": 10000.0, "pool": pool,
+                                    "sport": "TF"})
+    p10 = t10 / (10000.0 / MILE_M) if t10 else None
     training = (athlete_paces(source["person_id"])
                 if source.get("type") == "athlete" and source.get("person_id")
                 else None)
@@ -736,17 +744,21 @@ def convert_spread(source, xc_targets, tf_targets):
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
-        # ★ THE FULL LADDER WHEN THE SOURCE NAMES SOMEBODY, NOTHING OTHERWISE.
-        #   An athlete source carries a person_id, and a person_id carries a
-        #   season of races; a typed time carries one number, and one number
-        #   cannot tell a miler from a 5K runner.
+        # ★ THE FITTED LADDER WHEN THE SOURCE NAMES SOMEBODY, THE PROJECTED
+        #   ONE OTHERWISE. Both are built from something measured -- an
+        #   athlete's own critical speed, or this performance projected to
+        #   10,000m against 60M results -- and each row says which. What is
+        #   NOT here is a constant added to a mile: that hands three
+        #   different athletes one answer, which is the whole reason the
+        #   fitted ladder exists. See paces.projectedPaces.
         "paces": (training["paces"] if training and training.get("paces")
-                  else []),
+                  else projectedPaces(mile_t, p10)),
         "paces_from": training,
         "paces_note": (None if training and training.get("paces") else
-                       "Training paces need two races at different distances. "
-                       "Pick an athlete as the source and they are fitted to "
-                       "that athlete's own season."),
+                       "Projected from this one performance using the site's "
+                       "own distance curve. Pick an athlete as the source and "
+                       "the ladder is fitted to their own races instead, "
+                       "which adds a measured critical speed."),
         "vdot": vdot(ref_t, ref_d, pool),
         "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),

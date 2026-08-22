@@ -79,6 +79,7 @@ fields AS (
            min(doy)                                            AS doy,
            count(*)                                            AS field_size,
            avg(speed_rating - season_mean)                     AS field_dev,
+           avg(season_mean)                                    AS base_rating,
            stddev_pop(speed_rating - season_mean)              AS dev_spread
     FROM seasoned
     WHERE season_races >= 4          -- a season mean needs a season behind it
@@ -96,6 +97,7 @@ LEFT JOIN LATERAL (
     WHERE meets.meet_id = f.meet_id AND meets.div_id = f.div_id
     LIMIT 1
 ) m ON TRUE
+WHERE %(name)s IS NULL OR m.course_name ILIKE %(name)s
 ORDER BY abs(f.field_dev) DESC
 LIMIT %(limit)s
 """
@@ -143,6 +145,49 @@ FROM fields
 """
 
 
+
+# ★ WHAT DISTANCE WOULD EXPLAIN THE BIAS. Same chain the splitter uses:
+#
+#       normalized_time = t * (anchor / d) ** K      =>   nt is proportional to d ** -K
+#       rating          is proportional to 1 / nt
+#   so  rating_label / rating_true = (d_label / d_true) ** K
+#   and d_true = d_label * (base / (base + dev)) ** (1 / K)
+#
+# A field rating HIGH ran a course SHORTER than its label, and this says by
+# how much. It is the same number a hand adjudication would reach, which is
+# the point: the worklist should hand you the candidate, not just the alarm.
+_K = {"XC": 1.06, "TF": 1.10}
+
+
+def _impliedDistance(distance, base, dev, sport):
+    if not distance or not base or base + dev <= 0:
+        return None
+    return float(distance) * (base / (base + dev)) ** (1.0 / _K[sport])
+
+
+def _overrideFor(meet_id, div_id, sport):
+    """Is this field already covered by a distance override, and at what?
+
+    Answering "no override" and "an override that is not being applied" are
+    completely different bugs, and the worklist could not tell them apart.
+    """
+    try:
+        import sys
+        sys.path.insert(0, "engine")
+        import corrections
+        table = (corrections._DISTANCE_OVERRIDES_XC if sport == "XC"
+                 else corrections._DISTANCE_OVERRIDES_TF)
+    except Exception:
+        return None
+    for key in ((meet_id, div_id), (int(meet_id), int(div_id))):
+        try:
+            if key in table:
+                return table[key]
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _fetch(sql, params):
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -173,7 +218,7 @@ def reportDistribution(sport, minField):
     print(f"    |dev| > 40      {row['beyond_40']:,}   <-- UCSB magnitude")
 
 
-def reportWorklist(sport, minField, limit):
+def reportWorklist(sport, minField, limit, name=None):
     """
     The worst fields, for hand inspection.
 
@@ -186,19 +231,44 @@ def reportWorklist(sport, minField, limit):
                                not a course problem.
     """
     rows = _fetch(_MEET_OUTLIER_SQL.format(table=_TABLE[sport]),
-                  {"min_field": minField, "limit": limit})
+                  {"min_field": minField, "limit": limit,
+                   "name": f"%{name}%" if name else None})
 
-    print(f"\n  WORST FIELDS (top {limit} by |field_dev|)")
-    print(f"\n    {'dev':>7} {'spread':>7} {'n':>5} {'wk':>4} {'year':>5} "
-          f"{'meet/div':>18}  course")
+    scope = f" matching {name!r}" if name else ""
+    print(f"\n  WORST FIELDS (top {limit} by |field_dev|{scope})")
+    if not rows:
+        print(f"\n    nothing{scope} with a field of {minField}+ rated "
+              f"athletes. Widen with --min-field, or check the spelling "
+              f"against meets.course_name.")
+        return
+    print(f"\n    {'dev':>7} {'spread':>7} {'n':>5} {'label':>6} "
+          f"{'implied':>7} {'ovr':>7} {'year':>5} {'meet/div':>18}  course")
 
     for row in rows:
-        week = _weekOf(row["doy"], sport)
         meetDiv = f"{row['meet_id']}/{row['div_id']}"
-        course = (row["course_name"] or "(no meets row)")[:40]
+        course = (row["course_name"] or "(no meets row)")[:34]
+        implied = _impliedDistance(row["distance"], row["base_rating"],
+                                   row["field_dev"], sport)
+        ovr = _overrideFor(row["meet_id"], row["div_id"], sport)
+        label_s = f"{row['distance']:.0f}" if row["distance"] else "-"
+        imp_s = f"{implied:.0f}" if implied else "-"
+        # ! AN OVERRIDE THAT IS SET AND STILL WRONG IS THE LOUD CASE. The
+        #   distance was decided and the field is STILL off, so the override
+        #   is either not reaching this row or is itself wrong.
+        ovr_s = "-" if ovr is None else f"{ovr:.0f}!"
         print(f"    {row['field_dev']:>+7.1f} {row['dev_spread']:>7.1f} "
-              f"{row['field_size']:>5} {week:>4} {row['season_year']:>5} "
-              f"{meetDiv:>18}  {course}")
+              f"{row['field_size']:>5} {label_s:>6} {imp_s:>7} {ovr_s:>7} "
+              f"{row['season_year']:>5} {meetDiv:>18}  {course}")
+
+    print("\n    label = meets.distance   implied = what the field's bias says")
+    print("    implied UNDER-corrects: each athlete's season mean includes")
+    print("    this race, so the bias it is measured against is already")
+    print("    pulled toward it. A field really run at 4000 under a 5000")
+    print("    label reads implied 4251. Treat it as a floor on the error,")
+    print("    not as the distance to write.")
+    print("    ovr   = a distance override already set for this meet/div;")
+    print("            a value there next to a big dev means the override is")
+    print("            not reaching these rows, or is wrong itself.")
 
     print("\n    READ: high dev + LOW spread = whole field shifted = race-level")
     print("    scoring error (difficulty / distance / stale normalization).")
@@ -214,6 +284,10 @@ def main():
     parser.add_argument("--sport", choices=["XC", "TF"], default="XC")
     parser.add_argument("--min-field", type=int, default=_MIN_FIELD)
     parser.add_argument("--limit", type=int, default=40)
+    parser.add_argument("--name", default=None,
+                        help="only fields whose course_name "
+                             "contains this (case-insensitive), "
+                             "e.g. --name yellowjacket")
     args = parser.parse_args()
 
     print("=" * 78)
@@ -221,7 +295,7 @@ def main():
     print("=" * 78)
 
     reportDistribution(args.sport, args.min_field)
-    reportWorklist(args.sport, args.min_field, args.limit)
+    reportWorklist(args.sport, args.min_field, args.limit, args.name)
 
     print("\nNothing was written. This script is read only.\n")
 
