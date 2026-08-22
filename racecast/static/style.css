@@ -2928,26 +2928,18 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 /*    always visible rather than a tooltip.                           */
 /* ---------------------------------------------------------------- */
 .paces { margin: 1.5rem 0 0.5rem; }
-.paces h2 { font-size: 1.05rem; margin-bottom: 0.6rem; }
+/* ! THE PANEL IS A CONVERSION TABLE, SO IT USES .conv-table AND ADDS ONLY
+     WHAT IS ITS OWN. It had a private set of type sizes, paddings and a
+     lowercase small-caps header row, which put a second table style on a
+     page that already had one. Everything below is an addition to
+     .conv-table, never a contradiction of it. */
+.paces h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
 .paces-src {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     font-weight: 400;
     color: var(--muted);
     margin-left: 0.5rem;
 }
-.paces-tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.paces-tbl th {
-    text-align: left;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    font-weight: 600;
-    padding: 0 0.6rem 0.35rem 0;
-    border-bottom: 1px solid var(--line, #e3e3e3);
-}
-.paces-tbl td { padding: 0.4rem 0.6rem 0.4rem 0; vertical-align: baseline; }
-.paces-tbl tbody tr + tr td { border-top: 1px solid var(--line, #ededed); }
 .paces-tbl .zone { font-weight: 600; white-space: nowrap; }
 /* ! TABULAR FIGURES so the pace column lines up digit over digit -- a
      column of times that does not align is harder to scan than one that
@@ -2957,9 +2949,9 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     white-space: nowrap;
 }
 .paces-tbl .km { color: var(--muted); }
-.paces-tbl .basis { font-size: 0.78rem; color: var(--muted); }
+.paces-tbl .basis { color: var(--muted); }
 .paces-tbl tr.derived .zone,
-.paces-tbl tr.derived .pace { color: var(--accent, #b4462f); }
+.paces-tbl tr.derived .pace { color: var(--accent, #14477d); }
 .paces-tbl tr.derived .zone::after {
     content: "fitted";
     display: inline-block;
@@ -2968,7 +2960,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: var(--accent, #b4462f);
+    color: var(--accent, #14477d);
     border: 1px solid currentColor;
     border-radius: 2px;
     padding: 0 0.25rem;

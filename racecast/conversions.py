@@ -705,27 +705,30 @@ def convert_spread(source, xc_targets, tf_targets):
     #   off one fixed distance makes it a property of the athlete, like the
     #   rating beside it, instead of a number that moves when you retype the
     #   same fitness a different way.
-    # ⚠ TRAINING PACES NEED TWO RACES AND THIS TOOL TAKES ONE. Critical speed
-    #   is the slope of an athlete's distance-time line, so a single
-    #   performance cannot produce it: three athletes with the same 4:10 1600
-    #   and 3200s of 8:45, 8:58 and 9:20 have critical speeds 35 s/mile apart.
-    #   Rather than manufacture a second race off our own distance curve --
-    #   which would make the answer a restatement of this project's exponent
-    #   instead of a measurement of the athlete -- the spread carries the one
-    #   rule that needs only a mile, clearly labelled, and says what a second
-    #   race would buy.
+    # ⚠ TRAINING PACES NEED TWO RACES AND THIS TOOL TAKES ONE, so a
+    #   one-race source gets NO PACE TABLE -- only a line saying what would
+    #   produce one. Critical speed is the slope of an athlete's distance-time
+    #   line, so a single performance cannot produce it: three athletes with
+    #   the same 4:10 1600 and 3200s of 8:45, 8:58 and 9:20 have critical
+    #   speeds 35 s/mile apart.
+    #
+    #   An earlier version filled the gap with coachRuleTempo (mile + 60-80
+    #   s/mi). That is a real coaching rule and it is still in paces.py, but
+    #   as the ONLY row on the page it was doing exactly the thing this work
+    #   was rebuilt to stop doing: handing all three of those athletes the
+    #   same pace, off a constant, under a heading that says "training paces".
+    #   A rule of thumb is a fine thing to know and a bad thing to be the
+    #   answer. One honest empty state beats one dishonest row.
     #
     # ⚠ VDOT ANCHORS ON THE XC DISTANCE WHATEVER SPORT THE SOURCE WAS.
     #   targetFor is per sport -- hs is 5000m for XC and 1600m for TF -- so
     #   reading it off source["sport"] gave the SAME athlete two different
     #   VDOTs depending on how they typed the same fitness: 72.5 against 75.7.
-    from paces import coachRuleTempo, vdot, MILE_M     # noqa: E402
+    from paces import vdot                             # noqa: E402
     from normalize_distance import targetFor           # noqa: E402
     ref_d = targetFor(_bare(pool), "XC") or 5000.0
     ref_t = normalized_to_time(norm, {"distance": ref_d, "pool": pool,
                                       "sport": "XC"})
-    mile_t = normalized_to_time(norm, {"distance": MILE_M, "pool": pool,
-                                       "sport": "XC"})
     training = (athlete_paces(source["person_id"])
                 if source.get("type") == "athlete" and source.get("person_id")
                 else None)
@@ -733,16 +736,17 @@ def convert_spread(source, xc_targets, tf_targets):
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
-        # ★ THE FULL LADDER WHEN THE SOURCE NAMES SOMEBODY, the rule of thumb
-        #   otherwise. An athlete source carries a person_id, and a person_id
-        #   carries a season of races; a typed time carries one number.
+        # ★ THE FULL LADDER WHEN THE SOURCE NAMES SOMEBODY, NOTHING OTHERWISE.
+        #   An athlete source carries a person_id, and a person_id carries a
+        #   season of races; a typed time carries one number, and one number
+        #   cannot tell a miler from a 5K runner.
         "paces": (training["paces"] if training and training.get("paces")
-                  else [p for p in [coachRuleTempo(mile_t)] if p]),
+                  else []),
         "paces_from": training,
         "paces_note": (None if training and training.get("paces") else
-                       "pick an athlete as the source for paces fitted to "
-                       "their own races — one typed result cannot tell a "
-                       "miler from a 5K runner"),
+                       "Training paces need two races at different distances. "
+                       "Pick an athlete as the source and they are fitted to "
+                       "that athlete's own season."),
         "vdot": vdot(ref_t, ref_d, pool),
         "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),

@@ -412,15 +412,28 @@
     //   claiming something the work does not support.
     function paintPaces(data) {
         var panel = document.getElementById('paces-panel');
+        var wrap = document.getElementById('paces-tbl-wrap');
         var body = document.getElementById('paces-body');
         var src = document.getElementById('paces-src');
         var foot = document.getElementById('paces-foot');
+        var vd = document.getElementById('paces-vdot');
         if (!panel) return;
         var rows = data.paces || [];
         var from = data.paces_from;
-        if (!rows.length && !(from && from.reason)) { panel.hidden = true; return; }
+        // VO2max needs one time, so it survives a source that cannot give
+        // paces; the athlete's own is preferred because it is read off that
+        // athlete's races rather than off this one typed result.
+        var v = (from && from.vdot) || data.vdot;
+        if (!rows.length && !(v && v.value) && !data.paces_note) {
+            panel.hidden = true;
+            return;
+        }
         panel.hidden = false;
 
+        // ★ NO ROWS MEANS NO TABLE, not an empty one. A typed time cannot
+        //   produce critical speed, and a header row over nothing reads as a
+        //   failure rather than as a precondition.
+        if (wrap) wrap.hidden = !rows.length;
         body.innerHTML = rows.map(function (p) {
             var cls = p.source === 'derived' ? ' class="derived"' : '';
             return '<tr' + cls + '><td class="zone">' + esc(p.label) +
@@ -435,22 +448,20 @@
         // ★ VO2MAX ON ITS OWN LINE. It is a headline number the page was asked
         //   for, not a caveat; buried at the end of the footnote it read as
         //   "Estimated ... estimated ...", three hedges in one sentence.
-        var vd = document.getElementById('paces-vdot');
         if (vd) {
-            var v = from && from.vdot;
             vd.hidden = !(v && v.value);
             if (v && v.value)
-                vd.innerHTML = 'Estimated VO<sub>2</sub>max <strong>' +
+                vd.innerHTML = 'VO<sub>2</sub>max <strong>' +
                     esc(v.value) + '</strong> <span class="paces-vdot-note">' +
                     esc(v.note) + '</span>';
         }
 
         var bits = [];
-        if (from && from.paces && from.paces.length) {
+        if (rows.length) {
             bits.push('Critical speed is fitted from this athlete\'s own ' +
                       'races. Every other row applies a published ' +
                       'relationship to it.');
-            if (from.dprime)
+            if (from && from.dprime)
                 bits.push('D\u2032 ' + from.dprime + ' m \u2014 the distance ' +
                           'this athlete can cover above critical speed before ' +
                           'slowing.');
