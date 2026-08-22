@@ -94,7 +94,11 @@ def main():
         v = r.get("venue")
         seen[v] = seen.get(v, 0) + 1
         try:
-            d = r["date"]
+            # ! _asDate FIRST, EXACTLY AS packResults DOES. r.date comes out
+            #   of the query as TEXT, and poolOf feeds it to seasonYearFor,
+            #   which asserts on a real date object. Passing the raw string
+            #   made every row report the same error and look unanimous.
+            d = sr._asDate(r["date"])
             pool = sr.poolOf(r.get("grade"), r.get("gender"), r.get("source"),
                              r.get("school"), r.get("sport"), False,
                              person_id=r.get("person_id"),
