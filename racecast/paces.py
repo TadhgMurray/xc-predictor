@@ -115,8 +115,8 @@ def _fmt(sec_per_mile):
 
 def _pair(lo, hi):
     """A range as m:ss-m:ss, per mile and per km."""
-    return (f"{_fmt(lo)}-{_fmt(hi)}",
-            f"{_fmt(lo * 1000.0 / MILE_M)}-{_fmt(hi * 1000.0 / MILE_M)}")
+    return (f"{_fmt(lo)}–{_fmt(hi)}",
+            f"{_fmt(lo * 1000.0 / MILE_M)}–{_fmt(hi * 1000.0 / MILE_M)}")
 
 
 def criticalSpeed(races):
@@ -176,12 +176,12 @@ def trainingPaces(races):
         **dict(zip(("per_mile", "per_km"),
                    _pair(cs_pace / (1 + _INTERVAL_FASTER * 1.15),
                          cs_pace / (1 + _INTERVAL_FASTER * 0.85)))),
-        "basis": "CS + 3-4%", "source": "literature",
+        "basis": "3–4% faster than critical speed", "source": "literature",
     }, {
         "key": "critical_speed", "label": "Critical speed",
         "per_mile": _fmt(cs_pace),
         "per_km": _fmt(cs_pace * 1000.0 / MILE_M),
-        "basis": "your own two races — about 10K pace, 25-40 min",
+        "basis": "near 10K pace — the 25–40 min effort",
         "source": "derived", "dprime_m": round(dprime),
     }]
     # ⚠ ONE ROW, BECAUSE THE TWO SOURCES DESCRIBE ONE ZONE AND DISAGREE.
@@ -194,12 +194,12 @@ def trainingPaces(races):
     #   picking a favourite or by stacking them in an invented order.
     thr = cs_pace * _THRESHOLD_OF_CS
     lo, hi = thr, thr
-    basis = "CS pace x 1.08 (CS measured 8% faster than MLSS)"
+    basis = "critical speed pace × 1.08"
     if p10:
         lo = min(thr, p10 + _TEMPO_OVER_10K[0])
         hi = max(thr, p10 + _TEMPO_OVER_10K[1])
-        basis = ("two estimates of one zone: CS pace x 1.08, and 10K pace "
-                 "+ 15-20 s/mi")
+        basis = ("two estimates of one zone: critical speed pace "
+                 "× 1.08, and 10K pace + 15–20 s/mi")
     pm, pk = _pair(lo, hi)
     out.append({"key": "threshold", "label": "Threshold / Tempo",
                 "per_mile": pm, "per_km": pk, "basis": basis,
@@ -213,12 +213,12 @@ def trainingPaces(races):
     out.append({"key": "steady", "label": "Steady / Marathon",
                 "per_mile": _fmt(st_pace),
                 "per_km": _fmt(st_pace * 1000.0 / MILE_M),
-                "basis": "threshold pace x 1.05 (Daniels M against T)",
+                "basis": "threshold pace × 1.05 (Daniels, M against T)",
                 "source": "literature"})
     pm, pk = _pair(anchor * _EASY_OF_THRESHOLD[0],
                    anchor * _EASY_OF_THRESHOLD[1])
     out.append({"key": "easy", "label": "Easy", "per_mile": pm, "per_km": pk,
-                "basis": "threshold pace x 1.15-1.38 (Daniels E against T)",
+                "basis": "threshold pace × 1.15–1.38 (Daniels, E against T)",
                 "source": "literature"})
     return out
 
@@ -239,7 +239,7 @@ def coachRuleTempo(mile_seconds):
     hi = mile_seconds + _COACH_TEMPO_OVER_MILE[1]
     pm, pk = _pair(lo, hi)
     return {"key": "tempo", "label": "Tempo (rule of thumb)", "per_mile": pm,
-            "per_km": pk, "basis": "mile race pace + 60-80 s/mi",
+            "per_km": pk, "basis": "mile race pace + 60–80 s/mi",
             "source": "one coach's rule — enter a second race for your "
                       "actual critical speed"}
 
@@ -291,5 +291,5 @@ def vdot(time_seconds, distance_meters, pool=None):
     if pct <= 0:
         return {"value": None, "note": "unresolvable"}
     return {"value": round(vo2 / pct, 1),
-            "note": "estimated from performance (Daniels-Gilbert), "
-                    "not a measured VO2max"}
+            "note": "from race performance (Daniels–Gilbert), "
+                    "not a lab measurement"}

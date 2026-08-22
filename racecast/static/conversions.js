@@ -430,16 +430,30 @@
         }).join('');
 
         src.textContent = from && from.n_races
-            ? 'from ' + from.n_races + ' races in ' + from.year : '';
+            ? from.year + ' season \u00b7 ' + from.n_races + ' races' : '';
+
+        // ★ VO2MAX ON ITS OWN LINE. It is a headline number the page was asked
+        //   for, not a caveat; buried at the end of the footnote it read as
+        //   "Estimated ... estimated ...", three hedges in one sentence.
+        var vd = document.getElementById('paces-vdot');
+        if (vd) {
+            var v = from && from.vdot;
+            vd.hidden = !(v && v.value);
+            if (v && v.value)
+                vd.innerHTML = 'Estimated VO<sub>2</sub>max <strong>' +
+                    esc(v.value) + '</strong> <span class="paces-vdot-note">' +
+                    esc(v.note) + '</span>';
+        }
 
         var bits = [];
         if (from && from.paces && from.paces.length) {
             bits.push('Critical speed is fitted from this athlete\'s own ' +
-                      'races (D\u2032 ' + from.dprime + 'm); the rest are ' +
-                      'published relationships applied to it.');
-            if (from.vdot && from.vdot.value)
-                bits.push('Estimated VO\u2082max ' + from.vdot.value +
-                          ' \u2014 ' + from.vdot.note + '.');
+                      'races. Every other row applies a published ' +
+                      'relationship to it.');
+            if (from.dprime)
+                bits.push('D\u2032 ' + from.dprime + ' m \u2014 the distance ' +
+                          'this athlete can cover above critical speed before ' +
+                          'slowing.');
         } else if (from && from.reason) {
             bits.push('Not available for ' + from.year + ': ' + from.reason + '.');
         }

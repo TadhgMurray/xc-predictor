@@ -31,7 +31,9 @@ def s(x):
 
 
 def secs(txt):
-    txt = txt.split("-")[0]
+    # ranges are printed with an en dash so two clock times do not read as a
+    # subtraction; accept either separator
+    txt = txt.replace("\u2013", "-").split("-")[0]
     m, ss = txt.split(":")
     return int(m) * 60 + int(ss)
 
@@ -83,7 +85,7 @@ def main():
           spread > 30, True)
     coach = P.coachRuleTempo(s("4:10") * (MILE / 1600))
     check("while the one-race rule gives them one answer",
-          coach["per_mile"], "5:11-5:31")
+          coach["per_mile"], "5:11–5:31")
 
     print("\nTHE PACE LADDER, FOR A 4:10 / 8:58 ATHLETE")
     paces = P.trainingPaces([(1600.0, s("4:10")), (3200.0, s("8:58"))])

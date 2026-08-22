@@ -2961,7 +2961,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .paces-tbl tr.derived .zone,
 .paces-tbl tr.derived .pace { color: var(--accent, #b4462f); }
 .paces-tbl tr.derived .zone::after {
-    content: "measured";
+    content: "fitted";
     display: inline-block;
     margin-left: 0.45rem;
     font-size: 0.62rem;
@@ -2974,6 +2974,12 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     padding: 0 0.25rem;
     vertical-align: 1px;
 }
+.paces-vdot {
+    font-size: 0.92rem;
+    margin-top: 0.6rem;
+}
+.paces-vdot strong { font-variant-numeric: tabular-nums; }
+.paces-vdot-note { font-size: 0.78rem; color: var(--muted); margin-left: 0.3rem; }
 .paces-foot {
     font-size: 0.78rem;
     color: var(--muted);
