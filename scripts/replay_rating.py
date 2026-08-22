@@ -33,6 +33,7 @@ sys.path.insert(0, "scripts")
 from database import getConn                       # noqa: E402
 import speed_ratings_db as srdb                    # noqa: E402
 import speed_ratings as sr                         # noqa: E402
+import normalize_distance as nd                    # noqa: E402
 
 
 
@@ -132,7 +133,7 @@ def main():
     sql = f"""
         WITH eng AS ({inner})
         SELECT e.*,
-               r.grade, r.school, r.source, r.person_id,
+               r.grade, r.school, r.source, r.person_id, r.distance AS raw_dist,
                r.speed_rating,
                r.time_seconds,
                round((r.speed_rating * e.normalized_time / 100.0)::numeric, 2)
@@ -168,9 +169,9 @@ def main():
     #   passes: grade, gender, source, school, sport, merge, person_id, season
     #   and race_date. poolOf reads module-level dicts (season levels, grade
     #   fixes, pro flags); those load on demand, so the first call is slow.
-    print(f"    {'time':>8} {'rating':>7} {'norm':>9} {'pm*(1+d)':>9} "
-          f"{'pool':>16}  venue key")
-    seen, pools = {}, {}
+    print(f"    {'time':>8} {'rating':>7} {'norm':>9} {'RE-NORM':>9} "
+          f"{'re/st':>7} {'pm*(1+d)':>9} {'pool':>16}")
+    seen, pools, recomps = {}, {}, []
     for r in rows:
         v = r.get("venue")
         seen[v] = seen.get(v, 0) + 1
@@ -188,9 +189,45 @@ def main():
         except Exception as exc:                       # noqa: BLE001
             pool = f"<error {exc}>"
         pools[pool] = pools.get(pool, 0) + 1
+
+        # ★ RUN THE ENGINE'S OWN normalizeTime ON THE RAW TIME. The stored
+        #   normalized_time is an output of a PREVIOUS step; recomputing it
+        #   here from time + distance + pool + season says whether the column
+        #   still agrees with the code that wrote it. If it does not, the
+        #   rating was computed against a norm the column no longer holds, and
+        #   no amount of reading buildResultRatings will show that.
+        recomp = None
+        try:
+            dist = r.get("distance") or r.get("raw_dist")
+            if dist:
+                bare = (pool or "").split("|")[0]
+                recomp = nd.normalizeTime(
+                    float(r["time_seconds"]), float(dist), bare,
+                    season=d.year if d else None, sport=r.get("sport"))
+        except Exception:                                  # noqa: BLE001
+            recomp = None
+        ratio = (recomp / float(r["normalized_time"])
+                 if recomp and r["normalized_time"] else None)
+        recomps.append(ratio)
+        rs = f"{recomp:9.2f}" if recomp else "        -"
+        rr = f"{ratio:7.5f}" if ratio else "      -"
         print(f"    {r['time_seconds']:>8.1f} {r['speed_rating']:>7.2f} "
-              f"{r['normalized_time']:>9.2f} {r['pm_times_1plus_d']:>9.1f} "
-              f"{str(pool):>16}  {v}")
+              f"{r['normalized_time']:>9.2f} {rs} {rr} "
+              f"{r['pm_times_1plus_d']:>9.1f} {str(pool):>16}")
+
+    got = [x for x in recomps if x]
+    if got:
+        print(f"\n  RECOMPUTED / STORED normalized_time: "
+              f"min {min(got):.5f}  max {max(got):.5f}")
+        if max(got) - min(got) > 1e-4:
+            print("  -> the engine's own normalizeTime does NOT reproduce the "
+                  "stored column\n     by the same factor for every row. The "
+                  "stored normalized_time is not\n     what the rating was "
+                  "computed against.")
+        else:
+            print("  -> one constant factor for every row: the stored column "
+                  "agrees with the\n     code that wrote it (any offset is "
+                  "weather/geometry this call omits).")
 
     print(f"\n  DISTINCT POOLS IN THIS RACE: {len(pools)}")
     for pl, n in sorted(pools.items(), key=lambda kv: -kv[1]):
