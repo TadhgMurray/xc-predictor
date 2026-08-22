@@ -160,6 +160,64 @@ _TF_STATE_TEMP_SQL = """
 """
 
 
+_XC_TFRRS_DIST_SQL = """
+    DROP TABLE IF EXISTS tmp_xc_tfrrs_dist;
+    CREATE TEMP TABLE tmp_xc_tfrrs_dist AS
+        SELECT m.meet_id,
+               (kv.key)::bigint                        AS div_id,
+               m.source,
+               (kv.value ->> 'distance')::float        AS distance
+        FROM   meets_tfrrs m,
+               LATERAL jsonb_each(m.division_distances) kv
+        WHERE  m.division_distances IS NOT NULL
+          AND  kv.value ->> 'distance' IS NOT NULL
+          AND  kv.key ~ '^[0-9]+$';
+    CREATE INDEX ON tmp_xc_tfrrs_dist (meet_id, div_id, source);
+    ANALYZE tmp_xc_tfrrs_dist;
+"""
+
+
+def prepareXcTfrrsDistTemp(conn):
+    """The XC distances that are NOT in `meets`, which is half the corpus.
+
+    ⚠ THE XC QUERY JOINED `meets` AND NOTHING ELSE, AND `meets` IS THE ANET
+      SOURCE. tfrrs cross-country divisions keep their per-division distance
+      in meets_tfrrs.division_distances -- a JSONB blob keyed by div_id as a
+      string, with no div_id column to join on -- so every one of them
+      reached ranking_results with distance NULL.
+
+      That is why propose_distances._DISTANCES has to UNION two sources to
+      build div_distance, and why audit_overrides prints them apart:
+
+          anet:   812,079 divisions with a distance
+          tfrrs:   41,508 divisions with a distance
+
+      This file referenced neither meets_tfrrs nor div_distance. Measured
+      consequence, from 10_rankings' own log:
+
+          anchor gate: 585,213 UNCHECKED (1.8% -- no distance, so the gate
+          could not fire on them)
+
+      A NULL distance is not a rating error, which is why every
+      rating-based audit walked past it: the ratings in `results` are fine.
+      It is the absence of the one column the anchor gate and the PR boards
+      need. Meet 26359 -- Ox Bow Park, the JV Minutemen Classic -- carries
+      568 tfrrs rows across divisions 0-3 and has no `meets` row at all.
+
+    ! SAME SHAPE AS prepareTfStateTemp, for the same reason: collapse the
+      blob once into a table unique on (meet_id, div_id, source), index it,
+      and let the streaming query do an indexed lookup instead of expanding
+      JSON 34.5M times.
+    """
+    with conn.cursor() as cur:
+        cur.execute(_XC_TFRRS_DIST_SQL)
+        cur.execute("SELECT count(*) FROM tmp_xc_tfrrs_dist")
+        n = cur.fetchone()[0]
+    conn.commit()
+    print(f"  XC tfrrs distances: {n:,} meet-divisions "
+          f"(built once; these are absent from `meets` entirely)")
+
+
 def prepareTfStateTemp(conn):
     """One pass over meets_tf, so the TF query stops paying for its EVENT axis.
 
@@ -304,7 +362,11 @@ _SQL = {
                --   a gate that is not gating.
                r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
-               COALESCE(dov.distance, m.distance) AS distance,
+               -- ⚠ THREE SOURCES, NOT TWO. dov is the override, m.distance
+               --   is anet, and xtd is tfrrs -- which lives in a JSONB blob
+               --   in meets_tfrrs and was missing entirely. See
+               --   prepareXcTfrrsDistTemp.
+               COALESCE(dov.distance, m.distance, xtd.distance) AS distance,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -337,6 +399,9 @@ _SQL = {
         --   corpus has already decided were wrong.
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+        LEFT JOIN tmp_xc_tfrrs_dist xtd
+               ON xtd.meet_id = r.meet_id AND xtd.div_id = r.div_id
+              AND xtd.source  = r.source
         {_GENDER_JOIN}{_seasonLevelJoin("XC")}{_gateJoins("XC")}
         WHERE r.speed_rating IS NOT NULL
           AND r.person_id IS NOT NULL
@@ -389,6 +454,9 @@ _SQL = {
         FROM results_tf r
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+        LEFT JOIN tmp_xc_tfrrs_dist xtd
+               ON xtd.meet_id = r.meet_id AND xtd.div_id = r.div_id
+              AND xtd.source  = r.source
         -- ! THREE KEYS INTO A COLLAPSED TABLE, NOT FOUR INTO meets_tf. The
         --   event_id was only ever there to stop the ~21.5x fan-out that
         --   meets_tf's per-event grain causes; the one column this query
@@ -1320,6 +1388,7 @@ def main():
         #   a property of cursors rather than of this query. See dbfast.
         tuneSession(conn)
         prepareGenderTemp(conn)
+        prepareXcTfrrsDistTemp(conn)
         prepareTfStateTemp(conn)
 
         createShadow(conn, _LOAD_TABLE, "ranking_results")
