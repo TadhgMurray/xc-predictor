@@ -32,6 +32,7 @@ sys.path.insert(0, "scripts")
 
 from database import getConn                       # noqa: E402
 import speed_ratings_db as srdb                    # noqa: E402
+import speed_ratings as sr                         # noqa: E402
 
 
 def main():
@@ -50,6 +51,7 @@ def main():
     sql = f"""
         WITH eng AS ({inner})
         SELECT e.*,
+               r.grade, r.school, r.source, r.person_id,
                r.speed_rating,
                r.time_seconds,
                round((r.speed_rating * e.normalized_time / 100.0)::numeric, 2)
@@ -74,16 +76,40 @@ def main():
 
     print(f"\n  ENGINE INPUTS, ROW BY ROW -- meet {args.meet} div {args.div}"
           f"  ({len(rows)} rows)\n")
+    # ★ AND THE POOL, WHICH IS THE STEP THIS TOOL WAS MISSING. The venue key
+    #   is built in SQL and was already visible; the pool is decided in PYTHON,
+    #   per row, by poolOf -- so a replay that stops at the SQL cannot see it.
+    #   pool_mean is looked up by exactly this string, so if two runners in one
+    #   race get different pools, they are divided by different constants and
+    #   the race stops sorting by time.
+    #
+    # ⚠ CALLED, NOT REIMPLEMENTED, and with the same arguments packResults
+    #   passes: grade, gender, source, school, sport, merge, person_id, season
+    #   and race_date. poolOf reads module-level dicts (season levels, grade
+    #   fixes, pro flags); those load on demand, so the first call is slow.
     print(f"    {'time':>8} {'rating':>7} {'norm':>9} {'pm*(1+d)':>9} "
-          f"{'gender':>6}  venue key")
-    seen = {}
+          f"{'pool':>16}  venue key")
+    seen, pools = {}, {}
     for r in rows:
         v = r.get("venue")
-        seen.setdefault(v, 0)
-        seen[v] += 1
+        seen[v] = seen.get(v, 0) + 1
+        try:
+            d = r["date"]
+            pool = sr.poolOf(r.get("grade"), r.get("gender"), r.get("source"),
+                             r.get("school"), r.get("sport"), False,
+                             person_id=r.get("person_id"),
+                             season=d.year if hasattr(d, "year") else None,
+                             race_date=d)
+        except Exception as exc:                       # noqa: BLE001
+            pool = f"<error {exc}>"
+        pools[pool] = pools.get(pool, 0) + 1
         print(f"    {r['time_seconds']:>8.1f} {r['speed_rating']:>7.2f} "
               f"{r['normalized_time']:>9.2f} {r['pm_times_1plus_d']:>9.1f} "
-              f"{str(r.get('gender')):>6}  {v}")
+              f"{str(pool):>16}  {v}")
+
+    print(f"\n  DISTINCT POOLS IN THIS RACE: {len(pools)}")
+    for pl, n in sorted(pools.items(), key=lambda kv: -kv[1]):
+        print(f"    x{n:<5} {pl}")
 
     print(f"\n  DISTINCT VENUE KEYS IN THIS RACE: {len(seen)}")
     for v, n in sorted(seen.items(), key=lambda kv: -kv[1]):
@@ -98,7 +124,12 @@ def main():
         lo, hi = min(terms), max(terms)
         print(f"\n  pm*(1+d):  min {lo:.1f}  max {hi:.1f}  "
               f"spread {100 * (hi - lo) / lo:.2f}%")
-        if len(seen) > 1:
+        if len(pools) > 1:
+            print("  -> MORE THAN ONE POOL in a single race. pool_mean is "
+                  "looked up by that\n     string, so these runners are "
+                  "divided by different constants. That is\n     the fault, "
+                  "and it is in poolOf, not in the distance or the venue.")
+        elif len(seen) > 1:
             print("  -> MORE THAN ONE VENUE KEY in a single race. The rows are "
                   "landing in\n     different cells, so they get different "
                   "difficulties. That is the fault.")
