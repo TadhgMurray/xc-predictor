@@ -251,6 +251,52 @@
         {% endif %}
     </div>
 
+    {# ★ TRAINING PACES, FROM THIS ATHLETE'S OWN RACES. Every row says where
+       its number came from: "derived" is this athlete's two races and no
+       constant; "literature" is one cited figure applied to that. A page that
+       shows five paces of visibly different provenance as five identical rows
+       is claiming a confidence it does not have. #}
+    {% if training and training.paces %}
+    <section class="paces">
+        <h2>Training paces
+            <span class="paces-src">from {{ training.n_races }} races in
+            {{ training.year }}</span></h2>
+        <table class="paces-tbl">
+            <thead><tr><th>Zone</th><th>per mile</th><th>per km</th>
+                <th class="basis">where it comes from</th></tr></thead>
+            <tbody>
+            {% for p in training.paces %}
+                <tr class="{{ 'derived' if p.source == 'derived' else '' }}">
+                    <td class="zone">{{ p.label }}</td>
+                    <td class="pace">{{ p.per_mile }}</td>
+                    <td class="pace km">{{ p.per_km }}</td>
+                    <td class="basis">{{ p.basis }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p class="paces-foot">
+            Critical speed is fitted from this athlete's own races
+            (<span title="anaerobic distance capacity">D&prime;
+            {{ training.dprime }}m</span>); the rest are published
+            relationships applied to it.
+            {% if training.vdot and training.vdot.value %}
+            Estimated VO<sub>2</sub>max <strong>{{ training.vdot.value }}</strong>
+            — {{ training.vdot.note }}.
+            {% endif %}
+        </p>
+    </section>
+    {% elif training and training.reason %}
+    {# ⚠ THE REASON, NOT SILENCE. "No paces" and "every race you ran was the
+       same distance" are different messages, and only one of them tells a
+       runner what would fix it. #}
+    <section class="paces">
+        <h2>Training paces</h2>
+        <p class="paces-foot">Not available for {{ training.year }}:
+           {{ training.reason }}.</p>
+    </section>
+    {% endif %}
+
     <nav class="sport-toggle">
         <a href="#xc">Cross Country</a>
         <a href="#tf">Track &amp; Field</a>
