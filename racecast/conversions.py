@@ -597,6 +597,71 @@ def normalized_to_rating(norm, pool, difficulty=0.0, sport=None):
 #  THE SPREAD    (one source -> a grid of targets)
 # ===================================================================== #
 
+
+# ★ THE ATHLETE'S OWN RACES, WHICH IS THE ONLY INPUT THAT CAN PRODUCE PACES.
+#   Critical speed is the slope of a distance-time line, so it needs two races
+#   at different distances. A typed time cannot give that -- one performance
+#   cannot separate a miler from a 5K runner -- but an athlete SOURCE names
+#   somebody whose whole season is already on file, so picking them here is
+#   enough.
+#
+# ⚠ ONE SEASON, NEWEST FIRST, NEVER A CAREER. CS is a fitness and fitness
+#   moves; pairing a freshman 3200 against a senior 5K measures growing up.
+#   Walks back a year at a time and stops at the first that fits, so a runner
+#   whose current season is all 5Ks still gets last year's, labelled.
+#
+# ! RAW time_seconds AND real distance. NOT normalized_time: that column
+#   already carries the distance correction, so a distance-time line built
+#   from it would be fitting this project's own exponent back to itself.
+_PACE_RACES_SQL = """
+    SELECT year, pool, distance, time_seconds
+    FROM   ranking_results
+    WHERE  person_id = %(pid)s
+      AND  time_seconds > 0
+      AND  distance > 0
+    ORDER  BY year DESC
+"""
+
+
+def athlete_paces(person_id):
+    """{year, n_races, paces, dprime, vdot} for one athlete, or a refusal."""
+    import paces as _p
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_PACE_RACES_SQL, {"pid": person_id})
+            rows = cur.fetchall()
+        conn.rollback()
+    if not rows:
+        return None
+
+    by_year = {}
+    for year, pool, dist, secs in rows:
+        by_year.setdefault(year, []).append(
+            (float(dist), float(secs), pool))
+
+    for year in sorted(by_year, reverse=True):
+        races = [(d, t) for d, t, _ in by_year[year]]
+        got, why = _p.criticalSpeed(races)
+        if got is None:
+            continue
+        ladder = _p.trainingPaces(races)
+        if not ladder:
+            continue
+        cs, dprime = got
+        pool = by_year[year][0][2]
+        return {
+            "year": year, "n_races": len(races), "paces": ladder,
+            "dprime": round(dprime),
+            "vdot": _p.vdot(_p._timeFor(cs, dprime, 5000.0), 5000.0, pool),
+        }
+
+    # ! THE REASON, NOT SILENCE. "No paces" and "every race you ran was the
+    #   same distance" are different messages and only one is actionable.
+    newest = sorted(by_year, reverse=True)[0]
+    _, why = _p.criticalSpeed([(d, t) for d, t, _ in by_year[newest]])
+    return {"year": newest, "paces": [], "reason": why}
+
+
 def convert_spread(source, xc_targets, tf_targets):
     """The whole tool in one call.
 
@@ -661,13 +726,23 @@ def convert_spread(source, xc_targets, tf_targets):
                                       "sport": "XC"})
     mile_t = normalized_to_time(norm, {"distance": MILE_M, "pool": pool,
                                        "sport": "XC"})
+    training = (athlete_paces(source["person_id"])
+                if source.get("type") == "athlete" and source.get("person_id")
+                else None)
 
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
-        "paces": [p for p in [coachRuleTempo(mile_t)] if p],
-        "paces_note": ("training paces need two races at different distances "
-                       "— one result cannot tell a miler from a 5K runner"),
+        # ★ THE FULL LADDER WHEN THE SOURCE NAMES SOMEBODY, the rule of thumb
+        #   otherwise. An athlete source carries a person_id, and a person_id
+        #   carries a season of races; a typed time carries one number.
+        "paces": (training["paces"] if training and training.get("paces")
+                  else [p for p in [coachRuleTempo(mile_t)] if p]),
+        "paces_from": training,
+        "paces_note": (None if training and training.get("paces") else
+                       "pick an athlete as the source for paces fitted to "
+                       "their own races — one typed result cannot tell a "
+                       "miler from a 5K runner"),
         "vdot": vdot(ref_t, ref_d, pool),
         "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),

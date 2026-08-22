@@ -466,6 +466,7 @@ def athlete(person_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             training = _athletePaces(cur, person_id)
+    athlete["person_id"] = person_id
 
     return render_template("athlete.html",
                            athlete=athlete,
@@ -2076,7 +2077,12 @@ def conversions_page():
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             xc_courses = _default_xc_courses(cur, 10)
 
+    # ★ DEEP LINK FROM AN ATHLETE PAGE. /conversions?athlete=123 arrives with
+    #   the source already chosen, so the handoff is one click rather than a
+    #   name typed twice.
+    prefill = request.args.get("athlete", type=int)
     return render_template("conversions.html",
+                           prefill_athlete=prefill,
                            xc_courses=xc_courses,
                            tf_distances=_TF_DEFAULT_DISTANCES,
                            pools=_POOLS)
