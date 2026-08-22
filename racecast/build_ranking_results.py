@@ -942,13 +942,58 @@ def createShadow(conn, name, like):
     conn.commit()
 
 
+# ⚠ THE INDEXES THIS SITE CANNOT RUN WITHOUT, WRITTEN DOWN.
+#
+#   They used to live ONLY in the live table's catalogue, read back by
+#   indexDefs and replayed onto the shadow. That works exactly as long as the
+#   live table has them -- and it is self-erasing the moment it does not:
+#   indexDefs returns nothing, buildIndexes returns early (it used to do so
+#   SILENTLY), the shadow swaps in bare, and every run after that faithfully
+#   copies "no indexes" forward. A 56M-row ranking_results with no index turns
+#   every athlete page and every board into a sequential scan.
+#
+#   athlete_season had it worse: buildIndexes was never called for it at all,
+#   so createShadow's deliberate "no indexes" was permanent. 12.9M rows,
+#   scanned in full for every ability board.
+#
+#   So the list is here, in the code, and the catalogue is a SUPPLEMENT to it
+#   rather than the source: anything added by hand on the live table is still
+#   picked up and replayed, but nothing here can be lost by having been lost
+#   once.
+#
+#   Each entry names the query that needs it. Do not add one without one.
+_CANONICAL_INDEXES = {
+    "ranking_results": [
+        # app.py _athletePaces, conversions.athlete_paces, rankings PR ranks:
+        #   WHERE person_id = %s
+        ("rr_person_idx", "(person_id)"),
+        # rankings performance boards: pool/sport/year equality, then
+        #   ORDER BY speed_rating DESC LIMIT cand
+        ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
+        # rankings PR boards: same filters, ORDER BY time_seconds ASC
+        ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
+        ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+    ],
+    "athlete_season": [
+        # athlete pages and "where am I": WHERE person_id = %s
+        ("as_person_idx", "(person_id)"),
+        # rankings ability boards: WHERE n_races >= .. AND pool/sport/year,
+        #   ORDER BY mean_rating DESC
+        ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC)"),
+        # the same boards sorted on the season best instead
+        ("as_board_best_idx", "(pool, sport, year, best_rating DESC)"),
+    ],
+}
+
+
 def indexDefs(conn, like):
     """The live table's index definitions, ready to replay on the shadow.
 
-    Read from the catalogue rather than hardcoded: this project has added
-    indexes to ranking_results more than once, and a hardcoded list would
-    silently drop any that were added since. The same reasoning as
-    merge_column._columns.
+    THE CATALOGUE PLUS THE CANONICAL LIST, not one or the other. Reading the
+    catalogue keeps indexes this project added by hand; the canonical list
+    keeps the ones the site cannot run without even when the live table has
+    already lost them. See _CANONICAL_INDEXES.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -956,7 +1001,22 @@ def indexDefs(conn, like):
             FROM   pg_indexes
             WHERE  schemaname = 'public' AND tablename = %s
         """, (like,))
-        return cur.fetchall()
+        defs = list(cur.fetchall())
+
+    # Compare on the column list, not the name: the same index built by an
+    # earlier run carries an auto-generated name, and adding ours beside it
+    # would build the same tree twice.
+    def _cols(ddl):
+        i = ddl.find("(")
+        return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
+
+    have = {_cols(ddl) for _n, ddl in defs}
+    for name, cols in _CANONICAL_INDEXES.get(like, []):
+        if _cols(cols) in have:
+            continue
+        defs.append((f"{like}_{name}",
+                     f"CREATE INDEX {like}_{name} ON public.{like} {cols}"))
+    return defs
 
 
 def buildIndexes(conn, name, like):
@@ -982,6 +1042,11 @@ def buildIndexes(conn, name, like):
     """
     defs = indexDefs(conn, like)
     if not defs:
+        # Unreachable while _CANONICAL_INDEXES has an entry for this table,
+        # which is the point -- but if someone empties it, say so instead of
+        # swapping in a bare table and letting the site find out.
+        print(f"  ⚠ NO INDEXES to build on {name}. The swapped-in table will "
+              f"be scanned in full by every query that touches it.")
         return
     print(f"  building {len(defs)} indexes on {name} (deferred until after "
           f"the load)")
@@ -1198,6 +1263,10 @@ def refreshAthleteSeason(conn):
         n = cur.fetchone()[0]
     conn.commit()
     print(f"  athlete_season: {n:,} person-seasons")
+    # ! AND ITS INDEXES. createShadow copies structure without them by design,
+    #   and this call was missing -- so every run since swapped in a
+    #   12.9M-row table with no index on it at all.
+    buildIndexes(conn, _LOAD_SEASON, "athlete_season")
 
 
 # ------------------------------------------------------------------ #
