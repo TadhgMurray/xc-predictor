@@ -352,6 +352,41 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
         else:
             print(f"    ...but under --min-field, so it was never aggregated.")
         return
+    # ★ THE ROWS, BECAUSE THE AGGREGATE CAN BE INNOCENT WHILE THE DIVISION
+    #   IS NOT. 26359/0 reports 22 rated rows and a field median gap of -2.5
+    #   -- clean by this measure -- for a race whose winner ran 18:02.9
+    #   against a five-mile label. Both can be true only if the athletes'
+    #   OWN MEDIANS are built from the bad races: a first-year runner with
+    #   three rated results, two of them at this venue, has a median that IS
+    #   the corrupted value, so their gap collapses to zero.
+    #
+    #   `meets` is the count of DISTINCT OTHER meets behind that athlete's
+    #   median. At 0 or 1 the median is largely self-referential and the gap
+    #   measured against it means little; the division's median gap is then
+    #   an average over rows that cannot see their own fault.
+    cur.execute("""
+        WITH here AS (
+            SELECT ident, speed_rating, med, gap
+            FROM   reb_gap WHERE meet_id = %s AND div_id = %s
+        )
+        SELECT h.*,
+               (SELECT count(DISTINCT g2.meet_id) FROM reb_gap g2
+                WHERE g2.ident = h.ident AND g2.meet_id <> %s) AS other_meets
+        FROM   here h ORDER BY h.gap
+    """, (key[0], key[1], key[0]))
+    detail = cur.fetchall()
+    print(f"    {'rating':>7} {'own med':>8} {'gap':>7} {'other meets':>12}")
+    for d in detail:
+        print(f"    {d['speed_rating']:>7.1f} {d['med']:>8.1f} "
+              f"{d['gap']:>+7.1f} {d['other_meets']:>12}")
+    thin = sum(1 for d in detail if d["other_meets"] <= 1)
+    if thin:
+        print(f"\n    {thin} of {len(detail)} rows belong to athletes with "
+              f"<= 1 other meet behind\n    their median. For those the gap "
+              f"is measured against a number this\n    same division helped "
+              f"produce, and cannot show the fault.")
+    print()
+
     n, gap = row["n"], float(row["med_gap"])
     bar = barFor(n, sigma, t1)
     print(f"    rated rows (n):                   {n}")
