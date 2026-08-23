@@ -2181,7 +2181,13 @@ def main():
                                              args.unanimity, cur)
                 # ! ONE ROUND TRIP, AFTER THE PASS. See _NAMES_SQL: joined
                 #   inside the query this ran 31.6M times instead of 5,500.
-                applyNames(cur, got, skipped)
+                #
+                # ! AND ONLY THE CONDEMNED SET. Passing `skipped` here handed
+                #   applyNames the other ~548k divisions -- 550+ paged
+                #   statements, four correlated subqueries each -- to fetch
+                #   names report1 never prints (it only Counts skipped
+                #   reasons). That was the third post-loop stall.
+                applyNames(cur, got)
                 report1(got, routed, skipped, args)
                 if args.out:
                     got = [r for r in got if r.get("tier") in ("A", "B")]
