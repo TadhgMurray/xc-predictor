@@ -2,6 +2,7 @@
 #
 #     .\run_overrides.ps1
 #     .\run_overrides.ps1 -Reset         # after a wipe -- see -Reset below
+#     .\run_overrides.ps1 -Reset -Replace # ...and clear an earlier pass block
 #     .\run_overrides.ps1 -DryRun        # propose and validate, write nothing
 #     .\run_overrides.ps1 -SkipPipeline  # apply, but do not run the 4h rebuild
 #
@@ -27,6 +28,7 @@ param(
     [switch]$DryRun,
     [switch]$SkipPipeline,
     [switch]$Reset,
+    [switch]$Replace,
     [double]$Sigma = 4.5
 )
 
@@ -90,6 +92,49 @@ $t_start = Get-Date
 # ! THE BACKUP FIRST, ALWAYS. It is hash-verified and it is the only copy of
 #   the uncommitted override work on this disk.
 Step "01_backup"   { python scripts\backup_corrections.py }
+
+# ---------------------------------------------------------------------- #
+#  THE STALE PASS BLOCK, CHECKED FIRST RATHER THAN LAST
+# ---------------------------------------------------------------------- #
+#
+# * apply_passes REFUSES TO STACK TWO BLOCKS, correctly -- two sets of
+#   proposals for the same division in one file is a silent argument decided
+#   by whichever .update() runs last.
+#
+# ⚠ BUT IT FOUND OUT AT STEP 3, AFTER 28 MINUTES OF PASSES. Nothing was wrong
+#   with the passes and nothing they wrote was lost; the run simply stopped
+#   at the first thing that touches corrections.py, which is the last step
+#   before the pipeline. The check costs a second and belongs up here.
+#
+# ! AND IT DOES NOT DELETE ANYTHING BY DEFAULT. A pass block is generated and
+#   reversible, so removing it is the prescribed lifecycle -- but a stale one
+#   can also carry _RESULT_DROP entries that ARE live (drops are additive;
+#   the wipe's restate only rebinds the distance dict), so clearing it really
+#   does change what the file resolves to. -Replace says you mean it.
+# ! Select-String, NOT Get-Content -Raw. corrections.py is 52 MB; -Raw pulls
+#   the whole thing into memory to answer a yes/no question. -Quiet streams
+#   and stops at the first hit.
+$hasBlock = Select-String -Path engine\corrections.py -SimpleMatch -Quiet `
+                          -Pattern "# === PASS PROPOSALS (scripts/apply_passes.py) ==="
+if ($hasBlock) {
+    if ($Replace) {
+        Step "01b_unapply" { python scripts\apply_passes.py --undo --write }
+    } else {
+        Write-Host ""
+        Write-Host "  corrections.py already carries a pass block from an earlier run." -ForegroundColor Red
+        Write-Host "  apply_passes will refuse to stack a second one, so this would have" -ForegroundColor Red
+        Write-Host "  failed at step 03 after ~28 minutes of passes. Stopping now instead." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Remove it and re-run:" -ForegroundColor Yellow
+        Write-Host "    python scripts\apply_passes.py --undo --write"
+        Write-Host "    .\run_overrides.ps1 -Reset"
+        Write-Host ""
+        Write-Host "  Or let this script do it: .\run_overrides.ps1 -Reset -Replace" -ForegroundColor Yellow
+        Write-Host "  The backup above is your floor either way." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+}
 
 Step "02_pass0"    { python scripts\find_dropped_divisions.py --min-survivors 2 --out pass0.py }
 Step "02_pass1"    { python scripts\rebuild_overrides.py --pass 1 --sigma $Sigma @asIf --out pass1.py }
