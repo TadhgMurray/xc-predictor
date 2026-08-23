@@ -159,6 +159,18 @@ Step "04_apply"    { python scripts\apply_passes.py --write }
 #   the old table and the night is wasted.
 Step "05_dump"     { python engine\dump_overrides.py }
 
+# ★ THE LAST THING CHECKABLE BEFORE FOUR HOURS ARE SPENT. Every other override
+#   audit measures a written distance against the RATINGS, and the ratings on
+#   disk are still the OLD ones until 05_backfill runs -- so none of them can
+#   be believed in this window. This one asks whether the overrides agree with
+#   EACH OTHER, which needs no rebuild: a venue runs one course, so sibling
+#   divisions at it have one distance.
+#
+# ! REPORT ONLY, NEVER A GATE. A venue legitimately running three distances is
+#   common (Van Cortlandt runs 2500, 4023 and 5000), so a split is a prompt to
+#   read, not a fault. It sorts the genuinely suspect ones to the top.
+Step "05b_coherence" { python scripts\check_override_coherence.py --worst 30 }
+
 if ($SkipPipeline) {
     Write-Host "`n  -SkipPipeline: overrides are applied and dist_override is" -ForegroundColor Cyan
     Write-Host "  rebuilt, but nothing downstream has been recomputed yet." -ForegroundColor Cyan
