@@ -97,29 +97,84 @@ SPAN_LO, SPAN_HI = 200, 900
 # ! ONE ROW PER COMPETITION BLOCK, and (sport, year) already IS the block:
 #   season_year puts fall XC and the following spring's track in one `year`,
 #   and the sport tells them apart. So no date bucketing is needed or wanted.
-_BLOCK_SQL = """
-DROP TABLE IF EXISTS sg_block;
-CREATE TEMP TABLE sg_block AS
-SELECT person_id, pool, sport, year,
-       avg(speed_rating)::float8                                   AS rating,
+# ★ TWO SOURCES, AND THE DIFFERENCE BETWEEN THEM IS THE ANSWER.
+#
+#     ln rating = const(pool) + h * delta[cell] - ln(normalized_time)
+#
+#   alpha is not in a per-result rating at all, and pm_c comes from
+#   poolPerAthlete, which strips the sport suffix (pair_ratings.py:57) -- so
+#   the pool mean is one number shared by both sports and cancels inside a
+#   sandwich. That leaves exactly two places a sport gap can live: the CELLS
+#   (h * delta) and the NORMALISATION (distance, geometry, era, weather).
+#
+#   --from rating measures both together. --from norm uses 1/normalized_time
+#   in place of the rating, which drops the cell term entirely. So
+#
+#       D(norm)              is the normalisation half
+#       D(rating) - D(norm)  is the cell half
+#
+#   and one subtraction says which of the two to go and fix.
+#
+# ! GEOMETRIC MEAN, NOT ARITHMETIC. The estimator interpolates in logs, so the
+#   block statistic must be the mean of the logs or the line being drawn is
+#   not the line being sampled. exp(avg(ln x)) is that, written so the column
+#   stays a rating.
+#
+# ! AND 1/normalized_time, NOT normalized_time. A rating rises when a run is
+#   better and a normalised time falls, so inverting keeps every sign
+#   downstream identical and makes the two runs directly comparable.
+#
+# ! norm COSTS A JOIN PER SPORT, which is why it is opt-in and why it is a
+#   UNION rather than a CASE. ranking_results does not carry normalized_time
+#   (see _COLUMNS in build_ranking_results), and XC and TF keep theirs in
+#   different tables. A lateral picking between them would run 56 million
+#   times; two aggregates the planner can hash-join separately do not.
+_BLOCK_SELECT = """
+SELECT k.person_id, k.pool, k.sport, k.year,
+       {stat}                                                        AS rating,
        -- ! CARRIED FOR THE COVARIATE REPORT, NOT FOR THE ESTIMATE. D is
-       --   computed from ratings alone; these only answer "what else is
+       --   computed from `rating` alone; these only answer "what else is
        --   different about this pool".
-       avg(distance) FILTER (WHERE distance > 0)::float8            AS dist,
+       avg(k.distance) FILTER (WHERE k.distance > 0)::float8         AS dist,
        -- midpoint of the block, as a real date: (date - date) is an int and
        -- (date + int) is a date, so this needs no epoch arithmetic.
-       (min(race_date) + ((max(race_date) - min(race_date)) / 2))   AS mid_date,
-       count(*)                                                    AS n
-FROM   ranking_results
-WHERE  person_id IS NOT NULL
-  AND  race_date IS NOT NULL
-  AND  speed_rating BETWEEN %(lo)s AND %(hi)s
-  AND  (%(pool)s IS NULL OR pool = %(pool)s)
-GROUP  BY person_id, pool, sport, year
-HAVING count(*) >= %(min_races)s;
-CREATE INDEX ON sg_block (person_id, pool, mid_date);
-ANALYZE sg_block;
+       (min(k.race_date) + ((max(k.race_date) - min(k.race_date)) / 2))
+                                                                     AS mid_date,
+       count(*)                                                      AS n
+FROM   ranking_results k
+{join}
+WHERE  k.person_id IS NOT NULL
+  AND  k.race_date IS NOT NULL
+  AND  k.speed_rating BETWEEN %(lo)s AND %(hi)s
+  AND  (%(pool)s IS NULL OR k.pool = %(pool)s)
+  {extra}
+GROUP  BY k.person_id, k.pool, k.sport, k.year
+HAVING count(*) >= %(min_races)s
 """
+
+_SOURCES = {
+    "rating": [{"stat": "exp(avg(ln(k.speed_rating)))::float8",
+                "join": "", "extra": ""}],
+    "norm": [
+        {"stat": "exp(-avg(ln(r.normalized_time)))::float8",
+         "join": "JOIN   results r ON r.result_id = k.result_id",
+         "extra": "AND  k.sport = 'XC' AND r.normalized_time > 0"},
+        {"stat": "exp(-avg(ln(r.normalized_time)))::float8",
+         "join": "JOIN   results_tf r ON r.result_id = k.result_id",
+         "extra": "AND  k.sport = 'TF' AND r.normalized_time > 0"},
+    ],
+}
+
+
+def blockSql(source):
+    """The CREATE TEMP TABLE for one source, one arm per sport table."""
+    arms = "\nUNION ALL\n".join(_BLOCK_SELECT.format(**v)
+                                 for v in _SOURCES[source])
+    return ("DROP TABLE IF EXISTS sg_block;\n"
+            "CREATE TEMP TABLE sg_block AS\n" + arms + ";\n"
+            "CREATE INDEX ON sg_block (person_id, pool, mid_date);\n"
+            "ANALYZE sg_block;\n")
+
 
 # ⚠ PARTITIONED BY (person_id, pool), NOT person_id ALONE. An athlete moving
 #   from hs_m to college_m changes the population their rating is scaled
@@ -480,6 +535,12 @@ def main():
     ap.add_argument("--bbar", type=float, default=-0.03924,
                     help="the bbar the engine currently uses, for the "
                          "implications block")
+    ap.add_argument("--from", dest="source", default="rating",
+                    choices=sorted(_SOURCES),
+                    help="rating: the published speed_rating, which carries "
+                         "both the cell difficulty and the normalisation. "
+                         "norm: 1/normalized_time, which carries only the "
+                         "normalisation. Subtract them for the cell half.")
     ap.add_argument("--self-test", action="store_true", dest="self_test",
                     help="check the estimator against synthetic athletes with "
                          "a known gap and known improvement. No database.")
@@ -493,10 +554,10 @@ def main():
             # ! ONE BIG AGGREGATE. Give it room rather than letting it spill;
             #   SET LOCAL dies with the transaction, so nothing leaks.
             cur.execute("SET LOCAL work_mem = '1GB'")
-            print("\n  building season blocks...")
-            cur.execute(_BLOCK_SQL, {"lo": RATING_LO, "hi": RATING_HI,
-                                     "pool": args.pool,
-                                     "min_races": args.min_races})
+            print(f"\n  building season blocks from {args.source}...")
+            cur.execute(blockSql(args.source),
+                        {"lo": RATING_LO, "hi": RATING_HI,
+                         "pool": args.pool, "min_races": args.min_races})
             cur.execute("SELECT count(*) AS n, count(DISTINCT person_id) AS a "
                         "FROM sg_block")
             b = cur.fetchone()
