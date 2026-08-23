@@ -340,6 +340,82 @@ def _noBarePercent(name, sql):
             f"{sql[max(0, m.start() - 40):m.start() + 10]!r}")
 
 
+# ------------------------------------------------------------------ #
+#  IS THE LABEL STILL THE ONE THE RATINGS WERE BUILT AT?
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE PASSES READ dist_override FOR THE LABEL, AND THAT IS ONLY RIGHT WHILE
+#   THE TABLE STILL DESCRIBES WHAT THE BACKFILL USED.
+#
+#   impliedDistance scales from the label, and the gap it scales was measured
+#   against ratings computed from normalized_time -- which the backfill wrote
+#   using whatever dist_override held AT THAT TIME. Rebuild dist_override
+#   without re-running 05_backfill and the two fall out of step: the label
+#   says one thing, the ratings were built on another, and every proposal is
+#   wrong by the ratio between them. That is the bug that put 3,085 wrong 6 km
+#   divisions into corrections.py across twenty daily blocks.
+#
+#   The ordering rule -- wipe corrections.py, do NOT re-dump until after the
+#   pipeline -- is easy to state and easy to break at one in the morning.
+#
+# ★ SO IT IS CHECKED, NOT TRUSTED. normalizeTime is deterministic given time,
+#   distance, pool and sport, so running it at the override distance and
+#   comparing against the stored normalized_time says whether the backfill
+#   used that distance. Same recomputation anchor_check makes, and the same
+#   one census_override_sources --verify makes from the other side.
+#
+# ! IT REFUSES RATHER THAN WARNS. A warning above a hundred-line report is a
+#   warning nobody reads, and the cost of missing this one is a whole corpus
+#   of overrides wrong by a constant ratio.
+LABEL_MIN_AGREE = 0.90
+LABEL_SAMPLE = 20_000
+
+_LABEL_SQL = """
+SELECT r.time_seconds, r.normalized_time, o.distance, k.pool
+FROM   dist_override o
+JOIN   {table} r ON r.meet_id = o.meet_id AND r.div_id = o.div_id
+JOIN   ranking_results k ON k.result_id = r.result_id AND k.sport = %(sport)s
+WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+  AND  r.time_seconds > 0 AND o.distance > 0
+LIMIT  %(n)s
+"""
+
+
+def assertLabelTrustworthy(cur, sport, min_agree=LABEL_MIN_AGREE):
+    """Refuse to run if dist_override no longer describes the backfill."""
+    from anchor_check import mismatch
+
+    cur.execute(_LABEL_SQL.format(table=_TABLE[sport]),
+                {"sport": sport, "n": LABEL_SAMPLE})
+    rows = cur.fetchall()
+    if not rows:
+        print("  label check: nothing to check -- dist_override is empty, or "
+              "ranking_results\n               has not been rebuilt. "
+              "Proceeding.")
+        return True
+
+    agree = 0
+    for r in rows:
+        _bad, _exp, ratio = mismatch(r["time_seconds"], float(r["distance"]),
+                                     r["normalized_time"], r["pool"], sport)
+        if ratio is not None and abs(ratio - 1.0) <= 0.05:
+            agree += 1
+    share = agree / len(rows)
+    print(f"  label check: {share:.1%} of {len(rows):,} overridden rows were "
+          f"normalised at their\n               own override distance "
+          f"(need {min_agree:.0%})")
+    if share >= min_agree:
+        return True
+    print("\n  ⚠ REFUSING TO RUN. dist_override no longer describes what the "
+          "backfill used, so\n    the label the passes scale from does not "
+          "match the ratings they measure.\n"
+          "    Every proposal would be wrong by the ratio between them.\n\n"
+          "    Most likely engine/dump_overrides.py was run after editing "
+          "corrections.py\n    but before 05_backfill. Re-run the pipeline, "
+          "or put dist_override back to\n    what the backfill last saw.\n")
+    return False
+
+
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
     _noBarePercent("_GAP_BODY", _GAP_BODY)
@@ -1408,6 +1484,8 @@ def main():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if not assertLabelTrustworthy(cur, args.sport):
+                return 2
             buildGap(cur, args.sport, args.min_own_races,
                      as_if_wiped=args.as_if_wiped, tol=args.same_tol)
 
