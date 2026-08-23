@@ -327,6 +327,142 @@ ANALYZE reb_gap;
 """
 
 
+
+# ------------------------------------------------------------------ #
+#  THE GAP FROM TIMES -- EVERY FINISHER, NOT THE ONES THE GUARD KEPT
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE OLD BODY READ `WHERE r.speed_rating IS NOT NULL`, AND THAT IS
+#   BACKWARDS FOR A DISTANCE DETECTOR.
+#
+#   A wrong distance makes times look impossible, the pace guard drops those
+#   rows, and a dropped row has no speed_rating. So the worse the distance
+#   error, the fewer rows the detector gets: Ox Bow Park, 145 finishers, 2
+#   rated. MIN_FIELD was never the problem -- a division with zero rated rows
+#   is zero at any threshold.
+#
+#   And the half that is quieter: the survivors of a broken division are not
+#   a sample of the field, they are the rows whose times HAPPENED to stay
+#   plausible at the wrong distance. Taking their median under-states the
+#   error even where the division does clear the gate.
+#
+# ★ SO THE RATING IS COMPUTED HERE, FOR EVERY ROW, FROM THE ENGINE'S OWN
+#   FORMULA. speed_rating = 100 * pool_mean * exp(delta_cell) /
+#   normalized_time, and normalized_time is written by the BACKFILL -- a
+#   different stage from the one that drops rows, so it survives exactly what
+#   speed_rating loses.
+#
+# ! AND NOT COALESCE(speed_rating, computed). Mixing the engine's number with
+#   a computed one makes a single field heterogeneous: the engine's rows
+#   carry apply_tilt (which is XC-only), the guard's clamping, and the
+#   selection above. A field median wants one formula applied to everybody.
+#
+# ★ THE POOL MEAN DOES NOT AFFECT THE ANSWER, which is why it is defined here
+#   rather than read from the engine. Every gate uses own_med / rating, so any
+#   constant shared by a row and that athlete's median cancels. It is set so
+#   each pool's median rating is 100 -- readability, and comparability for an
+#   athlete whose career crosses pools, since targetFor anchors normalized
+#   time PER POOL and the raw numbers are not comparable across that seam.
+_POOL_SQL = """
+DROP TABLE IF EXISTS reb_pool;
+CREATE TEMP TABLE reb_pool AS
+SELECT person_id                                 AS ident,
+       mode() WITHIN GROUP (ORDER BY pool)       AS pool
+FROM   ranking_results
+WHERE  person_id IS NOT NULL AND pool IS NOT NULL
+  AND  sport = %(sport)s
+GROUP  BY person_id;
+CREATE INDEX ON reb_pool (ident);
+ANALYZE reb_pool;
+"""
+
+# ! THE SAME CELL KEY apply_tilt USES, copied rather than re-derived: XC
+#   difficulty is stored as 'XC:' || course_name with the distance snapped to
+#   the nearest 100 m. min() because `meets` is not unique on
+#   (meet_id, div_id) -- see the note in apply_tilt.
+#
+# ⚠ A DIVISION WITH NO CELL GETS delta = 0, NOT DROPPED. Course difficulty is
+#   a few percent; a missing one is worth far less than losing the division.
+_CELL_SQL = """
+DROP TABLE IF EXISTS reb_cell;
+CREATE TEMP TABLE reb_cell AS
+SELECT m.meet_id, m.div_id, min(c.difficulty) AS difficulty
+FROM   meets m
+JOIN   course_difficulties c
+       ON c.course_name = 'XC:' || m.course_name
+      AND c.distance_m  = (round(m.distance / 100.0) * 100)::int
+WHERE  c.difficulty IS NOT NULL
+  AND  m.distance IS NOT NULL AND m.distance > 0
+GROUP  BY 1, 2;
+CREATE INDEX ON reb_cell (meet_id, div_id);
+ANALYZE reb_cell;
+"""
+
+_GAP_BODY_TIMES = """
+DROP TABLE IF EXISTS reb_q;
+CREATE TEMP TABLE reb_q AS
+SELECT r.meet_id, r.div_id, r.result_id,
+       COALESCE(r.person_id, r.athlete_id)                     AS ident,
+       r.time_seconds,
+       -- ! THE ONLY PLACE --as-if-wiped CHANGES ANYTHING, same as before:
+       --   reb_unovr is empty without it, so COALESCE is the identity.
+       exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
+           * COALESCE(u.scale, 1.0)                             AS q
+FROM   {table} r
+LEFT   JOIN reb_unovr u  ON u.meet_id = r.meet_id AND u.div_id = r.div_id
+LEFT   JOIN reb_cell  cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
+WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+  AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL;
+CREATE INDEX ON reb_q (ident);
+ANALYZE reb_q;
+
+-- ! GEOMETRIC MEAN, NOT percentile_cont. This is a scale constant that
+--   cancels out of every gate, so it does not deserve an ordered-set
+--   aggregate and the GroupAggregate plus 60M-row sort that comes with one.
+DROP TABLE IF EXISTS reb_pm;
+CREATE TEMP TABLE reb_pm AS
+SELECT p.pool, 100.0 / exp(avg(ln(x.q))) AS pm
+FROM   reb_q x
+JOIN   reb_pool p ON p.ident = x.ident
+WHERE  x.q > 0
+GROUP  BY p.pool;
+CREATE INDEX ON reb_pm (pool);
+ANALYZE reb_pm;
+
+DROP TABLE IF EXISTS reb_gap;
+CREATE TEMP TABLE reb_gap AS
+WITH rated AS (
+    SELECT x.meet_id, x.div_id, x.result_id, x.ident, x.time_seconds,
+           x.q * COALESCE(pm.pm, 1.0) AS speed_rating
+    FROM   reb_q x
+    LEFT   JOIN reb_pool p  ON p.ident = x.ident
+    LEFT   JOIN reb_pm   pm ON pm.pool = p.pool
+    WHERE  x.q > 0
+), own AS (
+    SELECT ident,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
+    FROM   rated
+    GROUP  BY ident
+    HAVING count(*) >= %(min_own)s
+), sex AS (
+    SELECT DISTINCT ON (athlete_id) athlete_id, gender
+    FROM   athletes
+    WHERE  gender IN ('M', 'F')
+    ORDER  BY athlete_id, school
+)
+SELECT x.meet_id, x.div_id, x.result_id, x.ident,
+       x.speed_rating, x.time_seconds, o.med,
+       x.speed_rating - o.med AS gap,
+       s.gender
+FROM   rated x
+JOIN   own o ON o.ident = x.ident
+LEFT   JOIN sex s ON s.athlete_id = x.ident;
+
+CREATE INDEX ON reb_gap (meet_id, div_id);
+ANALYZE reb_gap;
+"""
+
+
 # ⚠ A LITERAL % IN ANY OF THESE STRINGS IS A RUNTIME ERROR, NOT A TYPO.
 #   psycopg2 reads % as the start of a placeholder, so a SQL COMMENT saying
 #   "100% on one side" makes execute() raise "dict is not a sequence" -- an
@@ -590,7 +726,7 @@ def _step(t0, label):
 
 
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
-             skip_label_check=False):
+             skip_label_check=False, gap_from="times"):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
     _noBarePercent("_GAP_BODY", _GAP_BODY)
     # ! ALL THREE, not just the one that broke. They share _LABEL_LATERAL now,
@@ -639,14 +775,42 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
                   "pipeline step, so run it first.")
     else:
         cur.execute(_UNOVERRIDE_NONE)
-    cur.execute(_GAP_BODY.format(table=_TABLE[sport]), {"min_own": min_own})
-    _t = _step(_t, "gap table (the expensive one)")
+    if gap_from == "times":
+        _noBarePercent("_GAP_BODY_TIMES", _GAP_BODY_TIMES)
+        cur.execute(_POOL_SQL, {"sport": sport})
+        cur.execute(_CELL_SQL)
+        cur.execute(_GAP_BODY_TIMES.format(table=_TABLE[sport]),
+                    {"min_own": min_own})
+    else:
+        cur.execute(_GAP_BODY.format(table=_TABLE[sport]),
+                    {"min_own": min_own})
+    _t = _step(_t, f"gap table from {gap_from} (the expensive one)")
     # RealDictCursor, so name the aggregates rather than unpacking a tuple.
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
     row = cur.fetchone()
     n, n_sexed = row["n"], row["n_sexed"]
     print(f"  gap table: {n:,} rated rows judged against their athlete's own "
           f"median ({n_sexed:,} with a gender)")
+    if gap_from == "times":
+        # ★ THE NUMBER THAT SAYS WHETHER THIS WAS WORTH DOING. Rows the engine
+        #   never rated are exactly the ones a wrong distance produces, so the
+        #   share of the gap table they make up is the blind spot being closed.
+        cur.execute("""
+            SELECT count(*) AS n,
+                   count(*) FILTER (WHERE r.speed_rating IS NULL) AS recovered,
+                   count(DISTINCT (g.meet_id, g.div_id))
+                       FILTER (WHERE r.speed_rating IS NULL)      AS divs
+            FROM   reb_gap g
+            JOIN   {table} r ON r.result_id = g.result_id
+        """.format(table=_TABLE[sport]))
+        c = cur.fetchone()
+        if c and c["n"]:
+            print(f"             {c['recovered']:,} of them "
+                  f"({c['recovered'] / c['n']:.1%}) have NO speed_rating in "
+                  f"the database\n             -- rows the pace guard dropped, "
+                  f"across {c['divs']:,} divisions. Those are\n             "
+                  f"the ones a wrong distance produces, and the old gap table "
+                  f"could not see them.")
     if not skip_label_check and not assertGapLabelMatchesRatings(
             cur, sport, as_if_wiped, n):
         return None
@@ -1815,6 +1979,15 @@ def main():
     ap.add_argument("--ladder", action="store_true",
                     help="print the corpus ladder and how much discriminating "
                          "power the snap has left at each tolerance, then stop")
+    # ⚠ DEFAULTS TO times. See the header on _GAP_BODY_TIMES: gating the gap
+    #   table on speed_rating makes the detector weakest exactly where the
+    #   fault is largest. `ratings` is the old behaviour, kept so the two can
+    #   be diffed rather than swapped on trust.
+    ap.add_argument("--gap-from", dest="gap_from", default="times",
+                    choices=("times", "ratings"),
+                    help="times: compute the rating for EVERY finisher from "
+                         "normalized_time, so pace-guard drops still count. "
+                         "ratings: only rows the engine rated (the old gate).")
     ap.add_argument("--skip-label-check", action="store_true",
                     dest="skip_label_check",
                     help="run even when the label does not match the distance "
@@ -1833,7 +2006,8 @@ def main():
                 return 2
             if buildGap(cur, args.sport, args.min_own_races,
                         as_if_wiped=args.as_if_wiped, tol=args.same_tol,
-                        skip_label_check=args.skip_label_check) is None:
+                        skip_label_check=args.skip_label_check,
+                        gap_from=args.gap_from) is None:
                 return 2
 
             if args.ladder:
