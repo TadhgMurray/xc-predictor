@@ -767,7 +767,8 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     cur.execute(_XC_TFRRS_DIST_SQL)
     _t = _step(_t, "tfrrs distances")
     cur.execute(_COURSE_DIST_SQL, {"min_n": COURSE_MIN_N})
-    _t = _step(_t, "course distances")
+    n_courses = loadCourseDistances(cur)
+    _t = _step(_t, f"course distances ({n_courses:,} venues cached)")
     kept, raw = loadLadder(cur)
     _t = _step(_t, "corpus ladder")
     print(f"  ladder: {len(kept):,} distances the corpus actually races "
@@ -1367,16 +1368,40 @@ def ladderPower(tol=None, lo=1500, hi=12000, n=200_000):
 
 
 
+# ⚠ LOADED ONCE, NOT LOOKED UP PER VENUE, AND THE LAZY VERSION IS WHAT HUNG
+#   THE RUN AFTER THE DIVISION COUNT PRINTED.
+#
+#   It memoised per course_name and queried on a miss -- one round trip per
+#   distinct venue. That was survivable while about seven thousand divisions
+#   cleared the bar. The times gap table includes the rows the pace guard
+#   dropped, whose ratings are extreme by construction, so far more divisions
+#   clear it -- and the miss rate is one per venue, so the loop turned into
+#   hundreds of thousands of serial round trips with nothing printed between
+#   them. The query is fast; the latency is the cost, and it cannot be
+#   amortised one row at a time.
+#
+# ★ reb_course_dist IS SMALL BY CONSTRUCTION -- it is already filtered to
+#   venues with COURSE_MIN_N finishers at a distance -- so the whole table
+#   fits in a dict and one query replaces all of them.
+def loadCourseDistances(cur):
+    """Fill _COURSE_DIST from reb_course_dist in one pass."""
+    _COURSE_DIST.clear()
+    cur.execute("SELECT course_name, distance, n FROM reb_course_dist "
+                "ORDER BY course_name, n DESC")
+    for r in cur.fetchall():
+        _COURSE_DIST.setdefault(r["course_name"], []).append(
+            (float(r["distance"]), int(r["n"])))
+    return len(_COURSE_DIST)
+
+
 def courseDistances(cur, course_name):
-    """[(distance, n), ...] for one venue, commonest first. Memoised."""
-    if course_name in _COURSE_DIST:
-        return _COURSE_DIST[course_name]
-    cur.execute("SELECT distance, n FROM reb_course_dist "
-                "WHERE course_name = %(c)s ORDER BY n DESC",
-                {"c": course_name})
-    got = [(float(r["distance"]), int(r["n"])) for r in cur.fetchall()]
-    _COURSE_DIST[course_name] = got
-    return got
+    """[(distance, n), ...] for one venue, commonest first.
+
+    ! NO QUERY HERE. loadCourseDistances fills the map in buildGap; a venue
+      that is absent has no distance over the floor, which is a fact, not a
+      cache miss to go and resolve.
+    """
+    return _COURSE_DIST.get(course_name, ())
 
 
 def snapToCourse(implied, course_name, label, cur, tol=COURSE_TOL):
@@ -1593,7 +1618,14 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
     """(condemned, routed_to_2, skipped) for the whole-division pass."""
     condemned, routed, skipped = [], [], []
     _SNAP_MISS.clear()
-    for r in rows:
+    # ! IT SAYS WHERE IT IS. This loop runs over half a million rows and
+    #   printed nothing until it finished, so a slow one was
+    #   indistinguishable from a hung one -- which is exactly how the
+    #   per-venue round trip above went unnoticed.
+    _every = max(1, len(rows) // 10)
+    for _i, r in enumerate(rows):
+        if _i and _i % _every == 0:
+            print(f"    ...{_i:,}/{len(rows):,} divisions judged", flush=True)
         gap = float(r["med_gap"])
         if abs(gap) <= barFor(r["n"], sigma, t1):
             skipped.append((r, "within the bar"))
