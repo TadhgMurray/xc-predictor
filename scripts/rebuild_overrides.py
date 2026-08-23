@@ -364,10 +364,16 @@ ANALYZE reb_gap;
 #   athlete whose career crosses pools, since targetFor anchors normalized
 #   time PER POOL and the raw numbers are not comparable across that seam.
 _POOL_SQL = """
+-- ! min(pool), NOT mode(). mode() IS AN ORDERED-SET AGGREGATE, so Postgres
+--   can only plan it as GroupAggregate -- a full sort of all 56M rows of
+--   ranking_results, with no parallel plan available, for a value that is
+--   constant for almost every athlete anyway. min() is a plain aggregate:
+--   HashAggregate, parallel, and it picks deterministically. The only
+--   athletes it decides anything for are the ones who changed pool, and for
+--   them it only sets which scale constant they share.
 DROP TABLE IF EXISTS reb_pool;
 CREATE TEMP TABLE reb_pool AS
-SELECT person_id                                 AS ident,
-       mode() WITHIN GROUP (ORDER BY pool)       AS pool
+SELECT person_id AS ident, min(pool) AS pool
 FROM   ranking_results
 WHERE  person_id IS NOT NULL AND pool IS NOT NULL
   AND  sport = %(sport)s
@@ -398,46 +404,64 @@ CREATE INDEX ON reb_cell (meet_id, div_id);
 ANALYZE reb_cell;
 """
 
-_GAP_BODY_TIMES = """
-DROP TABLE IF EXISTS reb_q;
-CREATE TEMP TABLE reb_q AS
-SELECT r.meet_id, r.div_id, r.result_id,
-       COALESCE(r.person_id, r.athlete_id)                     AS ident,
-       r.time_seconds,
-       -- ! THE ONLY PLACE --as-if-wiped CHANGES ANYTHING, same as before:
-       --   reb_unovr is empty without it, so COALESCE is the identity.
-       exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
-           * COALESCE(u.scale, 1.0)                             AS q
-FROM   {table} r
-LEFT   JOIN reb_unovr u  ON u.meet_id = r.meet_id AND u.div_id = r.div_id
-LEFT   JOIN reb_cell  cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
-WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
-  AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL;
-CREATE INDEX ON reb_q (ident);
-ANALYZE reb_q;
-
--- ! GEOMETRIC MEAN, NOT percentile_cont. This is a scale constant that
---   cancels out of every gate, so it does not deserve an ordered-set
---   aggregate and the GroupAggregate plus 60M-row sort that comes with one.
+# ★ pm FROM A ONE PERCENT SAMPLE, AND IT DOES NOT MATTER THAT IT IS ONE.
+#   Every gate uses own_med / rating, so pm cancels; it exists to put each
+#   pool's median near 100 for readability and to keep an athlete comparable
+#   across a pool change. A scale constant does not deserve a full pass over
+#   60M rows, and TABLESAMPLE SYSTEM reads blocks rather than rows.
+#
+# ! GEOMETRIC MEAN, NOT MEDIAN, for the same reason min() replaced mode():
+#   percentile_cont would force a sort where avg(ln x) is a HashAggregate.
+_PM_SQL = """
 DROP TABLE IF EXISTS reb_pm;
 CREATE TEMP TABLE reb_pm AS
-SELECT p.pool, 100.0 / exp(avg(ln(x.q))) AS pm
-FROM   reb_q x
-JOIN   reb_pool p ON p.ident = x.ident
-WHERE  x.q > 0
+SELECT p.pool,
+       100.0 / exp(avg(ln(exp(COALESCE(cd.difficulty, 0.0))
+                          / r.normalized_time))) AS pm
+FROM   {table} r TABLESAMPLE SYSTEM (1)
+JOIN   reb_pool p  ON p.ident = COALESCE(r.person_id, r.athlete_id)
+LEFT   JOIN reb_cell cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
+WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
 GROUP  BY p.pool;
 CREATE INDEX ON reb_pm (pool);
 ANALYZE reb_pm;
+"""
 
+# ⚠ SAME SHAPE AS _GAP_BODY, DELIBERATELY, so the cost is "the old one on
+#   more rows" rather than a new plan nobody has watched. The only additions
+#   are three hash joins against small temp tables.
+#
+#   There is no intermediate 60M-row table and no index on one: reb_q was
+#   both, and neither was ever read by anything that needed an index. The
+#   joins here are hash joins against reb_pool / reb_pm / reb_cell, which are
+#   small enough to hash.
+#
+# ! percentile_cont STAYS. It is an ordered-set aggregate and it does force a
+#   sort -- but the athlete's own median is the one place robustness is not
+#   optional, precisely because this table now INCLUDES the rows the pace
+#   guard threw out, and those are wild by construction. A geometric mean
+#   there would let one impossible row move an athlete's whole history.
+#   buildGap raises work_mem before this runs so the sort stays in memory.
+_GAP_BODY_TIMES = """
 DROP TABLE IF EXISTS reb_gap;
 CREATE TEMP TABLE reb_gap AS
 WITH rated AS (
-    SELECT x.meet_id, x.div_id, x.result_id, x.ident, x.time_seconds,
-           x.q * COALESCE(pm.pm, 1.0) AS speed_rating
-    FROM   reb_q x
-    LEFT   JOIN reb_pool p  ON p.ident = x.ident
-    LEFT   JOIN reb_pm   pm ON pm.pool = p.pool
-    WHERE  x.q > 0
+    SELECT r.meet_id, r.div_id, r.result_id,
+           COALESCE(r.person_id, r.athlete_id)                  AS ident,
+           r.time_seconds,
+           -- the engine's own formula, applied to EVERY row.
+           -- ! reb_unovr is empty without --as-if-wiped, so COALESCE is the
+           --   identity in the normal path -- same as the old body.
+           COALESCE(pm.pm, 100.0)
+               * exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
+               * COALESCE(u.scale, 1.0)                          AS speed_rating
+    FROM   {table} r
+    LEFT   JOIN reb_unovr u  ON u.meet_id = r.meet_id AND u.div_id = r.div_id
+    LEFT   JOIN reb_cell  cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
+    LEFT   JOIN reb_pool  p  ON p.ident = COALESCE(r.person_id, r.athlete_id)
+    LEFT   JOIN reb_pm    pm ON pm.pool = p.pool
+    WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
     SELECT ident,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
@@ -461,7 +485,6 @@ LEFT   JOIN sex s ON s.athlete_id = x.ident;
 CREATE INDEX ON reb_gap (meet_id, div_id);
 ANALYZE reb_gap;
 """
-
 
 # ⚠ A LITERAL % IN ANY OF THESE STRINGS IS A RUNTIME ERROR, NOT A TYPO.
 #   psycopg2 reads % as the start of a placeholder, so a SQL COMMENT saying
@@ -777,8 +800,17 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         cur.execute(_UNOVERRIDE_NONE)
     if gap_from == "times":
         _noBarePercent("_GAP_BODY_TIMES", _GAP_BODY_TIMES)
+        # ! ROOM FOR THE ONE SORT THIS CANNOT AVOID. The athlete-median is an
+        #   ordered-set aggregate over every finisher, not just the rated
+        #   ones, so it is the biggest sort in the run. Spilling it to disk is
+        #   the difference between minutes and hours. SET LOCAL dies with the
+        #   transaction, so nothing leaks.
+        cur.execute("SET LOCAL work_mem = '2GB'")
         cur.execute(_POOL_SQL, {"sport": sport})
+        _t = _step(_t, "pool per athlete")
         cur.execute(_CELL_SQL)
+        cur.execute(_PM_SQL.format(table=_TABLE[sport]))
+        _t = _step(_t, "cells and pool scale")
         cur.execute(_GAP_BODY_TIMES.format(table=_TABLE[sport]),
                     {"min_own": min_own})
     else:
