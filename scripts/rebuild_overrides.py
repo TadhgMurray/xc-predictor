@@ -548,6 +548,41 @@ def loadLadder(cur, min_n=LADDER_MIN_N):
     return _CORPUS_LADDER
 
 
+def ladderPower(tol=None, lo=1500, hi=12000, n=200_000):
+    """How often a RANDOM distance snaps within tol. The gate's false-positive rate.
+
+    ⚠ A DENSER LADDER IS A WEAKER TEST, AND THAT TRADE HAS TO BE MEASURED.
+      snapToLadder's contract is that it is a TEST -- a field wrong for a
+      reason other than distance implies a value BETWEEN the rungs, and the
+      error is what says so. That only works while the rungs are sparse
+      relative to the tolerance. Going from 28 rungs to 94 admitted 1,376 more
+      divisions; it also made it easier for a value that means nothing to land
+      near something.
+      
+      So: draw distances log-uniformly across the range real races occupy and
+      count how many snap. That fraction is what the gate would pass if the
+      implied distances were pure noise -- exactly the `noise%` column the
+      pass 1 sweep prints, for the snap instead of the bar.
+
+    ! LOG-UNIFORM, NOT UNIFORM. Race distances span 800 m to 20 km and the
+      rungs crowd at the short end; sampling uniformly would put most of the
+      draws in a range with three rungs in it and understate the pass rate.
+    """
+    import math
+    if tol is None:
+        tol = SNAP_TOL
+    if not _CORPUS_LADDER:
+        return None
+    step = (math.log(hi) - math.log(lo)) / n
+    hits = 0
+    for i in range(n):
+        d = math.exp(math.log(lo) + step * i)
+        got = snapToCorpus(d)
+        if got and abs(got[1]) <= tol:
+            hits += 1
+    return hits / n
+
+
 def snapToCorpus(implied):
     """(nearest distance the corpus races, fractional error), or None.
 
@@ -1183,6 +1218,9 @@ def main():
                     help="how far a scraped distance must sit from the "
                          "override before reverting counts as a change "
                          "(default 2%%)")
+    ap.add_argument("--ladder", action="store_true",
+                    help="print the corpus ladder and how much discriminating "
+                         "power the snap has left at each tolerance, then stop")
     ap.add_argument("--out", default=None)
     ap.add_argument("--explain", default=None,
                     help="MEET/DIV -- print every gate that division met or "
@@ -1194,6 +1232,34 @@ def main():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             buildGap(cur, args.sport, args.min_own_races,
                      as_if_wiped=args.as_if_wiped, tol=args.same_tol)
+
+            if args.ladder:
+                rungs = _CORPUS_LADDER
+                print(f"\n  {len(rungs):,} RUNGS "
+                      f"({LADDER_MIN_N:,}+ finishers each)\n")
+                for i in range(0, len(rungs), 6):
+                    print("    " + "  ".join(
+                        f"{d:>6,}" for d, _n in rungs[i:i + 6]))
+                gaps = [(100.0 * (b - a) / a, a, b)
+                        for (a, _x), (b, _y) in zip(rungs, rungs[1:])]
+                gaps.sort(reverse=True)
+                print(f"\n  WIDEST GAPS -- a value mid-gap misses both "
+                      f"neighbours by half of this\n")
+                for pct, a, b in gaps[:8]:
+                    print(f"    {a:>6,} -> {b:>6,}   {pct:>5.1f}%")
+                print(f"\n  HOW MUCH TEST IS LEFT IN THE SNAP\n")
+                print(f"    {'tolerance':<12}{'random values that pass':>26}")
+                print("    " + "-" * 38)
+                for t in (0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10):
+                    p = ladderPower(t)
+                    flag = "  <-- current" if abs(t - SNAP_TOL) < 1e-9 else ""
+                    print(f"    {t:<12.0%}{p:>25.1%}{flag}")
+                print(f"\n    This is the share of PURE NOISE the snap would "
+                      f"admit -- the same\n    reading as the sweep's noise% "
+                      f"column, for the snap instead of the\n    bar. A "
+                      f"tolerance where most random numbers pass is not a "
+                      f"test.")
+                return 0
 
             if args.measure:
                 measure(cur)
