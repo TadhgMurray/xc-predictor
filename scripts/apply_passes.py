@@ -35,7 +35,8 @@ END = "# === END PASS PROPOSALS ==="
 # What each pass writes, and the most it may write before this refuses.
 # Sized from the corpus: pass 1 condemned 3,907 divisions of 543,261, so a
 # five-figure count means something broke rather than something was found.
-_FILES = (("pass1.py", "whole-division distance", 8_000),
+_FILES = (("pass0.py", "divisions whose evidence was deleted", 2_000),
+          ("pass1.py", "whole-division distance", 8_000),
           ("pass2.py", "per-row distance and sex", 20_000),
           ("pass3.py", "individually corrupt rows", 20_000))
 
