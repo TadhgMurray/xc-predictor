@@ -416,9 +416,141 @@ def assertLabelTrustworthy(cur, sport, min_agree=LABEL_MIN_AGREE):
     return False
 
 
-def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
+# ------------------------------------------------------------------ #
+#  IS THE LABEL THE DISTANCE reb_gap's RATINGS WERE COMPUTED AT?
+# ------------------------------------------------------------------ #
+#
+# ★ THE ONE INVARIANT THIS WHOLE TOOL RESTS ON, SO IT IS MEASURED RATHER THAN
+#   ASSERTED IN A COMMENT. Every proposal is
+#
+#       d_true = label * (base / (base + gap)) ** (1 / K)
+#
+#   and `gap` is measured against reb_gap.speed_rating. If the label is not
+#   the distance THAT rating was computed at, every proposal is wrong by the
+#   ratio between the two -- silently, plausibly, and in the same direction
+#   for the whole corpus. It is the bug that wrote 3,085 wrong 6 km
+#   divisions, and then its mirror image under --as-if-wiped.
+#
+# ★ AND IT IS CHECKABLE END TO END, because rating is inversely proportional
+#   to normalized_time and reverting a division multiplies the rating by
+#   `scale`:
+#
+#       normalizeTime(t, label)  ==  normalized_time_stored / scale
+#
+#   Both sides are already on disk. normalizeTime is deterministic given
+#   time, distance, pool and sport, so this is arithmetic, not a heuristic.
+#
+# ! IT COVERS EVERY ROW, NOT JUST THE OVERRIDDEN ONES, which is what
+#   assertLabelTrustworthy cannot do -- that one compares dist_override
+#   against the backfill and is silent about the 90-odd percent of divisions
+#   that have no override, and blind by construction under --as-if-wiped,
+#   where the label is SUPPOSED to differ from dist_override.
+#
+# ! mod(result_id, 997) RATHER THAN A BARE LIMIT. A systematic label error is
+#   exactly what a head-of-scan sample can miss: the first ten thousand rows
+#   of a temp table are one region of one index, and reb_gap is physically in
+#   `results` order, so a LIMIT reads one end of the corpus by date.
+#
+#   1-in-997 is chosen so the sample cannot early-stop before the far end:
+#   filling it requires walking the whole table, which is a seq scan of a
+#   temp table and a few thousand primary-key lookups. A smaller modulus
+#   would let LIMIT stop a tenth of the way in and reproduce the bias it
+#   exists to avoid. Coming back with a few thousand rows instead of the cap
+#   is fine -- the threshold is a share, not a count.
+GAP_LABEL_MIN_AGREE = 0.90
+GAP_LABEL_SAMPLE = 20_000
+GAP_LABEL_TOL = 0.05
+
+_GAP_LABEL_SQL = """
+SELECT r.time_seconds, r.normalized_time, lbl.distance AS label,
+       k.pool, COALESCE(u.scale, 1.0) AS scale
+FROM   reb_gap g
+JOIN   {table} r ON r.result_id = g.result_id
+JOIN   ranking_results k ON k.result_id = g.result_id AND k.sport = %(sport)s
+LEFT   JOIN reb_unovr u ON u.meet_id = g.meet_id AND u.div_id = g.div_id
+__LABEL__
+WHERE  mod(g.result_id, 997) = 0
+  AND  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+  AND  r.time_seconds > 0 AND lbl.distance > 0
+LIMIT  %(n)s
+"""
+
+
+def assertGapLabelMatchesRatings(cur, sport, as_if_wiped,
+                                 min_agree=GAP_LABEL_MIN_AGREE):
+    """The label must be the distance reb_gap's ratings were computed at."""
+    from anchor_check import mismatch
+
+    sql = _GAP_LABEL_SQL.format(table=_TABLE[sport])
+    sql = sql.replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
+    _noBarePercent("_GAP_LABEL_SQL", sql.replace("%(sport)s", "")
+                                        .replace("%(n)s", ""))
+    cur.execute(sql, {"sport": sport, "n": GAP_LABEL_SAMPLE})
+    rows = cur.fetchall()
+    if not rows:
+        print("  label/rating check: no sampled row carried both a label and "
+              "a normalised time.")
+        return True
+
+    agree, ratios = 0, []
+    for r in rows:
+        # rating ~ 1 / normalized_time, and --as-if-wiped multiplied the
+        # rating by `scale`, so the normalised time it implies is /scale.
+        want = float(r["normalized_time"]) / float(r["scale"])
+        _bad, _exp, ratio = mismatch(r["time_seconds"], float(r["label"]),
+                                     want, r["pool"], sport)
+        if ratio is None:
+            continue
+        ratios.append(ratio)
+        if abs(ratio - 1.0) <= GAP_LABEL_TOL:
+            agree += 1
+    if not ratios:
+        print("  label/rating check: nothing comparable in the sample.")
+        return True
+
+    share = agree / len(ratios)
+    ratios.sort()
+    med = ratios[len(ratios) // 2]
+    print(f"  label/rating check: {share:.1%} of {len(ratios):,} sampled rows "
+          f"were normalised at the\n                      label the passes "
+          f"will scale from (median ratio {med:.4f}, "
+          f"need {min_agree:.0%})")
+    if share >= min_agree:
+        return True
+
+    # ⚠ THE MEDIAN RATIO IS THE DIAGNOSIS, NOT DECORATION. A label error is
+    #   systematic, so the ratio clusters: 1.33 is the Lehigh 8000-vs-6000
+    #   shape, 0.5 or 2.0 is a mile/two-mile confusion, and a ratio spread
+    #   flat around 1 is something else entirely and not this bug.
+    lo = ratios[len(ratios) // 20]
+    hi = ratios[-max(1, len(ratios) // 20)]
+    print("\n  ⚠ REFUSING TO RUN. The label does not describe the distance "
+          "these ratings were\n    computed at, so every proposal would be "
+          f"wrong by the ratio between them.\n"
+          f"    ratio 5th/50th/95th: {lo:.4f} / {med:.4f} / {hi:.4f}\n")
+    if as_if_wiped:
+        print("    --as-if-wiped is ON, so reb_gap's ratings were reverted to "
+              "the scraped\n    distance and the label had to revert with "
+              "them. Check that the CASE on\n    reb_unovr in _LABEL_LATERAL "
+              "still fires for every reverted division.\n")
+    else:
+        print("    Most likely engine/dump_overrides.py was run after editing "
+              "corrections.py\n    but before 05_backfill, so dist_override "
+              "describes a rebuild that has not\n    happened yet.\n")
+    print("    --skip-label-check runs anyway. It is there for diagnosing "
+          "this message,\n    not for getting past it: the proposals will be "
+          "wrong.\n")
+    return False
+
+
+def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
+             skip_label_check=False):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
     _noBarePercent("_GAP_BODY", _GAP_BODY)
+    # ! ALL THREE, not just the one that broke. They share _LABEL_LATERAL now,
+    #   so a bare % written into it would take out every pass at once.
+    _noBarePercent("_PASS2_SQL", _PASS2_SQL)
+    _noBarePercent("_PASS3_SQL", _PASS3_SQL)
     # ! ALWAYS, NOT ONLY UNDER --as-if-wiped. _PASS1_SQL now falls back to
     #   this for a division's label distance, so it has to exist in both
     #   modes or every tfrrs division loses its label again. Same reader
@@ -462,6 +594,9 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
     n, n_sexed = row["n"], row["n_sexed"]
     print(f"  gap table: {n:,} rated rows judged against their athlete's own "
           f"median ({n_sexed:,} with a gender)")
+    if not skip_label_check and not assertGapLabelMatchesRatings(
+            cur, sport, as_if_wiped):
+        return None
     return n
 
 
@@ -530,35 +665,64 @@ def measure(cur):
 #  PASS 1 -- the whole division is wrong
 # ------------------------------------------------------------------ #
 
-_PASS1_SQL = """
-SELECT g.meet_id, g.div_id,
-       count(*)                                                AS n,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)      AS med_gap,
-       avg(g.med)                                              AS base,
-       greatest(
-           count(*) FILTER (WHERE g.gap > 0),
-           count(*) FILTER (WHERE g.gap < 0)
-       )::float / count(*)                                     AS same_side,
-       m.course_name, m.distance, m.division
-FROM   reb_gap g
+# ------------------------------------------------------------------ #
+#  THE LABEL -- ONE DEFINITION, BECAUSE THREE COPIES DRIFTED
+# ------------------------------------------------------------------ #
+#
+# ★ EVERY PASS SCALES FROM THIS AND NOTHING ELSE:
+#
+#       d_true = label * (base / (base + gap)) ** (1 / K)
+#
+#   so the label MUST be the distance the ratings being measured were
+#   computed at. Not the scraped one, not the current one -- that one.
+#
+# ⚠ IT LIVED IN THREE PLACES AND ONLY ONE OF THEM GOT FIXED. Pass 1 was
+#   given dist_override precedence, then the tfrrs fallback, then the
+#   --as-if-wiped revert. Passes 2 and 3 kept a two-line
+#   COALESCE(o.distance, m.distance) through all three, so under
+#   --as-if-wiped they reverted the RATINGS (reb_gap rescales every row) and
+#   left the LABEL on the override -- the exact mirror-image bug that made
+#   Swedetown propose 2400 -> 1200 instead of 5000 -> 2500. They were also
+#   still blind to every tfrrs division, which is what hid 26359/0.
+#
+#   Three copies of a rule is three chances to fix two of them. So there is
+#   one, spliced into all three queries below, and `{g}` is the alias of the
+#   gap row it hangs off.
+_LABEL_LATERAL = r"""
 LEFT   JOIN LATERAL (
-    -- ⚠ `meets` IS ANET-ONLY, AND THAT BLINDED THIS PASS TO EVERY TFRRS
+    -- ⚠ `meets` IS ANET-ONLY, AND THAT BLINDED THESE PASSES TO EVERY TFRRS
     --   DIVISION. impliedDistance needs a label to scale from; with no label
-    --   it returns None and pass1 skips the row as "no usable label
-    --   distance" -- AFTER the division has already passed the bar and the
-    --   unanimity gate. The fault is found and then discarded.
+    --   it returns None and the row is skipped as "no usable label distance"
+    --   -- AFTER the division has already passed the bar and the unanimity
+    --   gate. The fault is found and then discarded.
     --
     --   Measured on 26359/0, Ox Bow Park, the JV Minutemen Classic: 22 rated
-    --   rows, field median gap +58.6, the whole field on one side, bar
-    --   11.2. It passes
-    --   everything and dies here, because meet 26359 has 568 tfrrs rows and
-    --   no `meets` row at all.
+    --   rows, field median gap +58.6, the whole field on one side, bar 11.2.
+    --   It passes everything and dies here, because meet 26359 has 568 tfrrs
+    --   rows and no `meets` row at all.
     --
     -- ★ SO THE TFRRS BLOB IS THE FALLBACK, same source and same reader as
     --   build_ranking_results.prepareXcTfrrsDistTemp -- a per-division
     --   distance inside meets_tfrrs.division_distances, keyed by div_id as a
     --   string. COALESCE, not UNION: anet wins where both have one, which is
     --   the precedence every other reader uses.
+    --
+    -- ⚠ dist_override FIRST, AND ITS ABSENCE HERE WAS THE BUG. The ratings
+    --   were computed at the distance the BACKFILL used -- which is
+    --   dist_override when one exists, since that is the precedence
+    --   backfill_normalize, the engine's _xcQuery and build_ranking_results
+    --   all apply.
+    --
+    --   Reading the scrape instead starts the scaling from the wrong number.
+    --   Meet 44518 div 191150, Lehigh: dist_override says 6000, `meets` says
+    --   8000, and pass 1 reported the label as 8000 -- so every implied
+    --   distance for that division came out 8000/6000 = 1.33x too long, was
+    --   written as a fresh override, and the next run repeated the error from
+    --   the new wrong base. corrections.py carries twenty daily
+    --   distance_override_xc.py blocks from 2026-07-13 to 07-18, several with
+    --   identical entry counts, re-proposing the same divisions. That is this
+    --   loop, running once a day.
+    --
     -- ⚠ AND --as-if-wiped MOVES WHAT THE RATINGS WERE BUILT AT, SO IT MOVES
     --   THIS TOO. The flag reverts a division's ratings to the SCRAPED
     --   distance; the label has to follow, or the two disagree again in the
@@ -577,45 +741,43 @@ LEFT   JOIN LATERAL (
                 ELSE COALESCE(o.distance, m.distance, x.distance)
            END                                     AS distance,
            m.division                              AS division
-    -- ⚠ dist_override FIRST, AND ITS ABSENCE HERE WAS THE BUG.
-    --   impliedDistance scales FROM this label:
-    --       d_true = label * (base / (base + gap)) ** (1/K)
-    --   and the ratings it measures the gap against were computed at the
-    --   distance the BACKFILL used -- which is dist_override when one
-    --   exists, since that is the precedence backfill_normalize, the
-    --   engine's _xcQuery and build_ranking_results all apply.
-    --
-    --   Reading the scrape instead starts the scaling from the wrong number.
-    --   Meet 44518 div 191150, Lehigh: dist_override says 6000, `meets` says
-    --   8000, and pass 1 reported the label as 8000 -- so every implied
-    --   distance for that division came out 8000/6000 = 1.33x too long, was
-    --   written as a fresh override, and the next run repeated the error from
-    --   the new wrong base. corrections.py carries twenty daily
-    --   distance_override_xc.py blocks from 2026-07-13 to 07-18, several with
-    --   identical entry counts, re-proposing the same divisions. That is this
-    --   loop, running once a day.
     FROM  (SELECT course_name, distance, division
              FROM meets
-            WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id
+            WHERE meets.meet_id = {g}.meet_id AND meets.div_id = {g}.div_id
             LIMIT 1) m
     LEFT  JOIN LATERAL
           (SELECT distance FROM dist_override d
-            WHERE d.meet_id = g.meet_id AND d.div_id = g.div_id
+            WHERE d.meet_id = {g}.meet_id AND d.div_id = {g}.div_id
             LIMIT 1) o ON TRUE
     LEFT  JOIN LATERAL
           (SELECT meet_id FROM reb_unovr r
-            WHERE r.meet_id = g.meet_id AND r.div_id = g.div_id
+            WHERE r.meet_id = {g}.meet_id AND r.div_id = {g}.div_id
             LIMIT 1) u ON TRUE
     FULL  OUTER JOIN
           (SELECT NULL::text AS course_name, t.distance
              FROM tmp_xc_tfrrs_dist t
-            WHERE t.meet_id = g.meet_id AND t.div_id = g.div_id
+            WHERE t.meet_id = {g}.meet_id AND t.div_id = {g}.div_id
             LIMIT 1) x ON TRUE
     LIMIT 1
-) m ON TRUE
-GROUP  BY g.meet_id, g.div_id, m.course_name, m.distance, m.division
-HAVING count(*) >= %(min_field)s
+) lbl ON TRUE
 """
+
+
+_PASS1_SQL = """
+SELECT g.meet_id, g.div_id,
+       count(*)                                                AS n,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)      AS med_gap,
+       avg(g.med)                                              AS base,
+       greatest(
+           count(*) FILTER (WHERE g.gap > 0),
+           count(*) FILTER (WHERE g.gap < 0)
+       )::float / count(*)                                     AS same_side,
+       lbl.course_name, lbl.distance, lbl.division
+FROM   reb_gap g
+__LABEL__
+GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division
+HAVING count(*) >= %(min_field)s
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
 
 
 # ------------------------------------------------------------------ #
@@ -1079,23 +1241,13 @@ SELECT g.meet_id, g.div_id, g.gender,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)    AS med_gap,
        avg(g.med)                                            AS base,
        array_agg(g.result_id)                                AS result_ids,
-       COALESCE(o.distance, m.distance)                      AS distance
+       lbl.distance                                          AS distance
 FROM   reb_gap g
-LEFT   JOIN LATERAL (
-    SELECT distance FROM dist_override d
-     WHERE d.meet_id = g.meet_id AND d.div_id = g.div_id LIMIT 1) o ON TRUE
-LEFT   JOIN LATERAL (
-    -- ⚠ dist_override FIRST -- see the note in _PASS1_SQL. The ratings were
-    --   built at the distance the BACKFILL used, so scaling from the scrape
-    --   starts the arithmetic at the wrong number and the error compounds on
-    --   every rerun.
-    SELECT distance FROM meets
-    WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id LIMIT 1
-) m ON TRUE
+__LABEL__
 WHERE  g.gender IN ('M', 'F')
   AND  (g.meet_id, g.div_id) IN (SELECT meet_id, div_id FROM reb_pass2)
-GROUP  BY g.meet_id, g.div_id, g.gender, o.distance, m.distance
-"""
+GROUP  BY g.meet_id, g.div_id, g.gender, lbl.distance
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
 
 
 def pass2(halves, sigma, t2, min_minority):
@@ -1243,22 +1395,15 @@ WITH adj AS (
 SELECT a.result_id, a.meet_id, a.div_id, a.ident,
        a.adj_rating AS speed_rating, a.med, a.adj_gap AS gap,
        a.time_seconds, d.div_gap, d.n AS div_n,
-       COALESCE(o.distance, m.distance) AS distance, m.course_name
+       lbl.distance AS distance, lbl.course_name
 FROM   adj a
 JOIN   div d ON d.meet_id = a.meet_id AND d.div_id = a.div_id
-LEFT   JOIN LATERAL (
-    -- ⚠ dist_override FIRST -- see the note in _PASS1_SQL. The ratings were
-    --   built at the distance the BACKFILL used, so scaling from the scrape
-    --   starts the arithmetic at the wrong number and the error compounds on
-    --   every rerun.
-    SELECT distance, course_name FROM meets
-    WHERE meets.meet_id = a.meet_id AND meets.div_id = a.div_id LIMIT 1
-) m ON TRUE
+__LABEL__
 WHERE  abs(a.adj_gap) > %(bar)s
   AND  abs(a.adj_gap - d.div_gap) > %(vs_field)s
 ORDER  BY abs(a.adj_gap) DESC
 LIMIT  %(limit)s
-"""
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
 
 
 def stagePriorPasses(cur, fixed, pinned):
@@ -1494,6 +1639,11 @@ def main():
     ap.add_argument("--ladder", action="store_true",
                     help="print the corpus ladder and how much discriminating "
                          "power the snap has left at each tolerance, then stop")
+    ap.add_argument("--skip-label-check", action="store_true",
+                    dest="skip_label_check",
+                    help="run even when the label does not match the distance "
+                         "the ratings were computed at. For diagnosing that "
+                         "message; the proposals will be wrong.")
     ap.add_argument("--out", default=None)
     ap.add_argument("--explain", default=None,
                     help="MEET/DIV -- print every gate that division met or "
@@ -1505,8 +1655,10 @@ def main():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if not assertLabelTrustworthy(cur, args.sport):
                 return 2
-            buildGap(cur, args.sport, args.min_own_races,
-                     as_if_wiped=args.as_if_wiped, tol=args.same_tol)
+            if buildGap(cur, args.sport, args.min_own_races,
+                        as_if_wiped=args.as_if_wiped, tol=args.same_tol,
+                        skip_label_check=args.skip_label_check) is None:
+                return 2
 
             if args.ladder:
                 rungs = _CORPUS_LADDER

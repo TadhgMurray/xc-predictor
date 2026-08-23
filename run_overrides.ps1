@@ -1,6 +1,7 @@
 # run_overrides.ps1 -- rebuild the overrides and take them live, unattended.
 #
 #     .\run_overrides.ps1
+#     .\run_overrides.ps1 -Reset         # after a wipe -- see -Reset below
 #     .\run_overrides.ps1 -DryRun        # propose and validate, write nothing
 #     .\run_overrides.ps1 -SkipPipeline  # apply, but do not run the 4h rebuild
 #
@@ -25,8 +26,34 @@
 param(
     [switch]$DryRun,
     [switch]$SkipPipeline,
+    [switch]$Reset,
     [double]$Sigma = 4.5
 )
+
+# ---------------------------------------------------------------------- #
+#  -Reset -- REBUILDING FROM A WIPE IS A DIFFERENT QUESTION
+# ---------------------------------------------------------------------- #
+#
+# * WITHOUT IT THE PASSES JUDGE THE RATINGS ON DISK, which were solved WITH
+#   the current overrides. A CORRECT override therefore sits perfectly on its
+#   athletes' own heads -- gap ~ 0 -- and pass 1 declines it, correctly.
+#   Wipe corrections.py afterwards and that override is gone with nothing
+#   proposed to replace it: every override that was RIGHT is lost and only
+#   the wrong ones come back.
+#
+# * SO A RESET RUN PASSES --as-if-wiped, which reverts each division's
+#   ratings to the scraped distance first and re-proposes the correct
+#   override from the same evidence that justified it originally.
+#
+# ! ALL THREE PASSES OR NONE. Pass 2 chains onto pass 1's proposals and pass
+#   3 chains onto both; running one of them against a different baseline than
+#   the others produces proposals that disagree with each other and no error
+#   anywhere. The flag is set once, here, for exactly that reason.
+$asIf = @()
+if ($Reset) {
+    $asIf = @("--as-if-wiped")
+    Write-Host "  -Reset: passes judge the ratings a wipe would produce" -ForegroundColor Cyan
+}
 
 $ErrorActionPreference = "Continue"
 $env:PYTHONUTF8 = "1"
@@ -65,9 +92,9 @@ $t_start = Get-Date
 Step "01_backup"   { python scripts\backup_corrections.py }
 
 Step "02_pass0"    { python scripts\find_dropped_divisions.py --min-survivors 2 --out pass0.py }
-Step "02_pass1"    { python scripts\rebuild_overrides.py --pass 1 --sigma $Sigma --out pass1.py }
-Step "02_pass2"    { python scripts\rebuild_overrides.py --pass 2 --sigma $Sigma --out pass2.py }
-Step "02_pass3"    { python scripts\rebuild_overrides.py --pass 3 --sigma $Sigma --out pass3.py }
+Step "02_pass1"    { python scripts\rebuild_overrides.py --pass 1 --sigma $Sigma @asIf --out pass1.py }
+Step "02_pass2"    { python scripts\rebuild_overrides.py --pass 2 --sigma $Sigma @asIf --out pass2.py }
+Step "02_pass3"    { python scripts\rebuild_overrides.py --pass 3 --sigma $Sigma @asIf --out pass3.py }
 
 # ⚠ THE VALIDATION GATE. apply_passes execs every proposal against throwaway
 #   dicts and refuses on a syntax error, an absurd distance, or a volume past

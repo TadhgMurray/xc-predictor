@@ -130,7 +130,11 @@ def main():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # ⚠ NO --as-if-wiped. These ratings must be the ones on disk,
             #   because d_built_at is the distance they were built at.
-            buildGap(cur, args.sport, args.min_own_races)
+            # ! AND IT HONOURS THE LABEL REFUSAL. Same invariant: if
+            #   the label is not the distance these ratings were built
+            #   at, d_built_at is a fiction and so is every verdict.
+            if buildGap(cur, args.sport, args.min_own_races) is None:
+                return 2
             cur.execute("DROP TABLE IF EXISTS _adj")
             cur.execute("CREATE TEMP TABLE _adj "
                         "(meet_id bigint, div_id bigint)")
