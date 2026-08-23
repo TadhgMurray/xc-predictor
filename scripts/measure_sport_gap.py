@@ -21,12 +21,36 @@ Run from the PROJECT ROOT.
 
   So inside a group the sport contrast is PERFECTLY COLLINEAR WITH TIME. A
   high schooler who is fitter in spring than they were the previous fall --
-  the normal trajectory -- produces a signal identical to "track is easier".
-  beta absorbs it, bbar averages it over 2.07M dual-sport athlete-seasons, and
-  the recentre deposits a year of growing up into the TF difficulties.
+  the normal trajectory -- produces a signal identical to "track is easier",
+  and nothing inside a group can separate them. That was the reason to build
+  this: bbar might be booking a year of growing up as difficulty.
 
-  pair_recenter's header says the assumption is unproven and frames the risk
-  as SPECIALISATION. Time is the larger confound and is not mentioned there.
+★ MEASURED, IT IS NOT. That hypothesis is dead and the number that killed it
+  is worth keeping. This estimator removes the growth trend by construction;
+  bbar does not. If growth were in bbar the two would disagree:
+
+      bbar in the engine    -0.03924
+      --from norm measured  -0.03878      1.2 percent apart
+
+  beta really is measuring the raw XC-vs-TF discrepancy in normalised time,
+  and a year of development is not detectably in it. The tool still earns its
+  place -- it is what PROVED that, and --from rating/--from norm is what
+  splits the gap into its two halves -- but do not read the paragraph above
+  as a diagnosis.
+
+★ WHAT THE SPLIT ACTUALLY FOUND. Across eight pools:
+
+      D(cell)   mean +0.0538,  sd 0.0024      <- one global constant
+      D(norm)   mean -0.0362,  sd 0.0151      <- all of the pool spread
+
+  The cell half is flat, which is exactly what one global bbar deposited in
+  every cell should look like -- the difficulties are behaving. Every bit of
+  the per-pool variation lives in normalized_time. And the applied cell gap
+  (+0.0538) overshoots the raw discrepancy it cancels (-0.0388) by +0.0134,
+  of which bbar contributes only 0.0392 -- so roughly +0.015 is added to the
+  XC-TF delta somewhere before the recentre runs. shrinkByLinkage assigning
+  unidentified cells a per-sport default is the first thing to check; that is
+  the `[link] sport defaults` line in 08_golive.log.
 
 ★ THE FIX FOR THE MEASUREMENT IS TO STOP USING THE SOLVE'S GROUPING. The
   academic year constrains beta; it does not constrain a script. Put the XC
