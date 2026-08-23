@@ -1863,16 +1863,11 @@ def search_api():
     kind = (request.args.get("kind") or "").strip()
     limit = min(int(request.args.get("limit") or 10), 40)
     params["lim"] = limit
-    params["first"] = params["t_first"]
     if kind:
         where.append("kind = %(kind)s")
         params["kind"] = kind
 
-    # Meets sort on the year, people and schools on how much they raced.
-    # Both fall back to the other so a tie is still broken sensibly.
-    second_key = ("sort_year DESC NULLS LAST, sort_count DESC NULLS LAST"
-                  if kind == "meet" else
-                  "sort_count DESC NULLS LAST, sort_year DESC NULLS LAST")
+    order_tail = _searchOrder()
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1914,9 +1909,7 @@ def search_api():
                 --   sort_count carries races for an athlete and athletes for a
                 --   school, so one column serves both.
                 ORDER  BY ({word_score}) DESC,
-                          {second_key},
-                          (search_text LIKE %(first)s) DESC,
-                          length(search_text)
+                          {order_tail}
                 LIMIT  %(lim)s
             """, params)
             rows = cur.fetchall()
@@ -1947,11 +1940,31 @@ def _searchTerms(raw, prefix="t"):
     if not tokens:
         return None
 
+    # ⚠ search_text ALONE. THE `OR search_last` WAS DEAD CODE THAT COST A
+    #   SEQUENTIAL SCAN OF 16 MILLION ROWS PER TOKEN.
+    #
+    #   search_index has a GIN trigram index on search_text, which is what
+    #   serves LIKE '%tok%'. search_last has only a btree text_pattern_ops
+    #   index, which serves LEFT-ANCHORED patterns and nothing else -- so the
+    #   second half of the OR was unindexable, and an OR is only as fast as
+    #   its worst branch. Measured on "arcadia": Parallel Seq Scan, 5,428,976
+    #   rows removed per worker, 385,773 buffers read, 1.35 s for the tab
+    #   counts alone.
+    #
+    # ★ AND IT COULD NEVER HAVE MATCHED ANYTHING EXTRA. Every loader in
+    #   search_index.py puts search_last inside search_text already: athletes
+    #   get the last name, which is a token of "name school"; schools,
+    #   courses, meets and venues set the two columns to the identical string.
+    #   So `search_last LIKE '%tok%'` implies `search_text LIKE '%tok%'`.
+    #
+    #   It earned its place under the OLD left-anchored match, where "smith"
+    #   could not prefix-match "john smith northgate" but could prefix-match
+    #   search_last. The move to substring matching made it redundant, and
+    #   nobody removed it.
     where, params = [], {}
     for i, tok in enumerate(tokens):
         k = f"{prefix}{i}"
-        where.append(f"(search_text LIKE %({k})s OR search_last "
-                     f"LIKE %({k})s)")
+        where.append(f"search_text LIKE %({k})s")
         params[k] = f"%{tok}%"
         params[f"{k}_w"] = f"% {tok}%"
         params[f"{k}_s"] = f"{tok}%"
@@ -1966,6 +1979,48 @@ def _searchTerms(raw, prefix="t"):
         f"LIKE %({prefix}{i}_s)s THEN 1 ELSE 0 END)"
         for i in range(len(tokens)))
     return where, params, word_score
+
+
+
+# ★ ONE ORDER FOR BOTH SURFACES, AND KIND-AWARE PER ROW RATHER THAN PER
+#   REQUEST. The two populations answer different questions:
+#
+#     meet   -> RECENCY. Thirty editions of one name, and the recent one is
+#               nearly always the one meant.
+#     others -> HOW MUCH THEY RACED. sort_count carries races for an athlete,
+#               athletes for a school, results for a course or venue; someone
+#               searching a name wants the runner with a career, not a
+#               namesake with a single result.
+#
+# ⚠ IT USED TO BRANCH ON ?kind=, AND THAT MADE IT UNREACHABLE FROM THE SEARCH
+#   BOX. topbar-search.js calls /search/api with no kind at all, so `kind`
+#   was "" and every meet fell through to the count-first branch -- exactly
+#   the "a short 2010 name beats a longer 2025 one" bug the comment above
+#   claims to have fixed. It was only ever fixed for the pickers in
+#   predictions.js and rankings.js, which pass kind explicitly.
+#
+#   A CASE on the row's own kind cannot be bypassed by the caller, and it is
+#   also the only thing that can order a MIXED list correctly: the "All" tab
+#   and the dropdown both hold meets and athletes at once, and no
+#   per-request choice can rank both of those the way each wants.
+#
+# ! WORD MATCHES STILL COME FIRST, ABOVE THIS. The order of the keys is the
+#   whole ranking, and word_score leads it -- meets are stored with the year
+#   and edition number in front, so "starts with" is a weak signal here and
+#   "every token on a word boundary" is a strong one.
+_ORDER_TAIL = """
+          (CASE WHEN kind = 'meet' THEN sort_year  ELSE sort_count END)
+              DESC NULLS LAST,
+          (CASE WHEN kind = 'meet' THEN sort_count ELSE sort_year  END)
+              DESC NULLS LAST,
+          (search_text LIKE %({p}_first)s) DESC,
+          length(search_text)
+"""
+
+
+def _searchOrder(prefix="t"):
+    """The ranking below word_score. Both surfaces use this, unmodified."""
+    return _ORDER_TAIL.format(p=prefix)
 
 
 def _parse_year(q):
@@ -2015,7 +2070,7 @@ def _run_search(q, kind, year_filter, offset):
     if terms is None:
         return [], {}, []
     where, params, word_score = terms
-    params["p"] = params["t_first"]
+    order_tail = _searchOrder()
     # ! CAPTURED BEFORE kind AND year ARE APPENDED. The tab counts must ignore
     #   the kind filter (that is what makes the tabs switchable) and the year
     #   list must ignore the year filter (or picking a year collapses the
@@ -2044,43 +2099,59 @@ def _run_search(q, kind, year_filter, offset):
                 --   substring matching buries "Arcadia" under "Allen East JH
                 --   Tri--Arcadia, McComb" -- both match, but only one is what
                 --   was meant. Booleans sort false < true, hence DESC.
-                -- ★ THE SAME RANKING THE DROPDOWN USES, in the same
-                --   order. A result that is first in the dropdown has to be
-                --   first here, or clicking through reshuffles the list under
-                --   the cursor and the page looks broken even when it is not.
+                -- ★ THE SAME RANKING THE DROPDOWN USES, from the same
+                --   _searchOrder. A result that is first in the dropdown has
+                --   to be first here, or clicking through reshuffles the list
+                --   under the cursor and the page looks broken even when it
+                --   is not. It also fixes the page's own key, which sorted
+                --   EVERYTHING by year -- right for meets, wrong for athletes
+                --   and schools, where the question is how much they raced.
                 ORDER  BY ({word_score}) DESC,
-                          (search_text LIKE %(p)s) DESC,
-                          sort_year DESC, sort_count DESC, length(search_text)
+                          {order_tail}
                 LIMIT  %(lim)s OFFSET %(off)s
             """, {**params, "lim": PAGE_SIZE, "off": offset})
             results = cur.fetchall()
 
             # per-kind counts for the tabs (ignore the kind filter for counts)
             #
-            # ⚠ THE SAME PREDICATE AS THE RESULTS, %(sub)s AND NOT %(p)s.
-            #   These two queries were left on the old left-anchored match when
-            #   the results moved to substring, and they referred to a
-            #   `prefix` variable that went away with it -- so /search raised
-            #   NameError on every query while the dropdown, which never comes
-            #   through here, kept working.
+            # ⚠ THE SAME PREDICATE AS THE RESULTS. These two queries were left
+            #   on the old left-anchored match when the results moved to
+            #   substring, referring to a `prefix` variable that had gone away
+            #   with it -- so /search raised NameError on every query, while
+            #   the dropdown, which never comes through here, kept working.
             #
             #   Fixing only the name would have been worse than the crash: the
-            #   tabs would count PREFIX hits beside SUBSTRING results, so
-            #   "Louisiana State Meet" would list thirty meets under a tab
-            #   reading 0. A count that disagrees with the list under it is a
-            #   bug nobody reports and everybody distrusts.
+            #   tabs would count PREFIX hits beside SUBSTRING results, so a
+            #   query could list thirty meets under a tab reading 0. A count
+            #   that disagrees with the list under it is a bug nobody reports
+            #   and everybody distrusts.
+            #
+            # ★ AND IT IS COUNTED WITH A CEILING. An exact COUNT(*) has to
+            #   touch every matching row -- the results query stops at 30, this
+            #   one did not, so on a common token the tabs cost more than the
+            #   results they label. Nobody reads a four-digit tab count; they
+            #   read "lots". One capped scan per kind answers the only question
+            #   the tabs actually ask, which is whether it is worth clicking.
             count_where = list(where_base)
             cparams = dict(params)
+            cparams["cap"] = SEARCH_COUNT_CAP + 1
             if year:
                 count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
                 cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
+            kinds_sql = ", ".join(f"('{k}')" for k in SEARCH_KINDS)
             cur.execute(f"""
-                SELECT kind, COUNT(*) AS n
-                FROM search_index
-                WHERE {' AND '.join(count_where)}
-                GROUP BY kind
+                SELECT k.kind, c.n
+                FROM   (VALUES {kinds_sql}) AS k(kind)
+                CROSS  JOIN LATERAL (
+                    SELECT count(*) AS n FROM (
+                        SELECT 1 FROM search_index s
+                        WHERE  s.kind = k.kind
+                          AND  {' AND '.join(count_where)}
+                        LIMIT  %(cap)s
+                    ) t
+                ) c
             """, cparams)
-            counts = {r["kind"]: r["n"] for r in cur.fetchall()}
+            counts = {r["kind"]: r["n"] for r in cur.fetchall() if r["n"]}
 
             # distinct years -- from q+kind ONLY, never the year filter itself,
             # or picking a year collapses the dropdown to just that year.
@@ -2099,6 +2170,14 @@ def _run_search(q, kind, year_filter, offset):
     return results, counts, years
 
 PAGE_SIZE = 30
+
+# ! THE TAB COUNTS STOP HERE AND SAY "1000+". See the note in _run_search: an
+#   exact count has to walk the whole match set, and the tabs are a
+#   worth-clicking signal, not a statistic.
+SEARCH_COUNT_CAP = 1000
+
+# The tab order on the results page, and the kinds the counts are taken over.
+SEARCH_KINDS = ("athlete", "meet", "course", "venue", "school")
 
 @app.route("/search")
 def search_page():
@@ -2120,7 +2199,8 @@ def search_page():
                            counts=counts,        # per-tab counts
                            years=years,          # for the year dropdown
                            offset=offset,
-                           page_size=PAGE_SIZE)
+                           page_size=PAGE_SIZE,
+                           count_cap=SEARCH_COUNT_CAP)
 
 # ===================================================================== #
 #  CONVERSIONS  — paste these two routes into app.py

@@ -65,11 +65,15 @@
         {% set tab_list = [('all','All'), ('athlete','Athletes'),
                            ('meet','Meets'), ('course','Courses'),
                            ('venue','Venues'), ('school','Schools')] %}
+        {# The counts are CAPPED -- see SEARCH_COUNT_CAP in app.py. A tab is a
+           worth-clicking signal, not a statistic, and an exact count has to
+           walk the whole match set while the results stop at 30. #}
         {% for key, lbl in tab_list %}
             {% set n = counts.values()|sum if key == 'all' else counts.get(key, 0) %}
+            {% set shown = (count_cap|string) ~ '+' if n > count_cap else n %}
             <a class="search-tab {{ 'is-active' if kind == key else '' }}"
                href="/search?q={{ q|urlencode }}{% if year %}&year={{ year }}{% endif %}&kind={{ key }}">
-                {{ lbl }} <span class="tab-count">{{ n }}</span>
+                {{ lbl }} <span class="tab-count">{{ shown }}</span>
             </a>
         {% endfor %}
     </nav>
