@@ -118,6 +118,37 @@ def _tfrrs_join(r="r"):
     """
 
 
+def _dist_override_join(r="r"):
+    """LEFT JOIN fragment exposing `dov` -- the hand-verified distance.
+
+    ⚠ WITHOUT THIS THE SITE SHOWED A DISTANCE THE CORPUS HAD ALREADY
+      REJECTED. dist_override carries 5,248 corrected divisions and app.py
+      referenced it NOWHERE, so every page rendered COALESCE(meets.distance,
+      the tfrrs blob) -- the scraped value the override exists to replace.
+
+      Meet 26359 div 0, the JV Minutemen Classic at Ox Bow Park, is the
+      example: scraped 8046 m, overridden to 5000, rated at 5000 (correctly),
+      and DISPLAYED as 8046. The rating was right and the number beside it was
+      wrong, which is why every rating-based audit called the division clean
+      while it was plainly wrong on the page.
+
+    ⚠ AND IT IS NOT COSMETIC. The same expression keys the join into
+      course_difficulties: cd.distance_m is matched against the race distance
+      snapped to 100m, so a wrong distance looks up a DIFFERENT CELL -- or no
+      cell at all -- and the difficulty shown belongs to a course the athlete
+      did not run. The engine keyed that cell at the OVERRIDE distance.
+
+    ! (meet_id, div_id) IS THE WHOLE KEY -- dist_override has no source
+      column, see engine/dump_overrides.py, and its primary key is exactly
+      these two. So this cannot fan out.
+    """
+    return f"""
+    LEFT JOIN dist_override dov
+           ON dov.meet_id = {r}.meet_id
+          AND dov.div_id  = {r}.div_id
+    """
+
+
 def _blob(r="r", field="distance"):
     """The per-division value from meets_tfrrs.division_distances.
 
@@ -134,9 +165,18 @@ def _xc_course_sql(r="r"):
 
 
 def _xc_distance_sql(r="r"):
-    """Race distance, either source. anet keeps it on `meets`; tfrrs keeps it
-    per division inside the blob."""
-    return f"COALESCE(m.distance, {_blob(r, 'distance')}::real)"
+    """Race distance -- the corrected one first, then either scraped source.
+
+    ★ SAME PRECEDENCE AS EVERY OTHER READER. backfill_normalize, the engine's
+      _xcQuery, build_ranking_results and apply_tilt all take dist_override
+      ahead of the scrape; this file did not, so the site disagreed with its
+      own ratings about how long the race was. See _dist_override_join.
+
+    anet keeps the scraped value on `meets`; tfrrs keeps it per division
+    inside a jsonb blob.
+    """
+    return (f"COALESCE(dov.distance::real, m.distance, "
+            f"{_blob(r, 'distance')}::real)")
 
 
 # Creates the app; __name__ tells Flask where "here" is
@@ -515,7 +555,7 @@ def get_races(cur, person_id):
                ON m.div_id  = r.div_id
               AND m.meet_id = r.meet_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         -- Difficulty is keyed on (canonical_id, distance_m) since the
         -- per-distance split -- a venue hosting a 2300m and an 8000m has a
         -- separate difficulty for each, because they are different courses on
@@ -1080,7 +1120,7 @@ def get_race_header(cur, meet_id, div_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         LEFT JOIN course_canonical cc
                ON cc.course_name = {_xc_course_sql('r')}
               AND round(cc.gps_lat::numeric,  5)
@@ -1212,7 +1252,7 @@ def get_meet_header(cur, meet_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         -- Rows that resolved a name sort first, so a meet where only SOME
         -- divisions carry metadata still shows one.
         ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC
@@ -1242,11 +1282,11 @@ def get_meet_divisions(cur, meet_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         {_athlete_lateral('r')}
         WHERE r.meet_id = %(meet)s
         GROUP BY r.div_id, m.division, mt.division_distances,
-                 m.distance, r.source
+                 dov.distance, m.distance, r.source
         ORDER BY division NULLS LAST, r.div_id
     """, {"meet": meet_id})
     return cur.fetchall()
