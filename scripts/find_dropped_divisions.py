@@ -217,19 +217,72 @@ def main():
         flagged.append({**r, "gap": gap, "implied": imp,
                         "snapped": snapped, "err": err})
 
+    # ★ DIVISIONS MISLABELLED TOGETHER ARE SIZED TOGETHER.
+    #
+    #   Meet 26359 divs 1, 2 and 3 all carry the scraped label 8047 and
+    #   between them keep 12, 2 and 1 survivors. Sized alone they imply 5222,
+    #   5167 and 6011 -- the last from a SINGLE row, which snaps to 6000 and
+    #   is simply wrong. One survivor estimates a multiplier badly; fifteen
+    #   estimate it well.
+    #
+    # ! GROUPED ON (meet, scraped label), NOT ON THE MEET ALONE. A meet
+    #   legitimately runs several distances -- 26359 also has a division at
+    #   4828 that rates 85% of its field and is fine. What identifies rows
+    #   that were mislabelled by the same mistake is sharing the mistake:
+    #   the same wrong number, at the same meeting.
+    #
+    #   Pooled by survivor count rather than averaging the implied distances,
+    #   because a division with 12 survivors knows twelve times more about
+    #   the multiplier than one with 1. The pooled figure puts all three of
+    #   26359's divisions on the same rung.
+    groups = {}
+    for r in flagged:
+        groups.setdefault((r["meet_id"], round(float(r["label"]))),
+                          []).append(r)
+    for key, members in groups.items():
+        if len(members) < 2:
+            continue
+        w = sum(m["n_rated"] for m in members)
+        rating = sum(m["n_rated"] * float(m["rating"]) for m in members) / w
+        own = sum(m["n_rated"] * float(m["own_med"]) for m in members) / w
+        imp = impliedDistance(key[1], own, rating)
+        if imp is None:
+            continue
+        snapped, err = snapToLadder(imp)
+        for m in members:
+            m["alone"] = (m["snapped"], m["err"])
+            m["implied"], m["snapped"], m["err"] = imp, snapped, err
+            m["pooled"] = w
+            m["siblings"] = len(members)
+
     flagged.sort(key=lambda r: -abs(r["gap"]))
     good = [r for r in flagged if abs(r["err"]) <= SNAP_TOL]
 
     print(f"\n\n  DIVISIONS WHOSE EVIDENCE WAS DELETED "
           f"({len(flagged):,} flagged, {len(good):,} snap to a real rung)\n")
+    n_pooled = sum(1 for r in good if r.get("siblings"))
+    n_moved = sum(1 for r in good
+                  if r.get("alone") and r["alone"][0] != r["snapped"])
+    print(f"    {n_pooled:,} of them were sized with their siblings; that "
+          f"changed the answer for {n_moved:,}.\n")
     print(f"    {'rows':>6}{'rated':>6}{'label':>7}{'rating':>8}{'own':>7}"
-          f"{'gap':>8}{'implied':>8}{'snap':>7}{'err':>7}  meet/div  course")
+          f"{'gap':>8}{'implied':>8}{'snap':>7}{'err':>7}{'sib':>5}"
+          f"  meet/div  course")
     for r in good[:args.limit]:
+        # ! FLAG THE ONES POOLING RESCUED, so the effect is visible rather
+        #   than asserted -- alone[0] is what a single division would have
+        #   written on its own.
+        moved = ("*" if r.get("alone") and r["alone"][0] != r["snapped"]
+                 else " ")
         print(f"    {r['n_rows']:>6}{r['n_rated']:>6}{r['label']:>7.0f}"
               f"{r['rating']:>8.1f}{r['own_med']:>7.1f}{r['gap']:>+8.1f}"
               f"{r['implied']:>8.0f}{r['snapped']:>7.0f}{r['err']:>+7.1%}"
+              f"{r.get('siblings', 1):>4}{moved}"
               f"  {r['meet_id']}/{r['div_id']}"
               f"  {(r['course_name'] or '?')[:24]}")
+    if n_moved:
+        print(f"\n    * pooling moved this division off the rung its own "
+              f"survivors implied.")
 
     if args.out and good:
         lines = [f"({r['meet_id']}, {r['div_id']}): {r['snapped']:.0f},"
