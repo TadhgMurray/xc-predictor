@@ -46,9 +46,18 @@ Run from the PROJECT ROOT.
   and no re-solve. (Per-race ratings no longer carry beta -- it was removed
   from resultRatings -- so what is left is the cell difficulty being tested.)
 
-! BOTH DIRECTIONS, ALWAYS. TF-XC-TF and XC-TF-XC estimate the same quantity
-  with opposite signs. If they disagree, the linear-in-time assumption is
-  failing and you know it, instead of getting one confident number.
+★ BOTH DIRECTIONS, ALWAYS, AND NOT MERELY AS A CROSS-CHECK. Writing
+  ln r_S(t) = A(t) + (eff_S - T_S) + const, a TF-XC-TF sandwich returns C + D
+  and an XC-TF-XC sandwich returns C - D, where C is how far the athlete's
+  true curve sits off the straight line at the middle date and D is the error
+  in the sport gap. So the MEAN of the two directions is D with the curvature
+  cancelled exactly, and half their difference IS the curvature.
+
+  Running both does not just check the linear assumption -- it removes the
+  need for it. Measured: C is about +0.0024 for high school and middle
+  school and about ZERO for college, which is what a real developmental
+  curve looks like. Twelve-year-olds decelerate over a year; twenty-year-olds
+  do not.
 
 ⚠ WHAT THIS CANNOT SEPARATE, AND NOTHING ELSE CAN EITHER. Interpolating
   between two SPRINGS and evaluating at the intervening FALL still carries the
@@ -188,18 +197,43 @@ def _report(label, by_end):
         print("    only one direction available -- no cross-check.")
         return (m_tf if n_tf else -m_xc) if (n_tf or n_xc) else None
 
-    # ! WEIGHTED BY COUNT, and the agreement is reported rather than assumed.
+    # ★ THE TWO DIRECTIONS DIFFERING IS A MEASUREMENT, NOT A FAILURE, AND
+    #   THE FIRST VERSION OF THIS CALLED IT A FAILURE.
+    #
+    #     ln r_S(t) = A(t) + (eff_S - T_S) + const
+    #
+    #   so with C the deviation of A at the middle date from the straight line
+    #   through the two ends, and D = (eff_XC - T_XC) - (eff_TF - T_TF):
+    #
+    #     TF-XC-TF  ->  C + D          (printed as-is)
+    #     XC-TF-XC  ->  C - D          (printed negated, so D - C)
+    #
+    #   The MEAN of the two is D and the curvature cancels EXACTLY. Half their
+    #   difference is C. So a sandwich does not merely assume development is
+    #   linear -- running it both ways measures the non-linearity and removes
+    #   it, and the disagreement is the estimate of how curved a year is.
+    #
+    # ! WHAT WOULD ACTUALLY SPOIL D IS IMBALANCE, NOT CURVATURE. The two
+    #   directions are averaged by count, so C leaks in proportional to
+    #   (n_tf - n_xc) / (n_tf + n_xc). With the counts near equal that is
+    #   nothing; it is only worth a warning when both the imbalance and the
+    #   curvature are large.
     d = (m_tf * n_tf + (-m_xc) * n_xc) / (n_tf + n_xc)
-    disagree = abs(m_tf - (-m_xc))
+    curve = 0.5 * (m_tf + m_xc)
+    imbalance = (n_tf - n_xc) / float(n_tf + n_xc)
+    leak = curve * imbalance
     pooled_se = math.sqrt(se_tf ** 2 + se_xc ** 2)
-    print(f"    {'combined':<12} {n_tf + n_xc:>9,} {d:>10.5f}")
-    print(f"\n    the two directions differ by {disagree:.5f} "
-          f"({disagree / pooled_se:.1f} SE)" if pooled_se else "")
-    if pooled_se and disagree > 3 * pooled_se:
-        print("    ⚠ THEY DISAGREE. A sandwich removes a LINEAR trend; if the "
-              "two directions\n      do not mirror, development is not "
-              "linear over this span and the number\n      above is a blend "
-              "of the sport gap and whatever the curvature is.")
+    print(f"    {'combined':<12} {n_tf + n_xc:>9,} {d:>10.5f}   <- D, the gap "
+          f"error")
+    print(f"\n    curvature of a year   {curve:+.5f}"
+          + (f"  ({abs(m_tf + m_xc) / pooled_se:.0f} SE)" if pooled_se else ""))
+    print(f"    it cancels in D except through the count imbalance "
+          f"({imbalance:+.1%}),")
+    print(f"    which leaves {leak:+.5f} of it in the number above.")
+    if abs(leak) > 0.1 * max(abs(d), 1e-9):
+        print("    ⚠ THAT LEAK IS OVER A TENTH OF D. The two directions are "
+              "unbalanced enough\n      that the curvature is no longer "
+              "cancelling. Read the two rows, not D.")
     return d
 
 
