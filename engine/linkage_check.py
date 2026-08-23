@@ -634,16 +634,23 @@ def resultRatings(D, anchor="career"):
     pm_c, pm_s = poolMeanPerGroup(D["rat"]["ability"], D["attrs"],
                                   D["rat"]["valid"],
                                   anchor=D["rat"].get("anchor"))
-    # ★ THE COURSE EFFECT ON THIS ROW, whatever the model shape.
-    #   h scales delta by the athlete's ability tilt; beta*sc removes the part
-    #   of the row that is the athlete's SPORT SPECIALISATION rather than the
-    #   course. Omitting beta here would credit a track specialist's advantage
-    #   to the track itself on every one of their races.
+    # ★ THE COURSE EFFECT ON THIS ROW. Per-cell, and ONLY per-cell.
+    #   h scales delta by the ability tilt, which abilityTilt computes per CELL,
+    #   so every row in one race gets the same h.
+    #
+    #   beta (the athlete-season sport offset) is deliberately NOT applied here.
+    #   It is a nuisance parameter of the split solve -- it exists so alpha and
+    #   delta come out clean -- and it varies from athlete to athlete. Folding
+    #   it into eff gave two runners in the SAME race on the SAME course
+    #   different effective difficulties, so ratings stopped being monotone in
+    #   time: exp(+-0.045) is a ~4.6% spread, more than enough to invert
+    #   adjacent finishers. A per-result rating answers "how fast was this run,
+    #   on this course" -- a property of the row and the cell, not of the
+    #   athlete's specialisation. beta stays in the solve (recenterSport); it
+    #   just does not leak out into the published rating.
     eff = ratingDelta(D)[D["course"]]
     if D.get("h") is not None:
         eff = D["h"] * eff
-    if D.get("beta") is not None and D.get("sc") is not None:
-        eff = eff + D["beta"][D["group"]] * D["sc"]
     adjusted = D["norm"] / np.exp(eff)
     rc = 100.0 * pm_c[D["group"]] / adjusted
     rs = 100.0 * pm_s[D["group"]] / adjusted
