@@ -273,12 +273,14 @@ ANALYZE reb_gap;
 
 
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
+    # ! ALWAYS, NOT ONLY UNDER --as-if-wiped. _PASS1_SQL now falls back to
+    #   this for a division's label distance, so it has to exist in both
+    #   modes or every tfrrs division loses its label again. Same reader
+    #   build_ranking_results uses -- imported, not copied.
+    sys.path.insert(0, "racecast")
+    from build_ranking_results import _XC_TFRRS_DIST_SQL
+    cur.execute(_XC_TFRRS_DIST_SQL)
     if as_if_wiped:
-        # The tfrrs blob has to exist before reb_unovr reads it. Same reader
-        # build_ranking_results uses -- imported, not copied.
-        sys.path.insert(0, "racecast")
-        from build_ranking_results import _XC_TFRRS_DIST_SQL
-        cur.execute(_XC_TFRRS_DIST_SQL)
         cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
         cur.execute("SELECT count(*) AS n FROM reb_unovr")
         n_ovr = cur.fetchone()["n"]
@@ -389,9 +391,35 @@ SELECT g.meet_id, g.div_id,
        m.course_name, m.distance, m.division
 FROM   reb_gap g
 LEFT   JOIN LATERAL (
-    SELECT course_name, distance, division
-    FROM   meets WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id
-    LIMIT  1
+    -- ⚠ `meets` IS ANET-ONLY, AND THAT BLINDED THIS PASS TO EVERY TFRRS
+    --   DIVISION. impliedDistance needs a label to scale from; with no label
+    --   it returns None and pass1 skips the row as "no usable label
+    --   distance" -- AFTER the division has already passed the bar and the
+    --   unanimity gate. The fault is found and then discarded.
+    --
+    --   Measured on 26359/0, Ox Bow Park, the JV Minutemen Classic: 22 rated
+    --   rows, field median gap +58.6, 100% on one side, bar 11.2. It passes
+    --   everything and dies here, because meet 26359 has 568 tfrrs rows and
+    --   no `meets` row at all.
+    --
+    -- ★ SO THE TFRRS BLOB IS THE FALLBACK, same source and same reader as
+    --   build_ranking_results.prepareXcTfrrsDistTemp -- a per-division
+    --   distance inside meets_tfrrs.division_distances, keyed by div_id as a
+    --   string. COALESCE, not UNION: anet wins where both have one, which is
+    --   the precedence every other reader uses.
+    SELECT COALESCE(m.course_name, x.course_name)  AS course_name,
+           COALESCE(m.distance, x.distance)        AS distance,
+           m.division                              AS division
+    FROM  (SELECT course_name, distance, division
+             FROM meets
+            WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id
+            LIMIT 1) m
+    FULL  OUTER JOIN
+          (SELECT NULL::text AS course_name, t.distance
+             FROM tmp_xc_tfrrs_dist t
+            WHERE t.meet_id = g.meet_id AND t.div_id = g.div_id
+            LIMIT 1) x ON TRUE
+    LIMIT 1
 ) m ON TRUE
 GROUP  BY g.meet_id, g.div_id, m.course_name, m.distance, m.division
 HAVING count(*) >= %(min_field)s
