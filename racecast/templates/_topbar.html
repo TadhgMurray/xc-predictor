@@ -35,7 +35,17 @@
     </nav>
 
     <div class="search-wrap">
+        {# ! PRE-FILLED ON THE RESULTS PAGE ONLY. Everywhere else an empty box
+           is right -- it is a jump-to, not a filter on what you are reading.
+           On /search the query IS the page, and a blank box there reads as
+           "there is no search bar here".
+
+           Guarded on the endpoint rather than just reading ?q=, so a route
+           that happens to use q for something else cannot leak it in here. #}
         <input type="search" id="search-input"
+               {% if request.endpoint == 'search_page' %}
+                   value="{{ request.args.get('q', '') }}"
+               {% endif %}
                placeholder="Search athletes, meets, courses…"
                autocomplete="off" aria-label="Search">
         <div id="search-results" class="search-results"></div>

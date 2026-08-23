@@ -508,6 +508,36 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     margin-bottom: 1rem;
 }
 
+/* The results page's own search bar. Wide enough to read a long meet name
+   back, and it sits above the tabs because it changes what the tabs count. */
+.search-page-form {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.75rem 0 0.25rem;
+    max-width: 640px;
+}
+.search-page-form input[type="search"] {
+    flex: 1 1 auto;
+    padding: 0.5rem 0.8rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+.search-page-form button {
+    padding: 0.5rem 1.1rem;
+    border: 1px solid #222;
+    border-radius: 4px;
+    background: #222;
+    color: #fff;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.search-page-form button:hover { background: #000; }
+
+@media (max-width: 640px) {
+    .search-page-form { max-width: none; }
+}
+
 .conv-add { position: relative; }        /* anchor */
 .conv-drop {
     position: absolute;
