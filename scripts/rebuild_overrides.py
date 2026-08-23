@@ -483,13 +483,34 @@ LEFT   JOIN LATERAL (
     --   distance inside meets_tfrrs.division_distances, keyed by div_id as a
     --   string. COALESCE, not UNION: anet wins where both have one, which is
     --   the precedence every other reader uses.
-    SELECT COALESCE(m.course_name, x.course_name)  AS course_name,
-           COALESCE(m.distance, x.distance)        AS distance,
-           m.division                              AS division
+    SELECT COALESCE(m.course_name, x.course_name)      AS course_name,
+           COALESCE(o.distance, m.distance, x.distance) AS distance,
+           m.division                                  AS division
+    -- ⚠ dist_override FIRST, AND ITS ABSENCE HERE WAS THE BUG.
+    --   impliedDistance scales FROM this label:
+    --       d_true = label * (base / (base + gap)) ** (1/K)
+    --   and the ratings it measures the gap against were computed at the
+    --   distance the BACKFILL used -- which is dist_override when one
+    --   exists, since that is the precedence backfill_normalize, the
+    --   engine's _xcQuery and build_ranking_results all apply.
+    --
+    --   Reading the scrape instead starts the scaling from the wrong number.
+    --   Meet 44518 div 191150, Lehigh: dist_override says 6000, `meets` says
+    --   8000, and pass 1 reported the label as 8000 -- so every implied
+    --   distance for that division came out 8000/6000 = 1.33x too long, was
+    --   written as a fresh override, and the next run repeated the error from
+    --   the new wrong base. corrections.py carries twenty daily
+    --   distance_override_xc.py blocks from 2026-07-13 to 07-18, several with
+    --   identical entry counts, re-proposing the same divisions. That is this
+    --   loop, running once a day.
     FROM  (SELECT course_name, distance, division
              FROM meets
             WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id
             LIMIT 1) m
+    LEFT  JOIN LATERAL
+          (SELECT distance FROM dist_override d
+            WHERE d.meet_id = g.meet_id AND d.div_id = g.div_id
+            LIMIT 1) o ON TRUE
     FULL  OUTER JOIN
           (SELECT NULL::text AS course_name, t.distance
              FROM tmp_xc_tfrrs_dist t
@@ -963,15 +984,22 @@ SELECT g.meet_id, g.div_id, g.gender,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)    AS med_gap,
        avg(g.med)                                            AS base,
        array_agg(g.result_id)                                AS result_ids,
-       m.distance
+       COALESCE(o.distance, m.distance)                      AS distance
 FROM   reb_gap g
 LEFT   JOIN LATERAL (
+    SELECT distance FROM dist_override d
+     WHERE d.meet_id = g.meet_id AND d.div_id = g.div_id LIMIT 1) o ON TRUE
+LEFT   JOIN LATERAL (
+    -- ⚠ dist_override FIRST -- see the note in _PASS1_SQL. The ratings were
+    --   built at the distance the BACKFILL used, so scaling from the scrape
+    --   starts the arithmetic at the wrong number and the error compounds on
+    --   every rerun.
     SELECT distance FROM meets
     WHERE meets.meet_id = g.meet_id AND meets.div_id = g.div_id LIMIT 1
 ) m ON TRUE
 WHERE  g.gender IN ('M', 'F')
   AND  (g.meet_id, g.div_id) IN (SELECT meet_id, div_id FROM reb_pass2)
-GROUP  BY g.meet_id, g.div_id, g.gender, m.distance
+GROUP  BY g.meet_id, g.div_id, g.gender, o.distance, m.distance
 """
 
 
@@ -1120,10 +1148,14 @@ WITH adj AS (
 SELECT a.result_id, a.meet_id, a.div_id, a.ident,
        a.adj_rating AS speed_rating, a.med, a.adj_gap AS gap,
        a.time_seconds, d.div_gap, d.n AS div_n,
-       m.distance, m.course_name
+       COALESCE(o.distance, m.distance) AS distance, m.course_name
 FROM   adj a
 JOIN   div d ON d.meet_id = a.meet_id AND d.div_id = a.div_id
 LEFT   JOIN LATERAL (
+    -- ⚠ dist_override FIRST -- see the note in _PASS1_SQL. The ratings were
+    --   built at the distance the BACKFILL used, so scaling from the scrape
+    --   starts the arithmetic at the wrong number and the error compounds on
+    --   every rerun.
     SELECT distance, course_name FROM meets
     WHERE meets.meet_id = a.meet_id AND meets.div_id = a.div_id LIMIT 1
 ) m ON TRUE
