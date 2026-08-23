@@ -897,21 +897,37 @@ LEFT   JOIN LATERAL (
 """
 
 
+# ⚠ THE AGGREGATE FIRST, THE LABEL SECOND, AND HAVING IT THE OTHER WAY ROUND
+#   WAS THE WHOLE RUNTIME.
+#
+#   With the lateral in the FROM beside reb_gap it is evaluated once per ROW
+#   -- 31,667,670 of them -- each running up to four correlated subqueries,
+#   so roughly 126 million subquery evaluations to answer a question about
+#   543,260 divisions.
+#
+#   The label is a property of (meet_id, div_id). Grouping first and hanging
+#   the lateral off the 543,260-row aggregate is the same answer for one
+#   fifty-eighth of the work. Same mistake as _NAME_LATERAL, one function
+#   over, found the same way.
 _PASS1_SQL = """
-SELECT g.meet_id, g.div_id,
-       count(*)                                                AS n,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)      AS med_gap,
-       avg(g.med)                                              AS base,
-       greatest(
-           count(*) FILTER (WHERE g.gap > 0),
-           count(*) FILTER (WHERE g.gap < 0)
-       )::float / count(*)                                     AS same_side,
+WITH agg AS (
+    SELECT g.meet_id, g.div_id,
+           count(*)                                            AS n,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)  AS med_gap,
+           avg(g.med)                                          AS base,
+           greatest(
+               count(*) FILTER (WHERE g.gap > 0),
+               count(*) FILTER (WHERE g.gap < 0)
+           )::float / count(*)                                 AS same_side
+    FROM   reb_gap g
+    GROUP  BY g.meet_id, g.div_id
+    HAVING count(*) >= %(min_field)s
+)
+SELECT a.meet_id, a.div_id, a.n, a.med_gap, a.base, a.same_side,
        lbl.course_name, lbl.distance, lbl.division
-FROM   reb_gap g
+FROM   agg a
 __LABEL__
-GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division
-HAVING count(*) >= %(min_field)s
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
 
 
 # ------------------------------------------------------------------ #
@@ -1390,19 +1406,24 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
 #  PASS 2 -- the division holds two races, split by sex
 # ------------------------------------------------------------------ #
 
+# ! SAME SHAPE AS PASS 1, AND FOR THE SAME REASON. Group, then label.
 _PASS2_SQL = """
-SELECT g.meet_id, g.div_id, g.gender,
-       count(*)                                              AS n,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap)    AS med_gap,
-       avg(g.med)                                            AS base,
-       array_agg(g.result_id)                                AS result_ids,
-       lbl.distance                                          AS distance
-FROM   reb_gap g
+WITH agg AS (
+    SELECT g.meet_id, g.div_id, g.gender,
+           count(*)                                           AS n,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap) AS med_gap,
+           avg(g.med)                                         AS base,
+           array_agg(g.result_id)                             AS result_ids
+    FROM   reb_gap g
+    WHERE  g.gender IN ('M', 'F')
+      AND  (g.meet_id, g.div_id) IN (SELECT meet_id, div_id FROM reb_pass2)
+    GROUP  BY g.meet_id, g.div_id, g.gender
+)
+SELECT a.meet_id, a.div_id, a.gender, a.n, a.med_gap, a.base, a.result_ids,
+       lbl.distance AS distance
+FROM   agg a
 __LABEL__
-WHERE  g.gender IN ('M', 'F')
-  AND  (g.meet_id, g.div_id) IN (SELECT meet_id, div_id FROM reb_pass2)
-GROUP  BY g.meet_id, g.div_id, g.gender, lbl.distance
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
 
 
 def pass2(halves, sigma, t2, min_minority):
