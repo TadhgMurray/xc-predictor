@@ -102,6 +102,10 @@ DROP TABLE IF EXISTS sg_block;
 CREATE TEMP TABLE sg_block AS
 SELECT person_id, pool, sport, year,
        avg(speed_rating)::float8                                   AS rating,
+       -- ! CARRIED FOR THE COVARIATE REPORT, NOT FOR THE ESTIMATE. D is
+       --   computed from ratings alone; these only answer "what else is
+       --   different about this pool".
+       avg(distance) FILTER (WHERE distance > 0)::float8            AS dist,
        -- midpoint of the block, as a real date: (date - date) is an int and
        -- (date + int) is a date, so this needs no epoch arithmetic.
        (min(race_date) + ((max(race_date) - min(race_date)) / 2))   AS mid_date,
@@ -125,13 +129,17 @@ _TRIPLE_SQL = """
 DROP TABLE IF EXISTS sg_tri;
 CREATE TEMP TABLE sg_tri AS
 SELECT * FROM (
-    SELECT person_id, pool, sport, mid_date, rating, n,
+    SELECT person_id, pool, sport, mid_date, rating, n, dist,
            lag(sport)     OVER w AS a_sport,
            lag(mid_date)  OVER w AS a_date,
            lag(rating)    OVER w AS a_rating,
+           lag(dist)      OVER w AS a_dist,
+           lag(n)         OVER w AS a_n,
            lead(sport)    OVER w AS c_sport,
            lead(mid_date) OVER w AS c_date,
-           lead(rating)   OVER w AS c_rating
+           lead(rating)   OVER w AS c_rating,
+           lead(dist)     OVER w AS c_dist,
+           lead(n)        OVER w AS c_n
     FROM   sg_block
     WINDOW w AS (PARTITION BY person_id, pool ORDER BY mid_date)
 ) t
@@ -269,6 +277,131 @@ def _implications(d, bbar=-0.03924):
 
 
 # ------------------------------------------------------------------ #
+#  WHAT ELSE IS DIFFERENT ABOUT A POOL?
+# ------------------------------------------------------------------ #
+#
+# ★ D IS NOT ONE NUMBER, AND THAT IS THE ACTUAL FINDING. It runs from -0.004
+#   in college_f to +0.045 in elem_m, ordered by age. A single bbar applied to
+#   every cell cannot be right for all of them, so before changing bbar it is
+#   worth asking what the pools differ in.
+#
+# ★ THE HYPOTHESIS WITH A SHARP TEST. normalized_time is
+#
+#       T_anchor = T_d * exp(g(ln target) - g(ln d))
+#
+#   and targetFor is PER POOL. hs_m races XC at 5000 against a 5000 anchor --
+#   no correction at all -- while its track races at 800-3200 carry the whole
+#   of it. College track sits much nearer its anchor. Elementary track is
+#   furthest away and on the steepest part of the curve.
+#
+#   So if the distance curve is even slightly too steep, the error appears as
+#   an apparent SPORT gap, sized by how much further the track races had to
+#   travel than the cross country ones:
+#
+#       span = ln(target / d_TF) - ln(target / d_XC) = ln(d_XC / d_TF)
+#
+#   and D should be span times a CONSTANT -- the error in the local exponent.
+#   If D/span is roughly equal across pools, the fault is the distance curve
+#   and bbar is a symptom. If it scatters, it is not, and this hypothesis is
+#   dead rather than merely unproven.
+#
+# ! AND SOME COVARIATES THAT ARE NOT THE HYPOTHESIS, on purpose. Race volume,
+#   season spacing and rating level are printed beside it so the table can
+#   disagree with the story it was built to test.
+def _covariates(rows):
+    """Per pool: D, the distance span, and a few things that are not it."""
+    by_pool = {}
+    for r in rows:
+        by_pool.setdefault(r["pool"], []).append(r)
+
+    print("\n" + "=" * 78)
+    print("  WHAT VARIES WITH D")
+    print("=" * 78)
+    print(f"\n    {'pool':<10} {'D':>9} {'d_XC':>7} {'d_TF':>7} {'span':>7} "
+          f"{'D/span':>8} {'races':>11} {'gap_d':>6} {'level':>7}")
+    print(f"    {'-' * 76}")
+    out = []
+    for pool in sorted(by_pool, key=lambda p: -len(by_pool[p])):
+        rs = by_pool[pool]
+        if len(rs) < 200:
+            continue
+        d = _report_quiet(rs)
+        if d is None:
+            continue
+        # distances, taken from whichever leg of the sandwich is that sport
+        # ! THE MIDDLE IS ONE SPORT AND BOTH ENDS ARE THE OTHER, so a
+        #   sandwich contributes one block to each list -- never mixed.
+        xc, tf, vol_xc, vol_tf, spans, lvl = [], [], [], [], [], []
+        for r in rs:
+            mid = xc if r["sport"] == "XC" else tf
+            end = tf if r["sport"] == "XC" else xc
+            mid_vol = vol_xc if r["sport"] == "XC" else vol_tf
+            end_vol = vol_tf if r["sport"] == "XC" else vol_xc
+            if r["dist"] is not None:
+                mid.append(r["dist"])
+                mid_vol.append(r["n"] or 0)
+            for dist, n in ((r["a_dist"], r["a_n"]), (r["c_dist"], r["c_n"])):
+                if dist is not None:
+                    end.append(dist)
+                    end_vol.append(n or 0)
+            spans.append((r["c_date"] - r["a_date"]).days)
+            lvl.append(r["rating"])
+        if not (xc and tf):
+            continue
+        d_xc = sum(xc) / len(xc)
+        d_tf = sum(tf) / len(tf)
+        span = math.log(d_xc / d_tf) if d_tf > 0 else 0.0
+        ratio = d / span if abs(span) > 1e-6 else float("nan")
+        races = (f"{sum(vol_xc) / max(len(vol_xc), 1):.1f}"
+                 f"/{sum(vol_tf) / max(len(vol_tf), 1):.1f}")
+        print(f"    {pool:<10} {d:>9.5f} {d_xc:>7.0f} {d_tf:>7.0f} "
+              f"{span:>7.3f} {ratio:>8.4f} {races:>11} "
+              f"{sum(spans) / len(spans):>6.0f} "
+              f"{sum(lvl) / len(lvl):>7.1f}")
+        out.append((pool, d, span, ratio, len(rs)))
+
+    print(f"\n    d_XC / d_TF   mean race distance in each sport, metres")
+    print(f"    span          ln(d_XC / d_TF) -- how much further the track")
+    print(f"                  races had to be normalised than the XC ones")
+    print(f"    D/span        the implied error in the local exponent. THE")
+    print(f"                  TEST: if the distance curve is the fault, this")
+    print(f"                  column is roughly CONSTANT down the table.")
+    print(f"    races         mean races per season block, XC/TF")
+    print(f"    gap_d         mean days between the two ends of a sandwich")
+    print(f"    level         mean rating of the middle season\n")
+
+    good = [o for o in out if o[3] == o[3] and abs(o[2]) > 0.05]
+    if len(good) >= 3:
+        vals = [o[3] for o in good]
+        m = sum(vals) / len(vals)
+        sd = math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
+        print(f"    D/span across {len(good)} pools: mean {m:+.4f}, "
+              f"sd {sd:.4f}  (spread {sd / abs(m):.0%} of the mean)")
+        if sd < 0.35 * abs(m):
+            print("    ★ THAT IS TIGHT. D is tracking the distance span, so "
+                  "what is being\n      measured as a sport gap is mostly a "
+                  "DISTANCE CURVE error, and bbar\n      is the wrong knob.")
+        else:
+            print("    ⚠ THAT IS NOT CONSTANT. D does not track the distance "
+                  "span, so the\n      distance-curve hypothesis does not "
+                  "explain the pool spread. Look at\n      the columns that "
+                  "are not it.")
+    print()
+
+
+def _report_quiet(rows):
+    """D for one population, printing nothing."""
+    by = _collect(rows)
+    n_tf, m_tf, _md, _se = _stats(by["TF"])
+    n_xc, m_xc, _md2, _se2 = _stats(by["XC"])
+    if not (n_tf or n_xc):
+        return None
+    if not (n_tf and n_xc):
+        return m_tf if n_tf else -m_xc
+    return (m_tf * n_tf + (-m_xc) * n_xc) / (n_tf + n_xc)
+
+
+# ------------------------------------------------------------------ #
 #  --self-test -- DOES THE ESTIMATOR RECOVER A GAP IT WAS GIVEN?
 # ------------------------------------------------------------------ #
 #
@@ -386,6 +519,8 @@ def main():
     print("  XC MINUS INTERPOLATED TF, IN LOG-RATING")
     print("=" * 68)
     d = _report("ALL POOLS", _collect(rows))
+
+    _covariates(rows)
 
     if args.by_pool:
         pools = {}
