@@ -800,6 +800,52 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
     print(f"\n    It clears every gate -- it should be in the output.")
 
 
+# ------------------------------------------------------------------ #
+#  HOW MUCH TO TRUST ONE PROPOSAL
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE SNAP CANNOT CARRY THIS DECISION, AND THE MEASUREMENT SAYS SO. On the
+#   de-combed 58-rung ladder, 74.2% of PURE NOISE still snaps within 3%. That
+#   is not a ladder problem -- the surviving rungs around 2092, 2172, 2253,
+#   2400, 2414, 2500, 2574, 2600, 2655, 2700 are 3-4% apart and every one of
+#   them is a real race distance. Cross country races something every hundred
+#   metres between 2 km and 5 km, so "it landed near a real distance" is worth
+#   almost nothing in the range where most races are.
+#
+#   Removing the comb moved the number from 74.9% to 74.2%. The comb was not
+#   the cause. The sport is.
+#
+# ★ SO THE EVIDENCE THAT ACTUALLY DISCRIMINATES IS RANKED, AND THE OUTPUT IS
+#   TIERED RATHER THAN GATED:
+#
+#     A  the COURSE corroborates it. A venue races one to three distances, not
+#        fifty-eight, so landing on one of them is strong -- this is the test
+#        the corpus ladder cannot be. These are safe to append.
+#
+#     B  no course history, but the corpus snap is tight AND the field is big
+#        enough that its median is precise. Reviewable in bulk.
+#
+#     C  everything else that cleared the bar. Something is wrong with these
+#        divisions -- they are 11+ points off their own athletes' heads -- but
+#        the distance proposed is a guess. Report, do not write.
+#
+# ! THE BAR AND THE UNANIMITY GATE ARE UNCHANGED AND STILL DO THE REAL WORK.
+#   This only decides how much to trust the NUMBER once a division has already
+#   been judged wrong.
+TIER_B_SNAP = 0.02      # a corpus snap this tight, and...
+TIER_B_SE = 2.0         # ...a field whose median is good to this many points
+
+
+def tierFor(source, err, gap, n, sigma):
+    import math
+    if source == "course":
+        return "A"
+    se = 1.25 * sigma / math.sqrt(max(n, 1))
+    if abs(err) <= TIER_B_SNAP and se <= TIER_B_SE:
+        return "B"
+    return "C"
+
+
 # Every snap failure's error magnitude, so report1 can show the distribution
 # instead of a count -- the difference between "the tolerance is too tight" and
 # "these are not distance faults".
@@ -834,7 +880,9 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
                if cur is not None else None)
         if hit is not None:
             snapped, err, _src = hit
+            source = "course"
         else:
+            source = "corpus"
             # ★ THE CORPUS LADDER, NOT THE HAND LIST. See _LADDER_SQL: the
             #   28-rung list has 25% gaps and rejected 2,598 divisions it had
             #   already agreed were wrong.
@@ -857,7 +905,8 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
                                f"the {MAX_CHANGE:.1f}x cap"))
             continue
         condemned.append({**r, "implied": implied, "snapped": snapped,
-                          "snap_err": err, "gap": gap})
+                          "snap_err": err, "gap": gap, "source": source,
+                          "tier": tierFor(source, err, gap, r["n"], sigma)})
     return condemned, routed, skipped
 
 
@@ -1339,6 +1388,7 @@ def main():
                                              args.unanimity, cur)
                 report1(got, routed, skipped, args)
                 if args.out:
+                    got = [r for r in got if r.get("tier") in ("A", "B")]
                     lines = [f"({r['meet_id']}, {r['div_id']}): "
                              f"{r['snapped']:.0f},  # was "
                              f"{r['distance']:.0f}, field {r['gap']:+.1f} over "
@@ -1515,6 +1565,15 @@ def report1(got, routed, skipped, args):
               f"by a later gate. That is the number to\n    argue with, not "
               f"the condemned count.")
     if got:
+        from collections import Counter as _C
+        tiers = _C(r.get("tier", "C") for r in got)
+        print(f"    CONFIDENCE IN THE DISTANCE PROPOSED")
+        for t, what in (("A", "the course itself races this distance"),
+                        ("B", "corpus snap within 2%, field median precise"),
+                        ("C", "wrong division, guessed distance")):
+            print(f"      {t}  {tiers.get(t, 0):>7,}   {what}")
+        print(f"\n      A and B are what --out writes. C is reported only "
+              f"-- see tierFor.\n")
         print(f"    {'gap':>7} {'n':>5} {'side':>5} {'label':>6} "
               f"{'implied':>7} {'snap':>6} {'err':>7}  {'meet/div':>16}  course")
         for r in sorted(got, key=lambda x: -abs(x["gap"]))[:args.limit]:
