@@ -41,6 +41,7 @@ import argparse
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+sys.path.insert(0, os.path.join(_ROOT, "engine"))
 
 from database import getConn                              # noqa: E402
 # ★ THE SAME READER build_ranking_results USES, imported not copied. tfrrs XC
@@ -52,6 +53,113 @@ from build_ranking_results import _XC_TFRRS_DIST_SQL      # noqa: E402
 # keeps it in the event name, so `meets_tf` cannot answer this question and an
 # override there is always a sole source by construction.
 _TABLE = {"XC": "results", "TF": "results_tf"}
+
+# ------------------------------------------------------------------ #
+#  --verify -- WHICH DISTANCE DID THE BACKFILL ACTUALLY USE?
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE FACT THE WHOLE RESET TURNS ON, AND IT IS NOT DERIVABLE FROM DATES.
+#   rebuild_overrides --as-if-wiped reverts each division's ratings from the
+#   override distance to the scraped one before judging. That is right ONLY if
+#   the ratings on disk were built WITH the overrides. If they were already
+#   built without them, the flag reverts a second time and every proposal is
+#   garbage.
+#
+#   dump_overrides is not a pipeline step and run_ratings.ps1 starts at 08, so
+#   the propagation is easy to reason about and easy to get wrong. This does
+#   not reason about it: it recomputes.
+#
+# ★ THE TEST IS A RECOMPUTATION, THE SAME ONE anchor_check MAKES.
+#   normalizeTime is deterministic given the row's time, distance, pool and
+#   sport -- so run it at BOTH candidate distances and see which reproduces
+#   the stored normalized_time. Whichever matches is the distance the backfill
+#   used. No date, no log, no inference.
+#
+# ! THE POOL COMES FROM ranking_results, which is the only table that stores
+#   it, and rows missing from there cannot be checked -- they are counted as
+#   unanswerable rather than as either answer.
+_VERIFY = """
+SELECT o.meet_id, o.div_id, o.distance AS ovr, base.d AS scraped,
+       r.result_id, r.time_seconds, r.normalized_time, k.pool
+FROM   dist_override o
+CROSS  JOIN LATERAL (
+    SELECT COALESCE(
+        (SELECT min(m.distance) FROM meets m
+          WHERE m.meet_id = o.meet_id AND m.div_id = o.div_id
+            AND m.distance IS NOT NULL AND m.distance > 0),
+        (SELECT min(x.distance) FROM tmp_xc_tfrrs_dist x
+          WHERE x.meet_id = o.meet_id AND x.div_id = o.div_id)
+    ) AS d
+) base
+JOIN   {table} r ON r.meet_id = o.meet_id AND r.div_id = o.div_id
+JOIN   ranking_results k ON k.result_id = r.result_id AND k.sport = %(sport)s
+WHERE  base.d IS NOT NULL AND base.d > 0 AND o.distance > 0
+  AND  abs(base.d - o.distance) / base.d > %(tol)s
+  AND  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+  AND  r.time_seconds > 0
+LIMIT  %(sample)s
+"""
+
+# How close a recomputation has to land to count as a match. anchor_check uses
+# 10% to separate a pool mismatch from a stale spline; here the two candidates
+# are a median 25% apart, so 5% separates them with room and still tolerates a
+# spline refit since the backfill ran.
+MATCH_TOL = 0.05
+
+
+def verify(cur, sport, tol, sample):
+    """Did the stored normalized_time come from the override or the scrape?"""
+    from anchor_check import mismatch
+
+    cur.execute(_VERIFY.format(table=_TABLE[sport]),
+                {"sport": sport, "tol": tol, "sample": sample})
+    rows = cur.fetchall()
+    if not rows:
+        print("\n  --verify: no checkable row. Either dist_override is empty, "
+              "or\n  ranking_results has not been rebuilt since it was "
+              "populated.")
+        return None
+
+    tally = {"override": 0, "scraped": 0, "neither": 0}
+    for _m, _d, ovr, scraped, _rid, t, nt, pool in rows:
+        _b1, _e1, r_ovr = mismatch(t, float(ovr), nt, pool, sport)
+        _b2, _e2, r_scr = mismatch(t, float(scraped), nt, pool, sport)
+        off_o = abs(r_ovr - 1.0) if r_ovr is not None else None
+        off_s = abs(r_scr - 1.0) if r_scr is not None else None
+        ok_o = off_o is not None and off_o <= MATCH_TOL
+        ok_s = off_s is not None and off_s <= MATCH_TOL
+        if ok_o and (not ok_s or off_o < off_s):
+            tally["override"] += 1
+        elif ok_s:
+            tally["scraped"] += 1
+        else:
+            tally["neither"] += 1
+
+    n = len(rows)
+    print(f"\n\n  WHICH DISTANCE THE BACKFILL USED  ({n:,} rows sampled from "
+          f"divisions whose\n  override disagrees with the scrape, "
+          f"recomputed both ways)\n")
+    for k in ("override", "scraped", "neither"):
+        print(f"    {k:<12}{tally[k]:>10,}{100.0 * tally[k] / n:>8.1f}%")
+
+    top = max(tally, key=tally.get)
+    share = tally[top] / n
+    print()
+    if top == "override" and share >= 0.9:
+        print("  => normalized_time WAS built with the overrides.\n"
+              "     Run the passes WITH --as-if-wiped.")
+        return "override"
+    if top == "scraped" and share >= 0.9:
+        print("  => normalized_time was built WITHOUT the overrides -- they "
+              "never reached\n     the backfill. Run the passes WITHOUT "
+              "--as-if-wiped; using it would\n     revert distances a second "
+              "time and every proposal would be wrong.")
+        return "scraped"
+    print("  ⚠ NO CLEAR ANSWER. The corpus is mixed, or the distance spline "
+          "has been\n    refit since the backfill ran. Do NOT run "
+          "--as-if-wiped on this; re-run\n    05_backfill first so there is "
+          "one answer.")
+    return None
 
 _CENSUS = """
 WITH rated AS (
@@ -103,15 +211,25 @@ def main():
     ap.add_argument("--worst", type=int, default=25,
                     help="how many sole-source divisions to name")
     ap.add_argument("--tol", type=float, default=SAME_TOL)
+    ap.add_argument("--verify", action="store_true",
+                    help="recompute normalized_time at both candidate "
+                         "distances to find out which one the backfill "
+                         "actually used. This is what decides whether "
+                         "rebuild_overrides --as-if-wiped is correct.")
+    ap.add_argument("--sample", type=int, default=20_000,
+                    help="rows to recompute for --verify (default 20,000)")
     args = ap.parse_args()
 
     print(f"\nWHAT A dist_override WIPE WOULD COST -- {args.sport}")
 
+    used = None
     with getConn() as conn:
         with conn.cursor() as cur:
             cur.execute(_XC_TFRRS_DIST_SQL)
             cur.execute(_CENSUS.format(table=_TABLE[args.sport]))
             rows = cur.fetchall()
+            if args.verify and rows:
+                used = verify(cur, args.sport, args.tol, args.sample)
 
     if not rows:
         print("\n  dist_override is empty. Run engine/dump_overrides.py "

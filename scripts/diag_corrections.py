@@ -125,8 +125,19 @@ def main():
                   f"--no-skip-worktree engine/corrections.py")
         else:
             print(f"   ⚠ unexpected flag '{flag}'.")
-        diff = run("git", "diff", "--stat", "--", "engine/corrections.py")
-        print(f"   diff vs HEAD: {diff or '(none reported)'}")
+        # ⚠ `git diff` IS UNSTAGED-ONLY, AND THAT UNDER-REPORTED BY 1.6MB.
+        #   A file with staged-but-uncommitted content shows only the newest
+        #   unstaged edits -- 14 lines of wipe block sitting on top of 1,134
+        #   staged overrides. HEAD is the comparison that matters here.
+        unstaged = run("git", "diff", "--stat", "--",
+                       "engine/corrections.py")
+        staged = run("git", "diff", "--cached", "--stat", "--",
+                     "engine/corrections.py")
+        both = run("git", "diff", "HEAD", "--stat", "--",
+                   "engine/corrections.py")
+        print(f"   unstaged      : {unstaged or '(none)'}")
+        print(f"   staged        : {staged or '(none)'}")
+        print(f"   vs HEAD (both): {both or '(none)'}")
         # ! THE ONE CHECK THAT SEES THROUGH assume-unchanged. --no-index
         #   compares bytes and never consults the index.
         blob = run("git", "rev-parse", "HEAD:engine/corrections.py")
