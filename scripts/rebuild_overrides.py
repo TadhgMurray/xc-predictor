@@ -295,6 +295,7 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
     sys.path.insert(0, "racecast")
     from build_ranking_results import _XC_TFRRS_DIST_SQL
     cur.execute(_XC_TFRRS_DIST_SQL)
+    cur.execute(_COURSE_DIST_SQL, {"min_n": COURSE_MIN_N})
     if as_if_wiped:
         cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
         cur.execute("SELECT count(*) AS n FROM reb_unovr")
@@ -442,6 +443,88 @@ HAVING count(*) >= %(min_field)s
 """
 
 
+# ------------------------------------------------------------------ #
+#  WHAT DISTANCE IS THIS COURSE ACTUALLY RUN AT?
+# ------------------------------------------------------------------ #
+#
+# ★ THE LADDER IS A GUESS ABOUT THE SPORT; THE COURSE IS A FACT ABOUT THE
+#   COURSE. snapToLadder picks the nearest entry from a global list of race
+#   distances, which is right in general and needlessly weak here: a venue
+#   that has hosted 40,000 results at 5000 m and none at 5149 is telling you
+#   which of those two an implied 5124 means.
+#
+#   26359 is the case. Its divisions imply 5220, 5164 and 5259; the ladder
+#   snaps all of them to 5149 (3.2 miles) because 5149 is nearer. The venue
+#   itself runs 5000 -- and the hand-written override on div 0, written by
+#   someone who knew Indiana high school cross country is 5000 m, says 5000.
+#   The ladder cannot see either fact.
+#
+# ! COUNTED BY RESULTS, NOT BY DIVISIONS. One mislabelled division at a venue
+#   should not make its own wrong distance a candidate; forty thousand
+#   finishers at 5000 should.
+#
+# ⚠ AND THE BROKEN DIVISION'S OWN LABEL IS EXCLUDED. Otherwise a venue whose
+#   only rows are the mislabelled ones "corroborates" the mislabel and the
+#   snap returns the number we are trying to replace.
+_COURSE_DIST_SQL = """
+DROP TABLE IF EXISTS reb_course_dist;
+CREATE TEMP TABLE reb_course_dist AS
+SELECT m.course_name, m.distance, count(*) AS n
+FROM   meets m
+JOIN   results r ON r.meet_id = m.meet_id AND r.div_id = m.div_id
+                AND r.source = m.source
+WHERE  m.course_name IS NOT NULL
+  AND  m.distance IS NOT NULL AND m.distance > 0
+GROUP  BY 1, 2
+HAVING count(*) >= %(min_n)s;
+CREATE INDEX ON reb_course_dist (course_name);
+ANALYZE reb_course_dist;
+"""
+
+# A distance needs this many finishers at a venue before it counts as one the
+# venue runs. Below it, one mislabelled division is a "candidate".
+COURSE_MIN_N = 200
+
+# How near the implied distance must land to one the course runs. Wider than
+# SNAP_TOL because this is corroborated evidence rather than a guess: the
+# venue has actually been raced at that distance, thousands of times.
+COURSE_TOL = 0.06
+
+_COURSE_DIST = {}
+
+
+def courseDistances(cur, course_name):
+    """[(distance, n), ...] for one venue, commonest first. Memoised."""
+    if course_name in _COURSE_DIST:
+        return _COURSE_DIST[course_name]
+    cur.execute("SELECT distance, n FROM reb_course_dist "
+                "WHERE course_name = %(c)s ORDER BY n DESC",
+                {"c": course_name})
+    got = [(float(r["distance"]), int(r["n"])) for r in cur.fetchall()]
+    _COURSE_DIST[course_name] = got
+    return got
+
+
+def snapToCourse(implied, course_name, label, cur, tol=COURSE_TOL):
+    """(distance, err, 'course') using what this venue actually runs, or None.
+
+    Returns the venue's COMMONEST distance within tol of the implied value --
+    commonest, not nearest, because the tie this exists to break is between
+    two rungs that are both close.
+    """
+    if not implied or not course_name:
+        return None
+    best = None
+    for d, n in courseDistances(cur, course_name):
+        if label and abs(d - float(label)) / float(label) <= 0.02:
+            continue                       # the label we are replacing
+        if abs(implied - d) / d <= tol and (best is None or n > best[1]):
+            best = (d, n)
+    if best is None:
+        return None
+    return float(best[0]), (implied - best[0]) / best[0], "course"
+
+
 def impliedDistance(label, base, gap):
     """The distance that would put this field back on its own heads.
 
@@ -559,7 +642,7 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
     print(f"\n    It clears every gate -- it should be in the output.")
 
 
-def pass1(rows, sigma, t1, unanimity):
+def pass1(rows, sigma, t1, unanimity, cur=None):
     """(condemned, routed_to_2, skipped) for the whole-division pass."""
     condemned, routed, skipped = [], [], []
     for r in rows:
@@ -578,14 +661,23 @@ def pass1(rows, sigma, t1, unanimity):
         if implied is None:
             skipped.append((r, "no usable label distance"))
             continue
-        snapped, err = snapToLadder(implied)
-        if abs(err) > SNAP_TOL:
-            # A field that is wrong for a reason OTHER than distance implies
-            # a value between the rungs. That is not a distance fault and
-            # must not be written as one.
-            skipped.append((r, f"implied {implied:.0f} snaps poorly "
-                               f"({err:+.1%})"))
-            continue
+        # ★ THE COURSE FIRST, THE LADDER SECOND. What this venue actually
+        #   runs beats a global list of what the sport runs -- see
+        #   snapToCourse. Falls through to the ladder for a venue with no
+        #   history, which is most of the ones that need fixing.
+        hit = (snapToCourse(implied, r.get("course_name"), r["distance"], cur)
+               if cur is not None else None)
+        if hit is not None:
+            snapped, err, _src = hit
+        else:
+            snapped, err = snapToLadder(implied)
+            if abs(err) > SNAP_TOL:
+                # A field wrong for a reason OTHER than distance implies a
+                # value between the rungs. That is not a distance fault and
+                # must not be written as one.
+                skipped.append((r, f"implied {implied:.0f} snaps poorly "
+                                   f"({err:+.1%})"))
+                continue
         ratio = snapped / float(r["distance"])
         if abs(ratio - 1) < 0.02:
             skipped.append((r, "snaps back to the label"))
@@ -1040,7 +1132,7 @@ def main():
                     sweep1(rows, args.sigma, args.unanimity, args.min_field)
                     return 0
                 got, routed, skipped = pass1(rows, args.sigma, args.t1,
-                                             args.unanimity)
+                                             args.unanimity, cur)
                 report1(got, routed, skipped, args)
                 if args.out:
                     lines = [f"({r['meet_id']}, {r['div_id']}): "
@@ -1059,7 +1151,7 @@ def main():
                 cur.execute(_PASS1_SQL, {"min_field": args.min_field})
                 rows = cur.fetchall()
                 got1, _routed, _sk = pass1(rows, args.sigma, args.t1,
-                                           args.unanimity)
+                                           args.unanimity, cur)
                 # ⚠ EVERY DIVISION PASS 1 DID NOT CONDEMN, not just the ones
                 #   that failed its unanimity gate. That gate is a bad router
                 #   for this: a genuine two-race division has one half at gap
@@ -1111,7 +1203,7 @@ def main():
                 cur.execute(_PASS1_SQL, {"min_field": args.min_field})
                 rows = cur.fetchall()
                 got1, routed, _sk = pass1(rows, args.sigma, args.t1,
-                                          args.unanimity)
+                                          args.unanimity, cur)
                 cur.execute("DROP TABLE IF EXISTS reb_pass2")
                 cur.execute("CREATE TEMP TABLE reb_pass2 "
                             "(meet_id bigint, div_id bigint)")
@@ -1168,6 +1260,38 @@ def report1(got, routed, skipped, args):
           f"{args.unanimity:.0%} of the field on one side)")
     print(f"  {len(routed):,} routed to pass 2 (field not one-sided enough)")
     print(f"  {len(skipped):,} left alone\n")
+
+    # ★ WHERE THE FINDINGS DIE, WHICH THIS NEVER SAID. Every rejection has
+    #   carried a reason since the first version and report1 printed only the
+    #   total, so "the passes aren't working" was unanswerable by design: a
+    #   division that cleared the bar and then died at the snap looked exactly
+    #   like one that was never wrong.
+    #
+    # ⚠ READ THE GATES BELOW THE BAR AS SUSPECTS, NOT AS SUCCESSES. Anything
+    #   dying at the snap, the label or the change cap has ALREADY been judged
+    #   too far from its athletes' own heads to be chance. It is a division
+    #   this tool agrees is broken and then declines to fix.
+    from collections import Counter
+    why = Counter()
+    for _row, reason in skipped:
+        # collapse the ones that carry numbers in the text
+        key = ("implied snaps poorly" if reason.startswith("implied ")
+               else "past the change cap" if "cap" in reason
+               else reason)
+        why[key] += 1
+    print("    WHY THE REST WERE LEFT ALONE")
+    below, above = [], []
+    for reason, n in why.most_common():
+        (below if reason == "within the bar" else above).append((reason, n))
+    for reason, n in below + above:
+        mark = "     " if reason == "within the bar" else "  <-- "
+        print(f"    {n:>9,}{mark}{reason}")
+    n_judged = sum(n for r, n in above)
+    if n_judged:
+        print(f"\n    {n_judged:,} of those cleared the bar -- this tool "
+              f"already agrees they are\n    wrong -- and were then refused "
+              f"by a later gate. That is the number to\n    argue with, not "
+              f"the condemned count.")
     if got:
         print(f"    {'gap':>7} {'n':>5} {'side':>5} {'label':>6} "
               f"{'implied':>7} {'snap':>6} {'err':>7}  {'meet/div':>16}  course")
