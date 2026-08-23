@@ -296,9 +296,10 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
     from build_ranking_results import _XC_TFRRS_DIST_SQL
     cur.execute(_XC_TFRRS_DIST_SQL)
     cur.execute(_COURSE_DIST_SQL, {"min_n": COURSE_MIN_N})
-    n_rungs = len(loadLadder(cur))
-    print(f"  ladder: {n_rungs:,} distances the corpus actually races "
-          f"({LADDER_MIN_N:,}+ finishers each)")
+    kept, raw = loadLadder(cur)
+    print(f"  ladder: {len(kept):,} distances the corpus actually races "
+          f"({LADDER_MIN_N:,}+ finishers each; {len(raw) - len(kept):,} "
+          f"comb teeth merged away)")
     if as_if_wiped:
         cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
         cur.execute("SELECT count(*) AS n FROM reb_unovr")
@@ -539,13 +540,66 @@ LADDER_MIN_N = 5_000
 _CORPUS_LADDER = []
 
 
+# ⚠ THE RAW CORPUS LADDER IS A COMB, NOT A LADDER. Measured on this corpus:
+#
+#       4667  4683  4699  4715  4731  4747  4763  4779  4795
+#
+#   Nine "distances" sixteen metres apart. 16.09 m is one hundredth of a mile,
+#   so something upstream records distances in hundredths of a mile and the
+#   conversion to metres produces teeth. Same at 4409/4417/4425 (8 m = 0.005
+#   mi) and 3089/3100/3106.
+#
+#   Those teeth are not race distances anybody chose, and they destroy the
+#   snap as a test: with the comb present, 74.9% of PURE NOISE passes at 3%,
+#   because anything landing between 4600 and 4950 hits a tooth.
+#
+# ★ SO A RUNG HAS TO BE A LOCAL PEAK. Keep a distance only when no distance
+#   within MERGE_TOL of it was raced more often -- which collapses each comb
+#   to its most popular tooth and leaves the real rungs untouched, because a
+#   real rung IS the popular one in its neighbourhood. That is what "commonly
+#   run" has to mean: a distance with 5,001 finishers is not a peer of 5000 m
+#   with millions.
+# ! LOCAL PEAK WAS THE WRONG RULE AND THE TESTS CAUGHT IT. Keeping whichever
+#   distance is tallest in its neighbourhood keeps the tallest COMB TOOTH
+#   (4699, with 7,000 finishers, beats its eight neighbours and survives) and
+#   deletes genuine distances that happen to sit beside a bigger one (3218
+#   loses to 3200; 4800 loses to 4828 -- all four are real).
+#
+# ★ THE DISTINCTION IS MAGNITUDE, NOT RANK. A real race distance holds a
+#   meaningful share of the traffic around it; a comb tooth holds a
+#   thousandth. 3200 and 3218 are within 0.6% of each other and BOTH have
+#   millions of finishers, so both are real and both stay. 4699 has 7,000
+#   against 4828's four million, so it is rounding noise and goes.
+MERGE_WINDOW = 0.05     # how far to look for a rung's peers
+MERGE_SHARE = 0.05      # ...and the share of the biggest peer it must hold
+
+
+def decomb(rungs, window=MERGE_WINDOW, share=MERGE_SHARE):
+    """Drop distances that are a rounding artifact of a bigger neighbour.
+
+    rungs is [(distance, n)]. A distance survives when its finisher count is
+    at least `share` of the largest count within `window` of it.
+    """
+    keep = []
+    for d, n in rungs:
+        peak = max((m for e, m in rungs if abs(e - d) / d <= window),
+                   default=n)
+        if peak <= 0 or n / peak >= share:
+            keep.append((d, n))
+    # ! SORTED, BECAUSE TWO READERS ASSUME IT. --ladder's gap report zips
+    #   consecutive pairs, and snapToCorpus's min() does not care but the
+    #   report would print negative gaps from an unsorted list.
+    return sorted(keep)
+
+
 def loadLadder(cur, min_n=LADDER_MIN_N):
-    """The distances this corpus actually races, commonest first."""
+    """The distances this corpus actually races, de-combed."""
     global _CORPUS_LADDER
     cur.execute(_LADDER_SQL, {"min_n": min_n})
     cur.execute("SELECT distance, n FROM reb_ladder ORDER BY distance")
-    _CORPUS_LADDER = [(int(r["distance"]), int(r["n"])) for r in cur.fetchall()]
-    return _CORPUS_LADDER
+    raw = [(int(r["distance"]), int(r["n"])) for r in cur.fetchall()]
+    _CORPUS_LADDER = decomb(raw)
+    return _CORPUS_LADDER, raw
 
 
 def ladderPower(tol=None, lo=1500, hi=12000, n=200_000):
@@ -1236,10 +1290,13 @@ def main():
             if args.ladder:
                 rungs = _CORPUS_LADDER
                 print(f"\n  {len(rungs):,} RUNGS "
-                      f"({LADDER_MIN_N:,}+ finishers each)\n")
-                for i in range(0, len(rungs), 6):
-                    print("    " + "  ".join(
-                        f"{d:>6,}" for d, _n in rungs[i:i + 6]))
+                      f"({LADDER_MIN_N:,}+ finishers each, de-combed)\n")
+                # ! WITH THE COUNTS. The comb was invisible without them: nine
+                #   teeth 16 m apart look like nine distances until you see
+                #   that one has 4M finishers and the rest have 6,000.
+                for i in range(0, len(rungs), 4):
+                    print("    " + "   ".join(
+                        f"{d:>6,} ({n:>9,})" for d, n in rungs[i:i + 4]))
                 gaps = [(100.0 * (b - a) / a, a, b)
                         for (a, _x), (b, _y) in zip(rungs, rungs[1:])]
                 gaps.sort(reverse=True)
