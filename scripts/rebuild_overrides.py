@@ -821,8 +821,17 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
     row = cur.fetchone()
     n, n_sexed = row["n"], row["n_sexed"]
-    print(f"  gap table: {n:,} rated rows judged against their athlete's own "
+    # ! IT SAYS WHICH ROWS THESE ARE. Both modes printed "rated rows", so the
+    #   times table -- whose entire point is that it does NOT gate on a rating
+    #   -- looked exactly like the thing it replaced.
+    what = "finishers" if gap_from == "times" else "ENGINE-RATED rows only"
+    print(f"  gap table: {n:,} {what} judged against their athlete's own "
           f"median ({n_sexed:,} with a gender)")
+    if gap_from != "times":
+        print("             ⚠ --gap-from ratings: rows the pace guard dropped "
+              "are NOT here, so a\n               division whose distance is "
+              "badly wrong is mostly invisible. That is\n               the "
+              "old gate; --gap-from times is the default.")
     if gap_from == "times":
         # ★ THE NUMBER THAT SAYS WHETHER THIS WAS WORTH DOING. Rows the engine
         #   never rated are exactly the ones a wrong distance produces, so the
@@ -2086,7 +2095,8 @@ def main():
                              args.t1, args.unanimity, cur)
                     return 0
                 print(f"  {len(rows):,} divisions with >= {args.min_field} "
-                      f"rated rows")
+                      f"{'finishers' if args.gap_from == 'times' else 'rated rows'}"
+                      f" in the gap table")
                 if args.sweep:
                     sweep1(rows, args.sigma, args.unanimity, args.min_field)
                     return 0
