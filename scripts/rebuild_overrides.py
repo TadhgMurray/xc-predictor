@@ -749,7 +749,7 @@ def _step(t0, label):
 
 
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
-             skip_label_check=False, gap_from="times"):
+             skip_label_check=False, gap_from="times", coverage=False):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
     _noBarePercent("_GAP_BODY", _GAP_BODY)
     # ! ALL THREE, not just the one that broke. They share _LABEL_LATERAL now,
@@ -845,6 +845,46 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
             JOIN   {table} r ON r.result_id = g.result_id
         """.format(table=_TABLE[sport]))
         c = cur.fetchone()
+        if c and c["n"] and coverage:
+            # ★ THE ROWS THAT ARE STILL NOT HERE, AND WHY. Recovering the
+            #   pace-guard drops is only half the blind spot: normalized_time
+            #   survives the RATING stage, but nothing dropped at or before
+            #   the BACKFILL ever gets one. _RESULT_DROP_XC alone is 569,352
+            #   rows, _DISTANCE_DROP kills whole divisions, and a division
+            #   with no usable distance cannot be normalised at all.
+            #
+            # ! ONE LEFT JOIN OVER THE WHOLE RESULT TABLE, which is why it is
+            #   behind a flag. It is the only way to count what is absent.
+            cur.execute("""
+                SELECT count(*) AS total,
+                       count(*) FILTER (
+                           WHERE r.normalized_time IS NULL
+                              OR r.normalized_time <= 0)          AS no_norm,
+                       count(*) FILTER (
+                           WHERE COALESCE(r.person_id, r.athlete_id)
+                                 IS NULL)                          AS no_ident,
+                       count(*) FILTER (
+                           WHERE g.result_id IS NULL
+                             AND r.normalized_time > 0
+                             AND COALESCE(r.person_id, r.athlete_id)
+                                 IS NOT NULL)                      AS no_own
+                FROM   {table} r
+                LEFT   JOIN reb_gap g ON g.result_id = r.result_id
+            """.format(table=_TABLE[sport]))
+            v = cur.fetchone()
+            t = max(v["total"], 1)
+            print(f"\n  COVERAGE -- {v['total']:,} rows in {_TABLE[sport]}, "
+                  f"{n:,} of them judgeable ({n / t:.1%})\n")
+            print(f"    {v['no_norm']:>12,}  ({v['no_norm'] / t:>5.1%})  no "
+                  f"normalized_time -- dropped at or before the BACKFILL,")
+            print(f"    {'':>12}           so no distance can be implied from "
+                  f"them at all")
+            print(f"    {v['no_ident']:>12,}  ({v['no_ident'] / t:>5.1%})  no "
+                  f"person_id or athlete_id -- nobody to compare against")
+            print(f"    {v['no_own']:>12,}  ({v['no_own'] / t:>5.1%})  usable, "
+                  f"but their athlete has fewer than")
+            print(f"    {'':>12}           --min-own-races rated races "
+                  f"elsewhere\n")
         if c and c["n"]:
             print(f"             {c['recovered']:,} of them "
                   f"({c['recovered'] / c['n']:.1%}) have NO speed_rating in "
@@ -2024,6 +2064,10 @@ def main():
     #   table on speed_rating makes the detector weakest exactly where the
     #   fault is largest. `ratings` is the old behaviour, kept so the two can
     #   be diffed rather than swapped on trust.
+    ap.add_argument("--coverage", action="store_true",
+                    help="count the rows that are STILL not judgeable and "
+                         "why. One left join over the whole result table, so "
+                         "it costs a minute or two.")
     ap.add_argument("--gap-from", dest="gap_from", default="times",
                     choices=("times", "ratings"),
                     help="times: compute the rating for EVERY finisher from "
@@ -2048,7 +2092,8 @@ def main():
             if buildGap(cur, args.sport, args.min_own_races,
                         as_if_wiped=args.as_if_wiped, tol=args.same_tol,
                         skip_label_check=args.skip_label_check,
-                        gap_from=args.gap_from) is None:
+                        gap_from=args.gap_from,
+                        coverage=args.coverage) is None:
                 return 2
 
             if args.ladder:
