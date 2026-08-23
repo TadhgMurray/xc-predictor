@@ -692,56 +692,80 @@ def measure(cur):
 #  WHAT TO CALL A DIVISION IN THE REPORT
 # ------------------------------------------------------------------ #
 #
-# ⚠ SEPARATE FROM THE LABEL, DELIBERATELY, AND NOT MERGED INTO IT. It is
-#   tempting to have _LABEL_LATERAL return the tfrrs venue name as
-#   `course_name` and be done -- but course_name is not decoration there, it
-#   is the KEY snapToCourse looks up in reb_course_dist, and that table is
-#   built from `meets` alone. Feeding it a tfrrs venue name would find no
-#   candidates for some divisions and, worse, real candidates for others
-#   whose venue string happens to collide. The snap would change, silently,
-#   as a side effect of improving a printout.
+# ⚠ LOOKED UP AFTER THE PASS, NOT JOINED INSIDE IT, AND THE FIRST VERSION GOT
+#   THAT WRONG. As a LATERAL beside _LABEL_LATERAL this ran once per ROW of
+#   reb_gap -- 31.6 MILLION rows, not the 543,260 divisions they group into,
+#   because the join happens before the aggregate. Four correlated subqueries
+#   on top of that took pass 1 from 6 minutes to past 21 and still climbing,
+#   on IO wait.
 #
-# ★ SO THE NAME IS ITS OWN COLUMN AND FEEDS NOTHING. It exists because
-#   forty-odd rows of the pass 1 report read "?" -- every tfrrs division,
-#   since `meets` is anet-only -- and because pass1.py carried meet/div ids
-#   and no name at all, so a course could not be looked up in the proposals
-#   without first looking up its id.
+# ★ AND THE NAMES ARE ONLY EVER NEEDED FOR THE FINDINGS. Pass 1 condemns
+#   about 5,500 divisions of 543,260 and prints a couple of hundred; pass 3
+#   drops a few dozen. So the lookup takes the keys it actually has to name --
+#   four orders of magnitude fewer -- and runs once, at the end.
 #
-# ! meets_tfrrs IS KEYED ON meet_id ALONE for these two columns, so no div_id
-#   is involved. Scalar subqueries rather than a joined subquery: a LATERAL
-#   with no FROM returns exactly one row, so a meet with no tfrrs record
-#   still comes back with the anet course_name rather than dropping out.
+# ! SEPARATE FROM THE LABEL, DELIBERATELY. It is tempting to have the label
+#   lateral return the tfrrs venue as `course_name` and be done, but
+#   course_name is not decoration there: it is the KEY snapToCourse looks up
+#   in reb_course_dist, and that table is built from `meets` alone. Feeding it
+#   a tfrrs venue string would find no candidates for some divisions and,
+#   worse, real candidates for others whose venue happens to collide. The snap
+#   would change as a side effect of improving a printout.
 #
-# ⚠ AND THE MEET NAME IS CARRIED SEPARATELY FROM THE VENUE, because they are
-#   different strings and people search for both. "Ox Bow Park" is the venue;
-#   "JV Minutemen Classic" is the meet. Every name in the last round of
-#   complaints -- Yellow Jacket, Gunstock, RGNS, Wyoming Invitational -- is a
-#   MEET name, so a venue-only report could not have matched one of them, and
-#   searching the proposals for any of them would have come back empty while
-#   the division sat right there in the file.
-#
-# ! meet_name QUALIFIED ON BOTH SIDES. Unqualified it is ambiguous between the
-#   subquery's table and the outer row, and Postgres resolves that silently in
-#   favour of the inner one -- which is what is wanted here, but only by
-#   accident, and the accident stops being true the moment a column is added.
-_NAME_LATERAL = r"""
-LEFT   JOIN LATERAL (
-    SELECT COALESCE(
-        lbl.course_name,
-        (SELECT venue_name FROM meets_tfrrs
-          WHERE meets_tfrrs.meet_id = {g}.meet_id
-            AND venue_name IS NOT NULL LIMIT 1)
-    ) AS display_name,
-    COALESCE(
-        (SELECT meet_name FROM meets
-          WHERE meets.meet_id = {g}.meet_id
-            AND meets.meet_name IS NOT NULL LIMIT 1),
-        (SELECT meet_name FROM meets_tfrrs
-          WHERE meets_tfrrs.meet_id = {g}.meet_id
-            AND meets_tfrrs.meet_name IS NOT NULL LIMIT 1)
-    ) AS meet_display
-) nm ON TRUE
+# ⚠ VENUE AND MEET NAME BOTH, because they are different strings and people
+#   search for both. "Ox Bow Park" is the venue; "JV Minutemen Classic" is the
+#   meet. Every name in the last round of complaints -- Yellow Jacket,
+#   Gunstock, RGNS, Wyoming Invitational -- is a MEET name, so a venue-only
+#   report could not have matched one of them, and searching the proposals for
+#   any of them would have come back empty while the division sat in the file.
+_NAMES_SQL = """
+SELECT k.meet_id, k.div_id,
+       COALESCE(
+           (SELECT m.course_name FROM meets m
+             WHERE m.meet_id = k.meet_id AND m.div_id = k.div_id
+               AND m.course_name IS NOT NULL LIMIT 1),
+           (SELECT t.venue_name FROM meets_tfrrs t
+             WHERE t.meet_id = k.meet_id
+               AND t.venue_name IS NOT NULL LIMIT 1)
+       ) AS display_name,
+       COALESCE(
+           (SELECT m.meet_name FROM meets m
+             WHERE m.meet_id = k.meet_id
+               AND m.meet_name IS NOT NULL LIMIT 1),
+           (SELECT t.meet_name FROM meets_tfrrs t
+             WHERE t.meet_id = k.meet_id
+               AND t.meet_name IS NOT NULL LIMIT 1)
+       ) AS meet_display
+FROM   (VALUES %s) AS k(meet_id, div_id)
 """
+
+
+def applyNames(cur, *rowsets):
+    """Fill display_name / meet_display on these rows, in place.
+
+    Takes several lists so one round trip covers the whole report -- the
+    condemned set and the skipped set share most of their meets.
+    """
+    from psycopg2.extras import execute_values
+
+    keys, rows = set(), []
+    for rs in rowsets:
+        for r in rs or ():
+            # skipped rows arrive as (row, reason) pairs
+            r = r[0] if isinstance(r, tuple) else r
+            if r.get("meet_id") is None:
+                continue
+            keys.add((int(r["meet_id"]), int(r["div_id"])))
+            rows.append(r)
+    if not keys:
+        return
+    execute_values(cur, _NAMES_SQL, sorted(keys), page_size=1000)
+    got = {(int(r["meet_id"]), int(r["div_id"])):
+           (r["display_name"], r["meet_display"]) for r in cur.fetchall()}
+    for r in rows:
+        name = got.get((int(r["meet_id"]), int(r["div_id"])))
+        if name:
+            r["display_name"], r["meet_display"] = name
 
 
 _LABEL_LATERAL = r"""
@@ -828,16 +852,12 @@ SELECT g.meet_id, g.div_id,
            count(*) FILTER (WHERE g.gap > 0),
            count(*) FILTER (WHERE g.gap < 0)
        )::float / count(*)                                     AS same_side,
-       lbl.course_name, lbl.distance, lbl.division,
-       nm.display_name, nm.meet_display
+       lbl.course_name, lbl.distance, lbl.division
 FROM   reb_gap g
 __LABEL__
-__NAME__
-GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division,
-          nm.display_name, nm.meet_display
+GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division
 HAVING count(*) >= %(min_field)s
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="g")) \
-   .replace("__NAME__", _NAME_LATERAL.format(g="g"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
 
 
 # ------------------------------------------------------------------ #
@@ -1476,18 +1496,15 @@ WITH adj AS (
 SELECT a.result_id, a.meet_id, a.div_id, a.ident,
        a.adj_rating AS speed_rating, a.med, a.adj_gap AS gap,
        a.time_seconds, d.div_gap, d.n AS div_n,
-       lbl.distance AS distance, lbl.course_name, nm.display_name,
-       nm.meet_display
+       lbl.distance AS distance, lbl.course_name
 FROM   adj a
 JOIN   div d ON d.meet_id = a.meet_id AND d.div_id = a.div_id
 __LABEL__
-__NAME__
 WHERE  abs(a.adj_gap) > %(bar)s
   AND  abs(a.adj_gap - d.div_gap) > %(vs_field)s
 ORDER  BY abs(a.adj_gap) DESC
 LIMIT  %(limit)s
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="a")) \
-   .replace("__NAME__", _NAME_LATERAL.format(g="a"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
 
 
 def stagePriorPasses(cur, fixed, pinned):
@@ -1794,6 +1811,9 @@ def main():
                     return 0
                 got, routed, skipped = pass1(rows, args.sigma, args.t1,
                                              args.unanimity, cur)
+                # ! ONE ROUND TRIP, AFTER THE PASS. See _NAMES_SQL: joined
+                #   inside the query this ran 31.6M times instead of 5,500.
+                applyNames(cur, got, skipped)
                 report1(got, routed, skipped, args)
                 if args.out:
                     got = [r for r in got if r.get("tier") in ("A", "B")]
@@ -1893,6 +1913,7 @@ def main():
                     cur, args.sigma, args.t3, args.vs_field, args.limit,
                     args.max_per_div, args.max_drop_frac, args.max_per_ath,
                     args.max_per_meet)
+                applyNames(cur, drops, saves)
                 report3(drops, saves, groups, medians, args)
                 if args.out:
                     dl = [f"{r['result_id']},  # {r['speed_rating']:.1f} vs "
