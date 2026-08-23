@@ -559,9 +559,24 @@ LEFT   JOIN LATERAL (
     --   distance inside meets_tfrrs.division_distances, keyed by div_id as a
     --   string. COALESCE, not UNION: anet wins where both have one, which is
     --   the precedence every other reader uses.
-    SELECT COALESCE(m.course_name, x.course_name)      AS course_name,
-           COALESCE(o.distance, m.distance, x.distance) AS distance,
-           m.division                                  AS division
+    -- ⚠ AND --as-if-wiped MOVES WHAT THE RATINGS WERE BUILT AT, SO IT MOVES
+    --   THIS TOO. The flag reverts a division's ratings to the SCRAPED
+    --   distance; the label has to follow, or the two disagree again in the
+    --   mirror image of the bug above.
+    --
+    --   Measured on Swedetown 199300/798809: with the override as the label
+    --   the run proposed 2400 -> 1200, against 5000 -> 2500 before. Same
+    --   division, same field, two answers, because the label and the ratings
+    --   were describing different distances.
+    --
+    -- ! reb_unovr HOLDS EXACTLY THE REVERTED DIVISIONS and is EMPTY when the
+    --   flag is off, so this CASE is the identity in the normal path.
+    SELECT COALESCE(m.course_name, x.course_name)  AS course_name,
+           CASE WHEN u.meet_id IS NOT NULL
+                THEN COALESCE(m.distance, x.distance)
+                ELSE COALESCE(o.distance, m.distance, x.distance)
+           END                                     AS distance,
+           m.division                              AS division
     -- ⚠ dist_override FIRST, AND ITS ABSENCE HERE WAS THE BUG.
     --   impliedDistance scales FROM this label:
     --       d_true = label * (base / (base + gap)) ** (1/K)
@@ -587,6 +602,10 @@ LEFT   JOIN LATERAL (
           (SELECT distance FROM dist_override d
             WHERE d.meet_id = g.meet_id AND d.div_id = g.div_id
             LIMIT 1) o ON TRUE
+    LEFT  JOIN LATERAL
+          (SELECT meet_id FROM reb_unovr r
+            WHERE r.meet_id = g.meet_id AND r.div_id = g.div_id
+            LIMIT 1) u ON TRUE
     FULL  OUTER JOIN
           (SELECT NULL::text AS course_name, t.distance
              FROM tmp_xc_tfrrs_dist t
