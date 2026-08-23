@@ -1059,9 +1059,15 @@ def applyNames(cur, *rowsets):
             rows.append(r)
     if not keys:
         return
-    execute_values(cur, _NAMES_SQL, sorted(keys), page_size=1000)
+    # ! fetch=True, NOT cur.fetchall(). execute_values sends one statement
+    #   per page, and the cursor only holds the LAST page's rows -- so over
+    #   1,000 keys, fetchall() named ~keys%1000 divisions and silently
+    #   dropped the rest. The console table hid it behind its course_name
+    #   fallback; pass1.py's comments have no fallback and came out bare.
+    fetched = execute_values(cur, _NAMES_SQL, sorted(keys), page_size=1000,
+                             fetch=True)
     got = {(int(r["meet_id"]), int(r["div_id"])):
-           (r["display_name"], r["meet_display"]) for r in cur.fetchall()}
+           (r["display_name"], r["meet_display"]) for r in fetched}
     for r in rows:
         name = got.get((int(r["meet_id"]), int(r["div_id"])))
         if name:
