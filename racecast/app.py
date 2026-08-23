@@ -1855,31 +1855,18 @@ def search_api():
     if len(raw) < 2:
         return jsonify([])
 
-    # Punctuation is separator, not content: "mt. sac" and "mt sac" and
-    # "arcadia-loup" should all tokenise the same way.
-    tokens = [t for t in re.split(r"[^a-z0-9]+", raw) if t][:6]
-    if not tokens:
+    terms = _searchTerms(raw)
+    if terms is None:
         return jsonify([])
+    where, params, word_score = terms
 
     kind = (request.args.get("kind") or "").strip()
     limit = min(int(request.args.get("limit") or 10), 40)
-
-    where, params = [], {"lim": limit, "first": tokens[0] + "%"}
-    for i, tok in enumerate(tokens):
-        where.append(f"(search_text LIKE %(t{i})s OR search_last LIKE %(t{i})s)")
-        params[f"t{i}"] = f"%{tok}%"
-        params[f"w{i}"] = f"% {tok}%"
+    params["lim"] = limit
+    params["first"] = params["t_first"]
     if kind:
         where.append("kind = %(kind)s")
         params["kind"] = kind
-
-    # How many tokens land on a word boundary. A row matching every token at a
-    # word start is a better hit than one matching them mid-word.
-    word_score = " + ".join(
-        f"(CASE WHEN search_text LIKE %(w{i})s OR search_text LIKE %(t{i}_start)s"
-        f" THEN 1 ELSE 0 END)" for i in range(len(tokens)))
-    for i, tok in enumerate(tokens):
-        params[f"t{i}_start"] = f"{tok}%"
 
     # Meets sort on the year, people and schools on how much they raced.
     # Both fall back to the other so a tie is still broken sensibly.
@@ -1937,6 +1924,50 @@ def search_api():
     return jsonify(rows)
 
 
+def _searchTerms(raw, prefix="t"):
+    """(where_clauses, params, word_score_sql) for a typed query, or None.
+
+    ★ ONE MATCHER FOR THE DROPDOWN AND THE PAGE, BECAUSE THEY DRIFTED AND IT
+      SHOWED. The dropdown ANDed per-token substrings; the page looked for the
+      whole phrase contiguously. Same box, same words, two different result
+      sets -- and since meets are stored with the year and edition number in
+      front of the distinctive part, the page was the one that failed. Click a
+      dropdown hit's "see all results" and you could land on an empty page.
+
+    ⚠ AND THE PAGE'S COUNTS AND YEAR LIST DRIFTED AGAIN INSIDE THE PAGE. They
+      were left on the old left-anchored predicate, referring to a `prefix`
+      variable that had already been deleted, so /search raised NameError on
+      every query. Three copies of one rule is three chances to fix two.
+
+    Punctuation is a separator, not content: "mt. sac", "mt sac" and
+    "arcadia-loup" all tokenise the same. Six tokens is the cap -- past that
+    the AND is narrow enough that more only costs time.
+    """
+    tokens = [t for t in re.split(r"[^a-z0-9]+", (raw or "").lower()) if t][:6]
+    if not tokens:
+        return None
+
+    where, params = [], {}
+    for i, tok in enumerate(tokens):
+        k = f"{prefix}{i}"
+        where.append(f"(search_text LIKE %({k})s OR search_last "
+                     f"LIKE %({k})s)")
+        params[k] = f"%{tok}%"
+        params[f"{k}_w"] = f"% {tok}%"
+        params[f"{k}_s"] = f"{tok}%"
+    params[f"{prefix}_first"] = tokens[0] + "%"
+
+    # How many tokens land on a word boundary. A row matching every token at a
+    # word start is a better hit than one matching them mid-word -- it is what
+    # keeps "arcadia" from surfacing "Allen East JH Tri--Arcadia, McComb"
+    # above "Arcadia".
+    word_score = " + ".join(
+        f"(CASE WHEN search_text LIKE %({prefix}{i}_w)s OR search_text "
+        f"LIKE %({prefix}{i}_s)s THEN 1 ELSE 0 END)"
+        for i in range(len(tokens)))
+    return where, params, word_score
+
+
 def _parse_year(q):
     """Pull a 4-digit year (1990-2030) out of the query text.
     Returns (year_or_None, query_without_year)."""
@@ -1980,8 +2011,16 @@ def _run_search(q, kind, year_filter, offset):
     # ★ PREFIX MATCHES STILL RANK FIRST. Substring matching alone would bury
     #   "Arcadia" under "Allen East JH Tri--Arcadia, McComb"; the ORDER BY
     #   below puts a prefix hit ahead of a mid-string one.
-    where = ["(search_text LIKE %(sub)s OR search_last LIKE %(sub)s)"]
-    params = {"sub": f"%{needle}%", "p": needle + "%"}
+    terms = _searchTerms(needle)
+    if terms is None:
+        return [], {}, []
+    where, params, word_score = terms
+    params["p"] = params["t_first"]
+    # ! CAPTURED BEFORE kind AND year ARE APPENDED. The tab counts must ignore
+    #   the kind filter (that is what makes the tabs switchable) and the year
+    #   list must ignore the year filter (or picking a year collapses the
+    #   dropdown to just that year).
+    where_base = list(where)
 
     if kind != "all":
         where.append("kind = %(k)s")
@@ -2005,15 +2044,33 @@ def _run_search(q, kind, year_filter, offset):
                 --   substring matching buries "Arcadia" under "Allen East JH
                 --   Tri--Arcadia, McComb" -- both match, but only one is what
                 --   was meant. Booleans sort false < true, hence DESC.
-                ORDER  BY (search_text LIKE %(p)s) DESC,
+                -- ★ THE SAME RANKING THE DROPDOWN USES, in the same
+                --   order. A result that is first in the dropdown has to be
+                --   first here, or clicking through reshuffles the list under
+                --   the cursor and the page looks broken even when it is not.
+                ORDER  BY ({word_score}) DESC,
+                          (search_text LIKE %(p)s) DESC,
                           sort_year DESC, sort_count DESC, length(search_text)
                 LIMIT  %(lim)s OFFSET %(off)s
             """, {**params, "lim": PAGE_SIZE, "off": offset})
             results = cur.fetchall()
 
             # per-kind counts for the tabs (ignore the kind filter for counts)
-            count_where = ["(search_text LIKE %(p)s OR search_last LIKE %(p)s)"]
-            cparams = {"p": prefix}
+            #
+            # ⚠ THE SAME PREDICATE AS THE RESULTS, %(sub)s AND NOT %(p)s.
+            #   These two queries were left on the old left-anchored match when
+            #   the results moved to substring, and they referred to a
+            #   `prefix` variable that went away with it -- so /search raised
+            #   NameError on every query while the dropdown, which never comes
+            #   through here, kept working.
+            #
+            #   Fixing only the name would have been worse than the crash: the
+            #   tabs would count PREFIX hits beside SUBSTRING results, so
+            #   "Louisiana State Meet" would list thirty meets under a tab
+            #   reading 0. A count that disagrees with the list under it is a
+            #   bug nobody reports and everybody distrusts.
+            count_where = list(where_base)
+            cparams = dict(params)
             if year:
                 count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
                 cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
@@ -2027,8 +2084,8 @@ def _run_search(q, kind, year_filter, offset):
 
             # distinct years -- from q+kind ONLY, never the year filter itself,
             # or picking a year collapses the dropdown to just that year.
-            yr_where = ["(search_text LIKE %(p)s OR search_last LIKE %(p)s)"]
-            yparams = {"p": prefix}
+            yr_where = list(where_base)
+            yparams = dict(params)
             if kind != "all":
                 yr_where.append("kind = %(k)s")
                 yparams["k"] = kind
