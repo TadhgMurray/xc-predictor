@@ -688,6 +688,62 @@ def measure(cur):
 #   Three copies of a rule is three chances to fix two of them. So there is
 #   one, spliced into all three queries below, and `{g}` is the alias of the
 #   gap row it hangs off.
+# ------------------------------------------------------------------ #
+#  WHAT TO CALL A DIVISION IN THE REPORT
+# ------------------------------------------------------------------ #
+#
+# ⚠ SEPARATE FROM THE LABEL, DELIBERATELY, AND NOT MERGED INTO IT. It is
+#   tempting to have _LABEL_LATERAL return the tfrrs venue name as
+#   `course_name` and be done -- but course_name is not decoration there, it
+#   is the KEY snapToCourse looks up in reb_course_dist, and that table is
+#   built from `meets` alone. Feeding it a tfrrs venue name would find no
+#   candidates for some divisions and, worse, real candidates for others
+#   whose venue string happens to collide. The snap would change, silently,
+#   as a side effect of improving a printout.
+#
+# ★ SO THE NAME IS ITS OWN COLUMN AND FEEDS NOTHING. It exists because
+#   forty-odd rows of the pass 1 report read "?" -- every tfrrs division,
+#   since `meets` is anet-only -- and because pass1.py carried meet/div ids
+#   and no name at all, so a course could not be looked up in the proposals
+#   without first looking up its id.
+#
+# ! meets_tfrrs IS KEYED ON meet_id ALONE for these two columns, so no div_id
+#   is involved. Scalar subqueries rather than a joined subquery: a LATERAL
+#   with no FROM returns exactly one row, so a meet with no tfrrs record
+#   still comes back with the anet course_name rather than dropping out.
+#
+# ⚠ AND THE MEET NAME IS CARRIED SEPARATELY FROM THE VENUE, because they are
+#   different strings and people search for both. "Ox Bow Park" is the venue;
+#   "JV Minutemen Classic" is the meet. Every name in the last round of
+#   complaints -- Yellow Jacket, Gunstock, RGNS, Wyoming Invitational -- is a
+#   MEET name, so a venue-only report could not have matched one of them, and
+#   searching the proposals for any of them would have come back empty while
+#   the division sat right there in the file.
+#
+# ! meet_name QUALIFIED ON BOTH SIDES. Unqualified it is ambiguous between the
+#   subquery's table and the outer row, and Postgres resolves that silently in
+#   favour of the inner one -- which is what is wanted here, but only by
+#   accident, and the accident stops being true the moment a column is added.
+_NAME_LATERAL = r"""
+LEFT   JOIN LATERAL (
+    SELECT COALESCE(
+        lbl.course_name,
+        (SELECT venue_name FROM meets_tfrrs
+          WHERE meets_tfrrs.meet_id = {g}.meet_id
+            AND venue_name IS NOT NULL LIMIT 1)
+    ) AS display_name,
+    COALESCE(
+        (SELECT meet_name FROM meets
+          WHERE meets.meet_id = {g}.meet_id
+            AND meets.meet_name IS NOT NULL LIMIT 1),
+        (SELECT meet_name FROM meets_tfrrs
+          WHERE meets_tfrrs.meet_id = {g}.meet_id
+            AND meets_tfrrs.meet_name IS NOT NULL LIMIT 1)
+    ) AS meet_display
+) nm ON TRUE
+"""
+
+
 _LABEL_LATERAL = r"""
 LEFT   JOIN LATERAL (
     -- ⚠ `meets` IS ANET-ONLY, AND THAT BLINDED THESE PASSES TO EVERY TFRRS
@@ -772,12 +828,16 @@ SELECT g.meet_id, g.div_id,
            count(*) FILTER (WHERE g.gap > 0),
            count(*) FILTER (WHERE g.gap < 0)
        )::float / count(*)                                     AS same_side,
-       lbl.course_name, lbl.distance, lbl.division
+       lbl.course_name, lbl.distance, lbl.division,
+       nm.display_name, nm.meet_display
 FROM   reb_gap g
 __LABEL__
-GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division
+__NAME__
+GROUP  BY g.meet_id, g.div_id, lbl.course_name, lbl.distance, lbl.division,
+          nm.display_name, nm.meet_display
 HAVING count(*) >= %(min_field)s
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="g")) \
+   .replace("__NAME__", _NAME_LATERAL.format(g="g"))
 
 
 # ------------------------------------------------------------------ #
@@ -1002,6 +1062,27 @@ def snapToCourse(implied, course_name, label, cur, tol=COURSE_TOL):
     if best is None:
         return None
     return float(best[0]), (implied - best[0]) / best[0], "course"
+
+
+def _named(r):
+    """`  -- Venue | Meet` for a comment, or nothing. Never raises on a NULL.
+
+    Both, not the better of the two: the whole point is that findstr should
+    match whichever one the person happens to know.
+    """
+    def clean(v):
+        # ! ONE LINE PER ENTRY. A newline in a scraped venue string would split
+        #   the generated dict and make corrections.py unimportable, which is
+        #   found out four hours into a pipeline. Collapse whitespace rather
+        #   than trusting the source.
+        return " ".join((v or "").split())[:60]
+
+    parts = [p for p in (clean(r.get("display_name")),
+                         clean(r.get("meet_display"))) if p]
+    # A venue whose meet name repeats it adds nothing to search on.
+    if len(parts) == 2 and parts[0].lower() == parts[1].lower():
+        parts.pop()
+    return ("  -- " + " | ".join(parts)) if parts else ""
 
 
 def impliedDistance(label, base, gap):
@@ -1395,15 +1476,18 @@ WITH adj AS (
 SELECT a.result_id, a.meet_id, a.div_id, a.ident,
        a.adj_rating AS speed_rating, a.med, a.adj_gap AS gap,
        a.time_seconds, d.div_gap, d.n AS div_n,
-       lbl.distance AS distance, lbl.course_name
+       lbl.distance AS distance, lbl.course_name, nm.display_name,
+       nm.meet_display
 FROM   adj a
 JOIN   div d ON d.meet_id = a.meet_id AND d.div_id = a.div_id
 __LABEL__
+__NAME__
 WHERE  abs(a.adj_gap) > %(bar)s
   AND  abs(a.adj_gap - d.div_gap) > %(vs_field)s
 ORDER  BY abs(a.adj_gap) DESC
 LIMIT  %(limit)s
-""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a")) \
+   .replace("__NAME__", _NAME_LATERAL.format(g="a"))
 
 
 def stagePriorPasses(cur, fixed, pinned):
@@ -1713,11 +1797,17 @@ def main():
                 report1(got, routed, skipped, args)
                 if args.out:
                     got = [r for r in got if r.get("tier") in ("A", "B")]
+                    # ! THE NAME GOES IN THE COMMENT, so a course can be
+                    #   found in the proposals with findstr. Without it
+                    #   pass1.py is meet/div ids and nothing else, and
+                    #   checking what happened to a meet you can name means
+                    #   first looking up its id somewhere else.
                     lines = [f"({r['meet_id']}, {r['div_id']}): "
                              f"{r['snapped']:.0f},  # was "
                              f"{r['distance']:.0f}, field {r['gap']:+.1f} over "
                              f"its own heads, n={r['n']}, snap "
                              f"{r['snap_err']:+.1%}"
+                             f"{_named(r)}"
                              for r in got]
                     emit(args.out, args.sport,
                          [(f"_DISTANCE_OVERRIDES_{args.sport}", lines)],
@@ -1906,7 +1996,7 @@ def report1(got, routed, skipped, args):
                   f"{r['implied']:>7.0f} {r['snapped']:>6.0f} "
                   f"{r['snap_err']:>+7.1%}  "
                   f"{str(r['meet_id']) + '/' + str(r['div_id']):>16}  "
-                  f"{(r['course_name'] or '?')[:28]}")
+                  f"{(r.get('display_name') or r['course_name'] or '?')[:28]}")
     print()
 
 
@@ -1936,7 +2026,7 @@ def report3(drops, saves, groups, medians, args):
             print(f"    {r['speed_rating']:>7.1f} {r['med']:>8.1f} "
                   f"{r['gap']:>+7.1f} {r['div_gap']:>+8.1f} {r['div_n']:>6}  "
                   f"{str(r['meet_id']) + '/' + str(r['div_id']):>16}  "
-                  f"{(r['course_name'] or '?')[:26]}")
+                  f"{(r.get('display_name') or r['course_name'] or '?')[:26]}")
     if groups:
         from collections import Counter
         per = Counter((r["meet_id"], r["div_id"]) for r in groups)

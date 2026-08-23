@@ -10,6 +10,39 @@
 #   real failure. Failure is detected from the EXIT CODE instead, which is the
 #   only thing that actually distinguishes a traceback from a warning.
 
+param(
+    # ---------------------------------------------------------------- #
+    #  -From -- START PARTWAY IN
+    # ---------------------------------------------------------------- #
+    #
+    # * THE VERDICT STEPS DO NOT DEPEND ON DISTANCES. 01_season_year stamps
+    #   the academic season, 03_pro_flag flags professionals and
+    #   04_grade_sanity writes grade_fix -- none of them reads a distance,
+    #   and an override run changes nothing any of them would decide
+    #   differently. 05_backfill reads grade_fix as it stands, which after a
+    #   previous full run is already correct.
+    #
+    #   So an override-only rebuild can start at 05 and skip roughly half an
+    #   hour: .\run_pipeline.ps1 -From 05
+    #
+    # ⚠ AND IT IS NOT A GENERAL SHORTCUT. Skip 04 after changing anything
+    #   that touches grades, pools or school levels and the backfill resolves
+    #   pools from a stale grade_fix -- the disagreement that was measured at
+    #   a 64 percent rating error, frozen into the row. -From is for a run
+    #   where you know what changed and it was downstream.
+    [string]$From = "01"
+)
+
+# ! RESOLVED HERE, ABOVE ITS FIRST USE. PowerShell does not hoist, so a
+#   $fromNum read before this line is $null and every comparison against it
+#   is quietly false -- the skip would simply never happen.
+#
+#   The digits are pulled out so "-From 05", "-From 5" and "-From 05_backfill"
+#   all mean the same thing; anything with no digit in it falls back to 1
+#   rather than throwing on the cast.
+$fromNum = 1
+if ($From -match '\d') { $fromNum = [int]($From -replace '\D', '') }
+
 $ErrorActionPreference = "Continue"
 
 # ------------------------------------------------------------------ #
@@ -97,6 +130,9 @@ if ($flask) {
 }
 Write-Host "  dev server not running" -ForegroundColor Green
 Write-Host "  logging to $dir" -ForegroundColor Cyan
+if ($fromNum -gt 1) {
+    Write-Host "  -From $From : steps before $fromNum are skipped (02_drop_old still runs)" -ForegroundColor Cyan
+}
 
 
 # ------------------------------------------------------------------ #
@@ -106,7 +142,20 @@ Write-Host "  logging to $dir" -ForegroundColor Cyan
 # Per-step logs plus one combined. A single log makes finding the numbers a
 # search problem; per-step files keep the ones that matter named and small,
 # and pipeline.log reads top to bottom.
+# ! 02_drop_old IS NEVER SKIPPED, WHATEVER -From SAYS. It is not a verdict
+#   step -- it clears results_old / results_tf_old, and saveResultSpeedRatings
+#   REFUSES to start while either is present. The ALS engine's own final phase
+#   recreates them, so after any previous full run they exist, and skipping
+#   this would fail at 08_golive three and a half hours in. It costs a DROP
+#   TABLE.
+$NEVER_SKIP = @("02_drop_old")
+
 function Step($name, $cmd) {
+    $num = [int]($name -replace '^(\d+).*$', '$1')
+    if ($num -lt $fromNum -and $NEVER_SKIP -notcontains $name) {
+        Write-Host "  $name skipped (-From $From)" -ForegroundColor DarkGray
+        return
+    }
     $log = "$dir\$name.log"
     $t0  = Get-Date
     Write-Host ""
