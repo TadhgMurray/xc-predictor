@@ -1,3 +1,58 @@
+# ⚠ NEAREST IS THE WRONG RULE WHEN THE RUNGS ARE NOT EQUALLY REAL.
+#
+#   An implied 5180 sits 2.4% from 5310 and 3.6% from 5000. Nearest picks
+#   5310 -- which the corpus raced 5,345 times, against 5000's 19,505,087. A
+#   race is not a 5310 because a number landed slightly closer to it.
+#
+# ★ SO THE SNAP WEIGHS FREQUENCY AGAINST ERROR. Score each rung by how often
+#   it is raced, discounted by how far the implied value sits from it:
+#
+#       score = log10(n) * exp(-(err / SNAP_SIGMA)^2 / 2)
+#
+#   The Gaussian is what stops this becoming "always answer 5000": at 20%
+#   away the discount is e^-22, so a rung has to be genuinely close before
+#   its popularity counts for anything.
+#
+# ! log10(n), NOT n. Weighting by the raw count is too strong -- an implied
+#   4850 would snap to 5000 over 4828 (three miles) even though 4828 is
+#   nearly exact, because 5000 is five times commoner. log10 lets popularity
+#   break a tie without overruling a good fit:
+#
+#       implied 5180  ->  5000  (5310 loses despite being nearer)
+#       implied 4850  ->  4828  (5000 loses despite being commoner)
+#       implied 4000  ->  4000  (nothing else is close enough to matter)
+#   SNAP_SIGMA is 0.045 and that was set from cases, not taste. At 0.03 the
+#   error term is so sharp that popularity cannot reach across 5%: an implied
+#   5250 went to 5310 (5,345 finishers, 1.1% away) over 5000 (19.5M, 5%
+#   away). 0.045 is the widest value that still lets an almost-exact fit win
+#   -- 4850 stays on 4828 rather than sliding to the commoner 5000.
+SNAP_SIGMA = 0.045
+
+# Past this the implied value is not near anything and no weighting saves it.
+SNAP_MAX_ERR = 0.12
+
+
+def snapToCorpus(implied):
+    """(distance, fractional error), weighing how often each rung is raced.
+
+    Still a TEST rather than a rounding: nothing within SNAP_MAX_ERR means no
+    answer, and the error it returns is what the caller judges.
+    """
+    import math
+    if not implied or not _CORPUS_LADDER:
+        return None
+    best, best_score = None, None
+    for d, n in _CORPUS_LADDER:
+        err = (implied - d) / d
+        if abs(err) > SNAP_MAX_ERR:
+            continue
+        score = math.log10(max(n, 10)) * math.exp(
+            -(err / SNAP_SIGMA) ** 2 / 2.0)
+        if best_score is None or score > best_score:
+            best, best_score = (float(d), err), score
+    return best
+
+
 # Project: xc-predictor / scripts
 # File:    rebuild_overrides.py
 # Purpose: Rebuild the distance and result overrides from nothing, in three
@@ -637,18 +692,6 @@ def ladderPower(tol=None, lo=1500, hi=12000, n=200_000):
     return hits / n
 
 
-def snapToCorpus(implied):
-    """(nearest distance the corpus races, fractional error), or None.
-
-    Same contract as snapToLadder -- still a TEST, not a rounding: a field
-    wrong for a reason other than distance lands between the rungs and the
-    error is what says so. There are simply far more rungs, and every one of
-    them is a distance somebody ran.
-    """
-    if not implied or not _CORPUS_LADDER:
-        return None
-    best = min((d for d, _n in _CORPUS_LADDER), key=lambda x: abs(x - implied))
-    return float(best), (implied - best) / best
 
 
 def courseDistances(cur, course_name):

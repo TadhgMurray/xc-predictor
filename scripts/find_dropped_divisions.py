@@ -251,7 +251,14 @@ def main():
     for r in rows:
         if r["n_rated"] / r["n_rows"] > args.max_frac:
             continue
-        if r["n_rated"] < args.min_surv or not r["own_med"] or not r["rating"]:
+        # ⚠ NOT THE SURVIVOR FILTER YET. It runs AFTER pooling, below --
+        #   filtering here is what dropped Ox Bow Park's girls race: 128
+        #   finishers, ONE rating, and fourteen pooled siblings at the same
+        #   meet under the same wrong label that would have sized it fine.
+        #   A division with one survivor and no siblings is a guess; one with
+        #   one survivor and fourteen siblings is not, and the filter could
+        #   not tell them apart from where it was.
+        if not r["own_med"] or not r["rating"]:
             continue
         gap = float(r["rating"]) - float(r["own_med"])
         if abs(gap) < args.min_gap:
@@ -264,6 +271,11 @@ def main():
                         "snapped": snapped, "err": err})
 
     flagged = _pool(flagged)
+    # ! NOW the survivor test, counting the pool. `pooled` is the summed
+    #   survivor count across everything mislabelled the same way; a lone
+    #   division falls back to its own.
+    flagged = [r for r in flagged
+               if r.get("pooled", r["n_rated"]) >= args.min_surv]
     flagged.sort(key=lambda r: -abs(r["gap"]))
     good = [r for r in flagged if abs(r["err"]) <= SNAP_TOL]
 
