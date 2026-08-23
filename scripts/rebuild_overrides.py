@@ -446,46 +446,81 @@ def assertLabelTrustworthy(cur, sport, min_agree=LABEL_MIN_AGREE):
 #   that have no override, and blind by construction under --as-if-wiped,
 #   where the label is SUPPOSED to differ from dist_override.
 #
-# ! mod(result_id, 997) RATHER THAN A BARE LIMIT. A systematic label error is
-#   exactly what a head-of-scan sample can miss: the first ten thousand rows
-#   of a temp table are one region of one index, and reb_gap is physically in
-#   `results` order, so a LIMIT reads one end of the corpus by date.
+# ! THE SAMPLE IS DRAWN FIRST, INTO ITS OWN TABLE, AND THE FIRST VERSION OF
+#   THIS TOOK PASS 1 FROM 6 MINUTES TO FOREVER.
 #
-#   1-in-997 is chosen so the sample cannot early-stop before the far end:
-#   filling it requires walking the whole table, which is a seq scan of a
-#   temp table and a few thousand primary-key lookups. A smaller modulus
-#   would let LIMIT stop a tenth of the way in and reproduce the bias it
-#   exists to avoid. Coming back with a few thousand rows instead of the cap
-#   is fine -- the threshold is a share, not a count.
+#   It read `FROM reb_gap g JOIN results ... JOIN ranking_results ...
+#   WHERE mod(g.result_id, 997) = 0` in one statement. Postgres has no
+#   statistics for mod() on a temp table, so it falls back to a default
+#   selectivity and estimates the filter returns a hundred thousand-odd rows
+#   rather than the 31,000 it does -- and on that estimate a hash join against
+#   all 56M rows of ranking_results looks cheaper than 31,000 index lookups.
+#   The plan builds hash tables over two large tables to answer a question
+#   about 20,000 rows.
+#
+# ★ SO THE SAMPLE IS MATERIALISED, ANALYZED, AND THEN JOINED. Once it is a
+#   real 20,000-row table with real statistics, no planner will choose a hash
+#   join over a nested loop, and the whole check costs a handful of index
+#   lookups.
+#
+# ! TABLESAMPLE SYSTEM, NOT mod(). The reason for mod() was that a bare LIMIT
+#   reads one end of the corpus -- reb_gap is physically in `results` order,
+#   so the first 20,000 rows are one span of dates. But mod() has to walk all
+#   31.6M rows to find its hits, and it does that on every pass. SYSTEM picks
+#   random BLOCKS across the whole table and reads only those, which is the
+#   same spread for a thousandth of the IO.
+#
+# ⚠ BLOCK SAMPLING IS CLUSTERED, and that is a real cost: rows in one block
+#   are adjacent results, usually the same division, so the effective sample
+#   is smaller than the row count suggests. It is the right trade here because
+#   the fault being caught is a CORPUS-WIDE CONSTANT RATIO -- every label
+#   wrong by the same factor -- and clustering barely blunts that. It would be
+#   the wrong trade for estimating a rare per-row property.
 GAP_LABEL_MIN_AGREE = 0.90
 GAP_LABEL_SAMPLE = 20_000
 GAP_LABEL_TOL = 0.05
 
+_GAP_SAMPLE_SQL = """
+DROP TABLE IF EXISTS gl_sample;
+CREATE TEMP TABLE gl_sample AS
+SELECT result_id, meet_id, div_id
+FROM   reb_gap TABLESAMPLE SYSTEM ({pct})
+LIMIT  {cap};
+CREATE INDEX ON gl_sample (result_id);
+CREATE INDEX ON gl_sample (meet_id, div_id);
+ANALYZE gl_sample;
+"""
+
 _GAP_LABEL_SQL = """
 SELECT r.time_seconds, r.normalized_time, lbl.distance AS label,
        k.pool, COALESCE(u.scale, 1.0) AS scale
-FROM   reb_gap g
+FROM   gl_sample g
 JOIN   {table} r ON r.result_id = g.result_id
 JOIN   ranking_results k ON k.result_id = g.result_id AND k.sport = %(sport)s
 LEFT   JOIN reb_unovr u ON u.meet_id = g.meet_id AND u.div_id = g.div_id
 __LABEL__
-WHERE  mod(g.result_id, 997) = 0
-  AND  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
   AND  r.time_seconds > 0 AND lbl.distance > 0
-LIMIT  %(n)s
 """
 
 
-def assertGapLabelMatchesRatings(cur, sport, as_if_wiped,
+def assertGapLabelMatchesRatings(cur, sport, as_if_wiped, n_rows,
                                  min_agree=GAP_LABEL_MIN_AGREE):
     """The label must be the distance reb_gap's ratings were computed at."""
     from anchor_check import mismatch
 
+    # Ask for three times the cap in blocks, then take the cap: SYSTEM returns
+    # whole blocks, so the yield varies, and coming up short is worse than
+    # reading a few thousand rows nobody uses.
+    pct = min(100.0, max(0.01, 100.0 * 3.0 * GAP_LABEL_SAMPLE
+                         / max(int(n_rows), 1)))
+    cur.execute(_GAP_SAMPLE_SQL.format(pct=f"{pct:.4f}",
+                                       cap=GAP_LABEL_SAMPLE))
+
     sql = _GAP_LABEL_SQL.format(table=_TABLE[sport])
     sql = sql.replace("__LABEL__", _LABEL_LATERAL.format(g="g"))
-    _noBarePercent("_GAP_LABEL_SQL", sql.replace("%(sport)s", "")
-                                        .replace("%(n)s", ""))
-    cur.execute(sql, {"sport": sport, "n": GAP_LABEL_SAMPLE})
+    _noBarePercent("_GAP_LABEL_SQL", sql.replace("%(sport)s", ""))
+    cur.execute(sql, {"sport": sport})
     rows = cur.fetchall()
     if not rows:
         print("  label/rating check: no sampled row carried both a label and "
@@ -543,6 +578,17 @@ def assertGapLabelMatchesRatings(cur, sport, as_if_wiped,
     return False
 
 
+# ! A CLOCK, BECAUSE "IT IS SLOW" WAS DIAGNOSED TWICE BY GUESSING. buildGap
+#   is six statements and any one of them can be the whole runtime; without
+#   per-step elapsed the only evidence is a running query in pg_stat_activity
+#   and a hypothesis. Costs one time.time() per step.
+def _step(t0, label):
+    import time
+    now = time.time()
+    print(f"    [{now - t0:6.1f}s] {label}")
+    return now
+
+
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
              skip_label_check=False):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
@@ -557,14 +603,20 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     #   build_ranking_results uses -- imported, not copied.
     sys.path.insert(0, "racecast")
     from build_ranking_results import _XC_TFRRS_DIST_SQL
+    import time
+    _t = time.time()
     cur.execute(_XC_TFRRS_DIST_SQL)
+    _t = _step(_t, "tfrrs distances")
     cur.execute(_COURSE_DIST_SQL, {"min_n": COURSE_MIN_N})
+    _t = _step(_t, "course distances")
     kept, raw = loadLadder(cur)
+    _t = _step(_t, "corpus ladder")
     print(f"  ladder: {len(kept):,} distances the corpus actually races "
           f"({LADDER_MIN_N:,}+ finishers each; {len(raw) - len(kept):,} "
           f"comb teeth merged away)")
     if as_if_wiped:
         cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
+        _t = _step(_t, "--as-if-wiped revert")
         cur.execute("SELECT count(*) AS n FROM reb_unovr")
         n_ovr = cur.fetchone()["n"]
         print(f"  --as-if-wiped: {n_ovr:,} divisions reverted to their scraped "
@@ -588,6 +640,7 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     else:
         cur.execute(_UNOVERRIDE_NONE)
     cur.execute(_GAP_BODY.format(table=_TABLE[sport]), {"min_own": min_own})
+    _t = _step(_t, "gap table (the expensive one)")
     # RealDictCursor, so name the aggregates rather than unpacking a tuple.
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
     row = cur.fetchone()
@@ -595,8 +648,9 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     print(f"  gap table: {n:,} rated rows judged against their athlete's own "
           f"median ({n_sexed:,} with a gender)")
     if not skip_label_check and not assertGapLabelMatchesRatings(
-            cur, sport, as_if_wiped):
+            cur, sport, as_if_wiped, n):
         return None
+    _step(_t, "label/rating check")
     return n
 
 
