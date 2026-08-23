@@ -1565,6 +1565,23 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
     ratio = snapped / float(row["distance"])
     print(f"    change:                           {ratio:.2f}x   "
           f"{'FAILS HERE' if ratio > MAX_CHANGE or ratio < 1 / MAX_CHANGE else 'PASS'}")
+    if ratio > MAX_CHANGE or ratio < 1 / MAX_CHANGE:
+        return
+    if gap < 0:
+        # Mirror of pass1's direction gate. The run also requires the COURSE
+        # to corroborate a slow-field relabel; this ladder-only view cannot
+        # check that half, so a PASS here is necessary, not sufficient.
+        side_ok = side >= NEG_UNANIMITY
+        mag_ok = abs(gap) >= NEG_BAR_MULT * bar
+        print(f"    slow-field gate (gap < 0):        "
+              f"side {side:.0%} vs {NEG_UNANIMITY:.0%} "
+              f"{'PASS' if side_ok else 'FAILS HERE'};  "
+              f"|gap| {abs(gap):.1f} vs {NEG_BAR_MULT:.0f}x bar "
+              f"= {NEG_BAR_MULT * bar:.1f} "
+              f"{'PASS' if mag_ok else 'FAILS HERE'};  "
+              f"course corroboration also required (not visible here)")
+        if not (side_ok and mag_ok):
+            return
     print(f"\n    It clears every gate -- it should be in the output.")
 
 
@@ -1602,6 +1619,29 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
 #   been judged wrong.
 TIER_B_SNAP = 0.02      # a corpus snap this tight, and...
 TIER_B_SE = 2.0         # ...a field whose median is good to this many points
+
+# ⚠ THE TWO DIRECTIONS ARE NOT THE SAME EVIDENCE, so the gate is asymmetric.
+#   A field ABOVE its own heads (label too long, propose shorter) has one
+#   explanation -- nobody runs 60 points over their own career median, so the
+#   distance is wrong. A field BELOW its own heads (label too short, propose
+#   longer) has several: a season opener before anyone is fit, August heat, a
+#   JV tail jogging it in, first-year athletes measured against medians they
+#   have outgrown. Measured on the 2026-08-23 run, the negative population
+#   sat at -13..-22 -- exactly the size of an opener's fitness deficit, never
+#   the -40 a real 1.2x distance error can produce alone -- and proposed
+#   label x1.2 across the board: college 5000s -> 6000 dated late August, and
+#   Yellow Jacket's 3218 -> 4800 re-derived from its own slow tail while the
+#   14:52 up front pinned the true distance.
+#
+# ★ SO A SLOW FIELD ALONE NEVER RELABELS A DIVISION. A negative-gap division
+#   stays condemnable only when the COURSE itself corroborates the longer
+#   distance AND the field is near-unanimous AND the gap is one fitness
+#   cannot plausibly reach. Everything else lands in skipped with its own
+#   reason -- counted in report1, so the size of this population stays
+#   visible -- and its individually impossible rows remain pass 3's
+#   per-result business, which is where a slow tail belongs.
+NEG_UNANIMITY = 0.90    # slow fields need 90% on one side, vs 75% for fast
+NEG_BAR_MULT = 2.0      # and a gap clearing TWICE the bar fitness can reach
 
 
 def tierFor(source, err, gap, n, sigma):
@@ -1678,6 +1718,14 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
         if ratio > MAX_CHANGE or ratio < 1.0 / MAX_CHANGE:
             skipped.append((r, f"would move the distance {ratio:.2f}x, past "
                                f"the {MAX_CHANGE:.1f}x cap"))
+            continue
+        # The asymmetric direction gate -- see the block above NEG_UNANIMITY.
+        if gap < 0 and not (source == "course"
+                            and float(r["same_side"]) >= NEG_UNANIMITY
+                            and abs(gap) >= NEG_BAR_MULT
+                                * barFor(r["n"], sigma, t1)):
+            skipped.append((r, "field slow, not fast -- openers and heat "
+                               "fake this; per-result territory"))
             continue
         condemned.append({**r, "implied": implied, "snapped": snapped,
                           "snap_err": err, "gap": gap, "source": source,
