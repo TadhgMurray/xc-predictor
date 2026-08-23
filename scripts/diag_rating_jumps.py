@@ -39,6 +39,12 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 _SQL = """
 WITH rated AS (
     SELECT r.meet_id, r.div_id, r.result_id, r.speed_rating,
+           -- ! THE DATE COMES OFF THE ROW. `meets` HAS NO date COLUMN --
+           --   selecting one raised "column \"date\" does not exist" on
+           --   every invocation of this script. The race date lives on the
+           --   result, which is also the only source that works for a
+           --   division with no `meets` row at all.
+           r.date,
            COALESCE(r.person_id, r.athlete_id) AS ident
     FROM   {table} r
     WHERE  r.speed_rating IS NOT NULL
@@ -67,7 +73,7 @@ own AS (
     HAVING count(*) >= %(min_races)s
 ),
 jumps AS (
-    SELECT x.meet_id, x.div_id, x.speed_rating, o.med,
+    SELECT x.meet_id, x.div_id, x.speed_rating, x.date, o.med,
            x.speed_rating - o.med AS gap
     FROM   rated x
     JOIN   own o ON o.ident = x.ident
@@ -78,17 +84,41 @@ SELECT j.meet_id, j.div_id,
        round(max(j.gap)::numeric, 1)                      AS worst,
        round(avg(j.gap) FILTER (WHERE j.gap > %(gap)s)::numeric, 1) AS avg_jump,
        round(max(j.speed_rating)::numeric, 1)             AS top_rating,
-       m.course_name, m.distance, m.division, m.date
+       max(j.date)                                        AS date,
+       m.course_name, m.distance, m.division, m.meet_name
 FROM   jumps j
 LEFT   JOIN LATERAL (
-    SELECT course_name, distance, division, date
+    SELECT course_name, distance, division, NULL::text AS meet_name
     FROM   meets
     WHERE  meets.meet_id = j.meet_id AND meets.div_id = j.div_id
     LIMIT  1
-) m ON TRUE
-WHERE  (%(name)s IS NULL OR m.course_name ILIKE %(name)s)
+) a ON TRUE
+-- ⚠ `meets` IS ANET-ONLY, AND --name SEARCHED IT ALONE. Meet 26359 -- the JV
+--   Minutemen Classic at Ox Bow Park, 568 tfrrs rows -- has no `meets` row,
+--   so `--name minutemen` matched nothing and reported "nothing matched" as
+--   though the division were clean. The same blind spot that hid it from
+--   every other tool.
+LEFT   JOIN LATERAL (
+    SELECT venue_name, meet_name, distance
+    FROM   meets_tfrrs
+    WHERE  meets_tfrrs.meet_id = j.meet_id
+    LIMIT  1
+) t ON TRUE
+CROSS  JOIN LATERAL (
+    SELECT COALESCE(a.course_name, t.venue_name) AS course_name,
+           COALESCE(a.distance, t.distance)      AS distance,
+           a.division                            AS division,
+           t.meet_name                           AS meet_name
+) m
+-- ★ AND IT SEARCHES THE MEET NAME TOO. "minutemen" and "yellowjacket" are
+--   MEET names; course_name is the VENUE ("Ox Bow Park"). Searching only the
+--   venue could never match what anyone actually types.
+WHERE  (%(name)s IS NULL
+        OR m.course_name ILIKE %(name)s
+        OR m.meet_name   ILIKE %(name)s)
   AND  (%(meet)s IS NULL OR j.meet_id = %(meet)s)
-GROUP  BY j.meet_id, j.div_id, m.course_name, m.distance, m.division, m.date
+GROUP  BY j.meet_id, j.div_id, m.course_name, m.distance, m.division,
+          m.meet_name
 HAVING count(*) FILTER (WHERE j.gap > %(gap)s) >= %(min_ath)s
 ORDER  BY count(*) FILTER (WHERE j.gap > %(gap)s) DESC, max(j.gap) DESC
 LIMIT  %(limit)s
@@ -138,7 +168,8 @@ def main():
               f"{r['avg_jump']:>6} {r['top_rating']:>6} {d:>6} "
               f"{str(r['date'])[:10]:>10}  "
               f"{str(r['meet_id']) + '/' + str(r['div_id']):>16}  "
-              f"{(r['course_name'] or '?')[:30]}")
+              f"{(r['course_name'] or '?')[:30]}"
+              + (f"  -- {r['meet_name'][:28]}" if r.get('meet_name') else ""))
 
     print(f"\n    jump/rated = athletes over the bar / athletes rated at all.")
     print(f"    A LOW `rated` next to a high `jump` is the worst case: most of")

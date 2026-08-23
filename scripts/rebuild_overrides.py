@@ -272,7 +272,22 @@ ANALYZE reb_gap;
 """
 
 
+# ⚠ A LITERAL % IN ANY OF THESE STRINGS IS A RUNTIME ERROR, NOT A TYPO.
+#   psycopg2 reads % as the start of a placeholder, so a SQL COMMENT saying
+#   "100% on one side" makes execute() raise "dict is not a sequence" -- an
+#   error message that names neither the string nor the character. Write
+#   percentages as words inside these, or double them.
+def _noBarePercent(name, sql):
+    import re
+    for m in re.finditer(r"%(?!\(|%)", sql):
+        raise AssertionError(
+            f"{name} contains a bare '%' at offset {m.start()}: "
+            f"{sql[max(0, m.start() - 40):m.start() + 10]!r}")
+
+
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
+    _noBarePercent("_PASS1_SQL", _PASS1_SQL)
+    _noBarePercent("_GAP_BODY", _GAP_BODY)
     # ! ALWAYS, NOT ONLY UNDER --as-if-wiped. _PASS1_SQL now falls back to
     #   this for a division's label distance, so it has to exist in both
     #   modes or every tfrrs division loses its label again. Same reader
@@ -398,7 +413,8 @@ LEFT   JOIN LATERAL (
     --   unanimity gate. The fault is found and then discarded.
     --
     --   Measured on 26359/0, Ox Bow Park, the JV Minutemen Classic: 22 rated
-    --   rows, field median gap +58.6, 100% on one side, bar 11.2. It passes
+    --   rows, field median gap +58.6, the whole field on one side, bar
+    --   11.2. It passes
     --   everything and dies here, because meet 26359 has 568 tfrrs rows and
     --   no `meets` row at all.
     --
