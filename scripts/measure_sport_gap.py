@@ -300,8 +300,27 @@ def _report(label, by_end):
     return d
 
 
-def _implications(d, bbar=-0.03924):
+def _implications(d, bbar=-0.03924, source="rating"):
     """What d means for bbar and the difficulties."""
+    # ⚠ ONLY --from rating IS AN ERROR. --from norm measures the raw XC-vs-TF
+    #   discrepancy in normalised time -- the thing the difficulty EXISTS to
+    #   correct -- so feeding it through this arithmetic reads a correct
+    #   measurement as a correction to itself and doubles the gap. It printed
+    #   "bbar -0.03924 -> -0.07802" once; that number means nothing.
+    if source != "rating":
+        print("\n  WHAT THIS MEANS\n")
+        print(f"    D = {d:+.5f} is the RAW XC-vs-TF discrepancy in normalised")
+        print(f"    time, with no difficulty applied. It is what the sport gap")
+        print(f"    exists to cancel, NOT an error in it.\n")
+        print(f"    The engine's bbar is {bbar:+.5f}. These should be close --")
+        print(f"    beta measures this same quantity -- so a large difference")
+        print(f"    would mean bbar is picking up something else.")
+        print(f"        difference {bbar - d:+.5f}\n")
+        print(f"    ★ SUBTRACT THIS RUN FROM THE --from rating RUN for the CELL")
+        print(f"      half: D(cell) = D(rating) - D(norm). That is the")
+        print(f"      correction the engine actually applies; comparing it to")
+        print(f"      the number above is what says whether it overshoots.\n")
+        return
     print("\n  WHAT THIS MEANS FOR THE ENGINE\n")
     print(f"    D = {d:+.5f} in log-rating. rating is proportional to "
           f"exp(eff), so a")
@@ -412,7 +431,10 @@ def _covariates(rows):
         print(f"    {pool:<10} {d:>9.5f} {d_xc:>7.0f} {d_tf:>7.0f} "
               f"{span:>7.3f} {ratio:>8.4f} {races:>11} "
               f"{sum(spans) / len(spans):>6.0f} "
-              f"{sum(lvl) / len(lvl):>7.1f}")
+              # ! MEANINGLESS UNDER --from norm, where `rating` is
+              #   1/normalized_time, and it read 0.0. A zero somebody has to
+              #   work out is not a measurement.
+              f"{(f'{sum(lvl) / len(lvl):.1f}' if max(lvl) > 1.0 else '--'):>7}")
         out.append((pool, d, span, ratio, len(rs)))
 
     print(f"\n    d_XC / d_TF   mean race distance in each sport, metres")
@@ -593,7 +615,7 @@ def main():
             _report(pool, _collect(pools[pool]))
 
     if d is not None:
-        _implications(d, args.bbar)
+        _implications(d, args.bbar, args.source)
     print()
     return 0
 
