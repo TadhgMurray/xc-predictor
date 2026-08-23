@@ -29,6 +29,7 @@ import sys
 import time
 import argparse
 import datetime
+import concurrent.futures as cf
 
 import psycopg2.extras
 
@@ -63,6 +64,46 @@ except ImportError as exc:
     )
 
 
+# ------------------------------------------------------------------ #
+#  THE PHASE CLOCK
+# ------------------------------------------------------------------ #
+#
+# ★ 112 MINUTES WITH NO BREAKDOWN IS NOT A MEASUREMENT. The 2026-08 run logged
+#   one number for the whole build and printed nothing between the last TF
+#   progress line and "swapping in", so the only way to find the cost was to
+#   guess at it. Profiled separately, the Python half of this build --
+#   prepareRow plus the COPY payload -- is 8 us/row, which is EIGHT minutes for
+#   60M rows. The other hundred are Postgres, and this is how the next run says
+#   which statement.
+_PHASES = []
+
+
+class phase:
+    """Time one named phase and remember it for the summary."""
+
+    def __init__(self, label):
+        self.label = label
+
+    def __enter__(self):
+        self.t0 = time.time()
+        return self
+
+    def __exit__(self, *exc):
+        _PHASES.append((self.label, time.time() - self.t0))
+        return False
+
+
+def phaseReport():
+    if not _PHASES:
+        return
+    total = sum(dt for _l, dt in _PHASES)
+    print("\n  WHERE THE TIME WENT")
+    for label, dt in _PHASES:
+        share = 100.0 * dt / total if total else 0.0
+        print(f"    {dt / 60:7.1f} min  {share:5.1f}%  {label}")
+    print(f"    {total / 60:7.1f} min          (phases; the rest is startup)")
+
+
 # Rows streamed per network round-trip. Big enough that the round-trip cost
 # disappears, small enough that a batch fits comfortably in memory.
 _FETCH_BATCH = 50_000
@@ -76,6 +117,12 @@ _COPY_BATCH = 200_000
 # (observed: speed_rating 7528 on a 20.6s time) and must never reach a board.
 _RATING_MIN = 20.0
 _RATING_MAX = 200.0
+
+# How many indexes to build at once. Each CREATE INDEX already uses up to
+# max_parallel_maintenance_workers on its own, so this multiplies rather than
+# replaces it -- 3 stays inside max_parallel_workers (8) with room for the
+# three leader processes.
+_INDEX_JOBS = 3
 
 
 # ------------------------------------------------------------------ #
@@ -1087,6 +1134,25 @@ def indexDefs(conn, like):
     return defs
 
 
+def analyze(conn, name):
+    """Fresh planner statistics, timed.
+
+    ★ NOT OPTIONAL, AND IT USED TO BE. A table this script CREATE'd has no
+      statistics at all: Postgres falls back to a 10-page, ~2,550-row guess
+      and plans against that. The next reader of ranking_results_new is
+      refreshAthleteSeason's aggregate over 56.6M rows, and the one after that
+      is the whole site.
+
+      It used to be the third statement inside _ATHLETE_SEASON_SQL -- i.e.
+      AFTER the aggregate that needed it.
+    """
+    with conn.cursor() as cur:
+        t0 = time.time()
+        cur.execute(f"ANALYZE {name}")
+        print(f"    [{time.time() - t0:7.1f}s] ANALYZE {name}")
+    conn.commit()
+
+
 def buildIndexes(conn, name, like):
     """Create the deferred indexes on the shadow, after the data is in.
 
@@ -1115,29 +1181,67 @@ def buildIndexes(conn, name, like):
         # swapping in a bare table and letting the site find out.
         print(f"  ⚠ NO INDEXES to build on {name}. The swapped-in table will "
               f"be scanned in full by every query that touches it.")
+        # ! STILL ANALYZE. A table this script created has NO statistics at
+        #   all, and the next reader is refreshAthleteSeason's aggregate.
+        analyze(conn, name)
         return
     print(f"  building {len(defs)} indexes on {name} (deferred until after "
-          f"the load)")
-    with conn.cursor() as cur:
-        # Session-scoped, for these index builds only. The default 64MB spills
-        # a sort over 61.6M rows to disk.
-        cur.execute("SET maintenance_work_mem = '2GB'")
-        for idxname, ddl in defs:
-            t0 = time.time()
-            # The shadow's own name for this index, derived not accumulated.
-            newname = (idxname if idxname.startswith(name)
-                       else idxname.replace(like, name, 1)
-                       if like in idxname else f"{name}_{idxname}")
-            sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
-            sql = sql.replace(f" ON {like} ", f" ON {name} ")
-            sql = sql.replace(f"INDEX {idxname} ",
-                              f"INDEX IF NOT EXISTS {newname} ")
-            sql = sql.replace(f"INDEX IF NOT EXISTS {idxname} ",
-                              f"INDEX IF NOT EXISTS {newname} ")
-            cur.execute(sql)
-            print(f"    [{time.time() - t0:7.1f}s] {newname[:60]}")
-        cur.execute(f"ANALYZE {name}")
-    conn.commit()
+          f"the load, {_INDEX_JOBS} at a time)")
+
+    def rename(idxname, ddl):
+        """The shadow's own name for this index, derived not accumulated."""
+        newname = (idxname if idxname.startswith(name)
+                   else idxname.replace(like, name, 1)
+                   if like in idxname else f"{name}_{idxname}")
+        sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
+        sql = sql.replace(f" ON {like} ", f" ON {name} ")
+        sql = sql.replace(f"INDEX {idxname} ",
+                          f"INDEX IF NOT EXISTS {newname} ")
+        sql = sql.replace(f"INDEX IF NOT EXISTS {idxname} ",
+                          f"INDEX IF NOT EXISTS {newname} ")
+        return newname, sql
+
+    # ★ ONE CONNECTION EACH, IN PARALLEL. Four indexes over 56.6M rows built
+    #   one after another is four full sorts in series, and the server sits
+    #   mostly idle through all of them: a single CREATE INDEX saturates
+    #   max_parallel_maintenance_workers (4) and nothing else.
+    #
+    #   They are independent -- different columns, same table, no shared
+    #   state -- so there is no ordering to preserve. psycopg2 releases the
+    #   GIL inside execute(), so threads are the right shape here; the work is
+    #   entirely on the server.
+    #
+    # ⚠ SAFE ONLY BECAUSE THIS IS A SHADOW. Nothing reads `name` until swapIn
+    #   renames it, so concurrent ACCESS EXCLUSIVE-taking DDL on it blocks
+    #   nobody. Do NOT reuse this shape against a live table -- use CREATE
+    #   INDEX CONCURRENTLY there, which is what ensure_ranking_indexes.py does.
+    #
+    # ! AND THE POOL IS ThreadedConnectionPool, checked -- see
+    #   scripts/database.py. A SimpleConnectionPool would corrupt here.
+    def build(job):
+        idxname, ddl = job
+        newname, sql = rename(idxname, ddl)
+        t0 = time.time()
+        with getConn() as c:
+            with c.cursor() as cur:
+                # Per-session, so each builder gets its own sort memory.
+                cur.execute("SET maintenance_work_mem = '2GB'")
+                cur.execute("SET max_parallel_maintenance_workers = 4")
+                cur.execute(sql)
+            c.commit()
+        return newname, time.time() - t0
+
+    jobs = min(_INDEX_JOBS, len(defs))
+    if jobs > 1:
+        with cf.ThreadPoolExecutor(max_workers=jobs) as pool:
+            for newname, dt in pool.map(build, defs):
+                print(f"    [{dt:7.1f}s] {newname[:60]}")
+    else:
+        for job in defs:
+            newname, dt = build(job)
+            print(f"    [{dt:7.1f}s] {newname[:60]}")
+
+    analyze(conn, name)
 
 
 def seedOtherSports(conn, keep_sports):
@@ -1202,9 +1306,13 @@ def swapIn(conn):
         conn.commit()
     print("  swapped. dropping the old copies...")
 
+    # The old ranking_results is ~23GB. Timed because a drop that size is not
+    # instant and it is the last thing between here and the next step.
+    t0 = time.time()
     with conn.cursor() as cur:
         cur.execute("DROP TABLE ranking_results_old, athlete_season_old")
     conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] dropped the old copies")
     print("  done -- the site was never served an empty board")
 
 
@@ -1308,10 +1416,33 @@ SELECT person_id, pool, sport, year,
        mode() WITHIN GROUP (ORDER BY grade)
 FROM {{load_table}} base
 GROUP BY person_id, pool, sport, year;
-
-ANALYZE {{load_table}};
-ANALYZE {{season_table}};
 """
+
+
+# ⚠ THE SORT THIS AGGREGATE CANNOT AVOID, AND THE MEMORY IT WAS NOT GIVEN.
+#
+#   percentile_cont and the three mode()s are ORDERED-SET aggregates. Postgres
+#   implements those only as GroupAggregate, so the plan is forced to sort all
+#   56.6M rows of the shadow by (person_id, pool, sport, year) first -- there
+#   is no HashAggregate available and no parallel plan available, whatever
+#   max_parallel_workers_per_gather says.
+#
+#   That sort carries speed_rating, race_date, state, school and grade along
+#   with the key. `school` alone averages ~25 bytes, so the sort is several GB
+#   -- against dbfast's session-wide work_mem of 256MB. Every run of this
+#   aggregate has therefore been a multi-pass external merge sort spilling
+#   gigabytes to disk, which is the shape of a step that takes an hour and
+#   prints nothing while it does.
+#
+# ! SET LOCAL, so it lasts exactly one transaction and dbfast's 256MB is back
+#   for everything after. And a LADDER, because a managed server may refuse
+#   the top of it -- the same reason tuneSession swallows its failures.
+#   4GB is the number the rest of this project already uses for a bulk sort
+#   (speed_ratings_db._tuneForBulkBuild sets maintenance_work_mem there), and
+#   at ~60 bytes a row a 56.6M-row sort is ~3.4GB -- so 4GB is the smallest
+#   value that keeps it in memory rather than on disk. The rest of the ladder
+#   is for a server that says no.
+_SEASON_WORK_MEM = ("4GB", "2GB", "1GB", "512MB")
 
 
 def refreshAthleteSeason(conn):
@@ -1326,10 +1457,25 @@ def refreshAthleteSeason(conn):
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON)
     with conn.cursor() as cur:
+        # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
+        #   _SEASON_WORK_MEM: this is the sort that decides the step.
+        for want in _SEASON_WORK_MEM:
+            try:
+                cur.execute(f"SET LOCAL work_mem = '{want}'")
+                print(f"    work_mem {want} for the group-by sort")
+                break
+            except Exception as exc:                      # noqa: BLE001
+                conn.rollback()
+                print(f"    (server refused work_mem {want}: "
+                      f"{str(exc).splitlines()[0]})")
+        t0 = time.time()
         cur.execute(sql)
+        print(f"    [{time.time() - t0:7.1f}s] GROUP BY -> {_LOAD_SEASON}")
         cur.execute(f"SELECT count(*) FROM {_LOAD_SEASON}")
         n = cur.fetchone()[0]
     conn.commit()
+
+    analyze(conn, _LOAD_SEASON)
     print(f"  athlete_season: {n:,} person-seasons")
     # ! AND ITS INDEXES. createShadow copies structure without them by design,
     #   and this call was missing -- so every run since swapped in a
@@ -1387,30 +1533,37 @@ def main():
         #   workers; the streaming cursors cannot use workers at all, which is
         #   a property of cursors rather than of this query. See dbfast.
         tuneSession(conn)
-        prepareGenderTemp(conn)
-        prepareXcTfrrsDistTemp(conn)
-        prepareTfStateTemp(conn)
+        with phase("temp indexes (gender, tfrrs distance, TF state)"):
+            prepareGenderTemp(conn)
+            prepareXcTfrrsDistTemp(conn)
+            prepareTfStateTemp(conn)
 
-        createShadow(conn, _LOAD_TABLE, "ranking_results")
-        seedOtherSports(conn, sports)
+        with phase("create shadow"):
+            createShadow(conn, _LOAD_TABLE, "ranking_results")
+            seedOtherSports(conn, sports)
 
         for sport in sports:
-            buildSport(conn, sport, args.since, stats)
-            conn.commit()
+            with phase(f"stream + COPY {sport}"):
+                buildSport(conn, sport, args.since, stats)
+                conn.commit()
 
         # ! AFTER THE LOAD, NOT BEFORE IT. createShadow deliberately leaves the
         #   indexes off so the 61.6M COPYed rows do not maintain them one row
         #   at a time. Built here, each is a sequential scan plus a sort, and
         #   refreshAthleteSeason below reads this table, so they have to exist
         #   before it runs.
-        buildIndexes(conn, _LOAD_TABLE, "ranking_results")
+        with phase("index ranking_results"):
+            buildIndexes(conn, _LOAD_TABLE, "ranking_results")
 
-        refreshAthleteSeason(conn)
-        swapIn(conn)
+        with phase("athlete_season"):
+            refreshAthleteSeason(conn)
+        with phase("swap in + drop old"):
+            swapIn(conn)
 
     elapsed = (datetime.datetime.now() - started).total_seconds()
     total = sum(v for k, v in stats.items() if k.endswith("_written"))
     print(f"\n  {total:,} rows in ranking_results")
+    phaseReport()
     print(f"  {elapsed / 60:.1f} minutes\n")
 
 
