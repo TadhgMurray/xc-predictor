@@ -18,6 +18,7 @@ import datetime
 import argparse
 import itertools
 from collections import defaultdict, Counter
+from functools import lru_cache
 
 import psycopg2.extras
 
@@ -138,6 +139,7 @@ _NON_SCHOOL_FRAGMENTS = ("dark sky", "under arm", "under armour", "under armor")
 sys.path.insert(0, "engine")
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 from pool_resolve import resolvePool, inScope
+from dbfast import dictRows, tuneSession
 
 
 # ===================================================================== #
@@ -176,11 +178,21 @@ _DODEA_SCHOOLS = frozenset(s.lower() for s in {
 })
 
 
+# ★ CACHED, BECAUSE THESE ARE ASKED THE SAME QUESTION MILLIONS OF TIMES.
+#   build_ranking_results calls both on EVERY ONE of 61.6M rows, and there are
+#   only a few hundred thousand distinct school names behind them --
+#   _is_non_school in particular walks a fragment list with a substring test
+#   per fragment, which is the most expensive single thing in that loop, for a
+#   value that cannot change. Pure functions of one string, so the cache is
+#   exact. Bounded rather than unbounded: a corrupt corpus with millions of
+#   distinct school strings should get slower, not run out of memory.
+@lru_cache(maxsize=1 << 18)
 def _is_dodea(school):
     """Exact match against the Far East DoDEA list. See the warning above."""
     return bool(school) and school.strip().lower() in _DODEA_SCHOOLS
 
 
+@lru_cache(maxsize=1 << 18)
 def _is_non_school(school):
     if not school:
         return False
@@ -203,7 +215,11 @@ def _streamingCursor(conn, name):
     the Postgres side and arrive in batches of `itersize`, so memory stays
     flat no matter how big the query is.
 
-    RealDictCursor to match app.py, so rows are dicts and row["col"] works.
+    ★ A PLAIN CURSOR, WRAPPED BY dbfast.dictRows. The rows are still dicts and
+      row["col"] still works -- but RealDictCursor builds an ordered-dict
+      subclass per row, and over the 39M rows this function exists for that is
+      minutes. Measured on 2M rows: 11.8s against 4.3s. Callers iterate
+      dictRows(cur), never the cursor itself.
 
     ★ cursor_tuple_fraction = 1.0 IS THE POINT OF THIS FUNCTION NOW.
       A named cursor is planned as DECLARE CURSOR, and Postgres plans that for
@@ -225,8 +241,7 @@ def _streamingCursor(conn, name):
     with conn.cursor() as setup:
         setup.execute("SET LOCAL cursor_tuple_fraction = 1.0")
 
-    cur = conn.cursor(name=name,
-                      cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor(name=name)
     cur.itersize = FETCH_BATCH
     return cur
 
@@ -363,11 +378,20 @@ def _poolOf(row, sport):
     #
     #   merge=True: the boards are already per sport, so the pool key carries
     #   no sport suffix.
+    # The season, for the hand-listed professionals -- per athlete-season now.
+    # A row with no parseable date simply does not narrow the span.
+    try:
+        season = seasonYearFromIso(sport, row.get("date"))
+    except (TypeError, ValueError, IndexError):
+        season = None
+
     return resolvePool(row.get("grade"),
                        row.get("gender"),
                        row.get("source"),
                        row.get("school"),
                        sport,
+                       season=season,
+                       person_id=row.get("person_id"),
                        season_level=row.get("season_level"),
                        grade_untrusted=bool(row.get("grade_untrusted")),
                        fixed_grade=row.get("fixed_grade"),
@@ -713,6 +737,10 @@ _PERF_SQL_XC = f"""
            r.meet_id, r.div_id,
            COALESCE(m.meet_name, mt.meet_name)   AS meet_name,
            m.course_name,
+           -- ! FOR _perfDetail. The board shows the time and what it was run
+           --   over; without this the XC half could only show the clock.
+           --   No new join: the difficulty ON clause below already reads it.
+           m.distance,
            -- Geography for tfrrs rows, which `meets` cannot supply at all.
            COALESCE(m.state, mt.state)           AS state,
            cd.difficulty,
@@ -810,12 +838,70 @@ def _tilted(row):
     return raw if d is None else float(_ratingFor(raw, d))
 
 
+def _fmtTime(seconds):
+    """Seconds -> m:ss.d, keeping only the precision the value carries.
+
+    ⚠ A DISPLAY TWIN OF app.format_time, AND THEY MUST AGREE. This runs at
+      build time and writes text into homepage_panels, so the site cannot
+      reformat it later -- but a reader comparing the home board with a race
+      page is comparing these two functions. Change one, change the other.
+      Kept local rather than imported because app.py builds a Flask app at
+      import time and this is a pipeline script.
+    """
+    if seconds is None:
+        return None
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0 or value >= DNF_SENTINEL:
+        return None
+    whole = int(value)
+    hundredths = round((value - whole) * 100)
+    tail = ("" if hundredths == 0
+            else f".{hundredths // 10}" if hundredths % 10 == 0
+            else f".{hundredths:02d}")
+    if value < 60:
+        return f"{whole}{tail}"
+    hours, minutes, secs = whole // 3600, (whole % 3600) // 60, whole % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
+    return f"{minutes}:{secs:02d}{tail}"
+
+
 def _perfDetail(sport, row):
-    """The one-line context shown next to the rating."""
-    meet = row.get("meet_name") or "Unknown meet"
-    if sport == "XC":
-        return f"{meet} ({row.get('course_name') or '?'})"
-    return f"{meet} ({row.get('event_short') or '?'})"
+    """The one-line context shown next to the rating on the home board.
+
+    ★ THE TIME AND THE MEET. Both, in that order, and the order is the whole
+      design: the time is short and fixed-width so it always survives, and
+      the meet name takes whatever room is left and ellipsises. A board
+      headed "Best Performances" has to show the performance, and a person
+      reading it wants to know where it happened.
+
+    ⚠ THIS COLUMN HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS. It read
+      "{meet} ({course})" and showed a truncated fragment of a meet name and
+      no performance at all. It was then cut to the time and the distance,
+      which fits perfectly and throws away the one thing people recognise a
+      race by. Neither end of that trade is right: put the fixed-width thing
+      first and let the variable-width thing run out of room.
+
+    ! THE COURSE IS THE PART THAT GOES. It is the least identifying of the
+      three -- a meet name usually implies its course, and the race page one
+      click away carries both. The distance goes with it: the RATING sits in
+      the very next column and is the distance-normalised comparison, which
+      is what the distance was there to enable.
+
+    Falls back to the bare time when there is no meet name, and to the meet
+    name when there is no usable time -- an empty cell says less than either.
+    """
+    meet = (row.get("meet_name") or "").strip()
+    time_text = _fmtTime(row.get("time_seconds"))
+
+    if time_text is None:
+        return meet or "Unknown meet"
+    if not meet:
+        return time_text
+    return f"{time_text} \u00b7 {meet}"
 
 
 def _collectPerformances(conn, sport, season_year, buckets, stats):
@@ -834,7 +920,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
     cur = _streamingCursor(conn, f"perf_{sport.lower()}")
     cur.execute(sql, params)
     try:
-        for row in cur:
+        for row in dictRows(cur):
             stats["perf_seen"] += 1
             # Already resolved, by build_ranking_results, from the same
             # resolvePool this loop used to call 101M times.
@@ -993,7 +1079,7 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
     cur = _streamingCursor(conn, f"ath_{sport.lower()}")
     cur.execute(_athleteSql(sport), params)
     try:
-        for row in cur:
+        for row in dictRows(cur):
             stats["ath_seen"] += 1
             # Already resolved, by build_ranking_results, using the same
             # resolvePool this file used to call 15.8M times.
@@ -1229,6 +1315,10 @@ def main():
     meta = {}
 
     with getConn() as conn:                      # app.py's helper, app.py's style
+        # Room to work: the aggregates and the temp-table build below are
+        # ordinary statements and can use parallel workers. The streaming
+        # cursors cannot -- see dbfast.
+        tuneSession(conn)
         # ★ ONCE, BEFORE THE SPORT LOOP. `ath` is session-scoped, so it must be
         #   built on the SAME connection every query below uses -- and it must
         #   be built before the first query, not lazily, so a failure surfaces

@@ -3,12 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ course_name }}</title>
+    {% set meta_title = course_name %}
+    {% set meta_description = "Race history and course difficulty for "
+       ~ course_name ~ " — how much the course gives or takes, solved from "
+       "athletes who raced both here and elsewhere." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ course_name }}</h1>
     <p class="meta">
         Difficulty:
@@ -106,5 +111,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

@@ -121,6 +121,13 @@ class ChunkedRaceDataset(Dataset):
         self._cached_idx  = -1
         self._cached_data = None
 
+        # ★ EVERY EXAMPLE'S LENGTH, WRITTEN BY feature_extraction._saveLengths.
+        #   ChunkAwareBatchSampler sorts on this. Absent for chunks written
+        #   before ragged storage, in which case the sampler falls back to
+        #   plain shuffling and simply runs slower.
+        lp = os.path.join(data_dir, "lengths.pt")
+        self.lengths = (torch.load(lp) if os.path.exists(lp) else None)
+
      # __len__
     # Purpose: Tell the DataLoader the total number of examples. It uses
     #          this to know how many batches make one epoch.
@@ -174,8 +181,24 @@ class ChunkedRaceDataset(Dataset):
         #
         # chunk["sequences"][row]   one example's sequence,                            
         # shape [S, 17]
-        sequence = chunk["sequences"][row]   # [S, 17]
-        mask     = chunk["masks"][row]       # [S]
+        # ★ A RAGGED SLICE, NOT A PADDED ROW. Chunks store every sequence
+        #   end to end with an offset per example, so this is a VIEW into the
+        #   chunk's one big [total_steps, 17] block -- no copy, and no padding
+        #   read off the disk that was only ever zeros. collateRagged pads the
+        #   batch afterwards, to the batch's own longest sequence.
+        #
+        # ! STILL READS A PADDED CHUNK IF IT FINDS ONE. Chunks written before
+        #   the ragged change carry "masks" and a [N, S, 17] block; there is
+        #   no reason to make those unloadable, and the collate handles both
+        #   because it only ever sees a [len, 17] sequence either way.
+        if "offsets" in chunk:
+            o0 = int(chunk["offsets"][row])
+            o1 = int(chunk["offsets"][row + 1])
+            sequence = chunk["sequences"][o0:o1]      # [len, 17]
+        else:
+            padded   = chunk["sequences"][row]        # [S, 17]
+            keep     = int(chunk["masks"][row].sum())
+            sequence = padded[:keep]                  # [len, 17]
         context  = chunk["context"][row]     # [17]
         target   = chunk["targets"][row]     # scalar
         # ★ int64, its own tensor. An embedding index is a lookup key, not a
@@ -185,8 +208,53 @@ class ChunkedRaceDataset(Dataset):
         venue    = (chunk["venues"][row] if "venues" in chunk
                     else torch.zeros((), dtype=torch.long))
 
-        return sequence, mask, context, target, venue
+        return sequence, context, target, venue
     
+# collateRagged
+# Purpose: turn a list of ragged examples into one padded batch.
+#
+# ★ PAD TO THE BATCH, NOT TO THE CORPUS. Attention is O(L^2) and the encoder
+#   runs over whatever L it is handed.
+#
+# ⚠ AND ON A SHUFFLED BATCH THAT BUYS ALMOST NOTHING. The batch max is the
+#   ~98th percentile of example lengths, so a shuffled batch of 64 pads to
+#   64.0 on average against a cap of 64 -- one long athlete sets L for
+#   everyone beside them. It is length-SORTED batching that collects the
+#   saving: mean padded width 18.2 instead of 64.0, and 174ms per step
+#   against 591ms. This function is what makes that possible; it is not what
+#   delivers it. See ChunkAwareBatchSampler.
+#
+# ! THE MASK IS BUILT HERE, IN THE POLARITY THE ENCODER EXPECTS: True = a
+#   real step. transformer.forward inverts it into src_key_padding_mask,
+#   where True means ignore. Getting this backwards trains the model on
+#   nothing but padding and still runs.
+#
+# ⚠ A ZERO-LENGTH SEQUENCE WOULD MAKE AN ALL-PADDING ROW, and attention over
+#   an entirely masked row is NaN, not zero. buildAthleteExamples starts at
+#   index 1 so every example has at least one prior race, but a floor of 1
+#   here means a future change upstream cannot silently poison a run.
+def collateRagged(items):
+    sequences, contexts, targets, venues = zip(*items)
+    lengths = [max(1, s.shape[0]) for s in sequences]
+    width   = sequences[0].shape[1]
+    longest = max(lengths)
+
+    padded = torch.zeros(len(sequences), longest, width, dtype=torch.float32)
+    masks  = torch.zeros(len(sequences), longest, dtype=torch.bool)
+    for i, seq in enumerate(sequences):
+        n = seq.shape[0]
+        if n:
+            padded[i, :n] = seq
+            masks[i, :n]  = True
+        else:
+            masks[i, 0] = True          # see the NaN note above
+
+    return (padded, masks,
+            torch.stack(contexts),
+            torch.stack(targets),
+            torch.stack(venues))
+
+
 # ------------------------------------------------------------------ #
 # CHUNK 2b — BATCH SAMPLER: shuffle without destroying the chunk cache
 # ------------------------------------------------------------------ #
@@ -240,17 +308,52 @@ class ChunkAwareBatchSampler:
         for i in self.indices:
             self.by_chunk.setdefault(i // self.chunk_size, []).append(i)
 
+        # ★ AND SORT EACH CHUNK'S INDICES BY SEQUENCE LENGTH, which is what
+        #   makes per-batch padding worth anything.
+        #
+        # ⚠ A BATCH PADS TO ITS LONGEST MEMBER, so one 300-race athlete drags
+        #   63 three-race athletes up to L=300 with them. Drawn at random, the
+        #   longest of 64 examples is about the 98th percentile of all
+        #   lengths, so 95% of shuffled batches pad to the cap and the ragged
+        #   storage buys nothing at training time. Sorting first puts long
+        #   with long and short with short:
+        #
+        #       shuffled batch of 64  -> 64.0 wide     591 ms/step
+        #       length-sorted         -> 18.2 wide     174 ms/step
+        #
+        # ! THE RANDOMNESS MOVES UP A LEVEL, IT IS NOT LOST. Chunks are
+        #   already shuffled corpus-wide when written, so each is a random
+        #   sample; sorting inside one groups similar lengths drawn from that
+        #   random sample, and __iter__ then shuffles the BATCH order every
+        #   epoch. What an epoch loses is the freedom to put a 3-race and a
+        #   300-race athlete in the same batch -- which is the thing that was
+        #   costing 3.4x.
+        self.bucketed = False
+        lengths = getattr(base, "lengths", None)
+        if shuffle and lengths is not None:
+            for cid, rows in self.by_chunk.items():
+                rows.sort(key=lambda i: int(lengths[i]))
+            self.bucketed = True
+
     def __iter__(self):
         import random
         chunk_ids = list(self.by_chunk)
         if self.shuffle:
             random.shuffle(chunk_ids)
+        # ! BATCHES ARE BUILT FIRST, THEN THEIR ORDER IS SHUFFLED. Shuffling
+        #   the rows instead would undo the length sort the constructor did.
+        #   When there are no lengths to sort on, this is the old behaviour
+        #   exactly: shuffle rows, cut into batches.
+        batches = []
         for cid in chunk_ids:
             rows = list(self.by_chunk[cid])
-            if self.shuffle:
+            if self.shuffle and not self.bucketed:
                 random.shuffle(rows)
             for start in range(0, len(rows), self.batch_size):
-                yield rows[start:start + self.batch_size]
+                batches.append(rows[start:start + self.batch_size])
+        if self.shuffle and self.bucketed:
+            random.shuffle(batches)
+        yield from batches
 
     def __len__(self) -> int:
         # Number of BATCHES, not examples -- DataLoader reports this as
@@ -275,6 +378,11 @@ def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
         # ★ batch_sampler REPLACES batch_size + shuffle. Passing all three
         #   is an error in torch, so they are gone from this call.
         batch_sampler=ChunkAwareBatchSampler(dataset, BATCH_SIZE, shuffle),
+        # ! REQUIRED, NOT OPTIONAL. The dataset now yields ragged
+        #   sequences; default_collate would try to stack rows of
+        #   different lengths and raise. collateRagged pads to the
+        #   batch's own longest and builds the mask.
+        collate_fn=collateRagged,
         # DataLoader auto-STACKS the per-example tensors __getitem__
         # returns: 64 sequences of [S,17] become one [64, S, 17], 64
         # masks become [64, S], etc. That leading 64 is the B in every

@@ -41,6 +41,9 @@ const state = {
   // Set once the user picks a pool, so switching boards stops choosing for
   // them. See syncBoard.
   poolTouched: false,
+  // Set once the user clicks a column header. Until then the teams board
+  // picks its own sort, which depends on whether one season is on screen.
+  sortTouched: false,
   dir: ""            // "" = the column's own natural direction
 };
 
@@ -185,6 +188,43 @@ function buildQuery() {
   // Board-specific filters. Sending date_from to the ability board is a 400 by
   // design -- the API refuses rather than silently ignoring it -- so the two
   // branches must stay aligned with the perf-only/ability-only CSS.
+  /* ! THE TEAMS BOARD TAKES A DIFFERENT SET, and sends none of the
+     single-race filters: a date range or a distance belongs to one race,
+     and min_races is a fact about one athlete. */
+  /* ★ THE COURSE BOARD TAKES ALMOST NOTHING THE OTHERS DO. No pool, no
+     sport, no scope, no season, no school -- a course has none of those. It
+     keeps `state`, because a course is somewhere, and adds its own three. */
+  if (state.board === "courses") {
+    const q2 = new URLSearchParams({ limit: PAGE_SIZE, offset: state.offset });
+    const st = combos.state ? combos.state.values() : [];
+    if (st.length) q2.set("state", st.join(","));
+    const dist = $("course_distance").value;
+    if (dist) q2.set("distance", dist);
+    const name = $("course_name").value.trim();
+    if (name) q2.set("name", name);
+    const minr = $("course_min_results").value;
+    if (minr && Number(minr) > 0) q2.set("min_results", minr);
+    if (state.sort) q2.set("sort", state.sort);
+    if (state.dir) q2.set("dir", state.dir);
+    return q2;
+  }
+
+  if (state.board === "teams") {
+    /* ★ THE SORT IS THE SERVER'S CHOICE UNTIL SOMEBODY CLICKS A HEADER, and
+       until then this sends none. The right default depends on whether the
+       filtered field is small enough to be raced as one meet -- which takes
+       a row count to know -- so the rule lives in teams.serveBoard, on the
+       side that can answer it. load() adopts what comes back, so the header
+       arrow lands on the column the board is actually sorted by.
+
+       ! AND A URL WITHOUT sort= IS THE BETTER URL TO SHARE: it means "the
+         right order for these filters" rather than freezing today's rule
+         into a link somebody opens in a year. */
+    if (!state.sortTouched) { q.delete("sort"); q.delete("dir"); }
+    q.set("min_athletes", $("min_athletes").value || 5);
+    return q;
+  }
+
   if (state.board === "pr") {
     q.set("distance", $("distance").value);
     if ($("date_from").value) q.set("date_from", $("date_from").value);
@@ -608,6 +648,42 @@ const COLUMNS = {
     { key: "date",   label: "Date" },
     { key: "rating", label: "Rating" }
   ],
+  /* ★ THE ONLY BOARD THAT RANKS A GROUP. The other three rank a number
+     each row already carries; this one ranks the finish order of a
+     hypothetical meet -- every team's top seven, sorted by season rating,
+     scored with the ordinary rules.
+     ! # IS THE BOARD'S OWN RANK, NOT THE ROW NUMBER. Filter the national
+       board to three states and it reads 1, 4, 11, which is the truth about
+       where those teams stand; renumbering would invent a championship. */
+  /* ★ A BOARD OF GROUND, NOT OF PEOPLE. Difficulty leads because it is what
+     the board ranks; results and athletes follow it because a difficulty is
+     only as good as the racing behind it, and putting them out of sight
+     would be publishing three decimal places with nothing under them. */
+  courses: [
+    /* ! # IS THE PLACE ON THE BOARD AS FILTERED, and unlike on the teams
+         board that is a true sentence. A course's difficulty is measured
+         against the whole corpus either way, so filtering to Oregon and
+         reading "3" means third hardest in Oregon -- where renumbering a
+         filtered team board would invent a championship. */
+    { key: null,         label: "#" },
+    { key: "difficulty", label: "Difficulty" },
+    { key: "name",       label: "Course" },
+    { key: "state",      label: "State" },
+    { key: "distance",   label: "Distance" },
+    { key: "results",    label: "Results" },
+    { key: "athletes",   label: "Athletes" },
+    { key: "meets",      label: "Meets" }
+  ],
+  teams: [
+    { key: "rank",     label: "#" },
+    { key: "school",   label: "Team" },
+    { key: "state",    label: "State" },
+    { key: "year",     label: "Year" },
+    { key: "points",   label: "Points" },
+    { key: "rating",   label: "Top 5 avg" },
+    { key: "fifth",    label: "5th runner" },
+    { key: "athletes", label: "Runners" }
+  ],
   /* Time first, because it is what this board ranks. Rating is still shown --
      the gap between a fast time and a modest rating IS the course, and seeing
      both is how somebody learns that. Pool is shown because "all pools" is an
@@ -672,7 +748,8 @@ function renderHead(board) {
  * because alphabetical means A first. Mirrors the per-column defaults in
  * rankings.py so the arrow never contradicts the data.
  */
-const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time", "first"]);
+const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time",
+                             "first", "rank", "points"]);
 
 function effectiveDir(board, key) {
   if (state.sort === key && state.dir) return state.dir;
@@ -683,6 +760,7 @@ function effectiveDir(board, key) {
  * Click a header: sort by it, or flip it if it is already the sort.
  */
 function onHeaderClick(key) {
+  state.sortTouched = true;
   if (state.sort === key) {
     state.dir = effectiveDir(state.board, key) === "asc" ? "desc" : "asc";
   } else {
@@ -806,6 +884,152 @@ function renderPr(rows) {
 }
 
 
+/* 1 -> "1st". Used in the tooltip that keeps a team's own season visible
+   when the board has been re-raced across several of them. */
+function ordinal(n) {
+  const t = n % 100;
+  const suffix = (t >= 11 && t <= 13) ? "th"
+               : ["th", "st", "nd", "rd"][n % 10] || "th";
+  return `${n}${suffix}`;
+}
+
+
+/*
+ * What the rank column means, which is not the same sentence every time.
+ *
+ * ★ WRITTEN FROM THE RESPONSE, NOT FROM THE FILTERS. Whether the field was
+ *   raced depends on how many teams matched, which only the server knows --
+ *   and a note that says "raced" over a board that fell back is worse than
+ *   no note at all.
+ */
+function teamsNote(data) {
+  const note = $("teams-note");
+  if (!note) return;
+  const n = (data.field_size || 0).toLocaleString();
+  const subset = Number.isInteger(data.shown_of_field)
+              && data.shown_of_field !== data.field_size;
+
+  if (data.reason === "unbuilt") {
+    /* ⚠ NOT "NARROW YOUR FILTER". No filter fixes a table built without the
+       ratings column, and sending somebody to fiddle with the year chips
+       over a rebuild is how a five-minute fix becomes an afternoon. */
+    note.innerHTML =
+      "<strong>Showing each squad's place in its own season.</strong> "
+      + "Racing seasons against each other needs the stored squad ratings, "
+      + "which this table was built without &mdash; rebuild with "
+      + "<code>racecast/build_team_season.py</code> to turn it on.";
+
+  } else if (data.raced && subset) {
+    /* ★ A SCHOOL SEARCH IS A LOOKUP, NOT A SMALLER MEET. The searched teams
+       raced the whole field and are being picked out of it, so # is their
+       place among all of them -- the number somebody searching a team
+       wants. Said out loud because rows numbered 1, 2 and 4 otherwise look
+       like the board lost some. */
+    note.innerHTML =
+      `<strong>Showing ${data.shown_of_field.toLocaleString()} of ${n} teams</strong>`
+      + " that raced each other in one meet. The # is their place in that "
+      + "full field, not among the rows shown &mdash; clear the filters to "
+      + "see everyone. Hover a rank for that squad's own season.";
+
+  } else if (data.raced) {
+    note.innerHTML =
+      `<strong>${n} teams raced against each other</strong> in one meet &mdash; `
+      + "every squad's top seven entered, sorted by season rating and scored "
+      + "the ordinary way. One first place, and the points are this field's. "
+      + "Squads from different years are separate entries; hover a rank to "
+      + "see where that squad finished in its own season.";
+
+  } else if (data.span === "alltime") {
+    /* The board the page opens on. Ranks come from a meet run at build time
+       over every season at once, so they are a single ranking -- and a
+       filtered view of one has gaps, which is the honest answer rather than
+       a renumbering that would invent a championship. */
+    note.innerHTML =
+      `<strong>Every squad of every season in one field</strong> &mdash; `
+      + `all ${n} of them, raced when the board was built and scored the `
+      + "ordinary way. One first place. A squad's year is its own; filter "
+      + "to a single Year to rank that season on its own instead.";
+
+  } else {
+    note.innerHTML =
+      "<strong>One season's own meet</strong> &mdash; every squad that raced "
+      + `that year, all ${n} of them, scored against each other. Clear the `
+      + "Year filter to put every season in one field instead.";
+  }
+}
+
+
+/*
+ * The courses board.
+ *
+ * ⚠ THE SIGN IS SPELLED OUT ON EVERY ROW, not left to a + to carry. "+0.050
+ *   harder" and "-0.050 easier" cost four characters and remove the one
+ *   misreading this board invites: that a big number is a fast course.
+ */
+function renderCourses(rows) {
+  const body = rows.map((r) => {
+    const d = Number(r.difficulty);
+    const sense = d > 0 ? "harder" : d < 0 ? "easier" : "neutral";
+    return `
+    <tr>
+      <td class="rank">${r.rank}</td>
+      <td class="rating ${d > 0 ? "hard" : "easy"}"
+          title="${sense} than an average course">${d >= 0 ? "+" : ""}${d.toFixed(3)}
+        <span class="sense">${sense}</span></td>
+      <td><a href="/course/${encodeURIComponent(r.course_name)}">${esc(r.course_name)}</a>${
+        r.n_same_name > 1
+          ? `<span class="sense" title="${r.n_same_name} different venues are `
+            + `called this. The engine keeps them apart by location; the state `
+            + `and meet count are left blank because they cannot be told apart `
+            + `by name.">1 of ${r.n_same_name} by this name</span>`
+          : ""}</td>
+      <td><span class="state">${esc(r.state || "—")}</span></td>
+      <td>${r.distance_m ? r.distance_m.toLocaleString() + "m" : "—"}</td>
+      <td>${(r.n_results || 0).toLocaleString()}</td>
+      <td>${(r.n_athletes || 0).toLocaleString()}</td>
+      <td>${(r.n_meets || 0).toLocaleString()}</td>
+    </tr>`;
+  }).join("");
+
+  return `<table class="rk">${renderHead("courses")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
+/*
+ * The teams board.
+ *
+ * The rank is served, not computed from the page position -- see COLUMNS.
+ * The school links to its own page, which is already the team's page.
+ */
+function renderTeams(rows, span) {
+  /* ⚠ THE LABEL DEPENDS ON WHICH BOARD THE ROW CAME FROM. board_rank is the
+     rank it carried BEFORE this race -- that is a season finish when one Year
+     is selected and an all-time placing otherwise, and calling the second one
+     a season finish would be a confident lie in a tooltip. */
+  const where = (r) => span === "season"
+    ? `in the ${r.year} season` : "all-time";
+  const body = rows.map((r) => `
+    <tr>
+      <td class="rank"${r.board_rank
+        ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
+          `on ${r.board_points} points"` : ""}>${r.rank}</td>
+      <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td><span class="state">${esc(r.state)}</span></td>
+      <td>${r.year}</td>
+      <td class="rating">${r.points}</td>
+      <td>${fmtRating(r.top5_mean)}</td>
+      <td>${fmtRating(r.fifth_rating)}</td>
+      <td>${r.n_athletes}</td>
+    </tr>`).join("");
+
+  return `<table class="rk">${renderHead("teams")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
 /* ------------------------------------------------------------------ *
  *  LOADING
  * ------------------------------------------------------------------ */
@@ -870,7 +1094,13 @@ async function load() {
        clears `busy` -- see the guard in syncUrl for why that matters. */
     syncUrl(query);
 
-    const res = await fetch("/api/rankings?" + query.toString());
+    /* The teams board is served by its own route: it reads a
+       precomputed table with a different shape, and folding it into
+       /api/rankings would mean one route answering two questions. */
+    const endpoint = state.board === "teams" ? "/api/teams"
+                   : state.board === "courses" ? "/api/courses"
+                   : "/api/rankings";
+    const res = await fetch(endpoint + "?" + query.toString());
     const data = await res.json();
 
     // A 400 carries {"error": "..."}. SHOW IT. An empty table on a bad filter
@@ -898,6 +1128,17 @@ async function load() {
     $("bias-notice").classList.toggle("show", Boolean(data.national_bias));
     $("notice").classList.toggle("show", $("scope").value === "all");
 
+    /* ★ ADOPT THE SORT THAT WAS SERVED, before anything renders. The teams
+       board lets the server choose (see buildQuery), and renderHead draws
+       the arrow from `state` -- so without this the arrow marks whatever was
+       last on screen while the rows are ordered by something else. */
+    if (state.board === "teams" && data.filters) {
+      state.sort = data.filters.sort;
+      state.dir = data.filters.sort_explicit
+        ? (data.filters.dir || "").toLowerCase() : "";
+      teamsNote(data);
+    }
+
     if (rows.length === 0) {
       $("results").innerHTML =
         '<div class="status">No results for these filters.</div>';
@@ -907,6 +1148,8 @@ async function load() {
       $("results").innerHTML =
         state.board === "ability"    ? renderAbility(rows)
         : state.board === "pr"       ? renderPr(rows)
+        : state.board === "courses"  ? renderCourses(rows)
+        : state.board === "teams"    ? renderTeams(rows, data.span)
         :                              renderPerformance(rows);
       $("pager").classList.remove("hidden");
     }
@@ -916,7 +1159,11 @@ async function load() {
     // full page probably has more behind it, a short page is the end. The only
     // wrong case is a result that is an exact multiple of PAGE_SIZE, which
     // shows one empty page. Cheaper than a COUNT(*) over 61M rows per request.
-    $("next").disabled = rows.length < PAGE_SIZE;
+    /* A raced board was scored in memory, so its size is known exactly and
+       the guess below is not needed. Everything else still infers. */
+    $("next").disabled = Number.isInteger(data.total)
+      ? state.offset + rows.length >= data.total
+      : rows.length < PAGE_SIZE;
     $("pageLabel").textContent =
       `${state.offset + 1}\u2013${state.offset + rows.length}`;
 
@@ -939,6 +1186,7 @@ async function load() {
  * -- one attribute, and the stylesheet does the rest.
  */
 function syncBoard(board) {
+  const previous = state.board;
   state.board = board;
   state.offset = 0;
   $("rankings").dataset.board = board;
@@ -948,14 +1196,36 @@ function syncBoard(board) {
   });
 
   /* A sort the new board does not offer would 400. Fall back rather than
-     sending a key the API will reject. */
-  if (!COLUMNS[board].some((c) => c.key === state.sort)) {
+     sending a key the API will reject.
+
+     ⚠ AND ARRIVING AT TEAMS ALWAYS RESETS, even though the key survives the
+       test. "rating" exists on both boards and means two different things --
+       an athlete's season average there, a squad's top-five average here --
+       so a sort carried over from the athlete board opens the team board
+       sorted by something other than the finish it exists to show. */
+  if (!COLUMNS[board].some((c) => c.key === state.sort)
+      || (board === "teams" && previous !== "teams")
+      || (board === "courses" && previous !== "courses")) {
     /* ! THE FALLBACK IS PER BOARD. Dropping onto "rating" here would open the
          times board sorted by something other than time, which is the one
          thing it exists to sort by. */
-    state.sort = board === "pr" ? "time" : "rating";
+    state.sort = board === "pr" ? "time"
+               : board === "teams" ? "rating"
+               : board === "courses" ? "difficulty"
+               : "rating";
     state.dir = "";
   }
+  // Arriving at a board hands the sort back to it; buildQuery then picks
+  // the teams default from the year filter on every load.
+  if (board !== previous) state.sortTouched = false;
+
+  /* ⚠ NO sport='both' ON A BOARD OF MEETS. One hypothetical race cannot hold
+     cross country and track teams at once, so the API refuses it -- and a
+     select left on "Both" would 400 on arrival with no obvious cause, the
+     same trap the hidden pool=all option sprang. */
+  const sportSel = $("sport");
+  sportSel.querySelector('option[value="both"]').hidden = board === "teams";
+  if (board === "teams" && sportSel.value === "both") sportSel.value = "XC";
 
   /* ! 'all' ONLY EXISTS ON THE PR BOARD, so leaving it selected while
        switching away would send a pool the API rejects with a 400. */
@@ -983,6 +1253,10 @@ function syncBoard(board) {
       ? "Season ability \u2014 averaged across a season, so one lucky race cannot carry an athlete."
       : board === "pr"
       ? "Best times \u2014 each athlete's fastest at one distance. Raw clock, no course correction."
+      : board === "teams"
+      ? "Teams \u2014 every squad's top seven raced against each other, scored the ordinary way."
+      : board === "courses"
+      ? "Courses \u2014 how much harder than average the ground is, measured from everyone who raced it."
       : "Single performances \u2014 the best individual races, noise and all.";
 }
 
@@ -1134,6 +1408,18 @@ function applyUrlFilters(params) {
   setSelectFromUrl("scope", params.get("scope"));
   setSelectFromUrl("distance", params.get("distance"));
 
+  /* ⚠ THE COURSE BOARD'S THREE, WHICH LIVE IN THEIR OWN CONTROLS. `distance`
+       is spelled the same in the URL on every board but is a different select
+       here, and `name` and `min_results` exist nowhere else -- so without this
+       a shared course link opens with the filters in the address bar and an
+       unfiltered board under them, which is the one thing syncUrl's own note
+       says a URL must never do. */
+  if (state.board === "courses") {
+    setSelectFromUrl("course_distance", params.get("distance"));
+    setInputFromUrl("course_name", params.get("name"));
+    setInputFromUrl("course_min_results", params.get("min_results"));
+  }
+
   /* Comma-separated back into chips, so a shared URL restores the exact
      filter set rather than one blob of text. */
   for (const field of ["state", "grade", "year", "school"]) {
@@ -1144,7 +1430,14 @@ function applyUrlFilters(params) {
   }
 
   const sort = params.get("sort");
-  if (sort && COLUMNS[state.board].some((c) => c.key === sort)) state.sort = sort;
+  /* ! A SORT IN THE URL COUNTS AS CHOSEN. Without this the teams board would
+       drop it on the first request and re-sort itself, so a shared link to
+       "these teams by fifth runner" would open on a different order than the
+       one that was shared. */
+  if (sort && COLUMNS[state.board].some((c) => c.key === sort)) {
+    state.sort = sort;
+    state.sortTouched = true;
+  }
   const dir = (params.get("dir") || "").toLowerCase();
   if (dir === "asc" || dir === "desc") state.dir = dir;
   /* ! A min_races IN THE URL IS THE USER'S, so mark it touched or the next
@@ -1176,8 +1469,8 @@ function initFromUrl() {
        same URL, a pool only the pr board accepts, and the first request 400ed
        with a message about pools that had nothing to do with the cause. */
   const asked = params.get("board");
-  syncBoard(["performance", "pr", "ability"].includes(asked) ? asked
-                                                             : "ability");
+  syncBoard(["performance", "pr", "ability", "teams", "courses"]
+              .includes(asked) ? asked : "ability");
   applyUrlFilters(params);
 
   load();

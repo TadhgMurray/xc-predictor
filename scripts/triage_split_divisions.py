@@ -44,7 +44,61 @@ sys.path.insert(0, "scripts")
 from database import getConn, initPool
 
 _TABLE = {"XC": "results", "TF": "results_tf"}
-_B = {"XC": 1.00, "TF": 1.10}          # distance-law exponent stand-ins (7/12 doc)
+
+# ★ THE LABEL DISTANCE, FROM WHEREVER IT ACTUALLY LIVES.
+#
+#   This tool used to read the label out of _DISTANCE_OVERRIDES only, and skip
+#   any division without one -- "this lane is for overridden zoo divisions".
+#   That was true when the zoo WAS the overridden set. propose_distances
+#   --merged now finds merged divisions across the whole corpus, and 222 of
+#   the 320 it verified have no override at all: they are merged at their
+#   SCRAPED distance. Skipping those left the tool unable to fix the cases it
+#   was built for.
+#
+# ⚠ THE ORDER MATTERS AND IT IS THE BACKFILL'S ORDER. A hand-written override
+#   beats the scraped column, because that is what normalisation used, and the
+#   swing being inverted here was measured against exactly that number. Read
+#   them in any other order and every implied distance is wrong by their ratio.
+#
+# ! tfrrs KEEPS ITS DISTANCE IN A JSON BLOB keyed by div_id as a STRING, and
+#   every college cross country meet is tfrrs. Without this half, the college
+#   side of the sport reports "no distance on file" and is skipped.
+_LABEL_SQL = {
+    "XC": """
+        SELECT COALESCE(
+            (SELECT m.distance FROM meets m
+              WHERE m.meet_id = %(meet)s AND m.div_id = %(div)s
+                AND m.distance IS NOT NULL LIMIT 1),
+            (SELECT (mt.division_distances -> %(divtext)s ->> 'distance')::float
+               FROM meets_tfrrs mt
+              WHERE mt.meet_id = %(meet)s AND mt.sport = 'XC' LIMIT 1)
+        )
+    """,
+    # Track carries its distance in the event name, not a column, and this
+    # tool has no event parser. TF divisions still need an override.
+    "TF": None,
+}
+
+
+def labelDistance(cur, sport, meet, div, overrides):
+    """(metres, where_it_came_from) for a division, or (None, why not)."""
+    pinned = overrides.get((meet, div))
+    if pinned:
+        return float(pinned), "dist_override"
+    sql = _LABEL_SQL.get(sport)
+    if sql is None:
+        return None, "no override, and TF has no distance column to fall back on"
+    cur.execute(sql, {"meet": meet, "div": div, "divtext": str(div)})
+    row = cur.fetchone()
+    if row and row[0]:
+        return float(row[0]), "the distance tables"
+    return None, "no distance on file anywhere"
+# ⚠ THE DISTANCE-LAW EXPONENT, AND XC'S USED TO BE 1.00. The normaliser uses
+#   K = 1.06 everywhere else -- propose_distances.K, audit_overrides.K, the
+#   anchor arithmetic -- so a 1.00 here made this tool disagree with every
+#   other estimator in the project. TF's true exponent is per pool (1.06-1.22
+#   fitted); 1.10 is the stand-in it has always used.
+_B = {"XC": 1.06, "TF": 1.10}
 
 _SPIKE = 15.0                          # |gap%| beyond which a row is "spiked"
 _SNAP_TOL = 0.06                       # 6% snap gate, same as pass-2 triage
@@ -72,6 +126,49 @@ _WINNER_FLOOR = 230.0
 _TAIL_CEIL = 1020.0
 _MILE = 1609.34
 
+# ⚠ THE RAILS ONLY SEE THE EXTREMES, so "sane" has been printed over groups
+#   that are plainly not one race. Two more shape tests on the SAME pace
+#   numbers physics already computes -- they cost nothing and they separate a
+#   pin worth trusting from a pin worth checking.
+#
+# ! A GROUP WITH NO SPREAD AT ALL IS DUPLICATED TIMES, NOT A RACE. Five to
+#   fourteen finishers never share a pace to three digits:
+#
+#       48570/207175   14 rows, pace 8.75-8.75 min/mi
+#       142354/596509   8 rows, pace 5.75-5.76
+#       221706/887270   7 rows, pace 6.08-6.09
+#       11784/0         6 rows, pace 6.76-6.77
+#       159142/661129   5 rows, pace 5.93-5.94
+#
+#   Whatever distance is pinned onto a placeholder time is meaningless, so
+#   these are refused rather than flagged.
+_FLAT_SPREAD = 1.02
+
+# ! AND A GROUP SPANNING MORE THAN 2x IS TOO BROAD TO BE ONE RACE -- flagged,
+#   not refused, because a middle-school open race with stragglers can get
+#   close. 201083/807557 pinned 49 rows spanning 6.73-16.36 min/mi (2.4x) and
+#   the line called it sane.
+_WIDE_SPREAD = 2.0
+
+# ⚠ AND THE TEST IS NOT "ARE THE CLEAN ROWS A MINORITY". That was the first
+#   version of this flag and it fired on the divisions per-row pinning handles
+#   BEST. 9705/0 holds three races -- 44 rows at 5000m, 65 at its 6000m label,
+#   33 at 7000m -- so its clean share is 44% by construction, and nothing is
+#   wrong with the label: it describes the largest race in the division.
+#
+#   What matters is whether the label's own race is still the MAIN one. If a
+#   subgroup that ran something else outnumbers the rows that match the label,
+#   the label is describing a minority race and the division needs a new
+#   distance, not pins hung off a small reference:
+#
+#       9705/0   clean 65   biggest anomaly 44   -- label is the main race, fine
+#       5803/0   clean  7   biggest anomaly 16   -- label describes 7 of 38
+#       8614/0   clean  2   biggest anomaly  7   -- pins hung off two rows
+#
+#   propose_distances flags the same condition from the other side with its
+#   `!` marker, and for the same reason.
+_LABEL_MINOR = 1.0                     # flag when biggest anomaly / clean > this
+
 
 # ================================================================== #
 # CHUNK 1 -- EVIDENCE: per-row gaps WITH result ids and raw times
@@ -80,15 +177,46 @@ _MILE = 1609.34
 def _rows(cur, table, meet, div):
     """Same population as the classifier/--dump, plus result_id and raw time
     so verdicts land on rows and physics can see the clock."""
+    # ★ THE SAME RATING EXPRESSION --merged USES, FALLBACK AND ALL. Requiring
+    #   speed_rating > 0 here made this tool mute on 63 of the 222 divisions
+    #   --merged had just handed it -- and every one of those 63 reported the
+    #   SAME reason, "results, none rated", over fields of 19 to 308 runners.
+    #   That was not 63 edge cases, it was one expression.
+    #
+    #   propose_distances reads COALESCE(speed_rating, k / normalized_time),
+    #   where k is the athlete's own median of speed_rating * normalized_time.
+    #   A division whose rows were never rated still HAS normalized times, and
+    #   an athlete who races anywhere else has a k, so the row's rating can be
+    #   reconstructed on exactly the scale the comparison needs. Reading it any
+    #   other way meant one tool could see a division and the other could not.
+    #
+    # ! THE REFERENCE STAYS ON REAL RATINGS. Only the rows HERE are
+    #   reconstructed; own_med is still the athlete's median speed_rating at
+    #   other meets, which is what --merged's `elsewhere` does too. Rebuilding
+    #   both sides from the same k would compare a number with itself.
     cur.execute(f"""
-        WITH here AS (
-            SELECT r.result_id, r.time_seconds,
+        WITH raw AS (
+            SELECT r.result_id, r.time_seconds, r.date,
                    COALESCE(r.person_id, r.athlete_id) AS ident,
-                   r.speed_rating AS sr_here, r.date
+                   r.speed_rating, r.normalized_time
             FROM {table} r
             WHERE r.meet_id = %s AND r.div_id = %s
-              AND r.speed_rating > 0
               AND COALESCE(r.person_id, r.athlete_id) IS NOT NULL
+        ), scale AS (
+            SELECT COALESCE(r2.person_id, r2.athlete_id) AS ident,
+                   percentile_cont(0.5) WITHIN GROUP
+                       (ORDER BY r2.speed_rating * r2.normalized_time) AS k
+            FROM {table} r2
+            WHERE COALESCE(r2.person_id, r2.athlete_id)
+                      IN (SELECT ident FROM raw)
+              AND r2.speed_rating > 0 AND r2.normalized_time > 0
+            GROUP BY 1
+        ), here AS (
+            SELECT w.result_id, w.time_seconds, w.ident, w.date,
+                   COALESCE(w.speed_rating,
+                            s.k / NULLIF(w.normalized_time, 0)) AS sr_here
+            FROM raw w
+            LEFT JOIN scale s ON s.ident = w.ident
         )
         SELECT h.result_id, h.time_seconds, h.sr_here,
                (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY r2.speed_rating)
@@ -96,6 +224,7 @@ def _rows(cur, table, meet, div):
                 WHERE COALESCE(r2.person_id, r2.athlete_id) = h.ident
                   AND r2.speed_rating > 0 AND r2.date <> h.date) AS own_med
         FROM here h
+        WHERE h.sr_here > 0
     """, (meet, div))
     out = []
     for rid, t, sr, om in cur.fetchall():
@@ -104,18 +233,98 @@ def _rows(cur, table, meet, div):
     return out
 
 
+# _whyEmpty
+# Purpose : say why a division produced nothing, instead of printing rows=0 and
+#           moving on.
+#
+# ⚠ rows=0 IS NOT "THIS DIVISION IS FINE". It means this tool could not form an
+#   opinion, which reads identically to "no anomaly found" in the output and is
+#   the opposite claim. --merged flags a division from a GROUP shift measured
+#   against a pool; this tool needs each athlete's OWN other races. A division
+#   can be genuinely merged and still be mute here -- unlinked athletes, a
+#   one-race field, nothing rated. Those want a different tool, not a shrug.
+#
+# ! Only ever called on the empty ones, so the extra scan costs nothing on the
+#   divisions that had something to say.
+def _whyEmpty(cur, table, meet, div):
+    cur.execute(f"""
+        WITH raw AS (
+            SELECT COALESCE(r.person_id, r.athlete_id) AS ident,
+                   r.speed_rating, r.normalized_time, r.time_seconds
+            FROM {table} r
+            WHERE r.meet_id = %s AND r.div_id = %s
+        ), scale AS (
+            SELECT COALESCE(r2.person_id, r2.athlete_id) AS ident
+            FROM {table} r2
+            WHERE COALESCE(r2.person_id, r2.athlete_id)
+                      IN (SELECT ident FROM raw WHERE ident IS NOT NULL)
+              AND r2.speed_rating > 0 AND r2.normalized_time > 0
+            GROUP BY 1
+        )
+        SELECT count(*),
+               count(*) FILTER (WHERE w.ident IS NOT NULL),
+               count(*) FILTER (WHERE w.speed_rating > 0),
+               count(*) FILTER (WHERE w.speed_rating IS NULL
+                                  AND w.normalized_time > 0
+                                  AND s.ident IS NOT NULL),
+               count(*) FILTER (WHERE w.time_seconds IS NOT NULL)
+        FROM raw w LEFT JOIN scale s ON s.ident = w.ident
+    """, (meet, div))
+    total, ident, rated, rebuilt, timed = cur.fetchone()
+    if not total:
+        return "no results at all under this meet/div"
+    if not ident:
+        return f"{total} results, none linked to a person"
+    if not rated and not rebuilt:
+        return (f"{total} results, none rated, and none of their athletes has "
+                f"a rated race anywhere else to rebuild a rating from")
+    if not timed:
+        return f"{total} results, no clock on any of them"
+    return (f"{total} results ({rated} rated, {rebuilt} rebuilt from the "
+            f"athlete's own scale) but none has a rated race on another date "
+            f"to be compared against")
+
+
 # ================================================================== #
 # CHUNK 2 -- INVERSION + SNAP (per row)
 # ================================================================== #
 
 # _impliedPerRow
-# Purpose : one row's implied true distance from its own swing. First-order,
-#           same law the pass-2 proposals used: rated g% fast => the label
-#           overstates distance by ~(1+g); slow => understates. b tempers the
-#           TF nonlinearity (XC b=1 is exact-enough at these magnitudes).
+# Purpose : one row's implied true distance from its own swing.
+#
+# ★ THE EXACT INVERSION, NOT THE FIRST-ORDER ONE. Derived from the same chain
+#   everything else uses:
+#
+#       nt     = t * (anchor / d) ^ K
+#       rating = M / nt = (M / t) * (d / anchor) ^ K
+#
+#   so running d_true while the label says d_label scales the rating by
+#   (d_label / d_true)^K, and inverting gives
+#
+#       d_true = d_label * (rating_true / rating_here) ^ (1/K)
+#              = d_label * (1 / (1 + gap)) ^ (1/K)
+#
+# ⚠ THE OLD FORM WAS label * (1 + |gap|) ON THE SLOW SIDE, and that is a
+#   different function, not a rounding of this one. 1/(1-g) against (1+g)
+#   agree to a percent at small swings and diverge fast:
+#
+#       gap -15%    correct  5628 m    old  5552 m     -1.3%
+#       gap -25%    correct  6333 m    old  6035 m     -4.7%
+#       gap -42%    correct  8071 m    old  6856 m    -15.1%
+#       gap -60%    correct 11460 m    old  7725 m    -32.6%
+#
+#   Which is why the four Detweiller Park divisions -- whose own athletes say
+#   they ran about 8,040 m -- were being snapped to 7000. The FAST side was
+#   never more than 2.8% out over the same range, because there the old
+#   expression was already label / (1+g)^(1/b) -- algebraically this one. All
+#   that changed for it is b, 1.00 -> 1.06. Only the slow branch was a
+#   different function.
+#
+# ! A gap at or below -100% is not a slower race, it is a broken row. Clamped
+#   rather than allowed to divide by zero.
 def _impliedPerRow(label_m, gap_pct, b):
-    factor = (1.0 + abs(gap_pct) / 100.0) ** (1.0 / b)
-    return label_m * factor if gap_pct < 0 else label_m / factor
+    g = max(float(gap_pct), -99.0) / 100.0
+    return label_m * (1.0 / (1.0 + g)) ** (1.0 / b)
 
 
 def _snap(implied):
@@ -195,35 +404,58 @@ def main():
     ap.add_argument("--corrections",
                     default=os.path.join("engine", "corrections.py"))
     ap.add_argument("--dir", default="scripts")
+    ap.add_argument("--exclude-flagged", action="store_true",
+                    help="write only pins carrying no WIDE or LABEL? flag")
     ap.add_argument("--write", action="store_true",
                     help="emit result_override_<sport>.py (default: report only)")
     args = ap.parse_args()
 
     pairs = list(map(tuple, args.pair or []))
     if args.pairs_file:
-        for line in open(args.pairs_file, encoding="utf-8"):
-            if line.strip():
-                m, d = line.split()
-                pairs.append((int(m), int(d)))
+        # ⚠ COMMENTS AND TRAILING FIELDS BOTH HAVE TO SURVIVE. The old parser
+        #   did `m, d = line.split()` on every non-blank line, so a work list
+        #   with a header -- which is what propose_distances --pairs-out
+        #   writes, naming the command that consumes it -- died on line 1 with
+        #   a ValueError about unpacking. A file somebody can read has to be a
+        #   file this can read.
+        for lineno, line in enumerate(open(args.pairs_file, encoding="utf-8"),
+                                      start=1):
+            text = line.split("#", 1)[0].strip()
+            if not text:
+                continue
+            bits = text.split()
+            if len(bits) < 2:
+                print(f"  {args.pairs_file}:{lineno}: not a 'meet div' pair, "
+                      f"skipped: {line.strip()!r}")
+                continue
+            pairs.append((int(bits[0]), int(bits[1])))
     if not pairs:
         sys.exit("no divisions given: --pair or --pairs-file")
 
     overrides = _importByPath(args.corrections, "_corr") \
         ._DISTANCE_OVERRIDES_BY_SPORT[args.sport]
+    n_skipped = n_mute = 0
     table, b = _TABLE[args.sport], _B[args.sport]
 
     pins, drop_queue = {}, []
+    tight = wide = minority = 0
     initPool()
     with getConn() as conn, conn.cursor() as cur:
         for meet, div in pairs:
-            label = overrides.get((meet, div))
+            label, whence = labelDistance(cur, args.sport, meet, div, overrides)
             if label is None:
-                print(f"{meet}/{div}: no override on file -- skipped "
-                      f"(this lane is for overridden zoo divisions)")
+                print(f"{meet}/{div}: skipped -- {whence}")
+                n_skipped += 1
                 continue
             rows = _rows(cur, table, meet, div)
-            print(f"\n== {meet}/{div}  label={label}  rows={len(rows)} ==")
-            div_pins = 0
+            print(f"\n== {meet}/{div}  label={label} (from {whence})  "
+                  f"rows={len(rows)} ==")
+            if not rows:
+                print(f"  MUTE: {_whyEmpty(cur, table, meet, div)}")
+                n_mute += 1
+                continue
+            div_pins = biggest = 0
+            here_rows = []
             for side in ("fast", "slow"):
                 verdict, snap, members, votes = _subgroup(rows, label, b, side)
                 if verdict == "TOO_SMALL":
@@ -239,24 +471,79 @@ def main():
                           f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi) -- NOT pinned")
                     drop_queue.append((meet, div, side, "PHYSICS_FAIL"))
                     continue
+                spread = hi / lo if lo > 0 else float("inf")
+                if spread < _FLAT_SPREAD:
+                    print(f"  {side:<5} snap {snap} REFUSED: {len(members)} "
+                          f"rows inside {(spread - 1) * 100:.1f}% of one pace "
+                          f"({lo/60:.2f} min/mi) -- duplicated times, not a "
+                          f"race")
+                    drop_queue.append((meet, div, side, "FLAT_TIMES"))
+                    continue
                 extra = ""
                 if verdict == "MAJORITY":
                     extra = (f" [MAJORITY: {votes['of'] - votes['agree']} "
                              f"outliers left flagged for next pass]")
+                if spread > _WIDE_SPREAD:
+                    extra += (f" [WIDE: {spread:.1f}x pace spread -- too broad "
+                              f"for one race, CHECK]")
+                    wide += len(members)
+                else:
+                    tight += len(members)
                 print(f"  {side:<5} {verdict} -> {snap}m for {len(members)} rows "
-                      f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi, sane){extra}")
+                      f"(pace {lo/60:.2f}-{hi/60:.2f} min/mi, {spread:.2f}x, "
+                      f"sane){extra}")
+                biggest = max(biggest, len(members))
                 for rid, _ in members:
-                    pins[rid] = (snap, meet, div, side)
+                    pins[rid] = [snap, meet, div, side,
+                                 "WIDE" if spread > _WIDE_SPREAD else ""]
                     div_pins += 1
+                    here_rows.append(rid)
             clean = sum(1 for _, _, g in rows if abs(g) <= _SPIKE)
-            print(f"  clean rows untouched: {clean}   pinned here: {div_pins}")
+            frac = clean / len(rows)
+            note = ""
+            if div_pins and biggest > _LABEL_MINOR * clean:
+                note = (f"  <- LABEL? {biggest} rows ran something else against "
+                        f"{clean} that match the label; the label is the "
+                        f"minority race here, so this wants a new division "
+                        f"distance, not {div_pins} row pins")
+                minority += div_pins
+                for rid in here_rows:
+                    pins[rid][4] = (pins[rid][4] + "+LABEL?").lstrip("+")
+            print(f"  clean rows untouched: {clean}/{len(rows)} ({frac:.0%})"
+                  f"   pinned here: {div_pins}{note}")
         conn.rollback()
 
     print(f"\nTOTAL: {len(pins)} per-row pins proposed; "
-          f"{len(drop_queue)} subgroups to the human queue")
+          f"{len(drop_queue)} subgroups to the human queue"
+          + (f"; {n_skipped} divisions skipped for want of a distance"
+             if n_skipped else "")
+          + (f"; {n_mute} divisions MUTE -- this tool could form no opinion, "
+             f"which is not the same as finding them clean"
+             if n_mute else ""))
+    # ★ AND WHAT THE PINS ARE WORTH, not just how many there are. A count of
+    #   1,877 reads as 1,877 findings; it is really three piles.
+    if pins:
+        print(f"\n  of those {len(pins)} pins:")
+        print(f"    {tight:>6}  from groups tight enough to be one race")
+        if wide:
+            print(f"    {wide:>6}  from groups spanning more than "
+                  f"{_WIDE_SPREAD:.0f}x in pace -- CHECK these")
+        if minority:
+            print(f"    {minority:>6}  in divisions where a subgroup that ran "
+                  f"something else\n            OUTNUMBERS the rows matching "
+                  f"the label -- those want a new\n            division "
+                  f"distance, not row pins")
     for item in drop_queue:
         print(f"  human queue: meet/div {item[0]}/{item[1]} {item[2]} ({item[3]})")
 
+    # ⚠ THE FLAGS HAVE TO GATE THE WRITE, not just the printout. A run that
+    #   names 384 doubtful pins and then writes them anyway has told the
+    #   reader something and done the opposite.
+    if args.exclude_flagged:
+        held = {r for r, v in pins.items() if v[4]}
+        pins = {r: v for r, v in pins.items() if not v[4]}
+        print(f"\n  --exclude-flagged: holding {len(held)} flagged pins, "
+              f"writing {len(pins)}")
     if args.write and pins:
         path = os.path.join(args.dir, f"result_override_{args.sport.lower()}.py")
         with open(path, "w", encoding="utf-8") as f:
@@ -266,10 +553,10 @@ def main():
                     "# guarded. Merge into _RESULT_OVERRIDE_"
                     f"{args.sport}.\n"
                     "_RESULT_OVERRIDE_ADDITIONS = {\n")
-            for rid, (snap, meet, div, side) in sorted(pins.items()):
+            for rid, (snap, meet, div, side, flag) in sorted(pins.items()):
                 f.write(f"    {rid}: ({snap}, None),  "
-                        f"# {side} subgroup, meet/div {meet}/{div}, "
-                        f"split 7/14\n")
+                        f"# {side} subgroup, meet/div {meet}/{div}"
+                        f"{'  ' + flag if flag else ''}\n")
             f.write("}\n")
         print(f"wrote {path}")
     elif args.write:

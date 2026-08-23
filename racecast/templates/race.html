@@ -3,12 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ header.meet_name }}</title>
+    {% set meta_title = header.meet_name %}
+    {% set meta_description = "Results and speed ratings for every finisher"
+       ~ ((" at " ~ header.course_name) if header.course_name else "")
+       ~ ". Team scores, PRs and course difficulty on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {# |urlencode, same as every school link: the name goes into the URL
@@ -134,5 +139,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

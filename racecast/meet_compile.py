@@ -32,6 +32,85 @@ TEAM SCORES, TWO WAYS
 """
 
 import json
+import os
+import re
+import sys
+
+# ★ WHY THIS IS NOT level_graph._JUNK, WHICH ANSWERS THE SAME QUESTION.
+#   The engine's pattern carries `^unat` -- an unanchored PREFIX, so it also
+#   swallows Unatego Central, a real school district in New York. In the
+#   level graph that costs one node out of ~100k and nobody can see it. In
+#   team scoring it deletes a team that actually raced from the results
+#   page, which is the most visible kind of wrong this file can produce.
+#
+#   The two patterns want different error trades -- the graph would rather
+#   drop a real school than admit a fake one, and scoring would rather show
+#   a fake team than hide a real one -- so they are deliberately separate,
+#   and this comment is the link between them. Keep them in step in SPIRIT,
+#   not character for character.
+#
+# ! WHICH TOKENS MAY MATCH ANYWHERE, AND WHICH MUST BE THE WHOLE STRING:
+#     unattached / unaffiliated   anywhere. No school is named with them,
+#                                 and the corpus writes "Unattached - Nike".
+#     individual / independent    WHOLE STRING ONLY. "Individual Learning
+#                                 Academy" and "Independence HS" are schools;
+#                                 a bare "Individual" is a placeholder.
+#     una / unat / unatt          WHOLE STRING ONLY, for the same reason
+#                                 Unatego exists.
+_NOT_A_TEAM = re.compile(r"""
+      ^\s*$                      # blank, and the scrapers do write blanks
+    | ^0$                        # the team_id=0 sentinel, as a string
+    | ^-+$                       # a dash standing in for "none"
+    | ^\?+$                      # ???
+    | ^n/?a$                     # n/a, na
+    | ^none$
+    | ^no\s+school$
+    | ^una?t{0,2}\.?$            # UNA, UNAT, UNATT, with an optional dot
+    | ^individuals?$
+    | ^independent$
+    | \bunattached\b
+    | \bunaffiliated\b
+
+    # ★ A NATIONAL TEAM IS NOT A SCHOOL TEAM. At an international meet the
+    #   school column holds the country, and five athletes wearing USA are a
+    #   selection from the whole country -- the same argument as Unattached,
+    #   only stronger: nobody attends it.
+    #
+    # ⚠ AND BARE COUNTRY NAMES ARE OFF LIMITS, however tempting. American
+    #   towns are named after countries and their high schools take the name:
+    #   Denmark, Peru, Cuba, Poland, Norway, Lebanon, Mexico and China Spring
+    #   are all real US schools -- pro_flag's own header cites "Denmark High
+    #   School" as the string that broke a simpler rule. So the test needs a
+    #   TEAM MARKER, not a place: "Team Canada" is a national team, "Canada"
+    #   is a village in New York.
+    #
+    # ! USA ALONE IS THE ONE EXCEPTION, whole-string only. No American school
+    #   is named "USA" -- but "USA" is a substring of nothing safe either
+    #   ("Sausalito", "Susa"), which is why this is anchored and the ones
+    #   above are not.
+    | ^u\.?s\.?a\.?$
+    | ^united\s+states$
+    | ^team\s+[a-z][a-z.\s'-]{2,}$
+    | \bnational\s+team\b
+""", re.IGNORECASE | re.VERBOSE)
+
+
+def isTeam(school):
+    """Is this school string a real team, or a placeholder for having none?
+
+    ★ UNATTACHED IS NOT A TEAM, AND FIVE UNATTACHED RUNNERS ARE NOT A SQUAD.
+      They share one string because none of them has a school -- not because
+      they represent the same one -- so scoring them together invents a team
+      out of exactly the runners who have none, and at a big open meet that
+      invented team can beat real ones.
+
+    ⚠ THE SAME STRING IS LEFT ALONE ELSEWHERE ON PURPOSE. panels._NON_SCHOOL
+      deliberately omits 'Unattached' because for POOLING these are real kids
+      at open meets whose grade still says what level they are. Being a real
+      athlete and being a team are different questions; this answers only
+      the second.
+    """
+    return bool(school and school.strip()) and not _NOT_A_TEAM.search(school)
 
 # Standard cross country scoring.
 SCORERS = 5
@@ -172,10 +251,24 @@ def scoreRows(rows):
       and everyone behind them moves up. Scoring against raw finishing places
       instead inflates every complete team's total.
     """
-    counts = {}
+    # ! NON-TEAMS ARE NEVER COUNTED, so they can neither score nor be
+    #   reported as short of runners -- "Unattached (7)" under a heading
+    #   about incomplete teams answers a question nobody asked. Their
+    #   runners are then skipped by the renumbering loop below, which lifts
+    #   them out of the scoring order exactly as an incomplete team's are.
+    # ! ASKED ONCE PER SCHOOL, NOT ONCE PER RUNNER. isTeam is a regex with
+    #   nine alternatives; a real meet has 300 finishers and 40 schools, and
+    #   the hypothetical national meet the team board races has 140,000
+    #   entrants and 20,000 -- where the difference is a third of the total
+    #   time. The answer cannot vary between two runners for the same school.
+    counts, real = {}, {}
     for r in rows:
-        if r.get("school"):
-            counts[r["school"]] = counts.get(r["school"], 0) + 1
+        school = r.get("school")
+        ok = real.get(school)
+        if ok is None:
+            ok = real[school] = isTeam(school)
+        if ok:
+            counts[school] = counts.get(school, 0) + 1
     full = {s for s, n in counts.items() if n >= SCORERS}
 
     scoring, place = {}, 0

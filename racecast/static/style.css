@@ -508,6 +508,36 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     margin-bottom: 1rem;
 }
 
+/* The results page's own search bar. Wide enough to read a long meet name
+   back, and it sits above the tabs because it changes what the tabs count. */
+.search-page-form {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.75rem 0 0.25rem;
+    max-width: 640px;
+}
+.search-page-form input[type="search"] {
+    flex: 1 1 auto;
+    padding: 0.5rem 0.8rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+.search-page-form button {
+    padding: 0.5rem 1.1rem;
+    border: 1px solid #222;
+    border-radius: 4px;
+    background: #222;
+    color: #fff;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.search-page-form button:hover { background: #000; }
+
+@media (max-width: 640px) {
+    .search-page-form { max-width: none; }
+}
+
 .conv-add { position: relative; }        /* anchor */
 .conv-drop {
     position: absolute;
@@ -736,7 +766,11 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
      cannot collide with variables in style.css. */
   --rk-muted:   #6b7280;
   --rk-line:    #e5e7eb;
-  --rk-accent:  #1d4ed8;
+  /* ! ONE BLUE ON THE SITE. This was #1d4ed8 -- which is, precisely,
+     Tailwind's default blue-700, and a palette lifted from a framework's
+     defaults is a large part of what makes a page look generated. The
+     buttons now sit in the same navy family as the links. */
+  --rk-accent:  #14477d;
   --rk-warn-bg: #fef3c7;
   --rk-warn-fg: #78350f;
   --rk-error:   #b91c1c;
@@ -840,6 +874,40 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    board wants a distance and, being one row per athlete, has no race count to
    filter on. Driven off data-board like the rules above, so rankings.js never
    touches individual field visibility. */
+/* ---- the teams board ---------------------------------------------- *
+ * It ranks a precomputed meet, so most of the other boards' controls have
+ * nothing to act on: min-races is per athlete, the dates and the distance
+ * belong to single races, and sport=both cannot be one field. */
+/* ★ COURSES SHARE THE TEAMS PATTERN: its own filters, and everything that
+   belongs to an athlete board hidden. A course has no pool, no sport, no
+   season and no school, so showing those controls would offer filters that
+   silently do nothing. */
+.rankings-page .courses-only { display: none; }
+.rankings-page[data-board="courses"] .courses-only { display: flex; }
+.rankings-page[data-board="courses"] p.board-note.courses-only { display: block; }
+.rankings-page[data-board="courses"] .ability-only { display: none; }
+.rankings-page[data-board="courses"] .perf-only    { display: none; }
+.rankings-page[data-board="courses"] .teams-only   { display: none; }
+/* ! STATE IS NOT IN HERE ON PURPOSE. A course is somewhere, so the state
+   filter means exactly what it says on this board; pool, sport, scope,
+   grade, year and school describe an athlete and would do nothing. */
+.rankings-page[data-board="courses"] .not-courses  { display: none; }
+/* Finding an ATHLETE on a board of ground is not a question with an answer --
+   the same reason it is off on teams. And "Coming soon" lists nation,
+   division and the rest: unbuilt filters for ATHLETE boards, which read on
+   this one as promises about courses that nobody has made. */
+.rankings-page[data-board="courses"] .findme     { display: none; }
+.rankings-page[data-board="courses"] .wip        { display: none; }
+
+.rankings-page .teams-only { display: none; }
+.rankings-page[data-board="teams"] .teams-only   { display: flex; }
+.rankings-page[data-board="teams"] .ability-only { display: none; }
+.rankings-page[data-board="teams"] .perf-only    { display: none; }
+.rankings-page[data-board="teams"] .pr-only      { display: none; }
+/* Finding an ATHLETE on a board of teams is not a question with an answer. */
+.rankings-page[data-board="teams"] .findme       { display: none; }
+.rankings-page[data-board="teams"] p.board-note.teams-only { display: block; }
+
 .rankings-page .pr-only { display: none; }
 .rankings-page[data-board="pr"] .pr-only      { display: flex; }
 .rankings-page[data-board="pr"] .ability-only { display: none; }
@@ -2413,6 +2481,425 @@ tr.more-row td { padding: 0; }
 .more-btn:hover { background: #f0f0ec; }
 .more-left { color: #999; }
 .h2-note { color: #999; font-weight: 400; font-size: 0.8em; }
+
+/* ======================================================================= *
+ *  SITE FOUNDATION
+ *
+ *  ★ THIS SECTION SUPERSEDES EARLIER RULES ON PURPOSE. It is last in the
+ *    file (bar the phone block) so it wins on source order without needing
+ *    !important or inflated selectors. Where it contradicts something
+ *    above -- the full cell grid on tables, most obviously -- the rule
+ *    above is the one being replaced, not a rule being fought.
+ * ======================================================================= */
+
+/* ---- tokens ----------------------------------------------------------- *
+ * These already existed, declared on .rankings-page so they could not
+ * collide with anything. Same values, at :root, because every page wants
+ * them and a second palette per page is how two greys appear. */
+:root {
+  --ink:    #111418;
+  --muted:  #6b7280;
+  --line:   #e5e7eb;
+  --line-2: #cbd0d6;
+  --accent: #14477d;   /* the same navy as --link; see --rk-accent */
+  --zebra:  #fafbfc;
+  --hover:  #f3f6fa;
+  --gold:   #a97a12;
+  /* ! LINKS NEED A COLOUR OF THEIR OWN. Near-black links with a hairline
+     underline were, correctly, reported as impossible to spot -- in a table
+     they were indistinguishable from the text beside them. This is a deep
+     navy: unmistakably a link, without the 1996 blue that made the board
+     shout. */
+  --link:   #14477d;
+}
+
+/* ---- the typeface ------------------------------------------------------ *
+ * ⚠ THERE WAS NONE. This file declared font-family exactly once, on form
+ *   controls, so every page rendered in the browser's default serif at
+ *   default sizes -- which is most of why the site read as an unstyled
+ *   document rather than a product.
+ *
+ * A system stack: nothing to fetch, no CDN to depend on, and it is the
+ * face the reader's own OS already renders best. tabular figures are the
+ * point for a results site -- without them a column of times jitters,
+ * because 1 is narrower than 0 in most proportional faces. */
+body, input, select, button, textarea {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+}
+body {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5 { letter-spacing: -0.015em; color: var(--ink); }
+h1 { font-size: 2rem;    font-weight: 700; }
+h2 { font-size: 1.35rem; font-weight: 650; margin-top: 2rem; }
+h3 { font-size: 1.05rem; font-weight: 650; }
+
+/* ---- links ------------------------------------------------------------- *
+ * ⚠ THERE WAS NO `a` RULE EITHER, so every link on the site outside .page
+ *   was browser-default blue and underlined. On the rankings board that was
+ *   three of nine columns shouting, and the rating -- the number the site
+ *   exists to produce -- could not compete with it.
+ *
+ * ! PROSE KEEPS ITS UNDERLINE. Dark text plus no underline is an invisible
+ *   link in a paragraph, so the underline only comes off where the ROW is
+ *   the link and the context already says so: tables, the board grid, nav,
+ *   the sidebar panels. Hover puts it back everywhere. */
+a { color: var(--link);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: currentColor; }
+a:hover { text-decoration-thickness: 2px; }
+
+table a, .board-grid a, .topnav a, .brand,
+.bests-panel a, .pr-panel a, .season-jump a, .sport-toggle a,
+.pool-more, .seg-btn, .yb, .meet-link, .tabs a, .find-opt {
+  text-decoration: none;
+}
+table a:hover, .board-grid a:hover, .topnav a:hover,
+.bests-panel a:hover, .pr-panel a:hover, .season-jump a:hover {
+  text-decoration: underline;
+}
+.topnav a { color: #374151; }
+.topnav a:hover { color: var(--ink); }
+
+/* ---- tables ------------------------------------------------------------ *
+ * The outer frame stays, so a table reads as one object; the internal
+ * verticals go, because a full cell grid makes a results list look like a
+ * spreadsheet. Rules plus a zebra do the separating.
+ *
+ * ! SQUARE CORNERS, DELIBERATELY. A rounded results table reads as a
+ *   dashboard widget rather than a results table -- the look every
+ *   generated site arrives with. Every reference this site actually sits
+ *   beside (TFRRS, Athletic.net, MileSplit) sets dense square tables, and
+ *   that is the idiom of the thing being displayed. No radius also means
+ *   border-collapse can stay `collapse`, which is the simpler mechanism. */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid var(--line-2);
+}
+th, td { border: 0; border-bottom: 1px solid var(--line); }
+thead th {
+  background: #f7f8fa;
+  border-bottom: 1px solid var(--line-2);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.5rem 0.7rem;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:nth-child(even) { background: var(--zebra); }
+tbody tr:hover { background: var(--hover); }
+
+/* In a table the colour carries it and the underline is noise -- but the
+   colour has to be doing real work, which is what --link is for. The
+   RATING stays ink-black: it is a number the row is ranked by, and weight
+   says that better than colour. */
+table a, .board-grid a { color: var(--link); }
+table td.rating a, .board-grid .c-rating a { color: var(--ink); }
+
+/* ---- focus ------------------------------------------------------------- *
+ * ! REQUIRED BY THE LINK CHANGE ABOVE. The browser default focus ring is
+ *   drawn against the link's own colour; now that links are near-black on
+ *   white it is close to invisible, and keyboard users lose their place. */
+a:focus-visible, button:focus-visible,
+input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+
+/* ======================================================================= *
+ *  PER-PAGE POLISH  (rests on SITE FOUNDATION above)
+ * ======================================================================= */
+
+/* ---- result pages get a measure ---------------------------------------- *
+ * race / meet / course / school / venue / compiled had no container at all,
+ * so at 1280 the h1 sat 8px from the window edge and the results table
+ * stretched the full width -- the eye travelling the whole monitor from a
+ * runner's name to their time. .page-wide is the wrapper those templates
+ * now use; .page (68ch) stays the prose measure for About. */
+.page-wide {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 1.6rem 1.5rem 3rem;
+}
+.page-wide > .meta:first-of-type { font-size: 0.95rem; color: #374151; }
+.page-wide > .meta a { font-weight: 600; }
+
+/* "View full meet" was a bare link on its own line; it is an action. */
+.meet-link {
+    display: inline-block;
+    padding: 0.45rem 0.8rem;
+    border: 1px solid var(--line-2);
+    border-radius: 3px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    background: #fff;
+}
+.meet-link:hover { background: var(--hover); }
+
+/* ---- you-are-here ------------------------------------------------------ *
+ * The topbar gave no indication which page you were on. _topbar.html sets
+ * the class from request.path, so no route had to learn about it. */
+.topnav a.is-here {
+    color: var(--ink);
+    font-weight: 650;
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* ---- rankings ---------------------------------------------------------- */
+/* The native selects and the custom combo buttons disagreed on border,
+   height and radius, so the filter row read as two toolbars. */
+.rankings-page .field select,
+.rankings-page .field input {
+    border-color: #ccc;
+    padding: 0.42rem 0.55rem;
+    border-radius: 3px;
+    font-size: 0.9rem;
+    /* ⚠ NO EXPLICIT HEIGHT. A fixed height PLUS vertical padding leaves a
+       native <select> laying its text out against a content box smaller
+       than the line it is drawing, and the label rides high in the box --
+       visibly off-centre next to the flex-centred combo buttons. Padding
+       alone sizes both to the same height and lets the control centre its
+       own text. */
+    min-width: 6.25rem;
+}
+/* ! ONE LINE-HEIGHT ACROSS ALL THREE CONTROL KINDS. Without it a <select>,
+   a text input and the flex combo button each derive their own content
+   height from `normal` -- the button's caret glyph makes it the tallest --
+   and the row ends up 3-4px out of step. Same padding plus the same line
+   box is the only way they come out identical without a fixed height. */
+.rankings-page .field select,
+.rankings-page .field input,
+.rankings-page .combo-btn { line-height: 1.25; }
+.rankings-page .field input.narrow { min-width: 4rem; }
+.rankings-page .field label { font-size: 0.65rem; }
+/* ⚠ THE SANS STACK IS WIDER THAN THE SERIF IT REPLACED, and the row was
+   sized for the serif -- Apply wrapped onto a second line. Trimming the
+   controls puts the whole bar back on one row at 1280. */
+.rankings-page .combo-btn { width: 132px; border-radius: 3px; }
+
+/* The rating is what the board ranks, so it leads the row. */
+.rankings-page table.rk td.rating { font-weight: 700; font-size: 1.02rem; }
+.rankings-page table.rk tbody tr:nth-child(-n+3) td.rank {
+    color: var(--gold);
+    font-weight: 700;
+}
+
+/* ⚠ THIS NOTICE IS PERMANENT ON A NATIONAL BOARD, which is the default, so
+   it is the first thing above the table on essentially every visit -- the
+   fate the international caveat was deliberately spared. A rule and small
+   text says the same thing without being the loudest object on the page. */
+.rankings-page .notice {
+    background: transparent;
+    border: 0;
+    border-left: 3px solid #d9b168;
+    border-radius: 0;
+    color: #57534e;
+    font-size: 0.8125rem;
+    padding: 0.4rem 0 0.4rem 0.7rem;
+}
+
+/* ---- home -------------------------------------------------------------- */
+/* ! THE MURAL'S OWN aspect-ratio: 16 / 11 STANDS, and is not to be overridden
+   here. A 16/7 override was added to get the boards above the fold; it
+   squashed the band the outer rows were sized for, which is the thing that
+   block's comment exists to protect. Above-the-fold is not worth cropping
+   the photographs for. */
+
+/* ★ TWO KINDS OF CONTROL THAT LOOKED IDENTICAL. The sport and scope groups
+   are PICK ONE; the pool chips are TOGGLE OFF -- and an "on" chip was
+   drawn exactly like an unselected mode button, so nothing said which was
+   which.
+   ! SQUARE, NOT PILLS, AND NO TICK GLYPHS. The pill-with-a-checkmark is
+     the generic component every template ships; a filter that is plainly
+     on or plainly greyed says the same thing in this site's own idiom.
+     The difference is now carried by weight and ink, not by decoration. */
+.pool-chips .chip {
+    opacity: 1;
+    background: #fff;
+    color: #9aa1a9;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    text-decoration: line-through;
+    text-decoration-color: #c9ced4;
+}
+.pool-chips .chip.is-on {
+    background: #fff;
+    border-color: #9aa1a9;
+    color: var(--ink);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+/* The board grid is divs, not a table, so every part of the table
+   treatment has to be spelled out -- and half-doing it is what made this
+   board hard to read: the cells lost their verticals while the header
+   kept them, the header lost its background, and nothing striped, so ten
+   rows of near-black text ran together.
+   ⚠ ZEBRA ON A CSS GRID IS ARITHMETIC, NOT :nth-child(even). There are no
+     row elements -- five header divs, then five cells per row -- so a row
+     is a span of five children and the stripe is a modulo over ten. */
+.board-grid .cell, .board-grid .head { border-left: 0; border-right: 0; }
+.board-grid .head {
+    background: #f2f4f6;
+    border-bottom: 1px solid var(--line-2);
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    color: #4b5563;
+}
+.board-grid .cell {
+    padding: 0.3rem 0.7rem;          /* denser: ten rows should read as a list */
+    border-bottom: 1px solid var(--line);
+}
+.board-grid .cell:nth-child(10n+6),
+.board-grid .cell:nth-child(10n+7),
+.board-grid .cell:nth-child(10n+8),
+.board-grid .cell:nth-child(10n+9),
+.board-grid .cell:nth-child(10n+10) { background: var(--zebra); }
+.board-grid .c-rating { font-weight: 700; font-variant-numeric: tabular-nums; }
+.board-grid .cell:nth-child(5n+1) { color: var(--muted); font-variant-numeric: tabular-nums; }
+.board-scope-label { font-size: 1.05rem; }
+
+/* ⚠ THE WIDER FONT CLIPPED SCHOOL NAMES ("Springdale Har-..."), so school
+   took the slack, the rank column gave some back and a three-digit rating
+   stopped needing 5rem.
+   ! EVERY RATIO HERE WAS MEASURED, and the margins are ONE PIXEL wide.
+     "Fort Smith Northside" overflows by exactly 1px at school 1.1fr and the
+     browser draws an ellipsis for it; the athlete names start doing the
+     same the moment school passes 1.15fr. 0.88 / 1.15 / 1.17 is the only
+     swept combination where neither clips at all.
+   ⚠ SO MEASURE STRICTLY IF YOU CHANGE THESE. An earlier pass allowed a 1px
+     tolerance, reported "nothing clipped", and shipped a visibly truncated
+     school column -- scrollWidth > clientWidth by ANY amount is a clip.
+   ! THE RESULT COLUMN IS THE ONE THAT MAY RUN OUT, by design: it holds a
+     time and a meet name, and about a quarter of meet names fit nowhere
+     ("Chile Pepper Cross Country Festival"). That is why the time is
+     written FIRST -- the fixed-width half always survives -- and why the
+     cell carries the full string in a title attribute. */
+:root {
+    --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 4.25rem minmax(0, 1.17fr);
+}
+
+/* ---- athlete ----------------------------------------------------------- */
+/* The XC/TF switcher was two bare links run together, which read as one
+   string. school.html already had a segmented control; this is it. */
+.sport-toggle {
+    display: inline-flex;
+    border: 1px solid var(--line-2);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0.6rem 0 1.2rem;
+}
+.sport-toggle a {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+    border-right: 1px solid var(--line-2);
+}
+.sport-toggle a:last-child { border-right: 0; }
+.sport-toggle a:hover { background: var(--hover); text-decoration: none; }
+
+/* All-Time Bests sat in a card and Season Bests did not, so two equivalent
+   panels read as different kinds of thing. */
+/* ! SQUARE, like the tables. A stack of 8px-rounded white cards is the
+   look this site is trying not to have. */
+.bests-panel, .pr-panel, .chart-panel {
+    border: 1px solid var(--line);
+    padding: 0.9rem 1rem 1rem;
+    margin-bottom: 1.1rem;
+    background: #fff;
+}
+.bests-panel h3, .pr-panel h3, .chart-panel h3 {
+    margin: 0 0 0.7rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    font-weight: 650;
+}
+/* ! NO BOX INSIDE A BOX. Now that the panel is a card, rating-head's own
+   frame is a second border 8px inside the first -- and the width it stole
+   wrapped "2026 TF season" onto two lines. */
+.bests-panel .rating-head {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    padding: 0 0 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.bests-panel .rating-head .note { white-space: nowrap; }
+.pr-panel ul { list-style: none; padding-left: 0; margin: 0.2rem 0 1rem; }
+.pr-panel li {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.15rem 0;
+    font-size: 0.875rem;
+}
+.pr-panel .season-head-link {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 650;
+    padding: 0.5rem 0 0.25rem;
+    border-top: 1px solid var(--line);
+    margin-top: 0.5rem;
+}
+.pr-panel .season-head-link:first-of-type { border-top: 0; margin-top: 0; }
+
+/* The season and its rating are the two facts in the heading, so they sit
+   at the two ends of one line. The rating was the faintest thing in it. */
+.season-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    border-bottom: 1px solid var(--line-2);
+    padding-bottom: 0.35rem;
+    margin-bottom: 0.2rem;
+}
+.season-rating { font-weight: 700; font-variant-numeric: tabular-nums; }
+.season-meta { color: var(--muted); font-size: 0.85rem; margin: 0.35rem 0 0.6rem; }
+
+/* The header stat strip: the page's headline numbers, which used to live
+   only in the sidebar. */
+/* ! ONE RULE UNDER IT, NOT A BOX AROUND IT. Big numbers over tiny
+   uppercase labels inside a bordered band is the dashboard-hero pattern;
+   the numbers are worth having, the packaging is not. */
+.stat-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+    align-items: baseline;
+    padding: 0.5rem 0 0.8rem;
+    border-bottom: 1px solid var(--line);
+    margin: 0.4rem 0 0.2rem;
+}
+.stat-strip .s-lab {
+    display: block;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+}
+.stat-strip .s-val {
+    font-size: 1.3rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.stat-strip .s-sub { font-size: 0.75rem; color: var(--muted); margin-left: 0.4rem; }
+
 /* ---- phones, site-wide ------------------------------------------------ *
  * The result pages now carry a real viewport meta, so this is where their
  * phone layout is decided. Two calls made here:
@@ -2438,4 +2925,90 @@ tr.more-row td { padding: 0; }
   /* Tighter cells: the padding was sized for desktop whitespace, and on a
      phone it is the difference between four visible columns and six. */
   th, td { padding: 0.35rem 0.55rem; }
+}
+
+
+/* ---- courses board ------------------------------------------------------ */
+/* ! THE SENSE WORD IS THE POINT, not decoration. A reader who sees only
+   "+0.050" has to remember which way the sign runs; "harder" beside it means
+   they never have to. It is small and muted so the number still leads. */
+.rankings-page .rk td .sense {
+    display: inline-block;
+    margin-left: 0.35rem;
+    font-size: 0.74em;
+    font-weight: 400;
+    color: var(--muted);
+    text-transform: lowercase;
+}
+/* ⚠ COLOUR IS A SECOND CHANNEL, NEVER THE ONLY ONE. The word carries the
+   meaning; these only reinforce it, so the board still reads correctly in
+   greyscale and for anyone who cannot separate the two hues. */
+.rankings-page .rk td.hard { color: #9a3412; }
+.rankings-page .rk td.easy { color: #14532d; }
+
+
+/* ---------------------------------------------------------------- */
+/*  TRAINING PACES                                                    */
+/*                                                                    */
+/*  ★ THE PROVENANCE COLUMN IS THE POINT, not decoration. One row is  */
+/*    this athlete's own two races with no constant in it; the others */
+/*    are published relationships applied to that row. Rendering them */
+/*    identically would flatten a real difference in confidence, so   */
+/*    the derived row carries the accent and the basis column is      */
+/*    always visible rather than a tooltip.                           */
+/* ---------------------------------------------------------------- */
+.paces { margin: 1.5rem 0 0.5rem; }
+/* ! THE PANEL IS A CONVERSION TABLE, SO IT USES .conv-table AND ADDS ONLY
+     WHAT IS ITS OWN. It had a private set of type sizes, paddings and a
+     lowercase small-caps header row, which put a second table style on a
+     page that already had one. Everything below is an addition to
+     .conv-table, never a contradiction of it. */
+.paces h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+.paces-src {
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 0.5rem;
+}
+.paces-tbl .zone { font-weight: 600; white-space: nowrap; }
+/* ! TABULAR FIGURES so the pace column lines up digit over digit -- a
+     column of times that does not align is harder to scan than one that
+     does, and these are read as a ladder. */
+.paces-tbl .pace {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.paces-tbl .km { color: var(--muted); }
+.paces-tbl .basis { color: var(--muted); }
+.paces-tbl tr.derived .zone,
+.paces-tbl tr.derived .pace { color: var(--accent, #14477d); }
+.paces-tbl tr.derived .zone::after {
+    content: "fitted";
+    display: inline-block;
+    margin-left: 0.45rem;
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent, #14477d);
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    padding: 0 0.25rem;
+    vertical-align: 1px;
+}
+.paces-vdot {
+    font-size: 0.92rem;
+    margin-top: 0.6rem;
+}
+.paces-vdot strong { font-variant-numeric: tabular-nums; }
+.paces-vdot-note { font-size: 0.78rem; color: var(--muted); margin-left: 0.3rem; }
+.paces-foot {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 0.55rem;
+    line-height: 1.5;
+}
+@media (max-width: 640px) {
+    .paces-tbl .km, .paces-tbl th:nth-child(3) { display: none; }
+    .paces-tbl .basis, .paces-tbl th.basis { display: none; }
 }

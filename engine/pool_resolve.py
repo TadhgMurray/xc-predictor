@@ -31,6 +31,7 @@ WHY THIS EXISTS
 """
 
 import re
+from functools import lru_cache
 
 from normalize_distance import poolFor
 
@@ -84,6 +85,8 @@ US_NAMES = frozenset("""
 }
 
 
+# ! FIFTY-ONE POSSIBLE ANSWERS, ASKED ONCE PER ROW. Cached.
+@lru_cache(maxsize=4096)
 def inScope(state):
     """True when this result belongs on a US board.
 
@@ -257,6 +260,11 @@ _PUNCT = re.compile(r"[^a-z0-9 ]+")
 _SPACE = re.compile(r"\s+")
 
 
+# ! TWO REGEX SUBSTITUTIONS PER CALL, AND resolvePool CALLS IT ON EVERY ROW.
+#   Over 61.6M rows that is 123M regex passes to answer a question with a few
+#   hundred thousand distinct answers. Pure, so caching changes nothing but
+#   the clock.
+@lru_cache(maxsize=1 << 18)
 def _normSchool(school):
     """Casefold, drop punctuation, collapse spaces. 'HOKA ONE ONE' -> the
     same key as 'Hoka One One'."""
@@ -276,22 +284,86 @@ def _normSchool(school):
 #   signal -- meet or division naming -- does not separate professional
 #   fields from ordinary invitationals in this corpus, and one wrong athlete
 #   at the top of a board is worth one line until it does.
-_PRO_PEOPLE = frozenset({
+# ★ HAND-LISTED PROFESSIONALS, AND NOW PER SEASON RATHER THAN PER PERSON.
+#
+#   This was a frozenset of person_ids, which applied to EVERY race that
+#   person ever ran, in both sports, for all time. For Fouad Messaoudi or
+#   David Mullarkey that is harmless -- they have no school seasons in this
+#   corpus at all -- but Andrew Hunter had a real high school career, and a
+#   person-wide flag erases it.
+#
+# ⚠ THE YEARS ARE SEASON LABELS, THE WAY A PERSON SAYS THEM. A track season
+#   opens in December and is NAMED for the year it closes in, so "2026 TF" is
+#   the Dec 2025 - Jul 2026 campaign, which season_year STORES as 2025.
+#   proSeasons() does that conversion once; every caller passes the stored
+#   season and nobody else has to think about it.
+#
+#   (first_label, last_label, sport) -- None anywhere means "no bound".
+_PRO_SEASONS = {
     # ⚠ EVERY ONE OF THESE DEFEATED A GENERAL RULE, WHICH IS WHY THEY ARE
     #   HERE RATHER THAN IN ONE.
-    32703729,   # Guillaume Tremblay, Université Laval Rouge et Or. His feed
-                # writes grade 5, 6, 7 across 2024-26 -- corroborated, cleanly
-                # progressing, and describing a Québec programme year rather
-                # than a US grade. He runs 1:54 for 800 m. Nothing in the
-                # verdict machinery can see that a middle schooler cannot.
-    26054637,   # Andrew Hunter, races as "Asics" -- a string shared with a
-                # youth club of 161 people whose fastest mark is 6.54 s, so
-                # the school cannot be used.
-    29751385,   # Fouad Messaoudi, "Morocco"
-    32542330,   # David Mullarkey, "Great Britain & N.I."
-                # National-team entries. A country as the school is a strong
-                # signal and would need a country list to use generally.
-})
+    32703729: (None, None, None),
+    # Guillaume Tremblay, Université Laval Rouge et Or. His feed writes grade
+    # 5, 6, 7 across 2024-26 -- corroborated, cleanly progressing, and
+    # describing a Québec programme year rather than a US grade. He runs 1:54
+    # for 800 m. Nothing in the verdict machinery can see that a middle
+    # schooler cannot. Every season, both sports.
+
+    26054637: (2017, None, None),
+    # Andrew Hunter, races as "Asics" -- a string shared with a youth club of
+    # 161 people whose fastest mark is 6.54 s, so the school cannot be used.
+    # ! FROM 2017 ONLY. He ran high school before that, and the old
+    #   person-wide flag was rating those seasons against professionals.
+
+    29751385: (2026, 2026, "TF"),
+    # Fouad Messaoudi, "Morocco" -- the 2026 track season and nothing else.
+
+    32542330: (2025, 2026, None),
+    # David Mullarkey, "Great Britain & N.I."
+    # National-team entries. A country as the school is a strong signal and
+    # would need a country list to use generally.
+
+    32628652: (2021, None, None),
+    26468447: (2019, None, None),
+    32606806: (2025, None, None),
+    30052170: (2026, None, None),
+    27196114: (2023, None, None),
+}
+
+
+def _label(sport, season):
+    """Stored season year -> the label a person uses. See season_year."""
+    return season + 1 if sport == "TF" and season is not None else season
+
+
+def isProPerson(person_id, sport=None, season=None):
+    """Is this athlete-season one of the hand-listed professional ones?
+
+    `season` is the STORED season year (August-July, named for the year it
+    opens in) -- what season_year.seasonYearFor returns.
+
+    ⚠ AN UNKNOWN SEASON IS TREATED AS INSIDE THE SPAN, which is the old
+      behaviour and is deliberate: a caller that cannot say which season a row
+      belongs to should not silently start rating a professional against high
+      schoolers. Every caller in this repo passes one; this is the floor under
+      the ones that do not.
+    """
+    if person_id is None:
+        return False
+    spec = _PRO_SEASONS.get(int(person_id))
+    if spec is None:
+        return False
+    first, last, only_sport = spec
+    if only_sport and sport and sport.split("|")[0] != only_sport:
+        return False
+    if season is None:
+        return True
+    label = _label(sport, season)
+    if first is not None and label < first:
+        return False
+    if last is not None and label > last:
+        return False
+    return True
 
 
 def isProTeam(school):
@@ -306,6 +378,7 @@ def isProTeam(school):
 
 def resolvePool(grade, gender, source, school, sport,
                 season_level=None, grade_untrusted=False, is_pro=False,
+                season=None,
                 college_first=None, upperclass_first=None,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
@@ -403,8 +476,11 @@ def resolvePool(grade, gender, source, school, sport,
     # ! person_id IS OPTIONAL, so a caller that does not pass it simply gets
     #   the school-based test. Adding a required argument would break three
     #   call sites for a set that is currently empty.
-    if isProTeam(school) or (person_id is not None
-                             and int(person_id) in _PRO_PEOPLE):
+    # ! THE SEASON DECIDES NOW, NOT JUST THE PERSON. See _PRO_SEASONS: a
+    #   hand-listed professional is professional for the seasons they were
+    #   professional in, and a high school career before that stays a high
+    #   school career.
+    if isProTeam(school) or isProPerson(person_id, sport, season):
         is_pro = True
 
     if grade_verdict in ("no_evidence", "contradicted", "thin_field",

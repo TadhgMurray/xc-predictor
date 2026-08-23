@@ -76,7 +76,10 @@
                     <div class="head">Name</div>
                     <div class="head">School</div>
                     <div class="head head-center">Rating</div>
-                    <div class="head">Detail</div>
+                    {# ! THE HEADING NAMES WHAT THE COLUMN HOLDS. "Detail" described
+                       two different things: a race count on the athlete board and
+                       the performance itself on the other. #}
+                    <div class="head">{{ 'Result' if board_type == 'performance' else 'Races' }}</div>
                     {% for r in rows %}
                         {% if r is none %}
                             {# padding row -> six blank cells keep the grid line #}
@@ -103,7 +106,12 @@
                                 {% else %}—{% endif %}
                             </div>
                             <div class="cell c-rating">{{ '%.1f'|format(r.rating) if r.rating is not none else '—' }}</div>
-                            <div class="cell c-detail">
+                            {# ! title CARRIES THE WHOLE STRING, because this
+                               cell ellipsises. The time always fits; a long
+                               meet name runs out of room, and hovering is
+                               then the only way to read it. Costs nothing --
+                               the text is already in the row. #}
+                            <div class="cell c-detail" title="{{ r.detail }}">
                                 {% if board_type == 'performance' and r.link %}
                                     <a href="{{ r.link }}">{{ r.detail or '—' }}</a>
                                 {% else %}{{ r.detail or '—' }}{% endif %}
@@ -123,11 +131,8 @@
        two <title> elements is worse than a wrong one, because browsers take
        the first and some scrapers take the last. #}
     {% include "_meta.html" %}
+    {# Favicon comes from _meta.html now, same as every other page. #}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    {# The tick scale alone. The wordmark is wide and short, so at 16px it
-       would be eight illegible smudges; the scale is the only square-ish
-       part of the lockup and stays readable. #}
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 {# ================================================================= #}

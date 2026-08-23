@@ -3,7 +3,16 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ athlete.name }} — Racecast</title>
+    {# _meta.html emits <title> (appending "— Racecast" itself) plus the
+       share-card metadata -- athlete links are the most-shared URLs on the
+       site, and without og:* tags they unfurl as bare blue text in every
+       chat app. #}
+    {% set meta_title = athlete.name %}
+    {% set meta_description = "Speed ratings, personal records and the full "
+       "cross country and track history for " ~ athlete.name
+       ~ ((" (" ~ athlete.school ~ ")") if athlete.school else "")
+       ~ ", on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='athlete-charts.css') }}">
 </head>
@@ -183,7 +192,7 @@
                             {{ race.meet }}
                         {% endif %}
                     </td>
-                    <td>{{ race.event }}</td>
+                    <td>{{ race.event|event_label }}</td>
                     <td>{{ race.result }}</td>
                     <td>{{ "%.1f"|format(race.speed_rating) if race.speed_rating else "—" }}</td>
                     <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
@@ -207,6 +216,54 @@
 
     <h1>{{ athlete.name }}</h1>
     <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }}</p>
+
+    {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
+       sidebar, so the page's own subject was the one thing the top of the
+       page did not say. Each figure links where it can: the best race
+       scrolls to its own row. #}
+    <div class="stat-strip">
+        <div>
+            <span class="s-lab">Athlete rating</span>
+            <span class="s-val">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+            {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
+        </div>
+        {% if alltime.rating %}
+        <div>
+            <span class="s-lab">Best race</span>
+            <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ "%.1f"|format(alltime.rating.speed_rating) }}</a></span>
+            <span class="s-sub">{{ alltime.rating.sport }}</span>
+        </div>
+        {% endif %}
+        {# Guarded like the others: a caller that does not set this should
+           drop the cell, not render a label over an empty space. #}
+        {% if athlete.n_races %}
+        <div>
+            <span class="s-lab">Races</span>
+            <span class="s-val">{{ athlete.n_races }}</span>
+        </div>
+        {% endif %}
+        {% if athlete.n_seasons %}
+        <div>
+            <span class="s-lab">Seasons</span>
+            <span class="s-val">{{ athlete.n_seasons }}</span>
+            {% if athlete.season_span %}<span class="s-sub">{{ athlete.season_span }}</span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    {# ★ A HANDOFF, NOT A PANEL. Training paces are a TOOL's output, and the
+       tool is /conversions -- this page is a record of what somebody ran.
+       The link carries the athlete so the tool arrives already filled in. #}
+    {% if training and training.paces %}
+    <p class="paces-link">
+        <a href="/conversions?athlete={{ athlete.person_id }}">Training paces
+        &amp; VO<sub>2</sub>max &rarr;</a>
+        <span class="s-sub">critical speed
+        {{ training.paces[1].per_mile if training.paces|length > 1
+           else training.paces[0].per_mile }}/mi, fitted from
+        {{ training.n_races }} races in {{ training.year }}</span>
+    </p>
+    {% endif %}
 
     <nav class="sport-toggle">
         <a href="#xc">Cross Country</a>
@@ -349,7 +406,7 @@
                             {# Then every distance, fastest time in each. #}
                             {% for event, race in bucket.events.items() %}
                             <li>
-                                <span class="ev">{{ event }}</span>
+                                <span class="ev">{{ event|event_label }}</span>
                                 <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
                             </li>
                             {% endfor %}
@@ -385,7 +442,7 @@
                         {% endif %}
                         {% for event, race in bests.events.items() %}
                         <li>
-                            <span class="ev">{{ event }}</span>
+                            <span class="ev">{{ event|event_label }}</span>
                             <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
                         </li>
                         {% endfor %}

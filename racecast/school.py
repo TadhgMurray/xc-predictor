@@ -16,13 +16,60 @@ SEASON-SCOPED THROUGHOUT
     A roster only means anything for a season. An all-time list would rank a
     2009 state champion above the current seventh runner, and neither answers
     "who runs for this school".
+
+★ AND A SEASON IS NOT A CALENDAR YEAR, WHICH THIS PAGE USED TO ASSUME TWICE.
+
+  A track season opens in December and runs to July, so it is STORED under
+  the year it opens in -- Dec 2025 through Jul 2026 is year 2025 -- and NAMED
+  year + 1 everywhere a person reads it, because nobody calls that campaign
+  their 2025 season. rankings._YEAR_LABEL and app.season_label already do
+  exactly this; this page did neither.
+
+      the year bar and the tables showed the STORED year, so a track season
+      read 2025 here and 2026 on every board;
+
+      and the meet list filtered on substring(date, 1, 4) -- the CALENDAR
+      year -- so a December meet landed in the season before its own and
+      January to July of the same campaign landed in the next one. One season
+      split across two pages, with the December meets in the wrong one.
+
+  So: the queries take the STORED year, the page shows and links the LABEL,
+  and seasonYearSqlInt does the filtering. seasonLabel and storedYear below
+  are the only two places that conversion happens.
 """
+
+import sys
+
+sys.path.insert(0, "engine")
+from season_year import seasonYearSqlInt
+
+
+def seasonLabel(sport, year):
+    """Stored season year -> what a person calls it."""
+    if year is None:
+        return None
+    return int(year) + 1 if sport == "TF" else int(year)
+
+
+def storedYear(sport, label):
+    """What a person calls it -> the stored season year."""
+    if label is None:
+        return None
+    return int(label) - 1 if sport == "TF" else int(label)
+
+
+# The same rule in SQL, for the columns that come back as labels.
+def _labelSql(year_col, sport_col):
+    return f"(CASE WHEN {sport_col} = 'TF' THEN {year_col} + 1 " \
+           f"ELSE {year_col} END)"
 
 
 def schoolYears(cur, school):
     """Seasons this school has raced, newest first, with a count each."""
-    cur.execute("""
-        SELECT year, sport, count(*) AS athletes
+    cur.execute(f"""
+        SELECT year, sport,
+               {_labelSql("year", "sport")} AS label,
+               count(*) AS athletes
         FROM   athlete_season
         WHERE  school = %(school)s
         GROUP  BY year, sport
@@ -33,10 +80,11 @@ def schoolYears(cur, school):
 
 def schoolHeader(cur, school):
     """State and span. None when the school has no rated results at all."""
-    cur.execute("""
+    label = _labelSql("year", "sport")
+    cur.execute(f"""
         SELECT count(DISTINCT person_id)          AS athletes,
-               min(year)                          AS first_year,
-               max(year)                          AS last_year,
+               min({label})                       AS first_year,
+               max({label})                       AS last_year,
                mode() WITHIN GROUP (ORDER BY state) AS state
         FROM   athlete_season
         WHERE  school = %(school)s
@@ -83,8 +131,14 @@ def schoolMeets(cur, school, sport, year=None, limit=2000):
     """
     table = "results" if sport == "XC" else "results_tf"
     tfrrs_sport = "XC" if sport == "XC" else "TF"
+    # ⚠ THE SEASON, NOT substring(date, 1, 4). A track season crosses New
+    #   Year, so the calendar year put December's meets in the season before
+    #   their own -- the one thing this filter exists to prevent. seasonYearSql
+    #   is the same expression build_ranking_results groups by, so the meet
+    #   list and the roster now answer about the same season.
+    #   `year` is the STORED season year; the page converts before calling.
     # Omitted entirely when no year is given: the school page is a history.
-    year_clause = ("AND substring(r.date, 1, 4)::int = %(year)s"
+    year_clause = (f"AND {seasonYearSqlInt(sport, 'r.date')} = %(year)s"
                    if year else "")
 
     cur.execute(f"""
@@ -139,7 +193,8 @@ def schoolBest(cur, school, sport, limit=25):
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
                rr.speed_rating                   AS rating,
-               rr.year,
+               (CASE WHEN rr.sport = 'TF' THEN rr.year + 1
+                     ELSE rr.year END)          AS year,
                rr.grade,
                rr.race_date,
                rr.meet_id,
@@ -177,8 +232,10 @@ def schoolTopAthletes(cur, school, sport, limit=12):
                        || COALESCE(a.last_name, ''))  AS name,
                    max(s.best_rating)                 AS best,
                    count(*)                           AS seasons,
-                   min(s.year)                        AS first_year,
-                   max(s.year)                        AS last_year
+                   min(CASE WHEN s.sport = 'TF' THEN s.year + 1
+                            ELSE s.year END)          AS first_year,
+                   max(CASE WHEN s.sport = 'TF' THEN s.year + 1
+                            ELSE s.year END)          AS last_year
             FROM   athlete_season s
             LEFT JOIN LATERAL (
                 SELECT NULLIF(TRIM(x.first_name), '') AS first_name,

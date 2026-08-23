@@ -1,4 +1,4 @@
-# run_pipeline.ps1 -- the full rebuild, logged, with a preflight that refuses
+﻿# run_pipeline.ps1 -- the full rebuild, logged, with a preflight that refuses
 # to start on a stale checkout.
 #
 # ⚠ $ErrorActionPreference IS DELIBERATELY *NOT* "Stop".
@@ -10,7 +10,63 @@
 #   real failure. Failure is detected from the EXIT CODE instead, which is the
 #   only thing that actually distinguishes a traceback from a warning.
 
+param(
+    # ---------------------------------------------------------------- #
+    #  -From -- START PARTWAY IN
+    # ---------------------------------------------------------------- #
+    #
+    # * THE VERDICT STEPS DO NOT DEPEND ON DISTANCES. 01_season_year stamps
+    #   the academic season, 03_pro_flag flags professionals and
+    #   04_grade_sanity writes grade_fix -- none of them reads a distance,
+    #   and an override run changes nothing any of them would decide
+    #   differently. 05_backfill reads grade_fix as it stands, which after a
+    #   previous full run is already correct.
+    #
+    #   So an override-only rebuild can start at 05 and skip roughly half an
+    #   hour: .\run_pipeline.ps1 -From 05
+    #
+    # ⚠ AND IT IS NOT A GENERAL SHORTCUT. Skip 04 after changing anything
+    #   that touches grades, pools or school levels and the backfill resolves
+    #   pools from a stale grade_fix -- the disagreement that was measured at
+    #   a 64 percent rating error, frozen into the row. -From is for a run
+    #   where you know what changed and it was downstream.
+    [string]$From = "01"
+)
+
+# ! RESOLVED HERE, ABOVE ITS FIRST USE. PowerShell does not hoist, so a
+#   $fromNum read before this line is $null and every comparison against it
+#   is quietly false -- the skip would simply never happen.
+#
+#   The digits are pulled out so "-From 05", "-From 5" and "-From 05_backfill"
+#   all mean the same thing; anything with no digit in it falls back to 1
+#   rather than throwing on the cast.
+$fromNum = 1
+if ($From -match '\d') { $fromNum = [int]($From -replace '\D', '') }
+
 $ErrorActionPreference = "Continue"
+
+# ------------------------------------------------------------------ #
+#  ⚠ UTF-8, OR A PRINT KILLS THE RUN
+# ------------------------------------------------------------------ #
+#
+#   08_golive died with UnicodeEncodeError: 'charmap' codec can't encode
+#   character '\u26a0' -- on the ⚠ inside a WARNING, six hours in.
+#
+# ★ AND THE REASON IT ONLY HAPPENS HERE IS THE PIPE. Straight to a console,
+#   Python writes through the Windows console API and every ★ and ⚠ in this
+#   project prints. The moment output is redirected -- `2>&1 | Tee-Object`, one
+#   line below -- stdout becomes a pipe and Python falls back to the LOCALE
+#   encoding, which on this machine is cp1252 and has no ⚠. So the same script
+#   that runs by hand dies inside the pipeline, which is exactly the wrong way
+#   round.
+#
+#   PYTHONUTF8=1 is UTF-8 mode: it makes stdout, stderr and every text file
+#   UTF-8 regardless of the locale. The console encoding is set to match so the
+#   log reads back correctly rather than as mojibake.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $dir   = "logs\$stamp"
@@ -41,6 +97,9 @@ $expect = @{
     "backfill\backfill_normalize.py"  = "_loadGradeFix"
     "racecast\build_ranking_results.py" = "prepareTfStateTemp"
     "racecast\panels.py"              = "THE TWO PROMOTION-GATE JOINS ARE GONE"
+    "engine\pair_engine.py"           = "def checkSymmetric"
+    "engine\pair_validate.py"         = "demeanWithin(sc[mask]"
+    "racecast\build_course_rank.py"   = "def build"
 }
 
 Write-Host "preflight..." -ForegroundColor Cyan
@@ -71,6 +130,9 @@ if ($flask) {
 }
 Write-Host "  dev server not running" -ForegroundColor Green
 Write-Host "  logging to $dir" -ForegroundColor Cyan
+if ($fromNum -gt 1) {
+    Write-Host "  -From $From : steps before $fromNum are skipped (02_drop_old still runs)" -ForegroundColor Cyan
+}
 
 
 # ------------------------------------------------------------------ #
@@ -80,7 +142,20 @@ Write-Host "  logging to $dir" -ForegroundColor Cyan
 # Per-step logs plus one combined. A single log makes finding the numbers a
 # search problem; per-step files keep the ones that matter named and small,
 # and pipeline.log reads top to bottom.
+# ! 02_drop_old IS NEVER SKIPPED, WHATEVER -From SAYS. It is not a verdict
+#   step -- it clears results_old / results_tf_old, and saveResultSpeedRatings
+#   REFUSES to start while either is present. The ALS engine's own final phase
+#   recreates them, so after any previous full run they exist, and skipping
+#   this would fail at 08_golive three and a half hours in. It costs a DROP
+#   TABLE.
+$NEVER_SKIP = @("02_drop_old")
+
 function Step($name, $cmd) {
+    $num = [int]($name -replace '^(\d+).*$', '$1')
+    if ($num -lt $fromNum -and $NEVER_SKIP -notcontains $name) {
+        Write-Host "  $name skipped (-From $From)" -ForegroundColor DarkGray
+        return
+    }
     $log = "$dir\$name.log"
     $t0  = Get-Date
     Write-Host ""
@@ -160,7 +235,19 @@ Step "09_tilt"         { python engine\apply_tilt.py --refresh --write }
 
 # ---- the site -------------------------------------------------------- #
 Step "10_rankings"     { python racecast\build_ranking_results.py }
-Step "11_panels"       { python racecast\panels.py }
+# ! AFTER RANKINGS, BEFORE PANELS. build_team_season reads athlete_season,
+#   which build_ranking_results writes -- run it first and it races last
+#   run's athletes. It was in run_rest.ps1 and missing here, so a full
+#   pipeline rebuilt every board except the team one, which then served a
+#   season older than everything around it.
+Step "11_teams"        { python racecast\build_team_season.py }
+# ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
+#   that step touches it, so this only has to be after the pack -- but it sits
+#   here with the other board builders because that is where somebody looks
+#   for it, and because a course count printed next to the athlete counts is
+#   how a collapsed one gets noticed.
+Step "12_courses"      { python racecast\build_course_rank.py }
+Step "13_panels"       { python racecast\panels.py }
 
 
 # ------------------------------------------------------------------ #

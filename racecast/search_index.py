@@ -28,11 +28,33 @@ CREATE TABLE IF NOT EXISTS search_index (
 );
 """
 
+# ★ idx_search_trgm IS THE ONE THAT MATTERS. Both surfaces match with
+#   `search_text LIKE '%tok%'`, and a LEADING wildcard can only be served by
+#   a GIN trigram index -- a btree, text_pattern_ops or not, is useless for it.
+#
+# ⚠ idx_search_last IS GONE, AND SO IS THE QUERY THAT NEEDED IT. app.py used
+#   to match `(search_text LIKE '%tok%' OR search_last LIKE '%tok%')`. The
+#   second half had only a btree, so it was unindexable, and an OR is as slow
+#   as its worst branch: measured at a Parallel Seq Scan, 5,428,976 rows
+#   removed per worker, 1.35 s for the tab counts on one token.
+#
+#   It could never match anything extra either. Every loader below puts
+#   search_last INSIDE search_text -- athletes get the last name, which is a
+#   token of "name school"; schools, courses, meets and venues set the two to
+#   the identical string. The OR made sense under the old LEFT-ANCHORED match,
+#   where "smith" could not prefix-match "john smith northgate" but could
+#   prefix-match search_last. Substring matching made it redundant.
+#
+#   The COLUMN stays -- it is nearly free and it is what a future
+#   surname-specific ranking would use -- but nothing indexes or reads it now.
+#   An existing database still carries the index; drop it when convenient:
+#       DROP INDEX CONCURRENTLY IF EXISTS idx_search_last;
+#
+# ! idx_search_prefix STILL EARNS ITS PLACE: the ranking asks
+#   `search_text LIKE 'tok%'`, which is left-anchored and does use a btree.
 _INDEX = """
 CREATE INDEX IF NOT EXISTS idx_search_prefix
     ON search_index (search_text text_pattern_ops);
-CREATE INDEX IF NOT EXISTS idx_search_last
-    ON search_index (search_last text_pattern_ops);
 CREATE INDEX IF NOT EXISTS idx_search_trgm
     ON search_index USING gin (search_text gin_trgm_ops);
 """

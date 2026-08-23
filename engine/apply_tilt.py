@@ -40,6 +40,7 @@
 
 import os
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (_HERE, os.path.dirname(_HERE),
@@ -64,6 +65,42 @@ H_MIN, H_MAX = 0.60, 1.50
 # How the join finds a row's cell. The engine stores XC difficulty keyed
 # 'XC:' || course_name with the distance snapped to the nearest 100 m.
 _DIST_SNAP = 100
+
+
+# ------------------------------------------------------------------ #
+#  THE PHASE CLOCK
+# ------------------------------------------------------------------ #
+#
+# ★ 26 MINUTES WITH NO BREAKDOWN IS NOT A MEASUREMENT. mergeColumn prints its
+#   own per-statement timings, which accounted for 165 of the 1,566 seconds
+#   this step took on the 2026-08 run. The other 1,400 were spent between
+#   four print statements. Same clock as build_ranking_results, same reason.
+_PHASES = []
+
+
+class phase:
+    def __init__(self, label):
+        self.label = label
+
+    def __enter__(self):
+        self.t0 = time.time()
+        return self
+
+    def __exit__(self, *exc):
+        dt = time.time() - self.t0
+        _PHASES.append((self.label, dt))
+        print(f"    [{dt:7.1f}s] {self.label}")
+        return False
+
+
+def phaseReport():
+    if not _PHASES:
+        return
+    total = sum(dt for _l, dt in _PHASES)
+    print("\n[tilt] WHERE THE TIME WENT")
+    for label, dt in _PHASES:
+        share = 100.0 * dt / total if total else 0.0
+        print(f"    {dt / 60:7.1f} min  {share:5.1f}%  {label}")
 
 
 # ------------------------------------------------------------------ #
@@ -98,14 +135,22 @@ def ensureSnapshot(cur, refresh=False):
         print("    dropped the old snapshot (--refresh)")
 
     if not exists:
-        cur.execute("""
-            CREATE TABLE results_rating_pretilt AS
-            SELECT result_id, speed_rating
-            FROM   results
-            WHERE  speed_rating IS NOT NULL
-        """)
-        cur.execute("CREATE UNIQUE INDEX ON results_rating_pretilt (result_id)")
-        cur.execute("ANALYZE results_rating_pretilt")
+        with phase("snapshot CTAS (results -> results_rating_pretilt)"):
+            cur.execute("""
+                CREATE TABLE results_rating_pretilt AS
+                SELECT result_id, speed_rating
+                FROM   results
+                WHERE  speed_rating IS NOT NULL
+            """)
+        with phase("snapshot indexes"):
+            cur.execute("CREATE UNIQUE INDEX ON "
+                        "results_rating_pretilt (result_id)")
+            # ! AND ONE ON THE RATING, FOR report(). That query filters
+            #   `p.speed_rating >= 130` and then joins the whole of results to
+            #   it -- without this the filter is a scan of all 34.6M snapshot
+            #   rows on every run. 130+ is a fraction of a percent of them.
+            cur.execute("CREATE INDEX ON results_rating_pretilt (speed_rating)")
+            cur.execute("ANALYZE results_rating_pretilt")
         cur.execute("SELECT count(*) FROM results_rating_pretilt")
         print(f"    snapshot taken: {cur.fetchone()[0]:,} ratings")
         return True
@@ -206,6 +251,7 @@ def apply(cur, conn):
       rows join nothing and are left alone. A known gap, not an oversight.
     """
     cur.execute("DROP TABLE IF EXISTS tilt_new")
+    _t0 = time.time()
     cur.execute(f"""
         CREATE TEMP TABLE tilt_new AS
         WITH cell AS (
@@ -250,18 +296,45 @@ def apply(cur, conn):
         WHERE  abs({_tiltSql('p.speed_rating', 'd.difficulty')}
                    - p.speed_rating) >= {MIN_SHIFT}
     """)
-    cur.execute("""SELECT count(*) FROM (
-                       SELECT meet_id, div_id FROM meets m
-                       JOIN course_difficulties c
-                            ON c.course_name = 'XC:' || m.course_name
-                       GROUP BY 1,2 HAVING count(DISTINCT c.difficulty) > 1
-                   ) q""")
+    _PHASES.append(("tilt_new CTAS (the join that finds the moved rows)",
+                    time.time() - _t0))
+    print(f"    [{time.time() - _t0:7.1f}s] tilt_new CTAS")
+    # ⚠ THE SAME JOIN KEY AS `div` ABOVE, WHICH IT DID NOT USE. This check
+    #   joined on course_name ALONE -- no distance, no DELTA_FLOOR -- so every
+    #   distance cell of a venue matched every division at it, and the count it
+    #   printed was not the count of divisions min() actually had to choose
+    #   between. It reported 693,781 on a run whose `div` CTE saw far fewer,
+    #   because a venue with four distance cells "disagreed" with itself four
+    #   ways by construction.
+    #
+    #   Measuring the wrong thing is the whole cost here: a name-only join
+    #   fans 812k meets rows across every cell sharing a name, aggregates the
+    #   lot, and then reports a number nobody can act on. Mirroring `div`
+    #   costs a fraction of that and the number means what the line says.
+    _t0 = time.time()
+    cur.execute(f"""
+        SELECT count(*) FROM (
+            SELECT m.meet_id, m.div_id
+            FROM   meets m
+            JOIN   course_difficulties c
+                   ON c.course_name = 'XC:' || m.course_name
+                  AND c.distance_m  =
+                      (round(m.distance / {_DIST_SNAP}.0)
+                       * {_DIST_SNAP})::int
+            WHERE  c.course_name LIKE 'XC:%'
+              AND  c.difficulty IS NOT NULL
+              AND  abs(c.difficulty) >= {DELTA_FLOOR}
+            GROUP  BY 1, 2
+            HAVING count(DISTINCT c.difficulty) > 1
+        ) q""")
     amb = cur.fetchone()[0]
+    _PHASES.append(("ambiguity check", time.time() - _t0))
     if amb:
-        print(f"    ⚠ {amb:,} meet-divisions map to >1 difficulty; "
-              f"min() taken")
-    cur.execute("CREATE UNIQUE INDEX ON tilt_new (result_id)")
-    cur.execute("ANALYZE tilt_new")
+        print(f"    ⚠ {amb:,} meet-divisions map to >1 difficulty at the same "
+              f"snapped distance; min() taken")
+    with phase("tilt_new index + analyze"):
+        cur.execute("CREATE UNIQUE INDEX ON tilt_new (result_id)")
+        cur.execute("ANALYZE tilt_new")
     cur.execute("SELECT count(*) FROM tilt_new")
     n = cur.fetchone()[0]
     print(f"    {n:,} rows move by >= {MIN_SHIFT}")
@@ -307,11 +380,13 @@ def apply(cur, conn):
 
         print(f"    {n:,} rows is past {REBUILD_ABOVE:,}; rebuilding instead "
               f"of updating in place")
-        mergeColumn(conn, "results", "speed_rating", "tilt_new",
-                    key="result_id", val="tilted", preserve_unmatched=True)
+        with phase("mergeColumn (heap rebuild of results)"):
+            mergeColumn(conn, "results", "speed_rating", "tilt_new",
+                        key="result_id", val="tilted", preserve_unmatched=True)
         print(f"    {n:,} ratings retilted")
         return n
 
+    _t_update = time.time()
     cur.execute("""
         UPDATE results r
         SET    speed_rating = t.tilted
@@ -321,6 +396,7 @@ def apply(cur, conn):
     """)
     total = cur.rowcount
     conn.commit()
+    _PHASES.append(("in-place UPDATE", time.time() - _t_update))
     print(f"    {total:,} ratings retilted")
     return total
 
@@ -418,7 +494,9 @@ def main(live=False, refresh=False, undo=False):
 
             print("\n[tilt] applying...")
             apply(cur, conn)
-            report(cur)
+            with phase("report (biggest movers)"):
+                report(cur)
+            phaseReport()
             print("\n[tilt] applied. Re-run panels so the boards match.")
             print("       Undo: python engine\\apply_tilt.py --undo")
 

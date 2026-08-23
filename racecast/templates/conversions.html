@@ -10,7 +10,8 @@
 <body>
 {% include "_topbar.html" %}
 
-<section class="conv">
+{# the athlete a /conversions?athlete=<id> link named, for conversions.js #}
+<section class="conv" data-prefill-athlete="{{ prefill_athlete or '' }}">
     <h1>Conversions</h1>
     <p class="conv-intro">
         Enter one performance — a time, a rating, an athlete, or a specific
@@ -223,6 +224,23 @@
             </div>
         </div>
     </div>
+
+    {# ★ FILLED BY conversions.js, HIDDEN UNTIL THERE IS SOMETHING TO SAY.
+       Training paces need two races at different distances, so this only
+       populates when the source names an athlete -- a typed time cannot tell
+       a miler from a 5K runner. #}
+    <section class="paces" id="paces-panel" hidden>
+        <h2>Training paces &amp; VO<sub>2</sub>max <span class="paces-src" id="paces-src"></span></h2>
+        <div id="paces-tbl-wrap" hidden>
+            <table class="conv-table paces-tbl">
+                <thead><tr><th>Zone</th><th>Per mile</th><th>Per km</th>
+                    <th class="basis">Basis</th></tr></thead>
+                <tbody id="paces-body"></tbody>
+            </table>
+        </div>
+        <p class="paces-vdot" id="paces-vdot" hidden></p>
+        <p class="paces-foot" id="paces-foot"></p>
+    </section>
 </section>
 
 <script src="{{ url_for('static', filename='conversions.js') }}"></script>

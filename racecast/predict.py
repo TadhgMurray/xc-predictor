@@ -34,6 +34,8 @@ TEAM SCORING IS NOT A SEPARATE MODEL
 
 import os
 
+from meet_compile import isTeam
+
 # Where train.py writes its checkpoint. Absent until the model is trained.
 MODEL_PATH = os.environ.get("RACECAST_MODEL", "model/checkpoint.pt")
 
@@ -162,15 +164,48 @@ def _score(field, preds):
     """
     order = sorted(zip(field, preds), key=lambda t: t[1]["seconds"])
 
-    by_team, place = {}, 0
+    # ★ PASS 1 -- WHO CAN ACTUALLY SCORE. Only runners from a complete team
+    #   occupy places in the scoring order, so the set has to be known before
+    #   the first place is handed out.
+    #
+    # ! UNATTACHED IS NOT A TEAM. Five runners who share that string share it
+    #   because none of them has a school, so scoring them together invents a
+    #   squad out of exactly the athletes who have none. Same isTeam the race
+    #   page's scoreRows uses.
+    counts = {}
+    for runner, _pred in order:
+        team = runner.get("school")
+        if isTeam(team):
+            counts[team] = counts.get(team, 0) + 1
+    full = {t for t, n in counts.items() if n >= TEAM_SCORERS}
+
+    # ★ PASS 2 -- TWO DIFFERENT PLACES, AND THEY ARE NOT THE SAME NUMBER.
+    #
+    #     place        where the runner is predicted to FINISH, counting
+    #                  everybody in the race.
+    #     score_place  where they stand once unattached runners and
+    #                  incomplete teams are lifted out, which is what the
+    #                  points are summed from.
+    #
+    #   This is the rule scoreRows already applied on the race page, and it
+    #   is the real one: an unattached runner finishing second takes nothing
+    #   away from the teams behind them. Predictions used to sum raw
+    #   finishing places, so every predicted score was inflated by whoever
+    #   happened to be running unattached that day.
+    by_team, place, score_place = {}, 0, 0
     for runner, pred in order:
         place += 1
         team = runner.get("school")
-        if not team:
+        if not isTeam(team):
             continue
-        by_team.setdefault(team, []).append(
-            {"person_id": runner["person_id"], "name": runner.get("name"),
-             "place": place, "seconds": pred["seconds"]})
+        entry = {"person_id": runner["person_id"], "name": runner.get("name"),
+                 "place": place, "seconds": pred["seconds"]}
+        # An incomplete team's runners keep a finishing place but never take
+        # a scoring one -- they are lifted out exactly like the unattached.
+        if team in full:
+            score_place += 1
+            entry["score_place"] = score_place
+        by_team.setdefault(team, []).append(entry)
 
     out = []
     for team, runners in by_team.items():
@@ -183,7 +218,7 @@ def _score(field, preds):
             continue
         out.append({
             "team": team,
-            "score": sum(r["place"] for r in scorers),
+            "score": sum(r["score_place"] for r in scorers),
             "runners": runners[:TEAM_SCORERS + TEAM_DISPLACERS],
         })
 

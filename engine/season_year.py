@@ -59,6 +59,7 @@ year the pro tables use, nor the academic year grade_sanity reasons on.
 """
 
 from datetime import date, datetime
+from functools import lru_cache
 
 
 # First month of a new season. 8 = August. Everything in this module is
@@ -112,6 +113,10 @@ def seasonYearFor(sport, d, ledger=None):
     return _resolve(sport, d.year, d.month, ledger)
 
 
+# ! ONE ANSWER PER (sport, date), AND build_ranking_results ASKS IT
+#   61.6M TIMES ACROSS ABOUT 13,000 DISTINCT DATES. Pure: a date string
+#   in, a season year out.
+@lru_cache(maxsize=1 << 16)
 def seasonYearFromIso(sport, date_text, ledger=None):
     """Season year from a 'YYYY-MM-DD' string. For callers holding raw text.
 

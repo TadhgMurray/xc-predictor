@@ -118,15 +118,50 @@ _TILT_K = -0.031
 
 def abilityTilt(D, k=_TILT_K, lo=0.6, hi=1.5):
     """
-    h per ROW, from the athlete's rating.
+    h per CELL, from the mean career rating of everyone who raced it.
 
-    ⚠ CLAMPED. The tilt was fitted over ratings ~70-140. A rating of 200 would
-      give h = -2.1 -- the course making an athlete FASTER the harder it is,
-      which is nonsense and would invert the sign of every cell they touch. The
-      bounds are guard rails against extrapolation, not model features.
+    ★ IT USED TO BE PER ROW, AND THAT MADE A COURSE HARDER FOR ONE RUNNER
+      THAN FOR THE PERSON BESIDE THEM.
+
+          rating = D["rat"]["career"][D["group"]]   # <- per athlete
+
+      A course's difficulty is a property of the course. Charging a different
+      delta_eff to two athletes in the same race means the same race divides
+      them by different constants, so the race stops sorting by time -- which
+      is exactly what the boards show: at Gans Creek 2025, 18:38.9 rated 130.6
+      and 18:52.6 rated 134.8.
+
+      The tilt itself is real and stays: harder courses do cost faster runners
+      proportionally less, measured at corr -0.993 across five difficulty
+      quintiles. What was wrong was the GRAIN. It is now evaluated once per
+      cell, on the mean career rating of that cell's field, and broadcast back
+      to every row in it -- so it still varies by course, and no longer varies
+      by who showed up.
+
+    ⚠ CLAMPED, unchanged. The tilt was fitted over ratings ~70-140. A rating of
+      200 would give h = -2.1 -- the course making an athlete FASTER the harder
+      it is -- which is nonsense. The bounds are guard rails against
+      extrapolation, not model features.
+
+    ! VENUELESS ROWS (course < 0) GET h = 1, i.e. no tilt. They vote on no
+      cell, so there is no cell mean to give them, and 1.0 leaves their delta
+      untouched rather than inventing one.
     """
-    rating = D["rat"]["career"][D["group"]]
-    h = 1.0 + k * (rating - 100.0) / 10.0
+    rating = np.asarray(D["rat"]["career"][D["group"]], dtype=np.float64)
+    rating = np.where(np.isfinite(rating), rating, 100.0)
+
+    cells = np.asarray(D["course"])
+    n_cells = int(D["n_cells"])
+    real = cells >= 0
+
+    # Mean career rating per cell, then broadcast back to that cell's rows.
+    sums = np.bincount(cells[real], weights=rating[real], minlength=n_cells)
+    cnts = np.bincount(cells[real], minlength=n_cells)
+    cell_rating = np.divide(sums, np.maximum(cnts, 1),
+                            out=np.full(n_cells, 100.0), where=cnts > 0)
+
+    per_row = np.where(real, cell_rating[np.maximum(cells, 0)], 100.0)
+    h = 1.0 + k * (per_row - 100.0) / 10.0
     h[~np.isfinite(h)] = 1.0
     return np.clip(h, lo, hi)
 
@@ -599,16 +634,23 @@ def resultRatings(D, anchor="career"):
     pm_c, pm_s = poolMeanPerGroup(D["rat"]["ability"], D["attrs"],
                                   D["rat"]["valid"],
                                   anchor=D["rat"].get("anchor"))
-    # ★ THE COURSE EFFECT ON THIS ROW, whatever the model shape.
-    #   h scales delta by the athlete's ability tilt; beta*sc removes the part
-    #   of the row that is the athlete's SPORT SPECIALISATION rather than the
-    #   course. Omitting beta here would credit a track specialist's advantage
-    #   to the track itself on every one of their races.
+    # ★ THE COURSE EFFECT ON THIS ROW. Per-cell, and ONLY per-cell.
+    #   h scales delta by the ability tilt, which abilityTilt computes per CELL,
+    #   so every row in one race gets the same h.
+    #
+    #   beta (the athlete-season sport offset) is deliberately NOT applied here.
+    #   It is a nuisance parameter of the split solve -- it exists so alpha and
+    #   delta come out clean -- and it varies from athlete to athlete. Folding
+    #   it into eff gave two runners in the SAME race on the SAME course
+    #   different effective difficulties, so ratings stopped being monotone in
+    #   time: exp(+-0.045) is a ~4.6% spread, more than enough to invert
+    #   adjacent finishers. A per-result rating answers "how fast was this run,
+    #   on this course" -- a property of the row and the cell, not of the
+    #   athlete's specialisation. beta stays in the solve (recenterSport); it
+    #   just does not leak out into the published rating.
     eff = ratingDelta(D)[D["course"]]
     if D.get("h") is not None:
         eff = D["h"] * eff
-    if D.get("beta") is not None and D.get("sc") is not None:
-        eff = eff + D["beta"][D["group"]] * D["sc"]
     adjusted = D["norm"] / np.exp(eff)
     rc = 100.0 * pm_c[D["group"]] / adjusted
     rs = 100.0 * pm_s[D["group"]] / adjusted

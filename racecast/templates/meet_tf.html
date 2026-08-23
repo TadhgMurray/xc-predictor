@@ -3,12 +3,16 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ header.meet_name }}</title>
+    {% set meta_title = header.meet_name %}
+    {% set meta_description = "Every event at this meet, with results and "
+       "speed ratings on one comparable scale." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+<main class="page-wide">
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
@@ -38,5 +42,6 @@
         </tbody>
     </table>
 
+</main>
 </body>
 </html>

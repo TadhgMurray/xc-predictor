@@ -21,6 +21,9 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
+from teams import parseFilters as parseTeamFilters, serveBoard
+from courses import (parseFilters as parseCourseFilters,
+                     getCourseRankings, countCourses)
 
 
 # ===================================================================== #
@@ -115,6 +118,37 @@ def _tfrrs_join(r="r"):
     """
 
 
+def _dist_override_join(r="r"):
+    """LEFT JOIN fragment exposing `dov` -- the hand-verified distance.
+
+    ⚠ WITHOUT THIS THE SITE SHOWED A DISTANCE THE CORPUS HAD ALREADY
+      REJECTED. dist_override carries 5,248 corrected divisions and app.py
+      referenced it NOWHERE, so every page rendered COALESCE(meets.distance,
+      the tfrrs blob) -- the scraped value the override exists to replace.
+
+      Meet 26359 div 0, the JV Minutemen Classic at Ox Bow Park, is the
+      example: scraped 8046 m, overridden to 5000, rated at 5000 (correctly),
+      and DISPLAYED as 8046. The rating was right and the number beside it was
+      wrong, which is why every rating-based audit called the division clean
+      while it was plainly wrong on the page.
+
+    ⚠ AND IT IS NOT COSMETIC. The same expression keys the join into
+      course_difficulties: cd.distance_m is matched against the race distance
+      snapped to 100m, so a wrong distance looks up a DIFFERENT CELL -- or no
+      cell at all -- and the difficulty shown belongs to a course the athlete
+      did not run. The engine keyed that cell at the OVERRIDE distance.
+
+    ! (meet_id, div_id) IS THE WHOLE KEY -- dist_override has no source
+      column, see engine/dump_overrides.py, and its primary key is exactly
+      these two. So this cannot fan out.
+    """
+    return f"""
+    LEFT JOIN dist_override dov
+           ON dov.meet_id = {r}.meet_id
+          AND dov.div_id  = {r}.div_id
+    """
+
+
 def _blob(r="r", field="distance"):
     """The per-division value from meets_tfrrs.division_distances.
 
@@ -131,9 +165,18 @@ def _xc_course_sql(r="r"):
 
 
 def _xc_distance_sql(r="r"):
-    """Race distance, either source. anet keeps it on `meets`; tfrrs keeps it
-    per division inside the blob."""
-    return f"COALESCE(m.distance, {_blob(r, 'distance')}::real)"
+    """Race distance -- the corrected one first, then either scraped source.
+
+    ★ SAME PRECEDENCE AS EVERY OTHER READER. backfill_normalize, the engine's
+      _xcQuery, build_ranking_results and apply_tilt all take dist_override
+      ahead of the scrape; this file did not, so the site disagreed with its
+      own ratings about how long the race was. See _dist_override_join.
+
+    anet keeps the scraped value on `meets`; tfrrs keeps it per division
+    inside a jsonb blob.
+    """
+    return (f"COALESCE(dov.distance::real, m.distance, "
+            f"{_blob(r, 'distance')}::real)")
 
 
 # Creates the app; __name__ tells Flask where "here" is
@@ -200,6 +243,73 @@ def home():
                            panels=panels,
                            meta=meta,
                            default_sport=default_sport)
+
+
+
+# ★ TRAINING PACES FROM THE ATHLETE'S OWN RACES, which is the only place this
+#   works. Critical speed is the slope of a distance-time line, so it needs two
+#   races at different distances -- and the conversions page takes ONE result,
+#   which is why it can only offer a coaching rule of thumb. Here the whole
+#   season is already on file and the requirement costs the reader nothing.
+#
+# ⚠ ONE SEASON, NEWEST FIRST, AND NOT A CAREER. CS is a fitness and fitness
+#   moves; pairing a freshman 3200 against a senior 5K measures growing up.
+#   Walks back a season at a time and stops at the first that fits, so a
+#   runner whose current season is all 5Ks still gets last year's paces rather
+#   than nothing -- labelled with the year it came from.
+#
+# ! RAW time_seconds AND real distance. NOT normalized_time: that column
+#   already contains the distance correction, so a distance-time line built
+#   from it would be fitting this project's own exponent back to itself.
+def _athletePaces(cur, person_id):
+    import paces                       # noqa: E402
+    cur.execute("""
+        SELECT year, pool, distance, time_seconds
+        FROM   ranking_results
+        WHERE  person_id = %s
+          AND  time_seconds > 0
+          AND  distance > 0
+        ORDER  BY year DESC
+    """, (person_id,))
+    rows = cur.fetchall()
+    if not rows:
+        return None
+
+    by_year = {}
+    for r in rows:
+        by_year.setdefault(r["year"], []).append(r)
+
+    for year in sorted(by_year, reverse=True):
+        races = [(float(r["distance"]), float(r["time_seconds"]))
+                 for r in by_year[year]]
+        got, why = paces.criticalSpeed(races)
+        if got is None:
+            continue
+        cs, dprime = got
+        ladder = paces.trainingPaces(races)
+        if not ladder:
+            continue
+        # VDOT off the model's own 5K, so it is one number for one fitness
+        # rather than one that moves with whichever race is quoted.
+        t5k = paces._timeFor(cs, dprime, 5000.0)
+        pool = by_year[year][0]["pool"]
+        return {
+            "year": year,
+            "n_races": len(races),
+            "paces": ladder,
+            "dprime": round(dprime),
+            "vdot": paces.vdot(t5k, 5000.0, pool),
+            "equiv_5k": t5k,
+        }
+
+    # ! THE REASON, NOT SILENCE. "No paces" and "your races are all the same
+    #   distance" are different messages, and the second one tells a runner
+    #   what to do about it.
+    newest = sorted(by_year, reverse=True)[0]
+    _, why = paces.criticalSpeed(
+        [(float(r["distance"]), float(r["time_seconds"]))
+         for r in by_year[newest]])
+    return {"year": newest, "paces": [], "reason": why}
 
 
 @app.route("/athlete/<int:person_id>")
@@ -363,6 +473,22 @@ def athlete(person_id):
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
 
+    # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
+    #   below the fold, or not at all -- while the header carried just a name
+    #   and a grey line. They are derived here rather than in the template so
+    #   the season span is computed once from the same keys the blocks use.
+    #
+    # ! SEASONS COUNTS YEARS, NOT BLOCKS. `seasons` is keyed (label, sport),
+    #   so an athlete running both sports in one year holds two entries for
+    #   one season of their life -- "5 seasons" for four years of school
+    #   would be wrong in the way nobody would think to check.
+    labels = sorted({label for label, _sport in seasons})
+    athlete["n_races"] = len(races)
+    athlete["n_seasons"] = len(labels)
+    athlete["season_span"] = (f"{labels[0]} — {labels[-1]}"
+                              if len(labels) > 1 else
+                              labels[0] if labels else None)
+
     xc_seasons = [(k, v) for k, v in ordered if k[1] == "XC"]
     tf_seasons = [(k, v) for k, v in ordered if k[1] == "TF"]
     tf_dists = tf_distances(races)
@@ -375,8 +501,16 @@ def athlete(person_id):
 
     chart_data = build_chart_data(races)
 
+    # ! ITS OWN CONNECTION SCOPE. The block above closed the cursor it opened;
+    #   reopening for one small query keeps this out of the long-lived one.
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            training = _athletePaces(cur, person_id)
+    athlete["person_id"] = person_id
+
     return render_template("athlete.html",
                            athlete=athlete,
+                           training=training,
                            xc_seasons=xc_seasons,
                            tf_seasons=tf_seasons,
                            tf_dists=tf_dists,
@@ -421,7 +555,7 @@ def get_races(cur, person_id):
                ON m.div_id  = r.div_id
               AND m.meet_id = r.meet_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         -- Difficulty is keyed on (canonical_id, distance_m) since the
         -- per-distance split -- a venue hosting a 2300m and an 8000m has a
         -- separate difficulty for each, because they are different courses on
@@ -658,6 +792,34 @@ def season_label(sport, date_text):
     except (TypeError, ValueError, IndexError):
         return (date_text or "")[:4]
     return str(year + 1) if sport == "TF" else str(year)
+
+
+@app.template_filter("event_label")
+def event_label(event):
+    """A bare number is a distance in metres, so give it its unit.
+
+    XC stores the race distance AS the event ("5000"), so the athlete page
+    printed a naked number in a column headed Event. TF's event_short already
+    carries one ("1600m", "4X400") and comes back untouched.
+
+    ! THE TEST IS "IS THIS ONLY A NUMBER", NOT THE SPORT. A TF row stored as a
+      bare 5000 is 5000 metres too, and keying on sport would leave it naked
+      while dressing the identical XC value.
+
+    ⚠ ROUNDED TO WHOLE METRES. The stored distance is whatever the meet
+      recorded, so a five-mile race arrives as 8046.72 and a 5000 can read
+      4988.9663 -- printing those verbatim in a table cell claims a precision
+      nobody measured. Same reasoning as PR_DISTANCE_TOL in rankings.py.
+    """
+    if event is None:
+        return ""
+    text = str(event).strip()
+    if not text:
+        return ""
+    try:
+        return f"{round(float(text))}m"
+    except (TypeError, ValueError):
+        return text
 
 
 def group_into_seasons(races):
@@ -958,7 +1120,7 @@ def get_race_header(cur, meet_id, div_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         LEFT JOIN course_canonical cc
                ON cc.course_name = {_xc_course_sql('r')}
               AND round(cc.gps_lat::numeric,  5)
@@ -1090,7 +1252,7 @@ def get_meet_header(cur, meet_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         -- Rows that resolved a name sort first, so a meet where only SOME
         -- divisions carry metadata still shows one.
         ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC
@@ -1120,11 +1282,11 @@ def get_meet_divisions(cur, meet_id):
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
               AND m.source  = r.source
-        {_tfrrs_join('r')}
+        {_tfrrs_join('r')}{_dist_override_join('r')}
         {_athlete_lateral('r')}
         WHERE r.meet_id = %(meet)s
         GROUP BY r.div_id, m.division, mt.division_distances,
-                 m.distance, r.source
+                 dov.distance, m.distance, r.source
         ORDER BY division NULLS LAST, r.div_id
     """, {"meet": meet_id})
     return cur.fetchall()
@@ -1455,7 +1617,8 @@ def school_page(school_name):
       one of them.
     """
     from school import (schoolHeader, schoolYears, schoolRoster, schoolMeets,
-                        schoolBest, schoolTopAthletes, currentSeason)
+                        schoolBest, schoolTopAthletes, currentSeason,
+                        seasonLabel, storedYear)
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
@@ -1474,17 +1637,24 @@ def school_page(school_name):
             #   on top. With one, the roster and the race list narrow to that
             #   season while the all-time tables stay put: the year is a filter
             #   on the history, not a different page.
+            # ⚠ THE URL CARRIES THE LABEL, THE QUERIES TAKE THE STORED YEAR.
+            #   A track season is stored under the year it opens in and named
+            #   year + 1, so ?year=2026 on TF means stored 2025. Converting
+            #   once here is what keeps the year bar, the roster and the meet
+            #   list all describing the same season -- see school.py's header.
             raw = request.args.get("year")
             picked = int(raw) if raw and raw.isdigit() else None
+            picked_stored = storedYear(sport, picked)
 
-            year   = picked or currentSeason(cur, school_name, sport)
+            year   = picked_stored or currentSeason(cur, school_name, sport)
             roster = schoolRoster(cur, school_name, year, sport) if year else []
-            meets  = schoolMeets(cur, school_name, sport, year=picked)
+            meets  = schoolMeets(cur, school_name, sport, year=picked_stored)
             best   = schoolBest(cur, school_name, sport)
             top    = schoolTopAthletes(cur, school_name, sport, limit=25)
 
     return render_template("school.html", school=school_name, header=header,
-                           years=years, year=year, sport=sport,
+                           years=years, year=seasonLabel(sport, year),
+                           sport=sport,
                            roster=roster, meets=meets, best=best, top=top,
                            picked=picked)
 
@@ -1685,37 +1855,19 @@ def search_api():
     if len(raw) < 2:
         return jsonify([])
 
-    # Punctuation is separator, not content: "mt. sac" and "mt sac" and
-    # "arcadia-loup" should all tokenise the same way.
-    tokens = [t for t in re.split(r"[^a-z0-9]+", raw) if t][:6]
-    if not tokens:
+    terms = _searchTerms(raw)
+    if terms is None:
         return jsonify([])
+    where, params, word_score = terms
 
     kind = (request.args.get("kind") or "").strip()
     limit = min(int(request.args.get("limit") or 10), 40)
-
-    where, params = [], {"lim": limit, "first": tokens[0] + "%"}
-    for i, tok in enumerate(tokens):
-        where.append(f"(search_text LIKE %(t{i})s OR search_last LIKE %(t{i})s)")
-        params[f"t{i}"] = f"%{tok}%"
-        params[f"w{i}"] = f"% {tok}%"
+    params["lim"] = limit
     if kind:
         where.append("kind = %(kind)s")
         params["kind"] = kind
 
-    # How many tokens land on a word boundary. A row matching every token at a
-    # word start is a better hit than one matching them mid-word.
-    word_score = " + ".join(
-        f"(CASE WHEN search_text LIKE %(w{i})s OR search_text LIKE %(t{i}_start)s"
-        f" THEN 1 ELSE 0 END)" for i in range(len(tokens)))
-    for i, tok in enumerate(tokens):
-        params[f"t{i}_start"] = f"{tok}%"
-
-    # Meets sort on the year, people and schools on how much they raced.
-    # Both fall back to the other so a tie is still broken sensibly.
-    second_key = ("sort_year DESC NULLS LAST, sort_count DESC NULLS LAST"
-                  if kind == "meet" else
-                  "sort_count DESC NULLS LAST, sort_year DESC NULLS LAST")
+    order_tail = _searchOrder()
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1757,14 +1909,118 @@ def search_api():
                 --   sort_count carries races for an athlete and athletes for a
                 --   school, so one column serves both.
                 ORDER  BY ({word_score}) DESC,
-                          {second_key},
-                          (search_text LIKE %(first)s) DESC,
-                          length(search_text)
+                          {order_tail}
                 LIMIT  %(lim)s
             """, params)
             rows = cur.fetchall()
 
     return jsonify(rows)
+
+
+def _searchTerms(raw, prefix="t"):
+    """(where_clauses, params, word_score_sql) for a typed query, or None.
+
+    ★ ONE MATCHER FOR THE DROPDOWN AND THE PAGE, BECAUSE THEY DRIFTED AND IT
+      SHOWED. The dropdown ANDed per-token substrings; the page looked for the
+      whole phrase contiguously. Same box, same words, two different result
+      sets -- and since meets are stored with the year and edition number in
+      front of the distinctive part, the page was the one that failed. Click a
+      dropdown hit's "see all results" and you could land on an empty page.
+
+    ⚠ AND THE PAGE'S COUNTS AND YEAR LIST DRIFTED AGAIN INSIDE THE PAGE. They
+      were left on the old left-anchored predicate, referring to a `prefix`
+      variable that had already been deleted, so /search raised NameError on
+      every query. Three copies of one rule is three chances to fix two.
+
+    Punctuation is a separator, not content: "mt. sac", "mt sac" and
+    "arcadia-loup" all tokenise the same. Six tokens is the cap -- past that
+    the AND is narrow enough that more only costs time.
+    """
+    tokens = [t for t in re.split(r"[^a-z0-9]+", (raw or "").lower()) if t][:6]
+    if not tokens:
+        return None
+
+    # ⚠ search_text ALONE. THE `OR search_last` WAS DEAD CODE THAT COST A
+    #   SEQUENTIAL SCAN OF 16 MILLION ROWS PER TOKEN.
+    #
+    #   search_index has a GIN trigram index on search_text, which is what
+    #   serves LIKE '%tok%'. search_last has only a btree text_pattern_ops
+    #   index, which serves LEFT-ANCHORED patterns and nothing else -- so the
+    #   second half of the OR was unindexable, and an OR is only as fast as
+    #   its worst branch. Measured on "arcadia": Parallel Seq Scan, 5,428,976
+    #   rows removed per worker, 385,773 buffers read, 1.35 s for the tab
+    #   counts alone.
+    #
+    # ★ AND IT COULD NEVER HAVE MATCHED ANYTHING EXTRA. Every loader in
+    #   search_index.py puts search_last inside search_text already: athletes
+    #   get the last name, which is a token of "name school"; schools,
+    #   courses, meets and venues set the two columns to the identical string.
+    #   So `search_last LIKE '%tok%'` implies `search_text LIKE '%tok%'`.
+    #
+    #   It earned its place under the OLD left-anchored match, where "smith"
+    #   could not prefix-match "john smith northgate" but could prefix-match
+    #   search_last. The move to substring matching made it redundant, and
+    #   nobody removed it.
+    where, params = [], {}
+    for i, tok in enumerate(tokens):
+        k = f"{prefix}{i}"
+        where.append(f"search_text LIKE %({k})s")
+        params[k] = f"%{tok}%"
+        params[f"{k}_w"] = f"% {tok}%"
+        params[f"{k}_s"] = f"{tok}%"
+    params[f"{prefix}_first"] = tokens[0] + "%"
+
+    # How many tokens land on a word boundary. A row matching every token at a
+    # word start is a better hit than one matching them mid-word -- it is what
+    # keeps "arcadia" from surfacing "Allen East JH Tri--Arcadia, McComb"
+    # above "Arcadia".
+    word_score = " + ".join(
+        f"(CASE WHEN search_text LIKE %({prefix}{i}_w)s OR search_text "
+        f"LIKE %({prefix}{i}_s)s THEN 1 ELSE 0 END)"
+        for i in range(len(tokens)))
+    return where, params, word_score
+
+
+
+# ★ ONE ORDER FOR BOTH SURFACES, AND KIND-AWARE PER ROW RATHER THAN PER
+#   REQUEST. The two populations answer different questions:
+#
+#     meet   -> RECENCY. Thirty editions of one name, and the recent one is
+#               nearly always the one meant.
+#     others -> HOW MUCH THEY RACED. sort_count carries races for an athlete,
+#               athletes for a school, results for a course or venue; someone
+#               searching a name wants the runner with a career, not a
+#               namesake with a single result.
+#
+# ⚠ IT USED TO BRANCH ON ?kind=, AND THAT MADE IT UNREACHABLE FROM THE SEARCH
+#   BOX. topbar-search.js calls /search/api with no kind at all, so `kind`
+#   was "" and every meet fell through to the count-first branch -- exactly
+#   the "a short 2010 name beats a longer 2025 one" bug the comment above
+#   claims to have fixed. It was only ever fixed for the pickers in
+#   predictions.js and rankings.js, which pass kind explicitly.
+#
+#   A CASE on the row's own kind cannot be bypassed by the caller, and it is
+#   also the only thing that can order a MIXED list correctly: the "All" tab
+#   and the dropdown both hold meets and athletes at once, and no
+#   per-request choice can rank both of those the way each wants.
+#
+# ! WORD MATCHES STILL COME FIRST, ABOVE THIS. The order of the keys is the
+#   whole ranking, and word_score leads it -- meets are stored with the year
+#   and edition number in front, so "starts with" is a weak signal here and
+#   "every token on a word boundary" is a strong one.
+_ORDER_TAIL = """
+          (CASE WHEN kind = 'meet' THEN sort_year  ELSE sort_count END)
+              DESC NULLS LAST,
+          (CASE WHEN kind = 'meet' THEN sort_count ELSE sort_year  END)
+              DESC NULLS LAST,
+          (search_text LIKE %({p}_first)s) DESC,
+          length(search_text)
+"""
+
+
+def _searchOrder(prefix="t"):
+    """The ranking below word_score. Both surfaces use this, unmodified."""
+    return _ORDER_TAIL.format(p=prefix)
 
 
 def _parse_year(q):
@@ -1810,8 +2066,16 @@ def _run_search(q, kind, year_filter, offset):
     # ★ PREFIX MATCHES STILL RANK FIRST. Substring matching alone would bury
     #   "Arcadia" under "Allen East JH Tri--Arcadia, McComb"; the ORDER BY
     #   below puts a prefix hit ahead of a mid-string one.
-    where = ["(search_text LIKE %(sub)s OR search_last LIKE %(sub)s)"]
-    params = {"sub": f"%{needle}%", "p": needle + "%"}
+    terms = _searchTerms(needle)
+    if terms is None:
+        return [], {}, []
+    where, params, word_score = terms
+    order_tail = _searchOrder()
+    # ! CAPTURED BEFORE kind AND year ARE APPENDED. The tab counts must ignore
+    #   the kind filter (that is what makes the tabs switchable) and the year
+    #   list must ignore the year filter (or picking a year collapses the
+    #   dropdown to just that year).
+    where_base = list(where)
 
     if kind != "all":
         where.append("kind = %(k)s")
@@ -1835,30 +2099,64 @@ def _run_search(q, kind, year_filter, offset):
                 --   substring matching buries "Arcadia" under "Allen East JH
                 --   Tri--Arcadia, McComb" -- both match, but only one is what
                 --   was meant. Booleans sort false < true, hence DESC.
-                ORDER  BY (search_text LIKE %(p)s) DESC,
-                          sort_year DESC, sort_count DESC, length(search_text)
+                -- ★ THE SAME RANKING THE DROPDOWN USES, from the same
+                --   _searchOrder. A result that is first in the dropdown has
+                --   to be first here, or clicking through reshuffles the list
+                --   under the cursor and the page looks broken even when it
+                --   is not. It also fixes the page's own key, which sorted
+                --   EVERYTHING by year -- right for meets, wrong for athletes
+                --   and schools, where the question is how much they raced.
+                ORDER  BY ({word_score}) DESC,
+                          {order_tail}
                 LIMIT  %(lim)s OFFSET %(off)s
             """, {**params, "lim": PAGE_SIZE, "off": offset})
             results = cur.fetchall()
 
             # per-kind counts for the tabs (ignore the kind filter for counts)
-            count_where = ["(search_text LIKE %(p)s OR search_last LIKE %(p)s)"]
-            cparams = {"p": prefix}
+            #
+            # ⚠ THE SAME PREDICATE AS THE RESULTS. These two queries were left
+            #   on the old left-anchored match when the results moved to
+            #   substring, referring to a `prefix` variable that had gone away
+            #   with it -- so /search raised NameError on every query, while
+            #   the dropdown, which never comes through here, kept working.
+            #
+            #   Fixing only the name would have been worse than the crash: the
+            #   tabs would count PREFIX hits beside SUBSTRING results, so a
+            #   query could list thirty meets under a tab reading 0. A count
+            #   that disagrees with the list under it is a bug nobody reports
+            #   and everybody distrusts.
+            #
+            # ★ AND IT IS COUNTED WITH A CEILING. An exact COUNT(*) has to
+            #   touch every matching row -- the results query stops at 30, this
+            #   one did not, so on a common token the tabs cost more than the
+            #   results they label. Nobody reads a four-digit tab count; they
+            #   read "lots". One capped scan per kind answers the only question
+            #   the tabs actually ask, which is whether it is worth clicking.
+            count_where = list(where_base)
+            cparams = dict(params)
+            cparams["cap"] = SEARCH_COUNT_CAP + 1
             if year:
                 count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
                 cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
+            kinds_sql = ", ".join(f"('{k}')" for k in SEARCH_KINDS)
             cur.execute(f"""
-                SELECT kind, COUNT(*) AS n
-                FROM search_index
-                WHERE {' AND '.join(count_where)}
-                GROUP BY kind
+                SELECT k.kind, c.n
+                FROM   (VALUES {kinds_sql}) AS k(kind)
+                CROSS  JOIN LATERAL (
+                    SELECT count(*) AS n FROM (
+                        SELECT 1 FROM search_index s
+                        WHERE  s.kind = k.kind
+                          AND  {' AND '.join(count_where)}
+                        LIMIT  %(cap)s
+                    ) t
+                ) c
             """, cparams)
-            counts = {r["kind"]: r["n"] for r in cur.fetchall()}
+            counts = {r["kind"]: r["n"] for r in cur.fetchall() if r["n"]}
 
             # distinct years -- from q+kind ONLY, never the year filter itself,
             # or picking a year collapses the dropdown to just that year.
-            yr_where = ["(search_text LIKE %(p)s OR search_last LIKE %(p)s)"]
-            yparams = {"p": prefix}
+            yr_where = list(where_base)
+            yparams = dict(params)
             if kind != "all":
                 yr_where.append("kind = %(k)s")
                 yparams["k"] = kind
@@ -1872,6 +2170,14 @@ def _run_search(q, kind, year_filter, offset):
     return results, counts, years
 
 PAGE_SIZE = 30
+
+# ! THE TAB COUNTS STOP HERE AND SAY "1000+". See the note in _run_search: an
+#   exact count has to walk the whole match set, and the tabs are a
+#   worth-clicking signal, not a statistic.
+SEARCH_COUNT_CAP = 1000
+
+# The tab order on the results page, and the kinds the counts are taken over.
+SEARCH_KINDS = ("athlete", "meet", "course", "venue", "school")
 
 @app.route("/search")
 def search_page():
@@ -1893,7 +2199,8 @@ def search_page():
                            counts=counts,        # per-tab counts
                            years=years,          # for the year dropdown
                            offset=offset,
-                           page_size=PAGE_SIZE)
+                           page_size=PAGE_SIZE,
+                           count_cap=SEARCH_COUNT_CAP)
 
 # ===================================================================== #
 #  CONVERSIONS  — paste these two routes into app.py
@@ -1947,7 +2254,12 @@ def conversions_page():
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             xc_courses = _default_xc_courses(cur, 10)
 
+    # ★ DEEP LINK FROM AN ATHLETE PAGE. /conversions?athlete=123 arrives with
+    #   the source already chosen, so the handoff is one click rather than a
+    #   name typed twice.
+    prefill = request.args.get("athlete", type=int)
     return render_template("conversions.html",
+                           prefill_athlete=prefill,
                            xc_courses=xc_courses,
                            tf_distances=_TF_DEFAULT_DISTANCES,
                            pools=_POOLS)
@@ -2111,6 +2423,110 @@ def api_rankings():
                     "national_bias": (f["state"] is None
                                       and f["board"] != "pr"),
                     "rows": rows})
+
+@app.route("/api/teams")
+def api_teams():
+    """One page of a team board.
+
+    ★ THE RANKING IS A MEET. team_season holds the finish order of a
+      hypothetical meet per (scope, pool, sport, season) -- every team's top
+      seven entered, sorted by season rating, scored with the ordinary rules.
+      See team_rank.py for why the teams are raced rather than having their
+      ratings averaged.
+
+    ★ AND WHEN A FILTER SPANS SEASONS, ANOTHER MEET IS RUN. Three seasons of
+      stored boards hold three first places; the only honest way to get one
+      is to race the selected teams against each other, which teams.serveBoard
+      does whenever the field fits under its ceiling. `raced` in the response
+      says whether that happened, so the page can explain what its rank
+      column means instead of guessing at the rule a second time.
+
+    national_bias is louder here than on the athlete boards on purpose: the
+    per-state offset lands on all five scorers at once and pushes them the
+    same way, instead of being one athlete's error.
+    """
+    f, err = parseTeamFilters(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                rows, info = serveBoard(cur, f)
+            except psycopg2.errors.UndefinedTable:
+                # ! THE HONEST 400 THE RANKINGS ROUTE ALREADY LEARNED TO GIVE.
+                #   Unhandled, Flask answers with its debug PAGE and the
+                #   frontend reports "Unexpected token '<'" -- an error about
+                #   JSON parsing, which sends the reader entirely the wrong way.
+                conn.rollback()
+                return jsonify({"error": "Team rankings have not been built "
+                                         "yet \u2014 run "
+                                         "racecast/build_team_season.py after "
+                                         "build_ranking_results.py."}), 400
+            except Exception:
+                # ★ AND A JSON-SHAPED 500 FOR EVERYTHING ELSE, because this
+                #   endpoint is only ever read by fetch(). A KeyError here
+                #   reached the browser as "Unexpected token '<' ... is not
+                #   valid JSON" -- a message about parsing, for a cursor
+                #   mistake, which is exactly the wrong direction to send
+                #   somebody. The traceback still goes to the server log
+                #   where it belongs; the client gets a sentence.
+                conn.rollback()
+                app.logger.exception("/api/teams failed")
+                return jsonify({"error": "Team rankings failed to load. The "
+                                         "server log has the traceback."}), 500
+
+    # ! f IS SENT BACK AFTER serveBoard, NOT BEFORE. It picks the sort, and
+    #   the page draws its header arrow from what came back -- so a response
+    #   describing the filters it was asked for rather than the ones it
+    #   served would put the arrow on a column the board is not sorted by.
+    return jsonify({"filters": f, "count": len(rows),
+                    "board_scope": f["board_scope"],
+                    "national_bias": f["board_scope"] == "usa",
+                    **info, "rows": rows})
+
+
+@app.route("/api/courses")
+def api_courses():
+    """One page of the course board.
+
+    ★ THE NUMBER IS THE ENGINE'S OWN. course_rank is built from
+      course_difficulties, which the solve re-centres to mean zero every
+      iteration -- so difficulty reads as "harder than an average course" and
+      not as a score anybody chose. See build_course_rank.py.
+
+    ⚠ AND IT IS ALREADY DISTANCE-NEUTRAL, applied after normalisation, which
+      is the only reason 5k and 8k courses can share one ranking.
+    """
+    f, err = parseCourseFilters(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                rows = getCourseRankings(cur, f)
+                total = countCourses(cur, f)
+            except psycopg2.errors.UndefinedTable:
+                # ! THE HONEST 400 THE OTHER BOARDS ALREADY LEARNED TO GIVE.
+                #   Unhandled, Flask answers with its debug PAGE and the
+                #   frontend reports "Unexpected token '<'" -- an error about
+                #   JSON parsing, which sends the reader the wrong way.
+                conn.rollback()
+                return jsonify({"error": "Course rankings have not been built "
+                                         "yet \u2014 run "
+                                         "racecast/build_course_rank.py after "
+                                         "the engine writes "
+                                         "course_difficulties."}), 400
+            except Exception:
+                conn.rollback()
+                app.logger.exception("/api/courses failed")
+                return jsonify({"error": "Course rankings failed to load. The "
+                                         "server log has the traceback."}), 500
+
+    return jsonify({"filters": f, "count": len(rows), "total": total,
+                    "rows": rows})
+
 
 @app.route("/api/rankings/rank")
 def api_rankings_rank():

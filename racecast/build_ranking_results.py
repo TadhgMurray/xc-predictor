@@ -29,6 +29,7 @@ import sys
 import time
 import argparse
 import datetime
+import concurrent.futures as cf
 
 import psycopg2.extras
 
@@ -47,6 +48,13 @@ from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 
 try:
     from normalize_distance import poolFor
+    from anchor_check import mismatch as anchorMismatch
+    # ★ THE SAME READER THE ENGINE AND anchor_check USE. Track keeps its
+    #   distance in the event name and event_parse is where that is read; a
+    #   second copy of that logic here would be a third way to get it wrong.
+    from event_parse import distanceFromEventShort
+    from dbfast import tuneSession
+    from pool_ceiling import ceilingFor
     from pool_resolve import resolvePool, inScope
 except ImportError as exc:
     raise SystemExit(
@@ -54,6 +62,46 @@ except ImportError as exc:
         "Fix the import path at the top of this file. Do NOT reimplement the "
         "pool logic here -- it must stay identical to the engine's."
     )
+
+
+# ------------------------------------------------------------------ #
+#  THE PHASE CLOCK
+# ------------------------------------------------------------------ #
+#
+# ★ 112 MINUTES WITH NO BREAKDOWN IS NOT A MEASUREMENT. The 2026-08 run logged
+#   one number for the whole build and printed nothing between the last TF
+#   progress line and "swapping in", so the only way to find the cost was to
+#   guess at it. Profiled separately, the Python half of this build --
+#   prepareRow plus the COPY payload -- is 8 us/row, which is EIGHT minutes for
+#   60M rows. The other hundred are Postgres, and this is how the next run says
+#   which statement.
+_PHASES = []
+
+
+class phase:
+    """Time one named phase and remember it for the summary."""
+
+    def __init__(self, label):
+        self.label = label
+
+    def __enter__(self):
+        self.t0 = time.time()
+        return self
+
+    def __exit__(self, *exc):
+        _PHASES.append((self.label, time.time() - self.t0))
+        return False
+
+
+def phaseReport():
+    if not _PHASES:
+        return
+    total = sum(dt for _l, dt in _PHASES)
+    print("\n  WHERE THE TIME WENT")
+    for label, dt in _PHASES:
+        share = 100.0 * dt / total if total else 0.0
+        print(f"    {dt / 60:7.1f} min  {share:5.1f}%  {label}")
+    print(f"    {total / 60:7.1f} min          (phases; the rest is startup)")
 
 
 # Rows streamed per network round-trip. Big enough that the round-trip cost
@@ -69,6 +117,12 @@ _COPY_BATCH = 200_000
 # (observed: speed_rating 7528 on a 20.6s time) and must never reach a board.
 _RATING_MIN = 20.0
 _RATING_MAX = 200.0
+
+# How many indexes to build at once. Each CREATE INDEX already uses up to
+# max_parallel_maintenance_workers on its own, so this multiplies rather than
+# replaces it -- 3 stays inside max_parallel_workers (8) with room for the
+# three leader processes.
+_INDEX_JOBS = 3
 
 
 # ------------------------------------------------------------------ #
@@ -151,6 +205,79 @@ _TF_STATE_TEMP_SQL = """
     CREATE INDEX ON tmp_tf_state (meet_id, div_id, source);
     ANALYZE tmp_tf_state;
 """
+
+
+_XC_TFRRS_DIST_SQL = """
+    DROP TABLE IF EXISTS tmp_xc_tfrrs_dist;
+    CREATE TEMP TABLE tmp_xc_tfrrs_dist AS
+        -- ⚠ XC ONLY, AND IT WAS NOT. Without this filter the table carries
+        --   the TF meets too, so a meeting with both sports contributes two
+        --   rows for the same (meet_id, div_id, source) -- and the LEFT JOIN
+        --   below FANS OUT rather than looking up. Measured: the TF stream
+        --   went from ~10 minutes to 130.8 of a 151.4 minute build.
+        --
+        -- ★ DISTINCT ON, so the key is unique BY CONSTRUCTION and the index
+        --   below can prove it. min() over a jsonb blob would hide a genuine
+        --   disagreement; picking deterministically and letting the unique
+        --   index fail loudly is the trade this file makes everywhere else.
+        SELECT DISTINCT ON (m.meet_id, (kv.key)::bigint, m.source)
+               m.meet_id,
+               (kv.key)::bigint                        AS div_id,
+               m.source,
+               (kv.value ->> 'distance')::float        AS distance
+        FROM   meets_tfrrs m,
+               LATERAL jsonb_each(m.division_distances) kv
+        WHERE  m.division_distances IS NOT NULL
+          AND  m.sport = 'XC'
+          AND  kv.value ->> 'distance' IS NOT NULL
+          AND  kv.key ~ '^[0-9]+$'
+        ORDER  BY m.meet_id, (kv.key)::bigint, m.source,
+                  (kv.value ->> 'distance')::float;
+    -- ! UNIQUE, so a future fan-out is an ERROR rather than an hour.
+    CREATE UNIQUE INDEX ON tmp_xc_tfrrs_dist (meet_id, div_id, source);
+    ANALYZE tmp_xc_tfrrs_dist;
+"""
+
+
+def prepareXcTfrrsDistTemp(conn):
+    """The XC distances that are NOT in `meets`, which is half the corpus.
+
+    ⚠ THE XC QUERY JOINED `meets` AND NOTHING ELSE, AND `meets` IS THE ANET
+      SOURCE. tfrrs cross-country divisions keep their per-division distance
+      in meets_tfrrs.division_distances -- a JSONB blob keyed by div_id as a
+      string, with no div_id column to join on -- so every one of them
+      reached ranking_results with distance NULL.
+
+      That is why propose_distances._DISTANCES has to UNION two sources to
+      build div_distance, and why audit_overrides prints them apart:
+
+          anet:   812,079 divisions with a distance
+          tfrrs:   41,508 divisions with a distance
+
+      This file referenced neither meets_tfrrs nor div_distance. Measured
+      consequence, from 10_rankings' own log:
+
+          anchor gate: 585,213 UNCHECKED (1.8% -- no distance, so the gate
+          could not fire on them)
+
+      A NULL distance is not a rating error, which is why every
+      rating-based audit walked past it: the ratings in `results` are fine.
+      It is the absence of the one column the anchor gate and the PR boards
+      need. Meet 26359 -- Ox Bow Park, the JV Minutemen Classic -- carries
+      568 tfrrs rows across divisions 0-3 and has no `meets` row at all.
+
+    ! SAME SHAPE AS prepareTfStateTemp, for the same reason: collapse the
+      blob once into a table unique on (meet_id, div_id, source), index it,
+      and let the streaming query do an indexed lookup instead of expanding
+      JSON 34.5M times.
+    """
+    with conn.cursor() as cur:
+        cur.execute(_XC_TFRRS_DIST_SQL)
+        cur.execute("SELECT count(*) FROM tmp_xc_tfrrs_dist")
+        n = cur.fetchone()[0]
+    conn.commit()
+    print(f"  XC tfrrs distances: {n:,} meet-divisions "
+          f"(built once; these are absent from `meets` entirely)")
 
 
 def prepareTfStateTemp(conn):
@@ -291,8 +418,17 @@ _SQL = {
     "XC": f"""
         SELECT r.result_id, r.person_id, r.speed_rating, r.date,
                r.grade, r.source, r.school, r.time_seconds,
+               -- ! FOR THE ANCHOR GATE IN poolOf. Without this column the
+               --   check reads None on every row and silently never fires,
+               --   which is worse than not having it: the build would report
+               --   a gate that is not gating.
+               r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
-               COALESCE(dov.distance, m.distance) AS distance,
+               -- ⚠ THREE SOURCES, NOT TWO. dov is the override, m.distance
+               --   is anet, and xtd is tfrrs -- which lives in a JSONB blob
+               --   in meets_tfrrs and was missing entirely. See
+               --   prepareXcTfrrsDistTemp.
+               COALESCE(dov.distance, m.distance, xtd.distance) AS distance,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -325,6 +461,9 @@ _SQL = {
         --   corpus has already decided were wrong.
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+        LEFT JOIN tmp_xc_tfrrs_dist xtd
+               ON xtd.meet_id = r.meet_id AND xtd.div_id = r.div_id
+              AND xtd.source  = r.source
         {_GENDER_JOIN}{_seasonLevelJoin("XC")}{_gateJoins("XC")}
         WHERE r.speed_rating IS NOT NULL
           AND r.person_id IS NOT NULL
@@ -334,8 +473,29 @@ _SQL = {
     "TF": f"""
         SELECT r.result_id, r.person_id, r.speed_rating, r.date,
                r.grade, r.source, r.school, r.time_seconds,
+               -- ! FOR THE ANCHOR GATE IN poolOf. Without this column the
+               --   check reads None on every row and silently never fires,
+               --   which is worse than not having it: the build would report
+               --   a gate that is not gating.
+               r.normalized_time,
                r.meet_id, r.div_id, r.canon_meet_id,
-               COALESCE(dov.distance, m.distance) AS distance,
+               -- ⚠ NO m.distance ON THIS SIDE. `m` here is tmp_tf_state, a
+               --   collapse of meets_tf on (meet, div, source) -- and it
+               --   cannot carry a distance even in principle, because on
+               --   track the distance belongs to the EVENT, not the meeting.
+               --   The 800 and the 3200 at one meet are one row of
+               --   tmp_tf_state and two distances. This query asked for
+               --   m.distance anyway and had done since that collapse landed;
+               --   it failed the first time a TF build ran afterwards, with
+               --   "column m.distance does not exist".
+               --
+               -- ★ SO TRACK TAKES ITS DISTANCE FROM THE EVENT NAME, which is
+               --   where track keeps it. event_parse.distanceFromEventShort
+               --   is the one reader of that -- anchor_check already uses it
+               --   for exactly this reason -- and prepareRow calls it below,
+               --   memoised on the event string.
+               dov.distance AS distance,
+               r.event_short,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -356,6 +516,12 @@ _SQL = {
         FROM results_tf r
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+        -- ⚠ NO tmp_xc_tfrrs_dist JOIN HERE, AND THERE USED TO BE ONE.
+        --   Track takes its distance from the EVENT NAME -- the select list
+        --   above reads dov.distance and r.event_short and nothing else -- so
+        --   the join was dead weight: 25.4M lookups whose result was never
+        --   read. It was also the cross-sport fan-out described in
+        --   _XC_TFRRS_DIST_SQL.
         -- ! THREE KEYS INTO A COLLAPSED TABLE, NOT FOUR INTO meets_tf. The
         --   event_id was only ever there to stop the ~21.5x fan-out that
         --   meets_tf's per-event grain causes; the one column this query
@@ -403,6 +569,27 @@ except ImportError:
 
     def _is_dodea(school):
         return False
+
+
+# ! MEMOISED ON THE EVENT STRING, NOT PER ROW. distanceFromEventShort is a
+#   dict lookup and then a parse; there are a few thousand distinct event
+#   names against ~24M track rows, so caching turns 24M parses into a few
+#   thousand. The cache is keyed on exactly what the query returns, including
+#   None, which resolves to None once rather than being re-parsed forever.
+_TF_DISTANCE = {}
+
+
+def _tfDistance(event_short):
+    """Metres for a track event name, or None. See event_parse."""
+    if event_short in _TF_DISTANCE:
+        return _TF_DISTANCE[event_short]
+    metres = None
+    if event_short:
+        got = distanceFromEventShort(event_short)
+        # ! (distance, gender) -- only the first is wanted here.
+        metres = got[0] if isinstance(got, (tuple, list)) else got
+    _TF_DISTANCE[event_short] = metres
+    return metres
 
 
 def _asDate(text):
@@ -460,6 +647,31 @@ _COPY_ESCAPES = str.maketrans({
 })
 
 
+# How much higher a SINGLE RACE may rate than the pool's season ceiling.
+# A season mean averages an athlete's good days with their bad ones, so one
+# race legitimately sits above it -- but not by half again, which is what a
+# mis-anchored row does. 10 points is about 7% at these ceilings.
+#
+# ⚠ NOT MEASURED YET, AND SAYING SO. The season ceilings in pool_ceiling.py
+#   were set from audit_pool_ceilings against the corpus; this margin is a
+#   first guess on top of them. audit_pool_ceilings --races prints the
+#   single-race distribution and the athletes each candidate would drop, and
+#   this number should be set from that the same way the others were.
+RACE_MARGIN = 10.0
+
+
+def raceCeiling(pool):
+    """The highest rating one RACE may carry and still reach a board."""
+    return ceilingFor(pool) + RACE_MARGIN
+
+
+# What the two rails did, per sport, so a build that stops gating says so.
+_GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
+                "outside_pool": 0},
+         "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
+                "outside_pool": 0}}
+
+
 def isRankablePool(pool):
     """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a board."""
     return bool(pool) and not pool.endswith("_unknown_gender")
@@ -467,6 +679,14 @@ def isRankablePool(pool):
 
 def prepareRow(row, sport):
     """One DB row -> one COPY tuple, or None to drop it.
+
+    ★ `row` IS A NAMEDTUPLE, NOT A DICT, AND THAT IS WORTH MINUTES. Measured
+      over 2M rows from a real server-side cursor: RealDictCursor 11.8s,
+      DictCursor 9.9s, NamedTupleCursor 3.3s, a bare tuple 2.9s. At 61.6M rows
+      the dict version spends about five minutes of the build building one
+      dictionary per row and throwing it away. The namedtuple keeps the field
+      names -- row.school still reads as row.school -- for 0.4s over the
+      fastest option there is.
 
     DROPS, and why none of them is silent data loss:
       non-school       grade is untrustworthy, so the pool would be WRONG
@@ -482,7 +702,7 @@ def prepareRow(row, sport):
     EXTRACT(year FROM race_date) IS NO LONGER EQUIVALENT to this column; any
     SQL that assumes it is will be wrong for TF by one year.
     """
-    school = row["school"]
+    school = row.school
     if _isNonSchoolCached(school):
         return None
     # Hidden, not corrected -- see panels._DODEA_SCHOOLS.
@@ -496,7 +716,7 @@ def prepareRow(row, sport):
     #
     #   inScope keeps anything it cannot PROVE is foreign, including a null
     #   state, so this removes only what the data is explicit about.
-    if not inScope(row.get("state")):
+    if not inScope(row.state):
         return None
 
     # ★ THE ENGINE'S DECISION, NOT A REIMPLEMENTATION OF IT. resolvePool is
@@ -505,16 +725,24 @@ def prepareRow(row, sport):
     #
     #   merge=True: this table stores the pool WITHOUT the sport suffix, since
     #   `sport` is already its own column.
-    pool = resolvePool(row["grade"], row["gender"], row["source"], school,
+    # ★ THE SEASON, COMPUTED ONCE AND USED TWICE. resolvePool needs it for the
+    #   hand-listed professionals (see pool_resolve._PRO_SEASONS, which is per
+    #   athlete-season now, not per person), and the row's own `year` column
+    #   is the same number. seasonYearFromIso is memoised, so this is a dict
+    #   hit rather than a second parse.
+    season = seasonYearFromIso(sport, row.date)
+
+    pool = resolvePool(row.grade, row.gender, row.source, school,
                        sport,
-                       season_level=row.get("season_level"),
-                       grade_untrusted=bool(row.get("grade_untrusted")),
-                       fixed_grade=row.get("fixed_grade"),
-                       fixed_level=row.get("fixed_level"),
-                       grade_verdict=row.get("grade_verdict"),
+                       season=season,
+                       season_level=row.season_level,
+                       grade_untrusted=bool(row.grade_untrusted),
+                       fixed_grade=row.fixed_grade,
+                       fixed_level=row.fixed_level,
+                       grade_verdict=row.grade_verdict,
                        # ! FOR _PRO_PEOPLE -- see pool_resolve.
-                       person_id=row.get("person_id"),
-                       is_pro=bool(row.get("is_pro")),
+                       person_id=row.person_id,
+                       is_pro=bool(row.is_pro),
                        # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
                        #   readers were the two promotion gates, now gone. This
                        #   call was already lazy about building the date; now
@@ -540,18 +768,107 @@ def prepareRow(row, sport):
     # ⚠ COALESCE'd TO 'high' IN THE QUERY, so a grade_fix written before this
     #   column existed ranks everything exactly as it used to rather than
     #   ranking nothing.
-    if row.get("grade_trust") == "low":
+    if row.grade_trust == "low":
         return None
 
-    rating = float(row["speed_rating"])
+    # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
+    #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
+    #
+    #   normalized_time was written by the backfill with the pool it decided
+    #   THEN; speed_rating divides by the pool mean of the pool the solve
+    #   decided LATER. Those two are computed by different code from facts
+    #   that can change in between -- a grade_fix verdict, a season_level
+    #   verdict, a school that acquired a level -- and until now nothing
+    #   checked they agree.
+    #
+    # ⚠ THE ANCHOR IS PER POOL, so disagreeing is not a rounding difference.
+    #   normalize_distance.targetFor anchors ms at 3200m and hs at 5000m, so a
+    #   3200m-anchored ability over a 5000m-anchored mean is inflated about
+    #   1.64x. Person 29346285, an eighth grader with no recorded grade, rated
+    #   187 in hs_m on races his own exponents place squarely at the ms
+    #   anchor; on one scale he is a 112.
+    #
+    # ! CHECKED BY RECOMPUTING, NOT BY INFERRING. normalizeTime is
+    #   deterministic given the row's own time and distance, so running it
+    #   with the pool the row is RATED in and comparing settles it -- no
+    #   exponent recovered, no anchor guessed. See engine/anchor_check.py,
+    #   which is the same function and can measure the corpus before this
+    #   drops anything.
+    #
+    # ! AND IT DROPS FROM THE BOARDS ONLY, exactly like grade_trust='low'
+    #   above. results.speed_rating is untouched, so the athlete's own page
+    #   still shows what the engine computed; what is refused is a place in a
+    #   national ranking built on a scale the row was never measured on.
+    # ★ TRACK'S DISTANCE COMES FROM THE EVENT NAME, and it has to be resolved
+    #   BEFORE the gate below, which cannot check a row whose distance is
+    #   None -- it would return "not a finding" on every TF row and the gate
+    #   would silently never fire. A hand-corrected override still wins.
+    distance = row.distance
+    if distance is None and sport == "TF":
+        # ! getattr, NOT row.event_short: the XC query does not select it, and
+        #   a namedtuple has no attribute it was not given. The TF guard is
+        #   already there; this is belt and braces against the two SELECT
+        #   lists drifting apart again.
+        distance = _tfDistance(getattr(row, "event_short", None))
+
+    # ⚠ AND IT COUNTS WHAT IT COULD NOT CHECK. mismatch() returns "not a
+    #   finding" when the row has no distance -- the honest answer to an
+    #   unanswerable question, but it means the row is PUBLISHED UNCHECKED.
+    #   Cross country takes its distance from dist_override or meets, and
+    #   where neither has one the gate is silently inert for that row. A
+    #   build that cannot check a third of its rows and does not say so is
+    #   the "gate that is not gating" this file's own comment warns about, so
+    #   the counts are printed per sport at the end of buildSport.
+    is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
+                                              row.normalized_time, pool, sport)
+    if ratio is None:
+        _GATE[sport]["unchecked"] += 1
+    elif is_bad:
+        _GATE[sport]["mismatched"] += 1
+        return None
+    else:
+        _GATE[sport]["checked"] += 1
+
+    rating = float(row.speed_rating)
     if not (_RATING_MIN <= rating <= _RATING_MAX):
         return None
 
-    date_text = row["date"]
+    # ★ AND A RATING OUTSIDE ITS OWN POOL IS A POOLING ERROR, NOT A RECORD.
+    #   The rail above is a FOSSIL: 20..200 exists to catch a speed_rating of
+    #   7528 on a 20-second time, and 159 sails through it in every pool
+    #   because 159 is a real number for somebody -- just not for a high
+    #   schooler running 21:32 for three miles.
+    #
+    # ⚠ THE BOARDS WERE FULL OF EXACTLY THAT. The whole top-25 of the 2025
+    #   hs_m XC board was one meet, times 21:32 to 21:55, every one rated
+    #   157-159. A 21:32 three-mile normalised on its own pool's anchor rates
+    #   92. The same athlete's page showed 14:28.1 and 14:45.9 over the SAME
+    #   3219m course rated 177.2 and 108.1 -- a ratio of 1.639, which is the
+    #   ms-against-hs anchor ratio and nothing else. The anchor gate above is
+    #   meant to catch that, and cannot when the row has no distance to
+    #   recompute with.
+    #
+    # ! SO THIS IS THE RAIL THAT DOES NOT NEED A DISTANCE. It is the same
+    #   ceiling build_team_season applies per athlete-season and the same one
+    #   audit_pool_ceilings measures, applied per RACE -- and it drops from
+    #   the BOARDS only, exactly like grade_trust='low' and the anchor gate.
+    #   The athlete's own page still shows what the engine computed.
+    #
+    # ⚠ A SEASON MEAN AND A SINGLE RACE ARE NOT THE SAME DISTRIBUTION, which
+    #   is why this is not simply ceilingFor(pool). One race can beat a
+    #   season average, so the line sits RACE_MARGIN above it. Measure the
+    #   single-race distribution with audit_pool_ceilings --races before
+    #   moving it, and read the names it drops: a real athlete above the line
+    #   means the line is wrong.
+    if rating > raceCeiling(pool):
+        _GATE[sport]["outside_pool"] += 1
+        return None
+
+    date_text = row.date
 
     return (sport,
-            row["result_id"],
-            row["person_id"],
+            row.result_id,
+            row.person_id,
             pool,
             rating,
             date_text,                 # Postgres parses YYYY-MM-DD directly
@@ -560,16 +877,16 @@ def prepareRow(row, sport):
             # engine's grouping. athlete_season's GROUP BY ... year inherits
             # it, which is what stops one real season showing as two rows on
             # the boards. XC is unaffected -- see season_year.py.
-            seasonYearFromIso(sport, date_text),
-            row["state"],
+            season,
+            row.state,
             school,
-            row["grade"],
-            row["meet_id"],
-            row["div_id"],
-            row["canon_meet_id"],
-            row["time_seconds"],
-            row.get("distance"),
-            row.get("event_id"))
+            row.grade,
+            row.meet_id,
+            row.div_id,
+            row.canon_meet_id,
+            row.time_seconds,
+            distance,
+            row.event_id)
 
 
 # ------------------------------------------------------------------ #
@@ -605,8 +922,9 @@ def copyRows(cur, rows):
     "".join(...) builds the payload in ONE allocation; repeated `s += ...`
     would be quadratic in the batch size.
     """
-    payload = "".join("\t".join(copyField(v) for v in row) + "\n"
-                      for row in rows)
+    # map, not a generator expression: 401k rows/s against 341k, measured over
+    # 200k rows of the real shape. Identical bytes; one less frame per row.
+    payload = "".join("\t".join(map(copyField, row)) + "\n" for row in rows)
     cur.copy_expert(
         f"COPY {_LOAD_TABLE} ({', '.join(_COLUMNS)}) FROM STDIN",
         io.StringIO(payload))
@@ -627,7 +945,7 @@ def buildSport(conn, sport, since, stats):
     seen = 0
 
     with conn.cursor(name=f"rank_src_{sport.lower()}",
-                     cursor_factory=psycopg2.extras.RealDictCursor) as src:
+                     cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
         src.execute(_SQL[sport], {"since": since})
 
@@ -652,6 +970,29 @@ def buildSport(conn, sport, since, stats):
                 stats[f"{sport}_written"] += len(buffer)
 
     stats[f"{sport}_read"] = seen
+    # ⚠ SAY HOW MUCH OF TRACK GOT A DISTANCE AT ALL. It now comes from the
+    #   event name, and an event name the parser does not recognise leaves the
+    #   row with no distance -- which silently costs it a place on the
+    #   distance-filtered PR boards AND makes the anchor gate unanswerable for
+    #   it. A number here is how that gets noticed; event_parse's own header
+    #   records 7.1M rows once dropped by a narrower reader.
+    if sport == "TF" and _TF_DISTANCE:
+        unknown = sorted(k for k, v in _TF_DISTANCE.items() if v is None and k)
+        print(f"    TF distances: {len(_TF_DISTANCE) - len(unknown):,} of "
+              f"{len(_TF_DISTANCE):,} distinct event names parsed"
+              + (f" -- unparsed: {', '.join(unknown[:6])}"
+                 f"{' ...' if len(unknown) > 6 else ''}" if unknown else ""))
+    g = _GATE[sport]
+    total = g["checked"] + g["mismatched"] + g["unchecked"]
+    if total:
+        print(f"    anchor gate: {g['checked']:,} checked, "
+              f"{g['mismatched']:,} dropped as mis-anchored, "
+              f"{g['unchecked']:,} UNCHECKED "
+              f"({100.0 * g['unchecked'] / total:.1f}% -- no distance, so the "
+              f"gate could not fire on them)")
+    if g["outside_pool"]:
+        print(f"    pool ceiling: {g['outside_pool']:,} races dropped as "
+              f"implausible for their pool (see RACE_MARGIN)")
     print(f"    {sport}: {seen:,} read, {stats[f'{sport}_written']:,} written, "
           f"{stats[f'{sport}_dropped']:,} dropped")
 
@@ -734,13 +1075,58 @@ def createShadow(conn, name, like):
     conn.commit()
 
 
+# ⚠ THE INDEXES THIS SITE CANNOT RUN WITHOUT, WRITTEN DOWN.
+#
+#   They used to live ONLY in the live table's catalogue, read back by
+#   indexDefs and replayed onto the shadow. That works exactly as long as the
+#   live table has them -- and it is self-erasing the moment it does not:
+#   indexDefs returns nothing, buildIndexes returns early (it used to do so
+#   SILENTLY), the shadow swaps in bare, and every run after that faithfully
+#   copies "no indexes" forward. A 56M-row ranking_results with no index turns
+#   every athlete page and every board into a sequential scan.
+#
+#   athlete_season had it worse: buildIndexes was never called for it at all,
+#   so createShadow's deliberate "no indexes" was permanent. 12.9M rows,
+#   scanned in full for every ability board.
+#
+#   So the list is here, in the code, and the catalogue is a SUPPLEMENT to it
+#   rather than the source: anything added by hand on the live table is still
+#   picked up and replayed, but nothing here can be lost by having been lost
+#   once.
+#
+#   Each entry names the query that needs it. Do not add one without one.
+_CANONICAL_INDEXES = {
+    "ranking_results": [
+        # app.py _athletePaces, conversions.athlete_paces, rankings PR ranks:
+        #   WHERE person_id = %s
+        ("rr_person_idx", "(person_id)"),
+        # rankings performance boards: pool/sport/year equality, then
+        #   ORDER BY speed_rating DESC LIMIT cand
+        ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
+        # rankings PR boards: same filters, ORDER BY time_seconds ASC
+        ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
+        ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+    ],
+    "athlete_season": [
+        # athlete pages and "where am I": WHERE person_id = %s
+        ("as_person_idx", "(person_id)"),
+        # rankings ability boards: WHERE n_races >= .. AND pool/sport/year,
+        #   ORDER BY mean_rating DESC
+        ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC)"),
+        # the same boards sorted on the season best instead
+        ("as_board_best_idx", "(pool, sport, year, best_rating DESC)"),
+    ],
+}
+
+
 def indexDefs(conn, like):
     """The live table's index definitions, ready to replay on the shadow.
 
-    Read from the catalogue rather than hardcoded: this project has added
-    indexes to ranking_results more than once, and a hardcoded list would
-    silently drop any that were added since. The same reasoning as
-    merge_column._columns.
+    THE CATALOGUE PLUS THE CANONICAL LIST, not one or the other. Reading the
+    catalogue keeps indexes this project added by hand; the canonical list
+    keeps the ones the site cannot run without even when the live table has
+    already lost them. See _CANONICAL_INDEXES.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -748,7 +1134,41 @@ def indexDefs(conn, like):
             FROM   pg_indexes
             WHERE  schemaname = 'public' AND tablename = %s
         """, (like,))
-        return cur.fetchall()
+        defs = list(cur.fetchall())
+
+    # Compare on the column list, not the name: the same index built by an
+    # earlier run carries an auto-generated name, and adding ours beside it
+    # would build the same tree twice.
+    def _cols(ddl):
+        i = ddl.find("(")
+        return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
+
+    have = {_cols(ddl) for _n, ddl in defs}
+    for name, cols in _CANONICAL_INDEXES.get(like, []):
+        if _cols(cols) in have:
+            continue
+        defs.append((f"{like}_{name}",
+                     f"CREATE INDEX {like}_{name} ON public.{like} {cols}"))
+    return defs
+
+
+def analyze(conn, name):
+    """Fresh planner statistics, timed.
+
+    ★ NOT OPTIONAL, AND IT USED TO BE. A table this script CREATE'd has no
+      statistics at all: Postgres falls back to a 10-page, ~2,550-row guess
+      and plans against that. The next reader of ranking_results_new is
+      refreshAthleteSeason's aggregate over 56.6M rows, and the one after that
+      is the whole site.
+
+      It used to be the third statement inside _ATHLETE_SEASON_SQL -- i.e.
+      AFTER the aggregate that needed it.
+    """
+    with conn.cursor() as cur:
+        t0 = time.time()
+        cur.execute(f"ANALYZE {name}")
+        print(f"    [{time.time() - t0:7.1f}s] ANALYZE {name}")
+    conn.commit()
 
 
 def buildIndexes(conn, name, like):
@@ -774,29 +1194,72 @@ def buildIndexes(conn, name, like):
     """
     defs = indexDefs(conn, like)
     if not defs:
+        # Unreachable while _CANONICAL_INDEXES has an entry for this table,
+        # which is the point -- but if someone empties it, say so instead of
+        # swapping in a bare table and letting the site find out.
+        print(f"  ⚠ NO INDEXES to build on {name}. The swapped-in table will "
+              f"be scanned in full by every query that touches it.")
+        # ! STILL ANALYZE. A table this script created has NO statistics at
+        #   all, and the next reader is refreshAthleteSeason's aggregate.
+        analyze(conn, name)
         return
     print(f"  building {len(defs)} indexes on {name} (deferred until after "
-          f"the load)")
-    with conn.cursor() as cur:
-        # Session-scoped, for these index builds only. The default 64MB spills
-        # a sort over 61.6M rows to disk.
-        cur.execute("SET maintenance_work_mem = '2GB'")
-        for idxname, ddl in defs:
-            t0 = time.time()
-            # The shadow's own name for this index, derived not accumulated.
-            newname = (idxname if idxname.startswith(name)
-                       else idxname.replace(like, name, 1)
-                       if like in idxname else f"{name}_{idxname}")
-            sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
-            sql = sql.replace(f" ON {like} ", f" ON {name} ")
-            sql = sql.replace(f"INDEX {idxname} ",
-                              f"INDEX IF NOT EXISTS {newname} ")
-            sql = sql.replace(f"INDEX IF NOT EXISTS {idxname} ",
-                              f"INDEX IF NOT EXISTS {newname} ")
-            cur.execute(sql)
-            print(f"    [{time.time() - t0:7.1f}s] {newname[:60]}")
-        cur.execute(f"ANALYZE {name}")
-    conn.commit()
+          f"the load, {_INDEX_JOBS} at a time)")
+
+    def rename(idxname, ddl):
+        """The shadow's own name for this index, derived not accumulated."""
+        newname = (idxname if idxname.startswith(name)
+                   else idxname.replace(like, name, 1)
+                   if like in idxname else f"{name}_{idxname}")
+        sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
+        sql = sql.replace(f" ON {like} ", f" ON {name} ")
+        sql = sql.replace(f"INDEX {idxname} ",
+                          f"INDEX IF NOT EXISTS {newname} ")
+        sql = sql.replace(f"INDEX IF NOT EXISTS {idxname} ",
+                          f"INDEX IF NOT EXISTS {newname} ")
+        return newname, sql
+
+    # ★ ONE CONNECTION EACH, IN PARALLEL. Four indexes over 56.6M rows built
+    #   one after another is four full sorts in series, and the server sits
+    #   mostly idle through all of them: a single CREATE INDEX saturates
+    #   max_parallel_maintenance_workers (4) and nothing else.
+    #
+    #   They are independent -- different columns, same table, no shared
+    #   state -- so there is no ordering to preserve. psycopg2 releases the
+    #   GIL inside execute(), so threads are the right shape here; the work is
+    #   entirely on the server.
+    #
+    # ⚠ SAFE ONLY BECAUSE THIS IS A SHADOW. Nothing reads `name` until swapIn
+    #   renames it, so concurrent ACCESS EXCLUSIVE-taking DDL on it blocks
+    #   nobody. Do NOT reuse this shape against a live table -- use CREATE
+    #   INDEX CONCURRENTLY there, which is what ensure_ranking_indexes.py does.
+    #
+    # ! AND THE POOL IS ThreadedConnectionPool, checked -- see
+    #   scripts/database.py. A SimpleConnectionPool would corrupt here.
+    def build(job):
+        idxname, ddl = job
+        newname, sql = rename(idxname, ddl)
+        t0 = time.time()
+        with getConn() as c:
+            with c.cursor() as cur:
+                # Per-session, so each builder gets its own sort memory.
+                cur.execute("SET maintenance_work_mem = '2GB'")
+                cur.execute("SET max_parallel_maintenance_workers = 4")
+                cur.execute(sql)
+            c.commit()
+        return newname, time.time() - t0
+
+    jobs = min(_INDEX_JOBS, len(defs))
+    if jobs > 1:
+        with cf.ThreadPoolExecutor(max_workers=jobs) as pool:
+            for newname, dt in pool.map(build, defs):
+                print(f"    [{dt:7.1f}s] {newname[:60]}")
+    else:
+        for job in defs:
+            newname, dt = build(job)
+            print(f"    [{dt:7.1f}s] {newname[:60]}")
+
+    analyze(conn, name)
 
 
 def seedOtherSports(conn, keep_sports):
@@ -861,9 +1324,13 @@ def swapIn(conn):
         conn.commit()
     print("  swapped. dropping the old copies...")
 
+    # The old ranking_results is ~23GB. Timed because a drop that size is not
+    # instant and it is the last thing between here and the next step.
+    t0 = time.time()
     with conn.cursor() as cur:
         cur.execute("DROP TABLE ranking_results_old, athlete_season_old")
     conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] dropped the old copies")
     print("  done -- the site was never served an empty board")
 
 
@@ -872,16 +1339,81 @@ def swapIn(conn):
 # needed. That was the point of materializing it.
 #
 # THE DECAY MATCHES THE ENGINE. speed_ratings.py weights races by
-# DECAY_K ** days_ago when solving ability; this does the same, anchored to the
-# athlete's LAST race of that season. So decayed_rating means "form at season's
-# end" while mean_rating means "the season as a whole".
+# DECAY_K ** days_ago when solving ability; this does the same. decayed_rating
+# still means "form at season's end" and mean_rating "the season as a whole" --
+# see _ANCHOR for why the season's end no longer has to be computed to say so.
 #
-# season_end - race_date is integer days: subtracting two dates in Postgres
-# yields int, not an interval, so power() takes it directly.
+# Subtracting two dates in Postgres yields int days, not an interval, so
+# power() takes it directly.
 #
 # state/school/grade are the MODE, not an arbitrary row: an athlete can change
 # school mid-season, and mode() picks what they mostly were.
 _DECAY_K = 0.996
+
+# ★ THE ANCHOR CANCELS, SO THE WINDOW FUNCTION WAS NEVER NEEDED.
+#
+#       decayed = sum(r * k^(end - d)) / sum(k^(end - d))
+#               = sum(r * k^end * k^-d) / sum(k^end * k^-d)
+#
+#   and k^end is CONSTANT WITHIN THE GROUP, so it divides out of both sums.
+#   Any anchor gives the same number -- the athlete's own last race, or a
+#   fixed date, or none at all. This used to compute the per-group maximum
+#   with `max(race_date) OVER (PARTITION BY person_id, pool, sport, year)`,
+#   which sorts 61.6M rows before the GROUP BY that then re-aggregates them.
+#
+#   Measured on 3M rows: 4.0s with the window, 2.2s without.
+#
+# ⚠ AND THE TWO ARE THE SAME NUMBER, THOUGH NOT ALWAYS THE SAME BITS. Summing
+#   the same terms in a different order can land on a different last bit:
+#   across 80,000 athlete-seasons of 7 races each, 2 of them moved, by
+#   7.6e-06 on a scale of 100 -- which IS float4's resolution there, so it is
+#   the smallest difference the column is able to hold. Every other group was
+#   identical. The claim is "equal to the precision this column stores", not
+#   "byte-identical", because the second one would be false.
+#
+# ! A FIXED FUTURE DATE, so every exponent is positive and every weight is at
+#   most 1. Anchoring at 1990 instead would make them k^-d, which grows, and
+#   a wide --since would eventually overflow. This direction shrinks: even a
+#   1900 race lands at 1e-127, comfortably inside float8. A race after 2100
+#   would merely make its weight exceed 1, which is still correct.
+_ANCHOR = "DATE '2100-01-01'"
+
+# ★ THE SEASON NUMBER IS AN UPPER QUANTILE, NOT A MEAN, AND THE COLUMN IS
+#   STILL CALLED mean_rating. Renaming it means 58 call sites in 13 files, so
+#   the name stayed and this note is the contract: mean_rating holds the
+#   athlete's 80th-percentile race, not their average one.
+#
+# ⚠ THE MEAN REWARDED A THIN SEASON. What is on file is not a season, it is
+#   whatever got scraped, and for older years that is disproportionately the
+#   championship races -- the ones run all out. A full modern season carries
+#   duals, tempo efforts and JV races that a championship-only season simply
+#   does not have, so averaging punishes the team that raced more. Simulated
+#   against one athlete with a true all-out rating of 100, three championship
+#   races read 3.9 points above twelve mixed ones, and 8.0 in the worst
+#   corner of the parameter sweep. Team boards are decided by less than that.
+#
+# ! AND "JUST USE THE BEST RACES" IS WORSE THAN THE BUG. The obvious fix --
+#   average the top 3, or the top 5 -- introduces the opposite bias, because
+#   the best 3 of 20 draws beats the best 3 of 3 on sampling alone. Worst
+#   case over the same sweep, as |points| of error:
+#
+#       estimator        old/new gap   n-sampling   worse of the two
+#       80th pct                 2.6          2.5                2.6
+#       85th pct                 2.0          2.7                2.7
+#       top-half mean            4.0          0.5                4.0
+#       max                      2.0          4.9                4.9
+#       mean (what this was)     8.0          0.1                8.0
+#       top-5 mean               2.2          9.3                9.3
+#       top-3 mean               3.3         10.5               10.5
+#
+#   A quantile is the only family that is flat in BOTH directions: it
+#   estimates the same point of an athlete's own distribution whether they
+#   raced three times or twenty, which is exactly the invariance needed.
+#
+# ! NO NEW COST. This aggregate already carries three mode() WITHIN GROUP
+#   calls, so it was never going to get a parallel plan; one more ordered-set
+#   aggregate over the same groups changes nothing about the plan shape.
+_SEASON_Q = 0.80
 
 # Reads and writes the SHADOW tables. No TRUNCATE: the live athlete_season is
 # untouched until swapIn renames it away.
@@ -890,9 +1422,9 @@ INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
 SELECT person_id, pool, sport, year,
-       avg(speed_rating)::real,
-       (sum(speed_rating * power({_DECAY_K}, season_end - race_date))
-        / nullif(sum(power({_DECAY_K}, season_end - race_date)), 0))::real,
+       (percentile_cont({_SEASON_Q}) WITHIN GROUP (ORDER BY speed_rating))::real,
+       (sum(speed_rating * power({_DECAY_K}, {_ANCHOR} - race_date))
+        / nullif(sum(power({_DECAY_K}, {_ANCHOR} - race_date)), 0))::real,
        max(speed_rating)::real,
        count(*),
        min(race_date),
@@ -900,17 +1432,35 @@ SELECT person_id, pool, sport, year,
        mode() WITHIN GROUP (ORDER BY state),
        mode() WITHIN GROUP (ORDER BY school),
        mode() WITHIN GROUP (ORDER BY grade)
-FROM (
-    SELECT *,
-           max(race_date) OVER (
-               PARTITION BY person_id, pool, sport, year) AS season_end
-    FROM {{load_table}}
-) base
+FROM {{load_table}} base
 GROUP BY person_id, pool, sport, year;
-
-ANALYZE {{load_table}};
-ANALYZE {{season_table}};
 """
+
+
+# ⚠ THE SORT THIS AGGREGATE CANNOT AVOID, AND THE MEMORY IT WAS NOT GIVEN.
+#
+#   percentile_cont and the three mode()s are ORDERED-SET aggregates. Postgres
+#   implements those only as GroupAggregate, so the plan is forced to sort all
+#   56.6M rows of the shadow by (person_id, pool, sport, year) first -- there
+#   is no HashAggregate available and no parallel plan available, whatever
+#   max_parallel_workers_per_gather says.
+#
+#   That sort carries speed_rating, race_date, state, school and grade along
+#   with the key. `school` alone averages ~25 bytes, so the sort is several GB
+#   -- against dbfast's session-wide work_mem of 256MB. Every run of this
+#   aggregate has therefore been a multi-pass external merge sort spilling
+#   gigabytes to disk, which is the shape of a step that takes an hour and
+#   prints nothing while it does.
+#
+# ! SET LOCAL, so it lasts exactly one transaction and dbfast's 256MB is back
+#   for everything after. And a LADDER, because a managed server may refuse
+#   the top of it -- the same reason tuneSession swallows its failures.
+#   4GB is the number the rest of this project already uses for a bulk sort
+#   (speed_ratings_db._tuneForBulkBuild sets maintenance_work_mem there), and
+#   at ~60 bytes a row a 56.6M-row sort is ~3.4GB -- so 4GB is the smallest
+#   value that keeps it in memory rather than on disk. The rest of the ladder
+#   is for a server that says no.
+_SEASON_WORK_MEM = ("4GB", "2GB", "1GB", "512MB")
 
 
 def refreshAthleteSeason(conn):
@@ -925,11 +1475,30 @@ def refreshAthleteSeason(conn):
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON)
     with conn.cursor() as cur:
+        # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
+        #   _SEASON_WORK_MEM: this is the sort that decides the step.
+        for want in _SEASON_WORK_MEM:
+            try:
+                cur.execute(f"SET LOCAL work_mem = '{want}'")
+                print(f"    work_mem {want} for the group-by sort")
+                break
+            except Exception as exc:                      # noqa: BLE001
+                conn.rollback()
+                print(f"    (server refused work_mem {want}: "
+                      f"{str(exc).splitlines()[0]})")
+        t0 = time.time()
         cur.execute(sql)
+        print(f"    [{time.time() - t0:7.1f}s] GROUP BY -> {_LOAD_SEASON}")
         cur.execute(f"SELECT count(*) FROM {_LOAD_SEASON}")
         n = cur.fetchone()[0]
     conn.commit()
+
+    analyze(conn, _LOAD_SEASON)
     print(f"  athlete_season: {n:,} person-seasons")
+    # ! AND ITS INDEXES. createShadow copies structure without them by design,
+    #   and this call was missing -- so every run since swapped in a
+    #   12.9M-row table with no index on it at all.
+    buildIndexes(conn, _LOAD_SEASON, "athlete_season")
 
 
 # ------------------------------------------------------------------ #
@@ -937,13 +1506,28 @@ def refreshAthleteSeason(conn):
 # ------------------------------------------------------------------ #
 
 def main():
+    global RACE_MARGIN
     parser = argparse.ArgumentParser(
         description="Fill ranking_results and athlete_season. "
                     "Run after every engine run.")
     parser.add_argument("--sport", choices=["XC", "TF", "both"], default="both")
     parser.add_argument("--since", default="1990-01-01",
                         help="earliest race date to include")
+    # ! SO THE RAIL CAN BE MEASURED. audit_pool_ceilings --races can only see
+    #   what this build admitted, which is circular while the rail is on. One
+    #   pass with a huge margin publishes everything, and then the
+    #   distribution above the line is visible and RACE_MARGIN can be set from
+    #   it rather than guessed.
+    parser.add_argument("--race-margin", type=float, default=RACE_MARGIN,
+                        help=f"how far above its pool's season ceiling one "
+                             f"race may rate (default {RACE_MARGIN:.0f}; pass "
+                             f"1000 to disable the rail for a measuring run)")
     args = parser.parse_args()
+
+    RACE_MARGIN = args.race_margin
+    if args.race_margin > 100:
+        print(f"  ⚠ RACE MARGIN {args.race_margin:.0f} -- the pool rail is "
+              f"effectively OFF for this run. Measure, then set it back.")
 
     sports = ("XC", "TF") if args.sport == "both" else (args.sport,)
     stats = {f"{s}_{k}": 0
@@ -962,29 +1546,42 @@ def main():
         #   and the live tables are replaced in one atomic step at the end.
         # Built BEFORE the shadow load: the streaming queries join it, and a
         # temp table lives for the session, so it must exist first.
-        prepareGenderTemp(conn)
-        prepareTfStateTemp(conn)
+        # ★ ROOM TO WORK, BEFORE ANY OF IT STARTS. The index builds after the
+        #   COPY and the athlete_season aggregate both want memory and
+        #   workers; the streaming cursors cannot use workers at all, which is
+        #   a property of cursors rather than of this query. See dbfast.
+        tuneSession(conn)
+        with phase("temp indexes (gender, tfrrs distance, TF state)"):
+            prepareGenderTemp(conn)
+            prepareXcTfrrsDistTemp(conn)
+            prepareTfStateTemp(conn)
 
-        createShadow(conn, _LOAD_TABLE, "ranking_results")
-        seedOtherSports(conn, sports)
+        with phase("create shadow"):
+            createShadow(conn, _LOAD_TABLE, "ranking_results")
+            seedOtherSports(conn, sports)
 
         for sport in sports:
-            buildSport(conn, sport, args.since, stats)
-            conn.commit()
+            with phase(f"stream + COPY {sport}"):
+                buildSport(conn, sport, args.since, stats)
+                conn.commit()
 
         # ! AFTER THE LOAD, NOT BEFORE IT. createShadow deliberately leaves the
         #   indexes off so the 61.6M COPYed rows do not maintain them one row
         #   at a time. Built here, each is a sequential scan plus a sort, and
         #   refreshAthleteSeason below reads this table, so they have to exist
         #   before it runs.
-        buildIndexes(conn, _LOAD_TABLE, "ranking_results")
+        with phase("index ranking_results"):
+            buildIndexes(conn, _LOAD_TABLE, "ranking_results")
 
-        refreshAthleteSeason(conn)
-        swapIn(conn)
+        with phase("athlete_season"):
+            refreshAthleteSeason(conn)
+        with phase("swap in + drop old"):
+            swapIn(conn)
 
     elapsed = (datetime.datetime.now() - started).total_seconds()
     total = sum(v for k, v in stats.items() if k.endswith("_written"))
     print(f"\n  {total:,} rows in ranking_results")
+    phaseReport()
     print(f"  {elapsed / 60:.1f} minutes\n")
 
 

@@ -370,6 +370,29 @@
         document.getElementById('norm-display').textContent = msg;
     }
 
+    // ★ ARRIVING FROM AN ATHLETE PAGE. The link carries a person_id; select
+    //   the athlete source, name them, and convert -- so the reader lands on
+    //   the answer rather than on an empty form.
+    (function prefillFromLink() {
+        var host = document.querySelector('.conv[data-prefill-athlete]');
+        var pid = host && host.getAttribute('data-prefill-athlete');
+        if (!pid) return;
+        fetch('/search/api?q=&person_id=' + encodeURIComponent(pid))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; })
+            .then(function (rows) {
+                var name = (rows && rows[0] && (rows[0].name || rows[0].label))
+                           || ('athlete ' + pid);
+                if (typeSel) { typeSel.value = 'athlete'; paintFields(); }
+                chosenAthlete = { person_id: Number(pid), name: name };
+                var box = document.getElementById('athlete-chosen');
+                if (box) box.textContent = name;
+                var inp = document.getElementById('in-athlete');
+                if (inp) inp.value = name;
+                convert();
+            });
+    })();
+
     function render(data) {
         if (data.error || data.normalized_time == null) {
             showNorm(data.error ? ('Error: ' + data.error) : 'Could not resolve source.');
@@ -379,6 +402,84 @@
                  '  ·  normalized 5K: ' + fmt(data.normalized_time));
         fill('#xc-body', data.xc);
         fill('#tf-body', data.tf);
+        paintPaces(data);
+    }
+
+    // ★ EVERY ROW SAYS WHERE ITS NUMBER CAME FROM. One is the athlete's own
+    //   two races with no constant in it and carries a badge; the rest name
+    //   the single published relationship applied to it. Five paces of
+    //   visibly different confidence drawn as five identical rows would be
+    //   claiming something the work does not support.
+    function paintPaces(data) {
+        var panel = document.getElementById('paces-panel');
+        var wrap = document.getElementById('paces-tbl-wrap');
+        var body = document.getElementById('paces-body');
+        var src = document.getElementById('paces-src');
+        var foot = document.getElementById('paces-foot');
+        var vd = document.getElementById('paces-vdot');
+        if (!panel) return;
+        var rows = data.paces || [];
+        var from = data.paces_from;
+        // VO2max needs one time, so it survives a source that cannot give
+        // paces; the athlete's own is preferred because it is read off that
+        // athlete's races rather than off this one typed result.
+        var v = (from && from.vdot) || data.vdot;
+        if (!rows.length && !(v && v.value) && !data.paces_note) {
+            panel.hidden = true;
+            return;
+        }
+        panel.hidden = false;
+
+        // ★ NO ROWS MEANS NO TABLE, not an empty one. A typed time cannot
+        //   produce critical speed, and a header row over nothing reads as a
+        //   failure rather than as a precondition.
+        if (wrap) wrap.hidden = !rows.length;
+        body.innerHTML = rows.map(function (p) {
+            var cls = p.source === 'derived' ? ' class="derived"' : '';
+            return '<tr' + cls + '><td class="zone">' + esc(p.label) +
+                   '</td><td class="pace">' + esc(p.per_mile) +
+                   '</td><td class="pace km">' + esc(p.per_km) +
+                   '</td><td class="basis">' + esc(p.basis) + '</td></tr>';
+        }).join('');
+
+        src.textContent = from && from.n_races
+            ? from.year + ' season \u00b7 ' + from.n_races + ' races' : '';
+
+        // ★ VO2MAX ON ITS OWN LINE. It is a headline number the page was asked
+        //   for, not a caveat; buried at the end of the footnote it read as
+        //   "Estimated ... estimated ...", three hedges in one sentence.
+        if (vd) {
+            vd.hidden = !(v && v.value);
+            if (v && v.value)
+                vd.innerHTML = 'VO<sub>2</sub>max <strong>' +
+                    esc(v.value) + '</strong> <span class="paces-vdot-note">' +
+                    esc(v.note) + '</span>';
+        }
+
+        var bits = [];
+        // ! KEYED ON A FITTED ROW, NOT ON HAVING ANY ROWS. The projected
+        //   ladder has rows and no critical speed in it, so claiming one was
+        //   fitted would be describing a row that is not on the page.
+        var fitted = rows.some(function (p) { return p.source === 'derived'; });
+        if (fitted) {
+            bits.push('Critical speed is fitted from this athlete\'s own ' +
+                      'races. Every other row applies a published ' +
+                      'relationship to it.');
+            if (from && from.dprime)
+                bits.push('D\u2032 ' + from.dprime + ' m \u2014 the distance ' +
+                          'this athlete can cover above critical speed before ' +
+                          'slowing.');
+        } else if (from && from.reason) {
+            bits.push('Not available for ' + from.year + ': ' + from.reason + '.');
+        }
+        if (data.paces_note) bits.push(data.paces_note);
+        foot.textContent = bits.join(' ');
+    }
+
+    function esc(t) {
+        return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+        });
     }
 
     // match returned cells to rows by order (API preserves target order)

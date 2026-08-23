@@ -597,6 +597,71 @@ def normalized_to_rating(norm, pool, difficulty=0.0, sport=None):
 #  THE SPREAD    (one source -> a grid of targets)
 # ===================================================================== #
 
+
+# ★ THE ATHLETE'S OWN RACES, WHICH IS THE ONLY INPUT THAT CAN PRODUCE PACES.
+#   Critical speed is the slope of a distance-time line, so it needs two races
+#   at different distances. A typed time cannot give that -- one performance
+#   cannot separate a miler from a 5K runner -- but an athlete SOURCE names
+#   somebody whose whole season is already on file, so picking them here is
+#   enough.
+#
+# ⚠ ONE SEASON, NEWEST FIRST, NEVER A CAREER. CS is a fitness and fitness
+#   moves; pairing a freshman 3200 against a senior 5K measures growing up.
+#   Walks back a year at a time and stops at the first that fits, so a runner
+#   whose current season is all 5Ks still gets last year's, labelled.
+#
+# ! RAW time_seconds AND real distance. NOT normalized_time: that column
+#   already carries the distance correction, so a distance-time line built
+#   from it would be fitting this project's own exponent back to itself.
+_PACE_RACES_SQL = """
+    SELECT year, pool, distance, time_seconds
+    FROM   ranking_results
+    WHERE  person_id = %(pid)s
+      AND  time_seconds > 0
+      AND  distance > 0
+    ORDER  BY year DESC
+"""
+
+
+def athlete_paces(person_id):
+    """{year, n_races, paces, dprime, vdot} for one athlete, or a refusal."""
+    import paces as _p
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_PACE_RACES_SQL, {"pid": person_id})
+            rows = cur.fetchall()
+        conn.rollback()
+    if not rows:
+        return None
+
+    by_year = {}
+    for year, pool, dist, secs in rows:
+        by_year.setdefault(year, []).append(
+            (float(dist), float(secs), pool))
+
+    for year in sorted(by_year, reverse=True):
+        races = [(d, t) for d, t, _ in by_year[year]]
+        got, why = _p.criticalSpeed(races)
+        if got is None:
+            continue
+        ladder = _p.trainingPaces(races)
+        if not ladder:
+            continue
+        cs, dprime = got
+        pool = by_year[year][0][2]
+        return {
+            "year": year, "n_races": len(races), "paces": ladder,
+            "dprime": round(dprime),
+            "vdot": _p.vdot(_p._timeFor(cs, dprime, 5000.0), 5000.0, pool),
+        }
+
+    # ! THE REASON, NOT SILENCE. "No paces" and "every race you ran was the
+    #   same distance" are different messages and only one is actionable.
+    newest = sorted(by_year, reverse=True)[0]
+    _, why = _p.criticalSpeed([(d, t) for d, t, _ in by_year[newest]])
+    return {"year": newest, "paces": [], "reason": why}
+
+
 def convert_spread(source, xc_targets, tf_targets):
     """The whole tool in one call.
 
@@ -629,9 +694,73 @@ def convert_spread(source, xc_targets, tf_targets):
             })
         return out
 
+    # ★ PACES AND VDOT ARE THE SAME normalized_time IN TWO MORE CONTEXTS, so
+    #   they belong here rather than in the route: every caller of this
+    #   function gets them, and none has to know how they are derived.
+    #
+    # ⚠ VDOT IS ANCHORED ON THE POOL'S OWN RACE DISTANCE, NOT ON WHATEVER THE
+    #   USER TYPED. Daniels' percentage-of-VO2max curve is a function of
+    #   DURATION, and our distance curve is a different function -- so a 1600m
+    #   time and its own 5K equivalent do not yield the same VDOT. Reading it
+    #   off one fixed distance makes it a property of the athlete, like the
+    #   rating beside it, instead of a number that moves when you retype the
+    #   same fitness a different way.
+    # ⚠ TRAINING PACES NEED TWO RACES AND THIS TOOL TAKES ONE, so a
+    #   one-race source gets NO PACE TABLE -- only a line saying what would
+    #   produce one. Critical speed is the slope of an athlete's distance-time
+    #   line, so a single performance cannot produce it: three athletes with
+    #   the same 4:10 1600 and 3200s of 8:45, 8:58 and 9:20 have critical
+    #   speeds 35 s/mile apart.
+    #
+    #   An earlier version filled the gap with coachRuleTempo (mile + 60-80
+    #   s/mi). That is a real coaching rule and it is still in paces.py, but
+    #   as the ONLY row on the page it was doing exactly the thing this work
+    #   was rebuilt to stop doing: handing all three of those athletes the
+    #   same pace, off a constant, under a heading that says "training paces".
+    #   A rule of thumb is a fine thing to know and a bad thing to be the
+    #   answer. One honest empty state beats one dishonest row.
+    #
+    # ⚠ VDOT ANCHORS ON THE XC DISTANCE WHATEVER SPORT THE SOURCE WAS.
+    #   targetFor is per sport -- hs is 5000m for XC and 1600m for TF -- so
+    #   reading it off source["sport"] gave the SAME athlete two different
+    #   VDOTs depending on how they typed the same fitness: 72.5 against 75.7.
+    from paces import vdot, projectedPaces, MILE_M     # noqa: E402
+    from normalize_distance import targetFor           # noqa: E402
+    ref_d = targetFor(_bare(pool), "XC") or 5000.0
+    ref_t = normalized_to_time(norm, {"distance": ref_d, "pool": pool,
+                                      "sport": "XC"})
+    # ★ THE SAME PROJECTION THE TABLE BELOW IS ALREADY SHOWING, reused as the
+    #   pace anchor. Expressing this performance at 10,000m is what the
+    #   conversion tool does; the paces just read the answer off it.
+    mile_t = normalized_to_time(norm, {"distance": MILE_M, "pool": pool,
+                                       "sport": "TF"})
+    t10 = normalized_to_time(norm, {"distance": 10000.0, "pool": pool,
+                                    "sport": "TF"})
+    p10 = t10 / (10000.0 / MILE_M) if t10 else None
+    training = (athlete_paces(source["person_id"])
+                if source.get("type") == "athlete" and source.get("person_id")
+                else None)
+
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
+        # ★ THE FITTED LADDER WHEN THE SOURCE NAMES SOMEBODY, THE PROJECTED
+        #   ONE OTHERWISE. Both are built from something measured -- an
+        #   athlete's own critical speed, or this performance projected to
+        #   10,000m against 60M results -- and each row says which. What is
+        #   NOT here is a constant added to a mile: that hands three
+        #   different athletes one answer, which is the whole reason the
+        #   fitted ladder exists. See paces.projectedPaces.
+        "paces": (training["paces"] if training and training.get("paces")
+                  else projectedPaces(mile_t, p10)),
+        "paces_from": training,
+        "paces_note": (None if training and training.get("paces") else
+                       "Projected from this one performance using the site's "
+                       "own distance curve. Pick an athlete as the source and "
+                       "the ladder is fitted to their own races instead, "
+                       "which adds a measured critical speed."),
+        "vdot": vdot(ref_t, ref_d, pool),
+        "vdot_basis_m": round(ref_d),
         "xc": _cells(xc_targets, "XC"),
         "tf": _cells(tf_targets, "TF"),
     }
