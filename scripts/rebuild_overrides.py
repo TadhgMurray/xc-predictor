@@ -1572,15 +1572,11 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
         # to corroborate a slow-field relabel; this ladder-only view cannot
         # check that half, so a PASS here is necessary, not sufficient.
         side_ok = side >= NEG_UNANIMITY
-        mag_ok = abs(gap) >= NEG_BAR_MULT * bar
         print(f"    slow-field gate (gap < 0):        "
               f"side {side:.0%} vs {NEG_UNANIMITY:.0%} "
               f"{'PASS' if side_ok else 'FAILS HERE'};  "
-              f"|gap| {abs(gap):.1f} vs {NEG_BAR_MULT:.0f}x bar "
-              f"= {NEG_BAR_MULT * bar:.1f} "
-              f"{'PASS' if mag_ok else 'FAILS HERE'};  "
               f"course corroboration also required (not visible here)")
-        if not (side_ok and mag_ok):
+        if not side_ok:
             return
     print(f"\n    It clears every gate -- it should be in the output.")
 
@@ -1633,15 +1629,21 @@ TIER_B_SE = 2.0         # ...a field whose median is good to this many points
 #   Yellow Jacket's 3218 -> 4800 re-derived from its own slow tail while the
 #   14:52 up front pinned the true distance.
 #
-# ★ SO A SLOW FIELD ALONE NEVER RELABELS A DIVISION. A negative-gap division
-#   stays condemnable only when the COURSE itself corroborates the longer
-#   distance AND the field is near-unanimous AND the gap is one fitness
-#   cannot plausibly reach. Everything else lands in skipped with its own
-#   reason -- counted in report1, so the size of this population stays
-#   visible -- and its individually impossible rows remain pass 3's
-#   per-result business, which is where a slow tail belongs.
-NEG_UNANIMITY = 0.90    # slow fields need 90% on one side, vs 75% for fast
-NEG_BAR_MULT = 2.0      # and a gap clearing TWICE the bar fitness can reach
+# ★ SO THE SLOW DIRECTION IS GATED ON UNANIMITY, NOT MAGNITUDE. A wrong
+#   distance shifts EVERY finisher by the same ratio; fitness is
+#   heterogeneous -- someone in every August field trained all summer and
+#   sits above their median. So -15 with everybody on one side is a distance
+#   fault, while -15 at 80% is an opener. A magnitude bar cannot make that
+#   distinction (a real 1.2x error IS about -15), and was tried and removed.
+#   A negative-gap division stays condemnable when the COURSE itself
+#   corroborates the longer distance AND the field is near-unanimous.
+#
+# ! AND THE FAILURES ARE A POPULATION, NOT NOISE. A slow division that fails
+#   unanimity is exactly what a MIXED division looks like -- two races, or a
+#   race plus a jogging tail -- so they land in skipped with one countable
+#   reason, ready to become a later pass's candidate list. Their individually
+#   impossible rows remain pass 3's per-result business either way.
+NEG_UNANIMITY = 0.95    # slow fields need ~everybody on one side, vs 75% fast
 
 
 def tierFor(source, err, gap, n, sigma):
@@ -1721,11 +1723,9 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
             continue
         # The asymmetric direction gate -- see the block above NEG_UNANIMITY.
         if gap < 0 and not (source == "course"
-                            and float(r["same_side"]) >= NEG_UNANIMITY
-                            and abs(gap) >= NEG_BAR_MULT
-                                * barFor(r["n"], sigma, t1)):
-            skipped.append((r, "field slow, not fast -- openers and heat "
-                               "fake this; per-result territory"))
+                            and float(r["same_side"]) >= NEG_UNANIMITY):
+            skipped.append((r, "field slow without near-unanimity -- opener "
+                               "or mixed division, not a relabel"))
             continue
         condemned.append({**r, "implied": implied, "snapped": snapped,
                           "snap_err": err, "gap": gap, "source": source,
