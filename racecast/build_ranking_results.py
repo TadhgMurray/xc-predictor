@@ -210,16 +210,31 @@ _TF_STATE_TEMP_SQL = """
 _XC_TFRRS_DIST_SQL = """
     DROP TABLE IF EXISTS tmp_xc_tfrrs_dist;
     CREATE TEMP TABLE tmp_xc_tfrrs_dist AS
-        SELECT m.meet_id,
+        -- ⚠ XC ONLY, AND IT WAS NOT. Without this filter the table carries
+        --   the TF meets too, so a meeting with both sports contributes two
+        --   rows for the same (meet_id, div_id, source) -- and the LEFT JOIN
+        --   below FANS OUT rather than looking up. Measured: the TF stream
+        --   went from ~10 minutes to 130.8 of a 151.4 minute build.
+        --
+        -- ★ DISTINCT ON, so the key is unique BY CONSTRUCTION and the index
+        --   below can prove it. min() over a jsonb blob would hide a genuine
+        --   disagreement; picking deterministically and letting the unique
+        --   index fail loudly is the trade this file makes everywhere else.
+        SELECT DISTINCT ON (m.meet_id, (kv.key)::bigint, m.source)
+               m.meet_id,
                (kv.key)::bigint                        AS div_id,
                m.source,
                (kv.value ->> 'distance')::float        AS distance
         FROM   meets_tfrrs m,
                LATERAL jsonb_each(m.division_distances) kv
         WHERE  m.division_distances IS NOT NULL
+          AND  m.sport = 'XC'
           AND  kv.value ->> 'distance' IS NOT NULL
-          AND  kv.key ~ '^[0-9]+$';
-    CREATE INDEX ON tmp_xc_tfrrs_dist (meet_id, div_id, source);
+          AND  kv.key ~ '^[0-9]+$'
+        ORDER  BY m.meet_id, (kv.key)::bigint, m.source,
+                  (kv.value ->> 'distance')::float;
+    -- ! UNIQUE, so a future fan-out is an ERROR rather than an hour.
+    CREATE UNIQUE INDEX ON tmp_xc_tfrrs_dist (meet_id, div_id, source);
     ANALYZE tmp_xc_tfrrs_dist;
 """
 
@@ -501,9 +516,12 @@ _SQL = {
         FROM results_tf r
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
-        LEFT JOIN tmp_xc_tfrrs_dist xtd
-               ON xtd.meet_id = r.meet_id AND xtd.div_id = r.div_id
-              AND xtd.source  = r.source
+        -- ⚠ NO tmp_xc_tfrrs_dist JOIN HERE, AND THERE USED TO BE ONE.
+        --   Track takes its distance from the EVENT NAME -- the select list
+        --   above reads dov.distance and r.event_short and nothing else -- so
+        --   the join was dead weight: 25.4M lookups whose result was never
+        --   read. It was also the cross-sport fan-out described in
+        --   _XC_TFRRS_DIST_SQL.
         -- ! THREE KEYS INTO A COLLAPSED TABLE, NOT FOUR INTO meets_tf. The
         --   event_id was only ever there to stop the ~21.5x fan-out that
         --   meets_tf's per-event grain causes; the one column this query
