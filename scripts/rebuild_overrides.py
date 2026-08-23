@@ -166,14 +166,82 @@ MAX_CHANGE = 2.0
 # ! ONE TEMP TABLE, NOT A CTE REPEATED THREE TIMES. The per-athlete median is
 #   the expensive half and all three passes need the identical one; computing
 #   it per pass would triple the cost and, worse, let the passes drift apart.
+# ------------------------------------------------------------------ #
+#  --as-if-wiped -- PROPOSE AGAINST THE SLATE THE WIPE WOULD LEAVE
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE HOLE IN "RESET, THEN REBUILD", AND IT IS NOT SMALL. The ratings in the
+#   database were solved WITH the current overrides. So a division whose
+#   override is CORRECT sits perfectly on its athletes' own heads -- gap ~ 0 --
+#   and pass 1 declines it, correctly, because there is nothing wrong with it.
+#
+#   Wipe afterwards and that override is gone, with nothing proposed to replace
+#   it, and the division silently reverts to the scraped distance the override
+#   existed to correct. Every override that was RIGHT is lost, and only the
+#   wrong ones get rebuilt. That is the exact opposite of the intent.
+#
+# ★ SO THE PASSES JUDGE THE RATINGS THE WIPE WOULD PRODUCE, NOT THE ONES ON
+#   DISK. Reverting a division from d_ovr to d_scraped multiplies its ratings
+#   by (d_scraped / d_ovr) ** K -- the same first-order arithmetic the passes
+#   already use to chain 2 and 3 onto pass 1, and the same one audit_overrides
+#   uses for `after`. Under it, a correct override becomes a large gap and
+#   pass 1 re-proposes it from the same evidence that justified it originally.
+#
+# ! SOLE SOURCES ARE LEFT ALONE, because wipe_overrides --keep-sole-source
+#   leaves them alone. Nothing else carries a distance for those divisions, so
+#   there is no scraped value to revert to and their ratings do not move. Run
+#   scripts/census_override_sources.py to see both counts.
+#
+# ⚠ IT IS FIRST ORDER. Reverting the distances would also move the pool means
+#   and every cell delta a little, and this does not model that. It is the
+#   approximation this whole tool is built on; the header's advice stands --
+#   run the engine once, then run this again, and the second pass should find
+#   far less than the first.
+_UNOVERRIDE_SQL = """
+DROP TABLE IF EXISTS reb_unovr;
+CREATE TEMP TABLE reb_unovr AS
+SELECT o.meet_id, o.div_id,
+       (base.d / o.distance) ^ (%(k)s)::double precision AS scale
+FROM   dist_override o
+CROSS  JOIN LATERAL (
+    SELECT COALESCE(
+        (SELECT min(m.distance) FROM meets m
+          WHERE m.meet_id = o.meet_id AND m.div_id = o.div_id
+            AND m.distance IS NOT NULL AND m.distance > 0),
+        (SELECT min(x.distance) FROM tmp_xc_tfrrs_dist x
+          WHERE x.meet_id = o.meet_id AND x.div_id = o.div_id)
+    ) AS d
+) base
+WHERE  base.d IS NOT NULL AND base.d > 0 AND o.distance > 0
+  -- A scraped value inside SAME_TOL of the override is not a correction and
+  -- reverting to it moves nothing; excluding it keeps the table small and the
+  -- report honest about how many divisions actually move.
+  AND  abs(base.d - o.distance) / base.d > (%(tol)s)::double precision;
+CREATE INDEX ON reb_unovr (meet_id, div_id);
+ANALYZE reb_unovr;
+"""
+
+# The empty stand-in, so _GAP_BODY has ONE shape whether or not the flag is on.
+_UNOVERRIDE_NONE = """
+DROP TABLE IF EXISTS reb_unovr;
+CREATE TEMP TABLE reb_unovr (meet_id bigint, div_id bigint,
+                             scale double precision);
+CREATE INDEX ON reb_unovr (meet_id, div_id);
+"""
+
 _GAP_BODY = """
 DROP TABLE IF EXISTS reb_gap;
 CREATE TEMP TABLE reb_gap AS
 WITH rated AS (
-    SELECT r.meet_id, r.div_id, r.result_id, r.speed_rating,
+    SELECT r.meet_id, r.div_id, r.result_id,
+           -- ! THE ONLY PLACE --as-if-wiped CHANGES ANYTHING. reb_unovr is
+           --   empty without it, so COALESCE makes this the identity.
+           r.speed_rating * COALESCE(u.scale, 1.0) AS speed_rating,
            r.time_seconds,
            COALESCE(r.person_id, r.athlete_id) AS ident
     FROM   {table} r
+    LEFT   JOIN reb_unovr u
+           ON u.meet_id = r.meet_id AND u.div_id = r.div_id
     WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0
       AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
@@ -204,7 +272,36 @@ ANALYZE reb_gap;
 """
 
 
-def buildGap(cur, sport, min_own):
+def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
+    if as_if_wiped:
+        # The tfrrs blob has to exist before reb_unovr reads it. Same reader
+        # build_ranking_results uses -- imported, not copied.
+        sys.path.insert(0, "racecast")
+        from build_ranking_results import _XC_TFRRS_DIST_SQL
+        cur.execute(_XC_TFRRS_DIST_SQL)
+        cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
+        cur.execute("SELECT count(*) AS n FROM reb_unovr")
+        n_ovr = cur.fetchone()["n"]
+        print(f"  --as-if-wiped: {n_ovr:,} divisions reverted to their scraped "
+              f"distance before judging.\n"
+              f"                 Sole sources are NOT reverted -- see "
+              f"scripts/census_override_sources.py.")
+        if not n_ovr and sport == "TF":
+            # ⚠ EXPECTED ON TRACK, AND WORTH SAYING SO. TF keeps its distance
+            #   in the EVENT NAME -- `meets_tf` cannot carry one, because the
+            #   800 and the 3200 at one meeting are one row and two distances.
+            #   So a TF distance override has no scraped value underneath it
+            #   by construction: every one is a sole source, nothing reverts,
+            #   and --as-if-wiped is correctly a no-op here.
+            print("  (TF: nothing to revert. Track's distance lives in the "
+                  "event name, so every\n   TF distance override is a sole "
+                  "source -- see census_override_sources.py.)")
+        elif not n_ovr:
+            print("  ⚠ NOTHING REVERTED. Either dist_override is empty or it "
+                  "is stale --\n    engine/dump_overrides.py is NOT a "
+                  "pipeline step, so run it first.")
+    else:
+        cur.execute(_UNOVERRIDE_NONE)
     cur.execute(_GAP_BODY.format(table=_TABLE[sport]), {"min_own": min_own})
     # RealDictCursor, so name the aggregates rather than unpacking a tuple.
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
@@ -856,6 +953,19 @@ def main():
                     dest="max_drop_frac",
                     help="pass 3: or more than this share of the division "
                          "(default 0.05)")
+    # ⚠ THE FLAG THAT MAKES A RESET A RESET. See _UNOVERRIDE_SQL: without it
+    #   the passes judge ratings solved WITH the current overrides, so every
+    #   override that is RIGHT looks fine, is not re-proposed, and is lost by
+    #   the wipe. Use it for the clean-slate rebuild; leave it off to audit the
+    #   corpus as it actually stands.
+    ap.add_argument("--as-if-wiped", action="store_true", dest="as_if_wiped",
+                    help="judge the ratings a wipe would produce: revert every "
+                         "correcting override to its scraped distance first. "
+                         "Sole-source overrides are left alone.")
+    ap.add_argument("--same-tol", type=float, default=0.02, dest="same_tol",
+                    help="how far a scraped distance must sit from the "
+                         "override before reverting counts as a change "
+                         "(default 2%%)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--explain", default=None,
                     help="MEET/DIV -- print every gate that division met or "
@@ -865,7 +975,8 @@ def main():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            buildGap(cur, args.sport, args.min_own_races)
+            buildGap(cur, args.sport, args.min_own_races,
+                     as_if_wiped=args.as_if_wiped, tol=args.same_tol)
 
             if args.measure:
                 measure(cur)

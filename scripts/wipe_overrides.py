@@ -28,6 +28,26 @@
 # ! _GENDER_OVERRIDES GOES, because pass 2 rewrites gender per row. Two rows
 #   in corrections.py today; both are division-level sex fixes, which is
 #   precisely pass 2's job.
+#
+# ⚠ AND NOT EVERY DISTANCE OVERRIDE IS A DECISION THE PASSES CAN RE-DERIVE.
+#   A row in dist_override is one of two things:
+#
+#     a CORRECTION    `meets` or the tfrrs blob already has a distance and the
+#                     override disagrees. Clearing it restores the scraped
+#                     value; the division stays rated, and pass 1 gets another
+#                     look with the same evidence that justified the override.
+#
+#     a SOLE SOURCE   nothing else has a distance at all. Clearing it does not
+#                     restore anything -- backfill_normalize writes no
+#                     normalized_time, the engine rates nothing there, and an
+#                     unrated division is INVISIBLE to all three passes. That
+#                     is the blind spot that hid 26359/0 from every earlier
+#                     tool: meet 26359 has 568 tfrrs rows and no `meets` row.
+#
+#   --keep-sole-source re-states those entries below the .clear() so a reset
+#   clears the judgements and keeps the data. Run
+#   scripts/census_override_sources.py first; it counts both kinds and the
+#   rows behind them.
 
 import argparse
 import io
@@ -42,6 +62,32 @@ _DROPS = ["_DISTANCE_DROP_XC", "_DISTANCE_DROP_TF",
           "_RESULT_DROP_XC", "_RESULT_DROP_TF"]
 
 
+def soleSource(sport="XC"):
+    """{(meet_id, div_id): distance} for overrides that are the ONLY distance.
+
+    Reads the LIVE dist_override, so it describes what dump_overrides last
+    wrote -- which is what the backfill actually read. If corrections.py has
+    moved since, re-run engine/dump_overrides.py before trusting this.
+    """
+    import sys as _sys
+    _sys.path.insert(0, "racecast")
+    from database import getConn
+    from census_override_sources import _XC_TFRRS_DIST_SQL, _CENSUS, classify
+    from census_override_sources import _TABLE
+
+    keep = {}
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_XC_TFRRS_DIST_SQL)
+            cur.execute(_CENSUS.format(table=_TABLE[sport]))
+            for meet, div, ovr, anet, tfrrs, _dict, _n, _rated in cur:
+                kind, _base = classify(float(ovr), anet and float(anet),
+                                       tfrrs and float(tfrrs))
+                if kind == "sole source":
+                    keep[(int(meet), int(div))] = float(ovr)
+    return keep
+
+
 def sizes(path):
     """{dict name: entries} as the file currently resolves."""
     import importlib.util
@@ -54,7 +100,40 @@ def sizes(path):
             for n in _REGENERATED + _DROPS}
 
 
-def block(names):
+def restate(keep, target="_DISTANCE_OVERRIDES_XC"):
+    """The sole sources, written back BELOW the .clear() so they survive it.
+
+    ! .update() ORDER IS THE WHOLE MECHANISM, same as the wipe itself. The
+      clear runs, then this puts back the entries that were never a judgement
+      to begin with.
+    """
+    if not keep:
+        return ""
+    lines = [
+        "",
+        "# --- kept through the wipe: these overrides are the ONLY distance",
+        "#     their division has. `meets` and meets_tfrrs.division_distances",
+        "#     are both silent for them, so clearing them would not restore a",
+        "#     scraped value -- it would leave the division unrated, and an",
+        "#     unrated division is invisible to all three rebuild passes.",
+        f"#     Counted by scripts/census_override_sources.py: {len(keep):,}.",
+        f"{target}.update({{",
+    ]
+    for (meet, div), dist in sorted(keep.items()):
+        lines.append(f"    ({meet}, {div}): {dist:g},")
+    lines.append("})")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def block(names, keep=None):
+    """The whole wipe, between the two markers.
+
+    ⚠ THE RESTATE GOES INSIDE THE MARKERS, NOT AFTER THEM. --undo deletes
+      everything between MARK and END WIPE; a restate block below END WIPE
+      would survive the undo and silently re-apply a handful of overrides on
+      top of the restored file.
+    """
     lines = [
         "", MARK,
         "#",
@@ -64,8 +143,8 @@ def block(names):
         "# Undo with: python scripts/wipe_overrides.py --undo",
     ]
     lines += [f"{n}.clear()" for n in names]
-    lines.append(f"# === END WIPE ===")
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    return body + restate(keep or {}) + "# === END WIPE ===\n"
 
 
 def main():
@@ -75,6 +154,12 @@ def main():
     ap.add_argument("--path", default=PATH)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", action="store_true")
+    ap.add_argument("--keep-sole-source", action="store_true",
+                    dest="keep_sole",
+                    help="re-state the distance overrides that are the ONLY "
+                         "distance their division has, below the .clear(). "
+                         "Run scripts/census_override_sources.py first.")
+    ap.add_argument("--sport", choices=["XC", "TF"], default="XC")
     ap.add_argument("--drops", action="store_true",
                     help="also clear _DISTANCE_DROP / _RESULT_DROP. The "
                          "passes do not regenerate these -- see the header.")
@@ -114,11 +199,25 @@ def main():
               "only sees\n    rows that are still rated. --drops overrides "
               "this.")
 
+    keep = {}
+    if args.keep_sole:
+        keep = soleSource(args.sport)
+        print(f"\n    keeping {len(keep):,} sole-source distance overrides: "
+              f"nothing else\n    carries a distance for those divisions, so "
+              f"clearing them would un-rate\n    them rather than restore a "
+              f"scraped value.")
+    else:
+        print("\n    ⚠ --keep-sole-source NOT given. Any override that is the "
+              "only distance\n      its division has will be cleared with "
+              "nothing to replace it, and the\n      division will stop being "
+              "rated. Run scripts/census_override_sources.py.")
+
     if not args.write:
         print("\n  DRY RUN -- pass --write to append the block.\n")
         return 0
 
-    io.open(args.path, "a", encoding="utf-8", newline="\n").write(block(names))
+    io.open(args.path, "a", encoding="utf-8", newline="\n").write(
+        block(names, keep))
     after = sizes(args.path)
     print("\n  after:")
     for n in _REGENERATED + _DROPS:
