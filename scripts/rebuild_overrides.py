@@ -296,6 +296,9 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02):
     from build_ranking_results import _XC_TFRRS_DIST_SQL
     cur.execute(_XC_TFRRS_DIST_SQL)
     cur.execute(_COURSE_DIST_SQL, {"min_n": COURSE_MIN_N})
+    n_rungs = len(loadLadder(cur))
+    print(f"  ladder: {n_rungs:,} distances the corpus actually races "
+          f"({LADDER_MIN_N:,}+ finishers each)")
     if as_if_wiped:
         cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": tol})
         cur.execute("SELECT count(*) AS n FROM reb_unovr")
@@ -492,6 +495,72 @@ COURSE_TOL = 0.06
 
 _COURSE_DIST = {}
 
+# ------------------------------------------------------------------ #
+#  THE LADDER THE CORPUS ACTUALLY RUNS
+# ------------------------------------------------------------------ #
+#
+# ⚠ THE HAND-WRITTEN LADDER IS WHY PASS 1 FINDS NOTHING. audit_overrides.LADDER
+#   is 28 rungs, and the gaps between them are enormous:
+#
+#       3218 -> 4000   24.3%      1200 -> 1500   25.0%
+#       8047 -> 10000  24.3%      1609 -> 1931   20.0%
+#
+#   A division implying 3600 m sits 12.2% from both neighbours -- FOUR TIMES
+#   SNAP_TOL. It cannot pass however obviously broken it is. Measured on this
+#   corpus: 2,598 divisions cleared the bar and died at the snap, against 1 at
+#   the change cap and 4 at the label. The snap is not a gate, it is the wall.
+#
+# ★ SO THE RUNGS COME FROM THE CORPUS. A distance that thousands of results
+#   were actually raced at is a real race distance, by definition and without
+#   anyone having to have thought of it. 3500, 4400, 5600, 9000 -- none of
+#   them are in the hand list and all of them are real somewhere.
+#
+# ! MISLABELLED ROWS CONTRIBUTE, AND THAT IS FINE. A race wrongly recorded as
+#   8046 still makes 8046 a rung -- and 8046 IS a real distance, so the rung
+#   is correct even when the row is not. What this cannot do is invent a rung
+#   nobody ever raced.
+_LADDER_SQL = """
+DROP TABLE IF EXISTS reb_ladder;
+CREATE TEMP TABLE reb_ladder AS
+SELECT round(m.distance)::int AS distance, count(*) AS n
+FROM   meets m
+JOIN   results r ON r.meet_id = m.meet_id AND r.div_id = m.div_id
+                AND r.source = m.source
+WHERE  m.distance BETWEEN 800 AND 20000
+GROUP  BY 1
+HAVING count(*) >= %(min_n)s;
+"""
+
+# How many finishers a distance needs corpus-wide to count as a rung. High
+# enough that a handful of mislabelled divisions cannot mint one; low enough
+# that a regionally common distance survives. --ladder prints what it yields.
+LADDER_MIN_N = 5_000
+
+_CORPUS_LADDER = []
+
+
+def loadLadder(cur, min_n=LADDER_MIN_N):
+    """The distances this corpus actually races, commonest first."""
+    global _CORPUS_LADDER
+    cur.execute(_LADDER_SQL, {"min_n": min_n})
+    cur.execute("SELECT distance, n FROM reb_ladder ORDER BY distance")
+    _CORPUS_LADDER = [(int(r["distance"]), int(r["n"])) for r in cur.fetchall()]
+    return _CORPUS_LADDER
+
+
+def snapToCorpus(implied):
+    """(nearest distance the corpus races, fractional error), or None.
+
+    Same contract as snapToLadder -- still a TEST, not a rounding: a field
+    wrong for a reason other than distance lands between the rungs and the
+    error is what says so. There are simply far more rungs, and every one of
+    them is a distance somebody ran.
+    """
+    if not implied or not _CORPUS_LADDER:
+        return None
+    best = min((d for d, _n in _CORPUS_LADDER), key=lambda x: abs(x - implied))
+    return float(best), (implied - best) / best
+
 
 def courseDistances(cur, course_name):
     """[(distance, n), ...] for one venue, commonest first. Memoised."""
@@ -642,9 +711,16 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
     print(f"\n    It clears every gate -- it should be in the output.")
 
 
+# Every snap failure's error magnitude, so report1 can show the distribution
+# instead of a count -- the difference between "the tolerance is too tight" and
+# "these are not distance faults".
+_SNAP_MISS = []
+
+
 def pass1(rows, sigma, t1, unanimity, cur=None):
     """(condemned, routed_to_2, skipped) for the whole-division pass."""
     condemned, routed, skipped = [], [], []
+    _SNAP_MISS.clear()
     for r in rows:
         gap = float(r["med_gap"])
         if abs(gap) <= barFor(r["n"], sigma, t1):
@@ -670,13 +746,18 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
         if hit is not None:
             snapped, err, _src = hit
         else:
-            snapped, err = snapToLadder(implied)
+            # ★ THE CORPUS LADDER, NOT THE HAND LIST. See _LADDER_SQL: the
+            #   28-rung list has 25% gaps and rejected 2,598 divisions it had
+            #   already agreed were wrong.
+            hit = snapToCorpus(implied)
+            snapped, err = hit if hit else snapToLadder(implied)
             if abs(err) > SNAP_TOL:
                 # A field wrong for a reason OTHER than distance implies a
                 # value between the rungs. That is not a distance fault and
                 # must not be written as one.
                 skipped.append((r, f"implied {implied:.0f} snaps poorly "
                                    f"({err:+.1%})"))
+                _SNAP_MISS.append(abs(err))
                 continue
         ratio = snapped / float(r["distance"])
         if abs(ratio - 1) < 0.02:
@@ -1286,6 +1367,24 @@ def report1(got, routed, skipped, args):
     for reason, n in below + above:
         mark = "     " if reason == "within the bar" else "  <-- "
         print(f"    {n:>9,}{mark}{reason}")
+    if _SNAP_MISS:
+        # ⚠ HOW FAR OUT, NOT JUST HOW MANY. A cluster just past the tolerance
+        #   means the tolerance is wrong; a long tail means these really are
+        #   fields wrong for some reason other than distance.
+        bands = [(0.03, 0.04), (0.04, 0.05), (0.05, 0.075), (0.075, 0.10),
+                 (0.10, 0.15), (0.15, 0.25), (0.25, 9.99)]
+        print(f"\n    HOW BADLY THE {len(_SNAP_MISS):,} SNAP FAILURES MISSED")
+        run = 0
+        for lo, hi in bands:
+            n = sum(1 for e in _SNAP_MISS if lo <= e < hi)
+            if not n:
+                continue
+            run += n
+            print(f"      {lo:.0%} - {hi:.0%}   {n:>8,}   "
+                  f"{100.0 * run / len(_SNAP_MISS):>5.1f}% cumulative")
+        print(f"      A cluster near the top of the list is a tolerance "
+              f"problem.\n      A long tail is not.")
+
     n_judged = sum(n for r, n in above)
     if n_judged:
         print(f"\n    {n_judged:,} of those cleared the bar -- this tool "
