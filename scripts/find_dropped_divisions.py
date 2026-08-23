@@ -161,62 +161,7 @@ def census(rows):
           "saw it.")
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description="Divisions where almost nobody kept a rating.")
-    ap.add_argument("--min-rows", type=int, default=MIN_ROWS, dest="min_rows")
-    ap.add_argument("--max-rated-frac", type=float, default=MAX_RATED_FRAC,
-                    dest="max_frac")
-    ap.add_argument("--min-gap", type=float, default=MIN_GAP, dest="min_gap")
-    ap.add_argument("--min-survivors", type=int, default=MIN_SURVIVORS,
-                    dest="min_surv")
-    ap.add_argument("--meet", type=int, help="explain one meet and stop")
-    ap.add_argument("--limit", type=int, default=60)
-    ap.add_argument("--out", default=None)
-    args = ap.parse_args()
-
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(_XC_TFRRS_DIST_SQL)
-            cur.execute(_SQL, {"min_rows": args.min_rows})
-            rows = cur.fetchall()
-
-    if args.meet:
-        hit = [r for r in rows if r["meet_id"] == args.meet]
-        print(f"\n  MEET {args.meet}\n")
-        print(f"    {'div':>10}{'rows':>7}{'rated':>7}{'share':>8}"
-              f"{'label':>8}{'rating':>8}{'own med':>9}{'implied':>9}"
-              f"{'snap':>8}")
-        for r in sorted(hit, key=lambda x: x["div_id"]):
-            imp = impliedDistance(r["label"], r["own_med"], r["rating"])
-            snap = snapToLadder(imp)[0] if imp else None
-            print(f"    {r['div_id']:>10}{r['n_rows']:>7}{r['n_rated']:>7}"
-                  f"{r['n_rated'] / r['n_rows']:>7.0%}"
-                  f"{(r['label'] or 0):>8.0f}"
-                  f"{(r['rating'] or 0):>8.1f}{(r['own_med'] or 0):>9.1f}"
-                  f"{(imp or 0):>9.0f}{(snap or 0):>8.0f}")
-        if not hit:
-            print(f"    no division with {args.min_rows}+ finishers.")
-        return 0
-
-    census(rows)
-
-    flagged = []
-    for r in rows:
-        if r["n_rated"] / r["n_rows"] > args.max_frac:
-            continue
-        if r["n_rated"] < args.min_surv or not r["own_med"] or not r["rating"]:
-            continue
-        gap = float(r["rating"]) - float(r["own_med"])
-        if abs(gap) < args.min_gap:
-            continue
-        imp = impliedDistance(r["label"], r["own_med"], r["rating"])
-        if imp is None:
-            continue
-        snapped, err = snapToLadder(imp)
-        flagged.append({**r, "gap": gap, "implied": imp,
-                        "snapped": snapped, "err": err})
-
+def _pool(flagged):
     # ★ DIVISIONS MISLABELLED TOGETHER ARE SIZED TOGETHER.
     #
     #   Meet 26359 divs 1, 2 and 3 all carry the scraped label 8047 and
@@ -254,7 +199,71 @@ def main():
             m["implied"], m["snapped"], m["err"] = imp, snapped, err
             m["pooled"] = w
             m["siblings"] = len(members)
+    return flagged
 
+def main():
+    ap = argparse.ArgumentParser(
+        description="Divisions where almost nobody kept a rating.")
+    ap.add_argument("--min-rows", type=int, default=MIN_ROWS, dest="min_rows")
+    ap.add_argument("--max-rated-frac", type=float, default=MAX_RATED_FRAC,
+                    dest="max_frac")
+    ap.add_argument("--min-gap", type=float, default=MIN_GAP, dest="min_gap")
+    ap.add_argument("--min-survivors", type=int, default=MIN_SURVIVORS,
+                    dest="min_surv")
+    ap.add_argument("--meet", type=int, help="explain one meet and stop")
+    ap.add_argument("--limit", type=int, default=60)
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(_XC_TFRRS_DIST_SQL)
+            cur.execute(_SQL, {"min_rows": args.min_rows})
+            rows = cur.fetchall()
+
+    if args.meet:
+        # ⚠ POOLED HERE TOO, OR THIS VIEW CONTRADICTS THE FILE. --meet used to
+        #   size each division alone while --out wrote the pooled answer, so
+        #   26359/3 read 6000 on screen and 5149 in pass0.py. One division,
+        #   two numbers, depending on which flag you passed.
+        hit = _pool([r for r in rows if r["meet_id"] == args.meet])
+        print(f"\n  MEET {args.meet}\n")
+        print(f"    {'div':>10}{'rows':>7}{'rated':>7}{'share':>8}"
+              f"{'label':>8}{'rating':>8}{'own med':>9}{'implied':>9}"
+              f"{'snap':>8}")
+        for r in sorted(hit, key=lambda x: x["div_id"]):
+            imp, snap = r.get("implied"), r.get("snapped")
+            if imp is None:
+                imp = impliedDistance(r["label"], r["own_med"], r["rating"])
+                snap = snapToLadder(imp)[0] if imp else None
+            print(f"    {r['div_id']:>10}{r['n_rows']:>7}{r['n_rated']:>7}"
+                  f"{r['n_rated'] / r['n_rows']:>7.0%}"
+                  f"{(r['label'] or 0):>8.0f}"
+                  f"{(r['rating'] or 0):>8.1f}{(r['own_med'] or 0):>9.1f}"
+                  f"{(imp or 0):>9.0f}{(snap or 0):>8.0f}")
+        if not hit:
+            print(f"    no division with {args.min_rows}+ finishers.")
+        return 0
+
+    census(rows)
+
+    flagged = []
+    for r in rows:
+        if r["n_rated"] / r["n_rows"] > args.max_frac:
+            continue
+        if r["n_rated"] < args.min_surv or not r["own_med"] or not r["rating"]:
+            continue
+        gap = float(r["rating"]) - float(r["own_med"])
+        if abs(gap) < args.min_gap:
+            continue
+        imp = impliedDistance(r["label"], r["own_med"], r["rating"])
+        if imp is None:
+            continue
+        snapped, err = snapToLadder(imp)
+        flagged.append({**r, "gap": gap, "implied": imp,
+                        "snapped": snapped, "err": err})
+
+    flagged = _pool(flagged)
     flagged.sort(key=lambda r: -abs(r["gap"]))
     good = [r for r in flagged if abs(r["err"]) <= SNAP_TOL]
 
