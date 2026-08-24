@@ -85,13 +85,12 @@ ATHLETE_KEY        = "person_id"
 # Boards withheld from the public page. Keys are (board, scope); the value is
 # WHY, and it travels with the data so the reason is never lost.
 #
-# performance/alltime: dominated by Mt. SAC, where one year's field ran the
-# RAIN COURSE (flat) while course_difficulties still carried the normal
-# course's difficulty -- whole field over-credited. Engine fix pending;
-# re-check this board after it lands, it is how we watch the problem.
-SUPPRESSED_BOARDS = {
-    ("performance", "alltime"): "mt-sac-rain-course-difficulty",
-}
+# performance/alltime WAS here for the Mt. SAC rain-course problem; the
+# offending meets are excluded row-by-row in EXCLUDED_MEET_IDS below, which
+# is the narrower patch, so the board is public again. If another
+# over-credited meet surfaces, add its id below rather than re-suppressing
+# the whole board.
+SUPPRESSED_BOARDS = {}
 
 # HARDCODED EXCLUSIONS -- temporary. Each is a specific meet whose ratings are
 # known-bad and not yet fixed upstream. This is a SITE patch the engine does

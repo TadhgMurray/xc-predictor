@@ -53,6 +53,26 @@ def _event_sort_key(event):
     return (1, str(event).lower())
 
 
+# Round/heat qualifiers that split one event into several "events" -- an
+# athlete's 1600m prelim and final are two races but ONE event, and keying
+# the bests panels on the raw label gave them two PR rows.
+# ⚠ DISPLAY GROUPING ONLY. The race rows below the panels keep their raw
+#   label, where "Prelims" is information. Mirrors the ROUND words of
+#   engine/event_parse's _TRAILING_NOISE; the parser's full list also eats
+#   "Invitational" and "Open", which here are usually meet names, not rounds.
+_ROUND_NOISE = re.compile(
+    r"\s*[\(\[].*?[\)\]]|"
+    r"\s*\b(section|sect|heat|flight|round|prelims?|semis?|finals?|"
+    r"trials?)\b.*$",
+    re.IGNORECASE)
+
+
+def _canonEvent(event):
+    """'1600m Prelims 2' and '1600m Finals' -> '1600m': one bests row."""
+    canon = _ROUND_NOISE.sub("", str(event)).strip(" -–—·:")
+    return canon or str(event).strip()
+
+
 def _is_better_time(race, current):
     """Faster wins. A race with no numeric time can never be a best."""
     if race.get("time_raw") is None:
@@ -121,6 +141,7 @@ def all_time_bests(races):
         event = race.get("event")
         if not event:
             continue
+        event = _canonEvent(event)
         if _is_better_time(race, bucket["events"].get(event)):
             bucket["events"][event] = race
 
@@ -189,6 +210,7 @@ def season_bests_flat(races, seasons):
         event = race.get("event")
         if not event:
             continue
+        event = _canonEvent(event)
         if _is_better_time(race, bucket["events"].get(event)):
             bucket["events"][event] = race
 

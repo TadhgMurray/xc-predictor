@@ -37,6 +37,22 @@ p  { color: rgb(82, 82, 82); }
    between the heading text and the rating that follows it. */
 .season-flag { margin-left: 6px; vertical-align: middle; }
 
+/* The board-note marker: a small amber asterisk beside the season's grade,
+   replacing the "Unranked" pill that used to sit in the heading and read
+   like an error. Amber, not red: the note is about where the numbers
+   appear, never about the numbers. --tip colours its tooltip border, same
+   machinery as the race flags. */
+.season-note {
+  --tip: #a05a00;
+  background: none;
+  color: #a05a00;
+  padding: 0;
+  margin: 0 0 0 3px;
+  font-size: 0.9em;
+  line-height: 1;
+  vertical-align: super;
+}
+
 .page-layout { display: flex; gap: 24px; align-items: flex-start; }
 .main-col    { flex: 1; min-width: 0; }
 .sidebar     { width: 280px; flex-shrink: 0; }

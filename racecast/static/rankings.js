@@ -1205,7 +1205,12 @@ function syncBoard(board) {
        sorted by something other than the finish it exists to show. */
   if (!COLUMNS[board].some((c) => c.key === state.sort)
       || (board === "teams" && previous !== "teams")
-      || (board === "courses" && previous !== "courses")) {
+      || (board === "courses" && previous !== "courses")
+      /* ! pr TOO: "rating" is a legal sort there, so a sort carried over
+           from the ability board survived the test above and the times
+           board opened sorted by rating -- the one thing it exists NOT to
+           lead with. Arriving always resets it to the clock. */
+      || (board === "pr" && previous !== "pr")) {
     /* ! THE FALLBACK IS PER BOARD. Dropping onto "rating" here would open the
          times board sorted by something other than time, which is the one
          thing it exists to sort by. */

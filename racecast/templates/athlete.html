@@ -139,10 +139,14 @@
 {% macro board_note(kind) %}
     {%- set n = BOARD_NOTES.get(kind) -%}
     {%- if n -%}
-    <span class="flag flag--warn season-flag" tabindex="0"
+    {# A small amber asterisk beside the grade, not an "Unranked" pill in
+       the heading: the pill read as an error about the season; the mark
+       sits on the thing the note is actually about (the grade evidence)
+       and the words live in its tooltip -- hover, tap or keyboard focus. #}
+    <span class="flag season-note" tabindex="0"
           data-title="{{ n.title }}"
           data-blurb="{{ n.blurb }}"
-          aria-label="{{ n.title }}. {{ n.blurb }}">Unranked</span>
+          aria-label="{{ n.title }}. {{ n.blurb }}">&#10033;</span>
     {%- endif -%}
 {%- endmacro %}
 
@@ -153,10 +157,9 @@
            showing the same figure. #}
         <h3 class="season-head">
             {{ year }} {{ sport }}
-            {% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}
             <span class="season-rating">{{ "%.1f"|format(season.rating) if season.rating else "—" }}</span>
         </h3>
-        <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}</p>
+        <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
             <thead>
                 <tr>
