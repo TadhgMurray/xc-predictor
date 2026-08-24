@@ -220,6 +220,33 @@ SIG_FLOOR = 1.5         # min per-athlete sigma; fast bar bottoms at t3*this
 SPREAD_MIN_RACES = 6    # races needed before the personal sigma is trusted
 MED_SANE_LO = 40.0      # an own-median outside this range is ITSELF the
 MED_SANE_HI = 150.0     # corrupt thing; its rows are never drop candidates
+
+# ------------------------------------------------------------------ #
+#  COLD START -- a division with NO career evidence at all
+# ------------------------------------------------------------------ #
+#
+# ★ THE CASE THE CAREER MACHINERY CANNOT TOUCH, BY CONSTRUCTION. Norwich
+#   269563/1072566: 17 JV girls, every one with exactly ONE normalized race
+#   ever -- this one. min_own exists so a median means something, so these
+#   athletes have no median, the gap table is empty, and a 7:50 "2500m" by a
+#   seventh grader sails through untouched. Hidden Valley 267944/1064960 is
+#   the same shape.
+#
+# ★ SO THE FIELD IS JUDGED AGAINST ITS POOL, NOT AGAINST ITSELF. pm is
+#   defined so each pool's median rating is ~100; a career-less field whose
+#   MEDIAN rating computes to 124 is not a field of prodigies, it is a label
+#   error. The bar is ~2x pass 1's (these athletes have real quality
+#   variance and no per-athlete baseline), the share gate replaces
+#   unanimity, and it fires ONLY where the career evidence is absent --
+#   a division pass 1 can judge is never judged this way.
+#
+# ! DOWNWARD ONLY, BY CONSTRUCTION AND BY POLICY. It fires on FAST fields
+#   (median far above the pool), which shorten the label and LOWER ratings.
+#   A slow career-less field is indistinguishable from a hilly course or a
+#   walk-a-thon, would RAISE ratings, and is not judged at all.
+COLD_MIN_N = 10         # finishers with a normalized time
+COLD_BAR = 20.0         # field median rating above the pool's ~100 by this
+COLD_SHARE = 0.80       # share of the field above the pool median
 # ! HI IS SET FROM THE CEILING, NOT FROM COMFORT. The engine's elite ceiling
 #   is ~146 for a single career-best PERFORMANCE, so a career MEDIAN above
 #   150 is not an athlete -- it is a person-merge. 200 let that class
@@ -529,7 +556,7 @@ WITH rated AS (
            -- the engine's own formula, applied to EVERY row.
            -- ! reb_unovr is empty without --as-if-wiped, so COALESCE is the
            --   identity in the normal path -- same as the old body.
-           COALESCE(pm.pm, 100.0)
+           COALESCE(pm.pm, pma.pm, 100.0)
                * exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
                * COALESCE(u.scale, 1.0)                          AS speed_rating
     FROM   {table} r
@@ -539,8 +566,13 @@ WITH rated AS (
     LEFT   JOIN reb_pool  p  ON p.ident =
                                 COALESCE(r.person_id, rp.person_id,
                                          r.athlete_id)
-    -- '__all__': the global scale for pool-less athletes -- see _PM_SQL.
-    LEFT   JOIN reb_pm    pm ON pm.pool = COALESCE(p.pool, '__all__')
+    -- '__all__' is the fallback BOTH for a pool-less athlete AND for a pool
+    -- the pm sample happened to miss (the fast --explain samples through a
+    -- restricted reb_pool, so a small pool can be absent entirely -- joining
+    -- only on COALESCE(p.pool,'__all__') left those rows on the collapsed
+    -- 100.0 scale and their gaps read +0.0 again).
+    LEFT   JOIN reb_pm    pm  ON pm.pool = p.pool
+    LEFT   JOIN reb_pm    pma ON pma.pool = '__all__'
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
       AND  COALESCE(r.person_id, rp.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
@@ -2085,6 +2117,36 @@ def explainFast(cur, args):
                       "meet": key[0], "div": key[1]})
     explain1(cur.fetchall(), key, args.sigma, args.t1, args.unanimity, cur)
 
+    # ★ THE COLD-START VERDICT, whenever the career machinery is blind here.
+    #   Same SQL as the full run's sweep, restricted to this division.
+    cur.execute("SELECT count(*) AS n FROM reb_gap "
+                "WHERE meet_id = %s AND div_id = %s", key)
+    if cur.fetchone()["n"] < args.min_field:
+        cold_sql = _restrict(
+            _COLD_SQL,
+            "    WHERE  r.normalized_time IS NOT NULL "
+            "AND r.normalized_time > 0",
+            "\n      AND  r.meet_id = %(meet)s AND r.div_id = %(div)s")
+        # bar/share disarmed here: coldJudge prints every gate itself, and a
+        # FAILING candidate is exactly what the reader needs to see.
+        cur.execute(cold_sql.format(table=table),
+                    {"min_field": args.min_field, "min_n": COLD_MIN_N,
+                     "bar": -1000.0, "share": 0.0,
+                     "meet": key[0], "div": key[1]})
+        cand = cur.fetchall()
+        print(f"\n  COLD-START VERDICT (career-less field vs its POOL, "
+              f"~100 by construction)\n")
+        if not cand:
+            print(f"    not a cold candidate: fewer than {COLD_MIN_N} "
+                  f"normalized finishers, or the\n    division has career "
+                  f"evidence after all.")
+        else:
+            entry = coldJudge(cand[0], cur, say=print)
+            if entry is not None:
+                print(f"\n    COLD PROPOSAL: {float(entry['distance']):.0f} "
+                      f"-> {entry['snapped']:.0f} -- clears every cold "
+                      f"gate; the next\n    rebuild writes it (tier COLD).")
+
 
 # ------------------------------------------------------------------ #
 #  HOW MUCH TO TRUST ONE PROPOSAL
@@ -2264,6 +2326,121 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
                           "snap_err": err, "gap": gap, "source": source,
                           "tier": tierFor(source, err, gap, r["n"], sigma)})
     return condemned, routed, skipped
+
+
+# ------------------------------------------------------------------ #
+#  COLD START -- see the COLD_* constants for the reasoning
+# ------------------------------------------------------------------ #
+
+_COLD_SQL = """
+WITH judgeable AS (
+    SELECT meet_id, div_id, count(*) AS n_j
+    FROM   reb_gap
+    GROUP  BY 1, 2
+), rated AS (
+    SELECT r.meet_id, r.div_id,
+           COALESCE(pm.pm, pma.pm, 100.0)
+               * exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
+               * COALESCE(u.scale, 1.0)                       AS speed_rating
+    FROM   {table} r
+    LEFT   JOIN reb_unovr u   ON u.meet_id = r.meet_id
+                             AND u.div_id = r.div_id
+    LEFT   JOIN reb_cell  cd  ON cd.meet_id = r.meet_id
+                             AND cd.div_id = r.div_id
+    LEFT   JOIN reb_person rp ON rp.athlete_id = r.athlete_id
+    LEFT   JOIN reb_pool  p   ON p.ident = COALESCE(r.person_id,
+                                                    rp.person_id,
+                                                    r.athlete_id)
+    LEFT   JOIN reb_pm    pm  ON pm.pool = p.pool
+    LEFT   JOIN reb_pm    pma ON pma.pool = '__all__'
+    WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+), agg AS (
+    SELECT x.meet_id, x.div_id,
+           count(*)                                            AS n,
+           percentile_cont(0.5)
+               WITHIN GROUP (ORDER BY x.speed_rating)          AS med_rating,
+           avg((x.speed_rating > 100.0)::int)                  AS same_side
+    FROM   rated x
+    LEFT   JOIN judgeable j ON j.meet_id = x.meet_id
+                           AND j.div_id = x.div_id
+    -- ONLY where the career machinery is blind: a division pass 1 can
+    -- judge is never judged this way.
+    WHERE  COALESCE(j.n_j, 0) < %(min_field)s
+    GROUP  BY x.meet_id, x.div_id
+    HAVING count(*) >= %(min_n)s
+       AND percentile_cont(0.5) WITHIN GROUP (ORDER BY x.speed_rating)
+           >= 100.0 + %(bar)s
+       AND avg((x.speed_rating > 100.0)::int) >= %(share)s
+)
+SELECT a.meet_id, a.div_id, a.n, a.med_rating, a.same_side,
+       lbl.course_name, lbl.distance, lbl.division
+FROM   agg a
+__LABEL__
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
+
+
+def coldJudge(r, cur, say=None):
+    """One cold candidate through the gates. Returns the proposal dict or
+    (None) -- `say` prints each gate for the --explain view."""
+    p = say or (lambda *_a, **_k: None)
+    gap = float(r["med_rating"]) - 100.0
+    p(f"    field median rating:              {float(r['med_rating']):.1f} "
+      f"(pool median is ~100)")
+    p(f"    cold bar (median - 100):          {gap:+.1f} vs {COLD_BAR:.0f}"
+      f"   {'PASS' if gap >= COLD_BAR else 'FAILS HERE'}")
+    if gap < COLD_BAR:
+        return None
+    p(f"    share above the pool median:      {float(r['same_side']):.0%} "
+      f"vs {COLD_SHARE:.0%}   "
+      f"{'PASS' if float(r['same_side']) >= COLD_SHARE else 'FAILS HERE'}")
+    if float(r["same_side"]) < COLD_SHARE:
+        return None
+    if not r["distance"]:
+        p(f"    label distance:                   none -- unusable")
+        return None
+    implied = impliedDistance(r["distance"], 100.0, gap)
+    p(f"    label distance:                   {float(r['distance']):.0f}")
+    p(f"    implied distance:                 {implied:.0f}")
+    hit = (snapToCourse(implied, r.get("course_name"), r["distance"], cur)
+           if cur is not None else None)
+    if hit is not None:
+        snapped, err, _src = hit
+        source = "course"
+    else:
+        source = "corpus"
+        hit2 = snapToCorpus(implied)
+        snapped, err = hit2 if hit2 else snapToLadder(implied)
+    p(f"    snap ({source}):                    {snapped:.0f} ({err:+.1%})"
+      f"   {'PASS' if abs(err) <= SNAP_TOL else 'FAILS HERE'}")
+    if abs(err) > SNAP_TOL:
+        return None
+    ratio = snapped / float(r["distance"])
+    ok = 1.0 / MAX_CHANGE <= ratio <= 0.98
+    p(f"    change:                           {ratio:.2f}x   "
+      f"{'PASS (shortens -> ratings DOWN)' if ok else 'FAILS HERE'}")
+    if not ok:
+        return None
+    return {**r, "implied": implied, "snapped": snapped, "snap_err": err,
+            "gap": gap, "base": 100.0, "source": source, "tier": "COLD"}
+
+
+def coldStart(cur, sport, min_field):
+    """Proposals for career-less divisions. See the COLD_* constants."""
+    _noBarePercent("_COLD_SQL", _COLD_SQL.format(table=_TABLE[sport]))
+    cur.execute("SET LOCAL work_mem = '2GB'")
+    cur.execute(_COLD_SQL.format(table=_TABLE[sport]),
+                {"min_field": min_field, "min_n": COLD_MIN_N,
+                 "bar": COLD_BAR, "share": COLD_SHARE})
+    rows = cur.fetchall()
+    got = []
+    for r in rows:
+        entry = coldJudge(r, cur)
+        if entry is not None:
+            got.append(entry)
+    print(f"  cold start: {len(rows):,} career-less divisions cleared the "
+          f"field gates, {len(got):,} snap\n              to a shorter "
+          f"real distance and are proposed (tier COLD)")
+    return got
 
 
 # ------------------------------------------------------------------ #
@@ -2847,6 +3024,10 @@ def main():
                     return 0
                 got, routed, skipped = pass1(rows, args.sigma, args.t1,
                                              args.unanimity, cur)
+                # ★ THE COLD-START SWEEP, after the career-based pass: fires
+                #   only where reb_gap is blind (career-less divisions), so
+                #   the two can never disagree about one division.
+                got.extend(coldStart(cur, args.sport, args.min_field))
                 # ! ONE ROUND TRIP, AFTER THE PASS. See _NAMES_SQL: joined
                 #   inside the query this ran 31.6M times instead of 5,500.
                 #
@@ -2858,7 +3039,10 @@ def main():
                 applyNames(cur, got)
                 report1(got, routed, skipped, args)
                 if args.out:
-                    got = [r for r in got if r.get("tier") in ("A", "B")]
+                    # COLD writes too: downward-only, double bar, and only
+                    # where no career evidence exists to contradict it.
+                    got = [r for r in got
+                           if r.get("tier") in ("A", "B", "COLD")]
                     # ! THE NAME GOES IN THE COMMENT, so a course can be
                     #   found in the proposals with findstr. Without it
                     #   pass1.py is meet/div ids and nothing else, and
@@ -2882,6 +3066,8 @@ def main():
                 rows = cur.fetchall()
                 got1, _routed, _sk = pass1(rows, args.sigma, args.t1,
                                            args.unanimity, cur)
+                # Cold proposals are applied too, so later passes must model them.
+                got1 = got1 + coldStart(cur, args.sport, args.min_field)
                 # ⚠ EVERY DIVISION PASS 1 DID NOT CONDEMN, not just the ones
                 #   that failed its unanimity gate. That gate is a bad router
                 #   for this: a genuine two-race division has one half at gap
@@ -2934,6 +3120,8 @@ def main():
                 rows = cur.fetchall()
                 got1, _routed, _sk = pass1(rows, args.sigma, args.t1,
                                            args.unanimity, cur)
+                # Cold proposals are applied too, so later passes must model them.
+                got1 = got1 + coldStart(cur, args.sport, args.min_field)
                 # ⚠ SAME CANDIDATE SET AS --pass 2, NOT pass 1's unanimity
                 #   router. --pass 2 judges every division pass 1 did not
                 #   condemn (the router found 2 half-divisions in 493,029);
@@ -2964,7 +3152,8 @@ def main():
                 fixed = [(r["meet_id"], r["div_id"],
                           (r["snapped"] / float(r["distance"])) ** K)
                          for r in got1
-                         if r["distance"] and r.get("tier") in ("A", "B")]
+                         if r["distance"]
+                         and r.get("tier") in ("A", "B", "COLD")]
                 pinned = [rid for side in got2 for rid in side["result_ids"]]
                 stagePriorPasses(cur, fixed, pinned)
                 drops, saves, groups, medians = pass3(
@@ -3063,10 +3252,12 @@ def report1(got, routed, skipped, args):
         print(f"    CONFIDENCE IN THE DISTANCE PROPOSED")
         for t, what in (("A", "the course itself races this distance"),
                         ("B", "corpus snap within 2%, field median precise"),
-                        ("C", "wrong division, guessed distance")):
-            print(f"      {t}  {tiers.get(t, 0):>7,}   {what}")
-        print(f"\n      A and B are what --out writes. C is reported only "
-              f"-- see tierFor.\n")
+                        ("C", "wrong division, guessed distance"),
+                        ("COLD", "career-less field vs pool median, "
+                                 "downward only")):
+            print(f"      {t:<4} {tiers.get(t, 0):>6,}   {what}")
+        print(f"\n      A, B and COLD are what --out writes. C is reported "
+              f"only -- see tierFor.\n")
         print(f"    {'gap':>7} {'n':>5} {'side':>5} {'label':>6} "
               f"{'implied':>7} {'snap':>6} {'err':>7}  {'meet/div':>16}  course")
         for r in sorted(got, key=lambda x: -abs(x["gap"]))[:args.limit]:
