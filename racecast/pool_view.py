@@ -95,8 +95,21 @@ _FAILED = set()          # keys already complained about
 # ranking_results.pool -- the pool of the row's own season -- instead of
 # athlete_ratings membership. That scoping is the entire fix: membership
 # mixes a college athlete's HS-era rows into the college sample and every
-# pool medians to the HS mode. The difficulty joins are copied from
-# conversions._MEAN_SQL, the join that was already proven right.
+# pool medians to the HS mode.
+#
+# ★ NO PER-ROW DIFFICULTY JOINS, AND THAT IS A MEASURED TRADE. The first
+#   version copied conversions._MEAN_SQL's venue joins for the exact
+#   (1+difficulty) per row -- but the XC shape matches course_canonical on
+#   round(gps, 5) equality, which no index serves, so each constant cost a
+#   1,500-row nested-loop scan and the HOME PAGE (the one place needing all
+#   ~16 pool x sport constants at once) took seconds per fresh process.
+#   Using the sport's DEFAULT difficulty instead: the same constant divides
+#   both C's, so it cancels in the C_hs/C_pool ratio the view actually
+#   uses; what remains is each pool's venue-mix deviation from the default,
+#   ~1% -- inside the tolerance the representative factor already accepts.
+#   The pool/sport sample fetch is index-served (rr_board_rating_idx) and
+#   the results join is by primary key, so a constant now costs
+#   milliseconds instead of seconds.
 
 _CONST_SQL = {
     "XC": """
@@ -106,20 +119,10 @@ _CONST_SQL = {
             WHERE  rr.pool = %(pool)s AND rr.sport = 'XC'
             LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time, cd.difficulty
+        SELECT r.speed_rating, r.normalized_time
         FROM   sample s
         JOIN   results r ON r.result_id = s.result_id
-        LEFT JOIN meets m
-               ON m.div_id = r.div_id AND m.meet_id = r.meet_id
-              AND m.source = r.source
-        LEFT JOIN course_canonical cc
-               ON cc.course_name = m.course_name
-              AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
-              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
-        LEFT JOIN course_difficulties cd
-               ON cd.canonical_id = cc.canonical_id
-              AND cd.distance_m   = (round(m.distance / 100.0) * 100)::int
-        WHERE r.speed_rating > 0 AND r.normalized_time > 0
+        WHERE  r.speed_rating > 0 AND r.normalized_time > 0
     """,
     "TF": """
         WITH sample AS (
@@ -128,19 +131,10 @@ _CONST_SQL = {
             WHERE  rr.pool = %(pool)s AND rr.sport = 'TF'
             LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time, cd.difficulty
+        SELECT r.speed_rating, r.normalized_time
         FROM   sample s
         JOIN   results_tf r ON r.result_id = s.result_id
-        LEFT JOIN LATERAL (
-            SELECT m.location_id, m.is_indoor
-            FROM meets_tf m WHERE m.meet_id = r.meet_id LIMIT 1
-        ) m ON TRUE
-        LEFT JOIN course_difficulties cd
-               ON m.location_id IS NOT NULL AND m.location_id <> 0
-              AND cd.course_name = 'TF:loc:' || m.location_id || ':'
-                                || CASE WHEN COALESCE(m.is_indoor, 0) = 1
-                                        THEN 'in' ELSE 'out' END
-        WHERE r.speed_rating > 0 AND r.normalized_time > 0
+        WHERE  r.speed_rating > 0 AND r.normalized_time > 0
     """,
 }
 
@@ -160,14 +154,13 @@ def _poolConstant(pool, sport):
     vals = []
     if sql is not None:
         try:
+            d = default_difficulty(sport)     # see the trade note above
             with getConn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
-                    for rating, norm, difficulty in cur.fetchall():
+                    for rating, norm in cur.fetchall():
                         if not rating or not norm:
                             continue
-                        d = (difficulty if difficulty is not None
-                             else default_difficulty(sport))
                         vals.append(
                             float(rating) * float(norm) / (1.0 + d) / 100.0)
         except Exception as exc:         # noqa: BLE001 -- a view, not a page
