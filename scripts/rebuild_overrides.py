@@ -325,12 +325,14 @@ WITH rated AS (
            --   empty without it, so COALESCE makes this the identity.
            r.speed_rating * COALESCE(u.scale, 1.0) AS speed_rating,
            r.time_seconds,
-           COALESCE(r.person_id, r.athlete_id) AS ident
+           -- ident through the person map, same as the times body.
+           COALESCE(r.person_id, rp.person_id, r.athlete_id) AS ident
     FROM   {table} r
     LEFT   JOIN reb_unovr u
            ON u.meet_id = r.meet_id AND u.div_id = r.div_id
+    LEFT   JOIN reb_person rp ON rp.athlete_id = r.athlete_id
     WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0
-      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
+      AND  COALESCE(r.person_id, rp.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
     SELECT ident,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
@@ -399,6 +401,26 @@ ANALYZE reb_gap;
 #   so each pool's median rating is 100 -- readability, and comparability for
 #   an athlete whose career crosses pools, since targetFor anchors normalized
 #   time PER POOL and the raw numbers are not comparable across that seam.
+# ★ ONE PERSON PER ATHLETE ID, EVEN WHERE A ROW FORGOT. results.person_id is
+#   filled per ROW by the linkage backfill, so a meet scraped after the last
+#   linkage run carries NULL person_ids while the same athletes' CAREER rows
+#   are person-keyed. COALESCE(person_id, athlete_id) then splits one human
+#   into two idents: the fresh division orphans from its own careers, its
+#   athletes read as having no history, and the passes go blind exactly
+#   where new mislabels arrive first. Measured: 264234/1050225, 78 athletes,
+#   1 judgeable row -- while the site showed the careers plainly. The map
+#   recovers the person from the athlete's other rows.
+_IDENT_SQL = """
+DROP TABLE IF EXISTS reb_person;
+CREATE TEMP TABLE reb_person AS
+SELECT athlete_id, min(person_id) AS person_id
+FROM   {table}
+WHERE  person_id IS NOT NULL AND athlete_id IS NOT NULL
+GROUP  BY athlete_id;
+CREATE INDEX ON reb_person (athlete_id);
+ANALYZE reb_person;
+"""
+
 _POOL_SQL = """
 -- ! min(pool), NOT mode(). mode() IS AN ORDERED-SET AGGREGATE, so Postgres
 --   can only plan it as GroupAggregate -- a full sort of all 56M rows of
@@ -500,7 +522,9 @@ DROP TABLE IF EXISTS reb_gap;
 CREATE TEMP TABLE reb_gap AS
 WITH rated AS (
     SELECT r.meet_id, r.div_id, r.result_id,
-           COALESCE(r.person_id, r.athlete_id)                  AS ident,
+           -- ident THROUGH the person map: a row linkage has not reached yet
+           -- still joins its athlete's person-keyed career. See _IDENT_SQL.
+           COALESCE(r.person_id, rp.person_id, r.athlete_id)    AS ident,
            r.time_seconds,
            -- the engine's own formula, applied to EVERY row.
            -- ! reb_unovr is empty without --as-if-wiped, so COALESCE is the
@@ -511,11 +535,14 @@ WITH rated AS (
     FROM   {table} r
     LEFT   JOIN reb_unovr u  ON u.meet_id = r.meet_id AND u.div_id = r.div_id
     LEFT   JOIN reb_cell  cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
-    LEFT   JOIN reb_pool  p  ON p.ident = COALESCE(r.person_id, r.athlete_id)
+    LEFT   JOIN reb_person rp ON rp.athlete_id = r.athlete_id
+    LEFT   JOIN reb_pool  p  ON p.ident =
+                                COALESCE(r.person_id, rp.person_id,
+                                         r.athlete_id)
     -- '__all__': the global scale for pool-less athletes -- see _PM_SQL.
     LEFT   JOIN reb_pm    pm ON pm.pool = COALESCE(p.pool, '__all__')
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
-      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
+      AND  COALESCE(r.person_id, rp.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
     SELECT ident,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
@@ -947,6 +974,8 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         #   the difference between minutes and hours. SET LOCAL dies with the
         #   transaction, so nothing leaks.
         cur.execute("SET LOCAL work_mem = '2GB'")
+        cur.execute(_IDENT_SQL.format(table=_TABLE[sport]))
+        _t = _step(_t, "person map (rows linkage has not reached yet)")
         cur.execute(_POOL_SQL, {"sport": sport})
         _t = _step(_t, "pool per athlete")
         cur.execute(_CELL_SQL)
@@ -958,6 +987,7 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         cur.execute(_GAP_BODY_TIMES.format(table=_TABLE[sport]),
                     {"min_own": min_own})
     else:
+        cur.execute(_IDENT_SQL.format(table=_TABLE[sport]))
         cur.execute(_GAP_BODY.format(table=_TABLE[sport]),
                     {"min_own": min_own})
     _t = _step(_t, f"gap table from {gap_from} (the expensive one)")
@@ -1842,20 +1872,44 @@ def explainFast(cur, args):
     _t = _step(_t, "revert state + ladder")
 
     cur.execute(f"""
-        SELECT DISTINCT COALESCE(person_id, athlete_id) AS ident
+        SELECT DISTINCT athlete_id, person_id
         FROM   {table}
         WHERE  meet_id = %s AND div_id = %s
-          AND  COALESCE(person_id, athlete_id) IS NOT NULL
     """, key)
-    idents = [r["ident"] for r in cur.fetchall()]
-    print(f"  {len(idents):,} athletes in {key[0]}/{key[1]}")
-    if not idents:
+    seen = cur.fetchall()
+    aids = sorted({r["athlete_id"] for r in seen
+                   if r["athlete_id"] is not None})
+    pids = {r["person_id"] for r in seen if r["person_id"] is not None}
+    if not aids and not pids:
         print(f"\n  WHY {key[0]}/{key[1]} IS NOT IN PASS 1\n")
         print(f"    no rows with an athlete id for that meet/div in {table}. "
               f"Check the ids:\n    on a colliding meet page the other "
               f"source's division is a different key,\n    and tfrrs XC "
               f"div_ids are small per-meet indices, not global ones.")
         return
+    # The person map, restricted to this division's athletes: rows here that
+    # linkage has not reached yet still join their person-keyed careers.
+    cur.execute("DROP TABLE IF EXISTS reb_person")
+    cur.execute("CREATE TEMP TABLE reb_person "
+                "(athlete_id bigint, person_id bigint)")
+    if aids:
+        cur.execute(f"""
+            INSERT INTO reb_person
+            SELECT athlete_id, min(person_id)
+            FROM   {table}
+            WHERE  athlete_id = ANY(%(a)s) AND person_id IS NOT NULL
+            GROUP  BY athlete_id
+        """, {"a": aids})
+        cur.execute("SELECT person_id FROM reb_person")
+        pids |= {r["person_id"] for r in cur.fetchall()}
+    cur.execute("CREATE INDEX ON reb_person (athlete_id)")
+    pids = sorted(pids)
+    print(f"  {len(aids):,} athletes in {key[0]}/{key[1]} "
+          f"({len(pids):,} resolve to linked persons)")
+    # ! [-1] STAND-INS: psycopg2 renders an empty list as '{}', and Postgres
+    #   cannot type an empty array literal inside = ANY().
+    aids = aids or [-1]
+    pids = pids or [-1]
 
     cur.execute("SET LOCAL work_mem = '512MB'")
     # reb_pool restricted to these athletes. Their pool only routes the pm
@@ -1864,7 +1918,7 @@ def explainFast(cur, args):
     cur.execute(_restrict(_POOL_SQL,
                           "  AND  sport = %(sport)s",
                           "\n  AND  person_id = ANY(%(ids)s)"),
-                {"sport": args.sport, "ids": idents})
+                {"sport": args.sport, "ids": pids + aids})
     cur.execute(_CELL_SQL)
     if cache and cache.get("pm"):
         cur.execute("DROP TABLE IF EXISTS reb_pm")
@@ -1878,15 +1932,17 @@ def explainFast(cur, args):
         pm_src = "recomputed live -- a full pass run writes the cache"
     _t = _step(_t, f"pools + cells (pm {pm_src})")
 
-    # The real gap body, restricted. The OR-of-two-indexable-conditions is
-    # COALESCE(person_id, athlete_id) = ANY(ids) written so an index on
-    # either id column can serve it.
+    # The real gap body, restricted. The OR-of-two-indexable-conditions
+    # covers both id spaces so an index on either column can serve it: a
+    # career row is person-keyed (pids, the map included) or still raw
+    # (aids).
     cur.execute(_restrict(
         _GAP_BODY_TIMES,
-        "      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL",
-        "\n      AND  (r.person_id = ANY(%(ids)s) OR (r.person_id IS NULL "
-        "AND r.athlete_id = ANY(%(ids)s)))").format(table=table),
-        {"min_own": args.min_own_races, "ids": idents})
+        "      AND  COALESCE(r.person_id, rp.person_id, r.athlete_id) "
+        "IS NOT NULL",
+        "\n      AND  (r.person_id = ANY(%(pids)s) "
+        "OR r.athlete_id = ANY(%(aids)s))").format(table=table),
+        {"min_own": args.min_own_races, "pids": pids, "aids": aids})
     _t = _step(_t, "gap table over these athletes' full careers")
     print("  ⚠ fast mode: the form (race-of-season) correction is skipped -- "
           "it needs the\n    full corpus and is worth at most ~3 points. A "
