@@ -1819,7 +1819,20 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
               f"course corroboration also required (not visible here)")
         if not (side_ok and mag_ok):
             return
-    print(f"\n    It clears every gate -- it should be in the output.")
+    # ⚠ THE GATES ARE NOT THE WHOLE VERDICT -- THE TIER DECIDES WHAT IS
+    #   WRITTEN, and this function ended on "should be in the output" for
+    #   Hidden Valley 267944/1064960 while tierFor was quietly filing it
+    #   under C (report-only): 7 athletes' medians are not precise enough
+    #   for tier B and the ladder-only view cannot see course history.
+    t = tierFor("corpus", err, gap, n, sigma)
+    print(f"\n    It clears every gate. Tier (ladder-only view): {t}")
+    if t == "C":
+        print(f"    ⚠ C is REPORT-ONLY unless the run's field-vs-pool check "
+              f"independently\n      agrees (then it writes as C+), or the "
+              f"venue's course history\n      corroborates it (tier A -- "
+              f"not visible from here).")
+    else:
+        print(f"    It should be in the output.")
 
 
 # ------------------------------------------------------------------ #
@@ -2438,6 +2451,61 @@ def coldJudge(r, cur, say=None):
             "gap": gap, "base": 100.0, "source": source, "tier": "COLD"}
 
 
+def rescueTierC(cur, sport, got):
+    """Upgrade tier-C proposals whose field-vs-pool evidence agrees.
+
+    ★ C IS REPORT-ONLY BECAUSE ONE ESTIMATOR IS IMPRECISE THERE -- a small
+      field's median isn't tight enough for tier B and the venue has no
+      history for tier A. But the cold check is a SECOND, independent
+      estimator (field level vs the pool, no careers involved), and when it
+      independently says "this field is inflated" and lands within 5% of the
+      career-implied rung, the two agreeing is stronger evidence than
+      either alone. Hidden Valley 267944/1064960: careers said 2480->2500
+      off 7 athletes (tier C, unwritten), the pool said ~2404->2414 -- same
+      story, one rung apart -- and the division stayed wrong for want of a
+      corroborator that existed.
+
+    ! THE CAREER RUNG IS WHAT GETS WRITTEN. Corroboration confirms the
+      MAGNITUDE; the career-implied snap is the better rung estimate.
+      Downward-only by construction: coldJudge only passes fields ABOVE the
+      pool, and every surviving C row is positive-gap (negative gaps need
+      course corroboration and become tier A).
+    """
+    cs = [r for r in got if r.get("tier") == "C"]
+    if not cs:
+        return 0
+    from psycopg2.extras import execute_values
+    cur.execute("DROP TABLE IF EXISTS reb_ccheck")
+    cur.execute("CREATE TEMP TABLE reb_ccheck (meet_id bigint, div_id bigint)")
+    execute_values(cur, "INSERT INTO reb_ccheck VALUES %s",
+                   [(r["meet_id"], r["div_id"]) for r in cs])
+    anchor = "    WHERE  COALESCE(j.n_j, 0) < %(min_field)s"
+    if anchor not in _COLD_SQL:
+        raise AssertionError("rescueTierC: _COLD_SQL shape changed")
+    sql = _COLD_SQL.replace(
+        anchor,
+        "    WHERE  (x.meet_id, x.div_id) IN "
+        "(SELECT meet_id, div_id FROM reb_ccheck)")
+    cur.execute("SET LOCAL work_mem = '2GB'")
+    cur.execute(sql.format(table=_TABLE[sport]),
+                {"min_field": 0, "min_n": COLD_MIN_N,
+                 "bar": COLD_BAR, "share": COLD_SHARE})
+    by_key = {(r["meet_id"], r["div_id"]): r for r in cs}
+    upgraded = 0
+    for row in cur.fetchall():
+        c = by_key.get((row["meet_id"], row["div_id"]))
+        entry = coldJudge(row, cur)
+        if c is None or entry is None:
+            continue
+        if abs(entry["snapped"] - c["snapped"]) / c["snapped"] <= 0.05:
+            c["tier"] = "C+"
+            upgraded += 1
+    print(f"  tier-C rescue: {upgraded:,} of {len(cs):,} C divisions "
+          f"corroborated by the independent\n                 field-vs-pool "
+          f"check (within 5% of the career rung) -- written as C+")
+    return upgraded
+
+
 def coldStart(cur, sport, min_field):
     """Proposals for career-less divisions. See the COLD_* constants."""
     _noBarePercent("_COLD_SQL", _COLD_SQL.format(table=_TABLE[sport]))
@@ -3042,6 +3110,7 @@ def main():
                 #   only where reb_gap is blind (career-less divisions), so
                 #   the two can never disagree about one division.
                 got.extend(coldStart(cur, args.sport, args.min_field))
+                rescueTierC(cur, args.sport, got)
                 # ! ONE ROUND TRIP, AFTER THE PASS. See _NAMES_SQL: joined
                 #   inside the query this ran 31.6M times instead of 5,500.
                 #
@@ -3056,7 +3125,7 @@ def main():
                     # COLD writes too: downward-only, double bar, and only
                     # where no career evidence exists to contradict it.
                     got = [r for r in got
-                           if r.get("tier") in ("A", "B", "COLD")]
+                           if r.get("tier") in ("A", "B", "COLD", "C+")]
                     # ! THE NAME GOES IN THE COMMENT, so a course can be
                     #   found in the proposals with findstr. Without it
                     #   pass1.py is meet/div ids and nothing else, and
@@ -3071,6 +3140,8 @@ def main():
                              f"{r['distance']:.0f}, field {r['gap']:+.1f} over "
                              + ("the POOL median (COLD, career-less)"
                                 if r.get("tier") == "COLD"
+                                else "its own heads, pool-corroborated (C+)"
+                                if r.get("tier") == "C+"
                                 else "its own heads")
                              + f", n={r['n']}, snap {r['snap_err']:+.1%}"
                              f"{_named(r)}"
@@ -3088,6 +3159,7 @@ def main():
                                            args.unanimity, cur)
                 # Cold proposals are applied too, so later passes must model them.
                 got1 = got1 + coldStart(cur, args.sport, args.min_field)
+                rescueTierC(cur, args.sport, got1)
                 # ⚠ EVERY DIVISION PASS 1 DID NOT CONDEMN, not just the ones
                 #   that failed its unanimity gate. That gate is a bad router
                 #   for this: a genuine two-race division has one half at gap
@@ -3142,6 +3214,7 @@ def main():
                                            args.unanimity, cur)
                 # Cold proposals are applied too, so later passes must model them.
                 got1 = got1 + coldStart(cur, args.sport, args.min_field)
+                rescueTierC(cur, args.sport, got1)
                 # ⚠ SAME CANDIDATE SET AS --pass 2, NOT pass 1's unanimity
                 #   router. --pass 2 judges every division pass 1 did not
                 #   condemn (the router found 2 half-divisions in 493,029);
@@ -3173,7 +3246,7 @@ def main():
                           (r["snapped"] / float(r["distance"])) ** K)
                          for r in got1
                          if r["distance"]
-                         and r.get("tier") in ("A", "B", "COLD")]
+                         and r.get("tier") in ("A", "B", "COLD", "C+")]
                 pinned = [rid for side in got2 for rid in side["result_ids"]]
                 stagePriorPasses(cur, fixed, pinned)
                 drops, saves, groups, medians = pass3(
@@ -3272,12 +3345,14 @@ def report1(got, routed, skipped, args):
         print(f"    CONFIDENCE IN THE DISTANCE PROPOSED")
         for t, what in (("A", "the course itself races this distance"),
                         ("B", "corpus snap within 2%, field median precise"),
-                        ("C", "wrong division, guessed distance"),
+                        ("C", "guessed distance, no corroborator -- report only"),
+                        ("C+", "C, but the field-vs-pool check independently "
+                               "agrees"),
                         ("COLD", "career-less field vs pool median, "
                                  "downward only")):
             print(f"      {t:<4} {tiers.get(t, 0):>6,}   {what}")
-        print(f"\n      A, B and COLD are what --out writes. C is reported "
-              f"only -- see tierFor.\n")
+        print(f"\n      A, B, COLD and C+ are what --out writes. Bare C is\n"
+              f"      reported only.\n")
         print(f"    {'gap':>7} {'n':>5} {'side':>5} {'label':>6} "
               f"{'implied':>7} {'snap':>6} {'err':>7}  {'meet/div':>16}  course")
         for r in sorted(got, key=lambda x: -abs(x["gap"]))[:args.limit]:
