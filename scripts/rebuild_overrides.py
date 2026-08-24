@@ -1690,11 +1690,15 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
         # to corroborate a slow-field relabel; this ladder-only view cannot
         # check that half, so a PASS here is necessary, not sufficient.
         side_ok = side >= NEG_UNANIMITY
+        mag_ok = abs(gap) >= NEG_BAR_MULT * bar
         print(f"    slow-field gate (gap < 0):        "
               f"side {side:.0%} vs {NEG_UNANIMITY:.0%} "
               f"{'PASS' if side_ok else 'FAILS HERE'};  "
+              f"|gap| {abs(gap):.1f} vs {NEG_BAR_MULT:.0f}x bar "
+              f"= {NEG_BAR_MULT * bar:.1f} "
+              f"{'PASS' if mag_ok else 'FAILS HERE'};  "
               f"course corroboration also required (not visible here)")
-        if not side_ok:
+        if not (side_ok and mag_ok):
             return
     print(f"\n    It clears every gate -- it should be in the output.")
 
@@ -1762,6 +1766,12 @@ TIER_B_SE = 2.0         # ...a field whose median is good to this many points
 #   reason, ready to become a later pass's candidate list. Their individually
 #   impossible rows remain pass 3's per-result business either way.
 NEG_UNANIMITY = 0.95    # slow fields need ~everybody on one side, vs 75% fast
+# ⚠ AND A MAGNITUDE FLOOR, BY POLICY: a longer distance RAISES every rating
+#   in the division, and the owner's call is that ratings move down freely
+#   but up only when it is blatant. 3x the bar (~-33 on a typical field) is
+#   Rocklin (-40) and Nevada Union (-35) territory; McIver-class ambiguity
+#   (-13) never raises a rating no matter how unanimous.
+NEG_BAR_MULT = 3.0      # |adjusted gap| must clear THREE times the bar
 
 
 def tierFor(source, err, gap, n, sigma):
@@ -1841,9 +1851,12 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
             continue
         # The asymmetric direction gate -- see the block above NEG_UNANIMITY.
         if gap < 0 and not (source == "course"
-                            and float(r["same_side"]) >= NEG_UNANIMITY):
-            skipped.append((r, "field slow without near-unanimity -- opener "
-                               "or mixed division, not a relabel"))
+                            and float(r["same_side"]) >= NEG_UNANIMITY
+                            and abs(gap) >= NEG_BAR_MULT
+                                * barFor(r["n"], sigma, t1)):
+            skipped.append((r, "field slow but not blatantly -- a longer "
+                               "distance raises ratings, so it must be "
+                               "obvious"))
             continue
         condemned.append({**r, "implied": implied, "snapped": snapped,
                           "snap_err": err, "gap": gap, "source": source,
