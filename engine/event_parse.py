@@ -205,7 +205,12 @@ def _toMeters(s, n):
     if re.search(r"\byards?\b|\byds?\b|\d\s*y\b", s):
         # Trust the unit only where a yard race existed. See _YARD_DISTANCES.
         return n * _YARD if int(n) in _YARD_DISTANCES else n
-    if re.search(r"\d\s*k\b|\bkm\b|kilomet", s):
+    #  \dkm\b is the GLUED form: '10km' has no boundary either side of the
+    #  unit ('k' is followed by 'm', 'km' is preceded by a digit), so both
+    #  older alternatives missed it and the row fell through to bare metres
+    #  -- 10m, under MIN_DISTANCE, dropped as no_distance. '10-km' always
+    #  worked; the dash was doing the regex's job.
+    if re.search(r"\d\s*k\b|\dkm\b|\bkm\b|kilomet", s):
         return n * 1000.0
     return n                                        # metres, stated or implied
 

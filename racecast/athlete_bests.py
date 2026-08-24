@@ -30,6 +30,15 @@ dropped from the route once this is in.
 
 import re
 
+# The engine's TF event parser -- prices '1mile', "Men's Mile", '10-km' and
+# "Men's 3000 Meters" onto one number, which is exactly the dedupe this page
+# needs. app.py puts engine/ on sys.path before importing us; standalone use
+# falls back to the textual cleanup below.
+try:
+    from event_parse import distanceFromEventShort
+except Exception:
+    distanceFromEventShort = None
+
 
 def _event_sort_key(event):
     """
@@ -66,11 +75,57 @@ _ROUND_NOISE = re.compile(
     r"trials?)\b.*$",
     re.IGNORECASE)
 
+# The tfrrs spellings the anet forms collide with: a gender prefix on every
+# event, and units written out ("3000 Meters" vs "3000m").
+# ! LONGEST ALTERNATIVE FIRST. Regex alternation takes the first branch that
+#   matches, so "men|men's" eats "Men" out of "Men's" and leaves "'s 200m".
+_GENDER_LEAD = re.compile(
+    r"^\s*(women's|womens|women|girl's|girls|female|"
+    r"men's|mens|men|boy's|boys|male)\b[\s'’]*", re.IGNORECASE)
+_METERS_WORD = re.compile(r"(\d+(?:,\d{3})?)\s*met(?:er|re)s?\b", re.IGNORECASE)
+
 
 def _canonEvent(event):
-    """'1600m Prelims 2' and '1600m Finals' -> '1600m': one bests row."""
-    canon = _ROUND_NOISE.sub("", str(event)).strip(" -–—·:")
+    """'1600m Prelims 2', "Men's 1600 Meters" and '1600m' -> one bests row."""
+    canon = _GENDER_LEAD.sub("", str(event))
+    canon = _ROUND_NOISE.sub("", canon)
+    canon = _METERS_WORD.sub(lambda m: m.group(1).replace(",", "") + "m", canon)
+    canon = canon.strip(" -–—·:")
     return canon or str(event).strip()
+
+
+# Display names for parser-priced distances that are not round metres.
+_MILE_LABELS = {805: "880y", 1609: "Mile", 3219: "2 Mile",
+                4828: "3 Mile", 8047: "5 Mile"}
+
+
+def _tfEvent(event):
+    """(sort_metres | None, display_label) for one TF event string.
+
+    Distance races go through the engine's parser, so both feeds' spellings
+    land on one key with a real sort position. Sprints, hurdles and relays
+    come back None there and keep a cleaned form of their own label. The
+    steeple is rejected by the parser on purpose (it is not priced), but the
+    feeds still spell it two ways ('3ksteeple', "Women's 3000 Steeplechase"),
+    so it is keyed here by its number -- offset +0.5 so it sorts just after
+    the flat race of the same distance instead of merging with it.
+    """
+    raw = str(event)
+    if re.search(r"steeple", raw, re.IGNORECASE):
+        num = re.search(r"(\d+(?:\.\d+)?)", raw)
+        metres = 3000.0
+        if num:
+            metres = float(num.group(1))
+            if metres < 10:
+                metres *= 1000
+        return metres + 0.5, f"{int(round(metres))}m Steeple"
+    if distanceFromEventShort is not None:
+        metres, _gender = distanceFromEventShort(raw)
+        if metres is not None:
+            label = (_MILE_LABELS.get(int(round(metres)))
+                     or f"{int(round(metres))}m")
+            return float(metres), label
+    return None, _canonEvent(raw)
 
 
 def _is_better_time(race, current):
@@ -141,15 +196,26 @@ def all_time_bests(races):
         event = race.get("event")
         if not event:
             continue
-        event = _canonEvent(event)
+        if sport == "TF":
+            sort_m, event = _tfEvent(event)
+            if sort_m is not None:
+                bucket.setdefault("_ev_m", {})[event] = sort_m
+        else:
+            event = _canonEvent(event)
         if _is_better_time(race, bucket["events"].get(event)):
             bucket["events"][event] = race
 
     for sport in ("XC", "TF"):
         bucket = out[sport]
         events = bucket["events"]
+        # Parser-priced events sort by their real metres (a Mile between the
+        # 1600 and the 3000, the steeple beside its flat race); everything
+        # else keeps the leading-digits heuristic.
+        ev_m = bucket.pop("_ev_m", {})
         bucket["events"] = {
-            k: events[k] for k in sorted(events, key=_event_sort_key)
+            k: events[k] for k in sorted(
+                events,
+                key=lambda k: (0, ev_m[k]) if k in ev_m else _event_sort_key(k))
         }
 
         # A flat mean over every rated race in the sport. Deliberately NOT the
@@ -210,14 +276,25 @@ def season_bests_flat(races, seasons):
         event = race.get("event")
         if not event:
             continue
-        event = _canonEvent(event)
+        if sport == "TF":
+            sort_m, event = _tfEvent(event)
+            if sort_m is not None:
+                bucket.setdefault("_ev_m", {})[event] = sort_m
+        else:
+            event = _canonEvent(event)
         if _is_better_time(race, bucket["events"].get(event)):
             bucket["events"][event] = race
 
     for key, bucket in buckets.items():
         events = bucket["events"]
+        # Parser-priced events sort by their real metres (a Mile between the
+        # 1600 and the 3000, the steeple beside its flat race); everything
+        # else keeps the leading-digits heuristic.
+        ev_m = bucket.pop("_ev_m", {})
         bucket["events"] = {
-            k: events[k] for k in sorted(events, key=_event_sort_key)
+            k: events[k] for k in sorted(
+                events,
+                key=lambda k: (0, ev_m[k]) if k in ev_m else _event_sort_key(k))
         }
 
         # seasons is keyed the same way. .get() rather than [] because a season
