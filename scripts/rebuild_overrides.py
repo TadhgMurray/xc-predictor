@@ -218,7 +218,13 @@ MIN_OWN_RACES = 3       # races an athlete needs for their median to mean this
 SIG_FLOOR = 1.5         # min per-athlete sigma; fast bar bottoms at t3*this
 SPREAD_MIN_RACES = 6    # races needed before the personal sigma is trusted
 MED_SANE_LO = 40.0      # an own-median outside this range is ITSELF the
-MED_SANE_HI = 200.0     # corrupt thing; its rows are never drop candidates
+MED_SANE_HI = 150.0     # corrupt thing; its rows are never drop candidates
+# ! HI IS SET FROM THE CEILING, NOT FROM COMFORT. The engine's elite ceiling
+#   is ~146 for a single career-best PERFORMANCE, so a career MEDIAN above
+#   150 is not an athlete -- it is a person-merge. 200 let that class
+#   through: the 2026-08-24 20k run's slow-side drop tail was full of rows
+#   like "97.2 vs own median 175.1", deleting what is probably the merged-in
+#   real kid's real race. Those belong in the broken-median unlink queue.
 # ! 0.03, NOT 0.06, BECAUSE THE LADDER IS DENSER THAN THAT. 1931 / 2000 /
 #   2011 sit inside 4% of each other, and 2400/2414, 3200/3218, 4800/4828,
 #   8000/8047 are all under 1% apart. At 6% an implied 2131 -- which is
