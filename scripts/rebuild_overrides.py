@@ -2833,18 +2833,30 @@ def pass4(cur, sigma, t1, min_field, min_sub):
         if not label or len(rows) < min_field:
             skipped.append((c, "no usable label distance"))
             continue
-        # The alternatives: other distances actually raced at this meet,
-        # far enough from the label that their rho is a real test.
+        # The alternatives: other distances raced at this meet, UNION the
+        # distances this VENUE runs (>= COURSE_MIN_N finishers each).
+        #
+        # ⚠ THE VENUE HISTORY IS NOT A NICETY -- IT IS THE WITNESS FOR
+        #   COMBINED ENTRIES. A split division usually isn't runners in the
+        #   "wrong" division: the meet operator entered several races as ONE
+        #   race, because the entry software takes one distance per race.
+        #   In that case the other race does not exist as another division
+        #   AT THE MEET at all -- the at-meet witness is erased by the very
+        #   act that created the problem. The venue's season-long history is
+        #   the witness the entry clerk cannot erase.
+        alt_dists = set(at_meet.get(c["meet_id"], []))
+        for d, _n in _COURSE_DIST.get(c.get("course_name") or "", []):
+            alt_dists.add(float(d))
         rhos = []
-        for d in at_meet.get(c["meet_id"], []):
+        for d in sorted(alt_dists):
             if abs(d - label) / label <= 0.02:
                 continue
             rho = (label / d) ** K
             if abs(rho - 1.0) >= P4_RHO_MIN:
                 rhos.append((d, rho))
         if not rhos:
-            skipped.append((c, "no distinguishable alternative raced at "
-                               "the meet"))
+            skipped.append((c, "no distinguishable alternative at the meet "
+                               "or in the venue's history"))
             continue
         z_of = {r["result_id"]: (float(r["med"]) + float(r["gap"]))
                                 / float(r["med"])
