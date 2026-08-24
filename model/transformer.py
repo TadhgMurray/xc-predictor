@@ -222,7 +222,7 @@ class XCPredictor(nn.Module):
         # Returns an object holding the list of the three steps (273->64->1)
         # and to run them sequentially.
         return nn.Sequential(
-            # 256 pooled history + 20 context + 16 venue = 292.
+            # 256 pooled history + 21 context + 16 venue = 293.
             nn.Linear(EMBED_DIM + CONTEXT_FEATURES + VENUE_EMBED_DIM, 64),
             nn.ReLU(),                                    # the nonlinearity
             nn.Linear(64, 1),                             # 64 -> 1

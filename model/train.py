@@ -12,7 +12,7 @@ import pickle
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
 
 # The model we built in transformer.py. Assumes train.py sits next to it
 # in model/ (same folder), matching how feature_extraction.py imports.
@@ -59,7 +59,18 @@ EPOCHS = 20
 
 # Fraction of examples held OUT of training, used only to check the
 # model is generalising rather than memorising.
+# ⚠ ONLY THE FALLBACK. When the chunks carry val_mask.pt (written by
+#   feature_extraction), the split is BY ATHLETE from that mask and this
+#   number is ignored -- see splitTrainVal for why example-level random
+#   splitting quietly rewards memorisation.
 VAL_FRACTION = 0.1
+
+# ★ THE SMOKE-RUN KNOB. The full corpus is ~80M examples -- roughly 1.25M
+#   steps per epoch at batch 64, days of GPU time. Set this to e.g. 200
+#   (2M examples) for a first run that proves the pipeline end to end and
+#   gives a loss curve in under an hour; None trains on everything.
+#   Chunks are corpus-wide shuffles, so a chunk prefix is a fair sample.
+MAX_CHUNKS = None
 
 # Fixed seed so the random train/val split is identical every run —
 # makes results reproducible and comparable.
@@ -114,6 +125,16 @@ class ChunkedRaceDataset(Dataset):
         self.total_examples = meta["total_examples"]
         self.chunk_size     = meta.get("chunk_size", 10_000)
         self.num_chunks = meta["num_chunks"]
+
+        # The smoke-run cap: read only the first MAX_CHUNKS files. Valid
+        # because extraction shuffles corpus-wide before chunking, so a
+        # prefix of chunks is a fair sample rather than a run of athletes.
+        if MAX_CHUNKS is not None and MAX_CHUNKS < self.num_chunks:
+            self.num_chunks     = MAX_CHUNKS
+            self.total_examples = min(self.total_examples,
+                                      MAX_CHUNKS * self.chunk_size)
+            print(f"  MAX_CHUNKS={MAX_CHUNKS}: training on "
+                  f"{self.total_examples:,} examples")
 
         # One-chunk cache: remember the last chunk we loaded so repeated
         # nearby lookups reuse it instead of re-reading the file.
@@ -293,20 +314,28 @@ class ChunkAwareBatchSampler:
     """
 
     def __init__(self, dataset, batch_size: int, shuffle: bool):
-        # A Subset (from random_split) wraps the real dataset and holds the
-        # global indices it owns. We need BOTH: the chunk_size to group by,
-        # and the actual indices this split is allowed to touch.
+        # A Subset (from random_split / the val mask) wraps the real dataset
+        # and holds the global indices it owns. We need BOTH: the chunk_size
+        # to group by, and the global index of every example this split may
+        # touch.
         base = getattr(dataset, "dataset", dataset)
-        self.indices = list(getattr(dataset, "indices",
-                                    range(len(dataset))))
+        self.globals_ = list(getattr(dataset, "indices",
+                                     range(len(dataset))))
         self.chunk_size = base.chunk_size
         self.batch_size = batch_size
         self.shuffle = shuffle
 
-        # Group this split's indices by which chunk file they live in.
+        # ⚠ YIELD POSITIONS, NOT GLOBAL INDICES. DataLoader hands whatever a
+        #   batch_sampler yields straight to dataset[i] -- and when `dataset`
+        #   is a Subset, that i is a POSITION into the subset, which the
+        #   Subset then maps to its global index itself. The original version
+        #   yielded globals, so every Subset row was double-mapped: an
+        #   IndexError past len(subset), a silently WRONG example before it.
+        #   Grouping still happens by the GLOBAL index's chunk file -- that is
+        #   the property that keeps one batch inside one file.
         self.by_chunk = {}
-        for i in self.indices:
-            self.by_chunk.setdefault(i // self.chunk_size, []).append(i)
+        for pos, g in enumerate(self.globals_):
+            self.by_chunk.setdefault(g // self.chunk_size, []).append(pos)
 
         # ★ AND SORT EACH CHUNK'S INDICES BY SEQUENCE LENGTH, which is what
         #   makes per-batch padding worth anything.
@@ -331,8 +360,9 @@ class ChunkAwareBatchSampler:
         self.bucketed = False
         lengths = getattr(base, "lengths", None)
         if shuffle and lengths is not None:
+            # rows are subset POSITIONS; the length lives at the GLOBAL index.
             for cid, rows in self.by_chunk.items():
-                rows.sort(key=lambda i: int(lengths[i]))
+                rows.sort(key=lambda pos: int(lengths[self.globals_[pos]]))
             self.bucketed = True
 
     def __iter__(self):
@@ -507,7 +537,27 @@ def saveTargetStats(mean: float, std: float, path: str) -> None:
 #           dataset: the full ChunkedRaceDataset
 # Output:  (train_subset, val_subset) — two torch Subsets
 def splitTrainVal(dataset):
-    
+
+    # ★ THE ATHLETE-DISJOINT SPLIT, WHEN THE CHUNKS CARRY ONE. random_split
+    #   over examples puts the same athlete -- and forecast twins of the very
+    #   same target -- on both sides, so val loss rewards memorising athletes
+    #   and save-on-best keeps an overfit model on purpose. Extraction now
+    #   hashes each ATHLETE to a side and writes val_mask.pt in global
+    #   example order; splitting on it makes validation actual unseen people.
+    vm_path = os.path.join(DATA_DIR, "val_mask.pt")
+    if os.path.exists(vm_path):
+        mask = torch.load(vm_path)[:len(dataset)]   # MAX_CHUNKS may cap us
+        val_idx   = mask.nonzero(as_tuple=True)[0].tolist()
+        train_idx = (~mask).nonzero(as_tuple=True)[0].tolist()
+        print(f"  athlete-disjoint split: {len(train_idx):,} train / "
+              f"{len(val_idx):,} val (val_mask.pt)")
+        return Subset(dataset, train_idx), Subset(dataset, val_idx)
+
+    # Fallback for chunk sets written before the mask existed. Known to leak
+    # athletes across the split -- retire it by re-running extraction.
+    print("  val_mask.pt not found -- falling back to example-level "
+          "random_split (athlete leakage; re-run extraction to fix)")
+
     # Calculates the amount of training and validation examples
     n_total = len(dataset)
     n_val = int(n_total * VAL_FRACTION)

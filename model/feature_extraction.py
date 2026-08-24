@@ -28,7 +28,9 @@
 
 import os
 import sys
+import heapq
 import pickle
+import zlib
 import torch
 import psycopg2.extras
 from collections import defaultdict
@@ -37,7 +39,7 @@ from sklearn.preprocessing import LabelEncoder
 import re
 import random
 import statistics
- 
+
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 from database import initPool, closePool, getConn
@@ -45,6 +47,17 @@ from database import initPool, closePool, getConn
 # ★ THE ENGINE'S POOLING DECISION, IMPORTED. buildPool below explains
 #   what it replaces and why a fifth reimplementation was the bug.
 from pool_resolve import resolvePool
+
+# ★ THE HAND-VERIFIED DISTANCES, SAME AS THE FITTER AND THE BACKFILL. The
+#   target (normalized_time) is computed at the OVERRIDDEN distance, so the
+#   distance feature must be the overridden distance too -- otherwise the
+#   12,000+ corrected divisions teach the model a 5000m label against a time
+#   normalized at 2735m, wrong physics at exactly the rows that were fixed.
+#   (TF's dict is empty today; the helper then returns "" and the query is
+#   byte-for-byte what it was.)
+from corrections import distanceOverrideSQL
+_OV_JOIN_XC, _OV_COALESCE_XC = distanceOverrideSQL("r", "XC")
+_OV_JOIN_TF, _OV_COALESCE_TF = distanceOverrideSQL("r", "TF")
 
 # ------------------------------------------------------------------ #
 # CONSTANTS
@@ -106,7 +119,26 @@ SHUFFLE_SEED = 42
 #   gigabytes of chunk files. The padding row below used a hardcoded 18,
 #   which silently desyncs the moment a feature is added.
 SEQUENCE_FEATURES = 21
-CONTEXT_FEATURES  = 20
+# 21, not 20: is_forecast sits at index 0 -- count _buildContextVector's
+# return, and keep transformer.CONTEXT_FEATURES equal to it.
+CONTEXT_FEATURES  = 21
+
+# ★ ATHLETE-DISJOINT VALIDATION, DECIDED HERE. train.py used to random_split
+#   over EXAMPLES, which puts the same athlete's examples -- and a forecast
+#   twin of the very same target -- on both sides of the split. Validation
+#   loss then rewards memorising athletes, and save-on-best keeps an overfit
+#   model on purpose. The split has to be by ATHLETE, and extraction is the
+#   only place that still knows which athlete an example came from -- so each
+#   athlete is hashed to a side here, every one of their examples carries the
+#   flag through the shuffle, and val_mask.pt records it in global order.
+#   crc32, not hash(): Python's hash is salted per process, and the split must
+#   be identical between runs.
+VAL_FRACTION_PERMILLE = 100          # 10.0% of ATHLETES -> validation
+
+
+def _isValAthlete(identity) -> bool:
+    return (zlib.crc32(repr(identity).encode())
+            % 1000) < VAL_FRACTION_PERMILLE
 
 # ★ THE TWO WIDTHS DIFFER ON PURPOSE, AND THE DIFFERENCE IS `place`.
 #   A prior race's finishing position is field context the model cannot get
@@ -192,19 +224,26 @@ MAX_SEQ_LEN = 512
 # — the missing columns just come back as NULL, which we handle in Python.
 
 
-# loadXCResults
-# Purpose: Loads all XC resutls with all features need for training.
-# Arguments: None.
-# Output: List of dicts, one per result.
-def loadXCResults() -> list[dict]:
+# ⚠ STREAMED, NEVER fetchall(). The corpus is ~54M rated rows across the two
+#   tables; materialised as RealDict rows that is >100 GB of Python objects
+#   and the old loadXCResults() died at the first query on any real machine.
+#   A named (server-side) cursor holds a portal in Postgres and hands rows
+#   over in itersize batches, so RAM holds one batch, not the corpus.
+#
+# ⚠ ORDERED BY IDENTITY, NOT BY DATE. Streaming only works if an athlete's
+#   rows arrive TOGETHER: the two sorted streams are heap-merged on the same
+#   key and grouped as they pass. (person_id IS NULL) sorts person-keyed rows
+#   apart from athlete-keyed ones, matching _identity's tag; date last keeps
+#   each career chronological.
+_STREAM_BATCH = 50_000
 
-    with getConn() as conn:
-        
-        # RealDictCursor makes rows come back as dicts (row["column_name"])
-        # instead of tuples (row[0]). Much easier to work with.
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+_ORDER_BY = """
+        ORDER BY (r.person_id IS NULL) ASC,
+                 COALESCE(r.person_id, r.athlete_id) ASC,
+                 r.date ASC
+"""
 
-        cursor.execute("""
+_XC_SQL = f"""
             SELECT
                 -- Result identifiers.
                 r.result_id,
@@ -226,9 +265,11 @@ def loadXCResults() -> list[dict]:
                 -- Meet features.
                 m.meet_id,
                 m.course_name,
-                -- AS renames the column in the query result, 
+                -- AS renames the column in the query result,
                 -- from distance to distance_meters.
-                m.distance      AS distance_meters,
+                -- ★ THE OVERRIDDEN DISTANCE, when one exists. The target was
+                --   normalized at it; the feature must agree with the target.
+                COALESCE({_OV_COALESCE_XC} m.distance) AS distance_meters,
                 m.gps_lat,
                 m.gps_long,
                 
@@ -311,7 +352,10 @@ def loadXCResults() -> list[dict]:
         JOIN meets     m  ON r.div_id       = m.div_id
                          AND r.meet_id      = m.meet_id
                          AND r.source       = m.source
-                       
+        -- The hand-verified distance overrides (source, meet_id, div_id) ->
+        -- corrected distance; referenced by the SELECT and the difficulty
+        -- join below, so it must appear before them.
+{_OV_JOIN_XC}
         -- LEFT JOIN: keeps result even if no course difficulty yet.
         --
         -- The old join was `m.course_name = cd.course_name` and NEVER MATCHED:
@@ -331,7 +375,11 @@ def loadXCResults() -> list[dict]:
               AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
         LEFT JOIN course_difficulties cd
                ON cd.canonical_id = cc.canonical_id
-              AND cd.distance_m   = (round(m.distance / 100.0) * 100)::int
+              -- The overridden distance again: the difficulty cell is keyed
+              -- by the distance actually raced, not the scraped label.
+              AND cd.distance_m   =
+                  (round(COALESCE({_OV_COALESCE_XC} m.distance) / 100.0)
+                   * 100)::int
         
         -- LEFT JOIN weather at the default XC race hour (9am local time).
         -- meet_id matches, hour matches our XC default.
@@ -395,29 +443,35 @@ def loadXCResults() -> list[dict]:
         -- sequence model. (See 6/25 diagnostics: ~2.5M such TF rows.)
         AND   r.athlete_id IS NOT NULL
                        
-        -- ORDER BY date so when we group by athlete later,
-        -- the races are already in chronological order.
-        ORDER BY r.date ASC
-    """, (XC_DEFAULT_HOUR, MIN_NORMALIZED_TIME))
-
-    # Converts each row dict from Postgres to a Python dict.
-    rows = [dict(row) for row in cursor.fetchall()]
- 
-    print(f"Loaded {len(rows):,} XC results")
-    return rows
+{_ORDER_BY}
+"""
 
 
-# loadTFResults
-# Purpose: Loads all TF distance results with all features need for training.
-#          Only loads events with a normalized_time (distance events 800m+).
-# Arguments: None.
-# Output: List of dicts, one per result.
-def loadTFResults() -> list[dict]:
+def _streamRows(conn, sql, params, name):
+    """Server-side cursor stream: yields plain dicts, one per row.
 
-    with getConn() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
- 
-        cursor.execute("""
+    The named cursor is a Postgres portal -- rows come over in
+    _STREAM_BATCH gulps and RAM holds one gulp, never the corpus.
+    withhold=True keeps the portal alive across the commits psycopg2's
+    context managers may issue elsewhere on this connection.
+    """
+    cursor = conn.cursor(name=name, withhold=True,
+                         cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.itersize = _STREAM_BATCH
+    cursor.execute(sql, params)
+    for row in cursor:
+        yield dict(row)
+    cursor.close()
+
+
+def streamXCResults(conn):
+    """All rated XC rows, identity-ordered, streamed."""
+    return _streamRows(conn, _XC_SQL,
+                       (XC_DEFAULT_HOUR, MIN_NORMALIZED_TIME), "xc_stream")
+
+
+# The TF stream: same shape and same identity ordering as the XC one.
+_TF_SQL = f"""
             SELECT
                 r.result_id,
                 r.athlete_id,
@@ -435,7 +489,11 @@ def loadTFResults() -> list[dict]:
                 m.meet_id,
                 m.event_short    AS course_name,
                 m.location_id,
-                m.distance_meters,
+                -- _DISTANCE_OVERRIDES_TF is empty today, so the helper
+                -- returns "" and this is byte-for-byte m.distance_meters --
+                -- but the day a TF override lands, this picks it up.
+                COALESCE({_OV_COALESCE_TF} m.distance_meters)
+                                 AS distance_meters,
                 m.gps_lat,
                 m.gps_long,
                 m.is_indoor,
@@ -495,7 +553,7 @@ def loadTFResults() -> list[dict]:
             JOIN meets_tf  m  ON r.meet_id    = m.meet_id
                              AND r.div_id     = m.div_id
                              AND r.event_id   = m.event_id
-
+{_OV_JOIN_TF}
             -- TF cells are keyed by LOCATION and the indoor flag, not by a
             -- course name and not by distance:
             --     TF:loc:<location_id>:<in|out>
@@ -576,37 +634,53 @@ def loadTFResults() -> list[dict]:
             AND   r.is_relay = 0
             -- Drop NULL-athlete_id profile-less entries (see XC note above).
             AND   r.athlete_id IS NOT NULL
- 
-            ORDER BY r.date ASC
-        """, (TF_DEFAULT_HOUR, MIN_NORMALIZED_TIME))
- 
-        rows = [dict(row) for row in cursor.fetchall()]
- 
-    print(f"Loaded {len(rows):,} TF results")
-    return rows
+{_ORDER_BY}
+"""
 
 
-# loadAllResults
-# Purpose: Loads XC and TF results and merges them into one list.
-#          Sorted by date so the athlete grouping step sees results
-#          in chronological order
-def loadAllResults() -> list[dict]:
+def streamTFResults(conn):
+    """All rated TF distance rows, identity-ordered, streamed."""
+    return _streamRows(conn, _TF_SQL,
+                       (TF_DEFAULT_HOUR, MIN_NORMALIZED_TIME), "tf_stream")
 
-    xc = loadXCResults()
-    tf = loadTFResults()
 
-    # Combines XC and TF results into one list.
-    all_results = xc + tf
+# ------------------------------------------------------------------ #
+# The streaming merge: two identity-sorted streams -> one athlete at a time
+# ------------------------------------------------------------------ #
 
-    # Sort by date. This ensure that when we group by athlete
-    # and iterate through their resutls, we always see them in order.
-    # strptime parses "YYYY-MM-DD" into a comparable date object.
-    # key= tells sort waht value to sort by, lambda r is an anonymous
-    # func that takes one arg (the results dict) and returns the date string.
-    all_results.sort(key=lambda r: r["date"])
+def _mergeKey(row):
+    """The Python mirror of _ORDER_BY, so heapq.merge preserves it.
 
-    print(f"Total results loaded: {len(all_results):,}")
-    return all_results
+    ⚠ MUST SORT IDENTICALLY TO THE SQL: (person-keyed first, id, date).
+      False < True matches Postgres's (r.person_id IS NULL) ASC.
+    """
+    pid = row.get("person_id")
+    return (pid is None,
+            pid if pid is not None else row["athlete_id"],
+            row["date"])
+
+
+def streamAthletes(conn):
+    """Yields one athlete's complete, date-sorted career at a time.
+
+    ★ THIS IS WHAT REPLACES loadAllResults + groupByAthlete. Both of those
+      needed the corpus in RAM; this holds exactly one career (a few hundred
+      rows at the extreme) plus one stream batch per source.
+    """
+    merged = heapq.merge(streamXCResults(conn), streamTFResults(conn),
+                         key=_mergeKey)
+    current_key, rows = None, []
+    for row in merged:
+        k = _identity(row)
+        if k != current_key and rows:
+            rows.sort(key=lambda r: r["date"])
+            yield current_key, rows
+            rows = []
+        current_key = k
+        rows.append(row)
+    if rows:
+        rows.sort(key=lambda r: r["date"])
+        yield current_key, rows
 
 
 # groupByAthlete
@@ -1052,8 +1126,94 @@ def buildEncoders(results: list[dict]) -> dict:
     # len() of that tells us how many categories each field has.
     for name, encoder in encoders.items():
         print(f"  {name}: {len(encoder.classes_)} categories")
- 
+
     return encoders
+
+
+# ------------------------------------------------------------------ #
+# Vocabulary straight from the DB -- the streaming pipeline's versions
+# ------------------------------------------------------------------ #
+#
+# ★ AGGREGATE QUERIES, NOT A CORPUS PASS. buildEncoders/buildVenueVocab take
+#   the full results list, which the streaming pipeline never materialises.
+#   A LabelEncoder only needs the set of distinct values, and the venue vocab
+#   only needs per-venue counts -- both of which Postgres computes in one
+#   aggregate each, returning kilobytes instead of streaming 54M rows twice.
+#
+# ⚠ THE ENCODER CLASSES ARE A SUPERSET of what the filtered rows contain
+#   (DISTINCT is taken with the row filters that matter, but edge rows can
+#   differ). Harmless: an extra class shifts nothing at training time, and the
+#   fitted encoder is saved beside the chunks either way.
+
+def buildEncodersFromDB(conn) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT grade FROM results
+            WHERE  normalized_time IS NOT NULL
+            UNION
+            SELECT DISTINCT grade FROM results_tf
+            WHERE  normalized_time IS NOT NULL
+        """)
+        grades = [row[0] for row in cur.fetchall()]
+        cur.execute("""
+            SELECT DISTINCT school FROM results
+            WHERE  normalized_time IS NOT NULL
+            UNION
+            SELECT DISTINCT school FROM results_tf
+            WHERE  normalized_time IS NOT NULL
+        """)
+        schools = [row[0] for row in cur.fetchall()]
+    encoders = {"grade": _fitEncoder(grades), "school": _fitEncoder(schools)}
+    for name, encoder in encoders.items():
+        print(f"  {name}: {len(encoder.classes_)} categories")
+    return encoders
+
+
+def buildVenueVocabFromDB(conn) -> dict:
+    """{venue_key: index} for venues with >= MIN_VENUE_RACES rated rows.
+
+    Same keys _venueKey produces -- ("XC", canonical_id) / ("TF",
+    location_id) -- with the same exclusions (no id, location_id 0).
+    """
+    keys = []
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cc.canonical_id, count(*)
+            FROM   results r
+            JOIN   meets m  ON r.div_id  = m.div_id
+                           AND r.meet_id = m.meet_id
+                           AND r.source  = m.source
+            JOIN   course_canonical cc
+                   ON cc.course_name = m.course_name
+                  AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+                  AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+            WHERE  r.normalized_time IS NOT NULL
+              AND  r.normalized_time > %s
+              AND  r.athlete_id IS NOT NULL
+            GROUP  BY cc.canonical_id
+            HAVING count(*) >= %s
+        """, (MIN_NORMALIZED_TIME, MIN_VENUE_RACES))
+        keys += [("XC", int(cid)) for cid, _ in cur.fetchall()]
+        cur.execute("""
+            SELECT m.location_id, count(*)
+            FROM   results_tf r
+            JOIN   meets_tf m ON r.meet_id  = m.meet_id
+                             AND r.div_id   = m.div_id
+                             AND r.event_id = m.event_id
+            WHERE  r.normalized_time IS NOT NULL
+              AND  r.normalized_time > %s
+              AND  r.is_relay = 0
+              AND  r.athlete_id IS NOT NULL
+              AND  m.location_id IS NOT NULL
+              AND  m.location_id <> 0
+            GROUP  BY m.location_id
+            HAVING count(*) >= %s
+        """, (MIN_NORMALIZED_TIME, MIN_VENUE_RACES))
+        keys += [("TF", int(loc)) for loc, _ in cur.fetchall()]
+    kept = sorted(keys)
+    print(f"  venues: {len(kept):,} with >= {MIN_VENUE_RACES} races "
+          f"(thin ones share index {UNKNOWN_VENUE})")
+    return {key: i for i, key in enumerate(kept, start=1)}
 
 # ------------------------------------------------------------------ #
 # CHUNK 3 — PER-ATHLETE SEQUENCE BUILDER
@@ -1110,20 +1270,34 @@ def _daysAgo(prior_date_str: str, target_date_str: str) -> int:
 #                          (encoders["grade"] from Chunk 2)
 # Output: float — the encoded grade, ready to go straight into a
 #         feature vector
+def _encoderMap(encoder: LabelEncoder) -> dict:
+    """{class: float(code)}, cached on the encoder.
+
+    ★ A DICT LOOKUP, NOT encoder.transform(). transform() is a numpy
+      searchsorted with ~50µs of sklearn overhead PER CALL, and the sequence
+      builder calls it once per (example, prior-race) pair -- hundreds of
+      millions of times over the corpus. That overhead alone was hours. The
+      mapping is identical (LabelEncoder codes classes in sorted order).
+    """
+    m = getattr(encoder, "_code_map", None)
+    if m is None:
+        m = {c: float(i) for i, c in enumerate(encoder.classes_)}
+        encoder._code_map = m
+    return m
+
+
 def _encodeGrade(grade_raw, grade_encoder: LabelEncoder) -> float:
- 
+
     # buildEncoders fit on "None" (the string) wherever grade was None,
     # so we have to match that exact substitution here at transform time.
     if grade_raw is None:
         grade_raw = "None"
-    
-    # Transforms the raw grade string into an integer based on the label
-    # it was encoded into in chunk 2.
-    # transform() expects a LIST of values, even for a single item,
-    # and returns a list/array back — [0] grabs the first (only) result.
-    encoded = grade_encoder.transform([grade_raw])[0]
- 
-    return float(encoded)
+
+    m = _encoderMap(grade_encoder)
+    # A grade string the vocabulary pass never saw (possible only through
+    # the DISTINCT-superset edge) falls to the "None" class rather than
+    # crashing a run hours in.
+    return m.get(grade_raw, m.get("None", 0.0))
 
 # _orZero
 # Purpose: Converts a possibly-NULL numeric value into a float,
@@ -1237,9 +1411,12 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
         float(prior_result["distance_meters"]),
         _encodeGrade(prior_result["grade"], encoders["grade"]),
  
-        # bool -> float: True becomes 1.0, False becomes 0.0
+        # bool -> float: True becomes 1.0, False becomes 0.0.
+        # _orZero on is_indoor: meets_tf.is_indoor is a NULLABLE integer
+        # (the difficulty join COALESCEs it for the same reason), and
+        # float(None) would crash the extraction mid-corpus.
         float(prior_result["is_xc"]),
-        float(prior_result["is_indoor"]),
+        _orZero(prior_result["is_indoor"]),
 
         # Weather this prior race was run in. _orZero handles NULLs
         # for meets where the weather backfill hasn't reached yet.
@@ -1290,7 +1467,7 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
 #           "target_result": result dict (full, for Chunk 4),
 #           "target":        float (normalized_time to predict),
 #         }
-def _forecastTwin(prior_results, target_result, encoders, rng):
+def _forecastTwin(prior_results, target_result, full_sequence, rng):
     """A copy of one example with the last k prior races hidden, or None.
 
     ⚠ TRUNCATES THE END, NOT THE START. Dropping the OLDEST races would model
@@ -1340,9 +1517,11 @@ def _forecastTwin(prior_results, target_result, encoders, rng):
     weeks = lo_weeks + (rng.random() ** FORECAST_GAP_SKEW) * (hi_weeks - lo_weeks)
     cutoff = target_date - timedelta(days=weeks * 7.0)
 
-    # Results arrive chronological, so a date filter yields a PREFIX.
-    kept = [p for p in prior_results
-            if (_asDate(p.get("date")) or target_date) < cutoff]
+    # Results arrive chronological, so the date cut IS a prefix -- taken as an
+    # explicit count so the full_sequence slice below can never disagree with
+    # it, whatever an individual date value does.
+    k = sum(1 for d in dates if d < cutoff)
+    kept = prior_results[:k]
 
     # The window makes both of these rare, but a duplicate date or a clip can
     # still land on an edge -- and a twin identical to its full example would
@@ -1350,10 +1529,13 @@ def _forecastTwin(prior_results, target_result, encoders, rng):
     if len(kept) < MIN_KEPT_RACES or len(kept) == len(prior_results):
         return None
 
-    sequence = [
-        _buildSequenceVector(prior, target_result["date"], kept[:j], encoders)
-        for j, prior in enumerate(kept)
-    ]
+    # ★ A PREFIX SLICE OF THE FULL EXAMPLE'S SEQUENCE, AND THAT IS CORRECT.
+    #   The twin shares the full example's TARGET, so every kept race's
+    #   days_ago (relative to that target) and its races-before-it prefix are
+    #   byte-identical to the full sequence's first len(kept) rows. The old
+    #   "rebuilt, not sliced" warning guarded against slicing a DIFFERENT
+    #   target's sequence; same target, the slice is the rebuild.
+    sequence = [v.copy() for v in full_sequence[:len(kept)]]
     return {
         "sequence": sequence,
         "prior_results": kept,
@@ -1369,10 +1551,29 @@ def _forecastTwin(prior_results, target_result, encoders, rng):
     }
 
 
+def _baseVectors(athlete_results: list[dict], encoders: dict) -> list:
+    """One sequence vector per race, with days_ago (index 2) left at 0.
+
+    ★ BUILT ONCE PER ATHLETE, NOT ONCE PER (EXAMPLE, PRIOR) PAIR. Of the 21
+      features, only days_ago depends on which target the vector serves --
+      everything else is a property of the race itself. The old code rebuilt
+      the whole vector (including an O(L) altitude median) for every prior of
+      every example: O(L³) per athlete, sklearn calls included. This is the
+      O(L²)-once version; buildAthleteExamples then copies a base row and
+      writes its days_ago, which is two cheap ops.
+    """
+    return [
+        _buildSequenceVector(r, r["date"], athlete_results[:j], encoders)
+        for j, r in enumerate(athlete_results)
+    ]
+
+
 def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
                          rng=None) -> list[dict]:
 
     examples = []
+    base  = _baseVectors(athlete_results, encoders)
+    dates = [_parseDate(r["date"]) for r in athlete_results]
 
     # Builds training examples for an athlete using a growing window
     # approach for every race.
@@ -1387,12 +1588,15 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
         # Slicing: everything from index 0 up to (but not including) i.
         prior_results = athlete_results[:i]
 
-        # Builds the sequence vector by building the sequence vector for
-        # eahc prior result.
-        sequence = [
-            _buildSequenceVector(prior, target_result["date"], prior_results[:j], encoders)
-            for j, prior in enumerate(prior_results)
-        ]
+        # Each prior's vector = its base row with days_ago filled in for
+        # THIS target. Copy first -- the base rows are shared across every
+        # example this athlete produces.
+        target_date = dates[i]
+        sequence = []
+        for j in range(i):
+            v = base[j].copy()
+            v[2] = float((target_date - dates[j]).days)
+            sequence.append(v)
 
         # Adds the current training examples to our list of training
         # examples. It contains the sequence, the context of the result
@@ -1420,7 +1624,7 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
         # ★ AND ITS TWIN. Same target, history cut short, flagged. Emitted
         #   ALONGSIDE rather than instead of -- both shapes occur at inference.
         if rng is not None and rng.random() < FORECAST_TWIN_RATE:
-            twin = _forecastTwin(prior_results, target_result, encoders, rng)
+            twin = _forecastTwin(prior_results, target_result, sequence, rng)
             if twin is not None:
                 examples.append(twin)
 
@@ -1766,57 +1970,60 @@ def _saveEncoders(encoders: dict, output_dir: str) -> None:
 #   iterated by_athlete.values(); the signature said `examples`, which is
 #   never defined in this scope -- a NameError on the first call. The
 #   docstring above already names it correctly.
-def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
+def saveAll(athletes, encoders: dict, vocab: dict,
             output_dir: str) -> None:
+    """athletes: an iterable of (identity, date-sorted result rows) -- in
+    practice streamAthletes(conn), so the corpus never sits in RAM.
 
+    ⚠ NO LENGTH PRE-PASS ANY MORE. The old pass 1 read every career length to
+      pick a padded width; ragged chunks made the global width meaningless
+      (padding is per batch), so max_len is just the truncation cap and the
+      distribution is reported at the END from the lengths collected on the
+      way through.
+    """
     os.makedirs(output_dir, exist_ok=True)
+    max_len = MAX_SEQ_LEN
 
-    # PASS 1 — the real distribution, then the cap. Counting is cheap
-    # (one len() per athlete) and it is the only way to know whether the cap
-    # is doing what the comment on MAX_SEQ_LEN claims.
-    lengths = sorted(len(v) for v in by_athlete.values())
-    n = len(lengths)
-    def pct(f):
-        return lengths[min(n - 1, int(f * n))] if n else 0
-    longest = lengths[-1] if n else 0
-    over = sum(1 for L in lengths if L > MAX_SEQ_LEN)
-    kept = sum(min(L, MAX_SEQ_LEN) for L in lengths)
-    total = sum(lengths)
-    max_len = min(longest, MAX_SEQ_LEN)
-    print(f"  sequence lengths over {n:,} athletes: "
-          f"median {pct(.50)}  p90 {pct(.90)}  p99 {pct(.99)}  "
-          f"max {longest}")
-    print(f"  cap {MAX_SEQ_LEN}: truncating {over:,} athletes "
-          f"({100.0 * over / max(n, 1):.2f}%), keeping "
-          f"{100.0 * kept / max(total, 1):.1f}% of all races")
-    if max_len < MAX_SEQ_LEN:
-        print(f"  no athlete reaches the cap -- padding to {max_len} instead")
-
-    # Pass 2 — build tensors, pad, save in chunks.
-    chunk_idx     = 0
+    chunk_idx      = 0
     total_examples = 0
-    all_lengths   = []
-    buffer        = []  # holds up to SHUFFLE_FACTOR*CHUNK_SIZE before flushing
+    all_lengths    = []   # per EXAMPLE, global order -- the sampler's food
+    all_val        = []   # per EXAMPLE, global order -- train.py's split
+    career_lengths = []   # per ATHLETE -- the distribution report
+    n_val_athletes = 0
+    buffer         = []  # holds up to SHUFFLE_FACTOR*CHUNK_SIZE before flushing
 
     # Local RNG, not random.seed(), so this does not reach out and change
     # the global random state for anything else in the process.
     rng = random.Random(SHUFFLE_SEED)
     hold = SHUFFLE_FACTOR * CHUNK_SIZE
 
-    # For each athlete result builds training examples, context, and saves
-    # them in chunks.
-    for athlete_results in by_athlete.values():
+    def flush_one():
+        nonlocal chunk_idx, total_examples, buffer
+        take = buffer[:CHUNK_SIZE]
+        lens, vals = _saveChunk(take, max_len, chunk_idx, output_dir)
+        all_lengths.extend(lens)
+        all_val.extend(vals)
+        chunk_idx      += 1
+        total_examples += len(take)
+        # Discard the flushed examples — this is what keeps RAM flat.
+        buffer = buffer[CHUNK_SIZE:]
 
-        # Builds training examples and context, adds to current buffer.
+    # For each athlete builds training examples and context, stamps the
+    # athlete-level validation flag, and saves in shuffled chunks.
+    for identity, athlete_results in athletes:
+        career_lengths.append(len(athlete_results))
+
         examples = buildAthleteExamples(athlete_results, encoders, rng)
         addContextToExamples(examples, encoders)
 
-        # ★ RESOLVED HERE, NOT WHEN THE EXAMPLE WAS BUILT. The vocabulary needs
-        #   every result counted before it knows which venues clear
-        #   MIN_VENUE_RACES, so the example carries the raw row until now and
-        #   swaps it for an index.
+        # ★ THE WHOLE ATHLETE IS TRAIN OR VAL, NEVER BOTH. See _isValAthlete:
+        #   splitting by example lets the model meet every val athlete during
+        #   training and validation stops measuring generalisation.
+        is_val = _isValAthlete(identity)
+        n_val_athletes += bool(is_val) and bool(examples)
         for ex in examples:
             ex["venue_idx"] = venueIndex(ex.pop("venue_row"), vocab)
+            ex["is_val"]    = is_val
 
         buffer.extend(examples)
 
@@ -1825,13 +2032,7 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
         # sample from a wide window of athletes rather than a contiguous run.
         while len(buffer) >= hold:
             rng.shuffle(buffer)
-            all_lengths.extend(
-                _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx,
-                           output_dir))
-            chunk_idx     += 1
-            total_examples += CHUNK_SIZE
-            # Discard the flushed examples — this is what keeps RAM flat.
-            buffer = buffer[CHUNK_SIZE:]
+            flush_one()
 
     # Drain the tail. Shuffle once more, then emit full chunks and a final
     # short one -- the last chunk being short is fine, the sampler sizes
@@ -1839,12 +2040,19 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
     if buffer:
         rng.shuffle(buffer)
         while buffer:
-            all_lengths.extend(
-                _saveChunk(buffer[:CHUNK_SIZE], max_len, chunk_idx,
-                           output_dir))
-            total_examples += len(buffer[:CHUNK_SIZE])
-            chunk_idx += 1
-            buffer = buffer[CHUNK_SIZE:]
+            flush_one()
+
+    # The distribution report the old pass 1 produced, now from the walk.
+    career_lengths.sort()
+    n = len(career_lengths)
+    def pct(f):
+        return career_lengths[min(n - 1, int(f * n))] if n else 0
+    over = sum(1 for L in career_lengths if L > MAX_SEQ_LEN)
+    print(f"  sequence lengths over {n:,} athletes: "
+          f"median {pct(.50)}  p90 {pct(.90)}  p99 {pct(.99)}  "
+          f"max {career_lengths[-1] if n else 0}")
+    print(f"  cap {MAX_SEQ_LEN}: truncated {over:,} athletes "
+          f"({100.0 * over / max(n, 1):.2f}%)")
 
     # ★ EVERY EXAMPLE'S SEQUENCE LENGTH, IN GLOBAL ORDER. Written here because
     #   this is the only place that knows them for free; the alternative is
@@ -1852,6 +2060,13 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
     #   read their offsets. int32 at ~80M examples is 320 MB, which loads in
     #   seconds and is what makes length-sorted batching possible.
     _saveLengths(all_lengths, output_dir)
+
+    # ★ THE ATHLETE-DISJOINT SPLIT, IN THE SAME GLOBAL ORDER. train.py reads
+    #   this instead of random_split when it exists.
+    vm_path = os.path.join(output_dir, "val_mask.pt")
+    torch.save(torch.tensor(all_val, dtype=torch.bool), vm_path)
+    print(f"  Saved {vm_path} ({sum(all_val):,} val examples from "
+          f"{n_val_athletes:,} athletes)")
 
     # Save metadata so DataLoader knows how many chunks exist.
     _saveMetadata(max_len, total_examples, chunk_idx, output_dir)
@@ -1871,11 +2086,12 @@ def saveAll(by_athlete: dict, encoders: dict, vocab: dict,
 #           output_dir: directory to save into.
 # Output: None.
 def _saveChunk(examples: list[dict], max_len: int,
-               chunk_idx: int, output_dir: str) -> list[int]:
-    
+               chunk_idx: int, output_dir: str):
+
     (sequences_t, offsets_t, context_t,
      targets_t, venues_t) = _buildTensors(examples, max_len)
     lengths = (offsets_t[1:] - offsets_t[:-1]).tolist()
+    vals    = [bool(ex.get("is_val")) for ex in examples]
 
     path = os.path.join(output_dir, f"chunk_{chunk_idx:04d}.pt")
 
@@ -1894,9 +2110,9 @@ def _saveChunk(examples: list[dict], max_len: int,
     print(f"  Saved {path} ({len(examples):,} examples)")
 
     # ! RETURNED, so saveAll can accumulate them without a second pass. The
-    #   sampler needs every length in global order; this is the only place
-    #   that has them.
-    return lengths
+    #   sampler needs every length in global order, train.py's split needs
+    #   every val flag in the same order; this is the only place with both.
+    return lengths, vals
 
 def _saveVenueVocab(vocab: dict, output_dir: str) -> None:
     """The venue vocabulary, beside the encoders.
@@ -1994,8 +2210,11 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
 
     # School encoder, same "None" substitution pattern as _encodeGrade
     # in Chunk 3 — buildEncoders fit on "None" wherever school was None.
+    # Dict map, not transform(): see _encoderMap — this runs once per example,
+    # ~80M times over the corpus.
     school_raw = target_result["school"] if target_result["school"] is not None else "None"
-    school_encoded = float(encoders["school"].transform([school_raw])[0])
+    sm = _encoderMap(encoders["school"])
+    school_encoded = sm.get(school_raw, sm.get("None", 0.0))
 
     # sequence[-1] is the most recent prior race (sequence is in
     # chronological order, same as athlete_results). Index [2] of
@@ -2055,37 +2274,36 @@ def addContextToExamples(examples: list[dict], encoders: dict) -> None:
             example.get("is_forecast", False),
         )
 
-    print(f"Added context vectors to {len(examples):,} examples")
- 
+    # No print here: this now runs once per ATHLETE in the streaming flow,
+    # and 4.7M progress lines is not progress. _saveChunk is the heartbeat.
+
 
 # ------------------------------------------------------------------ #
-# MAIN (placeholder — will be filled in subsequent chunks)
+# MAIN — the streaming flow
 # ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
-    
+
     # Creates a directory and all its parent directories if they don't exist.
     # exist_ok says don't crash if it already exists. It creates model/
     # and model/data/ if they don't exist (OUTPUT_DIR in constants).
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     initPool()
- 
+
     try:
-        print("Loading results from database...")
-        results = loadAllResults()
-        by_athlete = groupByAthlete(results)
- 
-        print("Building encoders...")
-        encoders = buildEncoders(results)
+        with getConn() as conn:
+            # Vocabulary first, from aggregate queries -- kilobytes back,
+            # instead of a second pass over 54M streamed rows.
+            print("Building encoders (DB aggregates)...")
+            encoders = buildEncodersFromDB(conn)
 
-        # Built from EVERY result, before chunking: a venue's race count is a
-        # property of the corpus, and counting per chunk would give the same
-        # venue a different index in each file.
-        print("Building venue vocabulary...")
-        vocab = buildVenueVocab(results)
+            print("Building venue vocabulary (DB aggregates)...")
+            vocab = buildVenueVocabFromDB(conn)
 
-        print("Saving chunked tensors...")
-        saveAll(by_athlete, encoders, vocab, OUTPUT_DIR)
- 
+            # Then ONE streamed pass: two identity-sorted server-side
+            # cursors, heap-merged, one athlete in RAM at a time.
+            print("Streaming athletes and saving chunked tensors...")
+            saveAll(streamAthletes(conn), encoders, vocab, OUTPUT_DIR)
+
     finally:
         closePool()
