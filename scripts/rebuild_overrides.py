@@ -194,6 +194,20 @@ MIN_FIELD = 4           # pass 1/2: rated rows needed to judge a division
 SE_K = 4.0              # ...and the gap must also clear this many SEs
 MIN_MINORITY = 5        # pass 2: rated rows needed in the smaller half
 MIN_OWN_RACES = 3       # races an athlete needs for their median to mean this
+
+# ⚠ ONE SIGMA DOES NOT FIT EVERY ATHLETE. The pooled sigma (~4.5) is the
+#   AVERAGE athlete's race-to-race scatter; an elite runs within a point or
+#   two of himself, so pass 3's t3*sigma bar is ~7.5 sigma of the average kid
+#   and ~15 of the elite's -- leaving the pass blind to corruption on exactly
+#   the rows the boards display. Pass 3's FAST side therefore uses the
+#   athlete's own scatter (1.4826 * MAD of their rating history, >= 6 races),
+#   clamped: floored here so three identical early ratings cannot collapse
+#   the bar to zero, and capped at the pooled sigma so a personal bar only
+#   ever TIGHTENS. The slow side keeps the pooled bar on purpose -- elites
+#   jog easy races deliberately (pacing a teammate, a workout race is -20
+#   "points" and real), nobody accidentally runs FASTER than their fitness.
+SIG_FLOOR = 1.5         # min per-athlete sigma; fast bar bottoms at t3*this
+SPREAD_MIN_RACES = 6    # races needed before the personal sigma is trusted
 # ! 0.03, NOT 0.06, BECAUSE THE LADDER IS DENSER THAN THAT. 1931 / 2000 /
 #   2011 sit inside 4% of each other, and 2400/2414, 3200/3218, 4800/4828,
 #   8000/8047 are all under 1% apart. At 6% an implied 2131 -- which is
@@ -2036,8 +2050,20 @@ SELECT a.result_id, a.meet_id, a.div_id, a.ident,
        lbl.distance AS distance, lbl.course_name
 FROM   adj a
 JOIN   div d ON d.meet_id = a.meet_id AND d.div_id = a.div_id
+LEFT   JOIN reb_spread sp ON sp.ident = a.ident
 __LABEL__
-WHERE  abs(a.adj_gap) > %(bar)s
+-- ⚠ ASYMMETRIC BAR -- see SIG_FLOOR. The fast side is judged against the
+--   athlete's OWN scatter (clamped to [SIG_FLOOR, pooled sigma], pooled
+--   fallback under SPREAD_MIN_RACES): a metronomic elite's typo trips at
+--   ~t3*1.5 points instead of hiding under the average kid's bar. The slow
+--   side keeps the pooled bar: deliberately jogged races are real, common,
+--   and board-harmless.
+WHERE  (CASE WHEN a.adj_gap > 0
+             THEN a.adj_gap > %(t3)s *
+                  COALESCE(greatest(%(sig_floor)s,
+                                    least(%(sigma)s, sp.raw_sig)),
+                           %(sigma)s)
+             ELSE -a.adj_gap > %(bar)s END)
   AND  abs(a.adj_gap - d.div_gap) > %(vs_field)s
 ORDER  BY abs(a.adj_gap) DESC
 LIMIT  %(limit)s
@@ -2065,8 +2091,28 @@ def stagePriorPasses(cur, fixed, pinned):
 
 
 def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3,
-          max_frac=0.05, max_per_ath=2, max_per_meet=4):
-    cur.execute(_PASS3_SQL, {"bar": t3 * sigma,
+          max_frac=0.05, max_per_ath=2, max_per_meet=4, form=True):
+    # Per-athlete scatter for the fast-side bar (see SIG_FLOOR). Built here,
+    # not in buildGap: pass 1 and 2 never read it, and it is one more full
+    # sort over the gap table. MAD is taken over the RAW gaps -- the form
+    # curve is a population correction and has no business inside one
+    # athlete's personal spread.
+    gapcol = "gap_raw" if form else "gap"
+    cur.execute("SET LOCAL work_mem = '2GB'")
+    cur.execute(f"""
+        DROP TABLE IF EXISTS reb_spread;
+        CREATE TEMP TABLE reb_spread AS
+        SELECT ident,
+               1.4826 * percentile_cont(0.5)
+                   WITHIN GROUP (ORDER BY abs({gapcol})) AS raw_sig
+        FROM   reb_gap
+        GROUP  BY ident
+        HAVING count(*) >= {int(SPREAD_MIN_RACES)};
+        CREATE INDEX ON reb_spread (ident);
+        ANALYZE reb_spread;
+    """)
+    cur.execute(_PASS3_SQL, {"bar": t3 * sigma, "t3": t3, "sigma": sigma,
+                             "sig_floor": SIG_FLOOR,
                              "vs_field": vs_field * sigma, "limit": limit})
     rows = cur.fetchall()
     div_n = {(r["meet_id"], r["div_id"]): r["div_n"] for r in rows}
@@ -2491,7 +2537,7 @@ def main():
                 drops, saves, groups, medians = pass3(
                     cur, args.sigma, args.t3, args.vs_field, args.limit,
                     args.max_per_div, args.max_drop_frac, args.max_per_ath,
-                    args.max_per_meet)
+                    args.max_per_meet, form=not args.no_form)
                 applyNames(cur, drops, saves)
                 report3(drops, saves, groups, medians, args)
                 if args.out:
