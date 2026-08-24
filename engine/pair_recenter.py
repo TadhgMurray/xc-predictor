@@ -83,11 +83,40 @@ def meanOffset(beta, sc, group, n_groups):
     return float(np.average(beta[ok], weights=w[ok])), int(ok.sum())
 
 
-def recenter(delta, alpha, beta, sc, group, sport, course, n_cells, n_groups):
+# ★ THE MEASURED CONSTANT THAT REPLACES A CONFOUNDED ESTIMATE, when set.
+#
+#   The solve's own bbar is a weighted mean over athlete-season betas, and it
+#   DRIFTS: -0.0392 in the handoff era, -0.053 by 2026-08, while the
+#   growth-free sandwich estimator (scripts/measure_sport_gap.py) held at
+#   -0.039. Whatever beta soaks up beyond true specialisation -- growth
+#   curvature, season composition -- lands in the applied gap. The
+#   reparameterisation below is prediction-preserving for ANY constant, so
+#   applying a measured one instead is algebraically free.
+#
+#   HOW TO SET IT, exactly (delta_bbar = +D, not 2D -- D is the error in the
+#   GAP and each sport carries half):
+#     1. after a golive, run scripts/measure_sport_gap.py on the live ratings;
+#        it prints D, the XC-minus-interpolated-TF residual in log-rating
+#     2. read the bbar that golive ACTUALLY APPLIED from its log:
+#        "[all] sport recentre: bbar X"
+#     3. set MEASURED_BBAR = X + D here
+#   Iterate after the next golive: measure D again, nudge by +D again. D
+#   converging toward 0 is the loop working; None reverts to the solve's own
+#   estimate. Production (pair_all) applies this; the diagnostics
+#   (linkage_check, this file's main) keep measuring the solve's own value.
+MEASURED_BBAR = None
+
+
+def recenter(delta, alpha, beta, sc, group, sport, course, n_cells, n_groups,
+             bbar=None):
     """
     Move the mean offset out of beta and into delta. Predictions unchanged.
+    Pass bbar to apply a measured constant instead of the solve's estimate;
+    n_ident still reports how many athlete-seasons the estimate had.
     """
-    bbar, n_ident = meanOffset(beta, sc, group, n_groups)
+    bbar_solve, n_ident = meanOffset(beta, sc, group, n_groups)
+    if bbar is None:
+        bbar = bbar_solve
     s_cell = cellSport(course, sport, n_cells)
 
     sbar = (np.bincount(group, weights=sport.astype(np.float64) - 0.5,
