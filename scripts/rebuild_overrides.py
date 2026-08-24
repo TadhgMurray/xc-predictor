@@ -1798,6 +1798,21 @@ NEG_UNANIMITY = 0.95    # slow fields need ~everybody on one side, vs 75% fast
 #   (-13) never raises a rating no matter how unanimous.
 NEG_BAR_MULT = 3.0      # |adjusted gap| must clear THREE times the bar
 
+# ★ HAND-REJECTED DIVISIONS -- judged by a human, not by a gate, because they
+#   are the one fault class no statistic can separate from a wrong label: a
+#   course that is SUPPOSED to be slow. Farragut's "Annual Hill Climb" is
+#   unanimous, blatant and course-corroborated -- and correct at 2993m: the
+#   oddball label is a wheeled course (error processes swap real race
+#   distances, they don't invent 2993), the meet name declares the terrain,
+#   and the same label recurs every edition. Relabeling it 5000 would mint
+#   +40-point ratings. Listed here, not deleted from pass1.py by hand, so
+#   every regeneration stays clean. Reviewed 2026-08-24.
+HAND_REJECTED = {
+    (174759, 717161): "Farragut Annual Hill Climb -- terrain, not distance",
+    (174766, 717169): "Farragut Annual Hill Climb -- terrain, not distance",
+    (225606, 901254): "Farragut Annual Hill Climb -- terrain, not distance",
+}
+
 
 def tierFor(source, err, gap, n, sigma):
     import math
@@ -1827,6 +1842,10 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
     for _i, r in enumerate(rows):
         if _i and _i % _every == 0:
             print(f"    ...{_i:,}/{len(rows):,} divisions judged", flush=True)
+        rej = HAND_REJECTED.get((r["meet_id"], r["div_id"]))
+        if rej:
+            skipped.append((r, f"hand-rejected: {rej}"))
+            continue
         gap = float(r["med_gap"])
         if abs(gap) <= barFor(r["n"], sigma, t1):
             skipped.append((r, "within the bar"))
