@@ -1496,12 +1496,29 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         # 2b) INSANE PACE — sane distance but impossible implied pace. Two sides:
         #     the slow ceiling (garbage-slow, the 15-hour "mile") and the absurd
         #     3:00/mile fast floor (obvious fakes, so they never reach the manual
-        #     mislabel-triage list). Ambiguous fast-but-possible times pass here
-        #     and are judged downstream by the WR cap / override table.
-        if not _paceSane(row[_TIME], distance) \
-                or not _paceNotAbsurd(row[_TIME], distance):
-            trace = _makeTrace(row, "insane_pace", distance)
-            return row[_ID], None, _SkipReason.INSANE_PACE, trace
+        #     mislabel-triage list).
+        #
+        # ★ DEMOTED FROM A SKIP TO A CENSUS LABEL: THE ROW STILL NORMALIZES AND
+        #   normalized_time IS WRITTEN. An impossible pace is a judgment about
+        #   the LABEL, and refusing to write nt destroyed the only evidence a
+        #   label detector can use: meet 264234 div 1050225 had 74 of 78 rows
+        #   refused this way (real times normalized at a wrong distance), so
+        #   the division was invisible to every rebuild pass -- the guard took
+        #   the blame for the label's crime, and hid the corpse.
+        #
+        #   Writing nt is SAFE because rating creation has its own band:
+        #   speed_ratings.packResults rejects normalized_time outside the
+        #   pool's pace band (0.12-0.72 s/m of the anchor), and both of this
+        #   guard's extremes land outside it -- these rows are never RATED, so
+        #   no board or solve sees them. Only the rebuild's gap table, whose
+        #   entire job is judging labels, now can.
+        #
+        # ! INSANE_RAW below is NOT demoted: the per-pool raw-time floor (the
+        #   fake-elite guard) has no rating-time equivalent tight enough --
+        #   the pack band is garbage-only loose -- so writing those would put
+        #   fake elites back on the boards.
+        pace_insane = (not _paceSane(row[_TIME], distance)
+                       or not _paceNotAbsurd(row[_TIME], distance))
 
         # 3) UNKNOWN POOL — classify the pool HERE, via the imported poolFor (the
         #    same single-source-of-truth the library uses). Doing it now lets us
@@ -1672,6 +1689,14 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
             # Reached the library but it declined (bad time/distance INSIDE the
             # library, now unambiguous because unknown_pool was caught above).
             return row[_ID], None, _SkipReason.LIBRARY_DROP, trace
+        if pace_insane:
+            # ★ WRITTEN AND LABELLED. The census still counts it under
+            #   insane_pace (the number to watch), but the value goes to the
+            #   table so the rebuild's gap table can finally see the division
+            #   the bad label broke. packResults' pool pace band keeps it out
+            #   of the ratings.
+            return (row[_ID], out["normalized_time"],
+                    _SkipReason.INSANE_PACE, trace)
         return row[_ID], out["normalized_time"], _SkipReason.WRITTEN, trace
     return fn
 
@@ -2524,6 +2549,12 @@ def _printReasonCensus(census, processed):
         print(f"  {reason:<14} {n:>12,}  ({100.0 * n / denom:5.1f}%)")
     w = census.counts.get(_SkipReason.WRITTEN, 0)  # then the written rows
     print(f"  {'written':<14} {w:>12,}  ({100.0 * w / denom:5.1f}%)")
+    ip = census.counts.get(_SkipReason.INSANE_PACE, 0)
+    if ip:
+        print(f"  ! insane_pace rows ARE written now (label-judgment, not "
+              f"corruption) --\n    counted above as the number to watch. "
+              f"packResults' pool pace band keeps\n    them out of the "
+              f"ratings; only the rebuild's gap table sees them.")
 
 
 # _writeSuspectFile
