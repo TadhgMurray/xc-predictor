@@ -158,6 +158,21 @@ if ($DryRun) {
     exit 0
 }
 
+# ⚠ THE WIPE IS WHAT MAKES -Reset A RESET, AND IT WAS MISSING. --as-if-wiped
+#   makes the passes JUDGE as if the old overrides were gone, and apply
+#   APPENDS what they re-propose -- but nothing ever removed the old
+#   entries. A wrong old override is precisely the one that survives that:
+#   reverted for judging, the division looks fine at its scraped distance,
+#   nothing is proposed, and the absence of a proposal leaves the bad entry
+#   standing (Thetford's confirmed-bad 6000-on-a-5k rode through the whole
+#   2026-08-24 rebuild this way). wipe_overrides appends a .clear() BEFORE
+#   the pass block is appended, keeps the sole-source entries (nothing else
+#   carries a distance for those divisions), and is idempotent -- a wipe
+#   block already in place is left alone.
+if ($Reset) {
+    Step "03b_wipe" { python scripts\wipe_overrides.py --write --keep-sole-source }
+}
+
 Step "04_apply"    { python scripts\apply_passes.py --write }
 
 # ⚠ NOT A PIPELINE STEP, WHICH IS WHY IT IS HERE. dist_override is rebuilt
