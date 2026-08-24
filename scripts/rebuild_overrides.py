@@ -217,6 +217,8 @@ MIN_OWN_RACES = 3       # races an athlete needs for their median to mean this
 #   where n = 1 and nothing averages out.
 SIG_FLOOR = 1.5         # min per-athlete sigma; fast bar bottoms at t3*this
 SPREAD_MIN_RACES = 6    # races needed before the personal sigma is trusted
+MED_SANE_LO = 40.0      # an own-median outside this range is ITSELF the
+MED_SANE_HI = 200.0     # corrupt thing; its rows are never drop candidates
 # ! 0.03, NOT 0.06, BECAUSE THE LADDER IS DENSER THAN THAT. 1931 / 2000 /
 #   2011 sit inside 4% of each other, and 2400/2414, 3200/3218, 4800/4828,
 #   8000/8047 are all under 1% apart. At 6% an implied 2131 -- which is
@@ -2165,6 +2167,17 @@ def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3,
     #   three times, in three unrelated divisions, is a bad median.
     per_ath = Counter(r["ident"] for r in rows)
     bad_median = {a for a, c in per_ath.items() if c > max_per_ath}
+    # ⚠ AND AN ABSOLUTE SANITY RANGE ON THE MEDIAN ITSELF. The count gate
+    #   needs three sightings, so an athlete with a broken median and only
+    #   one or two flagged rows slipped it: the 2026-08-24 run tried to drop
+    #   six rows whose own medians read 255-302, and nobody rates 300 -- the
+    #   engine's elite ceiling is ~146. A median outside the sane range is
+    #   itself the corrupt thing, the flagged row is likely that athlete's
+    #   one REAL race, and it belongs in the broken-median report, never in
+    #   the drops.
+    bad_median |= {r["ident"] for r in rows
+                   if r["med"] is not None
+                   and not (MED_SANE_LO <= float(r["med"]) <= MED_SANE_HI)}
 
     # ★ AND ONE LEVEL UP AGAIN: THE MEET. A meet whose divisions each
     #   contribute two or three rows slips under a per-division cap while
