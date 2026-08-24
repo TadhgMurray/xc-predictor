@@ -34,6 +34,7 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
   stay put when the reader toggles -- a view must not re-adjudicate records.
 """
 
+import sys
 from collections import Counter
 
 from conversions import pool_mean
@@ -73,17 +74,35 @@ def hsFactor(pool):
     if suffix not in ("m", "f"):
         return None                      # unknown_gender etc: no HS twin
 
+    # ! FAILURES ARE LOUD AND CACHED. A factor that cannot be built hides the
+    #   toggle with no other symptom, so say why ONCE on the server console
+    #   instead of failing silently -- and cache the None, because
+    #   conversions.pool_mean has already cached whatever broke: retrying per
+    #   page load would re-pay nothing and re-learn nothing until a restart.
+    why = None
     try:
         own = pool_mean(pool)
         hs = pool_mean("hs_" + suffix)
-    except Exception:                    # noqa: BLE001 -- a view, not a page
-        return None
-    if not own or not hs:
-        return None
+    except Exception as exc:             # noqa: BLE001 -- a view, not a page
+        own = hs = None
+        why = f"pool_mean raised {type(exc).__name__}: {exc}"
 
-    factor = float(hs) / float(own)
-    if not (_FACTOR_LO <= factor <= _FACTOR_HI):
-        return None
+    factor = None
+    if why is None:
+        if not own or not hs:
+            why = (f"pool_mean returned {pool}={own!r}, hs_{suffix}={hs!r} "
+                   f"(recovery found no rated rows and the legacy table has "
+                   f"no entry?)")
+        else:
+            factor = float(hs) / float(own)
+            if not (_FACTOR_LO <= factor <= _FACTOR_HI):
+                why = (f"factor {factor:.3f} outside the "
+                       f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
+                       f"({pool}={own:.1f}, hs_{suffix}={hs:.1f})")
+                factor = None
+
+    if why is not None:
+        print(f"pool_view: no HS factor for {pool} -- {why}", flush=True)
     _FACTOR_CACHE[pool] = factor
     return factor
 
@@ -162,3 +181,78 @@ def stampHsRatings(pool_rows, races):
         else:
             race["hs_rating"] = None
     return has_alt
+
+
+# ------------------------------------------------------------------ #
+#  DIAGNOSTIC CLI -- "why is there no toggle on this athlete?"
+# ------------------------------------------------------------------ #
+#
+#     python racecast\pool_view.py 12345678      # a person_id
+#     python racecast\pool_view.py               # just the factor table
+#
+# Run from the PROJECT ROOT. Prints every step the page takes silently:
+# the pool means as recovered, the factor (or the reason there is none),
+# the athlete's pools per season, and the final has-toggle verdict. The
+# fast-explain rule applied here: a feature that can hide itself must be
+# able to say why.
+def _diag(person_id=None):
+    sys.path.insert(0, "scripts")
+    from database import getConn
+    import psycopg2.extras
+
+    print("\n  -- factors ------------------------------------------------")
+    for pool in ("ms_m", "ms_f", "hs_m", "hs_f",
+                 "college_m", "college_f", "pro_m", "pro_f"):
+        try:
+            mean = pool_mean(pool)
+        except Exception as exc:          # noqa: BLE001
+            print(f"  {pool:<12} pool_mean RAISED {type(exc).__name__}: {exc}")
+            continue
+        factor = hsFactor(pool)
+        mean_s = f"{mean:.1f}" if mean else str(mean)
+        factor_s = f"x{factor:.4f}" if factor else "NO FACTOR (see line above)"
+        print(f"  {pool:<12} mean {mean_s:>10}   {factor_s}")
+
+    if person_id is None:
+        print()
+        return
+
+    with getConn() as conn:
+        with conn.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            rows = fetchPoolRows(cur, person_id)
+
+    print(f"\n  -- ranking_results pools for person {person_id} -----------")
+    if not rows:
+        print("  NONE. Either the person_id is wrong, ranking_results was "
+              "never built,\n  or every season was dropped (unresolved "
+              "grade). Without pool rows the\n  page cannot scale anything "
+              "and the toggle stays hidden.")
+        print()
+        return
+
+    seen = {}
+    for r in rows:
+        key = (r["sport"], int(r["year"]), r["pool"])
+        seen[key] = seen.get(key, 0) + 1
+    for (sport, year, pool), n in sorted(seen.items()):
+        factor = hsFactor(pool)
+        note = (f"x{factor:.4f}" if factor is not None
+                else "NO FACTOR -> own-scale passthrough")
+        print(f"  {sport} {year}  {pool or '(none)':<12} {n:>4} rows   {note}")
+
+    pools = {p for (_s, _y, p) in seen if p}
+    movable = [p for p in pools
+               if (f := hsFactor(p)) is not None and abs(f - 1.0) > 1e-9]
+    print(f"\n  verdict: toggle {'SHOWS' if movable else 'HIDDEN'} -- "
+          f"{len(pools)} pool(s), "
+          f"{len(movable)} with a factor that moves anything")
+    if not movable and len(pools) > 1:
+        print("  (multiple pools but no usable factor: the factor lines "
+              "above say which\n  recovery failed -- likely a mid-pipeline "
+              "database or an empty sample)")
+    print()
+
+
+if __name__ == "__main__":
+    _diag(int(sys.argv[1]) if len(sys.argv) > 1 else None)
