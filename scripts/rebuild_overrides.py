@@ -2129,12 +2129,30 @@ def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3,
     div_n = {(r["meet_id"], r["div_id"]): r["div_n"] for r in rows}
     # Which distances are raced elsewhere at the same meet -- the witness that
     # separates "recorded in the wrong race" from "corrupt".
+    #
+    # ⚠ BOTH SOURCES, NOT JUST `meets`. `meets` is anet-only, so at a
+    #   tfrrs-covered meet every other race was invisible, no witness was
+    #   found, and a reassignable runner became a deletion -- the same
+    #   blindness audit_overrides documented for its stored-distance
+    #   fallback. Measured on the 2026-08-24 --limit 5000 run: the +90 drop
+    #   band clustered at St. Olaf, Les Bolstadt, Kentucky Horse Park --
+    #   multi-race invitational venues -- with 17 savables against hundreds
+    #   of wrong-race-shaped drops.
     meets = tuple({r["meet_id"] for r in rows}) or (0,)
     cur.execute("""
         SELECT meet_id, array_agg(DISTINCT distance) AS dists
-        FROM   meets WHERE meet_id = ANY(%s) AND distance > 0
+        FROM (
+            SELECT meet_id, distance
+            FROM   meets WHERE meet_id = ANY(%(meets)s) AND distance > 0
+            UNION ALL
+            SELECT mt.meet_id, (d.value ->> 'distance')::real AS distance
+            FROM   meets_tfrrs mt,
+                   jsonb_each(mt.division_distances::jsonb) d
+            WHERE  mt.meet_id = ANY(%(meets)s) AND mt.sport = 'XC'
+              AND  (d.value ->> 'distance')::real > 0
+        ) x
         GROUP  BY meet_id
-    """, (list(meets),))
+    """, {"meets": list(meets)})
     at_meet = {r["meet_id"]: [float(d) for d in r["dists"]]
                for r in cur.fetchall()}
 
