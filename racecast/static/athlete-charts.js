@@ -65,39 +65,26 @@ const MIN_POINTS = 2;
 
 
 /* ------------------------------------------------------------------ *
- *  POOL-VIEW TOGGLE
+ *  POOL-VIEW (state owned by scale-view.js, loaded first)
  * ------------------------------------------------------------------ */
 
 /*
  * Ratings are pool-relative (100 = own pool's average), so a career that
  * crosses a pool boundary jumps at the seam. The HS-equivalent view redraws
  * every rating on the same-gender HS pool's scale: each point carries the
- * alternate value as `vh` (see athlete_chart_data._point) and every rating
- * in the tables carries it as data-hs on a .rv span (see the rv macro in
- * athlete.html). This block owns the switch between the two.
- *
- * The key is deliberately site-wide ("rc-rating-scale", not per athlete):
- * if other pages grow the view later they read the same preference.
+ * alternate value as `vh` (see athlete_chart_data._point). scale-view.js
+ * owns the toggle, the .rv table spans and the stored choice; this file
+ * only reads the mode and redraws its charts on "rc-scale-change".
  */
-const SCALE_KEY = "rc-rating-scale";
-
-function loadScaleMode() {
-  /* localStorage throws in some private-browsing modes; the default view
-     must survive that, so every touch is wrapped. */
-  try {
-    return localStorage.getItem(SCALE_KEY) === "hs" ? "hs" : "pool";
-  } catch (err) {
-    return "pool";
-  }
+function scaleMode() {
+  return window.rcScale ? window.rcScale.mode : "pool";
 }
-
-let scaleMode = loadScaleMode();
 
 /* The one value accessor every drawing path goes through. A point with no
  * alternate value (its pool never resolved) falls back to its own-scale
  * number rather than leaving a hole in the line. */
 function pointVal(p) {
-  return (scaleMode === "hs" && p.vh != null) ? p.vh : p.v;
+  return (scaleMode() === "hs" && p.vh != null) ? p.vh : p.v;
 }
 
 
@@ -411,7 +398,7 @@ function drawChart(host, points, opts) {
 
   /* Say which scale is drawn whenever the alternate one is in effect --
      a rescaled chart with an unchanged title looks like a data change. */
-  const scaled = scaleMode === "hs" && data.some((p) => p.vh != null);
+  const scaled = scaleMode() === "hs" && data.some((p) => p.vh != null);
   const title = scaled ? `${opts.title} — HS scale` : opts.title;
 
   host.classList.remove("chart-empty");
@@ -513,60 +500,6 @@ function attachHover(host) {
 
 
 /* ------------------------------------------------------------------ *
- *  POOL-VIEW WIRING
- * ------------------------------------------------------------------ */
-
-/*
- * Swap every .rv span between its two values. The own-pool number is the
- * span's server-rendered text; it is stashed in data-own on first touch so
- * the swap is reversible without a reload. A span with no data-hs keeps its
- * own number in both views (its pool never resolved to an HS factor).
- */
-function applyRvSpans() {
-  document.querySelectorAll(".rv").forEach((el) => {
-    if (el.dataset.own === undefined) el.dataset.own = el.textContent;
-    el.textContent = (scaleMode === "hs" && el.dataset.hs)
-      ? el.dataset.hs
-      : el.dataset.own;
-  });
-}
-
-/*
- * The toggle itself -- present only when the route decided the career
- * crosses a pool boundary. The spans still get applied without it, so a
- * stored "hs" preference from another athlete's page costs nothing here
- * (every factor is 1.0 and there is no data-hs to swap to).
- */
-function wireScaleToggle(redrawAll) {
-  const box = document.getElementById("scale-toggle");
-
-  const sync = () => {
-    if (!box) return;
-    box.querySelectorAll("button[data-scale]").forEach((b) => {
-      b.classList.toggle("is-active", b.dataset.scale === scaleMode);
-    });
-  };
-
-  sync();
-  applyRvSpans();
-  if (scaleMode === "hs") redrawAll();   /* stored preference: redraw once */
-
-  if (!box) return;
-  box.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-scale]");
-    if (!btn || btn.dataset.scale === scaleMode) return;
-    scaleMode = btn.dataset.scale;
-    try {
-      localStorage.setItem(SCALE_KEY, scaleMode);
-    } catch (err) { /* private mode: the choice just won't persist */ }
-    sync();
-    applyRvSpans();
-    redrawAll();
-  });
-}
-
-
-/* ------------------------------------------------------------------ *
  *  BOOT
  * ------------------------------------------------------------------ */
 
@@ -614,7 +547,10 @@ function initCharts() {
     drawn.push({ host, points, opts });
   });
 
-  wireScaleToggle(() =>
+  /* Redraw every chart when scale-view.js flips the rating scale. It also
+     fires once at load when the stored preference is "hs", so the charts
+     never disagree with the tables. */
+  document.addEventListener("rc-scale-change", () =>
     drawn.forEach(({ host, points, opts }) => drawChart(host, points, opts)));
 
   /*

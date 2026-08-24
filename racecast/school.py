@@ -193,6 +193,10 @@ def schoolBest(cur, school, sport, limit=25):
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
                rr.speed_rating                   AS rating,
+               -- pool + distance ride along for the HS-equivalent view
+               -- (pool_view.stampBoardRows in the route).
+               rr.pool,
+               rr.distance,
                (CASE WHEN rr.sport = 'TF' THEN rr.year + 1
                      ELSE rr.year END)          AS year,
                rr.grade,
@@ -231,6 +235,9 @@ def schoolTopAthletes(cur, school, sport, limit=12):
                    max(COALESCE(a.first_name, '') || ' '
                        || COALESCE(a.last_name, ''))  AS name,
                    max(s.best_rating)                 AS best,
+                   -- the pool of the season holding that best, for the
+                   -- HS-equivalent view (an athlete can span pools).
+                   (array_agg(s.pool ORDER BY s.best_rating DESC))[1] AS pool,
                    count(*)                           AS seasons,
                    min(CASE WHEN s.sport = 'TF' THEN s.year + 1
                             ELSE s.year END)          AS first_year,

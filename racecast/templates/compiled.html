@@ -15,6 +15,7 @@
     race that did not run.
 ===================================================================== #}
 <!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -98,7 +99,8 @@
     {% endif %}
 {% endif %}
 
-    <h2>Results</h2>
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+        <h2>Results</h2>
     <table>
         <thead>
             <tr>
@@ -128,7 +130,7 @@
                 <td>{{ row.grade if row.grade else "—" }}</td>
                 <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
                 <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
-                <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 <td>{{ row.score_place if row.score_place else "—" }}</td>
                 {# Where they actually finished, and in which race. The gap
                    between this and the compiled place is why compiling exists.
@@ -144,5 +146,6 @@
     </table>
 
 </main>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>
 </html>

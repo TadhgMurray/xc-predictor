@@ -21,7 +21,8 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
-from pool_view import fetchPoolRows, stampHsRatings, seasonFactor
+from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
+                       stampRowsHs, stampBoardRows)
 from teams import parseFilters as parseTeamFilters, serveBoard
 from courses import (parseFilters as parseCourseFilters,
                      getCourseRankings, countCourses)
@@ -231,7 +232,9 @@ def home():
             rows = get_homepage_panels(cur)
             meta = get_homepage_meta(cur)
 
-    panels = group_panels(rows)
+    # HS-equivalent view: each panel row carries its board's pool + sport;
+    # season means and career bests take the representative factor.
+    has_hs_view = stampBoardRows(rows, rating_keys=("rating",))
 
     panels = group_panels(rows)
     panels = pad_pool_pairs(panels)      # equalize lengths for the grid
@@ -241,6 +244,7 @@ def home():
     default_sport = meta.get("default_sport") or "XC"
 
     return render_template("home.html",
+                           has_hs_view=has_hs_view,
                            panels=panels,
                            meta=meta,
                            default_sport=default_sport)
@@ -1247,6 +1251,10 @@ def race_xc(meet_id, div_id):
             header  = get_race_header(cur, meet_id, div_id)
             results = get_race_results(cur, meet_id, div_id)
             published = publishedScores(cur, meet_id)
+            # HS-equivalent view: one race, one distance; pools per row.
+            has_hs_view = (stampRowsHs(cur, "XC", results,
+                                       distance=header.get("distance"))
+                           if header else False)
 
     # Stamp score_place / team_place on the rendered rows themselves --
     # scoreRows below runs on `ranked` COPIES, so its stamps never reach
@@ -1317,6 +1325,7 @@ def race_xc(meet_id, div_id):
                   "source": "computed"}
 
     return render_template("race.html",
+                           has_hs_view=has_hs_view,
                            header=header,
                            results=results,
                            race_date=race_date,
@@ -1483,16 +1492,20 @@ def compiled_race(meet_id, distance, gender):
                                              request.args.get("alt"))
             header = get_meet_header(cur, meet_id, source=src)
             groups = compiledResults(cur, meet_id, source=src)
+            group = next((g for g in groups
+                          if g["distance"] == distance
+                          and g["gender"] == gender), None)
+            # HS-equivalent view -- inside the block, the stamp needs the
+            # cursor for the pools-by-result lookup.
+            has_hs_view = (stampRowsHs(cur, "XC", group["results"],
+                                       distance=group["distance"])
+                           if group else False)
 
-    if header is None:
+    if header is None or group is None:
         abort(404)
 
-    group = next((g for g in groups
-                  if g["distance"] == distance and g["gender"] == gender), None)
-    if group is None:
-        abort(404)
-
-    return render_template("compiled.html", header=header, group=group)
+    return render_template("compiled.html", header=header, group=group,
+                           has_hs_view=has_hs_view)
 
 
 @app.route("/api/meet/xc/<int:meet_id>/compiled")
@@ -1589,6 +1602,10 @@ def race_tf(meet_id, event_id, div_id):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             header  = get_tf_race_header(cur, meet_id, div_id, event_id)
             results = get_tf_race_results(cur, meet_id, div_id, event_id)
+            # HS-equivalent view: the event's distance; pools per row.
+            has_hs_view = (stampRowsHs(cur, "TF", results,
+                                       distance=header.get("distance_meters"))
+                           if header else False)
 
     if header is None:
         abort(404)
@@ -1606,6 +1623,7 @@ def race_tf(meet_id, event_id, div_id):
     race_date = results[0]["date"] if results else None
 
     return render_template("race_tf.html",
+                           has_hs_view=has_hs_view,
                            header=header,
                            results=results,
                            race_date=race_date)
@@ -1812,7 +1830,14 @@ def school_page(school_name):
             best   = schoolBest(cur, school_name, sport)
             top    = schoolTopAthletes(cur, school_name, sport, limit=25)
 
+    # HS-equivalent view: rows carry their pool straight from
+    # ranking_results / athlete_season, so no lookup is needed.
+    has_hs_view = stampBoardRows(best, rating_keys=("rating",), sport=sport)
+    has_hs_view = stampBoardRows(top, rating_keys=("best",),
+                                 sport=sport) or has_hs_view
+
     return render_template("school.html", school=school_name, header=header,
+                           has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),
                            sport=sport,
                            roster=roster, meets=meets, best=best, top=top,
@@ -1827,11 +1852,15 @@ def course(course_name):
             bests     = get_course_bests(cur, course_name)
             meets     = get_course_meets(cur, course_name)
             distances = get_course_distances(cur, course_name)
+            # HS-equivalent view: distance varies per row on a course board.
+            has_hs_view = stampRowsHs(cur, "XC", bests,
+                                      distance_key="distance")
 
     for row in bests:
         row["display_time"] = format_time(row["time_seconds"])
 
     return render_template("course.html",
+                           has_hs_view=has_hs_view,
                            course_name=course_name,
                            header=header,
                            bests=bests,
@@ -1927,6 +1956,9 @@ def venue_tf(location_id, indoor):
             difficulty = get_tf_venue_difficulty(cur, location_id, is_indoor)
             bests      = get_tf_venue_bests(cur, location_id, is_indoor)
             venue_meets = get_tf_venue_meets(cur, location_id, is_indoor)
+            # HS-equivalent view: distance parsed from each row's event.
+            has_hs_view = stampRowsHs(cur, "TF", bests,
+                                      event_key="event_short")
 
     for row in bests:
         if row["is_field"]:
@@ -1937,6 +1969,7 @@ def venue_tf(location_id, indoor):
             row["display_result"] = "—"
 
     return render_template("venue_tf.html",
+                           has_hs_view=has_hs_view,
                            label=label,
                            location_id=location_id,
                            is_indoor=is_indoor,
@@ -2576,12 +2609,18 @@ def api_rankings():
                 return jsonify({"error": f"This board needs a rebuilt "
                                          f"ranking_results \u2014 {detail}"}), 400
 
+    # HS-equivalent view: rows carry their own pool (and, for single-race
+    # boards, distance). Display-only -- the ORDER stays the server's, so on
+    # a pool=all board the hs column can read unsorted; rankings.js says so.
+    hs_movable = stampBoardRows(rows, rating_keys=("rating", "best_rating"))
+
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not
                     #   apply to a board of raw times. The per-state offset is
                     #   in speed_rating; a clock has no such thing.
                     "national_bias": (f["state"] is None
                                       and f["board"] != "pr"),
+                    "hs_movable": hs_movable,
                     "rows": rows})
 
 @app.route("/api/teams")
@@ -2640,9 +2679,16 @@ def api_teams():
     #   the page draws its header arrow from what came back -- so a response
     #   describing the filters it was asked for rather than the ones it
     #   served would put the arrow on a column the board is not sorted by.
+    # HS-equivalent view: a team board is one pool throughout; the top-5
+    # average and the fifth man scale by the same factor as any member.
+    hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",
+                                                   "fifth_rating"),
+                                pool=f.get("pool"), sport=f.get("sport"))
+
     return jsonify({"filters": f, "count": len(rows),
                     "board_scope": f["board_scope"],
                     "national_bias": f["board_scope"] == "usa",
+                    "hs_movable": hs_movable,
                     **info, "rows": rows})
 
 

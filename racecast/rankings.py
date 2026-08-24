@@ -593,7 +593,8 @@ def getPerformanceRankings(cur, f):
         WITH candidates AS (
             SELECT sport, result_id, person_id, pool, speed_rating,
                    race_date, year, state, school, grade,
-                   meet_id, div_id, canon_meet_id, time_seconds, event_id
+                   meet_id, div_id, canon_meet_id, time_seconds, event_id,
+                   distance
             FROM   ranking_results
             WHERE  TRUE {where}
             ORDER  BY speed_rating DESC
@@ -608,6 +609,9 @@ def getPerformanceRankings(cur, f):
             FROM candidates
         )
         SELECT p.sport, p.result_id, p.person_id,
+               -- pool + distance ride along for the HS-equivalent view
+               -- (pool_view.stampBoardRows in the API route).
+               p.pool, p.distance,
                p.speed_rating                       AS rating,
                to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
                (CASE WHEN p.sport = 'TF' THEN p.year + 1

@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 {# ===================================================================== #}
 {#  MACRO: build a /rankings query string for one board cell             #}
@@ -105,7 +106,7 @@
                                     <a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>
                                 {% else %}—{% endif %}
                             </div>
-                            <div class="cell c-rating">{{ '%.1f'|format(r.rating) if r.rating is not none else '—' }}</div>
+                            <div class="cell c-rating">{{ rv(r.rating, r.hs_rating) }}</div>
                             {# ! title CARRIES THE WHOLE STRING, because this
                                cell ellipsises. The time always fits; a long
                                meet name runs out of room, and hovering is
@@ -228,7 +229,8 @@
 <section class="rankings" id="rankings"
          data-sport="{{ DEFAULT_SPORT }}" data-scope="season">
 
-    <h2 class="rank-heading">Rankings Snapshot</h2>
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+        <h2 class="rank-heading">Rankings Snapshot</h2>
     <p class="rank-sub">The current leaders, by level and sport.</p>
 
     <div class="rank-controls">
@@ -307,5 +309,6 @@
 </section>
 
 <script src="{{ url_for('static', filename='home.js') }}"></script>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>
 </html>

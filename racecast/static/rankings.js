@@ -145,6 +145,23 @@ function fmtRating(value) {
   return (value === null || value === undefined) ? "" : Number(value).toFixed(1);
 }
 
+/* HS-equivalent rating view (scale-view.js owns the toggle + stored mode).
+ * The API stamps hs_<key> beside each rating-ish column; in HS mode a row
+ * that has the alternate value shows it, everything else keeps its own
+ * number. Display-only: the ORDER stays the server's, so on a pool=all
+ * board the converted column can read unsorted -- the honest trade for not
+ * re-ranking client-side what the server paginated. */
+function hsMode() {
+  return Boolean(window.rcScale && window.rcScale.mode === "hs");
+}
+
+function rval(r, key) {
+  if (hsMode() && r["hs_" + key] !== null && r["hs_" + key] !== undefined) {
+    return r["hs_" + key];
+  }
+  return r[key];
+}
+
 
 /*
  * Build the query string from the current controls.
@@ -796,8 +813,8 @@ function renderAbility(rows) {
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       <td>${r.year}</td>
-      <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(r.rating)}</a></td>
-      <td>${fmtRating(r.best_rating)}</td>
+      <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
+      <td>${fmtRating(rval(r, "best_rating"))}</td>
       <td>${r.n_races}</td>
     </tr>`).join("");
 
@@ -830,7 +847,7 @@ function renderPerformance(rows) {
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
-      ${maybeLink(href, fmtRating(r.rating), "rating")}
+      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
     </tr>`;
   }).join("");
 
@@ -874,7 +891,7 @@ function renderPr(rows) {
       <td>${esc(r.race_date)}</td>
       ${maybeLink(href, fmtTime(r.time_seconds),
                   "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
-      ${maybeLink(href, fmtRating(r.rating), "rating")}
+      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
     </tr>`;
   }).join("");
 
@@ -1019,8 +1036,8 @@ function renderTeams(rows, span) {
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${r.year}</td>
       <td class="rating">${r.points}</td>
-      <td>${fmtRating(r.top5_mean)}</td>
-      <td>${fmtRating(r.fifth_rating)}</td>
+      <td>${fmtRating(rval(r, "top5_mean"))}</td>
+      <td>${fmtRating(rval(r, "fifth_rating"))}</td>
       <td>${r.n_athletes}</td>
     </tr>`).join("");
 
@@ -1073,6 +1090,24 @@ function syncUrl(query) {
  * The `busy` guard stops a double-click firing two overlapping requests whose
  * responses could arrive out of order and render the wrong page.
  */
+/* The last successfully rendered board, so a rating-scale flip can redraw
+   without refetching -- same rows, different displayed numbers. */
+let _lastBoard = null;
+
+function renderBoard(rows, data) {
+  return state.board === "ability"    ? renderAbility(rows)
+       : state.board === "pr"         ? renderPr(rows)
+       : state.board === "courses"    ? renderCourses(rows)
+       : state.board === "teams"      ? renderTeams(rows, data.span)
+       :                                renderPerformance(rows);
+}
+
+document.addEventListener("rc-scale-change", () => {
+  if (_lastBoard) {
+    $("results").innerHTML = renderBoard(_lastBoard.rows, _lastBoard.data);
+  }
+});
+
 async function load() {
   if (state.busy) return;
   state.busy = true;
@@ -1139,18 +1174,21 @@ async function load() {
       teamsNote(data);
     }
 
+    /* The scale toggle earns its place only when this board's rows actually
+       move under the HS view (the API says so) -- a switch that does
+       nothing reads as broken. */
+    const scaleBox = document.getElementById("scale-toggle");
+    if (scaleBox) scaleBox.style.display = data.hs_movable ? "" : "none";
+
     if (rows.length === 0) {
+      _lastBoard = null;
       $("results").innerHTML =
         '<div class="status">No results for these filters.</div>';
       // Keep the pager visible past page 1 so there is a way back.
       $("pager").classList.toggle("hidden", state.offset === 0);
     } else {
-      $("results").innerHTML =
-        state.board === "ability"    ? renderAbility(rows)
-        : state.board === "pr"       ? renderPr(rows)
-        : state.board === "courses"  ? renderCourses(rows)
-        : state.board === "teams"    ? renderTeams(rows, data.span)
-        :                              renderPerformance(rows);
+      _lastBoard = { rows, data };
+      $("results").innerHTML = renderBoard(rows, data);
       $("pager").classList.remove("hidden");
     }
 

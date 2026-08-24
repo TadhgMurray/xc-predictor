@@ -348,6 +348,97 @@ def stampHsRatings(pool_rows, races):
     return has_alt
 
 
+# ------------------------------------------------------------------ #
+#  SITE-WIDE STAMPS -- every other page funnels through these two
+# ------------------------------------------------------------------ #
+
+# A season/career mean has no single race context; these are the contexts a
+# typical rated race in each sport actually has, and the F ratio moves only
+# ~1-2% across the realistic distance range, so one representative factor
+# per (pool, sport) is honest for aggregate numbers.
+_REP_DIST = {"XC": 5000.0, "TF": 1600.0}
+
+
+def repFactor(pool, sport):
+    """The representative factor for aggregate numbers (season means, career
+    bests, board rows) that carry a pool but no single race distance."""
+    return hsFactor(pool, sport, _REP_DIST.get(sport))
+
+
+def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
+                event_key=None, rating_key="speed_rating"):
+    """Stamp row["hs_rating"] onto server-rendered RESULT rows (race, course,
+    venue, compiled pages).
+
+    Pools come from ranking_results by result_id in ONE ANY() query; rows
+    that never ranked (unresolved seasons) take the table's MODAL pool --
+    on a race page the field is one population, so the mode is the honest
+    fill. Distance: one value for the whole table (`distance`), a per-row
+    column (`distance_key`), or a TF event string (`event_key`).
+    Returns True when anything moves enough to show the toggle."""
+    ids = [r["result_id"] for r in rows
+           if r.get("result_id") is not None and r.get(rating_key) is not None]
+    pools = {}
+    if ids:
+        try:
+            cur.execute("""
+                SELECT result_id, pool FROM ranking_results
+                WHERE  sport = %s AND result_id = ANY(%s)
+            """, (sport, ids))
+            pools = {rid: p for rid, p in cur.fetchall() if p}
+        except Exception:                # noqa: BLE001 -- UndefinedTable et al.
+            cur.connection.rollback()
+            pools = {}
+
+    modal = (Counter(pools.values()).most_common(1)[0][0] if pools else None)
+
+    has_alt = False
+    for row in rows:
+        rating = row.get(rating_key)
+        if rating is None:
+            row["hs_rating"] = None
+            continue
+        pool = pools.get(row.get("result_id")) or modal
+        d = distance
+        if d is None and distance_key is not None:
+            d = row.get(distance_key)
+        if d is None and event_key is not None and row.get(event_key):
+            d, _label = _tfEvent(row[event_key])
+        factor = hsFactor(pool, sport, d)
+        if factor is not None:
+            row["hs_rating"] = float(rating) * factor
+            if abs(factor - 1.0) > _MOVES:
+                has_alt = True
+        else:
+            row["hs_rating"] = None
+    return has_alt
+
+
+def stampBoardRows(rows, rating_keys=("rating",), pool=None, sport=None):
+    """Stamp row["hs_<key>"] onto BOARD rows (rankings/teams APIs, homepage
+    panels, school tables) that already carry their pool -- per row, or one
+    for the whole board via `pool`/`sport`. Uses the representative factor:
+    these are season means and career bests, not single races.
+    Returns True when anything moves enough to show the toggle."""
+    has_alt = False
+    for row in rows:
+        p = row.get("pool", pool)
+        s = row.get("sport", sport)
+        # A row that knows its race distance gets the exact factor; a
+        # season/career aggregate takes the representative one.
+        d = row.get("distance")
+        factor = hsFactor(p, s, d) if d else repFactor(p, s)
+        for key in rating_keys:
+            rating = row.get(key)
+            if rating is not None and factor is not None:
+                row["hs_" + key] = round(float(rating) * factor, 1)
+                if abs(factor - 1.0) > _MOVES:
+                    has_alt = True
+            else:
+                row["hs_" + key] = None
+    return has_alt
+
+
 def seasonFactor(races, label=None, sport=None):
     """The median hs/own ratio over stamped races, optionally filtered to
     one (season label, sport). For scaling season-level MEANS (the header

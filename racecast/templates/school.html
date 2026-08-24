@@ -14,6 +14,7 @@
   Season pages come later; the year links are the entry point for those.
 ===================================================================== #}
 <!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -93,7 +94,8 @@
 {% endif %}
 
 {% if top %}
-    <h2>Best athletes</h2>
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+        <h2>Best athletes</h2>
     <p class="meta">Best career rating, one row per athlete.</p>
     <table>
         <thead>
@@ -104,7 +106,7 @@
             <tr>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ a.person_id }}">{{ a.name.strip() if a.name and a.name.strip() else "Unknown" }}</a></td>
-                <td>{{ "%.1f"|format(a.best) }}</td>
+                <td>{{ rv(a.best, a.hs_best) }}</td>
                 <td>{{ a.seasons }}</td>
                 <td>{{ a.first_year }}{% if a.last_year != a.first_year %} to {{ a.last_year }}{% endif %}</td>
             </tr>
@@ -128,7 +130,7 @@
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
                 <td>{{ b.grade if b.grade else "" }}</td>
-                <td>{{ "%.1f"|format(b.rating) }}</td>
+                <td>{{ rv(b.rating, b.hs_rating) }}</td>
                 <td>{{ b.year }}</td>
                 <td><a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a></td>
             </tr>
@@ -206,5 +208,6 @@ document.querySelectorAll("table.staged").forEach(function (table) {
 </script>
 
 </main>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>
 </html>

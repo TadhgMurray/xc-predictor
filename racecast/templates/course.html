@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -28,7 +29,8 @@
         Team records — coming later
     </div>
 
-    <h2>All-time bests</h2>
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+        <h2>All-time bests</h2>
     <table>
         <thead>
             <tr>
@@ -60,7 +62,7 @@
                 <td>{{ row.school if row.school else "—" }}</td>
                 <td><a href="/race/xc/{{ row.meet_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
                 <td>{{ row.date }}</td>
-                <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -112,5 +114,6 @@
     </table>
 
 </main>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>
 </html>

@@ -33,6 +33,7 @@
                   outranks an ordinary race by a great one.
 ===================================================================== #}
 <!DOCTYPE html>
+{% from "_scale.html" import scale_toggle %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -365,6 +366,9 @@
     noise of about 3 points.
   </div>
 
+  {# HS-equivalent view. Hidden until rankings.js sees a board
+     whose rows actually move (hs_movable from the API). #}
+  <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
   <div id="results"></div>
 
   <div class="pager hidden" id="pager">
@@ -375,6 +379,7 @@
 
 </div>
 
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 <script src="{{ url_for('static', filename='rankings.js') }}"></script>
 </body>
 </html>
