@@ -148,9 +148,13 @@ def _is_better_rating(race, current):
 
 def _empty_sport():
     # _rating_sum / _rating_n accumulate the mean; they are stripped before
-    # returning so the template never sees them.
+    # returning so the template never sees them. The _hs twins accumulate the
+    # HS-equivalent mean for the pool-view toggle -- counted separately
+    # because a race can be rated on its own scale yet have no HS factor.
     return {"events": {}, "rating": None, "avg_rating": None,
-            "_rating_sum": 0.0, "_rating_n": 0}
+            "avg_rating_hs": None,
+            "_rating_sum": 0.0, "_rating_n": 0,
+            "_hs_sum": 0.0, "_hs_n": 0}
 
 
 def all_time_bests(races):
@@ -189,6 +193,9 @@ def all_time_bests(races):
         if race.get("speed_rating") is not None:
             bucket["_rating_sum"] += float(race["speed_rating"])
             bucket["_rating_n"] += 1
+        if race.get("hs_rating") is not None:
+            bucket["_hs_sum"] += float(race["hs_rating"])
+            bucket["_hs_n"] += 1
 
         if race.get("is_field"):
             continue
@@ -224,8 +231,11 @@ def all_time_bests(races):
         # is "what did they average", which is a different and simpler claim.
         if bucket["_rating_n"]:
             bucket["avg_rating"] = bucket["_rating_sum"] / bucket["_rating_n"]
+        if bucket["_hs_n"]:
+            bucket["avg_rating_hs"] = bucket["_hs_sum"] / bucket["_hs_n"]
 
         del bucket["_rating_sum"], bucket["_rating_n"]
+        del bucket["_hs_sum"], bucket["_hs_n"]
 
     return out
 
@@ -305,6 +315,10 @@ def season_bests_flat(races, seasons):
         bucket["season_rating"] = (
             season.get("rating") if isinstance(season, dict) else
             getattr(season, "rating", None)
+        )
+        bucket["season_rating_hs"] = (
+            season.get("rating_hs") if isinstance(season, dict) else
+            getattr(season, "rating_hs", None)
         )
 
     return sorted(buckets.items(), reverse=True)

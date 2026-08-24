@@ -74,7 +74,7 @@ def _year_of(date_text):
         return None
 
 
-def _point(race, value):
+def _point(race, value, alt=None):
     """
     One chart point.
 
@@ -91,8 +91,12 @@ def _point(race, value):
          one block. _year_of remains only as the fallback for a caller that
          never stamped labels.
     sp   the sport, so the combined chart can colour XC and TF differently.
+    vh   the HS-equivalent value, present only on rating points that have
+         one -- athlete-charts.js reads it when the pool-view toggle is on
+         and falls back to v where it is absent, so a race whose pool never
+         resolved still draws rather than leaving a hole in the line.
     """
-    return {
+    point = {
         "d": race["date"],
         "v": round(float(value), 4),
         "meet": race.get("meet"),
@@ -101,6 +105,9 @@ def _point(race, value):
         "y": race.get("season_label") or _year_of(race["date"]),
         "sp": race.get("sport"),
     }
+    if alt is not None:
+        point["vh"] = round(float(alt), 4)
+    return point
 
 
 def build_chart_data(races):
@@ -147,7 +154,9 @@ def build_chart_data(races):
         rating = race.get("speed_rating")
 
         if rating is not None:
-            point = _point(race, rating)
+            # hs_rating rides along for the pool-view toggle; pace and raw
+            # time series are absolute already and carry no alternate value.
+            point = _point(race, rating, alt=race.get("hs_rating"))
             data["all_rating"].append(point)
             if sport == "XC":
                 data["xc_rating"].append(point)

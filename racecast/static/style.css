@@ -2836,6 +2836,64 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .sport-toggle a:last-child { border-right: 0; }
 .sport-toggle a:hover { background: var(--hover); text-decoration: none; }
 
+/* ---- pool-view toggle --------------------------------------------------- *
+ * Same segmented shape as .sport-toggle so the two controls read as
+ * siblings; buttons rather than links because switching a scale is state,
+ * not navigation. The active segment is filled -- an outline alone did not
+ * say which view the page is showing. */
+.scale-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    margin: 0 0 1.2rem 0.9rem;
+    vertical-align: top;
+}
+.scale-lab {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 0.55rem;
+}
+.scale-toggle button {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+    background: #fff;
+    border: 1px solid var(--line-2);
+    border-right: 0;
+    cursor: pointer;
+}
+.scale-toggle button:first-of-type { border-radius: 3px 0 0 3px; }
+.scale-toggle button:last-of-type {
+    border-right: 1px solid var(--line-2);
+    border-radius: 0 3px 3px 0;
+}
+.scale-toggle button:hover { background: var(--hover); }
+.scale-toggle button.is-active {
+    background: #374151;
+    border-color: #374151;
+    color: #fff;
+}
+/* The "?" beside the toggle: tooltip machinery from .flag, styled as a
+   quiet circled hint rather than a record pill. */
+.scale-note {
+    --tip: #374151;
+    background: none;
+    color: #6b7280;
+    border: 1px solid var(--line-2);
+    border-radius: 50%;
+    width: 1.15rem;
+    height: 1.15rem;
+    line-height: 1.05rem;
+    text-align: center;
+    padding: 0;
+    margin-left: 0.55rem;
+    font-size: 11px;
+}
+
 /* All-Time Bests sat in a card and Season Bests did not, so two equivalent
    panels read as different kinds of thing. */
 /* ! SQUARE, like the tables. A stack of 8px-rounded white cards is the

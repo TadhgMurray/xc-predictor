@@ -150,6 +150,21 @@
     {%- endif -%}
 {%- endmacro %}
 
+{# ===================================================================== #}
+{#  RATING VALUE -- every rating on the page renders through this macro.  #}
+{#                                                                        #}
+{#  The span carries BOTH scales: the own-pool number as its text, the    #}
+{#  HS-equivalent in data-hs. athlete-charts.js swaps them when the       #}
+{#  pool-view toggle flips, so the switch is instant and needs no server  #}
+{#  round trip. A rating with no HS factor (pool never resolved) has no   #}
+{#  data-hs and simply keeps its own-scale number in either view.         #}
+{# ===================================================================== #}
+{% macro rv(value, hs) -%}
+    {%- if value is not none -%}
+    <span class="rv"{% if hs is not none %} data-hs="{{ "%.1f"|format(hs) }}"{% endif %}>{{ "%.1f"|format(value) }}</span>
+    {%- else -%}—{%- endif -%}
+{%- endmacro %}
+
 {% macro season_block(year, sport, season) %}
     <div class="season" id="{{ year }}-{{ sport }}">
         {# The rating is IN the heading, not buried in the meta line below it:
@@ -157,7 +172,7 @@
            showing the same figure. #}
         <h3 class="season-head">
             {{ year }} {{ sport }}
-            <span class="season-rating">{{ "%.1f"|format(season.rating) if season.rating else "—" }}</span>
+            <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
         <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
@@ -210,7 +225,7 @@
                             {%- endif %}
                         {%- else -%}—{%- endif -%}
                     </td>
-                    <td>{{ "%.1f"|format(race.speed_rating) if race.speed_rating else "—" }}</td>
+                    <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
                     {# Same nine conditions as before -- only the rendering moved
                        into the flag() macro, so each badge now carries its own
@@ -240,13 +255,13 @@
     <div class="stat-strip">
         <div>
             <span class="s-lab">Athlete rating</span>
-            <span class="s-val">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+            <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
             {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
         </div>
         {% if alltime.rating %}
         <div>
             <span class="s-lab">Best race</span>
-            <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ "%.1f"|format(alltime.rating.speed_rating) }}</a></span>
+            <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
             <span class="s-sub">{{ alltime.rating.sport }}</span>
         </div>
         {% endif %}
@@ -285,6 +300,25 @@
         <a href="#xc">Cross Country</a>
         <a href="#tf">Track &amp; Field</a>
     </nav>
+
+    {# ================================================================= #}
+    {#  POOL-VIEW TOGGLE. Rendered only when this career crosses a pool  #}
+    {#  boundary (has_hs_view) -- for a pure-HS athlete both views are   #}
+    {#  the same numbers and a switch that does nothing reads as broken. #}
+    {#  athlete-charts.js owns the behaviour: it swaps every .rv span    #}
+    {#  and redraws the rating charts, and remembers the choice.         #}
+    {# ================================================================= #}
+    {% if has_hs_view %}
+    <div class="scale-toggle" id="scale-toggle">
+        <span class="scale-lab">Rating scale</span>
+        <button type="button" data-scale="pool" class="is-active">Own pool</button>
+        <button type="button" data-scale="hs">HS-equivalent</button>
+        <span class="flag scale-note" tabindex="0"
+              data-title="HS-equivalent view"
+              data-blurb="Ratings normally use 100 as the average of the athlete's own pool, so the scale shifts when they move up a level. This view re-expresses every rating against the same-gender high-school pool, so the whole career sits on one continuous scale. Records and flags are still judged on the own-pool scale."
+              aria-label="HS-equivalent view. Ratings normally use 100 as the average of the athlete's own pool; this view re-expresses every rating against the same-gender high-school pool so the whole career sits on one continuous scale.">?</span>
+    </div>
+    {% endif %}
 
     <div class="page-layout">
 
@@ -372,7 +406,7 @@
                 <div class="rating-head">
                     <div class="stat">
                         <span class="label">Athlete rating</span>
-                        <span class="value">{{ "%.1f"|format(athlete.rating) if athlete.rating else "—" }}</span>
+                        <span class="value">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
                         {# WHICH season this number is -- the most recent one,
                            from athlete_season. Without the note, a number
                            that changes when a new season starts looks like
@@ -383,7 +417,7 @@
                     <div class="stat">
                         <span class="label">Best race</span>
                         <span class="value">
-                            <a href="#race-{{ alltime.rating.result_id }}">{{ "%.1f"|format(alltime.rating.speed_rating) }}</a>
+                            <a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a>
                         </span>
                         <span class="note">{{ alltime.rating.sport }}</span>
                     </div>
@@ -406,7 +440,7 @@
                             {% if bucket.rating %}
                             <li class="is-rating">
                                 <span class="ev">Best rating</span>
-                                <a href="#race-{{ bucket.rating.result_id }}">{{ "%.1f"|format(bucket.rating.speed_rating) }}</a>
+                                <a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a>
                             </li>
                             {% endif %}
 
@@ -415,7 +449,7 @@
                                not one of them. #}
                             <li class="is-rating">
                                 <span class="ev">Average rating</span>
-                                <span>{{ "%.1f"|format(bucket.avg_rating) }}</span>
+                                <span>{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}</span>
                             </li>
                             {% endif %}
 
@@ -447,13 +481,13 @@
                 {% for (year, sport), bests in season_bests %}
                     <a class="season-head-link" href="#{{ year }}-{{ sport }}">
                         <span>{{ year }} {{ sport }}</span>
-                        <span class="rating">{{ "%.1f"|format(bests.season_rating) if bests.season_rating else "—" }}</span>
+                        <span class="rating">{{ rv(bests.season_rating, bests.season_rating_hs) }}</span>
                     </a>
                     <ul>
                         {% if bests.rating %}
                         <li class="is-rating">
                             <span class="ev">Best rating</span>
-                            <a href="#race-{{ bests.rating.result_id }}">{{ "%.1f"|format(bests.rating.speed_rating) }}</a>
+                            <a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a>
                         </li>
                         {% endif %}
                         {% for event, race in bests.events.items() %}

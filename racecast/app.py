@@ -21,6 +21,7 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
+from pool_view import hsFactor, fetchPoolRows, stampHsRatings
 from teams import parseFilters as parseTeamFilters, serveBoard
 from courses import (parseFilters as parseCourseFilters,
                      getCourseRankings, countCourses)
@@ -365,7 +366,7 @@ def athlete(person_id):
             rating = None
             if season_rating is None:
                 cur.execute("""
-                    SELECT speed_rating
+                    SELECT speed_rating, pool
                     FROM   athlete_ratings
                     WHERE  athlete_id = %s
                     ORDER  BY n_races DESC NULLS LAST, pool
@@ -373,6 +374,10 @@ def athlete(person_id):
                 """, (person_id,))
                 rating = cur.fetchone()
             races = get_races(cur, person_id)
+            # For the HS-equivalent view: which pool each rated row belongs
+            # to. Fetched here (the rows), consumed after dedupe (the stamp)
+            # -- see pool_view.stampHsRatings.
+            pool_rows = fetchPoolRows(cur, person_id)
 
             # ★ BOARD ELIGIBILITY, per academic season. ranking_results
             #   silently drops seasons grade_sanity could not place or could
@@ -401,6 +406,12 @@ def athlete(person_id):
     #     record flags and the sidebar bests all group on the same value.
     for race in races:
         race["season_label"] = season_label(race["sport"], race["date"])
+
+    # 0c. the HS-equivalent view: stamp race["pool"] and race["hs_rating"].
+    #     AFTER season_label (the fallback pools by season), BEFORE the
+    #     aggregates below (they all carry the alt value along). has_hs_view
+    #     is False for a pure-HS career, and the template hides the toggle.
+    has_hs_view = stampHsRatings(pool_rows, races)
 
     # 1. format times for display
     for race in races:
@@ -469,9 +480,18 @@ def athlete(person_id):
         label = (season_rating["year"] + 1 if season_rating["sport"] == "TF"
                  else season_rating["year"])
         athlete["rating_note"] = f"{label} {season_rating['sport']} season"
+        # A mean over one pool scales like any single rating in it.
+        _hf = hsFactor(season_rating["pool"])
+        athlete["rating_hs"] = (float(athlete["rating"]) * _hf
+                                if athlete["rating"] is not None and _hf
+                                else None)
     else:
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
+        _hf = hsFactor(rating["pool"]) if rating else None
+        athlete["rating_hs"] = (float(athlete["rating"]) * _hf
+                                if athlete["rating"] is not None and _hf
+                                else None)
 
     # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
     #   below the fold, or not at all -- while the header carried just a name
@@ -516,6 +536,7 @@ def athlete(person_id):
                            tf_dists=tf_dists,
                            alltime=alltime,
                            season_bests=season_best_list,
+                           has_hs_view=has_hs_view,
                            chart_data=chart_data)
 
 
@@ -896,6 +917,7 @@ def enrich_seasons(seasons):
         enriched[key] = {
             "races":  races,
             "rating": season_rating(races),
+            "rating_hs": season_rating(races, key="hs_rating"),
             "grade":  _season_grade(races),
             "school": _season_school(races),
         }
@@ -959,9 +981,10 @@ def _season_school(races):
     return None
 
 
-def season_rating(races):
-    """Average the per-race speed ratings for one season, ignoring unrated races."""
-    rated = [r["speed_rating"] for r in races if r["speed_rating"] is not None]
+def season_rating(races, key="speed_rating"):
+    """Average the per-race speed ratings for one season, ignoring unrated
+    races. key="hs_rating" averages the HS-equivalent view instead."""
+    rated = [r[key] for r in races if r.get(key) is not None]
     if not rated:                      # a season with no rated races
         return None                    # -> template shows "—", not a crash
     return sum(rated) / len(rated)
