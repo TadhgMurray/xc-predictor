@@ -2877,6 +2877,27 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     border-color: #374151;
     color: #fff;
 }
+/* ---- athlete season tables: keep them INSIDE the column ---------------- *
+ * The season table's natural width (long meet names + up to six nowrap
+ * flag pills) can exceed .main-col, and a table does not shrink below its
+ * content -- so it overflowed the column and painted over the sidebar
+ * charts. Three fences, in order of preference:
+ *   1. the flags cell WRAPS -- six pills become two rows, not one strip;
+ *   2. meet names ellipsize at 30ch (the full name stays in title=);
+ *   3. .season scrolls within itself as the last resort, so whatever
+ *      still doesn't fit scrolls rather than escaping the column. */
+.season { overflow-x: auto; }
+.season td.flags { white-space: normal; min-width: 7.5rem; }
+.season td.flags .flag { margin-bottom: 2px; }
+td.meet-cell a, td.meet-cell .muted, td.meet-cell .meet-name {
+    display: inline-block;
+    max-width: 30ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+
 /* The "?" beside the toggle: tooltip machinery from .flag, styled as a
    quiet circled hint rather than a record pill. */
 .scale-note {

@@ -192,7 +192,7 @@
                 {% for race in season.races %}
                 <tr id="race-{{ race.result_id }}">
                     <td>{{ race.date }}</td>
-                    <td>
+                    <td class="meet-cell">
                         {% if race.sport == 'XC' and race.meet_id %}
                             {% if race.meet %}
                                 <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
@@ -208,7 +208,7 @@
                                 <span class="muted">Unlinked meet</span>
                             {% endif %}
                         {% else %}
-                            {{ race.meet }}
+                            <span class="meet-name" title="{{ race.meet }}">{{ race.meet }}</span>
                         {% endif %}
                     </td>
                     <td>{{ race.event|event_label }}</td>
