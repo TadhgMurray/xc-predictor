@@ -1950,6 +1950,56 @@ def explainFast(cur, args):
           "Ratings print on the cached pm scale;\n    the gap and median "
           "columns are the evidence.")
 
+    # ★ WHEN THE DIVISION IS THIN, SAY WHY IT IS THIN. "1 row in the gap
+    #   table" has two very different causes -- rows the backfill has not
+    #   normalized yet, and athletes without min_own rated rows IN THIS
+    #   SPORT -- and 264234/1050225 burned a round-trip on exactly that
+    #   ambiguity. Both are one cheap query.
+    cur.execute("SELECT count(*) AS n FROM reb_gap "
+                "WHERE meet_id = %s AND div_id = %s", key)
+    if cur.fetchone()["n"] < args.min_field:
+        cur.execute(f"""
+            SELECT count(*) AS n,
+                   count(normalized_time) AS with_nt,
+                   count(speed_rating)    AS engine_rated
+            FROM   {table} WHERE meet_id = %s AND div_id = %s
+        """, key)
+        d = cur.fetchone()
+        print(f"\n  WHY THE DIVISION IS THIN IN THE GAP TABLE\n")
+        print(f"    rows in {table}:                  {d['n']}")
+        print(f"    with a normalized_time:           {d['with_nt']}")
+        print(f"    engine-rated:                     {d['engine_rated']}")
+        if d["with_nt"] == 0:
+            print(f"\n    NOTHING here is normalized -- the backfill has not "
+                  f"reached this meet.\n    Until 05_backfill runs, no pass "
+                  f"can judge it: there are no times on a\n    common scale "
+                  f"to judge.")
+        cur.execute(f"""
+            SELECT least(c.career, %(mo)s) AS bucket, count(*) AS athletes
+            FROM (
+                SELECT COALESCE(r.person_id, rp.person_id, r.athlete_id)
+                           AS ident,
+                       count(*) FILTER (WHERE r.normalized_time IS NOT NULL
+                                          AND r.normalized_time > 0)
+                           AS career
+                FROM   {table} r
+                LEFT   JOIN reb_person rp ON rp.athlete_id = r.athlete_id
+                WHERE  (r.person_id = ANY(%(pids)s)
+                        OR r.athlete_id = ANY(%(aids)s))
+                GROUP  BY 1
+            ) c GROUP BY 1 ORDER BY 1
+        """, {"pids": pids, "aids": aids, "mo": args.min_own_races})
+        hist = {int(r["bucket"]): int(r["athletes"]) for r in cur.fetchall()}
+        parts = [f"{b}: {hist.get(b, 0)}" for b in range(args.min_own_races)]
+        parts.append(f"{args.min_own_races}+: "
+                     f"{hist.get(args.min_own_races, 0)}")
+        print(f"\n    career sizes (normalized rows anywhere in {table}, "
+              f"this sport only --\n    a TF career does not testify in an "
+              f"XC gap table):\n        {'   '.join(parts)}"
+              f"    (min_own = {args.min_own_races})")
+        print(f"    athletes under min_own contribute no gap row: their "
+              f"median would be\n    mostly this division judging itself.")
+
     anchor = "    FROM   reb_gap g\n    GROUP  BY"
     if anchor not in _PASS1_SQL:
         raise AssertionError("explain fast-path: _PASS1_SQL shape changed")
