@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_recflag.html" import recflag %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -63,7 +64,7 @@
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
                 <td>{{ row.school if row.school else "—" }}</td>
-                <td>{{ row.display_result }}</td>
+                <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
                 {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else "—" }}</td>{% endif %}
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
             </tr>

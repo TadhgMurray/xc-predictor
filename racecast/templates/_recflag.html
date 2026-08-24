@@ -1,0 +1,23 @@
+{# =====================================================================
+   _recflag.html -- the PR / SR badge beside a time on a RACE page.
+
+   Stamped by app.stampRecordFlags: is_pr means no earlier rated race by
+   this athlete at this distance was faster, is_sr the same within the
+   season. PR wins the badge; a row is never both. Same pill classes and
+   tooltip machinery as the athlete page's flags, and the same tense:
+   "when this race was run" -- a mark beaten later in the season was
+   still a record on the day.
+
+   Import with:  {% from "_recflag.html" import recflag %}
+   ===================================================================== #}
+{% macro recflag(row) -%}
+    {%- if row.is_pr %} <span class="flag flag--pr" tabindex="0"
+        data-title="Personal Record"
+        data-blurb="Their fastest time at this distance when this race was run."
+        aria-label="Personal Record. Their fastest time at this distance when this race was run.">PR</span>
+    {%- elif row.is_sr %} <span class="flag flag--sr" tabindex="0"
+        data-title="Season Record"
+        data-blurb="Their fastest time at this distance in this season, when this race was run."
+        aria-label="Season Record. Their fastest time at this distance in this season, when this race was run.">SR</span>
+    {%- endif -%}
+{%- endmacro %}

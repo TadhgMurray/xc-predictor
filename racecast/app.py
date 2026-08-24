@@ -1246,6 +1246,70 @@ def get_race_results(cur, meet_id, div_id):
     return cur.fetchall()
 
 
+# Same distance band the PR rankings board uses (rankings.PR_DISTANCE_TOL):
+# 5000 and 5000.0 and a 5010m remeasure are one distance, 4828m is not.
+_REC_DIST_TOL = 0.0025
+
+
+def stampRecordFlags(cur, sport, rows, distance, race_date):
+    """Stamp is_pr / is_sr onto race result rows, anet-style.
+
+    A row is a PR when no earlier rated race by that athlete at this
+    distance was faster, and an SR when none THIS SEASON was (PR wins the
+    badge; the template shows one or the other). "Earlier" means strictly
+    before this race's date, so a record here that fell later in the season
+    still reads PR -- it was one when it was run, which is the claim the
+    badge makes on the athlete page too.
+
+    One query over ranking_results for the whole field (person_id is
+    indexed). An athlete with no earlier rated race at the distance gets
+    the PR badge -- a debut at a distance is that athlete's best at it,
+    which is how every results site treats it.
+    """
+    if not distance or not race_date:
+        return
+    pids = [r["person_id"] for r in rows
+            if r.get("person_id")
+            and r.get("time_seconds") and r["time_seconds"] < 999999]
+    if not pids:
+        return
+    yr = seasonYearFromIso(sport, race_date)
+    try:
+        cur.execute("""
+            SELECT person_id,
+                   min(time_seconds) FILTER (
+                       WHERE distance BETWEEN %(lo)s AND %(hi)s)
+                       AS best_before,
+                   min(time_seconds) FILTER (
+                       WHERE distance BETWEEN %(lo)s AND %(hi)s
+                         AND year = %(yr)s)
+                       AS season_best_before
+            FROM   ranking_results
+            WHERE  sport = %(sport)s
+              AND  person_id = ANY(%(pids)s)
+              AND  race_date < %(day)s
+              AND  time_seconds > 0 AND time_seconds < 999999
+            GROUP  BY person_id
+        """, {"sport": sport, "pids": pids, "day": race_date, "yr": yr,
+              "lo": float(distance) * (1 - _REC_DIST_TOL),
+              "hi": float(distance) * (1 + _REC_DIST_TOL)})
+        prior = {r["person_id"]: r for r in cur.fetchall()}
+    except Exception:                    # noqa: BLE001 -- UndefinedTable et al.
+        cur.connection.rollback()
+        return
+
+    for row in rows:
+        t = row.get("time_seconds")
+        if not row.get("person_id") or not t or t >= 999999:
+            continue
+        p = prior.get(row["person_id"])
+        best = p["best_before"] if p else None
+        season = p["season_best_before"] if p else None
+        row["is_pr"] = best is None or float(t) < float(best)
+        row["is_sr"] = (not row["is_pr"]
+                        and (season is None or float(t) < float(season)))
+
+
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
 def race_xc(meet_id, div_id):
     from meet_compile import scoreRows, publishedScores, annotateScoring
@@ -1259,6 +1323,10 @@ def race_xc(meet_id, div_id):
             has_hs_view = (stampRowsHs(cur, "XC", results,
                                        distance=header.get("distance"))
                            if header else False)
+            if header and results:
+                stampRecordFlags(cur, "XC", results,
+                                 header.get("distance"),
+                                 results[0].get("date"))
 
     # Stamp score_place / team_place on the rendered rows themselves --
     # scoreRows below runs on `ranked` COPIES, so its stamps never reach
@@ -1631,6 +1699,10 @@ def race_tf(meet_id, event_id, div_id):
             has_hs_view = (stampRowsHs(cur, "TF", results,
                                        distance=header.get("distance_meters"))
                            if header else False)
+            if header and results:
+                stampRecordFlags(cur, "TF", results,
+                                 header.get("distance_meters"),
+                                 results[0].get("date"))
 
     if header is None:
         abort(404)

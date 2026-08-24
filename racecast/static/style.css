@@ -171,6 +171,8 @@ td.flags { white-space: nowrap; }
    never inside either -- a nowrap on the whole cell painted over the
    rating column at half-screen widths. */
 .place-cell .no-break { white-space: nowrap; }
+/* Also as a cell class: a time and its PR/SR badge stay on one line. */
+td.no-break { white-space: nowrap; }
 
 /* ---- top bar --------------------------------------------------------- */
 .topbar {

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_recflag.html" import recflag %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -138,7 +139,7 @@
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
                 <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
-                <td>{{ row.display_time }}</td>
+                <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 <td>{{ row.score_place if row.score_place else "—" }}</td>
             </tr>
