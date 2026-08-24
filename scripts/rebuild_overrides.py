@@ -2000,6 +2000,56 @@ def explainFast(cur, args):
         print(f"    athletes under min_own contribute no gap row: their "
               f"median would be\n    mostly this division judging itself.")
 
+        # ⚠ ROWS THE BACKFILL REFUSED ARE INVISIBLE TO EVERY PASS -- the
+        #   times gap table starts from normalized_time. Name the refusal:
+        #   membership in the triage-era _RESULT_DROP corpus, or the
+        #   backfill's own sanity guards (insane pace AT THE LABEL distance
+        #   -- itself a distance-error symptom). 264234/1050225: 75 of 78.
+        if d["with_nt"] < d["n"]:
+            cur.execute(f"""
+                SELECT result_id, time_seconds
+                FROM   {table}
+                WHERE  meet_id = %s AND div_id = %s
+                  AND  normalized_time IS NULL
+            """, key)
+            missing = cur.fetchall()
+            n_drop = None
+            try:
+                # Lazy on purpose: corrections.py is a 53MB parse, only
+                # worth paying inside this branch.
+                print(f"\n    ({d['n'] - d['with_nt']} rows have no "
+                      f"normalized_time -- parsing corrections.py to "
+                      f"check the drop lists...)")
+                from corrections import _RESULT_DROP_BY_SPORT
+                dropset = _RESULT_DROP_BY_SPORT[args.sport]
+                n_drop = sum(1 for r in missing
+                             if r["result_id"] in dropset)
+            except Exception as e:
+                print(f"    (drop-list check unavailable: {e})")
+            times = sorted(float(r["time_seconds"]) for r in missing
+                           if r["time_seconds"])
+            cur.execute("SELECT min(distance) AS d FROM meets "
+                        "WHERE meet_id = %s AND div_id = %s", key)
+            lbl = (cur.fetchone() or {}).get("d")
+            print(f"\n    WHY THOSE ROWS HAVE NO normalized_time")
+            if n_drop is not None:
+                print(f"      in _RESULT_DROP (triage-era row drops): "
+                      f"{n_drop}")
+                print(f"      refused by the backfill's own guards:    "
+                      f"{len(missing) - n_drop}")
+            if times:
+                mid = times[len(times) // 2]
+                print(f"      their times: {times[0]:.0f}s .. {mid:.0f}s "
+                      f"(median) .. {times[-1]:.0f}s"
+                      + (f"   label distance: {lbl:.0f}m" if lbl else ""))
+                if lbl:
+                    print(f"      -> median pace {mid / lbl * 1000:.0f} "
+                          f"s/km at that label. If that pace is absurd, "
+                          f"the LABEL is the corpse:\n      the guard "
+                          f"rejected real times normalized at a wrong "
+                          f"distance, which is\n      pass 0's territory "
+                          f"(evidence deleted before any detector saw it).")
+
     anchor = "    FROM   reb_gap g\n    GROUP  BY"
     if anchor not in _PASS1_SQL:
         raise AssertionError("explain fast-path: _PASS1_SQL shape changed")
