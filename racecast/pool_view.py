@@ -10,25 +10,40 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
   on the SAME-GENDER HS pool's yardstick, so the graph and the tables show
   one continuous career.
 
-★ WHERE THE POOL SCALE ACTUALLY LIVES -- MEASURED, NOT ASSUMED. The first
-  version of this file scaled by pool_mean(hs)/pool_mean(pool), reasoning
-  from `rating = 100 * pool_mean * (1+difficulty) / normalized_time`. The
-  diagnostic below then showed every pool recovering the SAME mean per
-  gender (~1227.5 men / ~1466 women on the 2026-08 corpus): the rating
-  constant is per-GENDER, and the pool-relative scaling is inside
-  normalized_time -- concretely in the per-pool DISTANCE SPLINE level that
-  _normalizationFactorCached evaluates (era keys off gender only, geometry
-  never sees the pool). So the correct, exact conversion is the ratio of
-  the engine's own normalization factors for the same race context:
+★ THE FACTOR IS TWO MEASURED RATIOS, AND IT TOOK THREE ATTEMPTS TO LEARN
+  WHY. The record, so nobody relearns it:
 
-      nt        = raw * F(distance, pool, ...)
-      rating    = C_gender * (1 + difficulty) / nt
-   => hs_rating = rating * F(distance, own pool) / F(distance, hs pool)
+  1. pool_mean(hs)/pool_mean(pool) from conversions.pool_mean -> every
+     factor came back x1.0001. NOT because the constant is per-gender:
+     conversions' sampler scopes rows by athlete_ratings MEMBERSHIP
+     (`ath.athlete_id = r.person_id`), so a college athlete's sample is
+     mostly their own HS-era rows and every pool's median lands on the
+     corpus-dominant HS mode (~1227.5 men / ~1466 women). A polluted
+     sample, not a discovery. (Harmless inside the conversions tool
+     itself -- there source and target share one pool, so its pool_mean
+     always cancels.)
+  2. The spline-factor ratio F(d, pool)/F(d, hs) alone -> college_m
+     x1.63, pro x1.00: OVERcorrects, because the per-pool spline LEVEL is
+     arbitrary (the fitter pins ratios between distances, not the level;
+     gated pools inherit the sport global, which is why pro and
+     college_f|XC looked "reasonable"). The level is not the talent gap.
+  3. Both ratios together -- and the arbitrary level cancels:
 
-  raw time, weather and difficulty cancel -- same race on both sides. The
-  factor is per (pool, sport, distance), not one constant per pool: the
-  spline levels can differ by distance, and pretending otherwise would be
-  the flat-1.06 mistake all over again.
+      nt          = raw * F(d, pool)                (spline level inside)
+      rating      = 100 * C(pool) * (1+difficulty) / nt
+      C(pool)     = pool-mean ability IN THE POOL'S OWN nt UNITS
+                  ~ mean_raw(pool) * F(d, pool)
+   => hs_rating   = rating * [C(hs)/C(pool)] * [F(d, pool)/F(d, hs)]
+                  = rating * mean_raw(hs)/mean_raw(pool)     -- levels gone
+
+  C comes from the same recovery formula conversions uses, but scoped by
+  ranking_results.pool -- the pool of the ROW'S OWN SEASON -- which is
+  what kills the membership pollution. F comes from the engine's cached
+  normalization factor. Era (gender-keyed) and geometry (pool-blind)
+  cancel in the F ratio; raw time, weather and difficulty cancel between
+  the race's two views. The factor stays per (pool, sport, distance):
+  spline levels differ by distance, and pretending otherwise would be the
+  flat-1.06 mistake all over again.
 
 ★ SAME GENDER, ALWAYS. 'college_f' maps onto 'hs_f', never 'hs_m': the view
   answers "what would this rating read among high schoolers like them", and
@@ -47,8 +62,10 @@ from statistics import median
 
 # The engine's forward machinery via the conversions wrapper -- reused,
 # never reimplemented, so a spline refit changes this view automatically.
-from conversions import _forward_factor, pool_mean
+from conversions import _forward_factor, default_difficulty
 from athlete_bests import _tfEvent
+# conversions has already put scripts/ on sys.path by the time this runs.
+from database import getConn
 
 # factor cache: (pool, sport, distance) -> multiplier onto the same-gender
 # HS scale, or None for a context that cannot be scaled. Process-lifetime;
@@ -66,7 +83,106 @@ _FACTOR_LO, _FACTOR_HI = 0.5, 2.0
 # a page whose factors are all inside this band hides the toggle.
 _MOVES = 0.005
 
-_FAILED = set()          # (pool, sport, dq) already complained about
+_FAILED = set()          # keys already complained about
+
+
+# ------------------------------------------------------------------ #
+#  C(pool, sport) -- the pool constant, recovered from SEASON-ACCURATE rows
+# ------------------------------------------------------------------ #
+#
+# Same recovery formula as conversions.pool_mean (the engine wrote every
+# other term of its own equation down), but the sample is scoped by
+# ranking_results.pool -- the pool of the row's own season -- instead of
+# athlete_ratings membership. That scoping is the entire fix: membership
+# mixes a college athlete's HS-era rows into the college sample and every
+# pool medians to the HS mode. The difficulty joins are copied from
+# conversions._MEAN_SQL, the join that was already proven right.
+
+_CONST_SQL = {
+    "XC": """
+        WITH sample AS (
+            SELECT rr.result_id
+            FROM   ranking_results rr
+            WHERE  rr.pool = %(pool)s AND rr.sport = 'XC'
+            LIMIT  %(n)s
+        )
+        SELECT r.speed_rating, r.normalized_time, cd.difficulty
+        FROM   sample s
+        JOIN   results r ON r.result_id = s.result_id
+        LEFT JOIN meets m
+               ON m.div_id = r.div_id AND m.meet_id = r.meet_id
+              AND m.source = r.source
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = m.course_name
+              AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+        LEFT JOIN course_difficulties cd
+               ON cd.canonical_id = cc.canonical_id
+              AND cd.distance_m   = (round(m.distance / 100.0) * 100)::int
+        WHERE r.speed_rating > 0 AND r.normalized_time > 0
+    """,
+    "TF": """
+        WITH sample AS (
+            SELECT rr.result_id
+            FROM   ranking_results rr
+            WHERE  rr.pool = %(pool)s AND rr.sport = 'TF'
+            LIMIT  %(n)s
+        )
+        SELECT r.speed_rating, r.normalized_time, cd.difficulty
+        FROM   sample s
+        JOIN   results_tf r ON r.result_id = s.result_id
+        LEFT JOIN LATERAL (
+            SELECT m.location_id, m.is_indoor
+            FROM meets_tf m WHERE m.meet_id = r.meet_id LIMIT 1
+        ) m ON TRUE
+        LEFT JOIN course_difficulties cd
+               ON m.location_id IS NOT NULL AND m.location_id <> 0
+              AND cd.course_name = 'TF:loc:' || m.location_id || ':'
+                                || CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                                        THEN 'in' ELSE 'out' END
+        WHERE r.speed_rating > 0 AND r.normalized_time > 0
+    """,
+}
+
+_CONST_CACHE = {}              # (pool, sport) -> constant or None
+_CONST_SAMPLE = 1500           # rows to median over; a constant needs few
+_CONST_MIN_ROWS = 50           # below this the median is an anecdote
+
+
+def _poolConstant(pool, sport):
+    """C(pool, sport): median of rating*nt/(1+difficulty)/100 over rows the
+    athlete ran WHILE IN this pool. None when the pool cannot be sampled."""
+    key = (pool, sport)
+    if key in _CONST_CACHE:
+        return _CONST_CACHE[key]
+
+    sql = _CONST_SQL.get(sport)
+    vals = []
+    if sql is not None:
+        try:
+            with getConn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
+                    for rating, norm, difficulty in cur.fetchall():
+                        if not rating or not norm:
+                            continue
+                        d = (difficulty if difficulty is not None
+                             else default_difficulty(sport))
+                        vals.append(
+                            float(rating) * float(norm) / (1.0 + d) / 100.0)
+        except Exception as exc:         # noqa: BLE001 -- a view, not a page
+            if key not in _FAILED:
+                _FAILED.add(key)
+                print(f"pool_view: constant sample for {pool}/{sport} "
+                      f"raised {type(exc).__name__}: {exc}", flush=True)
+
+    value = median(vals) if len(vals) >= _CONST_MIN_ROWS else None
+    if value is None and key not in _FAILED:
+        _FAILED.add(key)
+        print(f"pool_view: constant for {pool}/{sport} unavailable "
+              f"({len(vals)} usable rows, need {_CONST_MIN_ROWS})", flush=True)
+    _CONST_CACHE[key] = value
+    return value
 
 
 def hsFactor(pool, sport, distance_m):
@@ -100,25 +216,33 @@ def hsFactor(pool, sport, distance_m):
     try:
         # season/track/event_short deliberately None: era keys off the
         # pool's GENDER (identical on both sides) and geometry never sees
-        # the pool, so both cancel in the ratio -- the ratio isolates
-        # exactly the per-pool spline level, which is the thing being
-        # converted.
-        own = _forward_factor(float(dq), pool, None, None, None, sport, None)
-        hs = _forward_factor(float(dq), "hs_" + suffix,
-                             None, None, None, sport, None)
+        # the pool, so both cancel in the ratio -- the F ratio isolates
+        # exactly the per-pool spline level, which the C ratio then
+        # cancels back out (see the module header: the two ratios
+        # together are the talent gap, neither alone is).
+        f_own = _forward_factor(float(dq), pool, None, None, None, sport, None)
+        f_hs = _forward_factor(float(dq), "hs_" + suffix,
+                               None, None, None, sport, None)
     except Exception as exc:             # noqa: BLE001 -- a view, not a page
-        own = hs = None
+        f_own = f_hs = None
         why = f"engine factor raised {type(exc).__name__}: {exc}"
 
+    if why is None and (not f_own or not f_hs):
+        why = f"engine factor returned {pool}={f_own!r}, hs_{suffix}={f_hs!r}"
+
     if why is None:
-        if not own or not hs:
-            why = f"engine factor returned {pool}={own!r}, hs_{suffix}={hs!r}"
+        c_own = _poolConstant(pool, sport)
+        c_hs = _poolConstant("hs_" + suffix, sport)
+        if not c_own or not c_hs:
+            why = (f"pool constant unavailable "
+                   f"({pool}={c_own!r}, hs_{suffix}={c_hs!r})")
         else:
-            factor = float(own) / float(hs)
+            factor = (float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs))
             if not (_FACTOR_LO <= factor <= _FACTOR_HI):
                 why = (f"factor {factor:.3f} outside the "
                        f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
-                       f"({pool}={own:.4f}, hs_{suffix}={hs:.4f})")
+                       f"(C {c_own:.1f}->{c_hs:.1f}, "
+                       f"F {f_own:.4f}->{f_hs:.4f})")
                 factor = None
 
     if why is not None and key not in _FAILED:
@@ -264,11 +388,43 @@ def _diag(person_id=None):
     from database import getConn
     import psycopg2.extras
 
-    print("\n  -- view factors (own scale -> HS scale) --------------------")
     pools = ("ms_m", "ms_f", "hs_m", "hs_f",
              "college_m", "college_f", "pro_m", "pro_f")
+
+    print("\n  -- pool constants C (season-accurate recovery; own nt units)")
+    print("  " + "pool".ljust(12) + "XC".rjust(10) + "TF".rjust(10)
+          + "    (a pool equal to its HS twin here has its whole gap in "
+            "the spline level)")
+    for pool in pools:
+        cells = []
+        for sport in ("XC", "TF"):
+            c = _poolConstant(pool, sport)
+            cells.append((f"{c:.1f}" if c else "--").rjust(10))
+        print("  " + pool.ljust(12) + "".join(cells))
+
+    print("\n  -- spline-level ratios F(pool)/F(hs) (arbitrary alone; "
+          "cancelled by C)")
     header = "  " + "pool".ljust(12) + "".join(
         f"{s} {int(d)}m".rjust(12) for s, d in _REF)
+    print(header)
+    for pool in pools:
+        cells = []
+        for sport, dist in _REF:
+            suffix = pool.rsplit("_", 1)[-1]
+            try:
+                f_own = _forward_factor(dist, pool, None, None, None,
+                                        sport, None)
+                f_hs = _forward_factor(dist, "hs_" + suffix, None, None,
+                                       None, sport, None)
+                ratio = (float(f_own) / float(f_hs)
+                         if f_own and f_hs else None)
+            except Exception:             # noqa: BLE001
+                ratio = None
+            cells.append((f"x{ratio:.4f}" if ratio is not None
+                          else "--").rjust(12))
+        print("  " + pool.ljust(12) + "".join(cells))
+
+    print("\n  -- VIEW FACTORS (C ratio x F ratio -- what the page applies)")
     print(header)
     for pool in pools:
         cells = []
@@ -277,21 +433,8 @@ def _diag(person_id=None):
             cells.append((f"x{factor:.4f}" if factor is not None
                           else "--").rjust(12))
         print("  " + pool.ljust(12) + "".join(cells))
-    print("  (x1.0000 across every non-HS row means the current spline "
-          "artifacts carry\n  no per-pool level -- see the constants below "
-          "-- and the view has nothing\n  to show; that is an engine-side "
-          "fact, not a website bug)")
-
-    print("\n  -- recovered rating constants (per gender if the view can "
-          "work) ----")
-    for pool in pools:
-        try:
-            mean = pool_mean(pool)
-        except Exception as exc:          # noqa: BLE001
-            print(f"  {pool:<12} pool_mean RAISED {type(exc).__name__}: {exc}")
-            continue
-        mean_s = f"{mean:.1f}" if mean else str(mean)
-        print(f"  {pool:<12} {mean_s:>10}")
+    print("  (sanity marks: college_m ~x1.2-1.35, ms_m ~x0.75-0.9, "
+          "pro above college;\n  a -- cell printed its reason above)")
 
     if person_id is None:
         print()
