@@ -20,13 +20,12 @@
     </p>
 
     {% if other_sources %}
-    {# Same collision note as meet.html: one id, two real-world meets. #}
+    {# Same collision note as meet.html: one id, two real-world meets.
+       No feed names, in the text or the URL. #}
     <p class="meta source-split-note">
-        Two different meets share this id. Showing the
-        {{ "Athletic.net" if src == "anet" else "TFRRS" }} meet —
+        Two different meets share this page address.
         {% for o in other_sources %}
-        <a href="?source={{ o.source }}">see the
-            {{ "Athletic.net" if o.source == "anet" else "TFRRS" }} meet</a>{{ ", " if not loop.last }}
+        <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
         {% endfor %}
     </p>
     {% endif %}

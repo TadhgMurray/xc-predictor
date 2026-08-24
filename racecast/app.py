@@ -549,7 +549,23 @@ def get_races(cur, person_id):
                r.div_id                      AS div_id,
                r.canon_meet_id               AS canon_meet_id,
                NULL::bigint                  AS event_id,
-               r.source                      AS source
+               r.source                      AS source,
+               -- Finishing place, DERIVED -- the stored `place` column has
+               -- never been trusted (see meet_compile). Count of strictly
+               -- faster finishers + 1 = standard competition ranking, ties
+               -- share a place. 999999 is the DNS/DNF sentinel, not a time.
+               -- ~2 indexed subqueries per race over (meet_id, div_id).
+               (SELECT count(*) + 1 FROM results r2
+                 WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
+                   AND r2.time_seconds IS NOT NULL
+                   AND r2.time_seconds < 999999
+                   AND r2.time_seconds < r.time_seconds) AS place,
+               (SELECT count(*) + 1 FROM results r2
+                 WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
+                   AND r2.school IS NOT DISTINCT FROM r.school
+                   AND r2.time_seconds IS NOT NULL
+                   AND r2.time_seconds < 999999
+                   AND r2.time_seconds < r.time_seconds) AS team_place
         FROM results r
         LEFT JOIN meets m
                ON m.div_id  = r.div_id
@@ -601,7 +617,28 @@ def get_races(cur, person_id):
                r.div_id  AS div_id,
                r.canon_meet_id               AS canon_meet_id,
                r.event_id                    AS event_id,
-               r.source                      AS source
+               r.source                      AS source,
+               -- Same derived place as the XC half; the race here is
+               -- (meet, event, div), div_id nullable on tfrrs rows. Field
+               -- events rank by mark, not time -- no place rather than a
+               -- wrong one.
+               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL ELSE
+                 (SELECT count(*) + 1 FROM results_tf r2
+                   WHERE r2.meet_id = r.meet_id
+                     AND r2.event_id = r.event_id
+                     AND r2.div_id IS NOT DISTINCT FROM r.div_id
+                     AND r2.time_seconds IS NOT NULL
+                     AND r2.time_seconds < 999999
+                     AND r2.time_seconds < r.time_seconds) END AS place,
+               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL ELSE
+                 (SELECT count(*) + 1 FROM results_tf r2
+                   WHERE r2.meet_id = r.meet_id
+                     AND r2.event_id = r.event_id
+                     AND r2.div_id IS NOT DISTINCT FROM r.div_id
+                     AND r2.school IS NOT DISTINCT FROM r.school
+                     AND r2.time_seconds IS NOT NULL
+                     AND r2.time_seconds < 999999
+                     AND r2.time_seconds < r.time_seconds) END AS team_place
        FROM results_tf r
         -- tfrrs rows often carry a blank div_id (it's only populated for meets
         -- re-scraped with the capture code), and NULL = anything is NULL, so a
@@ -650,7 +687,10 @@ def get_races(cur, person_id):
 # Fields that identify WHICH page a row links to. Never merged between copies:
 # a meet_id from one source plus a div_id from the other is a broken URL.
 _LINK_FIELDS = {"meet_id", "div_id", "event_id", "result_id", "source",
-                "canon_meet_id"}
+                "canon_meet_id",
+                # place is computed WITHIN the linked division; the tfrrs
+                # twin's div 0 would give a different, wrong number.
+                "place", "team_place"}
 
 
 def _race_identity(race):
@@ -792,6 +832,18 @@ def season_label(sport, date_text):
     except (TypeError, ValueError, IndexError):
         return (date_text or "")[:4]
     return str(year + 1) if sport == "TF" else str(year)
+
+
+@app.template_filter("ordinal")
+def ordinal(n):
+    """1 -> '1st', 12 -> '12th'. None or junk renders empty, never raises."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return ""
+    suf = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd",
+                                            3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
 
 
 @app.template_filter("event_label")
@@ -1316,13 +1368,24 @@ def meet_sources(cur, table, meet_id):
     return cur.fetchall()
 
 
-def pick_source(sources, requested):
-    """(chosen, others): the requested source if present, else the biggest."""
-    names = [s["source"] for s in sources]
-    if len(names) < 2:
-        return (names[0] if names else None), []
-    chosen = requested if requested in names else names[0]
-    return chosen, [s for s in sources if s["source"] != chosen]
+def pick_source(sources, alt):
+    """(chosen, alt_idx, others) from the biggest-first source list.
+
+    ⚠ THE PARAM AND THE PAGE STAY SOURCE-BLIND. Feed names never appear in
+      the UI or in a URL -- the site presents one dataset, not its scrapers.
+      The toggle is an opaque index (?alt=N) into the size-ordered list;
+      each entry in `others` carries the alt value that reaches it and its
+      row count, nothing else.
+    """
+    if not sources:
+        return None, 0, []
+    try:
+        idx = max(0, min(int(alt or 0), len(sources) - 1))
+    except (TypeError, ValueError):
+        idx = 0
+    others = [{"alt": i, "n": s["n"]}
+              for i, s in enumerate(sources) if i != idx]
+    return sources[idx]["source"], idx, others
 
 
 @app.route("/meet/xc/<int:meet_id>")
@@ -1332,8 +1395,8 @@ def meet_xc(meet_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             sources = meet_sources(cur, "results", meet_id)
-            src, other_sources = pick_source(sources,
-                                             request.args.get("source"))
+            src, alt_idx, other_sources = pick_source(
+                sources, request.args.get("alt"))
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
             compiled  = compiledResults(cur, meet_id, source=src)
@@ -1355,7 +1418,7 @@ def meet_xc(meet_id):
 
     return render_template("meet.html", header=header, divisions=divisions,
                            compiled=compiled_index,
-                           src=src, other_sources=other_sources)
+                           alt_idx=alt_idx, other_sources=other_sources)
 
 
 @app.route("/race/xc/<int:meet_id>/compiled/<int:distance>/<gender>")
@@ -1375,7 +1438,8 @@ def compiled_race(meet_id, distance, gender):
             # Same source discipline as the meet page: on a colliding id the
             # compiled merge must never mix the two real-world meets.
             sources = meet_sources(cur, "results", meet_id)
-            src, _others = pick_source(sources, request.args.get("source"))
+            src, _idx, _others = pick_source(sources,
+                                             request.args.get("alt"))
             header = get_meet_header(cur, meet_id, source=src)
             groups = compiledResults(cur, meet_id, source=src)
 
@@ -1403,7 +1467,8 @@ def api_meet_compiled(meet_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             sources = meet_sources(cur, "results", meet_id)
-            src, _others = pick_source(sources, request.args.get("source"))
+            src, _idx, _others = pick_source(sources,
+                                             request.args.get("alt"))
             compiled = compiledResults(cur, meet_id, source=src)
             published = publishedScores(cur, meet_id)
 
@@ -1553,8 +1618,8 @@ def meet_tf(meet_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             sources = meet_sources(cur, "meets_tf", meet_id)
-            src, other_sources = pick_source(sources,
-                                             request.args.get("source"))
+            src, alt_idx, other_sources = pick_source(
+                sources, request.args.get("alt"))
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
 
@@ -1562,7 +1627,7 @@ def meet_tf(meet_id):
         abort(404)
 
     return render_template("meet_tf.html", header=header, events=events,
-                           src=src, other_sources=other_sources)
+                           alt_idx=alt_idx, other_sources=other_sources)
 
 
 # ===================================================================== #

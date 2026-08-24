@@ -167,6 +167,7 @@
                     <th>Meet</th>
                     <th>Event</th>
                     <th>Result</th>
+                    <th>Place</th>
                     <th>Rating</th>
                     <th>Difficulty</th>
                     <th>PR/SR Flags</th>
@@ -197,6 +198,16 @@
                     </td>
                     <td>{{ race.event|event_label }}</td>
                     <td>{{ race.result }}</td>
+                    {# Derived within the division, ties share a place. No
+                       place for field events or DNS/DNF sentinel rows. #}
+                    <td>
+                        {%- if race.place and not race.is_field
+                               and race.time_raw and race.time_raw < 999999 -%}
+                            {{ race.place|ordinal }}{% if race.team_place -%}
+                            <span class="muted"> · {{ race.team_place|ordinal }} on team</span>
+                            {%- endif %}
+                        {%- else -%}—{%- endif -%}
+                    </td>
                     <td>{{ "%.1f"|format(race.speed_rating) if race.speed_rating else "—" }}</td>
                     <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
                     {# Same nine conditions as before -- only the rendering moved
