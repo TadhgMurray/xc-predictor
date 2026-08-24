@@ -296,11 +296,9 @@
     </p>
     {% endif %}
 
-    <nav class="sport-toggle">
-        <a href="#xc">Cross Country</a>
-        <a href="#tf">Track &amp; Field</a>
-    </nav>
-
+    {# One row: the sport nav on the left, the pool-view toggle flush     #}
+    {#  right (owner's pick, option C) -- same height, same segmented     #}
+    {#  shape, so the two boxes read as siblings on one line.             #}
     {# ================================================================= #}
     {#  POOL-VIEW TOGGLE. Rendered only when this career crosses a pool  #}
     {#  boundary (has_hs_view) -- for a pure-HS athlete both views are   #}
@@ -308,17 +306,23 @@
     {#  athlete-charts.js owns the behaviour: it swaps every .rv span    #}
     {#  and redraws the rating charts, and remembers the choice.         #}
     {# ================================================================= #}
-    {% if has_hs_view %}
-    <div class="scale-toggle" id="scale-toggle">
-        <span class="scale-lab">Rating scale</span>
-        <button type="button" data-scale="pool" class="is-active">Own pool</button>
-        <button type="button" data-scale="hs">HS-equivalent</button>
-        <span class="flag scale-note" tabindex="0"
-              data-title="HS-equivalent view"
-              data-blurb="Ratings normally use 100 as the average of the athlete's own pool, so the scale shifts when they move up a level. This view re-expresses every rating against the same-gender high-school pool, so the whole career sits on one continuous scale. Records and flags are still judged on the own-pool scale."
-              aria-label="HS-equivalent view. Ratings normally use 100 as the average of the athlete's own pool; this view re-expresses every rating against the same-gender high-school pool so the whole career sits on one continuous scale.">?</span>
+    <div class="toggle-row">
+        <nav class="sport-toggle">
+            <a href="#xc">Cross Country</a>
+            <a href="#tf">Track &amp; Field</a>
+        </nav>
+        {% if has_hs_view %}
+        <div class="scale-toggle" id="scale-toggle">
+            <span class="scale-lab">Rating scale</span>
+            <button type="button" data-scale="pool" class="is-active">Own pool</button>
+            <button type="button" data-scale="hs">HS-equivalent</button>
+            <span class="flag scale-note" tabindex="0"
+                  data-title="HS-equivalent view"
+                  data-blurb="Ratings normally use 100 as the average of the athlete's own pool, so the scale shifts when they move up a level. This view re-expresses every rating against the same-gender high-school pool, so the whole career sits on one continuous scale. Records and flags are still judged on the own-pool scale."
+                  aria-label="HS-equivalent view. Ratings normally use 100 as the average of the athlete's own pool; this view re-expresses every rating against the same-gender high-school pool so the whole career sits on one continuous scale.">?</span>
+        </div>
+        {% endif %}
     </div>
-    {% endif %}
 
     <div class="page-layout">
 

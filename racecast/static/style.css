@@ -2840,13 +2840,25 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
  * Same segmented shape as .sport-toggle so the two controls read as
  * siblings; buttons rather than links because switching a scale is state,
  * not navigation. The active segment is filled -- an outline alone did not
- * say which view the page is showing. */
+ * say which view the page is showing.
+ *
+ * .toggle-row puts the sport nav and this on ONE line: nav left, toggle
+ * flush right, centred on the same axis so the two boxes align (the nav's
+ * own bottom margin moves up onto the row). Wraps on narrow screens
+ * rather than crushing either control. */
+.toggle-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+    margin: 0.6rem 0 1.2rem;
+}
+.toggle-row .sport-toggle { margin: 0; }
 .scale-toggle {
     display: inline-flex;
     align-items: center;
     gap: 0;
-    margin: 0 0 1.2rem 0.9rem;
-    vertical-align: top;
+    margin-left: auto;
 }
 .scale-lab {
     font-size: 0.75rem;
