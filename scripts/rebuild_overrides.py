@@ -486,6 +486,76 @@ CREATE INDEX ON reb_gap (meet_id, div_id);
 ANALYZE reb_gap;
 """
 
+# ------------------------------------------------------------------ #
+#  THE FORM CURVE -- FITNESS BY RACE-OF-SEASON, MEASURED AND REMOVED
+# ------------------------------------------------------------------ #
+#
+# ⚠ AN ATHLETE'S OWN MEDIAN IS A MID-SEASON NUMBER, so every early-season
+#   race reads slow against it and the slow direction fills with phantom
+#   relabels. Measured on the 2026-08-23 run: 3,147 divisions failed the
+#   direction gate as openers, and of the 732 negative proposals that
+#   survived, the file mixed three populations only fitness separates --
+#   real mislabels at -33..-40 (Rocklin's 3000-actually-5000), time trials
+#   and openers at -12..-18 (LELAND TIME TRIALS, EHS Time Trial, the
+#   Wyoming altitude opener), and odd-but-correct local distances being
+#   "fixed" off a -12 (Crystal Springs' famous 4747).
+#
+# ★ SO FITNESS IS MEASURED AND SUBTRACTED, NOT GUESSED. Number each
+#   athlete's races within their academic season; the corpus-wide median
+#   gap at race #1, #2, ... IS the form curve, printed every run. A wrong
+#   distance keeps its deficit after the curve comes off (-40 stays ~-30);
+#   an opener collapses into the bar. Race-of-season self-aligns regions:
+#   Texas opens in early August and New York in September, but race #1 is
+#   race #1 everywhere.
+#
+# ! ONE COPY, AFTER EITHER BODY. This rewrites reb_gap in place (keeping
+#   gap_raw), so both --gap-from modes get it without a second copy of the
+#   rule -- the label lateral already taught us what three copies cost.
+#   Rows with an unparseable date get form 0 and pass through unchanged.
+#   Pass 3 recomputes its per-row gap from speed_rating and med directly
+#   and is deliberately untouched: a single row's impossibility is not a
+#   fitness question.
+_FORM_SQL = """
+DROP TABLE IF EXISTS reb_gap_raw;
+ALTER TABLE reb_gap RENAME TO reb_gap_raw;
+
+DROP TABLE IF EXISTS reb_seq;
+CREATE TEMP TABLE reb_seq AS
+SELECT g.result_id,
+       LEAST(row_number() OVER (
+           PARTITION BY g.ident, {season}
+           ORDER BY r.date, g.result_id), 10) AS k
+FROM   reb_gap_raw g
+JOIN   {table} r ON r.result_id = g.result_id
+WHERE  r.date ~ '^(19|20)[0-9][0-9]-[0-9][0-9]-[0-9][0-9]';
+CREATE INDEX ON reb_seq (result_id);
+ANALYZE reb_seq;
+
+DROP TABLE IF EXISTS reb_form;
+CREATE TEMP TABLE reb_form AS
+SELECT s.k,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap) AS form,
+       count(*) AS n
+FROM   reb_gap_raw g
+JOIN   reb_seq s ON s.result_id = g.result_id
+GROUP  BY s.k;
+
+CREATE TEMP TABLE reb_gap AS
+SELECT g.meet_id, g.div_id, g.result_id, g.ident,
+       g.speed_rating, g.time_seconds, g.med, g.gender,
+       g.gap                                 AS gap_raw,
+       g.gap - COALESCE(f.form, 0.0)         AS gap
+FROM   reb_gap_raw g
+LEFT   JOIN reb_seq  s ON s.result_id = g.result_id
+LEFT   JOIN reb_form f ON f.k = s.k;
+
+CREATE INDEX ON reb_gap (meet_id, div_id);
+ANALYZE reb_gap;
+DROP TABLE reb_gap_raw;
+DROP TABLE reb_seq;
+"""
+
+
 # ⚠ A LITERAL % IN ANY OF THESE STRINGS IS A RUNTIME ERROR, NOT A TYPO.
 #   psycopg2 reads % as the start of a placeholder, so a SQL COMMENT saying
 #   "100% on one side" makes execute() raise "dict is not a sequence" -- an
@@ -749,7 +819,8 @@ def _step(t0, label):
 
 
 def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
-             skip_label_check=False, gap_from="times", coverage=False):
+             skip_label_check=False, gap_from="times", coverage=False,
+             form=True):
     _noBarePercent("_PASS1_SQL", _PASS1_SQL)
     _noBarePercent("_GAP_BODY", _GAP_BODY)
     # ! ALL THREE, not just the one that broke. They share _LABEL_LATERAL now,
@@ -818,6 +889,22 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         cur.execute(_GAP_BODY.format(table=_TABLE[sport]),
                     {"min_own": min_own})
     _t = _step(_t, f"gap table from {gap_from} (the expensive one)")
+    if form:
+        from season_year import seasonYearSqlInt
+        sql = _FORM_SQL.format(table=_TABLE[sport],
+                               season=seasonYearSqlInt(None, "r.date"))
+        _noBarePercent("_FORM_SQL", sql)
+        # The window sort over the whole gap table is the same size as the
+        # own-median sort; give it the same room in the ratings branch too.
+        cur.execute("SET LOCAL work_mem = '2GB'")
+        cur.execute(sql)
+        _t = _step(_t, "form curve (fitness by race-of-season)")
+        cur.execute("SELECT k, form, n FROM reb_form ORDER BY k")
+        curve = cur.fetchall()
+        print("  [form] median gap by race-of-season, subtracted from every "
+              "gap (--no-form reverts):\n         "
+              + "  ".join(f"#{r['k']}{'+' if r['k'] == 10 else ''} "
+                          f"{r['form']:+.1f}" for r in curve))
     # RealDictCursor, so name the aggregates rather than unpacking a tuple.
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
     row = cur.fetchone()
@@ -2111,6 +2198,9 @@ def main():
     ap.add_argument("--min-field", type=int, default=MIN_FIELD)
     ap.add_argument("--min-minority", type=int, default=MIN_MINORITY)
     ap.add_argument("--min-own-races", type=int, default=MIN_OWN_RACES)
+    ap.add_argument("--no-form", action="store_true",
+                    help="do not subtract the race-of-season form curve "
+                         "from the gaps (for diffing against older runs)")
     ap.add_argument("--limit", type=int, default=400)
     ap.add_argument("--max-per-div", type=int, default=3, dest="max_per_div",
                     help="pass 3: more rows than this over the bar in one "
@@ -2179,7 +2269,8 @@ def main():
                         as_if_wiped=args.as_if_wiped, tol=args.same_tol,
                         skip_label_check=args.skip_label_check,
                         gap_from=args.gap_from,
-                        coverage=args.coverage) is None:
+                        coverage=args.coverage,
+                        form=not args.no_form) is None:
                 return 2
 
             if args.ladder:
