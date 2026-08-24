@@ -139,7 +139,13 @@ if ($hasBlock) {
 Step "02_pass0"    { python scripts\find_dropped_divisions.py --min-survivors 2 --out pass0.py }
 Step "02_pass1"    { python scripts\rebuild_overrides.py --pass 1 --sigma $Sigma @asIf --out pass1.py }
 Step "02_pass2"    { python scripts\rebuild_overrides.py --pass 2 --sigma $Sigma @asIf --out pass2.py }
-Step "02_pass3"    { python scripts\rebuild_overrides.py --pass 3 --sigma $Sigma @asIf --out pass3.py }
+# ! --limit 20000, NOT THE DEFAULT 400. The default sizes an interactive
+#   eyeball run; the SQL fetches the WORST rows first, and a real corpus has
+#   more than 400 above the bar. The 2026-08-23 unattended run proved it:
+#   274 group + 76 median + 50 drops + 0 saves = exactly 400 -- saturated,
+#   with the whole +90 half-time-corruption band below the fetch horizon.
+#   20,000 matches apply_passes' pass-3 cap, so nothing legitimate truncates.
+Step "02_pass3"    { python scripts\rebuild_overrides.py --pass 3 --sigma $Sigma @asIf --limit 20000 --out pass3.py }
 
 # ⚠ THE VALIDATION GATE. apply_passes execs every proposal against throwaway
 #   dicts and refuses on a syntax error, an absurd distance, or a volume past
