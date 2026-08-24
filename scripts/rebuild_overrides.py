@@ -156,6 +156,7 @@ def snapToCorpus(implied):
 
 import argparse
 import io
+import os
 import sys
 
 from psycopg2.extras import RealDictCursor
@@ -929,6 +930,9 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         cur.execute(_CELL_SQL)
         cur.execute(_PM_SQL.format(table=_TABLE[sport]))
         _t = _step(_t, "cells and pool scale")
+        # The two corpus constants --explain needs at start-up, cached so
+        # its fast path skips them. See _writeExplainCache.
+        _writeExplainCache(cur)
         cur.execute(_GAP_BODY_TIMES.format(table=_TABLE[sport]),
                     {"min_own": min_own})
     else:
@@ -1735,6 +1739,153 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
 
 
 # ------------------------------------------------------------------ #
+#  --explain IN SECONDS: the corpus build, restricted to one division
+# ------------------------------------------------------------------ #
+#
+# ★ THE FULL PATH PAID ~12 MINUTES TO ANSWER A QUESTION ABOUT ~100 ROWS.
+#   --explain used to run the whole pipeline -- 32M-row gap table, 4-minute
+#   form curve, course cache -- and then read one division out of it. But a
+#   division's verdict only needs its OWN athletes' careers: their medians,
+#   the cell difficulties, the revert state and the label. All of that is
+#   the same SQL, restricted to those athletes -- a few thousand rows.
+#
+# ⚠ TWO KNOWN DIFFERENCES FROM THE FULL RUN, BOTH PRINTED AT RUN TIME:
+#     form   the race-of-season correction needs the full corpus and is
+#            skipped; it is worth at most ~3 points. A verdict within 3 of
+#            a boundary deserves --explain-full.
+#     pm     the pool scale constant comes from the cache the last full run
+#            wrote (it cancels inside every gap; it only sets the printed
+#            scale). No cache yet -> recomputed live, a one-time ~12s cost.
+
+_EXPLAIN_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "engine", "data",
+                              "rebuild_explain_cache.pkl")
+
+
+def _writeExplainCache(cur):
+    """pm-per-pool and the raw ladder, saved so --explain skips the two
+    corpus aggregates that dominate its start-up. Written by every full
+    build, so it is at most one run stale -- and both values move only
+    when the corpus does."""
+    import pickle
+    try:
+        cur.execute("SELECT pool, pm FROM reb_pm")
+        pm = {r["pool"]: float(r["pm"]) for r in cur.fetchall()}
+        cur.execute("SELECT distance, n FROM reb_ladder ORDER BY distance")
+        raw = [(int(r["distance"]), int(r["n"])) for r in cur.fetchall()]
+        with open(_EXPLAIN_CACHE, "wb") as f:
+            pickle.dump({"pm": pm, "ladder_raw": raw}, f)
+    except Exception as e:        # a convenience, never a failure mode
+        print(f"  (explain cache not written: {e})")
+
+
+def _loadExplainCache():
+    import pickle
+    try:
+        with open(_EXPLAIN_CACHE, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
+
+def _restrict(sql, anchor, extra):
+    """Anchored injection into a shared SQL string -- LOUD when the anchor
+    drifts, instead of silently running the unrestricted corpus query."""
+    if anchor not in sql:
+        raise AssertionError(f"explain fast-path anchor missing: {anchor!r}")
+    return sql.replace(anchor, anchor + extra)
+
+
+def explainFast(cur, args):
+    """explain1, fed by a division-restricted build. Seconds, not minutes."""
+    import time
+    meet, _, div = args.explain.partition("/")
+    key = (int(meet), int(div or 0))
+    table = _TABLE[args.sport]
+    sys.path.insert(0, "racecast")
+    from build_ranking_results import _XC_TFRRS_DIST_SQL
+
+    _t = time.time()
+    cur.execute(_XC_TFRRS_DIST_SQL)
+    if args.as_if_wiped:
+        cur.execute(_UNOVERRIDE_SQL, {"k": K, "tol": args.same_tol})
+    else:
+        cur.execute(_UNOVERRIDE_NONE)
+    cache = _loadExplainCache()
+    if cache and cache.get("ladder_raw"):
+        global _CORPUS_LADDER
+        _CORPUS_LADDER = decomb(cache["ladder_raw"])
+    else:
+        loadLadder(cur)
+    _t = _step(_t, "revert state + ladder")
+
+    cur.execute(f"""
+        SELECT DISTINCT COALESCE(person_id, athlete_id) AS ident
+        FROM   {table}
+        WHERE  meet_id = %s AND div_id = %s
+          AND  COALESCE(person_id, athlete_id) IS NOT NULL
+    """, key)
+    idents = [r["ident"] for r in cur.fetchall()]
+    print(f"  {len(idents):,} athletes in {key[0]}/{key[1]}")
+    if not idents:
+        print(f"\n  WHY {key[0]}/{key[1]} IS NOT IN PASS 1\n")
+        print(f"    no rows with an athlete id for that meet/div in {table}. "
+              f"Check the ids:\n    on a colliding meet page the other "
+              f"source's division is a different key,\n    and tfrrs XC "
+              f"div_ids are small per-meet indices, not global ones.")
+        return
+
+    cur.execute("SET LOCAL work_mem = '512MB'")
+    # reb_pool restricted to these athletes. Their pool only routes the pm
+    # scale constant, so a missing row degrades the printed level, never the
+    # gap.
+    cur.execute(_restrict(_POOL_SQL,
+                          "  AND  sport = %(sport)s",
+                          "\n  AND  person_id = ANY(%(ids)s)"),
+                {"sport": args.sport, "ids": idents})
+    cur.execute(_CELL_SQL)
+    if cache and cache.get("pm"):
+        cur.execute("DROP TABLE IF EXISTS reb_pm")
+        cur.execute("CREATE TEMP TABLE reb_pm (pool text, pm float8)")
+        from psycopg2.extras import execute_values
+        execute_values(cur, "INSERT INTO reb_pm VALUES %s",
+                       sorted(cache["pm"].items()))
+        pm_src = "cached from the last full run"
+    else:
+        cur.execute(_PM_SQL.format(table=table))
+        pm_src = "recomputed live -- a full pass run writes the cache"
+    _t = _step(_t, f"pools + cells (pm {pm_src})")
+
+    # The real gap body, restricted. The OR-of-two-indexable-conditions is
+    # COALESCE(person_id, athlete_id) = ANY(ids) written so an index on
+    # either id column can serve it.
+    cur.execute(_restrict(
+        _GAP_BODY_TIMES,
+        "      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL",
+        "\n      AND  (r.person_id = ANY(%(ids)s) OR (r.person_id IS NULL "
+        "AND r.athlete_id = ANY(%(ids)s)))").format(table=table),
+        {"min_own": args.min_own_races, "ids": idents})
+    _t = _step(_t, "gap table over these athletes' full careers")
+    print("  ⚠ fast mode: the form (race-of-season) correction is skipped -- "
+          "it needs the\n    full corpus and is worth at most ~3 points. A "
+          "verdict within 3 of a\n    boundary deserves --explain-full. "
+          "Ratings print on the cached pm scale;\n    the gap and median "
+          "columns are the evidence.")
+
+    anchor = "    FROM   reb_gap g\n    GROUP  BY"
+    if anchor not in _PASS1_SQL:
+        raise AssertionError("explain fast-path: _PASS1_SQL shape changed")
+    one = _PASS1_SQL.replace(
+        anchor,
+        "    FROM   reb_gap g\n"
+        "    WHERE  g.meet_id = %(meet)s AND g.div_id = %(div)s\n"
+        "    GROUP  BY")
+    cur.execute(one, {"min_field": args.min_field,
+                      "meet": key[0], "div": key[1]})
+    explain1(cur.fetchall(), key, args.sigma, args.t1, args.unanimity, cur)
+
+
+# ------------------------------------------------------------------ #
 #  HOW MUCH TO TRUST ONE PROPOSAL
 # ------------------------------------------------------------------ #
 #
@@ -2412,12 +2563,28 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--explain", default=None,
                     help="MEET/DIV -- print every gate that division met or "
-                         "failed, in order, and stop")
+                         "failed, in order, and stop. Runs the FAST path: "
+                         "the same SQL restricted to the division's "
+                         "athletes, seconds instead of the corpus build")
+    ap.add_argument("--explain-full", action="store_true",
+                    dest="explain_full",
+                    help="run --explain through the full corpus build "
+                         "instead of the fast path -- exact form correction, "
+                         "~12 minutes. Use when a gap sits within ~3 points "
+                         "of a verdict boundary")
     args = ap.parse_args()
     SIGMA = args.sigma
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # ★ THE FAST EXPLAIN, BEFORE ANY CORPUS WORK. The label check and
+            #   the full gap build together cost ~12 minutes to answer a
+            #   question about one division; the fast path runs the same SQL
+            #   restricted to that division's athletes. --explain-full is the
+            #   old exact route.
+            if args.explain and args.which == 1 and not args.explain_full:
+                explainFast(cur, args)
+                return 0
             if not assertLabelTrustworthy(cur, args.sport):
                 return 2
             if buildGap(cur, args.sport, args.min_own_races,
