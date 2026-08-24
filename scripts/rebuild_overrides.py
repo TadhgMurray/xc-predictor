@@ -389,11 +389,15 @@ ANALYZE reb_gap;
 #   carry apply_tilt (which is XC-only), the guard's clamping, and the
 #   selection above. A field median wants one formula applied to everybody.
 #
-# ★ THE POOL MEAN DOES NOT AFFECT THE ANSWER, which is why it is defined here
-#   rather than read from the engine. Every gate uses own_med / rating, so any
-#   constant shared by a row and that athlete's median cancels. It is set so
-#   each pool's median rating is 100 -- readability, and comparability for an
-#   athlete whose career crosses pools, since targetFor anchors normalized
+# ★ THE POOL MEAN DOES NOT AFFECT THE ANSWER -- AS LONG AS IT IS ON THE RIGHT
+#   AXIS. Any constant shared by a row and that athlete's median cancels in a
+#   RATIO, but the gates measure gaps in ABSOLUTE POINTS, so the constant has
+#   to put ratings near 100 or the gaps land on the wrong scale entirely: a
+#   pool-less athlete who fell to a bare 100.0 (pm is ~1e5) had ratings of
+#   ~0.1 and gaps of milli-points that every gate read as +0.0 -- their
+#   evidence silently deleted (see the '__all__' row in _PM_SQL). It is set
+#   so each pool's median rating is 100 -- readability, and comparability for
+#   an athlete whose career crosses pools, since targetFor anchors normalized
 #   time PER POOL and the raw numbers are not comparable across that seam.
 _POOL_SQL = """
 -- ! min(pool), NOT mode(). mode() IS AN ORDERED-SET AGGREGATE, so Postgres
@@ -454,7 +458,24 @@ FROM   {table} r TABLESAMPLE SYSTEM (1)
 JOIN   reb_pool p  ON p.ident = COALESCE(r.person_id, r.athlete_id)
 LEFT   JOIN reb_cell cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
 WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
-GROUP  BY p.pool;
+GROUP  BY p.pool
+-- ⚠ THE GLOBAL ROW IS WHAT KEEPS A POOL-LESS ATHLETE'S EVIDENCE ALIVE.
+--   An athlete absent from reb_pool (thin or unlinked -- not in
+--   ranking_results) used to fall through to COALESCE(pm, 100.0), which is
+--   a scale ~1000x off: pm is ~100/mean(1/nt) ~ 1e5, so their ratings came
+--   out ~0.1 and their GAPS -- which every gate measures in absolute points
+--   -- compressed to milli-points and read as +0.0. "pm cancels" is true
+--   of ratios and FALSE of point differences. Measured on 26359/2, Ox Bow:
+--   8 of the division's 10 judgeable rows were self-neutralised this way
+--   and a wrong-race field printed a median gap of +0.0. The pool-less now
+--   share one corpus-wide scale; approximate, but on the right axis.
+UNION ALL
+SELECT '__all__',
+       100.0 / exp(avg(ln(exp(COALESCE(cd.difficulty, 0.0))
+                          / r.normalized_time)))
+FROM   {table} r TABLESAMPLE SYSTEM (1)
+LEFT   JOIN reb_cell cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
+WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0;
 CREATE INDEX ON reb_pm (pool);
 ANALYZE reb_pm;
 """
@@ -491,7 +512,8 @@ WITH rated AS (
     LEFT   JOIN reb_unovr u  ON u.meet_id = r.meet_id AND u.div_id = r.div_id
     LEFT   JOIN reb_cell  cd ON cd.meet_id = r.meet_id AND cd.div_id = r.div_id
     LEFT   JOIN reb_pool  p  ON p.ident = COALESCE(r.person_id, r.athlete_id)
-    LEFT   JOIN reb_pm    pm ON pm.pool = p.pool
+    -- '__all__': the global scale for pool-less athletes -- see _PM_SQL.
+    LEFT   JOIN reb_pm    pm ON pm.pool = COALESCE(p.pool, '__all__')
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
       AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
 ), own AS (
