@@ -185,6 +185,13 @@ def _xc_distance_sql(r="r"):
 app = Flask(__name__)
 
 
+@app.errorhandler(404)
+def not_found(_err):
+    """The branded not-found page; every abort(404) and dead URL lands here
+    instead of on the bare Flask default. See templates/404.html."""
+    return render_template("404.html"), 404
+
+
 # When someone visits the address "/" run the function below.
 # This is a decorator, it connects a URL to a function.
 @app.route("/hello")

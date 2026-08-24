@@ -2906,6 +2906,24 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .season td.flags { white-space: normal; }
 .season td.flags .flag { margin-bottom: 2px; }
 
+/* ---- the 404 page ------------------------------------------------------ */
+.nf-page { max-width: 560px; margin: 4.5rem auto 0; text-align: center;
+           padding: 0 1.5rem; }
+.nf-code { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.12em;
+           text-transform: uppercase; color: #9ca3af; }
+.nf-page h1 { margin: 0.3rem 0 0.6rem; }
+.nf-page p.meta { margin: 0 0 1.4rem; }
+.nf-search { display: flex; gap: 0.5rem; justify-content: center;
+             margin-bottom: 1.1rem; }
+.nf-search input { flex: 1; max-width: 340px; padding: 0.5rem 0.8rem;
+                   border: 1px solid #d1d5db; border-radius: 3px;
+                   font-size: 0.95rem; }
+.nf-search button { padding: 0.5rem 1rem; border: 1px solid #374151;
+                    background: #374151; color: #fff; font-weight: 600;
+                    border-radius: 3px; cursor: pointer; }
+.nf-links { font-size: 0.9rem; }
+.nf-report { margin-top: 2.2rem; font-size: 0.8rem; color: #6b7280; }
+
 /* The "?" beside the toggle: tooltip machinery from .flag, styled as a
    quiet circled hint rather than a record pill. */
 .scale-note {

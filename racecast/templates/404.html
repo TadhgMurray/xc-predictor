@@ -1,0 +1,41 @@
+{# =====================================================================
+   404.html -- the branded not-found page.
+
+   Registered via app.errorhandler(404), so every abort(404) and every
+   dead URL lands here instead of on the bare Flask default. Search is
+   the site's recovery path, so the box is front and center; the report
+   line feeds the existing /report form, because a 404 reached from one
+   of OUR links is a bug somebody should hear about.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Page not found — Racecast</title>
+    <meta name="robots" content="noindex">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="nf-page">
+    <div class="nf-code">404</div>
+    <h1>This page doesn't exist</h1>
+    <p class="meta">The link may be stale, or what it pointed at may have
+       moved during a data rebuild.</p>
+    <form class="nf-search" action="/search" method="get" role="search">
+        <input type="search" name="q" autofocus autocomplete="off"
+               placeholder="Search athletes, meets, courses…"
+               aria-label="Search">
+        <button type="submit">Search</button>
+    </form>
+    <p class="nf-links">
+        <a href="/">Home</a> · <a href="/rankings">Rankings</a> ·
+        <a href="/conversions">Conversions</a>
+    </p>
+    <p class="nf-report">If a link on this site brought you here,
+       <a href="/report">report it</a> and it gets fixed.</p>
+</main>
+</body>
+</html>
