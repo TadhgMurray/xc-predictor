@@ -121,8 +121,14 @@ DISPLACERS = 2
 #  1. COMPILED RESULTS
 # ------------------------------------------------------------------ #
 
-def compiledResults(cur, meet_id):
+def compiledResults(cur, meet_id, source=None):
     """Every division of a meet, merged by (distance, gender).
+
+    ⚠ `source` MATTERS WHEREVER TWO MEETS SHARE ONE meet_id. The anet and
+      tfrrs id spaces overlap (15,096 XC meet_ids hold rows from both), and
+      merging by (distance, gender) across sources compiles two different
+      real-world meets into one imaginary race. Callers on a colliding meet
+      pass the source they are showing; None keeps the old behaviour.
 
     Returns [{distance, gender, divisions, results:[...]}], biggest group
     first -- the varsity race is almost always the one being looked for, and
@@ -167,6 +173,7 @@ def compiledResults(cur, meet_id):
             LIMIT  1
         ) a ON TRUE
         WHERE  r.meet_id = %(meet)s
+          AND  (%(src)s::text IS NULL OR r.source = %(src)s)
           AND  r.time_seconds IS NOT NULL
           AND  r.time_seconds < 999999
           AND  COALESCE(
@@ -174,7 +181,7 @@ def compiledResults(cur, meet_id):
                  (mt.division_distances -> r.div_id::text ->> 'distance')::real
                ) > 0
         ORDER  BY distance, a.gender, r.time_seconds
-    """, {"meet": meet_id})
+    """, {"meet": meet_id, "src": source})
 
     groups = {}
     for row in cur.fetchall():

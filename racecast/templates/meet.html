@@ -27,6 +27,21 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
 
+    {% if other_sources %}
+    {# The anet and tfrrs id spaces overlap: this id holds two DIFFERENT
+       real-world meets. Say so, and link the other one -- silently merging
+       them is the bug this block exists to end. #}
+    <p class="meta source-split-note">
+        Two different meets share this id. Showing the
+        {{ "Athletic.net" if src == "anet" else "TFRRS" }} meet —
+        {% for o in other_sources %}
+        <a href="?source={{ o.source }}">see the
+            {{ "Athletic.net" if o.source == "anet" else "TFRRS" }} meet
+            ({{ o.n }} results)</a>{{ ", " if not loop.last }}
+        {% endfor %}
+    </p>
+    {% endif %}
+
     <h2>Races</h2>
     <table>
         <thead>
@@ -75,7 +90,7 @@
             <tr>
                 <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "—" }}</td>
                 <td>
-                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}">
+                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}{{ ('?source=' ~ src) if other_sources else '' }}">
                         {{ g.distance }}m
                     </a>
                 </td>

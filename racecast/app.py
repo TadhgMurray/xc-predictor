@@ -1234,12 +1234,16 @@ def race_xc(meet_id, div_id):
 #  XC MEET
 # ===================================================================== #
 
-def get_meet_header(cur, meet_id):
+def get_meet_header(cur, meet_id, source=None):
     """Basic info for a meet — taken from any one of its divisions.
 
     ★ Driven from `results` for the same reason as get_race_header: a tfrrs
       meet has no `meets` row, so the old `FROM meets` returned None and the
       route 404'd.
+
+    ⚠ `source` picks WHICH meet when two share the id — the anet and tfrrs
+      id spaces overlap, and without it a tfrrs meet's page could carry the
+      colliding anet meet's name.
     """
     cur.execute(f"""
         SELECT COALESCE(m.meet_name, mt.venue_name) AS meet_name,
@@ -1247,7 +1251,8 @@ def get_meet_header(cur, meet_id):
                m.state                              AS state,
                r.meet_id                            AS meet_id
         FROM (SELECT DISTINCT meet_id, div_id, source
-                FROM results WHERE meet_id = %(meet)s) r
+                FROM results WHERE meet_id = %(meet)s
+                 AND (%(src)s::text IS NULL OR source = %(src)s)) r
         LEFT JOIN meets m
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
@@ -1257,11 +1262,11 @@ def get_meet_header(cur, meet_id):
         -- divisions carry metadata still shows one.
         ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC
         LIMIT 1
-    """, {"meet": meet_id})
+    """, {"meet": meet_id, "src": source})
     return cur.fetchone()
 
 
-def get_meet_divisions(cur, meet_id):
+def get_meet_divisions(cur, meet_id, source=None):
     """Every division in this meet, with how many results each has.
 
     ★ Grouped from `results`, so tfrrs divisions appear. The division NAME and
@@ -1285,11 +1290,39 @@ def get_meet_divisions(cur, meet_id):
         {_tfrrs_join('r')}{_dist_override_join('r')}
         {_athlete_lateral('r')}
         WHERE r.meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR r.source = %(src)s)
         GROUP BY r.div_id, m.division, mt.division_distances,
                  dov.distance, m.distance, r.source
         ORDER BY division NULLS LAST, r.div_id
+    """, {"meet": meet_id, "src": source})
+    return cur.fetchall()
+
+
+def meet_sources(cur, table, meet_id):
+    """[{source, n}] for one meet_id, biggest first.
+
+    The anet and tfrrs id spaces OVERLAP: one meet_id can hold two different
+    real-world meets (15,096 of them in `results`). Measured 2026-08-24 by
+    scripts/census_meet_collision.py; the split is by results.source, which
+    the census verified clean (the div_id<100 folklore holds for XC and is
+    REVERSED for TF, which is why the column and not the folklore is used).
+    """
+    cur.execute(f"""
+        SELECT source, count(*) AS n
+        FROM   {table}
+        WHERE  meet_id = %(meet)s AND source IS NOT NULL
+        GROUP  BY source ORDER BY count(*) DESC
     """, {"meet": meet_id})
     return cur.fetchall()
+
+
+def pick_source(sources, requested):
+    """(chosen, others): the requested source if present, else the biggest."""
+    names = [s["source"] for s in sources]
+    if len(names) < 2:
+        return (names[0] if names else None), []
+    chosen = requested if requested in names else names[0]
+    return chosen, [s for s in sources if s["source"] != chosen]
 
 
 @app.route("/meet/xc/<int:meet_id>")
@@ -1298,9 +1331,12 @@ def meet_xc(meet_id):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header    = get_meet_header(cur, meet_id)
-            divisions = get_meet_divisions(cur, meet_id)
-            compiled  = compiledResults(cur, meet_id)
+            sources = meet_sources(cur, "results", meet_id)
+            src, other_sources = pick_source(sources,
+                                             request.args.get("source"))
+            header    = get_meet_header(cur, meet_id, source=src)
+            divisions = get_meet_divisions(cur, meet_id, source=src)
+            compiled  = compiledResults(cur, meet_id, source=src)
 
     # ★ THE MEET PAGE ONLY LISTS THE COMPILED RACES; each one has its own
     #   page. A compiled result IS a race -- it has a distance, a gender, a
@@ -1318,7 +1354,8 @@ def meet_xc(meet_id):
         abort(404)
 
     return render_template("meet.html", header=header, divisions=divisions,
-                           compiled=compiled_index)
+                           compiled=compiled_index,
+                           src=src, other_sources=other_sources)
 
 
 @app.route("/race/xc/<int:meet_id>/compiled/<int:distance>/<gender>")
@@ -1335,8 +1372,12 @@ def compiled_race(meet_id, distance, gender):
     gender = (gender or "").upper()[:1]
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = get_meet_header(cur, meet_id)
-            groups = compiledResults(cur, meet_id)
+            # Same source discipline as the meet page: on a colliding id the
+            # compiled merge must never mix the two real-world meets.
+            sources = meet_sources(cur, "results", meet_id)
+            src, _others = pick_source(sources, request.args.get("source"))
+            header = get_meet_header(cur, meet_id, source=src)
+            groups = compiledResults(cur, meet_id, source=src)
 
     if header is None:
         abort(404)
@@ -1361,7 +1402,9 @@ def api_meet_compiled(meet_id):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            compiled = compiledResults(cur, meet_id)
+            sources = meet_sources(cur, "results", meet_id)
+            src, _others = pick_source(sources, request.args.get("source"))
+            compiled = compiledResults(cur, meet_id, source=src)
             published = publishedScores(cur, meet_id)
 
     return jsonify({
@@ -1466,18 +1509,24 @@ def race_tf(meet_id, event_id, div_id):
 #  TF MEET
 # ===================================================================== #
 
-def get_tf_meet_header(cur, meet_id):
-    """Basic info for a TF meet, from any one of its events."""
+def get_tf_meet_header(cur, meet_id, source=None):
+    """Basic info for a TF meet, from any one of its events.
+
+    ⚠ `source` picks WHICH meet when the anet and tfrrs id spaces collide on
+      this id — LIMIT 1 without it could hand a tfrrs meet the colliding anet
+      meet's name.
+    """
     cur.execute("""
         SELECT meet_name, state, is_indoor, meet_id
         FROM meets_tf
         WHERE meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR source = %(src)s)
         LIMIT 1
-    """, {"meet": meet_id})
+    """, {"meet": meet_id, "src": source})
     return cur.fetchone()
 
 
-def get_tf_meet_events(cur, meet_id):
+def get_tf_meet_events(cur, meet_id, source=None):
     """Every event in this TF meet, with result counts."""
     cur.execute("""
         SELECT m.div_id,
@@ -1492,9 +1541,10 @@ def get_tf_meet_events(cur, meet_id):
               AND r.div_id   = m.div_id
               AND r.event_id = m.event_id
         WHERE m.meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
         ORDER BY m.division, m.distance_meters NULLS LAST, m.event_short
-    """, {"meet": meet_id})
+    """, {"meet": meet_id, "src": source})
     return cur.fetchall()
 
 
@@ -1502,13 +1552,17 @@ def get_tf_meet_events(cur, meet_id):
 def meet_tf(meet_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = get_tf_meet_header(cur, meet_id)
-            events = get_tf_meet_events(cur, meet_id)
+            sources = meet_sources(cur, "meets_tf", meet_id)
+            src, other_sources = pick_source(sources,
+                                             request.args.get("source"))
+            header = get_tf_meet_header(cur, meet_id, source=src)
+            events = get_tf_meet_events(cur, meet_id, source=src)
 
     if header is None:
         abort(404)
 
-    return render_template("meet_tf.html", header=header, events=events)
+    return render_template("meet_tf.html", header=header, events=events,
+                           src=src, other_sources=other_sources)
 
 
 # ===================================================================== #
