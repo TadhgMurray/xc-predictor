@@ -154,13 +154,19 @@ thead th {
    digits so a column of times lines up instead of jittering row to row.
    Alignment is handled once, for every table, at the bottom of this file. */
 td:nth-child(4),   /* Result     */
-td:nth-child(5),   /* Rating     */
-td:nth-child(6) {  /* Difficulty */
+td:nth-child(5),   /* Place      (athlete page; harmless elsewhere) */
+td:nth-child(6),   /* Rating     */
+td:nth-child(7) {  /* Difficulty -- shifted right when Place was added */
     font-variant-numeric: tabular-nums;
 }
 
 /* Dates and times shouldn't wrap mid-value */
 td:nth-child(1) { white-space: nowrap; }
+
+/* The race-flag cell and the place cell keep their content on ONE line.
+   Without this, any new column squeezes them and the badges stack
+   vertically -- a row with a full flag set grew to six lines tall. */
+td.flags, td.place-cell { white-space: nowrap; }
 
 /* ---- top bar --------------------------------------------------------- */
 .topbar {

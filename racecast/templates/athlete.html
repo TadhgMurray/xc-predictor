@@ -199,11 +199,15 @@
                     <td>{{ race.event|event_label }}</td>
                     <td>{{ race.result }}</td>
                     {# Derived within the division, ties share a place. No
-                       place for field events or DNS/DNF sentinel rows. #}
-                    <td>
+                       place for field events or DNS/DNF sentinel rows. The
+                       team place shows only when it says something the
+                       overall place doesn't -- "1st · 1st on team" is
+                       noise, "18th · 2nd on team" is information. #}
+                    <td class="place-cell">
                         {%- if race.place and not race.is_field
                                and race.time_raw and race.time_raw < 999999 -%}
-                            {{ race.place|ordinal }}{% if race.team_place -%}
+                            {{ race.place|ordinal }}{% if race.team_place
+                               and race.team_place != race.place -%}
                             <span class="muted"> · {{ race.team_place|ordinal }} on team</span>
                             {%- endif %}
                         {%- else -%}—{%- endif -%}
