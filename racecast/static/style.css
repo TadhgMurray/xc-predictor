@@ -163,10 +163,14 @@ td:nth-child(7) {  /* Difficulty -- shifted right when Place was added */
 /* Dates and times shouldn't wrap mid-value */
 td:nth-child(1) { white-space: nowrap; }
 
-/* The race-flag cell and the place cell keep their content on ONE line.
-   Without this, any new column squeezes them and the badges stack
-   vertically -- a row with a full flag set grew to six lines tall. */
-td.flags, td.place-cell { white-space: nowrap; }
+/* The race-flag cell keeps its badges on ONE line. Without this, any new
+   column squeezes it and the badges stack vertically -- a row with a full
+   flag set grew to six lines tall. */
+td.flags { white-space: nowrap; }
+/* The place cell may break BETWEEN the ordinal and the team suffix, but
+   never inside either -- a nowrap on the whole cell painted over the
+   rating column at half-screen widths. */
+.place-cell .no-break { white-space: nowrap; }
 
 /* ---- top bar --------------------------------------------------------- */
 .topbar {

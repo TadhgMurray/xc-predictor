@@ -1269,7 +1269,15 @@ def race_xc(meet_id, div_id):
         # ⚠ A NAME MISS IS SILENT AND HARMLESS -- meet_extras spells schools
         #   its own way ("Name" vs "rawName"), so a team whose spelling differs
         #   simply shows no scorers rather than the wrong ones.
-        teams = [{**t, "runners": (by_school.get(t["school"], {})
+        # ⚠ AND A DUPLICATED NAME GRAFTS TO NOBODY. NXN 2025 published two
+        #   Jesuits (287 and 336 points) and two Lincolns -- different
+        #   schools, one string. Grafting by name gave both the SAME seven
+        #   runners; no scorers shown is honest, the same seven twice is not.
+        from collections import Counter
+        dup = {s for s, c in Counter(t["school"] for t in pub).items()
+               if c > 1}
+        teams = [{**t, "runners": ([] if t["school"] in dup else
+                                   by_school.get(t["school"], {})
                                    .get("runners", []))}
                  for t in pub]
         scores = {"teams": teams, "incomplete": computed["incomplete"],

@@ -66,7 +66,14 @@ _NOT_A_TEAM = re.compile(r"""
     | ^none$
     | ^no\s+school$
     | ^una?t{0,2}\.?$            # UNA, UNAT, UNATT, with an optional dot
+    # ! THE PLURAL IS UNANCHORED, unlike its neighbours: NXN-style entries
+    #   read "SW Individuals -6", one fake school per entrant, and the
+    #   anchored form let every one count as a team -- each earned a
+    #   team-place marker and a line in the incomplete-teams list. The
+    #   SINGULAR stays anchored: "Individual" is imaginable inside a real
+    #   school name, "Individuals" is not.
     | ^individuals?$
+    | \bindividuals\b
     | ^independent$
     | \bunattached\b
     | \bunaffiliated\b
