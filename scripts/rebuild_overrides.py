@@ -2717,6 +2717,218 @@ LIMIT  %(limit)s
 """.replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
 
 
+# ------------------------------------------------------------------ #
+#  PASS 4 -- MIXED DIVISIONS: one label, several races, witness-driven
+# ------------------------------------------------------------------ #
+#
+# ★ THE CASE EVERY OTHER PASS REFUSES ON PURPOSE. 26785/0: ~25 rows fit the
+#   8000 label, ~40 sit at gap ~-21 and ~36 at ~-55. Pass 1 needs the field
+#   on ONE side; pass 2 can only split by sex; pass 3's cluster caps route
+#   the rows to the group-fault report rather than deleting real results.
+#   The division needs per-ROW answers -- the owner's own doctrine for
+#   minorities: "it should just be a per result override".
+#
+# ★ WITNESS-DRIVEN, NOT CLUSTERED. Blind gap-clustering cannot separate a
+#   -21 subgroup from the main pack's tail (they blend at -10). But the MEET
+#   says which races existed: for every other distance raced at the meet
+#   (both sources), the rating ratio a runner of THAT race would show under
+#   THIS label is exact -- rho = (label/d_alt)^K; a 10k under an 8k label
+#   predicts 0.79. A row is pinned to an alternative only when its own
+#   rating/median ratio sits within P4_ZTOL of that rho, so the split is
+#   sharp exactly where clustering is mush, and the witness is built in:
+#   there is no rho without a real race behind it.
+#
+# ! BOTH DIRECTIONS, BECAUSE THE WITNESS CARRIES IT. A slow subgroup pinned
+#   to a longer at-meet race RAISES those rows' ratings; the policy bar for
+#   raising is blatancy, and "the meet ran a 10k and these rows sit exactly
+#   on the 10k ratio" is blatant. A subgroup matching NO real race (the -55
+#   cluster: nothing at that meet is 2x the label) is REPORTED, never
+#   pinned and never dropped here.
+P4_ZTOL = 0.06          # how near a row's rating/median ratio must sit to
+                        # an alternative's rho (~6 points at a 100 median)
+P4_RHO_MIN = 0.11       # an alternative closer than this to 1.0 cannot be
+                        # told apart from the label (the pass-1 bar, as a
+                        # ratio)
+P4_MAX_PIN_SHARE = 0.7  # pinning more than this share of a division means
+                        # the LABEL is the minority answer -- a division
+                        # question, reported instead
+
+_PASS4_CAND_SQL = """
+WITH agg AS (
+    SELECT g.meet_id, g.div_id,
+           count(*)                                          AS n,
+           count(*) FILTER (WHERE abs(g.gap) >= %(bar)s)     AS n_over
+    FROM   reb_gap g
+    WHERE  NOT EXISTS (SELECT 1 FROM reb_fix f
+                       WHERE f.meet_id = g.meet_id
+                         AND f.div_id = g.div_id)
+    GROUP  BY g.meet_id, g.div_id
+    HAVING count(*) FILTER (WHERE abs(g.gap) >= %(bar)s) >= %(min_sub)s
+       AND count(*) >= %(min_field)s
+)
+SELECT a.meet_id, a.div_id, a.n, a.n_over,
+       lbl.course_name, lbl.distance, lbl.division
+FROM   agg a
+__LABEL__
+""".replace("__LABEL__", _LABEL_LATERAL.format(g="a"))
+
+_PASS4_ROWS_SQL = """
+SELECT g.meet_id, g.div_id, g.result_id, g.speed_rating, g.med, g.gap
+FROM   reb_gap g
+JOIN   reb_p4cand c ON c.meet_id = g.meet_id AND c.div_id = g.div_id
+LEFT   JOIN reb_pinned p ON p.result_id = g.result_id
+WHERE  p.result_id IS NULL
+"""
+
+# Same two-source witness pass 3 uses: `meets` is anet-only.
+_PASS4_ATMEET_SQL = """
+SELECT meet_id, array_agg(DISTINCT distance) AS dists
+FROM (
+    SELECT meet_id, distance
+    FROM   meets WHERE meet_id = ANY(%(meets)s) AND distance > 0
+    UNION ALL
+    SELECT mt.meet_id, (d.value ->> 'distance')::real AS distance
+    FROM   meets_tfrrs mt,
+           jsonb_each(mt.division_distances::jsonb) d
+    WHERE  mt.meet_id = ANY(%(meets)s) AND mt.sport = 'XC'
+      AND  (d.value ->> 'distance')::real > 0
+) x
+GROUP  BY meet_id
+"""
+
+
+def pass4(cur, sigma, t1, min_field, min_sub):
+    """(pins, division_report, skipped) -- per-result pins for divisions
+    holding several real races under one label. Runs AFTER staging: fixed
+    divisions are excluded, pass-2-pinned rows are excluded."""
+    bar = t1 * sigma
+    cur.execute("SET LOCAL work_mem = '2GB'")
+    _noBarePercent("_PASS4_CAND_SQL", _PASS4_CAND_SQL)
+    cur.execute(_PASS4_CAND_SQL, {"bar": bar, "min_sub": min_sub,
+                                  "min_field": min_field})
+    cands = cur.fetchall()
+    print(f"  {len(cands):,} unfixed divisions hold >= {min_sub} rows past "
+          f"the bar (mixed-division candidates)")
+    if not cands:
+        return [], [], []
+    from psycopg2.extras import execute_values
+    cur.execute("DROP TABLE IF EXISTS reb_p4cand")
+    cur.execute("CREATE TEMP TABLE reb_p4cand (meet_id bigint, div_id bigint)")
+    execute_values(cur, "INSERT INTO reb_p4cand VALUES %s",
+                   [(c["meet_id"], c["div_id"]) for c in cands])
+    cur.execute("ANALYZE reb_p4cand")
+    cur.execute(_PASS4_ROWS_SQL)
+    rows_by_div = {}
+    for r in cur.fetchall():
+        rows_by_div.setdefault((r["meet_id"], r["div_id"]), []).append(r)
+    meets = list({c["meet_id"] for c in cands}) or [0]
+    cur.execute(_PASS4_ATMEET_SQL, {"meets": meets})
+    at_meet = {r["meet_id"]: sorted(float(d) for d in r["dists"])
+               for r in cur.fetchall()}
+
+    pins, report, skipped = [], [], []
+    for c in cands:
+        rows = rows_by_div.get((c["meet_id"], c["div_id"]), [])
+        label = float(c["distance"]) if c["distance"] else None
+        if not label or len(rows) < min_field:
+            skipped.append((c, "no usable label distance"))
+            continue
+        # The alternatives: other distances actually raced at this meet,
+        # far enough from the label that their rho is a real test.
+        rhos = []
+        for d in at_meet.get(c["meet_id"], []):
+            if abs(d - label) / label <= 0.02:
+                continue
+            rho = (label / d) ** K
+            if abs(rho - 1.0) >= P4_RHO_MIN:
+                rhos.append((d, rho))
+        if not rhos:
+            skipped.append((c, "no distinguishable alternative raced at "
+                               "the meet"))
+            continue
+        z_of = {r["result_id"]: (float(r["med"]) + float(r["gap"]))
+                                / float(r["med"])
+                for r in rows if r["med"]}
+        main_n = sum(1 for z in z_of.values() if abs(z - 1.0) <= P4_ZTOL)
+        matched, unmatched_over = {}, 0
+        for r in rows:
+            z = z_of.get(r["result_id"])
+            if z is None or abs(z - 1.0) <= P4_ZTOL:
+                continue
+            hits = [(d, rho) for d, rho in rhos if abs(z - rho) <= P4_ZTOL]
+            if len(hits) == 1:
+                matched.setdefault(hits[0][0], []).append(r)
+            elif not hits and abs(z - 1.0) * 100.0 >= bar:
+                unmatched_over += 1
+            # two hits = two alternatives' rhos overlap at this z: ambiguous
+            # by construction, the row is left alone.
+        div_pins = []
+        for d, sub in matched.items():
+            if len(sub) < min_sub:
+                continue
+            zs = sorted(z_of[r["result_id"]] for r in sub)
+            med_z = zs[len(zs) // 2]
+            rho = (label / d) ** K
+            # Coherence: the SUBGROUP sits on the ratio, not merely near it.
+            if abs(med_z - rho) > 0.03:
+                continue
+            div_pins.extend((r["result_id"], d, z_of[r["result_id"]], rho)
+                            for r in sub)
+        if not div_pins:
+            if unmatched_over >= min_sub:
+                report.append({**c, "why": f"{unmatched_over} rows past the "
+                               f"bar match NO race at the meet"})
+            continue
+        if main_n < min_sub:
+            report.append({**c, "why": f"label fits only {main_n} rows -- "
+                           f"a division-level question, not a pin"})
+            continue
+        if len(div_pins) > P4_MAX_PIN_SHARE * len(rows):
+            report.append({**c, "why": f"would pin {len(div_pins)} of "
+                           f"{len(rows)} rows -- the label is the minority "
+                           f"answer"})
+            continue
+        for rid, d, z, rho in div_pins:
+            pins.append({"meet_id": c["meet_id"], "div_id": c["div_id"],
+                         "result_id": rid, "distance": label, "pin": d,
+                         "z": z, "rho": rho,
+                         "course_name": c.get("course_name")})
+        if unmatched_over >= min_sub:
+            report.append({**c, "why": f"pinned {len(div_pins)}, and "
+                           f"{unmatched_over} MORE rows match no race at "
+                           f"the meet"})
+    return pins, report, skipped
+
+
+def report4(pins, report, skipped, args):
+    from collections import Counter
+    divs = {(p["meet_id"], p["div_id"]) for p in pins}
+    print(f"\n  PASS 4 -- {len(pins):,} rows pinned to a witnessed at-meet "
+          f"race across {len(divs):,} mixed divisions")
+    moves = Counter((f"{p['distance']:.0f}", f"{p['pin']:.0f}") for p in pins)
+    for (lbl, d), n in moves.most_common(20):
+        print(f"    {n:>6,}   {lbl} label -> {d} (raced at the meet)")
+    if len(moves) > 20:
+        print(f"    ... and {len(moves) - 20} more label -> race pairs")
+    if report:
+        print(f"\n    {len(report):,} divisions REPORTED, not touched:")
+        why = Counter(("no-witness" if "NO race" in r["why"]
+                       else "label-minority" if "minority" in r["why"]
+                       else "label-fits-nobody" if "fits only" in r["why"]
+                       else "pinned+leftover") for r in report)
+        for w, n in why.most_common():
+            print(f"      {n:>6,}   {w}")
+        for r in report[:args.limit if args.limit < 100 else 40]:
+            print(f"      {str(r['meet_id']) + '/' + str(r['div_id']):>16}  "
+                  f"{(r.get('display_name') or r.get('course_name') or '?')[:30]:<32} "
+                  f"{r['why']}")
+    if skipped:
+        why = Counter(reason for _c, reason in skipped)
+        print(f"\n    WHY THE REST WERE LEFT ALONE")
+        for reason, n in why.most_common():
+            print(f"      {n:>6,}   {reason}")
+
+
 def stagePriorPasses(cur, fixed, pinned):
     """Put pass 1's scale factors and pass 2's pinned rows where the SQL can
     see them. Both tables always exist, empty if the pass found nothing, so
@@ -2953,7 +3165,7 @@ def main():
     ap.add_argument("--sport", choices=["XC", "TF"], default="XC")
     ap.add_argument("--measure", action="store_true",
                     help="report the corpus noise floor and stop")
-    ap.add_argument("--pass", dest="which", type=int, choices=(1, 2, 3))
+    ap.add_argument("--pass", dest="which", type=int, choices=(1, 2, 3, 4))
     ap.add_argument("--sweep", action="store_true")
     ap.add_argument("--sigma", type=float, default=SIGMA)
     ap.add_argument("--t1", type=float, default=T1_SIGMA)
@@ -3271,7 +3483,58 @@ def main():
                                         bar=args.t3 * args.sigma))
                 return 0
 
-    ap.error("give --measure or --pass 1|2|3")
+            if args.which == 4:
+                # Same staging as pass 3: passes 1 (with cold + rescue) and
+                # 2 run first so a division they fix is never re-split, and
+                # their pinned rows are excluded.
+                cur.execute(_PASS1_SQL, {"min_field": args.min_field})
+                rows = cur.fetchall()
+                got1, _routed, _sk = pass1(rows, args.sigma, args.t1,
+                                           args.unanimity, cur)
+                got1 = got1 + coldStart(cur, args.sport, args.min_field)
+                rescueTierC(cur, args.sport, got1)
+                fixed1 = {(r["meet_id"], r["div_id"]) for r in got1}
+                cand = [r for r in rows
+                        if (r["meet_id"], r["div_id"]) not in fixed1]
+                cur.execute("DROP TABLE IF EXISTS reb_pass2")
+                cur.execute("CREATE TEMP TABLE reb_pass2 "
+                            "(meet_id bigint, div_id bigint)")
+                if cand:
+                    from psycopg2.extras import execute_values
+                    execute_values(cur, "INSERT INTO reb_pass2 VALUES %s",
+                                   [(r["meet_id"], r["div_id"])
+                                    for r in cand])
+                cur.execute(_PASS2_SQL)
+                got2, _sk2 = pass2(cur.fetchall(), args.sigma, args.t2,
+                                   args.min_minority)
+                fixed = [(r["meet_id"], r["div_id"],
+                          (r["snapped"] / float(r["distance"])) ** K)
+                         for r in got1
+                         if r["distance"]
+                         and r.get("tier") in ("A", "B", "COLD", "C+")]
+                pinned = [rid for side in got2 for rid in side["result_ids"]]
+                stagePriorPasses(cur, fixed, pinned)
+                pins, p4_report, p4_skipped = pass4(
+                    cur, args.sigma, args.t1, args.min_field,
+                    args.min_minority)
+                applyNames(cur, p4_report)
+                report4(pins, p4_report, p4_skipped, args)
+                if args.out:
+                    lines = [f"{p['result_id']}: ({p['pin']:.1f}, None),  "
+                             f"# ran the {p['pin']:.0f} at this meet: "
+                             f"rating/median {p['z']:.2f} on the "
+                             f"{p['pin']:.0f}-under-{p['distance']:.0f} "
+                             f"ratio {p['rho']:.2f}"
+                             for p in pins]
+                    emit(args.out, args.sport,
+                         [(f"_RESULT_OVERRIDE_{args.sport}", lines)],
+                         _HEADER.format(what="pass 4: mixed divisions, "
+                                             "witnessed per-result pins",
+                                        n=len(lines),
+                                        bar=args.t1 * args.sigma))
+                return 0
+
+    ap.error("give --measure or --pass 1|2|3|4")
 
 
 _HEADER = '''# GENERATED by scripts/rebuild_overrides.py -- {what}

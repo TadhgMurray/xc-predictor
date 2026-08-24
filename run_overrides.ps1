@@ -146,6 +146,10 @@ Step "02_pass2"    { python scripts\rebuild_overrides.py --pass 2 --sigma $Sigma
 #   with the whole +90 half-time-corruption band below the fetch horizon.
 #   20,000 matches apply_passes' pass-3 cap, so nothing legitimate truncates.
 Step "02_pass3"    { python scripts\rebuild_overrides.py --pass 3 --sigma $Sigma @asIf --limit 20000 --out pass3.py }
+# Pass 4: mixed divisions -- per-result pins to OTHER races witnessed at the
+# same meet (the group-fault queue's fix). Runs after 3 for log order only;
+# both stage passes 1+2 themselves.
+Step "02_pass4"    { python scripts\rebuild_overrides.py --pass 4 --sigma $Sigma @asIf --out pass4.py }
 
 # ⚠ THE VALIDATION GATE. apply_passes execs every proposal against throwaway
 #   dicts and refuses on a syntax error, an absurd distance, or a volume past

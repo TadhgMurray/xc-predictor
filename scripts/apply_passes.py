@@ -46,7 +46,8 @@ END = "# === END PASS PROPOSALS ==="
 _FILES = (("pass0.py", "divisions whose evidence was deleted", 2_000),
           ("pass1.py", "whole-division distance", 12_000),
           ("pass2.py", "per-row distance and sex", 20_000),
-          ("pass3.py", "individually corrupt rows", 20_000))
+          ("pass3.py", "individually corrupt rows", 20_000),
+          ("pass4.py", "mixed-division per-result pins", 30_000))
 
 # A distance outside this is not a race. Cheaper than trusting the snap.
 _MIN_D, _MAX_D = 400.0, 25_000.0
