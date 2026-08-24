@@ -11,9 +11,7 @@
     </a>
 
     {# url_for, not a hardcoded path: these break loudly at render time if a
-       route is renamed, instead of silently 404ing in production. The two
-       that are still hardcoded are the ones whose endpoints I have not
-       confirmed; Predictions has no route at all yet. #}
+       route is renamed, instead of silently 404ing in production. #}
     {# ★ YOU-ARE-HERE, DERIVED RATHER THAN PASSED. The bar gave no clue which
        page you were on. `here` is read off request.path, so not one of the
        ~20 routes has to learn about a nav argument -- and a route that is

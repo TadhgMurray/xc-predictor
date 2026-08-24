@@ -100,6 +100,7 @@ def schoolRoster(cur, school, year, sport):
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
                s.grade,
+               s.pool,
                s.mean_rating,
                s.best_rating,
                s.n_races,

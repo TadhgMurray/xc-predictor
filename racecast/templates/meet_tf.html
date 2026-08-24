@@ -16,7 +16,11 @@
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
+        {% if meet_date %} · {{ meet_date }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
+        {% if header.location_id %} ·
+            <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">View venue →</a>
+        {% endif %}
     </p>
 
     {% if other_sources %}

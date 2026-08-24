@@ -54,58 +54,51 @@ from database import getConn
 # rated rows to cancel per-row noise, then cache it for the process lifetime.
 
 _POOL_MEAN_CACHE = {}          # bare pool -> recovered mean
-_SAMPLE_PER_POOL = 500         # rows to median over; plenty to pin a constant
-_ATHLETE_SAMPLE = 2000         # athletes to draw those rows from
+_SAMPLE_PER_POOL = 1500        # rows per sport to median over; a constant
+                               # needs few, and the fetch is index-served
 
-# The venue join per sport, so difficulty can be divided out of each sampled
-# row. Same two key shapes as venue_difficulty and _RESULT_SQL.
+# ★ SCOPED BY THE ROW'S OWN SEASON POOL, NOT BY MEMBERSHIP. The first
+#   version sampled "results of athletes who hold a rating in this pool"
+#   (athlete_ratings membership) -- but a college athlete's results are
+#   mostly their own HS-era rows, so every pool's sample medianed to the
+#   corpus-dominant HS constant (~1227 men / ~1466 women) and non-HS pools
+#   recovered the WRONG mean: a college rating entered on the conversions
+#   page produced times ~25% too fast. ranking_results.pool is the pool of
+#   the row's own season, which is the population the constant is ABOUT.
+#   (Same discovery as racecast/pool_view.py; see its header for the
+#   full story.)
+#
+# ★ AND NO PER-ROW DIFFICULTY JOINS. The venue joins matched
+#   course_canonical on round(gps, 5) equality, which no index serves, so a
+#   recovery was a 1,500-row nested-loop scan per pool. The sport's default
+#   difficulty replaces them: the median shrugs off the per-row spread, and
+#   what remains is the pool's venue-mix deviation from the default, ~1%.
+#   The pool/sport fetch is index-served (rr_board_rating_idx) and the
+#   results join is by primary key: milliseconds instead of seconds.
 _MEAN_SQL = {
     "XC": """
-        WITH ath AS (
-            SELECT athlete_id FROM athlete_ratings
-            WHERE pool = %(pool)s LIMIT %(nath)s
+        WITH sample AS (
+            SELECT rr.result_id
+            FROM   ranking_results rr
+            WHERE  rr.pool = %(pool)s AND rr.sport = 'XC'
+            LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time, cd.difficulty
-        FROM results r
-        JOIN ath ON ath.athlete_id = r.person_id
-        LEFT JOIN meets m
-               ON m.div_id = r.div_id AND m.meet_id = r.meet_id
-              AND m.source = r.source
-        LEFT JOIN course_canonical cc
-               ON cc.course_name = m.course_name
-              AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
-              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
-        LEFT JOIN course_difficulties cd
-               ON cd.canonical_id = cc.canonical_id
-              AND cd.distance_m   = (round(m.distance / 100.0) * 100)::int
-        WHERE r.speed_rating > 0 AND r.normalized_time > 0
-        LIMIT %(n)s
+        SELECT r.speed_rating, r.normalized_time
+        FROM   sample s
+        JOIN   results r ON r.result_id = s.result_id
+        WHERE  r.speed_rating > 0 AND r.normalized_time > 0
     """,
     "TF": """
-        WITH ath AS (
-            SELECT athlete_id FROM athlete_ratings
-            WHERE pool = %(pool)s LIMIT %(nath)s
+        WITH sample AS (
+            SELECT rr.result_id
+            FROM   ranking_results rr
+            WHERE  rr.pool = %(pool)s AND rr.sport = 'TF'
+            LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time, cd.difficulty
-        FROM results_tf r
-        JOIN ath ON ath.athlete_id = r.person_id
-        -- LATERAL on meet_id ALONE. tfrrs rows often carry a blank div_id and
-        -- their event_id is anet-local, so joining all three silently drops
-        -- them; (meet_id, event_id) is not unique in meets_tf either, so a
-        -- loosened plain join could emit two rows per result. LIMIT 1 makes
-        -- both impossible. Same shape app.py's get_races uses -- copied
-        -- deliberately, because it is the join that was already proven right.
-        LEFT JOIN LATERAL (
-            SELECT m.location_id, m.is_indoor
-            FROM meets_tf m WHERE m.meet_id = r.meet_id LIMIT 1
-        ) m ON TRUE
-        LEFT JOIN course_difficulties cd
-               ON m.location_id IS NOT NULL AND m.location_id <> 0
-              AND cd.course_name = 'TF:loc:' || m.location_id || ':'
-                                || CASE WHEN COALESCE(m.is_indoor, 0) = 1
-                                        THEN 'in' ELSE 'out' END
-        WHERE r.speed_rating > 0 AND r.normalized_time > 0
-        LIMIT %(n)s
+        SELECT r.speed_rating, r.normalized_time
+        FROM   sample s
+        JOIN   results_tf r ON r.result_id = s.result_id
+        WHERE  r.speed_rating > 0 AND r.normalized_time > 0
     """,
 }
 
@@ -160,31 +153,31 @@ def _recover_pool_mean(pool):
        ACROSS BOTH SPORTS.
 
     ★ POOL IS SPORT-AGNOSTIC BY DESIGN. `hs_m` is one pool spanning XC and TF,
-      and pool_mean is one mean normalized_time for it -- so there is no
-      per-sport mean to recover and no namespaced pool to filter on
-      (athlete_ratings.pool is bare: hs_m, hs_f, ms_m ...).
+      and pool_mean is one mean normalized_time for it -- so both sports'
+      rows go into one median (ranking_results.sport only picks which
+      results table each half joins).
 
       An earlier version of this function filtered on 'hs_m|TF', matched
       nothing, and silently fell back to the stale table. Sampling one sport
       would be just as wrong in a quieter way: it would return that sport's
       slice of a constant defined over both.
 
-      The two SQL shapes below differ ONLY in how each sport's venue is joined
-      for its difficulty -- not in what is being measured.
+    ⚠ THE CONSTANT DIFFERS BY POOL, AND THAT IS THE POINT. Each pool's
+      ratings were solved against its own mean, so hs_m recovers ~1227 while
+      college_m recovers a materially different number -- see the scoping
+      note on _MEAN_SQL for the membership bug that used to hide this.
     """
     vals = []
     with getConn() as conn:
         with conn.cursor() as cur:
             for sport, sql in _MEAN_SQL.items():
-                cur.execute(sql, {"pool": pool,
-                                  "nath": _ATHLETE_SAMPLE,
-                                  "n": _SAMPLE_PER_POOL})
-                for rating, norm, difficulty in cur.fetchall():
+                # The sport's typical venue stands in for every row's --
+                # see the note on _MEAN_SQL for why that trade is taken.
+                d = default_difficulty(sport)
+                cur.execute(sql, {"pool": pool, "n": _SAMPLE_PER_POOL})
+                for rating, norm in cur.fetchall():
                     if not rating or not norm:
                         continue
-                    # An unrated venue is unknown, not average.
-                    d = (difficulty if difficulty is not None
-                         else default_difficulty(sport))
                     vals.append(float(rating) * float(norm) / (1.0 + d) / 100.0)
 
     if not vals:

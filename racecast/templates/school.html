@@ -83,8 +83,8 @@
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
                 <td>{{ r.grade if r.grade else "" }}</td>
-                <td>{{ "%.1f"|format(r.mean_rating) if r.mean_rating is not none else "" }}</td>
-                <td>{{ "%.1f"|format(r.best_rating) if r.best_rating is not none else "" }}</td>
+                <td>{% if r.mean_rating is not none %}{{ rv(r.mean_rating, r.hs_mean_rating) }}{% endif %}</td>
+                <td>{% if r.best_rating is not none %}{{ rv(r.best_rating, r.hs_best_rating) }}{% endif %}</td>
                 <td>{{ r.n_races }}</td>
                 <td>{{ r.last_race if r.last_race else "" }}</td>
             </tr>

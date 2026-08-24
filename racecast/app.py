@@ -422,7 +422,8 @@ def athlete(person_id):
         if not race["is_field"] and race["result"] is not None:
             race["result"] = format_time(race["result"])
 
-    chart_data = build_chart_data(races)
+    # (chart_data is built ONCE, below, after the record walk -- an earlier
+    # copy of the call here was dead work thrown away by the second.)
 
     # 2. define the knobs
     # ! SEASON KEYS CARRY THE SPORT, because the label alone is ambiguous
@@ -584,19 +585,22 @@ def get_races(cur, person_id):
                -- never been trusted (see meet_compile). Count of strictly
                -- faster finishers + 1 = standard competition ranking, ties
                -- share a place. 999999 is the DNS/DNF sentinel, not a time.
-               -- ~2 indexed subqueries per race over (meet_id, div_id).
-               (SELECT count(*) + 1 FROM results r2
-                 WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
-                   AND r2.time_seconds IS NOT NULL
-                   AND r2.time_seconds < 999999
-                   AND r2.time_seconds < r.time_seconds) AS place,
-               (SELECT count(*) + 1 FROM results r2
-                 WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
-                   AND r2.school IS NOT DISTINCT FROM r.school
-                   AND r2.time_seconds IS NOT NULL
-                   AND r2.time_seconds < 999999
-                   AND r2.time_seconds < r.time_seconds) AS team_place
+               -- ! ONE lateral pass per race, both counts via FILTER: the
+               --   two-subquery version scanned each division twice, and a
+               --   200-race career paid 400 scans per page view.
+               pl.place, pl.team_place
         FROM results r
+        LEFT JOIN LATERAL (
+            SELECT count(*) FILTER (WHERE r2.time_seconds < r.time_seconds)
+                       + 1 AS place,
+                   count(*) FILTER (WHERE r2.time_seconds < r.time_seconds
+                       AND r2.school IS NOT DISTINCT FROM r.school)
+                       + 1 AS team_place
+            FROM results r2
+            WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
+              AND r2.time_seconds IS NOT NULL
+              AND r2.time_seconds < 999999
+        ) pl ON TRUE
         LEFT JOIN meets m
                ON m.div_id  = r.div_id
               AND m.meet_id = r.meet_id
@@ -651,25 +655,25 @@ def get_races(cur, person_id):
                -- Same derived place as the XC half; the race here is
                -- (meet, event, div), div_id nullable on tfrrs rows. Field
                -- events rank by mark, not time -- no place rather than a
-               -- wrong one.
-               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL ELSE
-                 (SELECT count(*) + 1 FROM results_tf r2
-                   WHERE r2.meet_id = r.meet_id
-                     AND r2.event_id = r.event_id
-                     AND r2.div_id IS NOT DISTINCT FROM r.div_id
-                     AND r2.time_seconds IS NOT NULL
-                     AND r2.time_seconds < 999999
-                     AND r2.time_seconds < r.time_seconds) END AS place,
-               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL ELSE
-                 (SELECT count(*) + 1 FROM results_tf r2
-                   WHERE r2.meet_id = r.meet_id
-                     AND r2.event_id = r.event_id
-                     AND r2.div_id IS NOT DISTINCT FROM r.div_id
-                     AND r2.school IS NOT DISTINCT FROM r.school
-                     AND r2.time_seconds IS NOT NULL
-                     AND r2.time_seconds < 999999
-                     AND r2.time_seconds < r.time_seconds) END AS team_place
+               -- wrong one. Same single-lateral shape as the XC half.
+               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL
+                    ELSE pl.place END       AS place,
+               CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL
+                    ELSE pl.team_place END  AS team_place
        FROM results_tf r
+        LEFT JOIN LATERAL (
+            SELECT count(*) FILTER (WHERE r2.time_seconds < r.time_seconds)
+                       + 1 AS place,
+                   count(*) FILTER (WHERE r2.time_seconds < r.time_seconds
+                       AND r2.school IS NOT DISTINCT FROM r.school)
+                       + 1 AS team_place
+            FROM results_tf r2
+            WHERE r2.meet_id = r.meet_id
+              AND r2.event_id = r.event_id
+              AND r2.div_id IS NOT DISTINCT FROM r.div_id
+              AND r2.time_seconds IS NOT NULL
+              AND r2.time_seconds < 999999
+        ) pl ON TRUE
         -- tfrrs rows often carry a blank div_id (it's only populated for meets
         -- re-scraped with the capture code), and NULL = anything is NULL, so a
         -- plain equality join drops them. Match on the keys that ARE reliable
@@ -1368,6 +1372,26 @@ def get_meet_header(cur, meet_id, source=None):
     return cur.fetchone()
 
 
+def get_meet_date(cur, table, meet_id, source=None):
+    """The meet's date: the earliest sane result date.
+
+    Derived from results because neither meets table carries a date column
+    (the race pages already do the same). `date` is TEXT and the corpus
+    holds junk years (0023, 2223), hence the regex; min() picks the opening
+    day of a multi-day meet. `table` is one of two literals from the
+    callers, never user input."""
+    assert table in ("results", "results_tf")
+    cur.execute(f"""
+        SELECT min(date) AS date
+        FROM   {table}
+        WHERE  meet_id = %(meet)s
+          AND  (%(src)s::text IS NULL OR source = %(src)s)
+          AND  date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}'
+    """, {"meet": meet_id, "src": source})
+    row = cur.fetchone()
+    return row["date"] if row else None
+
+
 def get_meet_divisions(cur, meet_id, source=None):
     """Every division in this meet, with how many results each has.
 
@@ -1450,6 +1474,7 @@ def meet_xc(meet_id):
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
             compiled  = compiledResults(cur, meet_id, source=src)
+            meet_date = get_meet_date(cur, "results", meet_id, source=src)
 
     # ★ THE MEET PAGE ONLY LISTS THE COMPILED RACES; each one has its own
     #   page. A compiled result IS a race -- it has a distance, a gender, a
@@ -1467,7 +1492,7 @@ def meet_xc(meet_id):
         abort(404)
 
     return render_template("meet.html", header=header, divisions=divisions,
-                           compiled=compiled_index,
+                           compiled=compiled_index, meet_date=meet_date,
                            alt_idx=alt_idx, other_sources=other_sources)
 
 
@@ -1641,7 +1666,7 @@ def get_tf_meet_header(cur, meet_id, source=None):
       meet's name.
     """
     cur.execute("""
-        SELECT meet_name, state, is_indoor, meet_id
+        SELECT meet_name, state, is_indoor, meet_id, location_id
         FROM meets_tf
         WHERE meet_id = %(meet)s
           AND (%(src)s::text IS NULL OR source = %(src)s)
@@ -1681,11 +1706,13 @@ def meet_tf(meet_id):
                 sources, request.args.get("alt"))
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
+            meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
 
     if header is None:
         abort(404)
 
     return render_template("meet_tf.html", header=header, events=events,
+                           meet_date=meet_date,
                            alt_idx=alt_idx, other_sources=other_sources)
 
 
@@ -1834,6 +1861,9 @@ def school_page(school_name):
     # ranking_results / athlete_season, so no lookup is needed.
     has_hs_view = stampBoardRows(best, rating_keys=("rating",), sport=sport)
     has_hs_view = stampBoardRows(top, rating_keys=("best",),
+                                 sport=sport) or has_hs_view
+    has_hs_view = stampBoardRows(roster, rating_keys=("mean_rating",
+                                                      "best_rating"),
                                  sport=sport) or has_hs_view
 
     return render_template("school.html", school=school_name, header=header,
