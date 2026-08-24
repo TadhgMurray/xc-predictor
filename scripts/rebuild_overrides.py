@@ -2453,23 +2453,39 @@ def main():
                 #   passes were about to fix.
                 cur.execute(_PASS1_SQL, {"min_field": args.min_field})
                 rows = cur.fetchall()
-                got1, routed, _sk = pass1(rows, args.sigma, args.t1,
-                                          args.unanimity, cur)
+                got1, _routed, _sk = pass1(rows, args.sigma, args.t1,
+                                           args.unanimity, cur)
+                # ⚠ SAME CANDIDATE SET AS --pass 2, NOT pass 1's unanimity
+                #   router. --pass 2 judges every division pass 1 did not
+                #   condemn (the router found 2 half-divisions in 493,029);
+                #   staging only the routed ones here computed reb_pinned
+                #   over ~nothing, so pass 3 re-reported every split
+                #   division's moved half as individual corruption -- the
+                #   exact failure the reb_pinned exclusion exists for.
+                fixed1 = {(r["meet_id"], r["div_id"]) for r in got1}
+                cand = [r for r in rows
+                        if (r["meet_id"], r["div_id"]) not in fixed1]
                 cur.execute("DROP TABLE IF EXISTS reb_pass2")
                 cur.execute("CREATE TEMP TABLE reb_pass2 "
                             "(meet_id bigint, div_id bigint)")
-                if routed:
+                if cand:
                     from psycopg2.extras import execute_values
                     execute_values(cur, "INSERT INTO reb_pass2 VALUES %s",
                                    [(r["meet_id"], r["div_id"])
-                                    for r in routed])
+                                    for r in cand])
                 cur.execute(_PASS2_SQL)
                 got2, _sk2 = pass2(cur.fetchall(), args.sigma, args.t2,
                                    args.min_minority)
                 # rating' = rating * (d_new / d_old) ** K
+                # ! A AND B ONLY: pass 3 models the corrections that will
+                #   actually be APPLIED, and tier C is report-only. Scaling
+                #   by C adjusts rows for a fix nobody writes; unscaled, a C
+                #   division's rows are shielded by the vs-field guard (their
+                #   division median is off with them).
                 fixed = [(r["meet_id"], r["div_id"],
                           (r["snapped"] / float(r["distance"])) ** K)
-                         for r in got1 if r["distance"]]
+                         for r in got1
+                         if r["distance"] and r.get("tier") in ("A", "B")]
                 pinned = [rid for side in got2 for rid in side["result_ids"]]
                 stagePriorPasses(cur, fixed, pinned)
                 drops, saves, groups, medians = pass3(
