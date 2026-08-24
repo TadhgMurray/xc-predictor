@@ -2020,17 +2020,40 @@ def explainFast(cur, args):
                 print(f"\n    ({d['n'] - d['with_nt']} rows have no "
                       f"normalized_time -- parsing corrections.py to "
                       f"check the drop lists...)")
-                from corrections import _RESULT_DROP_BY_SPORT
+                from corrections import (_RESULT_DROP_BY_SPORT,
+                                         _DISTANCE_OVERRIDES_BY_SPORT)
                 dropset = _RESULT_DROP_BY_SPORT[args.sport]
                 n_drop = sum(1 for r in missing
                              if r["result_id"] in dropset)
+                corr_ovr = _DISTANCE_OVERRIDES_BY_SPORT[args.sport].get(key)
             except Exception as e:
+                corr_ovr = None
                 print(f"    (drop-list check unavailable: {e})")
             times = sorted(float(r["time_seconds"]) for r in missing
                            if r["time_seconds"])
             cur.execute("SELECT min(distance) AS d FROM meets "
                         "WHERE meet_id = %s AND div_id = %s", key)
             lbl = (cur.fetchone() or {}).get("d")
+            # ⚠ THE DISTANCE THE BACKFILL ACTUALLY USED IS dist_override
+            #   WHEN ONE EXISTS -- and a wrong override poisons everything
+            #   downstream: real times normalized at it produce insane
+            #   paces, the guards refuse them, and the guard takes the
+            #   blame for the override's crime (the Lehigh feedback loop,
+            #   again). Show every source; the disagreement is usually the
+            #   answer.
+            cur.execute("SELECT min(distance) AS d, count(*) AS n "
+                        "FROM dist_override "
+                        "WHERE meet_id = %s AND div_id = %s", key)
+            live = cur.fetchone()
+            live_d = float(live["d"]) if live and live["n"] else None
+            print(f"\n    THE DISTANCE, FROM EVERY SOURCE:")
+            print(f"      meets (scraped):            "
+                  + ("-" if lbl is None else f"{lbl:.0f}m"))
+            print(f"      corrections.py resolves to: "
+                  + ("-" if corr_ovr is None else f"{corr_ovr:.0f}m"))
+            print(f"      live dist_override table:   "
+                  + ("-" if live_d is None else f"{live_d:.0f}m")
+                  + "   <- what the last backfill normalized at")
             print(f"\n    WHY THOSE ROWS HAVE NO normalized_time")
             if n_drop is not None:
                 print(f"      in _RESULT_DROP (triage-era row drops): "
