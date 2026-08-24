@@ -206,6 +206,15 @@ MIN_OWN_RACES = 3       # races an athlete needs for their median to mean this
 #   ever TIGHTENS. The slow side keeps the pooled bar on purpose -- elites
 #   jog easy races deliberately (pacing a teammate, a workout race is -20
 #   "points" and real), nobody accidentally runs FASTER than their fitness.
+#
+# ! AND ONLY PASS 3. Passes 1 and 2 judge FIELD MEDIANS, where n already
+#   does the noise reduction (barFor takes 4 SEs of the median), and their
+#   absolute floor exists for SYSTEMATIC day effects -- mud, heat, a
+#   re-routed course move every athlete the same ~5-10 points however
+#   consistent each one is. A field of four metronomic elites has a razor
+#   median and a muddy day still shifts it 8 points; tightening their bar
+#   would catch weather, not distance. Per-athlete sigma helps exactly
+#   where n = 1 and nothing averages out.
 SIG_FLOOR = 1.5         # min per-athlete sigma; fast bar bottoms at t3*this
 SPREAD_MIN_RACES = 6    # races needed before the personal sigma is trusted
 # ! 0.03, NOT 0.06, BECAUSE THE LADDER IS DENSER THAN THAT. 1931 / 2000 /
