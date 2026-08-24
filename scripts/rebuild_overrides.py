@@ -2338,9 +2338,23 @@ WITH judgeable AS (
     FROM   reb_gap
     GROUP  BY 1, 2
 ), rated AS (
+    -- ⚠ THE ENGINE'S OWN RATING FIRST, THE COMPUTED ONE AS FALLBACK -- the
+    --   OPPOSITE of the gap table's rule, for a scale reason specific to
+    --   cold start. Per-athlete gaps are ratios of one athlete's numbers,
+    --   so ANY consistent scale cancels; cold start compares against the
+    --   ABSOLUTE pool median (~100), so the scale must be the POOL'S. A
+    --   career-less athlete is missing from reb_pool and falls to the
+    --   '__all__' blend, which is biased for young pools: Norwich's field
+    --   read median 157 on the blend against 124 on the engine's own
+    --   per-pool scale, and the implied distance overshot 2000 to 1609.
+    --   The engine resolved these rows' pools from grade+gender at rating
+    --   time -- its number IS the pool scale. The unovr scale still applies
+    --   (--as-if-wiped reverts engine ratings exactly as _GAP_BODY does).
     SELECT r.meet_id, r.div_id,
-           COALESCE(pm.pm, pma.pm, 100.0)
-               * exp(COALESCE(cd.difficulty, 0.0)) / r.normalized_time
+           COALESCE(r.speed_rating,
+                    COALESCE(pm.pm, pma.pm, 100.0)
+                        * exp(COALESCE(cd.difficulty, 0.0))
+                        / r.normalized_time)
                * COALESCE(u.scale, 1.0)                       AS speed_rating
     FROM   {table} r
     LEFT   JOIN reb_unovr u   ON u.meet_id = r.meet_id
