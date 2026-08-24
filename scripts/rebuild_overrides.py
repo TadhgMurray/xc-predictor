@@ -3062,11 +3062,17 @@ def main():
                     #   pass1.py is meet/div ids and nothing else, and
                     #   checking what happened to a meet you can name means
                     #   first looking up its id somewhere else.
+                    # ! THE TIER GOES IN THE COMMENT TOO -- a COLD proposal
+                    #   rests on field-vs-pool evidence, not careers, and a
+                    #   reviewer grepping for them found nothing because
+                    #   every line looked identical.
                     lines = [f"({r['meet_id']}, {r['div_id']}): "
                              f"{r['snapped']:.0f},  # was "
                              f"{r['distance']:.0f}, field {r['gap']:+.1f} over "
-                             f"its own heads, n={r['n']}, snap "
-                             f"{r['snap_err']:+.1%}"
+                             + ("the POOL median (COLD, career-less)"
+                                if r.get("tier") == "COLD"
+                                else "its own heads")
+                             + f", n={r['n']}, snap {r['snap_err']:+.1%}"
                              f"{_named(r)}"
                              for r in got]
                     emit(args.out, args.sport,
