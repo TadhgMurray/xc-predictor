@@ -2890,25 +2890,19 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     color: #fff;
 }
 /* ---- athlete season tables: keep them INSIDE the column ---------------- *
- * The season table's natural width (long meet names + up to six nowrap
- * flag pills) can exceed .main-col, and a table does not shrink below its
- * content -- so it overflowed the column and painted over the sidebar
- * charts. Three fences, in order of preference:
- *   1. the flags cell WRAPS -- six pills become two rows, not one strip;
- *   2. meet names ellipsize at 30ch (the full name stays in title=);
- *   3. .season scrolls within itself as the last resort, so whatever
- *      still doesn't fit scrolls rather than escaping the column. */
-.season { overflow-x: auto; }
-.season td.flags { white-space: normal; min-width: 7.5rem; }
+ * The real column sizing lives in athlete-charts.css (table-layout: fixed
+ * with per-column widths -- and a COLUMN-ORDER comment that must track
+ * athlete.html). These are only the backstops:
+ *   1. the flags cell WRAPS -- six pills become two rows, not one strip.
+ *
+ * ⚠ NO overflow-x:auto HERE, though it looks like the obvious fence. The
+ *   flag tooltips are hidden 250px absolute boxes anchored to the pills in
+ *   the LAST column; they count toward scrollWidth even while invisible,
+ *   so a scroll container here shows a permanent phantom scrollbar (and
+ *   clips the tooltips when they open). The fixed table layout is what
+ *   guarantees the table fits its column. */
+.season td.flags { white-space: normal; }
 .season td.flags .flag { margin-bottom: 2px; }
-td.meet-cell a, td.meet-cell .muted, td.meet-cell .meet-name {
-    display: inline-block;
-    max-width: 30ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: bottom;
-}
 
 /* The "?" beside the toggle: tooltip machinery from .flag, styled as a
    quiet circled hint rather than a record pill. */
@@ -2925,6 +2919,18 @@ td.meet-cell a, td.meet-cell .muted, td.meet-cell .meet-name {
     padding: 0;
     margin-left: 0.55rem;
     font-size: 11px;
+}
+/* The toggle sits flush against the page's RIGHT edge, and the flag
+   tooltip opens rightward by default (left: 0) -- so this one ran off the
+   page. Anchor it to the badge's right edge and open leftward, tail moved
+   with it; same flip the <=900px rule applies to the table flags. */
+.scale-note::after {
+    left: auto;
+    right: 0;
+}
+.scale-note::before {
+    left: auto;
+    right: 4px;
 }
 
 /* All-Time Bests sat in a card and Season Bests did not, so two equivalent

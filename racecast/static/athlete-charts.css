@@ -385,18 +385,34 @@
  *  SEASON TABLE ALIGNMENT
  * ================================================================ */
 
-/* style.css right-aligns Result / Rating / Difficulty through
-   td:nth-child(4..6). Left-align them instead so every column starts at the
-   same edge and the eye can scan straight down a season.
+/* ⚠ COLUMN ORDER, THE ONLY SOURCE THESE nth-child RULES HAVE. Keep in step
+   with the season table in athlete.html:
+
+     1 Date | 2 Meet | 3 Event | 4 Result | 5 Place | 6 Rating
+     | 7 Difficulty | 8 PR/SR Flags
+
+   THE FAILURE MODE WHEN THIS DRIFTS IS SILENT AND UGLY: these widths were
+   written for the 7-column table before Place existed, still summed to 100%,
+   and under table-layout:fixed that gave the REAL last column (Flags) zero
+   width -- its pills painted outside the table over whatever sat there.
+   Adding a column to the template means updating this block, and the Flags
+   column deliberately carries NO width (see below) so the drift at least
+   degrades to squeezed columns instead of a zero-width one. */
+
+/* style.css right-aligns the numeric columns through td:nth-child rules.
+   Left-align them instead so every column starts at the same edge and the
+   eye can scan straight down a season.
 
    Scoped to .season -- the race and meet pages use the same nth-child rule on
    their own tables, and those should keep their right alignment. */
 .season table th:nth-child(4),
 .season table th:nth-child(5),
 .season table th:nth-child(6),
+.season table th:nth-child(7),
 .season table td:nth-child(4),
 .season table td:nth-child(5),
-.season table td:nth-child(6) {
+.season table td:nth-child(6),
+.season table td:nth-child(7) {
   text-align: left;
   /* Fixed-width digits, so 149.3 and 15:01.1 still line up column-wise once
      the right edge is no longer doing that job. */
@@ -416,20 +432,39 @@
   table-layout: fixed;
   width: 100%;
 }
+/* border-box, so the percentage widths INCLUDE cell padding. Content-box
+   (the default) charges every sized column's padding against the auto
+   column's remainder -- at narrow widths that starved Flags to ~40px and
+   the pills stacked one per line, making tall rows all over again. */
+.season table th,
+.season table td { box-sizing: border-box; }
 
 /* PERCENTAGES, NOT rem. With table-layout:fixed, one `auto` column absorbs
-   whatever is left after the fixed ones -- so Meet ballooned on a wide screen
-   and collapsed to an ellipsis on a narrow one. Percentages make every column
+   whatever is left after the fixed ones. Percentages make the sized columns
    scale together, so the proportions hold at any width.
 
-   They must sum to 100. */
+   ★ FLAGS IS THE AUTO COLUMN, ON PURPOSE. The sized columns sum to 82%, so
+     Flags absorbs the remaining ~18% -- and if a column is ever added
+     without updating this block, the newcomer and Flags SHARE the slack
+     instead of the last column silently collapsing to zero width, which is
+     exactly how this table broke twice. */
 .season table th:nth-child(1) { width: 12%; }   /* Date        */
-.season table th:nth-child(2) { width: 28%; }   /* Meet        */
-.season table th:nth-child(3) { width:  8%; }   /* Event       */
-.season table th:nth-child(4) { width: 11%; }   /* Result      */
-.season table th:nth-child(5) { width:  9%; }   /* Rating      */
-.season table th:nth-child(6) { width: 10%; }   /* Difficulty  */
-.season table th:nth-child(7) { width: 22%; }   /* PR/SR Flags */
+.season table th:nth-child(2) { width: 19%; }   /* Meet        */
+.season table th:nth-child(3) { width:  7%; }   /* Event       */
+.season table th:nth-child(4) { width:  9%; }   /* Result      */
+.season table th:nth-child(5) { width: 13%; }   /* Place       */
+.season table th:nth-child(6) { width:  7%; }   /* Rating      */
+.season table th:nth-child(7) { width:  9%; }   /* Difficulty  */
+/* th:nth-child(8) Flags -- NO width: the auto column, absorbs the rest. */
+
+/* A one-word header ("DIFFICULTY") cannot wrap, so in a squeezed column it
+   overflowed into its neighbour. Ellipsize instead -- only ever visible at
+   narrow desktop widths; phones already get the scrolling table. */
+.season thead th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Meet is the only column with unbounded content. Ellipsis keeps a long name
    from forcing the row taller; title="" on the link shows the full text on
@@ -441,8 +476,8 @@
 }
 
 /* Flags wrap to a second line on narrow screens rather than overflowing. A row
-   with five badges is the widest case and 22% will not always hold it. */
-.season table td:nth-child(7) {
+   with six badges is the widest case and ~18% will not always hold it. */
+.season table td:nth-child(8) {
   white-space: normal;
   line-height: 1.9;
 }
