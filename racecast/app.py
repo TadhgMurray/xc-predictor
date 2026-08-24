@@ -21,7 +21,7 @@ import psycopg2.errors
 from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
-from pool_view import hsFactor, fetchPoolRows, stampHsRatings
+from pool_view import fetchPoolRows, stampHsRatings, seasonFactor
 from teams import parseFilters as parseTeamFilters, serveBoard
 from courses import (parseFilters as parseCourseFilters,
                      getCourseRankings, countCourses)
@@ -480,17 +480,22 @@ def athlete(person_id):
         label = (season_rating["year"] + 1 if season_rating["sport"] == "TF"
                  else season_rating["year"])
         athlete["rating_note"] = f"{label} {season_rating['sport']} season"
-        # A mean over one pool scales like any single rating in it.
-        _hf = hsFactor(season_rating["pool"])
-        athlete["rating_hs"] = (float(athlete["rating"]) * _hf
-                                if athlete["rating"] is not None and _hf
+        # A season MEAN has no single race context, so it scales by the
+        # median per-race factor of the same displayed season -- computed
+        # from the races already stamped above.
+        _sf = seasonFactor(races, label=str(label),
+                           sport=season_rating["sport"])
+        athlete["rating_hs"] = (float(athlete["rating"]) * _sf
+                                if athlete["rating"] is not None and _sf
                                 else None)
     else:
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
-        _hf = hsFactor(rating["pool"]) if rating else None
-        athlete["rating_hs"] = (float(athlete["rating"]) * _hf
-                                if athlete["rating"] is not None and _hf
+        # The fallback number has no season attached; the career-wide
+        # median factor is the honest stand-in.
+        _sf = seasonFactor(races)
+        athlete["rating_hs"] = (float(athlete["rating"]) * _sf
+                                if athlete["rating"] is not None and _sf
                                 else None)
 
     # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
