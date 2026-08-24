@@ -1212,13 +1212,18 @@ def get_race_results(cur, meet_id, div_id):
 
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
 def race_xc(meet_id, div_id):
-    from meet_compile import scoreRows, publishedScores
+    from meet_compile import scoreRows, publishedScores, annotateScoring
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             header  = get_race_header(cur, meet_id, div_id)
             results = get_race_results(cur, meet_id, div_id)
             published = publishedScores(cur, meet_id)
+
+    # Stamp score_place / team_place on the rendered rows themselves --
+    # scoreRows below runs on `ranked` COPIES, so its stamps never reach
+    # the table.
+    annotateScoring(results)
 
     if header is None:
         abort(404)

@@ -117,6 +117,10 @@
                 <th>School</th>
                 <th>Time</th>
                 <th>Rating</th>
+                {# Rank among runners who can score or displace: complete
+                   teams' first seven only. The gap between Place and Points
+                   is the unattached, the incomplete teams, and the 8th men. #}
+                <th>Points</th>
             </tr>
         </thead>
         <tbody>
@@ -131,9 +135,10 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% else %}—{% endif %}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
                 <td>{{ row.display_time }}</td>
                 <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+                <td>{{ row.score_place if row.score_place else "—" }}</td>
             </tr>
             {% endfor %}
         </tbody>

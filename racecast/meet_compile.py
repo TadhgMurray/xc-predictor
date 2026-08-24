@@ -243,10 +243,64 @@ def compiledResults(cur, meet_id, source=None):
 #  2. SCORING
 # ------------------------------------------------------------------ #
 
+def _finished(r):
+    """A row with a real time. 999999 is the DNS/DNF sentinel, not a time."""
+    t = r.get("time_seconds")
+    try:
+        return t is not None and float(t) < 999999
+    except (TypeError, ValueError):
+        return False
+
+
+def annotateScoring(rows):
+    """Stamp team_place and score_place on an ORDERED field, in place.
+
+    score_place is the published "Points" number: the runner's rank among
+    those who can score or displace -- the first SCORERS + DISPLACERS
+    finishers of a school that fielded at least SCORERS finishers, isTeam
+    schools only. Everyone else -- an unattached runner, an incomplete
+    team's runner, an eligible team's 8th -- gets None and moves nobody up.
+    team_place is stamped for every isTeam finisher, scoring or not.
+
+    ⚠ THE 7-RUNNER CAP IS THE RULEBOOK'S, and the old scoreRows renumber
+      loop lacked it: a team's 8th and 9th finishers displaced. Both the
+      team totals and the per-row Points column now come through this one
+      loop, so they cannot disagree.
+
+    ! NON-TEAMS ARE NEVER COUNTED, so they can neither score nor be
+      reported as short of runners. isTeam is asked once per school, not
+      once per runner -- it is a nine-alternative regex, and the
+      hypothetical national meet has 140,000 entrants.
+    """
+    counts, real = {}, {}
+    for r in rows:
+        school = r.get("school")
+        ok = real.get(school)
+        if ok is None:
+            ok = real[school] = isTeam(school)
+        if ok and _finished(r):
+            counts[school] = counts.get(school, 0) + 1
+    full = {s for s, n in counts.items() if n >= SCORERS}
+
+    place, on_team = 0, {}
+    for r in rows:
+        school = r.get("school")
+        r["team_place"] = None
+        r["score_place"] = None
+        if not real.get(school) or not _finished(r):
+            continue
+        k = on_team[school] = on_team.get(school, 0) + 1
+        r["team_place"] = k
+        if school in full and k <= SCORERS + DISPLACERS:
+            place += 1
+            r["score_place"] = place
+    return rows
+
+
 def scoreRows(rows):
     """Team scores from an ordered list of finishers.
 
-    `rows` must already be in finishing order and carry `place`.
+    `rows` must already be in finishing order.
 
     ⚠ DISPLACERS COUNT EVEN THOUGH THEY DO NOT SCORE. Runners 6 and 7 push
       every later finisher's place up, which is the whole tactical point of
@@ -257,40 +311,27 @@ def scoreRows(rows):
       four runners cannot score, and by the rules its runners are lifted out
       and everyone behind them moves up. Scoring against raw finishing places
       instead inflates every complete team's total.
-    """
-    # ! NON-TEAMS ARE NEVER COUNTED, so they can neither score nor be
-    #   reported as short of runners -- "Unattached (7)" under a heading
-    #   about incomplete teams answers a question nobody asked. Their
-    #   runners are then skipped by the renumbering loop below, which lifts
-    #   them out of the scoring order exactly as an incomplete team's are.
-    # ! ASKED ONCE PER SCHOOL, NOT ONCE PER RUNNER. isTeam is a regex with
-    #   nine alternatives; a real meet has 300 finishers and 40 schools, and
-    #   the hypothetical national meet the team board races has 140,000
-    #   entrants and 20,000 -- where the difference is a third of the total
-    #   time. The answer cannot vary between two runners for the same school.
-    counts, real = {}, {}
-    for r in rows:
-        school = r.get("school")
-        ok = real.get(school)
-        if ok is None:
-            ok = real[school] = isTeam(school)
-        if ok:
-            counts[school] = counts.get(school, 0) + 1
-    full = {s for s, n in counts.items() if n >= SCORERS}
 
-    scoring, place = {}, 0
+    The renumbering itself lives in annotateScoring (shared with the race
+    pages' Points column), which also stamps the rows in place -- callers
+    rendering the same list get score_place and team_place for free.
+    """
+    annotateScoring(rows)
+    counts, scoring = {}, {}
     for r in rows:
-        if r.get("school") not in full:
-            continue
-        place += 1
-        scoring.setdefault(r["school"], []).append({**r, "score_place": place})
+        if r.get("team_place"):
+            s = r["school"]
+            counts[s] = max(counts.get(s, 0), r["team_place"])
+        if r.get("score_place"):
+            scoring.setdefault(r["school"], []).append(r)
+    full = set(scoring)
 
     out = []
     for school, runners in scoring.items():
         out.append({
             "school": school,
             "points": sum(x["score_place"] for x in runners[:SCORERS]),
-            "runners": runners[:SCORERS + DISPLACERS],
+            "runners": runners,          # annotate capped these at 7
         })
 
     # ⚠ TIES ARE BROKEN BY THE SIXTH RUNNER, as in the real rules. Without it

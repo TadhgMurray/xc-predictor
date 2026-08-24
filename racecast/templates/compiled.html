@@ -108,6 +108,9 @@
                 <th>School</th>
                 <th>Time</th>
                 <th>Rating</th>
+                {# Same Points as race.html: rank among the scorable, within
+                   THIS compiled field. #}
+                <th>Points</th>
                 <th>Actual race</th>
             </tr>
         </thead>
@@ -123,9 +126,10 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% else %}—{% endif %}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
                 <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
                 <td>{{ "%.1f"|format(row.speed_rating) if row.speed_rating else "—" }}</td>
+                <td>{{ row.score_place if row.score_place else "—" }}</td>
                 {# Where they actually finished, and in which race. The gap
                    between this and the compiled place is why compiling exists.
                    Derived in meet_compile, NOT read from results.place -- that
