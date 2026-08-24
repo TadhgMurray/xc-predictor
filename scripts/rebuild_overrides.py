@@ -501,12 +501,24 @@ ANALYZE reb_gap;
 #   "fixed" off a -12 (Crystal Springs' famous 4747).
 #
 # ★ SO FITNESS IS MEASURED AND SUBTRACTED, NOT GUESSED. Number each
-#   athlete's races within their academic season; the corpus-wide median
-#   gap at race #1, #2, ... IS the form curve, printed every run. A wrong
-#   distance keeps its deficit after the curve comes off (-40 stays ~-30);
-#   an opener collapses into the bar. Race-of-season self-aligns regions:
+#   athlete's races within their academic season; the median gap at race
+#   #1, #2, ... IS the form curve, printed every run. A wrong distance
+#   keeps its deficit after the curve comes off (-40 stays ~-30); an
+#   opener collapses into the bar. Race-of-season self-aligns regions:
 #   Texas opens in early August and New York in September, but race #1 is
 #   race #1 everywhere.
+#
+# ⚠ PER POOL, BECAUSE THE GLOBAL CURVE MEASURED FLAT AND THE FAULT DID NOT
+#   MOVE. First measurement: #1 -1.0, #10+ +1.6 across 32M finishers --
+#   corpus-wide, race #1 is barely slow, yet the McIver college opener
+#   still read ~-13. The corpus is overwhelmingly high schoolers; a
+#   population-specific offset (college medians inflated by the hs->college
+#   anchor seam, or a genuinely later college peak) is invisible in a
+#   global median. Per (pool, k) the curve is both the correction and the
+#   verdict: a college_f row that is flat-negative at every k is a
+#   CONSTANT accounting bias, not fitness -- read the printout.
+#   Cells under 500 rows are dropped (their median is noise) and fall
+#   through as form 0.
 #
 # ! ONE COPY, AFTER EITHER BODY. This rewrites reb_gap in place (keeping
 #   gap_raw), so both --gap-from modes get it without a second copy of the
@@ -533,12 +545,14 @@ ANALYZE reb_seq;
 
 DROP TABLE IF EXISTS reb_form;
 CREATE TEMP TABLE reb_form AS
-SELECT s.k,
+SELECT {poolexpr} AS pool, s.k,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY g.gap) AS form,
        count(*) AS n
 FROM   reb_gap_raw g
 JOIN   reb_seq s ON s.result_id = g.result_id
-GROUP  BY s.k;
+{pooljoin}
+GROUP  BY {poolexpr}, s.k
+HAVING count(*) >= 500;
 
 CREATE TEMP TABLE reb_gap AS
 SELECT g.meet_id, g.div_id, g.result_id, g.ident,
@@ -547,7 +561,8 @@ SELECT g.meet_id, g.div_id, g.result_id, g.ident,
        g.gap - COALESCE(f.form, 0.0)         AS gap
 FROM   reb_gap_raw g
 LEFT   JOIN reb_seq  s ON s.result_id = g.result_id
-LEFT   JOIN reb_form f ON f.k = s.k;
+{pooljoin}
+LEFT   JOIN reb_form f ON f.pool = {poolexpr} AND f.k = s.k;
 
 CREATE INDEX ON reb_gap (meet_id, div_id);
 ANALYZE reb_gap;
@@ -891,20 +906,36 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
     _t = _step(_t, f"gap table from {gap_from} (the expensive one)")
     if form:
         from season_year import seasonYearSqlInt
+        # reb_pool only exists on the times path; the ratings branch gets
+        # the global curve rather than a second copy of the pool logic.
+        if gap_from == "times":
+            poolexpr = "COALESCE(p.pool, 'unknown')"
+            pooljoin = "LEFT JOIN reb_pool p ON p.ident = g.ident"
+        else:
+            poolexpr, pooljoin = "'all'", ""
         sql = _FORM_SQL.format(table=_TABLE[sport],
-                               season=seasonYearSqlInt(None, "r.date"))
+                               season=seasonYearSqlInt(None, "r.date"),
+                               poolexpr=poolexpr, pooljoin=pooljoin)
         _noBarePercent("_FORM_SQL", sql)
         # The window sort over the whole gap table is the same size as the
         # own-median sort; give it the same room in the ratings branch too.
         cur.execute("SET LOCAL work_mem = '2GB'")
         cur.execute(sql)
-        _t = _step(_t, "form curve (fitness by race-of-season)")
-        cur.execute("SELECT k, form, n FROM reb_form ORDER BY k")
-        curve = cur.fetchall()
-        print("  [form] median gap by race-of-season, subtracted from every "
-              "gap (--no-form reverts):\n         "
-              + "  ".join(f"#{r['k']}{'+' if r['k'] == 10 else ''} "
-                          f"{r['form']:+.1f}" for r in curve))
+        _t = _step(_t, "form curve (fitness by race-of-season, per pool)")
+        cur.execute("SELECT pool, k, form, n FROM reb_form ORDER BY pool, k")
+        by_pool = {}
+        for r in cur.fetchall():
+            by_pool.setdefault(r["pool"], []).append(r)
+        print("  [form] median gap by race-of-season, per pool, subtracted "
+              "from every gap (--no-form reverts):\n"
+              "         a row that is flat-negative at every k is a constant "
+              "bias in that pool's\n         medians, not fitness -- that is "
+              "a finding, not a correction to shrug at")
+        for pool, rows in sorted(by_pool.items(),
+                                 key=lambda kv: -sum(r["n"] for r in kv[1])):
+            curve = "  ".join(f"#{r['k']}{'+' if r['k'] == 10 else ''} "
+                              f"{r['form']:+.1f}" for r in rows)
+            print(f"         {pool:<10} {curve}")
     # RealDictCursor, so name the aggregates rather than unpacking a tuple.
     cur.execute("SELECT count(*) AS n, count(gender) AS n_sexed FROM reb_gap")
     row = cur.fetchone()
