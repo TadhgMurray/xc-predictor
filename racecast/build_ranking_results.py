@@ -1311,10 +1311,20 @@ def swapIn(conn):
         #   This rewrites the table once, so it is not free -- but it is a
         #   sequential write with no index maintenance and no per-row overhead,
         #   which is far cheaper than having logged every insert.
+        # ⚠ BOTH TABLES, AND THE SECOND ONE WAS MISSING. Only ranking_results
+        #   was set back to logged; athlete_season went live UNLOGGED, and an
+        #   unlogged table is TRUNCATED by crash recovery. The first unclean
+        #   Postgres shutdown after a build silently emptied it while the
+        #   logged ranking_results kept its rows -- performance boards full,
+        #   athlete boards gone, rank lines gone, team boards built from
+        #   nothing, and not one error anywhere. Found from exactly that
+        #   state: panels printing "athlete-seasons scanned: 0" beside 37M
+        #   scanned performances.
         t0 = time.time()
         cur.execute(f"ALTER TABLE {_LOAD_TABLE} SET LOGGED")
+        cur.execute(f"ALTER TABLE {_LOAD_SEASON} SET LOGGED")
         conn.commit()
-        print(f"    [{time.time() - t0:7.1f}s] set logged")
+        print(f"    [{time.time() - t0:7.1f}s] set logged (both tables)")
 
         cur.execute("BEGIN")
         cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
