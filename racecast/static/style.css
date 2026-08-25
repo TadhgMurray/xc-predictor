@@ -370,6 +370,17 @@ td.no-break { white-space: nowrap; }
 .recent-block { display: none; margin-top: 2.2rem; }
 .rankings[data-sport="XC"] .recent-block[data-sport="XC"],
 .rankings[data-sport="TF"] .recent-block[data-sport="TF"] { display: block; }
+.recent-all { margin-top: 0.6rem; font-size: 0.9rem; text-align: right; }
+
+/* /meets: one table per month, the month as a quiet running head. */
+.meets-page .month-head {
+    margin: 1.6rem 0 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+}
  
 /* pool chips hide a pool everywhere at once */
 body.hide-hs_m      .pool-block[data-pool="hs_m"],

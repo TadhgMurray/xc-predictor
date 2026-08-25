@@ -181,31 +181,8 @@
     </table>
 {% endif %}
 
-{# Staged reveal. Inline because it is nine lines and exists only here; a
-   separate file for this would be a fourth static asset to keep in step. #}
-<script>
-document.querySelectorAll("table.staged").forEach(function (table) {
-    var btn = table.querySelector(".more-btn");
-    if (!btn) return;
-    var step = parseInt(table.dataset.step, 10) || 20;
-    var pressed = 0;
-    btn.addEventListener("click", function () {
-        pressed += 1;
-        var hidden = table.querySelectorAll("tr.row-hidden");
-        // Second press reveals the rest: the first is a sample, and after
-        // that the reader has said they want the list.
-        var take = pressed === 1 ? Math.min(step, hidden.length) : hidden.length;
-        for (var i = 0; i < take; i++) hidden[i].classList.remove("row-hidden");
-        var left = table.querySelectorAll("tr.row-hidden").length;
-        if (!left) {
-            table.querySelector(".more-row").remove();
-        } else {
-            btn.querySelector(".more-left").textContent = "(" + left + " left)";
-            btn.childNodes[0].nodeValue = "Show the remaining " + left + " ";
-        }
-    });
-});
-</script>
+{# Staged reveal -- shared with the home page's Latest results table. #}
+<script src="{{ url_for('static', filename='staged.js') }}"></script>
 
 </main>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>

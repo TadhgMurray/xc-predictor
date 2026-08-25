@@ -1,0 +1,74 @@
+{# =====================================================================
+   meets.html -- every recent meet, grouped by month.
+
+   The "view all" behind the home page's Latest results module. Serves
+   the whole homepage_recent precompute (a year back, 25+ results per
+   meet), one table per month so a season reads as a season rather than
+   one endless list. Sport is a segmented control, same as the school
+   page's.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% set meta_title = "Recent meets" %}
+    {% set meta_description = "Every recent cross country and track meet "
+       "with results and speed ratings on one comparable scale." %}
+    {% include "_meta.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide meets-page">
+    <h1>Recent meets</h1>
+    <p class="meta">Meets from the last year with real fields
+       ({{ min_results }}+ results), newest first.</p>
+
+    <div class="seg">
+        {% for s in ['XC', 'TF'] %}
+          <a class="seg-btn{{ ' is-on' if s == sport }}"
+             href="/meets?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+        {% endfor %}
+    </div>
+
+    {% if not months %}
+    <p class="meta">Nothing here yet. The list is rebuilt with the
+       homepage boards; if those are up to date, no {{ sport }} meet in the
+       window cleared the results floor.</p>
+    {% endif %}
+
+    {% for label, rows in months %}
+    <h2 class="month-head">{{ label }}</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Meet</th>
+                <th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
+                <th>State</th>
+                <th>Results</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in rows %}
+            <tr>
+                <td class="no-break">{{ m.date }}</td>
+                <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
+                <td>
+                    {% if sport == 'XC' and m.course_name %}
+                        <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
+                    {% else %}{{ m.course_name or "—" }}{% endif %}
+                </td>
+                <td>{{ m.state or "—" }}</td>
+                <td>{{ m.n_results }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+
+</main>
+</body>
+</html>

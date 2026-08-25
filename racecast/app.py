@@ -283,6 +283,44 @@ def home():
 
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+@app.route("/meets")
+def meets_page():
+    """Every recent meet, grouped by month -- the view-all behind the home
+    page's Latest results module. Serves the homepage_recent precompute
+    (see panels.py), so it costs one small indexed read per view."""
+    from panels import RECENT_MIN_RESULTS
+
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        sport = "XC"
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            recent = get_homepage_recent(cur)
+
+    # rows arrive newest first; group into (month label, rows) runs. A
+    # malformed date cannot happen here (panels.py regex-guards the window),
+    # but the fallback label keeps a surprise from taking the page down.
+    months, current = [], None
+    for m in recent.get(sport, []):
+        d = m.get("date") or ""
+        try:
+            label = f"{_MONTHS[int(d[5:7]) - 1]} {d[:4]}"
+        except (ValueError, IndexError):
+            label = "Undated"
+        if current is None or current[0] != label:
+            current = (label, [])
+            months.append(current)
+        current[1].append(m)
+
+    return render_template("meets.html", sport=sport, months=months,
+                           min_results=RECENT_MIN_RESULTS)
+
+
 # ★ TRAINING PACES FROM THE ATHLETE'S OWN RACES, which is the only place this
 #   works. Critical speed is the slope of a distance-time line, so it needs two
 #   races at different distances -- and the conversions page takes ONE result,

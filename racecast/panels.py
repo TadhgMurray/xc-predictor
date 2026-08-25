@@ -1182,9 +1182,13 @@ CREATE TABLE IF NOT EXISTS homepage_recent (
 #   upper bound (today + 2 days) is what keeps a 2223 row from sitting on
 #   top of the list forever.
 
-RECENT_N = 15                # rows per sport on the module
+# ★ DEEP ON PURPOSE. The home module shows 15 rows (and reveals 20 more);
+#   the /meets page serves the WHOLE precomputed list, so the depth here is
+#   that page's coverage. Still a few hundred small rows -- the cost lives
+#   in this nightly scan either way.
+RECENT_N = 400               # rows per sport, home module + /meets together
 RECENT_MIN_RESULTS = 25      # below this a "meet" is a dual-meet sliver
-RECENT_WINDOW_DAYS = 120     # long enough to bridge an off-season gap
+RECENT_WINDOW_DAYS = 365     # a full year back, so /meets spans the season
 
 _RECENT_SQL = {
     "XC": """
