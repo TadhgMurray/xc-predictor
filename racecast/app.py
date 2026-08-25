@@ -2114,9 +2114,60 @@ def _tf_heat_sections(results, is_field):
     return sections
 
 
+# ★ SCORING A MEET IS PER-MEET WORK ON A PER-RACE PAGE. Every TF race
+#   page needs the whole meet scored just to print its Points column, and
+#   a big invitational is thousands of rows -- so the points map caches
+#   in-process per (meet, source). Meet results never change after the
+#   scrape; the TTL only bounds staleness across a re-scrape.
+_TF_POINTS_CACHE = {}
+_TF_POINTS_TTL = 6 * 3600
+_TF_POINTS_MAX = 256
+
+
+def _tf_points_cached(cur, meet_id, source):
+    """points_by_result for one meet, cached. Compute via the same path
+    every page uses; evict oldest beyond the cap."""
+    import time as _time
+    from tf_points import scoreMeet
+
+    key = (meet_id, source)
+    hit = _TF_POINTS_CACHE.get(key)
+    now = _time.time()
+    if hit and now - hit[0] < _TF_POINTS_TTL:
+        return hit[1], hit[2]
+    rows = get_tf_meet_scoring_rows(cur, meet_id, source=source)
+    stamp_tf_meet_extras(cur, meet_id, rows)
+    points = scoreMeet(rows)["points_by_result"]
+    # event names ride along: a nameless race page borrows its rows'
+    # (possibly catalog-stamped) event_short for its title
+    names = {}
+    for r in rows:
+        k = (r.get("div_id"), r.get("event_id"))
+        if k not in names and (r.get("event_short") or "").strip():
+            names[k] = r["event_short"]
+    _TF_POINTS_CACHE[key] = (now, points, names)
+    if len(_TF_POINTS_CACHE) > _TF_POINTS_MAX:
+        oldest = min(_TF_POINTS_CACHE, key=lambda k: _TF_POINTS_CACHE[k][0])
+        _TF_POINTS_CACHE.pop(oldest, None)
+    return points, names
+
+
+def _tf_seed_points_cache(meet_id, source, rows, scored):
+    """Meet and compiled pages already scored the meet; bank it so the
+    race pages ride their work."""
+    import time as _time
+    names = {}
+    for r in rows:
+        k = (r.get("div_id"), r.get("event_id"))
+        if k not in names and (r.get("event_short") or "").strip():
+            names[k] = r["event_short"]
+    _TF_POINTS_CACHE[(meet_id, source)] = (
+        _time.time(), scored["points_by_result"], names)
+
+
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
-    from tf_points import scoreMeet, prettyEventName
+    from tf_points import prettyEventName
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -2133,8 +2184,9 @@ def race_tf(meet_id, event_id, div_id):
             # Points come from scoring the WHOLE meet, not this page's rows:
             # a prelim page's athletes score in the final, and a sectioned
             # final scores across its sections. Scope to this race's own
-            # source first -- the meet_id collision rule.
-            points_by_result = {}
+            # source first -- the meet_id collision rule. Cached per meet:
+            # only the first race page of a meet pays for the scoring.
+            points_by_result, event_names = {}, {}
             if header and results:
                 cur.execute("""
                     SELECT source FROM results_tf
@@ -2144,23 +2196,17 @@ def race_tf(meet_id, event_id, div_id):
                 """, {"meet": meet_id, "div": div_id, "event": event_id})
                 srow = cur.fetchone()
                 race_src = srow["source"] if srow else None
-                scoring_rows = get_tf_meet_scoring_rows(cur, meet_id,
-                                                        source=race_src)
-                stamp_tf_meet_extras(cur, meet_id, scoring_rows)
-                points_by_result = scoreMeet(scoring_rows)["points_by_result"]
+                points_by_result, event_names = _tf_points_cached(
+                    cur, meet_id, race_src)
 
     if header is None:
         abort(404)
 
     header["gender"] = _field_gender(results)
-    # A nameless event's page borrows the catalog name its scoring rows
-    # just got stamped with; then 'hj' is a column value, not a title.
+    # A nameless event's page borrows its rows' (possibly catalog-
+    # stamped) name; then 'hj' is a column value, not a title.
     if not (header.get("event_short") or "").strip():
-        for r in scoring_rows if (header and results) else []:
-            if (r.get("div_id") == div_id and r.get("event_id") == event_id
-                    and (r.get("event_short") or "").strip()):
-                header["event_short"] = r["event_short"]
-                break
+        header["event_short"] = event_names.get((div_id, event_id))
     if header.get("event_short"):
         header["event_short"] = prettyEventName(header["event_short"])
 
@@ -2207,11 +2253,14 @@ def get_tf_meet_header(cur, meet_id, source=None):
 
 
 def get_tf_meet_events(cur, meet_id, source=None):
-    """Every event in this TF meet, with result counts and the field's
-    majority athlete gender -- some feeds name both 800s just "800m", and
-    without a gender the two rows are indistinguishable on the page.
-    (mode() skips NULLs, so the CASE quietly drops unusable genders.)"""
-    cur.execute(f"""
+    """Every event in this TF meet, with result counts.
+
+    ★ NO ATHLETE LATERAL AND NO GENDER AGGREGATE HERE. This query used
+      to probe the 16M-row athletes table once per RESULT to compute a
+      majority gender per event -- but the route scores the meet anyway,
+      and the scorer resolves every event's gender (and name) deeper
+      than a mode() could. The route reuses that; this stays cheap."""
+    cur.execute("""
         SELECT m.div_id,
                m.event_id,
                -- Nameless meets_tf rows borrow their results' own name
@@ -2222,16 +2271,12 @@ def get_tf_meet_events(cur, meet_id, source=None):
                    AS event_short,
                m.division,
                m.distance_meters,
-               count(r.result_id) AS n_results,
-               mode() WITHIN GROUP (
-                   ORDER BY CASE WHEN a.gender IN ('M', 'F')
-                                 THEN a.gender END) AS gender
+               count(r.result_id) AS n_results
         FROM meets_tf m
         LEFT JOIN results_tf r
                ON r.meet_id  = m.meet_id
               AND r.div_id   = m.div_id
               AND r.event_id = m.event_id
-        {_athlete_lateral('r')}
         WHERE m.meet_id = %(meet)s
           AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
@@ -2442,6 +2487,7 @@ def meet_tf(meet_id):
         abort(404)
 
     scored = scoreMeet(scoring_rows)
+    _tf_seed_points_cache(meet_id, src, scoring_rows, scored)
 
     # The scorer already resolved each raw event's gender and name as
     # deeply as it can (name word or catalog name, athlete majority,
@@ -2511,6 +2557,7 @@ def compiled_tf(meet_id):
 
     _stamp_tf_display(rows)
     scored = scoreMeet(rows)
+    _tf_seed_points_cache(meet_id, src, rows, scored)
 
     return render_template("compiled_tf.html", header=header, scored=scored,
                            meet_date=meet_date, has_hs_view=has_hs_view,
