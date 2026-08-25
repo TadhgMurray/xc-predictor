@@ -1,6 +1,8 @@
 import sys
 import re
 import argparse
+from urllib.parse import quote
+
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
@@ -181,7 +183,11 @@ def _load_schools(conn):
             continue
         rows.append((
             "school", s, f"{r['n_ath']} athletes",
-            f"/search?q={s}&kind=athlete",           # no school page yet -> filtered search
+            # The school PAGE. This linked a filtered athlete search from
+            # before /school existed, and the stale index outlived the
+            # route by months -- scripts/fix_school_search_links.py
+            # repoints an already-built index without a full rebuild.
+            f"/school/{quote(s, safe='')}",
             s.lower(), s.lower(),
             0, r["n_ath"] or 0,
         ))

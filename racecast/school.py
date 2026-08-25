@@ -79,7 +79,14 @@ def schoolYears(cur, school):
 
 
 def schoolHeader(cur, school):
-    """State and span. None when the school has no rated results at all."""
+    """State and span. None when the school has no results at all.
+
+    ⚠ THREE SOURCES DEEP, because athlete_season is a REBUILT table: it
+      empties during a pipeline rebuild (and once emptied itself on crash
+      recovery, the UNLOGGED bug), and while it is empty every school
+      page on the site 404'd. The header now falls back to
+      ranking_results, then to the raw results tables -- the page
+      renders whatever sections have data instead of vanishing."""
     label = _labelSql("year", "sport")
     cur.execute(f"""
         SELECT count(DISTINCT person_id)          AS athletes,
@@ -88,6 +95,38 @@ def schoolHeader(cur, school):
                mode() WITHIN GROUP (ORDER BY state) AS state
         FROM   athlete_season
         WHERE  school = %(school)s
+    """, {"school": school})
+    row = cur.fetchone()
+    if row and row["athletes"]:
+        return row
+
+    cur.execute("""
+        SELECT count(DISTINCT person_id)          AS athletes,
+               min(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)
+                                                  AS first_year,
+               max(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)
+                                                  AS last_year,
+               NULL::text                         AS state
+        FROM   ranking_results
+        WHERE  school = %(school)s
+    """, {"school": school})
+    row = cur.fetchone()
+    if row and row["athletes"]:
+        return row
+
+    cur.execute("""
+        SELECT count(DISTINCT person_id)              AS athletes,
+               min(substring(date, 1, 4))::int        AS first_year,
+               max(substring(date, 1, 4))::int        AS last_year,
+               NULL::text                             AS state
+        FROM (
+            SELECT person_id, date FROM results
+            WHERE  school = %(school)s AND date IS NOT NULL
+            UNION ALL
+            SELECT person_id, date FROM results_tf
+            WHERE  school = %(school)s AND date IS NOT NULL
+        ) u
+        WHERE date ~ '^[0-9]{4}'
     """, {"school": school})
     row = cur.fetchone()
     return row if row and row["athletes"] else None
