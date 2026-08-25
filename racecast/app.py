@@ -2044,13 +2044,21 @@ def race_tf(meet_id, event_id, div_id):
                 race_src = srow["source"] if srow else None
                 scoring_rows = get_tf_meet_scoring_rows(cur, meet_id,
                                                         source=race_src)
+                stamp_tf_meet_extras(cur, meet_id, scoring_rows)
                 points_by_result = scoreMeet(scoring_rows)["points_by_result"]
 
     if header is None:
         abort(404)
 
     header["gender"] = _field_gender(results)
-    # 'hj' is a column value, not a page title.
+    # A nameless event's page borrows the catalog name its scoring rows
+    # just got stamped with; then 'hj' is a column value, not a title.
+    if not (header.get("event_short") or "").strip():
+        for r in scoring_rows if (header and results) else []:
+            if (r.get("div_id") == div_id and r.get("event_id") == event_id
+                    and (r.get("event_short") or "").strip()):
+                header["event_short"] = r["event_short"]
+                break
     if header.get("event_short"):
         header["event_short"] = prettyEventName(header["event_short"])
 
@@ -2141,6 +2149,7 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                r.is_field,
                COALESCE(r.is_relay, 0) AS is_relay,
                r.result_kind,
+               r.event_type_id,
                r.grade,
                r.school,
                r.speed_rating,
@@ -2164,6 +2173,125 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
         ORDER BY r.time_seconds ASC NULLS LAST
     """, {"meet": meet_id, "src": source})
     return cur.fetchall()
+
+
+def _tf_meet_extras(cur, meet_id, column):
+    """One JSONB blob from meet_extras for a TF meet, or None. Wrapped so
+    a database without the table degrades to the no-blob path."""
+    try:
+        cur.execute(f"""
+            SELECT {column} FROM meet_extras
+            WHERE meet_id = %(meet)s AND sport = 'TF'
+        """, {"meet": meet_id})
+        row = cur.fetchone()
+    except Exception:                    # noqa: BLE001 -- UndefinedTable et al.
+        cur.connection.rollback()
+        return None
+    if row is None:
+        return None
+    return row[column] if isinstance(row, dict) else row[0]
+
+
+def _pick(d, *keys):
+    """First present, non-null value among possible feed spellings."""
+    for k in keys:
+        v = d.get(k)
+        if v is not None:
+            return v
+    return None
+
+
+def _tf_event_type_names(cur, meet_id):
+    """{event_type_id: name} from the meet's eventTypes catalog blob.
+
+    ★ THIS is how a nameless event gets its real name: every result row
+      carries event_type_id, and the catalog the feed shipped alongside
+      the meet names each one. Defensive about key spellings because the
+      blob is stored verbatim from the feed.
+    """
+    blob = _tf_meet_extras(cur, meet_id, "event_types_json")
+    if not isinstance(blob, list):
+        return {}
+    names = {}
+    for e in blob:
+        if not isinstance(e, dict):
+            continue
+        tid = _pick(e, "ID", "Id", "id", "EventTypeID", "EventTypeId")
+        name = _pick(e, "Name", "name", "EventName", "Description",
+                     "EventShort", "Title")
+        if tid is not None and isinstance(name, str) and name.strip():
+            try:
+                names[int(tid)] = name.strip()
+            except (TypeError, ValueError):
+                continue
+    return names
+
+
+def _tf_relay_leg_genders(cur, meet_id):
+    """{result_id: 'M'/'F'} for relay squads, from the ACTUAL runners:
+    meet_extras.relay_legs_json lists each squad's legs by athlete id,
+    and the athletes table knows their genders. The majority of the
+    listed legs genders the squad; a split squad stays unknown."""
+    blob = _tf_meet_extras(cur, meet_id, "relay_legs_json")
+    if not isinstance(blob, list):
+        return {}
+    legs = {}
+    for e in blob:
+        if not isinstance(e, dict):
+            continue
+        rid = _pick(e, "IDResult", "ResultID", "ResultId", "result_id",
+                    "IDRelayResult", "RelayResultID")
+        aid = _pick(e, "AthleteID", "AthleteId", "athlete_id", "IDAthlete")
+        if rid is None or aid is None:
+            continue
+        try:
+            legs.setdefault(int(rid), []).append(int(aid))
+        except (TypeError, ValueError):
+            continue
+    if not legs:
+        return {}
+    all_ids = sorted({a for v in legs.values() for a in v})
+    genders = {}
+    try:
+        cur.execute("""
+            SELECT athlete_id, gender FROM athletes
+            WHERE athlete_id = ANY(%(ids)s) AND gender IN ('M', 'F')
+        """, {"ids": all_ids})
+        for rec in cur.fetchall():
+            aid, g = ((rec["athlete_id"], rec["gender"])
+                      if isinstance(rec, dict) else (rec[0], rec[1]))
+            genders[aid] = g
+    except Exception:                    # noqa: BLE001
+        cur.connection.rollback()
+        return {}
+    out = {}
+    for rid, aids in legs.items():
+        gs = [genders[a] for a in aids if a in genders]
+        m, f = gs.count("M"), gs.count("F")
+        if m != f:
+            out[rid] = "M" if m > f else "F"
+    return out
+
+
+def stamp_tf_meet_extras(cur, meet_id, rows):
+    """Enrich scoring rows with what the meet's sidecar blobs know: real
+    names for nameless events (which also lets their rounds merge), and
+    real genders for relay squads -- so tf_points' median-pairing
+    fallback only fires where the feed genuinely said nothing."""
+    names = _tf_event_type_names(cur, meet_id)
+    if names:
+        for r in rows:
+            if not (r.get("event_short") or "").strip():
+                nm = names.get(r.get("event_type_id"))
+                if nm:
+                    r["event_short"] = nm
+    relay_g = _tf_relay_leg_genders(cur, meet_id)
+    if relay_g:
+        for r in rows:
+            if r.get("is_relay") and not r.get("gender"):
+                g = relay_g.get(r.get("result_id"))
+                if g:
+                    r["gender"] = g
 
 
 def _stamp_tf_display(rows):
@@ -2192,33 +2320,38 @@ def meet_tf(meet_id):
             events = get_tf_meet_events(cur, meet_id, source=src)
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
+            stamp_tf_meet_extras(cur, meet_id, scoring_rows)
 
     if header is None:
         abort(404)
 
     scored = scoreMeet(scoring_rows)
 
-    # The scorer already resolved each raw event's gender as deeply as it
-    # can (name word, athlete majority, relay pairing) -- reuse that here
-    # rather than re-deriving a shallower answer.
-    scored_gender = {}
+    # The scorer already resolved each raw event's gender and name as
+    # deeply as it can (name word or catalog name, athlete majority,
+    # relay legs, relay pairing) -- reuse that here rather than
+    # re-deriving a shallower answer.
+    scored_gender, scored_name = {}, {}
     for d in scored["divisions"]:
         for ev in d["events"]:
-            if ev["gender"] in ("M", "F"):
-                for rw in ev["rows"]:
-                    scored_gender[(rw.get("div_id"),
-                                   rw.get("event_id"))] = ev["gender"]
+            for rw in ev["rows"]:
+                k = (rw.get("div_id"), rw.get("event_id"))
+                if ev["gender"] in ("M", "F"):
+                    scored_gender[k] = ev["gender"]
+                scored_name[k] = ev["name"]
 
-    # Bare feed codes get their reader names, a nameless event with a
-    # stored distance gets called by it, and events sort by distance
-    # parsed from the name when the column is empty, so the 200 stops
-    # listing after the 3200 and nameless events sink to the end.
+    # Bare feed codes get their reader names, a nameless event takes its
+    # catalog or distance name, and events sort by distance parsed from
+    # the name when the column is empty, so the 200 stops listing after
+    # the 3200 and nameless events sink to the end.
     for e in events:
+        k = (e["div_id"], e["event_id"])
         e["gender"] = (genderOf(e.get("event_short")) or
-                       scored_gender.get((e["div_id"], e["event_id"])) or
-                       e.get("gender"))
+                       scored_gender.get(k) or e.get("gender"))
         if e.get("event_short"):
             e["display_name"] = prettyEventName(e["event_short"])
+        elif scored_name.get(k):
+            e["display_name"] = scored_name[k]
         elif e.get("distance_meters"):
             e["display_name"] = f"{int(e['distance_meters'])}m"
         else:
@@ -2248,6 +2381,7 @@ def compiled_tf(meet_id):
                 sources, request.args.get("alt"))
             header = get_tf_meet_header(cur, meet_id, source=src)
             rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
+            stamp_tf_meet_extras(cur, meet_id, rows)
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             # Stamp BEFORE scoreMeet: it copies rows into its event
             # sections, so hs_rating and display_result must already be on
