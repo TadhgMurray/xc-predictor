@@ -39,6 +39,18 @@ _SEASONS_SQL = """
     ORDER  BY year DESC, sport
 """
 
+# The card's school/grade fallback: the athlete's own newest rated row.
+# athlete_season's mode() can come back NULL (thin rows), and right after
+# a wipe the table can be empty entirely -- the athlete page's header
+# reads the result rows and never blanks, so this card does too.
+_LATEST_ROW_SQL = """
+    SELECT school, grade
+    FROM   ranking_results
+    WHERE  person_id = %(pid)s
+    ORDER  BY race_date DESC NULLS LAST
+    LIMIT  1
+"""
+
 # The meeting self-join, per sport. Meet names ride along per sport's own
 # meets table; a lateral per row is fine at head-to-head row counts.
 _MEETINGS_SQL = {
@@ -181,11 +193,20 @@ def athleteCard(cur, pid):
                                               datetime.date.min))
     best = max((float(s["best_rating"]) for s in seasons
                 if s.get("best_rating") is not None), default=None)
+
+    school = (current or {}).get("school")
+    grade = (current or {}).get("grade")
+    if not school or not grade:
+        cur.execute(_LATEST_ROW_SQL, {"pid": pid})
+        latest = cur.fetchone() or {}
+        school = school or latest.get("school")
+        grade = grade or latest.get("grade")
+
     return {
         "person_id": pid,
         "name": name,
-        "school": (current or {}).get("school"),
-        "grade": (current or {}).get("grade"),
+        "school": school,
+        "grade": grade,
         "pool": (current or {}).get("pool"),
         "season_label": (f"{displayYear(current['sport'], current['year'])} "
                          f"{current['sport']}") if current else None,
