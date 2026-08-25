@@ -500,6 +500,169 @@ function attachHover(host) {
 
 
 /* ------------------------------------------------------------------ *
+ *  HEAD TO HEAD -- two athletes on one chart (/compare)
+ * ------------------------------------------------------------------ */
+
+/*
+ * Same chart, two series. Everything the single-athlete chart does --
+ * ordinal x axis, season dividers keyed on year|sport, nice gridlines,
+ * crowd-sized dots, hover tooltips, the HS-scale retitle -- drawn from the
+ * same helpers, so the two cannot drift apart in look.
+ *
+ * ★ ONE X SLOT PER DATE, NOT PER POINT. The merged careers interleave; if
+ *   every point took its own slot, the one thing this page exists to show
+ *   -- the two of them in the SAME race -- would render as two dots side
+ *   by side. Sharing the slot stacks them vertically, so the meeting's gap
+ *   reads as the vertical distance between the colours.
+ */
+function drawCompareChart(host, series, opts) {
+  const width = Math.max(240, host.clientWidth || FALLBACK_W);
+  const height = parseInt(
+    getComputedStyle(host).getPropertyValue("--chart-h"), 10) || 220;
+
+  host.innerHTML = "";
+
+  const all = [];
+  series.forEach((s, si) =>
+    (s.points || []).forEach((p) => all.push({ p, si })));
+  if (!all.length) {
+    host.classList.add("chart-empty");
+    host.innerHTML =
+      `<div class="chart-title">${esc(opts.title)}</div>` +
+      `<div class="chart-none">no data</div>`;
+    return;
+  }
+  all.sort((m, o) =>
+    m.p.d < o.p.d ? -1 : (m.p.d > o.p.d ? 1 : m.si - o.si));
+
+  const slotOf = {};
+  const slotPoints = [];               // first point per date: season keys
+  all.forEach((m) => {
+    if (!(m.p.d in slotOf)) {
+      slotOf[m.p.d] = slotPoints.length;
+      slotPoints.push(m.p);
+    }
+  });
+  const n = slotPoints.length;
+
+  const ys = all.map((m) => pointVal(m.p));
+  const [yLo, yHi, yStep] = niceRange(Math.min(...ys), Math.max(...ys));
+  const xScale = makeXScale(n, width);
+  const yScale = makeYScale(yLo, yHi, height);
+
+  const parts = [];
+
+  for (let v = yLo; v <= yHi + 1e-9; v += yStep) {
+    const y = yScale(v).toFixed(1);
+    parts.push(
+      `<line class="grid" x1="${PAD.left}" y1="${y}" ` +
+      `x2="${width - PAD.right}" y2="${y}"/>`,
+      `<text class="axis-y" x="${Y_LABEL_X}" y="${y}" ` +
+      `dominant-baseline="middle">${esc(opts.fmt(v))}</text>`
+    );
+  }
+
+  const runs = seasonRuns(slotPoints);
+  runs.forEach((run, i) => {
+    if (i > 0) {
+      const divX = (xScale(run.start) + xScale(run.start - 1)) / 2;
+      parts.push(
+        `<line class="season-div" x1="${divX.toFixed(1)}" y1="${PAD.top}" ` +
+        `x2="${divX.toFixed(1)}" y2="${height - PAD.bottom}"/>`
+      );
+    }
+    const mid = ((xScale(run.start) + xScale(run.end)) / 2).toFixed(1);
+    const label = run.sport ? `${run.sport} ${run.year}` : String(run.year);
+    const runWidth = xScale(run.end) - xScale(run.start);
+    const next = runs[i + 1];
+    const slotWidth = next
+      ? xScale(next.start) - xScale(run.start)
+      : (width - PAD.right) - xScale(run.start);
+    if (run.year && Math.max(runWidth, slotWidth) >= label.length * 6.2) {
+      parts.push(
+        `<text class="axis-x" x="${mid}" y="${height - 10}" ` +
+        `text-anchor="middle">${esc(label)}</text>`
+      );
+    }
+  });
+
+  const spacing = n > 1 ? xScale(1) - xScale(0) : width;
+  const dotR = all.length > 60 ? 1.6 : (all.length > 25 ? 2.5 : 3.5);
+  const hitR = Math.max(4, Math.min(12, spacing * 0.6));
+
+  series.forEach((s) => {
+    const pts = s.points || [];
+    if (!pts.length) return;
+    const path = pts
+      .map((p, i) => `${i === 0 ? "M" : "L"}` +
+                     `${xScale(slotOf[p.d]).toFixed(1)},` +
+                     `${yScale(pointVal(p)).toFixed(1)}`)
+      .join(" ");
+    parts.push(`<path class="line" style="stroke:${s.colour}" d="${path}"/>`);
+    pts.forEach((p) => {
+      const cx = xScale(slotOf[p.d]).toFixed(1);
+      const cy = yScale(pointVal(p)).toFixed(1);
+      const label = `${s.name} — ${fmtDate(p.d)} — ` +
+                    `${opts.fmt(pointVal(p))}` +
+                    (p.sp ? ` — ${p.sp}` : "") +
+                    (p.meet ? ` — ${p.meet}` : "") +
+                    (p.result ? ` (${p.result})` : "");
+      parts.push(`<circle class="dot" cx="${cx}" cy="${cy}" ` +
+                 `r="${dotR}" fill="${s.colour}"/>`);
+      parts.push(
+        `<circle class="hit" cx="${cx}" cy="${cy}" ` +
+        `r="${hitR.toFixed(1)}" data-label="${esc(label)}"/>`
+      );
+    });
+  });
+
+  const scaled = scaleMode() === "hs" &&
+    series.some((s) => (s.points || []).some((p) => p.vh != null));
+  const title = scaled ? `${opts.title} — HS scale` : opts.title;
+
+  host.classList.remove("chart-empty");
+  host.innerHTML =
+    `<div class="chart-title">${esc(title)}</div>` +
+    `<svg viewBox="0 0 ${width} ${height}" width="${width}" ` +
+    `height="${height}" role="img" aria-label="${esc(opts.title)}">` +
+    `${parts.join("")}</svg>` +
+    `<div class="chart-tip" hidden></div>`;
+
+  attachHover(host);
+}
+
+
+function initCompare() {
+  const node = document.getElementById("h2h-data");
+  const host = document.querySelector("[data-chart-compare]");
+  if (!node || !host) return;
+
+  let data;
+  try {
+    data = JSON.parse(node.textContent);
+  } catch (err) {
+    console.error("compare chart data is not valid JSON", err);
+    return;
+  }
+  const series = data.series || [];
+  const opts = { title: host.dataset.title || "Speed rating",
+                 fmt: fmtRating };
+
+  const redraw = () => drawCompareChart(host, series, opts);
+  redraw();
+  document.addEventListener("rc-scale-change", redraw);
+
+  if (typeof ResizeObserver === "undefined") return;
+  let pending = false;
+  new ResizeObserver(() => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; redraw(); });
+  }).observe(host);
+}
+
+
+/* ------------------------------------------------------------------ *
  *  BOOT
  * ------------------------------------------------------------------ */
 
@@ -578,3 +741,4 @@ function initCharts() {
 }
 
 document.addEventListener("DOMContentLoaded", initCharts);
+document.addEventListener("DOMContentLoaded", initCompare);

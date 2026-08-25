@@ -356,7 +356,7 @@ def compare_page():
     Query builders live in compare.py; this route only assembles and
     stamps the HS-equivalent values."""
     from compare import (athleteCard, meetings, record, seasonRows,
-                         bestRows, bestRatingRows, ratingSeries)
+                         bestRows, bestRatingRows, ratingSeries, chartPoints)
 
     a = request.args.get("a", type=int)
     b = request.args.get("b", type=int)
@@ -423,12 +423,21 @@ def compare_page():
                         list(brate.values()),
                         rating_keys=("speed_rating",)) or has_hs
 
+                    # The chart speaks the athlete page's own point shape,
+                    # drawn by athlete-charts.js (drawCompareChart).
+                    chart = {"series": [
+                        {"name": card_a["name"].split()[-1],
+                         "colour": "#14477d",
+                         "points": chartPoints(series_a)},
+                        {"name": card_b["name"].split()[-1],
+                         "colour": "#b45309",
+                         "points": chartPoints(series_b)},
+                    ]}
                     ctx.update(card_a=card_a, card_b=card_b,
                                meetings=mtgs, wins_a=wa, wins_b=wb,
                                ties=ties, avg_margin=avg,
                                seasons=seasons, bests=bests, brate=brate,
-                               series_a=series_a, series_b=series_b,
-                               has_hs_view=has_hs)
+                               chart=chart, has_hs_view=has_hs)
 
     # Short names for the margin and edge labels: the last word carries
     # the identity in almost every real name.

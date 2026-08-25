@@ -106,16 +106,38 @@ _BEST_RATING_SQL = """
     LIMIT  1
 """
 
-# The rating trajectory for the overlay chart: every rated race, dated.
-_SERIES_SQL = """
-    SELECT to_char(race_date, 'YYYY-MM-DD') AS date,
-           speed_rating, result_id, sport, distance, pool
-    FROM   ranking_results
-    WHERE  person_id = %(pid)s
-      AND  speed_rating IS NOT NULL
-      AND  race_date IS NOT NULL
-    ORDER  BY race_date
-"""
+# The rating trajectory for the overlay chart: every rated race, dated,
+# with the meet name for tooltips. Per sport, because the name lives in a
+# different table for each.
+_SERIES_SQL = {
+    "XC": """
+        SELECT to_char(r.race_date, 'YYYY-MM-DD') AS date,
+               r.speed_rating, r.result_id, r.sport, r.distance, r.pool,
+               r.year,
+               (SELECT min(mm.meet_name) FROM meets mm
+                 WHERE mm.meet_id = r.meet_id
+                   AND mm.div_id  = r.div_id) AS meet_name
+        FROM   ranking_results r
+        WHERE  r.person_id = %(pid)s
+          AND  r.sport = 'XC'
+          AND  r.speed_rating IS NOT NULL
+          AND  r.race_date IS NOT NULL
+        ORDER  BY r.race_date
+    """,
+    "TF": """
+        SELECT to_char(r.race_date, 'YYYY-MM-DD') AS date,
+               r.speed_rating, r.result_id, r.sport, r.distance, r.pool,
+               r.year,
+               (SELECT min(mt.meet_name) FROM meets_tf mt
+                 WHERE mt.meet_id = r.meet_id) AS meet_name
+        FROM   ranking_results r
+        WHERE  r.person_id = %(pid)s
+          AND  r.sport = 'TF'
+          AND  r.speed_rating IS NOT NULL
+          AND  r.race_date IS NOT NULL
+        ORDER  BY r.race_date
+    """,
+}
 
 # The TF rungs worth a row, in display order. XC gets its own fastest-5K
 # row; anything else either athlete raced stays off the table rather than
@@ -287,9 +309,32 @@ def bestRatingRows(cur, a, b):
 
 
 def ratingSeries(cur, pid):
-    """The chart series: [{date, v, sport, result_id, distance, pool}]."""
-    cur.execute(_SERIES_SQL, {"pid": pid})
-    return [{"date": r["date"], "speed_rating": float(r["speed_rating"]),
-             "result_id": r["result_id"], "sport": r["sport"],
-             "distance": r["distance"], "pool": r["pool"]}
-            for r in cur.fetchall()]
+    """Every rated race, both sports, date-sorted, ready for stamping."""
+    rows = []
+    for sport in ("XC", "TF"):
+        cur.execute(_SERIES_SQL[sport], {"pid": pid})
+        rows.extend({"date": r["date"],
+                     "speed_rating": float(r["speed_rating"]),
+                     "result_id": r["result_id"], "sport": r["sport"],
+                     "distance": r["distance"], "pool": r["pool"],
+                     "year": int(r["year"]),
+                     "meet_name": r["meet_name"]}
+                    for r in cur.fetchall())
+    rows.sort(key=lambda r: r["date"])
+    return rows
+
+
+def chartPoints(series):
+    """Stamped series rows -> the athlete chart's own point shape
+    ({d, v, vh, meet, y, sp} -- see athlete_chart_data), so /compare and
+    the athlete page draw from one contract."""
+    pts = []
+    for r in series:
+        p = {"d": r["date"], "v": round(r["speed_rating"], 4),
+             "meet": r["meet_name"],
+             "y": displayYear(r["sport"], r["year"]),
+             "sp": r["sport"]}
+        if r.get("hs_rating") is not None:
+            p["vh"] = round(float(r["hs_rating"]), 4)
+        pts.append(p)
+    return pts
