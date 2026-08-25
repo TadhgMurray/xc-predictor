@@ -2932,8 +2932,58 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
  * Boys and Girls side by side; the section heading carries the selected
  * distance, its own fitted difficulty and its result count as a quiet
  * suffix, so the numbers above the table say which course-at-a-distance
- * they describe. */
+ * they describe.
+ *
+ * ★ UNIFORM ROWS, BY OWNER'S CALL. table-layout:fixed + per-column widths
+ *   keep every column the same width whatever the content, and nowrap +
+ *   ellipsis keeps every row ONE LINE tall -- a long school name truncates
+ *   (full text in title=) instead of wrapping the row taller than its
+ *   neighbours. Same fixed-layout discipline the athlete season tables
+ *   learned, same box-sizing so the percentages mean what they say. */
 .rec-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+.rec-pair table, .dist-table, .meets-table { table-layout: fixed; }
+.rec-pair th, .rec-pair td,
+.dist-table th, .dist-table td,
+.meets-table th, .meets-table td {
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The paired tables live in a half-width column, so the sitewide 0.9rem
+   side padding would eat the narrow number columns whole. Tighter here. */
+.rec-pair th, .rec-pair td { padding: 0.4rem 0.5rem; }
+/* Number-ish columns get em widths sized to their widest real value
+   (padding included); the two name columns are left unset, so fixed
+   layout splits whatever remains between them and THEY do the
+   ellipsizing, never the numbers. */
+/* rem, not em: th widths in em would compute against the 0.7rem header
+   font and starve the column the DATA has to fit in. Each width covers
+   the widest of its header and its widest real value, padding included. */
+/* individual tables: #, Athlete, two number cols, Dist/Grade, School, Date.
+   Columns 3 and 4 are rating and time IN EITHER ORDER between the course
+   views, so both get the wider of the two. */
+.rec-ind th:nth-child(1) { width: 2.4rem; }
+.rec-ind th:nth-child(3) { width: 4.7rem; }
+.rec-ind th:nth-child(4) { width: 4.7rem; }
+.rec-ind th:nth-child(5) { width: 4.4rem; }
+.rec-ind th:nth-child(7) { width: 6.5rem; }
+/* team tables: #, School, two number cols, Meet, Date */
+.rec-team th:nth-child(1) { width: 2.4rem; }
+.rec-team th:nth-child(3) { width: 6.5rem; }
+.rec-team th:nth-child(4) { width: 4.9rem; }
+.rec-team th:nth-child(6) { width: 6.5rem; }
+.dist-table th:nth-child(1) { width: 16%; }
+.dist-table th:nth-child(2) { width: 16%; }
+.dist-table th:nth-child(3) { width: 24%; }
+.dist-table th:nth-child(4) { width: 22%; }
+.dist-table th:nth-child(5) { width: 22%; }
+.meets-table th:nth-child(1) { width: 50%; }
+.meets-table th:nth-child(2) { width: 16%; }
+.meets-table th:nth-child(3) { width: 18%; }
+.meets-table th:nth-child(4) { width: 16%; }
+/* the jump to the full board, right-aligned under a table */
+.view-all { margin: 0.4rem 0 0; font-size: 0.85rem; text-align: right; }
 .rec-gender { margin: 0 0 0.35rem; font-size: 0.8rem;
               text-transform: uppercase; letter-spacing: 0.05em;
               color: #6b7280; }

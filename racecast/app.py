@@ -2396,6 +2396,7 @@ def course(course_name):
                            dist_values=dist_values,
                            dist_table=dist_table,
                            sel_dist=sel_dist,
+                           pr_ok=(sel_dist in PR_DISTANCES) if sel_dist else False,
                            sel_n=sel_n,
                            sel_difficulty=sel_difficulty,
                            primary_dist=primary_dist,
@@ -3116,7 +3117,7 @@ def athlete_results():
 
 
 from rankings import (parseFilters, getPerformanceRankings, getPrRankings,
-                      getAbilityRankings, rankOf)
+                      getAbilityRankings, rankOf, PR_DISTANCES)
 
 
 @app.route("/api/rankings")

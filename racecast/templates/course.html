@@ -71,7 +71,7 @@
     {# ============================ OVERVIEW ============================ #}
     {% if dist_table %}
     <h2>Distances raced here</h2>
-    <table>
+    <table class="dist-table">
         <thead><tr><th>Distance</th><th>Difficulty</th><th>Results</th>
             <th>First</th><th>Last</th></tr></thead>
         <tbody>
@@ -92,27 +92,29 @@
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = rating_bests[key] %}
+        {% set bpool = "hs_m" if key == "M" else "hs_f" %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
-            <table class="staged" data-step="20">
+            <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
                     <th>Time</th><th>Dist</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
+            <p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>
             {% else %}<p class="meta">No rated results.</p>{% endif %}
         </div>
         {% endfor %}
@@ -126,17 +128,17 @@
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
-            <table class="staged" data-step="20">
+            <table class="staged rec-team" data-step="20">
                 <thead><tr><th>#</th><th>School</th><th>Top-5 avg</th>
                     <th>Dist</th><th>Meet</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                        <td><a href="/school/{{ t.school|urlencode }}" title="{{ t.school }}">{{ t.school }}</a></td>
                         <td>{{ "%.1f"|format(t.avg5) }}</td>
                         <td>{{ t.distance }}m</td>
-                        <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
+                        <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
                         <td class="no-break">{{ t.date }}</td>
                     </tr>
                     {% endfor %}
@@ -158,27 +160,29 @@
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = records[key] %}
+        {% set bpool = "hs_m" if key == "M" else "hs_f" %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
-            <table class="staged" data-step="20">
+            <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Time</th>
                     <th>Rating</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td>{{ r.grade if r.grade else "—" }}</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
+            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=pr&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all times on the rankings board →</a></p>{% endif %}
             {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
         </div>
         {% endfor %}
@@ -192,17 +196,17 @@
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
-            <table class="staged" data-step="20">
+            <table class="staged rec-team" data-step="20">
                 <thead><tr><th>#</th><th>School</th><th>Top-5 total</th>
                     <th>Average</th><th>Meet</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                        <td><a href="/school/{{ t.school|urlencode }}" title="{{ t.school }}">{{ t.school }}</a></td>
                         <td class="no-break">{{ t.display_total }}</td>
                         <td class="no-break">{{ t.display_avg }}</td>
-                        <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
+                        <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
                         <td class="no-break">{{ t.date }}</td>
                     </tr>
                     {% endfor %}
@@ -218,27 +222,29 @@
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = rating_bests[key] %}
+        {% set bpool = "hs_m" if key == "M" else "hs_f" %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
-            <table class="staged" data-step="20">
+            <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
                     <th>Time</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.grade if r.grade else "—" }}</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
+            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>{% endif %}
             {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
         </div>
         {% endfor %}
@@ -248,12 +254,12 @@
     <h2>Meets held here
         <span class="dist-note">{{ (sel_dist ~ "m") if sel_dist else "all distances" }}</span></h2>
     {% if meets %}
-    <table class="staged" data-step="20">
+    <table class="staged meets-table" data-step="20">
         <thead><tr><th>Meet</th><th>Last held</th><th>Distance</th><th>Results</th></tr></thead>
         <tbody>
             {% for m in meets %}
             <tr{{ hid(loop.index0) }}>
-                <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
+                <td><a href="/meet/xc/{{ m.meet_id }}" title="{{ m.meet_name }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
                 <td class="no-break">{{ m.last_date }}</td>
                 <td>{{ m.distances|map("int")|join(", ") if m.distances else "—" }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
