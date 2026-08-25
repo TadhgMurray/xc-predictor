@@ -1314,23 +1314,37 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
         return ro[0], ro[1]                          # gender rides along (may be None)
     if key in _DISTANCE_DROP_BY_SPORT[cfg.sport]:    # unfixable -> skip the row
         return None, None
-    override = _DISTANCE_OVERRIDES_BY_SPORT[cfg.sport].get(key)   # beats stored dist
-    if override is not None:
-        return override, None
+    override = _DISTANCE_OVERRIDES_BY_SPORT[cfg.sport].get(key)
 
+    # The stored resolution runs even when an override exists, because the
+    # override is now judged AGAINST it -- see the clamp below.
     if cfg.distance_src == "event_short":
         # (metres, gender). The gender rides back as `blob_gender`, which the row
         # fn already consults AFTER the athletes-table lookup and BEFORE giving
         # up -- exactly the slot it belongs in. anet TF rows hit the exact dict
         # and return gender None, so their athlete-table gender still wins.
-        return distanceFromEventShort(row[_EVENT_SHORT])
+        stored, stored_gender = distanceFromEventShort(row[_EVENT_SHORT])
+    elif row[_SRC] == "tfrrs":
+        # XC: THE SOURCE DECIDES, BEFORE any lookup. See _anetXcDistance /
+        # _tfrrsXcDistance and 0.2 -- results.div_id has a DUAL MEANING that
+        # only `source` disambiguates, and the two id spaces COLLIDE.
+        stored, stored_gender = _tfrrsXcDistance(row, tfrrs_blob)
+    else:
+        stored, stored_gender = _anetXcDistance(row, meet_distances)
 
-    # XC: THE SOURCE DECIDES, BEFORE any lookup. See _anetXcDistance /
-    # _tfrrsXcDistance and 0.2 -- results.div_id has a DUAL MEANING that only
-    # `source` disambiguates, and the two id spaces COLLIDE.
-    if row[_SRC] == "tfrrs":
-        return _tfrrsXcDistance(row, tfrrs_blob)
-    return _anetXcDistance(row, meet_distances)
+    if override is not None:
+        # ★ DOWNWARD ONLY -- the policy at the top of corrections.py's
+        #   _DISTANCE_OVERRIDES_XC. An override may lower a distance or fill
+        #   a missing/insane one; one that would RAISE a sane stored value is
+        #   refused here, whatever sits in the table. Inflated labels mint
+        #   fake elite ratings; deflated ones only make someone look slow.
+        if stored is None or not _distanceSane(stored) or override <= stored:
+            # gender None on purpose: _blobGender recovers it later, same as
+            # the pre-clamp behaviour of the override path.
+            return override, None
+        return stored, stored_gender
+
+    return stored, stored_gender
 
 
 # _blobGender

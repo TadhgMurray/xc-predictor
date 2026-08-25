@@ -56,8 +56,13 @@ from pool_resolve import resolvePool
 #   (TF's dict is empty today; the helper then returns "" and the query is
 #   byte-for-byte what it was.)
 from corrections import distanceOverrideSQL
-_OV_JOIN_XC, _OV_COALESCE_XC = distanceOverrideSQL("r", "XC")
-_OV_JOIN_TF, _OV_COALESCE_TF = distanceOverrideSQL("r", "TF")
+# stored_expr = each query's own fallback column, so the override is clamped
+# to never RAISE the stored distance (downward-only policy; see
+# corrections._DISTANCE_OVERRIDES_XC header).
+_OV_JOIN_XC, _OV_COALESCE_XC = distanceOverrideSQL(
+    "r", "XC", stored_expr="m.distance")
+_OV_JOIN_TF, _OV_COALESCE_TF = distanceOverrideSQL(
+    "r", "TF", stored_expr="m.distance_meters")
 
 # ------------------------------------------------------------------ #
 # CONSTANTS

@@ -52,7 +52,13 @@ from corrections import distanceOverrideSQL, distanceDropSQL
 # Hand-verified distance corrections, GENERATED from corrections.py so the
 # fitter and the backfill can never disagree. Empty table -> empty strings
 # -> the query below is byte-for-byte what it was before this change.
-_OV_JOIN, _OV_COALESCE = distanceOverrideSQL("r", "XC")
+# stored_expr mirrors the COALESCE fallbacks in the query below, so the
+# override is clamped to never RAISE the stored distance (downward-only
+# policy; see corrections._DISTANCE_OVERRIDES_XC header).
+_OV_JOIN, _OV_COALESCE = distanceOverrideSQL(
+    "r", "XC",
+    stored_expr="COALESCE(m.distance, (mt.division_distances -> "
+                "r.div_id::text ->> 'distance')::float)")
 _OV_DROP = distanceDropSQL("r", "XC")
 
 

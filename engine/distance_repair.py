@@ -595,6 +595,16 @@ def buildProposals(flagged, venue, tiers=None, explain=None):
         if abs(snapped - claimed) < 1:
             note("snapped back to the claimed distance")
             continue
+        # ★ DOWNWARD ONLY (corrections._DISTANCE_OVERRIDES_XC policy). A
+        #   deflated field is what a mislabelled-LONG race looks like; a slow
+        #   field looks identical to a hard day, a weak division, or a muddy
+        #   course, and "they were slow so it must be longer" is the exact
+        #   inference that filled the boards with fake elites. Upward
+        #   inferences are recorded in the ledger, never proposed.
+        if claimed > 0 and snapped > claimed:
+            note(f"upward ({claimed:.0f} -> {snapped:.0f}) refused: "
+                 f"corrections only lower a distance")
+            continue
 
         proposals.append({
             "meet_id": meet_id, "div_id": div_id, "date": str(date),

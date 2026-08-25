@@ -38,6 +38,9 @@ Usage:
     python engine/propose_distances.py --merged        # divisions holding TWO races
     python engine/propose_distances.py --merged --pairs-out merged.txt
                                                        # ... and the work list
+    python engine/propose_distances.py --merged --floor-write
+                                       # floor clean merged divisions to the
+                                       # LOWEST distance anyone ran there
 
 ★ A MERGED DIVISION IS NOT A DISTANCE PROBLEM AND --merged DOES NOT PROPOSE
   ONE. Two races in one bucket have two true distances, so any single number
@@ -480,7 +483,17 @@ def writable(p):
     enough to speak for itself with a couple of siblings to name the answer.
     Both paths still have to land the division near its class and stay under
     the ratio cap.
+
+    ★ AND NEVER UPWARD. Corrections only ever lower a distance (policy at the
+      top of corrections._DISTANCE_OVERRIDES_XC): every failure mode that has
+      actually polluted the boards inflates the label, and "the field ran
+      slow so it must be longer" is exactly the trap this file's own header
+      warns about -- a slow field proves nothing, a fast one proves the label
+      long. An upward proposal stays in the CSV for a human; it is never
+      auto-appended.
     """
+    if p["in_use"] and p["in_use"] > 0 and p["proposed"] > p["in_use"]:
+        return False
     ratio = max(p["proposed"] / p["in_use"], p["in_use"] / p["proposed"])
     if p["err_after"] > WRITE_MAX_AFTER or ratio > WRITE_MAX_RATIO:
         return False
@@ -952,7 +965,7 @@ def verifyMerged(cur, meet_id, div_id):
     return n, q25, q75, small_side, anom, ref, gap, tie
 
 
-def reportMerged(cur, limit=40, pairs_out=None):
+def reportMerged(cur, limit=40, pairs_out=None, floor_write=False):
     """Divisions whose own athletes do not agree about the distance.
 
     ★ AND IT CAN HAND THE LIST STRAIGHT TO THE SPLITTER. There is already a
@@ -1071,7 +1084,12 @@ def reportMerged(cur, limit=40, pairs_out=None):
               "against the wrong label)\n")
     print(f"    {'meet/div':<18}{'n':>5}{'small':>7}{'anom':>8}{'ref':>7}"
           f"{'label':>9}{'they ran':>10}  meet")
-    for _r, meet_id, div_id, n, small, anom, ref, gap, tie in kept[:limit]:
+    floor_props = []
+    # ! ALL of kept when floor-writing, the display cap otherwise. The floor
+    #   pass judges every verified division; the table stays a screenful.
+    scan = kept if floor_write else kept[:limit]
+    for row_i, (_r, meet_id, div_id, n, small, anom, ref, gap, tie) \
+            in enumerate(scan):
         # ! div_distance, NOT meets. It unions anet's column with the tfrrs
         #   JSON blob, and reading `meets` alone printed "-" for every tfrrs
         #   division -- exactly the ones with no distance column to read.
@@ -1095,10 +1113,26 @@ def reportMerged(cur, limit=40, pairs_out=None):
         mark = "*" if pinned else ""
         implied = label * (anom / ref) ** (1.0 / K) if label else None
         flag = ("!" if not 0.9 <= ref <= 1.1 else " ") + ("?" if tie else " ")
-        print(f"  {flag} {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
-              f"{anom:>8.3f}{ref:>7.3f}"
-              f"{(f'{label:.0f}{mark}' if label else '-'):>9}"
-              f"{(f'{implied:.0f}' if implied else '-'):>10}  {name[:28]}")
+        if row_i < limit:
+            print(f"  {flag} {f'{meet_id}/{div_id}':<18}{n:>5}{small:>6.0%}"
+                  f"{anom:>8.3f}{ref:>7.3f}"
+                  f"{(f'{label:.0f}{mark}' if label else '-'):>9}"
+                  f"{(f'{implied:.0f}' if implied else '-'):>10}  {name[:28]}")
+        # ★ THE FLOOR RULE: a mixed division takes the LOWEST distance anyone
+        #   ran there. A per-result split is still the better fix (see
+        #   _RESULT_OVERRIDE_XC), but until someone does that surgery, the
+        #   floor deflates the longer race's runners instead of letting the
+        #   shorter race's mint fake elite ratings -- the safe direction, by
+        #   the downward-only policy. Only the clean rows: an anomalous
+        #   reference group (!) means the whole label is wrong, and an exact
+        #   50/50 tie (?) means which side is real was a coin flip.
+        if (floor_write and label and implied
+                and flag == "  "               # neither ! nor ?
+                and implied < label * 0.97):
+            snapped = _snapConvention(implied)
+            if snapped and snapped < label:
+                floor_props.append((meet_id, div_id, snapped, label,
+                                    implied, n, name[:40]))
     print("\n    ! marks a division whose reference group is itself more than "
           "10% from\n      1.00 -- read those as 'this whole division is "
           "wrong', not 'half of it'.")
@@ -1109,9 +1143,65 @@ def reportMerged(cur, limit=40, pairs_out=None):
           "div_distance --\n      the number the ratings were actually built "
           "with.")
 
+    if floor_write:
+        _appendMergedFloors(floor_props)
+
+
+# The distances races are actually held at, for snapping a merged division's
+# implied lower distance. Same idea as bad_distance._CONVENTIONS; kept local
+# so the two tools cannot silently share a drifting list.
+_FLOOR_CONVENTIONS = (1200, 1500, 1600, 2000, 2253, 2414, 2500, 2800, 3000,
+                      3200, 3219, 3379, 3540, 4000, 4023, 4800, 4828, 5000,
+                      6000, 8000, 10000)
+
+
+def _snapConvention(distance, tol=0.12):
+    """The nearest conventional race distance within tol, else None.
+
+    None means "this number is not near anything people race", and a floor
+    that matches no real distance is not written -- same posture as
+    distance_repair's venue-history snap."""
+    best = min(_FLOOR_CONVENTIONS, key=lambda c: abs(c - distance))
+    return best if abs(best - distance) / distance <= tol else None
+
+
+def _appendMergedFloors(props, path=os.path.join("engine", "corrections.py")):
+    """Append the merged-division floors as (meet, div) distance overrides.
+
+    Same block shape as appendCorrections: its own dict, merged into
+    _DISTANCE_OVERRIDES_XC, deletable whole. Every entry carries "was N" so
+    the audit tools can judge its direction, which is downward by
+    construction here."""
+    if not props:
+        print("\n[dist] --floor-write: nothing qualified (clean rows with a "
+              "snappable lower distance)")
+        return
+    text = io.open(path, encoding="utf-8", newline="").read()
+    io.open(path + ".bak", "w", encoding="utf-8", newline="").write(text)
+    lines = ["\n\n# === merged-division floors (downward-only policy) "
+             "=========================",
+             "# A division holding TWO races takes the LOWEST distance anyone "
+             "ran there.",
+             "# Written by propose_distances --merged --floor-write; a "
+             "per-result split",
+             "# (_RESULT_OVERRIDE_XC) beats these when someone does the "
+             "surgery.",
+             "_DISTANCE_OVERRIDES_ADDITIONS = {"]
+    for meet_id, div_id, snapped, label, implied, n, name in sorted(props):
+        lines.append(f"    ({meet_id}, {div_id}): {snapped},"
+                     f"  # was {label:.0f}, small side ran ~{implied:.0f}, "
+                     f"n={n}  {name}")
+    lines.append("}")
+    lines.append("_DISTANCE_OVERRIDES_XC.update(_DISTANCE_OVERRIDES_ADDITIONS)")
+    lines.append("del _DISTANCE_OVERRIDES_ADDITIONS")
+    io.open(path, "a", encoding="utf-8", newline="").write("\n".join(lines) + "\n")
+    print(f"\n[dist] --floor-write: appended {len(props)} merged-division "
+          f"floor(s) to {path}")
+    print(f"       backup at {path}.bak; live on the next backfill run")
+
 
 def main(rebuild=True, write=False, explain_keys=(),
-         merged=False, repair=False, pairs_out=None):
+         merged=False, repair=False, pairs_out=None, floor_write=False):
     if repair:
         # ★ ITS OWN COMMAND, because the file is currently unimportable and
         #   the ordinary --write path would have to import nothing but still
@@ -1194,7 +1284,7 @@ def main(rebuild=True, write=False, explain_keys=(),
     if merged:
         # Its own exit: this is a question, and it names a different remedy.
         with getConn() as conn, conn.cursor() as cur:
-            reportMerged(cur, pairs_out=pairs_out)
+            reportMerged(cur, pairs_out=pairs_out, floor_write=floor_write)
         return
 
     if explain_keys:
@@ -1271,4 +1361,5 @@ if __name__ == "__main__":
          explain_keys=_explainArgs(sys.argv),
          merged="--merged" in sys.argv,
          repair="--repair" in sys.argv,
-         pairs_out=_after("--pairs-out"))
+         pairs_out=_after("--pairs-out"),
+         floor_write="--floor-write" in sys.argv)
