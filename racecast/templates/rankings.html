@@ -152,6 +152,14 @@
       <div class="combo" data-field="school"></div>
     </div>
 
+    {# ★ THE COURSE SPECIFIER, Performances + Best times only. With a course
+       picked those boards scope to one venue: Performances alone is the
+       overall all-distances view, adding a distance narrows it. #}
+    <div class="field wide perfpr-only">
+      <label for="course-input">Course</label>
+      <div class="combo" data-field="course"></div>
+    </div>
+
     {# ability-only / perf-only: shown and hidden by style.css off
        .rankings-page[data-board]. #}
     {# Teams-only: how many rated athletes a squad needs before it is
@@ -205,9 +213,15 @@
     {# The distance to rank. PR-only: the other boards are already
        distance-normalised, so asking them for "5000 m" would filter the
        board rather than define it. #}
-    <div class="field pr-only">
+    {# Shown on Best times AND Performances since the course specifier
+       landed: course alone is the overall view, course + distance narrows.
+       "Any" is a performance-only option -- the pr board RANKS the clock at
+       one distance, so rankings.js hides it there, same pattern as
+       sport=both on teams. #}
+    <div class="field perfpr-only">
       <label for="distance">Distance</label>
       <select id="distance">
+        <option value="" class="perf-any-opt">Any distance</option>
         <optgroup label="Sprints">
           <option value="55">55 m</option>
           <option value="60">60 m</option>

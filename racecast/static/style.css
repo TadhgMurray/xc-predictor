@@ -912,6 +912,11 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    UI and the API telling the same story. */
 .rankings-page .perf-only { display: none; }
 .rankings-page[data-board="performance"] .perf-only    { display: flex; }
+/* Shared by Performances and Best times: the distance select and the
+   course specifier. */
+.rankings-page .perfpr-only { display: none; }
+.rankings-page[data-board="performance"] .perfpr-only,
+.rankings-page[data-board="pr"] .perfpr-only { display: flex; }
 .rankings-page[data-board="performance"] .ability-only { display: none; }
 
 /* ★ THE PR BOARD HIDES BOTH OF THE OTHERS' CONTROLS AND SHOWS ITS OWN.

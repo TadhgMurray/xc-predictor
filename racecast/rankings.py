@@ -383,6 +383,27 @@ def parseFilters(args):
             return None, "distance must be a whole number of metres"
         if distance not in PR_DISTANCES:
             return None, f"distance must be one of {list(PR_DISTANCES)}"
+    elif board == "performance":
+        # ★ OPTIONAL here, unlike pr: the performance board is already
+        #   distance-normalised, so the filter narrows scope (a course at
+        #   5000m) rather than defining the ranked quantity. Absent means
+        #   every distance, which is the board's whole point.
+        raw = args.get("distance")
+        if raw:
+            try:
+                distance = int(raw)
+            except ValueError:
+                return None, "distance must be a whole number of metres"
+            if distance not in PR_DISTANCES:
+                return None, f"distance must be one of {list(PR_DISTANCES)}"
+
+    # ★ THE COURSE SPECIFIER, Performances and Best times only. Ability
+    #   averages seasons and Teams races rosters, so a single-venue filter
+    #   has no meaning there -- refuse loudly instead of silently ignoring.
+    course = _multiValue(args, "course")
+    if course and board not in ("performance", "pr"):
+        return None, ("the course filter applies only to the Performances "
+                      "and Best times boards")
 
     scope = args.get("scope", "usa")
     if scope not in SCOPES:
@@ -397,6 +418,7 @@ def parseFilters(args):
         # Lists, not scalars -- see _multiValue. None when absent, so
         # _whereClauses still adds no clause at all for an unset filter.
         "state":  _multiValue(args, "state", upper=True),
+        "course": course,
         "school": _multiValue(args, "school"),
         "grade":  _multiValue(args, "grade"),
         "year":      _multiInt(args, "year", 1990, 2100),
@@ -479,6 +501,21 @@ def _whereClauses(f, params, with_dates):
         params["dist_lo"] = d * (1 - PR_DISTANCE_TOL)
         params["dist_hi"] = d * (1 + PR_DISTANCE_TOL)
         parts.append(" AND distance BETWEEN %(dist_lo)s AND %(dist_hi)s")
+
+    # ★ THE COURSE SPECIFIER. parseFilters only lets it through for the
+    #   performance and pr boards, whose every consumer of this clause --
+    #   the board queries AND _rankInResults -- selects from unaliased
+    #   ranking_results, so the qualified outer reference resolves. (The
+    #   ability board aliases athlete_season; a course filter never reaches
+    #   it.) Courses are XC by definition, so the sport pin comes free and
+    #   keeps sport=both from mixing in TF rows that can never match.
+    if f.get("course"):
+        params["course"] = f["course"]
+        parts.append(""" AND sport = 'XC'
+            AND EXISTS (SELECT 1 FROM meets mm
+                        WHERE mm.meet_id = ranking_results.meet_id
+                          AND mm.div_id  = ranking_results.div_id
+                          AND mm.course_name = ANY(%(course)s))""")
 
     if f["sport"] != "both":
         params["sport"] = f["sport"]

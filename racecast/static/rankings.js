@@ -249,8 +249,18 @@ function buildQuery() {
   } else if (state.board === "ability") {
     q.set("min_races", $("min_races").value || defaultMinRaces());
   } else {
+    /* Performances: distance is OPTIONAL scope here (the board is already
+       distance-normalised), so an empty "Any" sends nothing. */
+    if ($("distance").value) q.set("distance", $("distance").value);
     if ($("date_from").value) q.set("date_from", $("date_from").value);
     if ($("date_to").value)   q.set("date_to",   $("date_to").value);
+  }
+
+  /* The course specifier rides only the two boards that accept it -- the
+     API refuses it elsewhere by design, same posture as date_from. */
+  if (state.board === "pr" || state.board === "performance") {
+    const cv = combos.course ? combos.course.values() : [];
+    if (cv.length) q.set("course", cv.join(","));
   }
 
   return q;
@@ -381,7 +391,12 @@ const PANEL = {
      Column-major over a variable-length result list would move every entry
      each time a letter is typed. One column, top to bottom, is already the
      reading order. */
-  school: { cols: 1, width: 340, searched: true }
+  school: { cols: 1, width: 340, searched: true, kind: "school",
+            hint: "Search schools\u2026" },
+  /* The course specifier (Performances + Best times). Same searched shape
+     as school, against the site index's course kind. */
+  course: { cols: 1, width: 340, searched: true, kind: "course",
+            hint: "Search courses\u2026" }
 };
 
 
@@ -425,7 +440,7 @@ function makeCombo(host) {
     `<div class="combo-panel hidden" style="width:${cfg.width}px">` +
       `<div class="combo-search">` +
         `<input id="${field}-input" class="combo-input" type="text" ` +
-        `autocomplete="off" placeholder="${searched ? "Search schools\u2026" : "Filter\u2026"}">` +
+        `autocomplete="off" placeholder="${searched ? (cfg.hint || "Search\u2026") : "Filter\u2026"}">` +
       `</div>` +
       `<div class="combo-opts${cfg.flow === "column" ? " flow-col" : ""}" ` +
       `style="--cols:${cfg.cols}"></div>` +
@@ -497,16 +512,17 @@ function makeCombo(host) {
       `<div class="combo-none">No matches</div>`;
   }
 
-  /* Debounced search against the site's own index. kind=school so athletes and
-     meets do not crowd out the schools. */
+  /* Debounced search against the site's own index, one kind per field so
+     athletes and meets do not crowd out the schools (or the courses). */
   async function runSearch() {
+    const kind = cfg.kind || "school";
     const q = input.value.trim();
     if (q.length < 2) { found = []; renderOptions(); return; }
     try {
-      const res = await fetch("/search/api?kind=school&q=" + encodeURIComponent(q));
+      const res = await fetch("/search/api?kind=" + kind + "&q=" + encodeURIComponent(q));
       const rows = await res.json();
       found = (rows || [])
-        .filter((r) => r.kind === "school")
+        .filter((r) => r.kind === kind)
         .map((r) => r.label)
         .filter((v, i, a) => v && a.indexOf(v) === i)
         .slice(0, 40);
@@ -1270,6 +1286,16 @@ function syncBoard(board) {
   sportSel.querySelector('option[value="both"]').hidden = board === "teams";
   if (board === "teams" && sportSel.value === "both") sportSel.value = "XC";
 
+  /* ⚠ "Any distance" IS PERFORMANCE-ONLY. The times board RANKS the clock
+     at one distance; an empty distance there is a 400. Same hidden-option
+     pattern as sport=both above. */
+  const distSel = $("distance");
+  if (distSel) {
+    const anyOpt = distSel.querySelector(".perf-any-opt");
+    if (anyOpt) anyOpt.hidden = board === "pr";
+    if (board === "pr" && !distSel.value) distSel.value = "5000";
+  }
+
   /* ! 'all' ONLY EXISTS ON THE PR BOARD, so leaving it selected while
        switching away would send a pool the API rejects with a 400. */
   const poolSel = $("pool");
@@ -1465,7 +1491,7 @@ function applyUrlFilters(params) {
 
   /* Comma-separated back into chips, so a shared URL restores the exact
      filter set rather than one blob of text. */
-  for (const field of ["state", "grade", "year", "school"]) {
+  for (const field of ["state", "grade", "year", "school", "course"]) {
     const raw = params.get(field);
     if (raw && combos[field]) {
       combos[field].set(raw.split(",").map((s) => s.trim()).filter(Boolean));
