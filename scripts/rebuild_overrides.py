@@ -1805,20 +1805,15 @@ def explain1(rows, key, sigma, t1, unanimity, cur):
     if ratio > MAX_CHANGE or ratio < 1 / MAX_CHANGE:
         return
     if gap < 0:
-        # Mirror of pass1's direction gate. The run also requires the COURSE
-        # to corroborate a slow-field relabel; this ladder-only view cannot
-        # check that half, so a PASS here is necessary, not sufficient.
-        side_ok = side >= NEG_UNANIMITY
-        mag_ok = abs(gap) >= NEG_BAR_MULT * bar
-        print(f"    slow-field gate (gap < 0):        "
-              f"side {side:.0%} vs {NEG_UNANIMITY:.0%} "
-              f"{'PASS' if side_ok else 'FAILS HERE'};  "
-              f"|gap| {abs(gap):.1f} vs {NEG_BAR_MULT:.0f}x bar "
-              f"= {NEG_BAR_MULT * bar:.1f} "
-              f"{'PASS' if mag_ok else 'FAILS HERE'};  "
-              f"course corroboration also required (not visible here)")
-        if not (side_ok and mag_ok):
-            return
+        # Mirror of pass1's direction gate, which is now ABSOLUTE -- see the
+        # POLICY UPGRADE above NEG_UNANIMITY. The old unanimity/magnitude
+        # numbers still print so an old proposal can be understood, but the
+        # verdict is fixed: a slow field never relabels a division longer.
+        print(f"    slow-field gate (gap < 0):        FAILS HERE -- "
+              f"downward-only policy (was: side {side:.0%} vs "
+              f"{NEG_UNANIMITY:.0%}, |gap| {abs(gap):.1f} vs "
+              f"{NEG_BAR_MULT:.0f}x bar = {NEG_BAR_MULT * bar:.1f})")
+        return
     # ⚠ THE GATES ARE NOT THE WHOLE VERDICT -- THE TIER DECIDES WHAT IS
     #   WRITTEN, and this function ended on "should be in the output" for
     #   Hidden Valley 267944/1064960 while tierFor was quietly filing it
@@ -2230,6 +2225,19 @@ NEG_UNANIMITY = 0.95    # slow fields need ~everybody on one side, vs 75% fast
 #   Rocklin (-40) and Nevada Union (-35) territory; McIver-class ambiguity
 #   (-13) never raises a rating no matter how unanimous.
 NEG_BAR_MULT = 3.0      # |adjusted gap| must clear THREE times the bar
+#
+# ★ POLICY UPGRADE 2026-08-25: THE SLOW DIRECTION IS CLOSED ENTIRELY.
+#   "Blatant" was not a strong enough gate -- Farragut's Hill Climb is
+#   unanimous, blatant AND course-corroborated, and correct at its odd
+#   label; the class needed a HAND_REJECTED list, which is a gate admitting
+#   it cannot tell. The owner's call is now absolute: corrections only ever
+#   LOWER a distance (see corrections._DISTANCE_OVERRIDES_XC). A slow field
+#   proves nothing -- terrain, openers, mixed divisions and mud all look
+#   exactly like it -- while a fast field really does prove the label long.
+#   The constants above stay for the explain path's printout; pass1 no
+#   longer consults them. The appliers clamp independently
+#   (backfill_normalize, distanceOverrideSQL), so even a hand-written
+#   upward entry cannot raise a sane stored distance any more.
 
 # ★ HAND-REJECTED DIVISIONS -- judged by a human, not by a gate, because they
 #   are the one fault class no statistic can separate from a wrong label: a
@@ -2326,14 +2334,12 @@ def pass1(rows, sigma, t1, unanimity, cur=None):
             skipped.append((r, f"would move the distance {ratio:.2f}x, past "
                                f"the {MAX_CHANGE:.1f}x cap"))
             continue
-        # The asymmetric direction gate -- see the block above NEG_UNANIMITY.
-        if gap < 0 and not (source == "course"
-                            and float(r["same_side"]) >= NEG_UNANIMITY
-                            and abs(gap) >= NEG_BAR_MULT
-                                * barFor(r["n"], sigma, t1)):
-            skipped.append((r, "field slow but not blatantly -- a longer "
-                               "distance raises ratings, so it must be "
-                               "obvious"))
+        # The direction gate, now absolute -- see the POLICY UPGRADE above
+        # NEG_UNANIMITY. A slow field never relabels a division longer.
+        if gap < 0:
+            skipped.append((r, "field slow -- a longer distance raises "
+                               "ratings, and corrections only ever lower "
+                               "a distance (downward-only policy)"))
             continue
         condemned.append({**r, "implied": implied, "snapped": snapped,
                           "snap_err": err, "gap": gap, "source": source,
