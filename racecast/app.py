@@ -2121,9 +2121,14 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
              ON r.div_id = m.div_id
             AND r.source = m.source
         WHERE m.course_name = %(course)s
-          -- dist scopes the list to meets that ran the selected distance.
-          AND (%(dist)s::int IS NULL OR round(m.distance)::int = %(dist)s)
         GROUP BY m.meet_id, m.meet_name
+        -- dist picks WHICH meets appear (those that ran the selected
+        -- distance) but not what a row says about them: the distances
+        -- and result counts stay the whole meet's. A HAVING, not a
+        -- WHERE, so the filter doesn't also throw away the other
+        -- divisions' rows before the aggregates see them.
+        HAVING %(dist)s::int IS NULL
+            OR bool_or(round(m.distance)::int = %(dist)s)
         ORDER BY max(r.date) DESC
         LIMIT %(limit)s
     """, {"course": course_name, "dist": dist, "limit": limit})
