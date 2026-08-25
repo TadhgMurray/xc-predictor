@@ -3356,7 +3356,8 @@ td.pts { font-weight: 700; }
 /* Team tables ride .rec-pair's fixed layout, so the number columns need
    widths (same rem discipline as .rec-ind): #, School, Points, Event wins.
    School is left unset and does the ellipsizing. */
-.tfp-team th:nth-child(1) { width: 2.4rem; }
+/* wide enough for a tie label ("T35"), not just a digit */
+.tfp-team th:nth-child(1) { width: 3.4rem; }
 .tfp-team th:nth-child(3) { width: 4.5rem; }
 .tfp-team th:nth-child(4) { width: 7.4rem; }
 /* Round/heat divider rows inside a race table */
