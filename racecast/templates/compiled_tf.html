@@ -59,7 +59,9 @@
         <span class="dist-note">
             {{- div.name if div.name and div.name != "All divisions" }}
             {{- (" " if div.name and div.name != "All divisions" else "") ~ g_label }}
-            {{- " · Finals" if ev.scored_finals -}}
+            {# Marks from every round rank together; the points came from
+               the final. The tag says which claim is which. #}
+            {{- " · Best marks, finals scored" if ev.scored_finals -}}
             {{- " · Not scored" if not ev.scored -}}
         </span></h2>
     <table>

@@ -287,6 +287,17 @@ def fmtPoints(p):
     return f"{round(p + 1e-9, 2):g}"
 
 
+def _entryKey(r, is_relay):
+    """Who a row belongs to: the school for a relay, the person (or the
+    name+school stand-in) otherwise. None for an unattributable relay."""
+    if is_relay:
+        s = (r.get("school") or "").strip().lower()
+        return ("school", s) if s else None
+    return ("person", r.get("person_id") or
+            ((r.get("athlete_name") or "").strip().lower(),
+             (r.get("school") or "").strip().lower()))
+
+
 def _entries(rows, is_relay):
     """Scoring entries: best row per athlete (or per school for a relay).
     Returns [(value, key, best_row)] for rankable rows only.
@@ -310,14 +321,9 @@ def _entries(rows, is_relay):
                   else (v, 1, 0))
         else:
             sv = (v, 0, 0)
-        if is_relay:
-            key = ("school", (r.get("school") or "").strip().lower())
-            if not key[1]:
-                continue              # a relay with no school cannot score
-        else:
-            key = ("person", r.get("person_id") or
-                   ((r.get("athlete_name") or "").strip().lower(),
-                    (r.get("school") or "").strip().lower()))
+        key = _entryKey(r, is_relay)
+        if key is None:
+            continue                  # a relay with no school cannot rank
         if key not in best or sv < best[key][0]:
             best[key] = (sv, r)
     return sorted(((v, k, r) for k, (v, r) in best.items()),
@@ -551,17 +557,42 @@ def scoreMeet(rows):
             if pts > 0:
                 points_by_result[row["result_id"]] = fmtPoints(pts)
 
-        # ---- the event's display rows: ranked entries, then the rest -- #
-        ev_rows = []
-        seen = set()
+        # ---- the event's display rows ---------------------------------- #
+        # One row per athlete, their BEST mark from ANY round, ranked by
+        # that mark -- the compiled page compares marks, same as the XC
+        # compiled disclaimer. Points ride the athlete from the
+        # finals-based scoring above, so a blazing prelim ranks where
+        # the time deserves while its points still tell the finals
+        # story. Race pages keep the full round-by-round detail.
+        pts_by_key = {}
         for label, pts, win, row in awarded:
-            ev_rows.append({**row, "place_label": label,
-                            "points": fmtPoints(pts) if pts > 0 else ""})
-            seen.add(row["result_id"])
-        for r in sorted(rows_g, key=lambda x: (_value(x) is None,
-                                               _value(x) or 0)):
-            if r["result_id"] not in seen:
-                ev_rows.append({**r, "place_label": "", "points": ""})
+            k = _entryKey(row, is_relay)
+            if k and pts > 0:
+                pts_by_key[k] = fmtPoints(pts)
+
+        disp = _entries(rows_g, is_relay)
+        ev_rows = []
+        i = 0
+        while i < len(disp):
+            j = i
+            while j + 1 < len(disp) and disp[j + 1][0] == disp[i][0]:
+                j += 1
+            label = f"T{i + 1}" if j > i else str(i + 1)
+            for p in range(i, j + 1):
+                r = disp[p][2]
+                ev_rows.append({**r, "place_label": label,
+                                "points": pts_by_key.get(
+                                    _entryKey(r, is_relay), "")})
+            i = j + 1
+        # athletes with no rankable mark anywhere (NH, FOUL, DNF) still
+        # show, once, unranked
+        ranked_keys = {_entryKey(e[2], is_relay) for e in disp}
+        for r in rows_g:
+            k = _entryKey(r, is_relay)
+            if k in ranked_keys:
+                continue
+            ranked_keys.add(k)
+            ev_rows.append({**r, "place_label": "", "points": ""})
 
         name_src = finals[0] if finals else rows_g[0]
         dist = eventDistance(name_src.get("event_short"),
