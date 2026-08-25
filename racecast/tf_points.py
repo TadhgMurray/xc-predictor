@@ -42,6 +42,7 @@ database -- the compare/teams convention.
   Girls standings are points invented for nobody.
 """
 
+import math
 import re
 
 TABLE = (10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
@@ -139,6 +140,52 @@ def eventDistance(event_short, stored=None):
     return float(m.group(1)) if m else None
 
 
+_RELAY_NXM = re.compile(r"(\d)\s*x\s*(\d{2,5})", re.IGNORECASE)
+
+
+def relayLegsSpec(event_short):
+    """(n_legs, total_metres) for a relay name, or None.
+
+    '4x200m' -> (4, 800). Medley codes carry legs in hundreds:
+    'distmed12,4,8,16' -> 1200+400+800+1600 -> (4, 4000);
+    'sprintmed2248' -> 200+200+400+800 -> (4, 1600). Bare medley words
+    take their standard totals."""
+    s = canonicalEvent(event_short)
+    m = _RELAY_NXM.search(s)
+    if m:
+        return int(m.group(1)), int(m.group(1)) * int(m.group(2))
+    m = _MEDLEY.match(s)
+    if m:
+        suffix = m.group(2) or ""
+        if "," in suffix:
+            try:
+                legs = [int(x) * 100 for x in suffix.split(",") if x]
+                if legs:
+                    return len(legs), sum(legs)
+            except ValueError:
+                pass
+        elif suffix.isdigit() and 2 <= len(suffix) <= 4:
+            legs = [int(c) * 100 for c in suffix]
+            return len(legs), sum(legs)
+        return (4, 1600) if m.group(1).lower() == "sprint" else (4, 4000)
+    return None
+
+
+def _median(values):
+    v = sorted(values)
+    return v[len(v) // 2] if v else None
+
+
+def _riegelK(leg_metres):
+    """Pace-decay exponent by leg distance: sprints slow down harder
+    per doubling than distance legs do."""
+    if leg_metres < 300:
+        return 1.16
+    if leg_metres < 800:
+        return 1.10
+    return 1.06
+
+
 def roundOf(event_short):
     """'final' | 'prelim' | None, read from the RAW name."""
     s = event_short or ""
@@ -147,6 +194,22 @@ def roundOf(event_short):
     if _PRELIM.search(s):
         return "prelim"
     return None
+
+
+# The feed's own per-result round codes. 'F' final; everything else that
+# appears ('P' prelim, and defensively S/Q/H for semis/quarters/heats).
+_ROUND_CODES = {"F": "final", "P": "prelim", "S": "prelim",
+                "Q": "prelim", "H": "prelim"}
+
+
+def rowRound(row):
+    """'final' | 'prelim' | None for one RESULT: the round column the
+    feed stamped on it when present (the truth -- prelims and finals can
+    share one event_id), else the event name's word."""
+    code = (row.get("round") or "").strip().upper()[:1]
+    if code in _ROUND_CODES:
+        return _ROUND_CODES[code]
+    return roundOf(row.get("event_short"))
 
 
 def genderOf(event_short):
@@ -298,8 +361,9 @@ def scoreMeet(rows):
              majority.get(ekey))
         d = relay_pairs.setdefault(
             ((r.get("division") or "").strip().lower(), canon), {})
-        e = d.setdefault(ekey, {"g": None, "times": []})
+        e = d.setdefault(ekey, {"g": None, "times": [], "rounds": set()})
         e["g"] = e["g"] or g
+        e["rounds"].add(rowRound(r))
         t = r.get("time_seconds")
         if t and float(t) > 0:
             e["times"].append(float(t))
@@ -307,16 +371,85 @@ def scoreMeet(rows):
     for evs in relay_pairs.values():
         if len(evs) != 2:
             continue
+        # An all-prelims event beside an all-finals one is ROUNDS of one
+        # race, not a gender pair -- the canonical merge handles those.
+        a, b = evs.values()
+        if ({"prelim"} in (a["rounds"], b["rounds"]) and
+                {"final"} in (a["rounds"], b["rounds"])):
+            continue
         unknown = [k for k, v in evs.items() if v["g"] is None and v["times"]]
         known = sorted({v["g"] for v in evs.values() if v["g"]})
         if len(unknown) == 1 and len(known) == 1 and known[0] in ("M", "F"):
             relay_gender[unknown[0]] = "F" if known[0] == "M" else "M"
         elif len(unknown) == 2:
-            med = {k: sorted(evs[k]["times"])[len(evs[k]["times"]) // 2]
-                   for k in unknown}
+            med = {k: _median(evs[k]["times"]) for k in unknown}
             fast, slow = sorted(unknown, key=lambda k: med[k])
             if med[fast] / med[slow] < 0.90:
                 relay_gender[fast], relay_gender[slow] = "M", "F"
+
+    # ---- singleton relays: paced against the meet's own fields --------- #
+    # A lone genderless relay (this meet ran only the women's 4x200) has
+    # no sibling to pair with, but the meet itself is full of gendered
+    # running events. Per-leg pace, Riegel-adjusted for leg distance,
+    # against each gendered reference: whichever gender's fields predict
+    # this relay better claims it. Self-calibrating -- a JV meet's slow
+    # references pull the boundary down with them -- and it must win by a
+    # clear margin or the relay stays unscored.
+    refs = {}                      # (div, canon) -> {gender: (t_leg, d_leg)}
+    agg = {}
+    for r in rows:
+        t = r.get("time_seconds")
+        if r.get("is_field") or not t or float(t) <= 0:
+            continue
+        ekey = (r.get("div_id"), r.get("event_id"))
+        g = (genderOf(r.get("event_short")) or r.get("gender") or
+             majority.get(ekey) or relay_gender.get(ekey))
+        if g not in ("M", "F"):
+            continue
+        canon = canonicalEvent(r.get("event_short"))
+        if r.get("is_relay"):
+            spec = relayLegsSpec(r.get("event_short"))
+            if not spec:
+                continue
+            n, total = spec
+        else:
+            dm = eventDistance(r.get("event_short"),
+                               r.get("distance_meters"))
+            if not dm:
+                continue
+            n, total = 1, dm
+        div = (r.get("division") or "").strip().lower()
+        agg.setdefault((div, canon, g), {"n": n, "d": total, "ts": []})
+        agg[(div, canon, g)]["ts"].append(float(t))
+    for (div, canon, g), a in agg.items():
+        refs.setdefault((div, canon), {})[g] = (
+            _median(a["ts"]) / a["n"], a["d"] / a["n"])
+
+    for (div, canon), evs in relay_pairs.items():
+        for ekey, e in evs.items():
+            if (e["g"] or ekey in relay_gender or not e["times"]):
+                continue
+            spec = relayLegsSpec(canon)
+            if not spec:
+                continue
+            n, total = spec
+            t_leg, d_leg = _median(e["times"]) / n, total / n
+            err = {"M": [0.0, 0.0], "F": [0.0, 0.0]}   # [sum w*err, sum w]
+            for (rdiv, rcanon), by_g in refs.items():
+                if rdiv != div or rcanon == canon or len(by_g) != 2:
+                    continue
+                for g, (rt, rd) in by_g.items():
+                    k = _riegelK(math.sqrt(d_leg * rd))
+                    pred = rt * (d_leg / rd) ** k
+                    w = 1.0 / (0.1 + abs(math.log(d_leg / rd)))
+                    err[g][0] += w * abs(math.log(t_leg / pred))
+                    err[g][1] += w
+            if not (err["M"][1] and err["F"][1]):
+                continue
+            em = err["M"][0] / err["M"][1]
+            ef = err["F"][0] / err["F"][1]
+            if abs(em - ef) > 0.05 and min(em, ef) < 0.12:
+                relay_gender[ekey] = "M" if em < ef else "F"
 
     # ---- group into canonical events ---------------------------------- #
     groups = {}
@@ -342,10 +475,14 @@ def scoreMeet(rows):
         grp = groups[key]
         rows_g = grp["rows"]
 
-        # rounds: finals beat everything else when any exist
-        finals = [r for r in rows_g
-                  if roundOf(r.get("event_short")) == "final"]
-        scoring_rows = finals or rows_g
+        # rounds: finals beat everything else when any exist. Per RESULT,
+        # not per event: the feed stamps a round code on each row, and
+        # prelims and finals often share one event_id.
+        finals = [r for r in rows_g if rowRound(r) == "final"]
+        # An event where EVERY row is a final (the normal case) needs no
+        # cut; the cut is for genuine mixed-round events.
+        scoring_rows = finals if (finals and len(finals) < len(rows_g)) \
+            else rows_g
 
         is_relay = any(r.get("is_relay") for r in scoring_rows)
         is_field = any(_value(r) is not None and
@@ -399,7 +536,9 @@ def scoreMeet(rows):
             "gender": grp["gender"], "is_relay": is_relay,
             "is_field": is_field, "distance": dist, "rows": ev_rows,
             "scored": gendered,
-            "scored_finals": bool(finals)})
+            # The Finals tag marks an actual cut -- an event whose rows
+            # are ALL finals is just an event, not news.
+            "scored_finals": bool(finals) and len(finals) < len(rows_g)})
 
         # ---- team sums ------------------------------------------------ #
         if gendered:

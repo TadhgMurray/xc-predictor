@@ -2149,6 +2149,7 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                r.is_field,
                COALESCE(r.is_relay, 0) AS is_relay,
                r.result_kind,
+               r.round,
                r.event_type_id,
                r.grade,
                r.school,
