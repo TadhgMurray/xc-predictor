@@ -1116,6 +1116,9 @@ _CANONICAL_INDEXES = {
         ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC)"),
         # the same boards sorted on the season best instead
         ("as_board_best_idx", "(pool, sport, year, best_rating DESC)"),
+        # school.py roster/years/currentSeason: WHERE school = %s
+        #   (+ sport/year equality) -- every school page view
+        ("as_school_idx", "(school, sport, year)"),
     ],
 }
 
