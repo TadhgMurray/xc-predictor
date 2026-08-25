@@ -427,8 +427,14 @@ def buildRankLine(cur, person_id, season):
     school = season.get("school")
 
     def boardArgs(with_state):
+        # ! min_races=1, NOT the board's default floor (20 TF / 8 XC). The
+        #   floor keeps thin seasons off the public board, but this line is
+        #   about ONE athlete -- a 12-race college season ranking nowhere
+        #   because 12 < 20 reads as a missing feature, not a policy. The
+        #   href carries the same filter, so the board the link opens shows
+        #   the same number the line does.
         args = {"board": "ability", "pool": season["pool"], "sport": sport,
-                "year": str(label_year)}
+                "year": str(label_year), "min_races": "1"}
         if with_state:
             args["state"] = state
         return args
