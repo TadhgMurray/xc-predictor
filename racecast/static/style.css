@@ -3369,3 +3369,31 @@ td.pts { font-weight: 700; }
     color: #374151;
     padding: 0.35rem 0.6rem;
 }
+
+/* ---- school PRs page -------------------------------------------------- */
+/* Side-by-side pair tables: #, Athlete, Time/Mark, (Rating), Grade, Date.
+   Fixed layout, numbers sized, the name does the ellipsizing. */
+.prs-tbl, .prs-course { table-layout: fixed; }
+.prs-tbl th, .prs-tbl td, .prs-course th, .prs-course td {
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* the rec-pair padding: the widths below are sized to it */
+    padding: 0.4rem 0.5rem;
+}
+.prs-tbl th:nth-child(1) { width: 2.4rem; }
+.prs-tbl th:nth-child(3) { width: 4.9rem; }   /* time/mark */
+.prs-tbl th:nth-child(4) { width: 4.7rem; }   /* rating */
+.prs-tbl th:nth-child(5) { width: 4.4rem; }   /* grade */
+.prs-tbl th:nth-child(6) { width: 6.5rem; }   /* date */
+/* field tables have no Rating column: grade+date shift left one */
+.prs-field.prs-tbl th:nth-child(4) { width: 4.4rem; }
+.prs-field.prs-tbl th:nth-child(5) { width: 6.5rem; }
+.prs-field.prs-tbl th:nth-child(6) { width: auto; }
+/* full-width XC tables with the Course column: name and course flex */
+.prs-course th:nth-child(1) { width: 2.4rem; }
+.prs-course th:nth-child(3) { width: 4.9rem; }
+.prs-course th:nth-child(4) { width: 4.7rem; }
+.prs-course th:nth-child(5) { width: 4.4rem; }
+.prs-course th:nth-child(7) { width: 6.5rem; }

@@ -242,7 +242,8 @@ def schoolBest(cur, school, sport, limit=25):
                rr.grade,
                rr.race_date,
                rr.meet_id,
-               rr.div_id
+               rr.div_id,
+               rr.event_id
         FROM   ranking_results rr
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,

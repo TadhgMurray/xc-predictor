@@ -1,0 +1,148 @@
+{# =====================================================================
+  school_prs.html -- one school's PRs, per distance/event.
+
+  ★ LAYOUT FOLLOWS THE COURSE COLUMN. XC "All courses" tables carry a
+    Course column, and six columns at half width strangle the names --
+    so those stack Boys over Girls full-width. Everything else (TF, and
+    XC scoped to one course, where the column would repeat the filter)
+    runs Boys/Girls side by side.
+
+  ★ VIEW-ALL LINKS ONLY WHERE THE BOARD CAN ANSWER. The pr board takes
+    whitelisted distances (rankings.PR_DISTANCES) and only times; an
+    off-list distance or a field event keeps its section, minus the
+    link.
+===================================================================== #}
+<!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% set meta_title = school ~ " — School PRs" %}
+    {% set meta_description = "Best mark per athlete in every event " ~ school
+       ~ " has contested, by season and course." %}
+    {% include "_meta.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+{% macro qs(sport_v, year_v, course_v) -%}
+?sport={{ sport_v }}{% if year_v %}&amp;year={{ year_v }}{% endif %}{% if course_v %}&amp;course={{ course_v|urlencode }}{% endif %}
+{%- endmacro %}
+
+{% macro pr_table(sec, g, with_course) -%}
+    {% set rows = sec.tables[g] %}
+    {% if rows %}
+    <h4 class="rec-gender">{{ "Boys" if g == "M" else "Girls" }}</h4>
+    <table class="staged {{ 'prs-course' if with_course else 'prs-tbl' }}{{ ' prs-field' if sec.kind == 'field' }}" data-step="20">
+        <thead><tr>
+            <th>#</th><th>Athlete</th>
+            <th>{{ "Time" if sec.kind == "running" else "Mark" }}</th>
+            {% if sec.kind == "running" %}<th>Rating</th>{% endif %}
+            <th>Grade</th>
+            {% if with_course %}<th>Course</th>{% endif %}
+            <th>Date</th>
+        </tr></thead>
+        <tbody>
+            {% for r in rows %}
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
+                <td>{{ loop.index }}</td>
+                <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a>
+                    {% else %}{{ r.name if r.name else "Unknown" }}{% endif %}</td>
+                <td class="no-break">{{ r.display_mark }}</td>
+                {% if sec.kind == "running" %}<td>{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{% endif %}
+                <td>{{ r.grade if r.grade else "—" }}</td>
+                {% if with_course %}
+                <td>{% if r.course_name %}<a href="/course/{{ r.course_name|urlencode }}" title="{{ r.course_name }}">{{ r.course_name }}</a>{% else %}—{% endif %}</td>
+                {% endif %}
+                <td class="no-break">
+                    {% if sec.kind == "running" and sport == 'XC' %}
+                    <a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.race_date }}</a>
+                    {% elif sec.kind == "running" %}
+                    {% if r.event_id %}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.race_date }}</a>{% else %}{{ r.race_date }}{% endif %}
+                    {% else %}
+                    <a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.date }}</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            {% if rows|length > 10 %}
+            <tr class="more-row"><td colspan="{{ 5 + (1 if sec.kind == 'running' else 0) + (1 if with_course else 0) }}">
+                <button type="button" class="more-btn">
+                    Show 20 more <span class="more-left">({{ rows|length - 10 + sec.left[g] }} left)</span>
+                </button>
+            </td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+    {% if sec.on_board %}
+    <p class="view-all"><a href="/rankings?board=pr&amp;sport={{ sport }}&amp;pool={{ data.pools[g] }}&amp;distance={{ sec.distance }}&amp;school={{ school|urlencode }}{% if data.year %}&amp;year={{ data.year }}{% endif %}{% if data.course %}&amp;course={{ data.course|urlencode }}{% endif %}">View all in rankings →</a></p>
+    {% endif %}
+    {% endif %}
+{%- endmacro %}
+
+<main class="page-wide">
+    <h1>{{ school }} <span class="dist-note">School PRs</span></h1>
+    <p class="meta">Best mark per athlete, every event the school has
+       contested. A year narrows to that season's bests{% if sport == 'XC' %};
+       a course narrows to bests run there{% endif %}.
+       · <a href="/school/{{ school|urlencode }}?sport={{ sport }}">Back to school page →</a></p>
+
+    <div class="seg">
+        {% for s in ['XC', 'TF'] %}
+          <a class="seg-btn{{ ' is-on' if s == sport }}"
+             href="/school/{{ school|urlencode }}/prs?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+        {% endfor %}
+    </div>
+
+    {% if data.years %}
+    <div class="yearbar">
+        <a class="yb{{ ' is-on' if not data.year }}"
+           href="/school/{{ school|urlencode }}/prs{{ qs(sport, None, data.course) }}">All time</a>
+        {% for y in data.years %}
+          <a class="yb{{ ' is-on' if data.year == y }}"
+             href="/school/{{ school|urlencode }}/prs{{ qs(sport, y, data.course) }}">{{ y }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if sport == 'XC' and data.courses %}
+    <div class="yearbar">
+        <a class="yb{{ ' is-on' if not data.course }}"
+           href="/school/{{ school|urlencode }}/prs{{ qs(sport, data.year, None) }}">All courses</a>
+        {% for c in data.courses %}
+          <a class="yb{{ ' is-on' if data.course == c }}"
+             href="/school/{{ school|urlencode }}/prs{{ qs(sport, data.year, c) }}">{{ c }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+
+{% if not data.sections %}
+    <p class="meta">Nothing here{% if data.year %} for {{ data.year }}{% endif %}{% if data.course %} at {{ data.course }}{% endif %}.</p>
+{% endif %}
+
+{# XC "All courses" shows WHERE each PR ran, and six columns at half
+   width strangle names -- so those tables stack. #}
+{% set with_course = sport == 'XC' and not data.course %}
+{% for sec in data.sections %}
+    <h2 class="ev-head">{{ sec.label }}{% if sec.dist_note %} <span class="dist-note">{{ sec.dist_note }}</span>{% endif %}</h2>
+    {% if with_course %}
+        {{ pr_table(sec, "M", True) }}
+        {{ pr_table(sec, "F", True) }}
+    {% else %}
+    <div class="rec-pair">
+        <div>{{ pr_table(sec, "M", False) }}</div>
+        <div>{{ pr_table(sec, "F", False) }}</div>
+    </div>
+    {% endif %}
+{% endfor %}
+
+</main>
+<script src="{{ url_for('static', filename='staged.js') }}"></script>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+</body>
+</html>

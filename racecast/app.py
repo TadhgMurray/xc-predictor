@@ -2729,8 +2729,10 @@ def school_page(school_name):
             year   = picked_stored or currentSeason(cur, school_name, sport)
             roster = schoolRoster(cur, school_name, year, sport) if year else []
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored)
-            best   = schoolBest(cur, school_name, sport)
-            top    = schoolTopAthletes(cur, school_name, sport, limit=25)
+            # deeper than the old 25: the tables reveal in place now, and
+            # the cap is what "show more" runs out against
+            best   = schoolBest(cur, school_name, sport, limit=100)
+            top    = schoolTopAthletes(cur, school_name, sport, limit=100)
 
     # HS-equivalent view: rows carry their pool straight from
     # ranking_results / athlete_season, so no lookup is needed.
@@ -2741,12 +2743,70 @@ def school_page(school_name):
                                                       "best_rating"),
                                  sport=sport) or has_hs_view
 
+    # Modal pool per gender, for the view-all links: a rankings board is
+    # pool-scoped, so a mixed table links Boys and Girls separately.
+    pool_counts = {"M": {}, "F": {}}
+    for row in list(best) + list(top) + list(roster):
+        p = row.get("pool") or ""
+        g = "M" if p.endswith("_m") else "F" if p.endswith("_f") else None
+        if g:
+            pool_counts[g][p] = pool_counts[g].get(p, 0) + 1
+    pools = {g: (max(c, key=c.get) if c else
+                 ("hs_m" if g == "M" else "hs_f"))
+             for g, c in pool_counts.items()}
+
     return render_template("school.html", school=school_name, header=header,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),
-                           sport=sport,
+                           sport=sport, pools=pools,
                            roster=roster, meets=meets, best=best, top=top,
                            picked=picked)
+
+
+@app.route("/school/<path:school_name>/prs")
+def school_prs_page(school_name):
+    """School PRs: best mark per athlete, one section per distance/event.
+    ?sport=XC|TF, ?year=<label> narrows to a season's bests, ?course=
+    (XC) narrows to bests run there."""
+    from school_prs import schoolPrData
+
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        sport = "XC"
+    raw_year = request.args.get("year")
+    year = int(raw_year) if raw_year and raw_year.isdigit() else None
+    course = (request.args.get("course") or "").strip() or None
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            data = schoolPrData(cur, school_name, sport,
+                                year_label=year, course=course)
+
+    if not data["any"] and not year and not course:
+        abort(404)
+
+    # HS-equivalent view: running rows carry pool + sport + distance, the
+    # exact trio stampBoardRows wants.
+    has_hs_view = False
+    for sec in data["sections"]:
+        if sec["kind"] != "running":
+            continue
+        for g in ("M", "F"):
+            has_hs_view = stampBoardRows(
+                sec["tables"][g],
+                rating_keys=("speed_rating",)) or has_hs_view
+
+    for sec in data["sections"]:
+        for g in ("M", "F"):
+            for r in sec["tables"][g]:
+                if sec["kind"] == "running":
+                    r["display_mark"] = format_time(r["time_seconds"])
+                else:
+                    r["display_mark"] = r.get("mark") or "—"
+
+    return render_template("school_prs.html", school=school_name,
+                           sport=sport, data=data,
+                           has_hs_view=has_hs_view)
 
 
 # ⚠ RECORD LISTS ARE WHERE ONE TYPO TOPS A PAGE FOREVER, so both record

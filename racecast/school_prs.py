@@ -1,0 +1,256 @@
+"""
+school_prs.py -- one school's PRs, per distance/event.
+
+★ MIRRORS THE PR BOARD'S RULES ON PURPOSE. Distances snap to the same
+  whitelist with the same 0.25% band (rankings.PR_DISTANCES) so a section
+  here and its "view all" board show the same population; a distance the
+  board refuses still gets a section, just no link. Same DNF sentinel
+  handling: the clock, not the rating, decides.
+
+★ RUNNING FROM ranking_results, FIELD FROM results_tf. ranking_results
+  carries times and distances for everything the engine rated; field
+  marks never enter it (they are not times), so jumps and throws come
+  straight from results_tf with tf_points' canonical-event and mark
+  parsing -- the exact code the meet scorer uses.
+
+Filters: a season label narrows to that season's bests; an XC course
+narrows to bests run THERE. Both are cut in Python over one fetch,
+because the year list and the course chips need the unfiltered rows
+anyway.
+"""
+
+from rankings import PR_DISTANCES, PR_DISTANCE_TOL
+from school import seasonLabel, storedYear
+from tf_points import canonicalEvent, displayEvent, parseMark
+
+# ranking_results stores metres as the meet recorded them; label the
+# imperial ones the way the people who ran them say them.
+_MILE_LABELS = {1609: "1 Mile", 2414: "1.5 Mile", 3218: "2 Mile",
+                4023: "2.5 Mile", 4828: "3 Mile", 6437: "4 Mile",
+                8047: "5 Mile"}
+
+
+def _distLabel(d):
+    return _MILE_LABELS.get(d, f"{d}m")
+
+
+def _snap(d):
+    """(bucket, on_board): the PR board's distance for this race, with
+    the board's own tolerance; off-list distances bucket to the metre
+    and simply don't link."""
+    best = min(PR_DISTANCES, key=lambda x: abs(x - d))
+    if abs(best - d) <= best * PR_DISTANCE_TOL:
+        return best, True
+    return int(round(d)), False
+
+
+def _genderOfPool(pool):
+    if not pool:
+        return None
+    if pool.endswith("_m"):
+        return "M"
+    if pool.endswith("_f"):
+        return "F"
+    return None
+
+
+_NAME_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT NULLIF(TRIM(concat_ws(' ', x.first_name, x.last_name)), '')
+               AS name,
+               x.gender
+        FROM   athletes x
+        WHERE  x.athlete_id = %(pcol)s
+        ORDER  BY (COALESCE(TRIM(x.first_name), '') <> ''
+                OR COALESCE(TRIM(x.last_name),  '') <> '') DESC,
+                  (x.gender IN ('M', 'F')) DESC
+        LIMIT  1
+    ) a ON TRUE
+"""
+
+
+def _runningRows(cur, school, sport):
+    """Every rated-or-timed race for this school in one sport, with the
+    course name for XC. The meets join stays XC-only: `meets` is keyed
+    in the XC div-id space and a TF div id colliding with it would hand
+    a track race a cross country course."""
+    course_sql = (
+        "LEFT JOIN meets m ON m.div_id = rr.div_id "
+        "AND m.meet_id = rr.meet_id" if sport == "XC" else "")
+    course_col = "m.course_name" if sport == "XC" else "NULL"
+    cur.execute(f"""
+        SELECT rr.result_id, rr.person_id, rr.pool, rr.speed_rating,
+               rr.time_seconds, rr.distance, rr.race_date, rr.year,
+               rr.grade, rr.meet_id, rr.div_id, rr.event_id,
+               {course_col} AS course_name,
+               a.name
+        FROM   ranking_results rr
+        {course_sql}
+        {_NAME_LATERAL % {"pcol": "rr.person_id"}}
+        WHERE  rr.school = %(school)s
+          AND  rr.sport  = %(sport)s
+          AND  rr.time_seconds > 0
+          AND  rr.time_seconds < 86400
+          AND  rr.distance IS NOT NULL
+    """, {"school": school, "sport": sport})
+    return cur.fetchall()
+
+
+def _fieldRows(cur, school):
+    """Every individual field/multi mark for this school. Names ride the
+    same athlete lateral every page uses; the event name coalesces the
+    meets_tf copy with the result's own, the scoring query's rule."""
+    from season_year import seasonYearSqlInt
+    cur.execute(f"""
+        SELECT r.result_id, r.person_id, r.mark, r.grade, r.date,
+               r.meet_id, r.div_id, r.event_id,
+               {seasonYearSqlInt('TF', 'r.date')} AS year,
+               COALESCE(NULLIF(TRIM(m.event_short), ''),
+                        NULLIF(TRIM(r.event_short), '')) AS event_short,
+               a.name, a.gender
+        FROM   results_tf r
+        LEFT JOIN meets_tf m ON m.meet_id  = r.meet_id
+                            AND m.div_id   = r.div_id
+                            AND m.event_id = r.event_id
+        {_NAME_LATERAL % {"pcol": "COALESCE(r.person_id, r.athlete_id)"}}
+        WHERE  r.school = %(school)s
+          AND  COALESCE(r.is_relay, 0) = 0
+          AND  (r.is_field = 1 OR r.result_kind IN ('field', 'combined'))
+          AND  r.mark IS NOT NULL
+          AND  r.date IS NOT NULL
+    """, {"school": school})
+    return cur.fetchall()
+
+
+def _bestPer(rows, value_of, key_of):
+    """Best row per key by value ascending (negate marks to reuse)."""
+    best = {}
+    for r in rows:
+        v = value_of(r)
+        k = key_of(r)
+        if v is None or k is None:
+            continue
+        if k not in best or v < best[k][0]:
+            best[k] = (v, r)
+    return sorted(best.values(), key=lambda e: e[0])
+
+
+def _person(r):
+    return r.get("person_id") or ((r.get("name") or "").strip().lower() or None)
+
+
+def schoolPrData(cur, school, sport, year_label=None, course=None,
+                 per_table=100):
+    """Everything the PRs page renders, one dict.
+
+    {"sections": [{label, dist_note, kind, on_board, distance,
+                   tables: {"M": [rows], "F": [rows]},
+                   left: {"M": n, "F": n}}],
+     "years": [labels desc], "courses": [names], "pools": {M,F},
+     "year": picked label or None, "course": picked or None,
+     "any": bool}
+    """
+    stored = storedYear(sport, year_label) if year_label else None
+    running = _runningRows(cur, school, sport)
+    field = _fieldRows(cur, school) if sport == "TF" else []
+
+    # year bar and course chips come from the UNFILTERED rows
+    years = sorted({seasonLabel(sport, r["year"]) for r in running
+                    if r.get("year")} |
+                   {seasonLabel("TF", r["year"]) for r in field
+                    if r.get("year")}, reverse=True)
+    course_counts = {}
+    for r in running:
+        c = (r.get("course_name") or "").strip()
+        if c:
+            course_counts[c] = course_counts.get(c, 0) + 1
+    courses = [c for c, _n in sorted(course_counts.items(),
+                                     key=lambda kv: -kv[1])[:8]]
+
+    if stored:
+        running = [r for r in running if r.get("year") == stored]
+        field = [r for r in field if r.get("year") == stored]
+    if course and sport == "XC":
+        running = [r for r in running
+                   if (r.get("course_name") or "").strip() == course]
+
+    # modal pool per gender, for the rankings links
+    pool_counts = {"M": {}, "F": {}}
+    for r in running:
+        g = _genderOfPool(r.get("pool"))
+        if g:
+            pool_counts[g][r["pool"]] = pool_counts[g].get(r["pool"], 0) + 1
+    pools = {g: (max(c, key=c.get) if c else
+                 ("hs_m" if g == "M" else "hs_f"))
+             for g, c in pool_counts.items()}
+
+    # ---- running sections: bucket, best per person, rank ------------- #
+    buckets = {}
+    for r in running:
+        g = _genderOfPool(r.get("pool"))
+        if not g:
+            continue
+        bucket, on_board = _snap(float(r["distance"]))
+        b = buckets.setdefault((bucket, on_board), {"M": [], "F": []})
+        b[g].append(r)
+
+    sections = []
+    for (bucket, on_board), by_g in buckets.items():
+        tables, left = {}, {}
+        for g in ("M", "F"):
+            ranked = _bestPer(by_g[g], lambda r: float(r["time_seconds"]),
+                              _person)
+            rows = [dict(r, sport=sport, distance=bucket)
+                    for _v, r in ranked]
+            left[g] = max(0, len(rows) - per_table)
+            tables[g] = rows[:per_table]
+        n = sum(len(by_g[g]) for g in ("M", "F"))
+        sections.append({"label": _distLabel(bucket),
+                         "dist_note": (f"{bucket}m"
+                                       if bucket in _MILE_LABELS else ""),
+                         "kind": "running", "distance": bucket,
+                         "on_board": on_board, "n": n,
+                         "tables": tables, "left": left})
+    if sport == "XC":
+        sections.sort(key=lambda s: -s["n"])       # most-raced first
+    else:
+        sections.sort(key=lambda s: s["distance"])
+
+    # ---- field sections (TF): canonical event, best mark ------------- #
+    f_groups = {}
+    for r in field:
+        canon = (canonicalEvent(r.get("event_short")) or
+                 f"#{r.get('event_id')}")
+        f_groups.setdefault(canon, []).append(r)
+    f_sections = []
+    for canon, rows_g in sorted(f_groups.items()):
+        by_g = {"M": [], "F": []}
+        for r in rows_g:
+            if r.get("gender") in ("M", "F"):
+                by_g[r["gender"]].append(r)
+        tables, left = {}, {}
+        for g in ("M", "F"):
+            ranked = _bestPer(
+                by_g[g],
+                lambda r: (-v if (v := parseMark(r.get("mark"))) is not None
+                           else None),
+                _person)
+            rows = [dict(r) for _v, r in ranked]
+            left[g] = max(0, len(rows) - per_table)
+            tables[g] = rows[:per_table]
+        if not (tables["M"] or tables["F"]):
+            continue
+        name_src = next((r.get("event_short") for r in rows_g
+                         if r.get("event_short")), None)
+        f_sections.append({
+            "label": (displayEvent(name_src) if name_src
+                      else f"Event {rows_g[0].get('event_id')}"),
+            "dist_note": "", "kind": "field", "distance": None,
+            "on_board": False, "n": len(rows_g),
+            "tables": tables, "left": left})
+    f_sections.sort(key=lambda s: s["label"])
+    sections.extend(f_sections)
+
+    return {"sections": sections, "years": years, "courses": courses,
+            "pools": pools, "year": year_label, "course": course,
+            "any": bool(sections)}

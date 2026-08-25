@@ -33,8 +33,18 @@
     <p class="meta">
         {% if header.state %}{{ header.state }} · {% endif %}
         {{ header.athletes }} athletes ·
-        {{ header.first_year }} to {{ header.last_year }}
+        {{ header.first_year }} to {{ header.last_year }} ·
+        <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}">School PRs →</a>
     </p>
+
+{# The two-gender view-all: a rankings board is pool-scoped, so a mixed
+   table links each side separately. #}
+{% macro view_all(board) -%}
+    <p class="view-all">View all in rankings:
+        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.M }}&amp;school={{ school|urlencode }}">Boys →</a>
+        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.F }}&amp;school={{ school|urlencode }}">Girls →</a>
+    </p>
+{%- endmacro %}
 
     {# ★ A SEGMENTED CONTROL, NOT TWO LINKS WITH A DOT BETWEEN THEM. Bolding
        the active one and leaving the other a link made them read as two
@@ -70,7 +80,7 @@
        it is that season's, and the year is the useful label. #}
     <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
         <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
-    <table>
+    <table class="staged" data-step="20">
         <thead>
             <tr>
                 <th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
@@ -79,7 +89,7 @@
         </thead>
         <tbody>
             {% for r in roster %}
-            <tr>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
                 <td>{{ r.grade if r.grade else "" }}</td>
@@ -89,21 +99,29 @@
                 <td>{{ r.last_race if r.last_race else "" }}</td>
             </tr>
             {% endfor %}
+            {% if roster|length > 10 %}
+            <tr class="more-row"><td colspan="7">
+                <button type="button" class="more-btn">
+                    Show 20 more <span class="more-left">({{ roster|length - 10 }} left)</span>
+                </button>
+            </td></tr>
+            {% endif %}
         </tbody>
     </table>
+    {{ view_all("ability") }}
 {% endif %}
 
 {% if top %}
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
         <h2>Best athletes</h2>
     <p class="meta">Best career rating, one row per athlete.</p>
-    <table>
+    <table class="staged" data-step="20">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Best</th><th>Seasons</th><th>Years</th></tr>
         </thead>
         <tbody>
             {% for a in top %}
-            <tr>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ a.person_id }}">{{ a.name.strip() if a.name and a.name.strip() else "Unknown" }}</a></td>
                 <td>{{ rv(a.best, a.hs_best) }}</td>
@@ -111,32 +129,50 @@
                 <td>{{ a.first_year }}{% if a.last_year != a.first_year %} to {{ a.last_year }}{% endif %}</td>
             </tr>
             {% endfor %}
+            {% if top|length > 10 %}
+            <tr class="more-row"><td colspan="5">
+                <button type="button" class="more-btn">
+                    Show 20 more <span class="more-left">({{ top|length - 10 }} left)</span>
+                </button>
+            </td></tr>
+            {% endif %}
         </tbody>
     </table>
+    {{ view_all("ability") }}
 {% endif %}
 
 {% if best %}
     <h2>Best performances</h2>
     {# Every race, not one per athlete. If the same runner owns the top four,
        that is the school's history. The table above is the per athlete one. #}
-    <table>
+    <table class="staged" data-step="20">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
                 <th>Season</th><th>Date</th></tr>
         </thead>
         <tbody>
             {% for b in best %}
-            <tr>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
                 <td>{{ b.grade if b.grade else "" }}</td>
                 <td>{{ rv(b.rating, b.hs_rating) }}</td>
                 <td>{{ b.year }}</td>
-                <td><a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a></td>
+                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a>
+                    {% elif b.event_id %}<a href="/race/tf/{{ b.meet_id }}/{{ b.event_id }}/{{ b.div_id }}">{{ b.race_date }}</a>
+                    {% else %}{{ b.race_date }}{% endif %}</td>
             </tr>
             {% endfor %}
+            {% if best|length > 10 %}
+            <tr class="more-row"><td colspan="6">
+                <button type="button" class="more-btn">
+                    Show 20 more <span class="more-left">({{ best|length - 10 }} left)</span>
+                </button>
+            </td></tr>
+            {% endif %}
         </tbody>
     </table>
+    {{ view_all("performance") }}
 {% endif %}
 
 {% if meets %}
