@@ -23,7 +23,23 @@ database -- the compare/teams convention.
   but NOT the level words (Varsity, JV, Frosh): those scope who was
   racing whom, and merging a varsity 100 with the JV 100 would score a
   meet that never happened. The division column joins the key for the
-  same reason.
+  same reason. An event with NO name keys on its ids instead: an empty
+  canonical name once merged six different unnamed events (470+ results)
+  into one fake mega-event at a real meet.
+
+★ UNATTACHED ATHLETES RANK BUT NEVER SCORE -- the real-meet rule. Some
+  feeds write "Unattached" as a literal school name, and at open invites
+  it promptly won both team titles. Non-team rows keep their place in
+  the event table (they really did win); the points skip over them to
+  the first actual team, and the event win goes with the points.
+
+★ GENDER, THREE SOURCES DEEP. Some feeds name events "800m" with no
+  Boys/Girls prefix. Order: the name's prefix, then the athlete's own
+  gender, then the event's majority gender (so an athlete we cannot sex
+  does not fork into a phantom copy of the event). An event with no
+  gender anywhere -- relays at prefix-less meets, mostly -- still
+  displays, but awards no points: points that cannot land in a Boys or
+  Girls standings are points invented for nobody.
 """
 
 import re
@@ -43,6 +59,13 @@ _GENDER = re.compile(
     re.IGNORECASE)
 _MALE = frozenset({"men", "mens", "men's", "boys", "boy's", "male"})
 
+# Gender word ANYWHERE in the name, for classification (not stripping):
+# "Varsity Boys 100" leads with a level word, not the gender. \b keeps
+# "women" from matching its inner "men".
+_GENDER_ANY = re.compile(
+    r"\b(boys?|men|mens|male|girls?|women|womens|female)\b", re.IGNORECASE)
+_MALE_WORDS = frozenset({"boy", "boys", "men", "mens", "male"})
+
 # Round/section noise for the MERGE KEY. Deliberately narrower than
 # event_parse._TRAILING_NOISE: no varsity/jv/frosh (level words scope the
 # competition) and no invite/championship (part of some events' names).
@@ -52,6 +75,63 @@ _NOISE = re.compile(
     r"semis?|semifinals?|quarterfinals?|finals?|trials?|"
     r"unseeded|seeded|fast|slow|\#)\b.*$",
     re.IGNORECASE)
+
+# School strings that mean "no team". Matched on the whole normalized
+# name -- "Independence HS" is a school, "Independent" is a shrug.
+_NON_TEAMS = frozenset({
+    "unattached", "unaffiliated", "independent", "n/a", "na", "none",
+    "no team", "no school", "no affiliation", "-", "--"})
+
+# Bare feed codes -> reader names. Display only: the merge key keeps the
+# raw string, so two different codes never collapse into one event.
+_CODE_NAMES = {
+    "hj": "High Jump", "lj": "Long Jump", "pv": "Pole Vault",
+    "tj": "Triple Jump", "shot": "Shot Put", "sp": "Shot Put",
+    "disc": "Discus", "discus": "Discus", "jav": "Javelin",
+    "wt": "Weight Throw", "weight": "Weight Throw",
+    "ham": "Hammer", "hammer": "Hammer",
+    "pent": "Pentathlon", "hept": "Heptathlon", "dec": "Decathlon",
+}
+_MEDLEY = re.compile(r"^(sprint|dist(?:ance)?)\s*med(?:ley)?\s*(\d+)?$",
+                     re.IGNORECASE)
+
+# Leading distance in an event name ("200m", "1600 Meters", "110h").
+# Two digits minimum so "4x200m" stays a relay, not a 4; a lookahead,
+# not \b, because "200m" has no word boundary before the m.
+_LEAD_NUM = re.compile(r"^(\d{2,5})(?=\D|$)")
+
+
+def scorableSchool(school):
+    """The school name if it names an actual team, else None."""
+    s = (school or "").strip()
+    low = s.lower()
+    if not s or low in _NON_TEAMS or low.startswith("unattached"):
+        return None
+    return s
+
+
+def prettyEventName(event_short):
+    """A bare feed code ('hj', 'sprintmed2248') becomes its reader name;
+    anything already name-shaped comes back untouched."""
+    s = " ".join((event_short or "").split())
+    low = s.lower()
+    if low in _CODE_NAMES:
+        return _CODE_NAMES[low]
+    m = _MEDLEY.match(low)
+    if m:
+        kind = "Sprint Medley" if m.group(1).lower() == "sprint" \
+            else "Distance Medley"
+        return f"{kind} {m.group(2)}" if m.group(2) else kind
+    return s or event_short
+
+
+def eventDistance(event_short, stored=None):
+    """Sort distance in metres: the stored column, else the number the
+    name leads with. None when neither answers (fields, relays, codes)."""
+    if stored:
+        return float(stored)
+    m = _LEAD_NUM.match(canonicalEvent(event_short))
+    return float(m.group(1)) if m else None
 
 
 def roundOf(event_short):
@@ -65,11 +145,12 @@ def roundOf(event_short):
 
 
 def genderOf(event_short):
-    """'M' | 'F' | None from the event name's gender prefix."""
-    m = _GENDER.match(event_short or "")
+    """'M' | 'F' | None from the gender word in the event name, wherever
+    it sits ("Boys 100", "Varsity Boys 100")."""
+    m = _GENDER_ANY.search(event_short or "")
     if not m:
         return None
-    return "M" if m.group(1).lower() in _MALE else "F"
+    return "M" if m.group(1).lower() in _MALE_WORDS else "F"
 
 
 def canonicalEvent(event_short):
@@ -80,10 +161,12 @@ def canonicalEvent(event_short):
 
 
 def displayEvent(event_short):
-    """The reader's name for an event: same strip, original case kept."""
+    """The reader's name for an event: same strip, original case kept,
+    bare feed codes translated ('hj' -> 'High Jump')."""
     s = _GENDER.sub("", event_short or "")
     s = _NOISE.sub("", s)
-    return " ".join(s.split()) or (event_short or "Event")
+    s = " ".join(s.split()) or (event_short or "Event")
+    return prettyEventName(s)
 
 
 def _value(row):
@@ -128,21 +211,36 @@ def _entries(rows, is_relay):
 
 
 def _award(entries):
-    """[(place_label, points, row)] with standard split-tie handling: tied
-    entries share the mean of the points their places cover, and wear a
-    T-prefixed place."""
+    """[(place_label, points, is_win, row)] with standard split-tie
+    handling: tied entries share the mean of the points their places
+    cover and wear a T-prefixed place.
+
+    Places count EVERY ranked entry; points count only rows with a real
+    team -- the unattached winner shows Place 1, and the 10 points (and
+    the event win) go to the first school behind them, exactly as meets
+    score open fields."""
     out = []
     i = 0
+    slot = 0                          # next unclaimed scoring place
     while i < len(entries):
         j = i
         while j + 1 < len(entries) and entries[j + 1][0] == entries[i][0]:
             j += 1
-        span = range(i, j + 1)
-        pts = [TABLE[p] if p < len(TABLE) else 0.0 for p in span]
-        share = sum(pts) / len(pts)
+        group = [entries[p][2] for p in range(i, j + 1)]
         label = f"T{i + 1}" if j > i else str(i + 1)
-        for p in span:
-            out.append((label, share, entries[p][2]))
+        n_team = sum(1 for r in group
+                     if scorableSchool(r.get("school")) is not None)
+        share = 0.0
+        if n_team:
+            pts = [TABLE[slot + k] if slot + k < len(TABLE) else 0.0
+                   for k in range(n_team)]
+            share = sum(pts) / n_team
+        win = n_team > 0 and slot == 0
+        for r in group:
+            team = scorableSchool(r.get("school")) is not None
+            out.append((label, share if team else 0.0,
+                        win and team, r))
+        slot += n_team
         i = j + 1
     return out
 
@@ -161,14 +259,31 @@ def scoreMeet(rows):
        "points_by_result": {result_id: "10"},
        "n_scored_events": int}
     """
+    # ---- majority gender per raw event -------------------------------- #
+    # For rows whose name and athlete both stay silent: strict majority
+    # of the KNOWN genders in the same raw event (div_id, event_id), so
+    # one unsexed athlete doesn't fork a phantom copy of the 800.
+    tallies = {}
+    for r in rows:
+        if r.get("gender") in ("M", "F"):
+            k = (r.get("div_id"), r.get("event_id"))
+            t = tallies.setdefault(k, {"M": 0, "F": 0})
+            t[r["gender"]] += 1
+    majority = {}
+    for k, t in tallies.items():
+        if t["M"] != t["F"]:
+            majority[k] = "M" if t["M"] > t["F"] else "F"
+
     # ---- group into canonical events ---------------------------------- #
     groups = {}
     for r in rows:
-        if not (r.get("school") or "").strip():
-            continue                  # unattached rows cannot move a team
         div = (r.get("division") or "").strip()
-        canon = canonicalEvent(r.get("event_short"))
-        g = genderOf(r.get("event_short")) or r.get("gender") or "?"
+        # Nameless events must NOT merge on their empty canonical name;
+        # each keeps its own identity by id.
+        canon = (canonicalEvent(r.get("event_short")) or
+                 f"#{r.get('div_id')}:{r.get('event_id')}")
+        g = (genderOf(r.get("event_short")) or r.get("gender") or
+             majority.get((r.get("div_id"), r.get("event_id"))) or "?")
         key = (div.lower(), canon, g)
         grp = groups.setdefault(key, {"division": div, "gender": g,
                                       "canon": canon, "rows": []})
@@ -195,18 +310,23 @@ def scoreMeet(rows):
 
         entries = _entries(scoring_rows, is_relay)
         awarded = _award(entries)
-        n_scored += 1 if awarded else 0
 
-        by_rid = {}
-        for label, pts, row in awarded:
+        # No gender means no standings to put points in: the event still
+        # displays with its places, but awards nothing.
+        gendered = grp["gender"] in ("M", "F")
+        if not gendered:
+            awarded = [(label, 0.0, False, row)
+                       for label, _pts, _win, row in awarded]
+        n_scored += 1 if any(pts > 0 for _l, pts, _w, _r in awarded) else 0
+
+        for label, pts, win, row in awarded:
             if pts > 0:
                 points_by_result[row["result_id"]] = fmtPoints(pts)
-            by_rid[row["result_id"]] = (label, pts)
 
-        # ---- the event's display rows: ranked scorers, then the rest -- #
+        # ---- the event's display rows: ranked entries, then the rest -- #
         ev_rows = []
         seen = set()
-        for label, pts, row in awarded:
+        for label, pts, win, row in awarded:
             ev_rows.append({**row, "place_label": label,
                             "points": fmtPoints(pts) if pts > 0 else ""})
             seen.add(row["result_id"])
@@ -216,28 +336,32 @@ def scoreMeet(rows):
                 ev_rows.append({**r, "place_label": "", "points": ""})
 
         name_src = finals[0] if finals else rows_g[0]
-        dist = name_src.get("distance_meters")
+        dist = eventDistance(name_src.get("event_short"),
+                             name_src.get("distance_meters"))
         div = divisions.setdefault(grp["division"].lower(), {
             "name": grp["division"] or "All divisions",
             "teams": {}, "events": []})
         div["events"].append({
-            "name": displayEvent(name_src.get("event_short")),
+            "name": (displayEvent(name_src.get("event_short"))
+                     if name_src.get("event_short")
+                     else f"Event {name_src.get('event_id')}"),
             "gender": grp["gender"], "is_relay": is_relay,
             "is_field": is_field, "distance": dist, "rows": ev_rows,
+            "scored": gendered,
             "scored_finals": bool(finals)})
 
         # ---- team sums ------------------------------------------------ #
-        if grp["gender"] in ("M", "F"):
+        if gendered:
             teams = div["teams"].setdefault(grp["gender"], {})
-            for label, pts, row in awarded:
-                school = (row.get("school") or "").strip()
+            for label, pts, win, row in awarded:
+                school = scorableSchool(row.get("school"))
                 if not school or pts <= 0:
                     continue
                 cell = teams.setdefault(school.lower(),
                                         {"school": school, "points": 0.0,
                                          "wins": 0})
                 cell["points"] += pts
-                if label in ("1", "T1"):
+                if win:
                     cell["wins"] += 1
 
     out_divs = []
@@ -261,11 +385,14 @@ def scoreMeet(rows):
             for t in teams:
                 t["display"] = fmtPoints(t["points"])
             div["teams"][g] = teams
-        # events in a stable reading order: running by distance, then
-        # field/multis, relays last, name as the tiebreak
+        # events in a stable reading order: running by distance (parsed
+        # from the name when the column is empty, so the 200 stops
+        # sorting after the 3200), then field/multis, relays last,
+        # unknown-distance running events after the known ones
         div["events"].sort(key=lambda e: (
             bool(e["is_relay"]), bool(e["is_field"]),
-            float(e["distance"] or 0), e["name"], e["gender"]))
+            float(e["distance"]) if e["distance"] else 1e9,
+            e["name"], e["gender"]))
         out_divs.append(div)
 
     return {"divisions": out_divs, "points_by_result": points_by_result,

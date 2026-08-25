@@ -45,6 +45,7 @@
         <thead>
             <tr>
                 <th>Event</th>
+                <th>Gender</th>
                 <th>Division</th>
                 <th>Results</th>
             </tr>
@@ -54,9 +55,10 @@
             <tr>
                 <td>
                     <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}">
-                        {{ e.event_short if e.event_short else "Event " ~ e.event_id }}
+                        {{ e.display_name }}
                     </a>
                 </td>
+                <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else "—" }}</td>
                 <td>{{ e.division if e.division else "—" }}</td>
                 <td>{{ e.n_results }}</td>
             </tr>

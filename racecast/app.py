@@ -2014,7 +2014,7 @@ def _field_gender(results):
 
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
-    from tf_points import scoreMeet
+    from tf_points import scoreMeet, prettyEventName
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -2050,6 +2050,9 @@ def race_tf(meet_id, event_id, div_id):
         abort(404)
 
     header["gender"] = _field_gender(results)
+    # 'hj' is a column value, not a page title.
+    if header.get("event_short"):
+        header["event_short"] = prettyEventName(header["event_short"])
 
     for row in results:
         if row["is_field"]:
@@ -2091,19 +2094,26 @@ def get_tf_meet_header(cur, meet_id, source=None):
 
 
 def get_tf_meet_events(cur, meet_id, source=None):
-    """Every event in this TF meet, with result counts."""
-    cur.execute("""
+    """Every event in this TF meet, with result counts and the field's
+    majority athlete gender -- some feeds name both 800s just "800m", and
+    without a gender the two rows are indistinguishable on the page.
+    (mode() skips NULLs, so the CASE quietly drops unusable genders.)"""
+    cur.execute(f"""
         SELECT m.div_id,
                m.event_id,
                m.event_short,
                m.division,
                m.distance_meters,
-               count(r.result_id) AS n_results
+               count(r.result_id) AS n_results,
+               mode() WITHIN GROUP (
+                   ORDER BY CASE WHEN a.gender IN ('M', 'F')
+                                 THEN a.gender END) AS gender
         FROM meets_tf m
         LEFT JOIN results_tf r
                ON r.meet_id  = m.meet_id
               AND r.div_id   = m.div_id
               AND r.event_id = m.event_id
+        {_athlete_lateral('r')}
         WHERE m.meet_id = %(meet)s
           AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
@@ -2171,7 +2181,7 @@ def _stamp_tf_display(rows):
 
 @app.route("/meet/tf/<int:meet_id>")
 def meet_tf(meet_id):
-    from tf_points import scoreMeet
+    from tf_points import scoreMeet, genderOf, prettyEventName, eventDistance
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -2187,6 +2197,21 @@ def meet_tf(meet_id):
         abort(404)
 
     scored = scoreMeet(scoring_rows)
+
+    # The name's own gender prefix outranks the field's majority; bare
+    # feed codes get their reader names; and events sort by distance
+    # parsed from the name when the column is empty, so the 200 stops
+    # listing after the 3200 and nameless events sink to the end.
+    for e in events:
+        e["gender"] = genderOf(e.get("event_short")) or e.get("gender")
+        e["display_name"] = (prettyEventName(e["event_short"])
+                             if e.get("event_short")
+                             else f"Event {e['event_id']}")
+    events.sort(key=lambda e: (
+        (e.get("division") or "").lower(),
+        d if (d := eventDistance(e.get("event_short"),
+                                 e.get("distance_meters"))) else 1e9,
+        e["display_name"], e.get("gender") or "?"))
 
     return render_template("meet_tf.html", header=header, events=events,
                            meet_date=meet_date, scored=scored,

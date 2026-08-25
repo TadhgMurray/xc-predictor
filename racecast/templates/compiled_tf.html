@@ -60,6 +60,7 @@
             {{- div.name if div.name and div.name != "All divisions" }}
             {{- (" " if div.name and div.name != "All divisions" else "") ~ g_label }}
             {{- " · Finals" if ev.scored_finals -}}
+            {{- " · Not scored" if not ev.scored -}}
         </span></h2>
     <table>
         <thead><tr>
