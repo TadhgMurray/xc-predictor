@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_tf_points.html" import tf_team_block %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -34,6 +35,12 @@
     </p>
     {% endif %}
 
+    {% if scored and scored.n_scored_events %}
+    <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}/compiled{{ ('?alt=' ~ alt_idx) if alt_idx }}">Compiled results →</a></p>
+    {{ tf_team_block(scored.divisions) }}
+    {% endif %}
+
+    <h2>Events</h2>
     <table>
         <thead>
             <tr>

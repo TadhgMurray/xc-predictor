@@ -2014,6 +2014,8 @@ def _field_gender(results):
 
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
+    from tf_points import scoreMeet
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             header  = get_tf_race_header(cur, meet_id, div_id, event_id)
@@ -2026,6 +2028,23 @@ def race_tf(meet_id, event_id, div_id):
                 stampRecordFlags(cur, "TF", results,
                                  header.get("distance_meters"),
                                  results[0].get("date"))
+            # Points come from scoring the WHOLE meet, not this page's rows:
+            # a prelim page's athletes score in the final, and a sectioned
+            # final scores across its sections. Scope to this race's own
+            # source first -- the meet_id collision rule.
+            points_by_result = {}
+            if header and results:
+                cur.execute("""
+                    SELECT source FROM results_tf
+                    WHERE meet_id = %(meet)s AND div_id = %(div)s
+                      AND event_id = %(event)s AND source IS NOT NULL
+                    GROUP BY source ORDER BY count(*) DESC LIMIT 1
+                """, {"meet": meet_id, "div": div_id, "event": event_id})
+                srow = cur.fetchone()
+                race_src = srow["source"] if srow else None
+                scoring_rows = get_tf_meet_scoring_rows(cur, meet_id,
+                                                        source=race_src)
+                points_by_result = scoreMeet(scoring_rows)["points_by_result"]
 
     if header is None:
         abort(404)
@@ -2039,6 +2058,7 @@ def race_tf(meet_id, event_id, div_id):
             row["display_result"] = format_time(row["time_seconds"])
         else:
             row["display_result"] = "—"
+        row["points"] = points_by_result.get(row["result_id"], "")
 
     race_date = results[0]["date"] if results else None
 
@@ -2092,8 +2112,67 @@ def get_tf_meet_events(cur, meet_id, source=None):
     return cur.fetchall()
 
 
+def get_tf_meet_scoring_rows(cur, meet_id, source=None):
+    """Every result in a TF meet with the event context tf_points needs.
+
+    One query for the whole meet, because scoring cannot work event page by
+    event page: prelims and finals arrive as DIFFERENT event_ids, and only
+    the full set lets tf_points merge them back into one scored event.
+
+    ⚠ `source` must scope BOTH tables. The anet and tfrrs id spaces collide
+      on meet_id (see meet_sources); an unscoped join could score two
+      real-world meets as one.
+    """
+    cur.execute(f"""
+        SELECT r.result_id,
+               r.person_id,
+               r.time_seconds,
+               r.mark,
+               r.is_field,
+               COALESCE(r.is_relay, 0) AS is_relay,
+               r.result_kind,
+               r.grade,
+               r.school,
+               r.speed_rating,
+               r.date,
+               m.event_short,
+               m.division,
+               m.distance_meters,
+               m.div_id,
+               m.event_id,
+               {_name_sql('r')} AS athlete_name,
+               a.gender          AS gender
+        FROM results_tf r
+        JOIN meets_tf m ON m.meet_id  = r.meet_id
+                       AND m.div_id   = r.div_id
+                       AND m.event_id = r.event_id
+        {_athlete_lateral('r')}
+        WHERE r.meet_id = %(meet)s
+          AND (%(src)s::text IS NULL
+               OR (r.source = %(src)s AND m.source = %(src)s))
+          AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
+        ORDER BY r.time_seconds ASC NULLS LAST
+    """, {"meet": meet_id, "src": source})
+    return cur.fetchall()
+
+
+def _stamp_tf_display(rows):
+    """row["display_result"]: the mark string for field events and multis
+    (result_kind says what `mark` holds), the formatted time otherwise --
+    the same rule race_tf renders by."""
+    for r in rows:
+        if r.get("is_field") or r.get("result_kind") in ("field", "combined"):
+            r["display_result"] = r["mark"] if r.get("mark") else "—"
+        elif r.get("time_seconds") is not None:
+            r["display_result"] = format_time(r["time_seconds"])
+        else:
+            r["display_result"] = "—"
+
+
 @app.route("/meet/tf/<int:meet_id>")
 def meet_tf(meet_id):
+    from tf_points import scoreMeet
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             sources = meet_sources(cur, "meets_tf", meet_id)
@@ -2102,12 +2181,48 @@ def meet_tf(meet_id):
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
+            scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
 
     if header is None:
         abort(404)
 
+    scored = scoreMeet(scoring_rows)
+
     return render_template("meet_tf.html", header=header, events=events,
-                           meet_date=meet_date,
+                           meet_date=meet_date, scored=scored,
+                           alt_idx=alt_idx, other_sources=other_sources)
+
+
+@app.route("/meet/tf/<int:meet_id>/compiled")
+def compiled_tf(meet_id):
+    """A TF meet's compiled results: computed team points on top, then
+    every event as its own section with that event's individual scores --
+    the XC meet-results reading order, for track."""
+    from tf_points import scoreMeet
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            sources = meet_sources(cur, "meets_tf", meet_id)
+            src, alt_idx, other_sources = pick_source(
+                sources, request.args.get("alt"))
+            header = get_tf_meet_header(cur, meet_id, source=src)
+            rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
+            meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
+            # Stamp BEFORE scoreMeet: it copies rows into its event
+            # sections, so hs_rating and display_result must already be on
+            # them. Per-row distance; the event string is the fallback.
+            has_hs_view = stampRowsHs(cur, "TF", rows,
+                                      distance_key="distance_meters",
+                                      event_key="event_short")
+
+    if header is None or not rows:
+        abort(404)
+
+    _stamp_tf_display(rows)
+    scored = scoreMeet(rows)
+
+    return render_template("compiled_tf.html", header=header, scored=scored,
+                           meet_date=meet_date, has_hs_view=has_hs_view,
                            alt_idx=alt_idx, other_sources=other_sources)
 
 

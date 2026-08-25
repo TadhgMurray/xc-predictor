@@ -37,6 +37,9 @@
     </p>
 
     {% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}
+    {# Points exist only where this event scored: a prelim page's rows
+       score in the final, so the column stays off prelim pages. #}
+    {% set has_pts = results | selectattr("points") | list | length > 0 %}
 
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
         <table>
@@ -49,6 +52,7 @@
                 <th>Result</th>
                 {% if has_wind %}<th>Wind</th>{% endif %}
                 <th>Rating</th>
+                {% if has_pts %}<th>Points</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -67,6 +71,7 @@
                 <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
                 {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else "—" }}</td>{% endif %}
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
+                {% if has_pts %}{% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}{% endif %}
             </tr>
             {% endfor %}
         </tbody>

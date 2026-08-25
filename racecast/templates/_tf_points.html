@@ -1,0 +1,46 @@
+{# =====================================================================
+  _tf_points.html -- the TF team-points block, shared by the meet page
+  and the compiled-results page so the two can never disagree.
+
+  ★ COMPUTED, NEVER OFFICIAL, AND THE NOTE SAYS SO. No meet publishes its
+    scoring rules into this data, so the block scores every meet one
+    honest way (the standard 8-place table) and labels the result as a
+    computed score. See tf_points.py for the rules themselves.
+===================================================================== #}
+
+{% macro tf_team_block(divisions) -%}
+{% for div in divisions %}
+{% if div.teams.M or div.teams.F %}
+    <h2>Team points{% if div.name and div.name != "All divisions" %} <span class="dist-note">{{ div.name }}</span>{% endif %}</h2>
+    {% if loop.first %}
+    <p class="meta tfp-note">Scored from the results with the standard
+       8-place table (10-8-6-5-4-3-2-1). Finals score where the meet
+       marked them; otherwise each athlete's best mark ranks the event.
+       Relays count once per school, field events by mark, multis by
+       points, ties split. Not the meet's official score.</p>
+    {% endif %}
+    <div class="rec-pair">
+        {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
+        {% if div.teams[g] %}
+        <div>
+            <h4 class="rec-gender">{{ g_label }}</h4>
+            <table class="tfp-team">
+                <thead><tr><th>#</th><th>School</th><th>Points</th><th>Event wins</th></tr></thead>
+                <tbody>
+                    {% for t in div.teams[g] %}
+                    <tr>
+                        <td>{{ t.place_label }}</td>
+                        <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                        <td{{ ' class="pts"'|safe if t.place_label in ("1", "T1") }}>{{ t.display }}</td>
+                        <td>{{ t.wins }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+{% endif %}
+{% endfor %}
+{%- endmacro %}

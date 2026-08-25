@@ -1,0 +1,101 @@
+{# =====================================================================
+  compiled_tf.html -- one TF meet, every event on one page, with the
+  computed team points on top. The TF twin of compiled.html.
+
+  ★ EVERY EVENT IS A SECTION with its own scoring column, mirroring how
+    the XC meet pages read: whole-meet standings first, then each event's
+    individual scores. Prelims and sections are merged into their event
+    (tf_points.py owns those rules), so a row can rank differently here
+    than on its own race page -- here it ranks against the whole event.
+
+  ★ THE SCORE IS COMPUTED, NOT OFFICIAL. The note under "Team points"
+    says exactly how it was scored.
+===================================================================== #}
+<!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
+{% from "_tf_points.html" import tf_team_block %}
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% set meta_title = header.meet_name ~ " — Compiled" %}
+    {% set meta_description = "Every event at this meet with computed team "
+       "points and each event's individual scores on one page." %}
+    {% include "_meta.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide">
+    <h1>{{ header.meet_name }}</h1>
+    <p class="meta">
+        {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
+        {% if meet_date %} · {{ meet_date }}{% endif %}
+        {% if header.state %} · {{ header.state }}{% endif %}
+        · Compiled results
+    </p>
+    <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}{{ ('?alt=' ~ alt_idx) if alt_idx }}">View full meet →</a></p>
+
+    {% if other_sources %}
+    {# Same collision note as meet_tf.html: one id, two real-world meets.
+       No feed names, in the text or the URL. #}
+    <p class="meta source-split-note">
+        Two different meets share this page address.
+        {% for o in other_sources %}
+        <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
+        {% endfor %}
+    </p>
+    {% endif %}
+
+    {{ tf_team_block(scored.divisions) }}
+
+{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+
+{% for div in scored.divisions %}
+{% for ev in div.events %}
+    {% set g_label = "Boys" if ev.gender == 'M' else "Girls" if ev.gender == 'F' else "" %}
+    <h2 class="ev-head">{{ ev.name }}
+        <span class="dist-note">
+            {{- div.name if div.name and div.name != "All divisions" }}
+            {{- (" " if div.name and div.name != "All divisions" else "") ~ g_label }}
+            {{- " · Finals" if ev.scored_finals -}}
+        </span></h2>
+    <table>
+        <thead><tr>
+            <th>Place</th>
+            {% if not ev.is_relay %}<th>Athlete</th>{% endif %}
+            <th>School</th>
+            <th>{{ "Mark" if ev.is_field else "Time" }}</th>
+            {# Relays have no per-athlete rating; field marks have none either. #}
+            {% if not ev.is_field and not ev.is_relay %}<th>Rating</th>{% endif %}
+            <th>Points</th>
+        </tr></thead>
+        <tbody>
+            {% for row in ev.rows %}
+            <tr>
+                <td>{{ row.place_label }}</td>
+                {% if not ev.is_relay %}
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.athlete_name if row.athlete_name else "Unknown" }}
+                    {% endif %}
+                </td>
+                {% endif %}
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% else %}—{% endif %}</td>
+                <td class="no-break">{{ row.display_result }}</td>
+                {% if not ev.is_field and not ev.is_relay %}<td>{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
+                {% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endfor %}
+{% endfor %}
+
+</main>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+</body>
+</html>

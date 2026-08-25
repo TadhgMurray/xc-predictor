@@ -3344,3 +3344,18 @@ td.margin-b { color: #b45309; font-weight: 600; }
     .paces-tbl .km, .paces-tbl th:nth-child(3) { display: none; }
     .paces-tbl .basis, .paces-tbl th.basis { display: none; }
 }
+
+/* ---- TF team points + compiled results -------------------------------- */
+/* Event section headings on the compiled page: the event name with its
+   division/gender/round context riding the standard dist-note. */
+.ev-head { margin: 1.6rem 0 0.4rem; }
+/* A scoring cell: the number a team fight is read from. */
+td.pts { font-weight: 700; }
+/* The how-this-was-scored note stays a readable measure, not full-bleed. */
+.tfp-note { max-width: 64rem; }
+/* Team tables ride .rec-pair's fixed layout, so the number columns need
+   widths (same rem discipline as .rec-ind): #, School, Points, Event wins.
+   School is left unset and does the ellipsizing. */
+.tfp-team th:nth-child(1) { width: 2.4rem; }
+.tfp-team th:nth-child(3) { width: 4.5rem; }
+.tfp-team th:nth-child(4) { width: 7.4rem; }
