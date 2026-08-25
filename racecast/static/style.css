@@ -3359,3 +3359,13 @@ td.pts { font-weight: 700; }
 .tfp-team th:nth-child(1) { width: 2.4rem; }
 .tfp-team th:nth-child(3) { width: 4.5rem; }
 .tfp-team th:nth-child(4) { width: 7.4rem; }
+/* Round/heat divider rows inside a race table */
+.heat-row td {
+    background: #f3f4f6;
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #374151;
+    padding: 0.35rem 0.6rem;
+}

@@ -56,9 +56,14 @@
             </tr>
         </thead>
         <tbody>
-            {% for row in results %}
+            {% set n_cols = 6 + (1 if has_wind else 0) + (1 if has_pts else 0) %}
+            {% for sec in sections %}
+            {% if sec.label %}
+            <tr class="heat-row"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>
+            {% endif %}
+            {% for row in sec.rows %}
             <tr>
-                <td>{{ loop.index }}</td>
+                <td>{{ row.sec_place }}</td>
                 <td>
                     {% if row.person_id %}
                         <a href="/athlete/{{ row.person_id }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
@@ -73,6 +78,7 @@
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 {% if has_pts %}{% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}{% endif %}
             </tr>
+            {% endfor %}
             {% endfor %}
         </tbody>
     </table>

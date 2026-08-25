@@ -282,18 +282,34 @@ def _value(row):
 
 
 def fmtPoints(p):
-    """10 -> '10', 5.5 -> '5.5'."""
-    return f"{p:g}"
+    """10 -> '10', 5.5 -> '5.5'. Two decimals at most: a genuine 7-way
+    split does not deserve '92.7857' in a standings table."""
+    return f"{round(p + 1e-9, 2):g}"
 
 
 def _entries(rows, is_relay):
     """Scoring entries: best row per athlete (or per school for a relay).
-    Returns [(value, key, best_row)] for rankable rows only."""
+    Returns [(value, key, best_row)] for rankable rows only.
+
+    ★ FIELD TIES BREAK ON THE FEED'S PLACE COLUMN. Two vertical jumpers
+      on the same height are usually NOT tied -- the meet ordered them
+      by countback misses, which our data carries only as `place`. So a
+      field entry's value is (mark, place): equal marks with different
+      places rank in place order, and only marks the meet itself left
+      tied (same place, or no place at all) split points. Running ties
+      on time stay real ties -- place there is section-local and must
+      not order a dead heat."""
     best = {}
     for r in rows:
         v = _value(r)
         if v is None:
             continue
+        if r.get("is_field") or r.get("result_kind") in ("field", "combined"):
+            place = r.get("place")
+            sv = ((v, 0, int(place)) if place
+                  else (v, 1, 0))
+        else:
+            sv = (v, 0, 0)
         if is_relay:
             key = ("school", (r.get("school") or "").strip().lower())
             if not key[1]:
@@ -302,8 +318,8 @@ def _entries(rows, is_relay):
             key = ("person", r.get("person_id") or
                    ((r.get("athlete_name") or "").strip().lower(),
                     (r.get("school") or "").strip().lower()))
-        if key not in best or v < best[key][0]:
-            best[key] = (v, r)
+        if key not in best or sv < best[key][0]:
+            best[key] = (sv, r)
     return sorted(((v, k, r) for k, (v, r) in best.items()),
                   key=lambda e: e[0])
 
@@ -573,13 +589,19 @@ def scoreMeet(rows):
         # ---- team sums ------------------------------------------------ #
         if gendered:
             teams = div["teams"].setdefault(grp["gender"], {})
+            # every school that showed up gets a standings row, scoring
+            # or not -- a zero is information too
+            for r in rows_g:
+                school = scorableSchool(r.get("school"))
+                if school:
+                    teams.setdefault(school.lower(),
+                                     {"school": school, "points": 0.0,
+                                      "wins": 0})
             for label, pts, win, row in awarded:
                 school = scorableSchool(row.get("school"))
                 if not school or pts <= 0:
                     continue
-                cell = teams.setdefault(school.lower(),
-                                        {"school": school, "points": 0.0,
-                                         "wins": 0})
+                cell = teams[school.lower()]
                 cell["points"] += pts
                 if win:
                     cell["wins"] += 1

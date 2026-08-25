@@ -1983,6 +1983,8 @@ def get_tf_race_results(cur, meet_id, div_id, event_id):
         SELECT r.result_id,
                r.person_id,
                r.place,
+               r.round,
+               r.heat,
                r.time_seconds,
                r.mark,
                r.is_field,
@@ -2010,6 +2012,57 @@ def _field_gender(results):
     if not genders:
         return None
     return max(set(genders), key=genders.count)
+
+
+def _tf_heat_sections(results, is_field):
+    """[{label, rows}] for a race page: rows grouped into the rounds and
+    heats the event was actually run in, finals first. One undivided
+    field renders as a single unlabeled section -- the page looks
+    exactly as before. Each row gets sec_place, its place within its
+    own heat, because a heat's finish order restarts at 1."""
+    from tf_points import rowRound, parseMark
+
+    def heat_no(r):
+        try:
+            return int(str(r.get("heat") or "").strip() or 0)
+        except ValueError:
+            return 0
+
+    rounds = {rowRound(r) for r in results}
+    heats = {heat_no(r) for r in results}
+    multi_round = len(rounds) > 1
+    multi_heat = len(heats) > 1
+
+    def group_key(r):
+        rd = rowRound(r)
+        return ({"final": 0, None: 1, "prelim": 2}.get(rd, 2),
+                heat_no(r) or 999)
+
+    def sort_in(r):
+        if is_field:
+            mk = parseMark(r.get("mark"))
+            return (r.get("place") is None, r.get("place") or 0,
+                    -(mk if mk is not None else -1e9))
+        t = r.get("time_seconds")
+        return (t is None, t or 0)
+
+    groups = {}
+    for r in results:
+        groups.setdefault(group_key(r), []).append(r)
+
+    sections = []
+    for gk in sorted(groups):
+        rows = sorted(groups[gk], key=sort_in)
+        for i, r in enumerate(rows):
+            r["sec_place"] = i + 1
+        label = ""
+        if multi_round:
+            label = {0: "Finals", 2: "Prelims"}.get(gk[0], "")
+        if multi_heat and gk[1] != 999:
+            word = "Flight" if is_field else "Heat"
+            label = f"{label} · {word} {gk[1]}" if label else f"{word} {gk[1]}"
+        sections.append({"label": label, "rows": rows})
+    return sections
 
 
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
@@ -2072,11 +2125,14 @@ def race_tf(meet_id, event_id, div_id):
         row["points"] = points_by_result.get(row["result_id"], "")
 
     race_date = results[0]["date"] if results else None
+    sections = _tf_heat_sections(results,
+                                 any(r.get("is_field") for r in results))
 
     return render_template("race_tf.html",
                            has_hs_view=has_hs_view,
                            header=header,
                            results=results,
+                           sections=sections,
                            race_date=race_date)
 
 
@@ -2155,6 +2211,7 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                COALESCE(r.is_relay, 0) AS is_relay,
                r.result_kind,
                r.round,
+               r.place,
                r.event_type_id,
                r.grade,
                r.school,
