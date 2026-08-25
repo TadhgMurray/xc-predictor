@@ -3398,3 +3398,6 @@ td.pts { font-weight: 700; }
 .prs-course th:nth-child(4) { width: 4.7rem; }
 .prs-course th:nth-child(5) { width: 4.4rem; }
 .prs-course th:nth-child(7) { width: 6.5rem; }
+/* folded course chips on the school PRs page */
+.chip-hidden { display: none; }
+button.yb-more { cursor: pointer; font: inherit; color: var(--accent, #14477d); }

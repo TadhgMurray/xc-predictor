@@ -109,13 +109,19 @@
     {% endif %}
 
     {% if sport == 'XC' and data.courses %}
-    <div class="yearbar">
+    {# The first few courses, the rest folded behind an expand -- a long
+       program has dozens, and eight most-raced ones answer most visits.
+       The picked course always shows, even from deep in the fold. #}
+    <div class="yearbar" id="course-chips">
         <a class="yb{{ ' is-on' if not data.course }}"
            href="/school/{{ school|urlencode }}/prs{{ qs(sport, data.year, None) }}">All courses</a>
         {% for c in data.courses %}
-          <a class="yb{{ ' is-on' if data.course == c }}"
+          <a class="yb{{ ' is-on' if data.course == c }}{{ ' chip-hidden' if loop.index0 >= 8 and data.course != c }}"
              href="/school/{{ school|urlencode }}/prs{{ qs(sport, data.year, c) }}">{{ c }}</a>
         {% endfor %}
+        {% if data.courses|length > 8 %}
+        <button type="button" class="yb yb-more" id="course-more">+{{ data.courses|length - 8 }} more</button>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -144,5 +150,17 @@
 </main>
 <script src="{{ url_for('static', filename='staged.js') }}"></script>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script>
+// Course-chip expand: one press shows every course, no round trip.
+(function () {
+  var btn = document.getElementById("course-more");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    document.querySelectorAll("#course-chips .chip-hidden")
+      .forEach(function (el) { el.classList.remove("chip-hidden"); });
+    btn.remove();
+  });
+})();
+</script>
 </body>
 </html>
