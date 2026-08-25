@@ -2109,7 +2109,12 @@ def get_tf_meet_events(cur, meet_id, source=None):
     cur.execute(f"""
         SELECT m.div_id,
                m.event_id,
-               m.event_short,
+               -- Nameless meets_tf rows borrow their results' own name
+               -- (the per-row copy is populated on plenty of them).
+               COALESCE(NULLIF(TRIM(m.event_short), ''),
+                        mode() WITHIN GROUP (
+                            ORDER BY NULLIF(TRIM(r.event_short), '')))
+                   AS event_short,
                m.division,
                m.distance_meters,
                count(r.result_id) AS n_results,
@@ -2155,7 +2160,11 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                r.school,
                r.speed_rating,
                r.date,
-               m.event_short,
+               -- The meets_tf name when it has one; else the RESULT's own
+               -- event_short -- the per-row copy is populated on plenty of
+               -- events whose meets_tf row is nameless.
+               COALESCE(NULLIF(TRIM(m.event_short), ''),
+                        NULLIF(TRIM(r.event_short), '')) AS event_short,
                m.division,
                m.distance_meters,
                m.div_id,
