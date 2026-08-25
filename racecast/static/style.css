@@ -2950,9 +2950,11 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     width: 1.05rem; height: 1.05rem; line-height: 0.95rem;
     text-align: center; padding: 0; margin-left: 0.5rem;
     font-size: 10px; display: inline-block;
-    /* an inline-block ring sits on the text baseline and reads as riding
-       high; nudge it down so the circle centres on the line's x-height. */
-    vertical-align: -0.22em; }
+    /* middle, not a baseline nudge: the ring's perceived height depends on
+       the viewer's font metrics (Segoe on Windows sat it LOW where the
+       build's fallback font sat it high), and middle is the one value that
+       centres the box against the text everywhere. */
+    vertical-align: middle; }
 
 /* ---- the 404 page ------------------------------------------------------ */
 .nf-page { max-width: 560px; margin: 4.5rem auto 0; text-align: center;
