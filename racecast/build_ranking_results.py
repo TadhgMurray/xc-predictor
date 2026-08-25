@@ -1100,6 +1100,11 @@ _CANONICAL_INDEXES = {
         # app.py _athletePaces, conversions.athlete_paces, rankings PR ranks:
         #   WHERE person_id = %s
         ("rr_person_idx", "(person_id)"),
+        # pool_view.stampRowsHs, on EVERY race/compiled/course/compare
+        #   page: WHERE sport = %s AND result_id = ANY(%s). Without it
+        #   each of those pages seq-scans 56M rows (measured 11.6s a hit,
+        #   56s across one page sweep).
+        ("rr_result_idx", "(result_id)"),
         # rankings performance boards: pool/sport/year equality, then
         #   ORDER BY speed_rating DESC LIMIT cand
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),

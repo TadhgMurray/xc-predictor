@@ -19,6 +19,9 @@ sys.path.insert(0, "scripts")
 from database import getConn   # noqa: E402
 
 WANTED = [
+    # stampRowsHs on every race/compiled/course/compare page -- without
+    # this each of those pages seq-scans ranking_results (56M rows).
+    ("ranking_results", "result_id", "idx_rr_result"),
     ("ranking_results", "school",  "idx_rr_school"),
     ("results_tf",      "school",  "idx_results_tf_school"),
     ("results_tf",      "meet_id", "idx_results_tf_meet"),
@@ -40,14 +43,20 @@ def main():
             #   CONCURRENTLY leaves an INVALID index behind: pg_indexes
             #   lists it, the planner ignores it, and "OK" would be a lie
             #   while the page stays a sequential scan.
-            cur.execute("""
+            # ⚠ AND THE LEADING COLUMN MUST MATCH EXACTLY. The first
+            #   version matched '%(school%', which "(school_source, ..."
+            #   also satisfies -- so results_tf reported OK on the wrong
+            #   index, the school index never built, and the PRs page
+            #   kept seq-scanning 37M rows at 55s a view.
+            cur.execute(r"""
                 SELECT i.relname, idx.indisvalid, pg_get_indexdef(idx.indexrelid)
                 FROM   pg_index idx
                 JOIN   pg_class i ON i.oid = idx.indexrelid
                 JOIN   pg_class t ON t.oid = idx.indrelid
                 WHERE  t.relname = %s
-                  AND  pg_get_indexdef(idx.indexrelid) ILIKE %s
-            """, (table, f"%({col}%"))
+                  AND  pg_get_indexdef(idx.indexrelid)
+                       ~* ('\(\s*' || %s || '\s*[,)]')
+            """, (table, col))
             rows = cur.fetchall()
             valid = [r for r in rows if r[1]]
             invalid = [r for r in rows if not r[1]]
