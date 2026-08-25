@@ -91,8 +91,12 @@ _CODE_NAMES = {
     "wt": "Weight Throw", "weight": "Weight Throw",
     "ham": "Hammer", "hammer": "Hammer",
     "pent": "Pentathlon", "hept": "Heptathlon", "dec": "Decathlon",
+    "1mile": "1 Mile", "2mile": "2 Mile", "3mile": "3 Mile",
 }
-_MEDLEY = re.compile(r"^(sprint|dist(?:ance)?)\s*med(?:ley)?\s*(\d+)?$",
+# Medley codes carry a leg suffix: a plain number reads as a distance
+# ("sprintmed2248" -> "Sprint Medley 2248"), a leg list does not
+# ("distmed12,4,8,16" is a DMR, and nobody calls it that).
+_MEDLEY = re.compile(r"^(sprint|dist(?:ance)?)\s*med(?:ley)?\s*([\d,.x]+)?$",
                      re.IGNORECASE)
 
 # Leading distance in an event name ("200m", "1600 Meters", "110h").
@@ -121,7 +125,8 @@ def prettyEventName(event_short):
     if m:
         kind = "Sprint Medley" if m.group(1).lower() == "sprint" \
             else "Distance Medley"
-        return f"{kind} {m.group(2)}" if m.group(2) else kind
+        suffix = m.group(2)
+        return f"{kind} {suffix}" if suffix and suffix.isdigit() else kind
     return s or event_short
 
 
@@ -274,6 +279,45 @@ def scoreMeet(rows):
         if t["M"] != t["F"]:
             majority[k] = "M" if t["M"] > t["F"] else "F"
 
+    # ---- relay genders by pairing -------------------------------------- #
+    # Relays have no athletes to take a majority from, so at prefix-less
+    # meets they arrive genderless in PAIRS: the same canonical event
+    # twice, one per gender. When one canonical relay has exactly two
+    # genderless raw events, the faster-by-median one is the men's -- the
+    # M/F relay gap runs ~15%+, while two heats of ONE gender sit within
+    # a few percent, so the 10% gate leaves genuine sections merged and
+    # unscored rather than guessing. A singleton genderless relay stays
+    # unscored: there is nothing to compare it against.
+    relay_pairs = {}
+    for r in rows:
+        canon = canonicalEvent(r.get("event_short"))
+        if not canon or not r.get("is_relay"):
+            continue
+        ekey = (r.get("div_id"), r.get("event_id"))
+        g = (genderOf(r.get("event_short")) or r.get("gender") or
+             majority.get(ekey))
+        d = relay_pairs.setdefault(
+            ((r.get("division") or "").strip().lower(), canon), {})
+        e = d.setdefault(ekey, {"g": None, "times": []})
+        e["g"] = e["g"] or g
+        t = r.get("time_seconds")
+        if t and float(t) > 0:
+            e["times"].append(float(t))
+    relay_gender = {}
+    for evs in relay_pairs.values():
+        if len(evs) != 2:
+            continue
+        unknown = [k for k, v in evs.items() if v["g"] is None and v["times"]]
+        known = sorted({v["g"] for v in evs.values() if v["g"]})
+        if len(unknown) == 1 and len(known) == 1 and known[0] in ("M", "F"):
+            relay_gender[unknown[0]] = "F" if known[0] == "M" else "M"
+        elif len(unknown) == 2:
+            med = {k: sorted(evs[k]["times"])[len(evs[k]["times"]) // 2]
+                   for k in unknown}
+            fast, slow = sorted(unknown, key=lambda k: med[k])
+            if med[fast] / med[slow] < 0.90:
+                relay_gender[fast], relay_gender[slow] = "M", "F"
+
     # ---- group into canonical events ---------------------------------- #
     groups = {}
     for r in rows:
@@ -282,8 +326,9 @@ def scoreMeet(rows):
         # each keeps its own identity by id.
         canon = (canonicalEvent(r.get("event_short")) or
                  f"#{r.get('div_id')}:{r.get('event_id')}")
+        ekey = (r.get("div_id"), r.get("event_id"))
         g = (genderOf(r.get("event_short")) or r.get("gender") or
-             majority.get((r.get("div_id"), r.get("event_id"))) or "?")
+             majority.get(ekey) or relay_gender.get(ekey) or "?")
         key = (div.lower(), canon, g)
         grp = groups.setdefault(key, {"division": div, "gender": g,
                                       "canon": canon, "rows": []})
@@ -341,10 +386,16 @@ def scoreMeet(rows):
         div = divisions.setdefault(grp["division"].lower(), {
             "name": grp["division"] or "All divisions",
             "teams": {}, "events": []})
+        # A nameless running event with a stored distance can at least be
+        # called "60m"; only truly unknowable ones stay "Event N".
+        if name_src.get("event_short"):
+            ev_name = displayEvent(name_src.get("event_short"))
+        elif dist and not is_field and not is_relay:
+            ev_name = f"{int(dist)}m"
+        else:
+            ev_name = f"Event {name_src.get('event_id')}"
         div["events"].append({
-            "name": (displayEvent(name_src.get("event_short"))
-                     if name_src.get("event_short")
-                     else f"Event {name_src.get('event_id')}"),
+            "name": ev_name,
             "gender": grp["gender"], "is_relay": is_relay,
             "is_field": is_field, "distance": dist, "rows": ev_rows,
             "scored": gendered,

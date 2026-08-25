@@ -2198,15 +2198,31 @@ def meet_tf(meet_id):
 
     scored = scoreMeet(scoring_rows)
 
-    # The name's own gender prefix outranks the field's majority; bare
-    # feed codes get their reader names; and events sort by distance
+    # The scorer already resolved each raw event's gender as deeply as it
+    # can (name word, athlete majority, relay pairing) -- reuse that here
+    # rather than re-deriving a shallower answer.
+    scored_gender = {}
+    for d in scored["divisions"]:
+        for ev in d["events"]:
+            if ev["gender"] in ("M", "F"):
+                for rw in ev["rows"]:
+                    scored_gender[(rw.get("div_id"),
+                                   rw.get("event_id"))] = ev["gender"]
+
+    # Bare feed codes get their reader names, a nameless event with a
+    # stored distance gets called by it, and events sort by distance
     # parsed from the name when the column is empty, so the 200 stops
     # listing after the 3200 and nameless events sink to the end.
     for e in events:
-        e["gender"] = genderOf(e.get("event_short")) or e.get("gender")
-        e["display_name"] = (prettyEventName(e["event_short"])
-                             if e.get("event_short")
-                             else f"Event {e['event_id']}")
+        e["gender"] = (genderOf(e.get("event_short")) or
+                       scored_gender.get((e["div_id"], e["event_id"])) or
+                       e.get("gender"))
+        if e.get("event_short"):
+            e["display_name"] = prettyEventName(e["event_short"])
+        elif e.get("distance_meters"):
+            e["display_name"] = f"{int(e['distance_meters'])}m"
+        else:
+            e["display_name"] = f"Event {e['event_id']}"
     events.sort(key=lambda e: (
         (e.get("division") or "").lower(),
         d if (d := eventDistance(e.get("event_short"),
