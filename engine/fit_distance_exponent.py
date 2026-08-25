@@ -1523,10 +1523,22 @@ def _polyDeriv(coeffs, x):
 #            over its data, and is its boundary slope physical".
 # Arguments: coeffs, knots — as fitted; lo, hi — the data span in log-d.
 # Output:    list of sampled g values, one per knot.
-def _sampleClamped(coeffs, knots, lo, hi):
+def _sampleClamped(coeffs, knots, lo, hi, s_hi_override=None):
     L0 = math.log(TARGET_DISTANCE_METERS)
     g_lo, s_lo = _polyEval(coeffs, lo - L0), _polyDeriv(coeffs, lo - L0)
     g_hi, s_hi = _polyEval(coeffs, hi - L0), _polyDeriv(coeffs, hi - L0)
+    # ★ THE MEASURED EXTENSION, when the trimmed tail could testify. The
+    #   high-side line used to ride the cubic's boundary TANGENT -- and for
+    #   every TF pool the anchor (5000) sits beyond a span that ends at
+    #   3200, so the 3200->5000 chunk of every TF normalization was pure
+    #   tangent extrapolation. A cubic's tangent steepens exactly where the
+    #   fade curve curls, and the season-best diagnostic measured the real
+    #   hs_m 3200->5000 fade at k~1.157 while the applied chunk ran
+    #   ~1.17-1.22: about 25 seconds on one 3200->5K conversion, and a
+    #   constant deflation of every TF rating against XC. See
+    #   _extensionSlopeHigh for where the override comes from.
+    if s_hi_override is not None:
+        s_hi = s_hi_override
     values = []
     for k in knots:
         if k < lo:
@@ -1536,6 +1548,59 @@ def _sampleClamped(coeffs, knots, lo, hi):
         else:
             values.append(_polyEval(coeffs, k - L0)) # the cubic, in-data
     return [float(v) for v in values]
+
+
+# The beyond-span testimony has to be a population, not an anecdote, and
+# its verdict has to be a physical exponent. Outside the band, the tangent
+# (which the health gates already police) is the safer liar.
+MIN_EXT_PAIRS = 300
+EXT_SLOPE_BAND = (0.85, 1.30)
+# A long leg barely past the span makes the slope's denominator ~0; demand
+# a real gap (about 5% in log-distance) before a pair may testify.
+MIN_EXT_GAP_LOG = 0.05
+
+
+def _extensionSlopeHigh(pairs, coeffs, lo, hi):
+    """The measured slope for the high-side extension, or None.
+
+    Uses exactly the pairs _distanceSupport trims away: short leg inside
+    the fitted span, long leg beyond it. Too sparse to condition a cubic's
+    SHAPE, but a single median slope over one leg needs far less. Per
+    pair, the fitted curve supplies g at the in-span leg and the pair's
+    own ratio supplies the climb to the out-of-span leg, so the implied
+    beyond-span slope is
+
+        s = (g_fit(x1) + k_pair*(x2 - x1) - g_fit(hi)) / (x2 - hi)
+
+    with k_pair = log(t2/t1)/log(d2/d1). Median over the population; the
+    tangent stays when the count or the physics band refuses it.
+    """
+    L0 = math.log(TARGET_DISTANCE_METERS)
+    g_hi = _polyEval(coeffs, hi - L0)
+    slopes = []
+    for p in pairs:
+        d1, d2, t1, t2 = (p["distance1"], p["distance2"],
+                          p["time1"], p["time2"])
+        if min(d1, d2, t1, t2) <= 0:
+            continue
+        if d1 > d2:
+            d1, d2, t1, t2 = d2, d1, t2, t1
+        x1, x2 = math.log(d1), math.log(d2)
+        if not (lo <= x1 <= hi):            # anchor leg must be in-span
+            continue
+        if x2 - hi < MIN_EXT_GAP_LOG:       # long leg must be truly beyond
+            continue
+        if x2 - x1 < MIN_EDGE_SPAN_LOG:     # same no-signal floor as edges
+            continue
+        k_pair = math.log(t2 / t1) / (x2 - x1)
+        g1 = _polyEval(coeffs, x1 - L0)
+        slopes.append((g1 + k_pair * (x2 - x1) - g_hi) / (x2 - hi))
+    if len(slopes) < MIN_EXT_PAIRS:
+        return None, len(slopes)
+    med = float(np.median(slopes))
+    if not EXT_SLOPE_BAND[0] <= med <= EXT_SLOPE_BAND[1]:
+        return None, len(slopes)
+    return med, len(slopes)
 
 
 # _fitOnePotential
@@ -1582,9 +1647,13 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
     wts = [e[4] for e in edges] + [e[4] for e in edges]
     lo, hi = (_weightedPercentile(pts, wts, 5),
               _weightedPercentile(pts, wts, 95))
+    # The measured high-side extension, from the trimmed tail -- see
+    # _extensionSlopeHigh. None -> the boundary tangent, as before.
+    ext_slope, n_ext = _extensionSlopeHigh(pairs, coeffs, lo, hi)
     knots = _knotGrid(edges)
     return {"knots": [float(k) for k in knots],
-            "values": _sampleClamped(coeffs, knots, lo, hi),
+            "values": _sampleClamped(coeffs, knots, lo, hi,
+                                     s_hi_override=ext_slope),
             "n_edges": n_trans, "degree": degree,
             "coeffs": [float(c) for c in coeffs],
             "span": (float(math.exp(lo)), float(math.exp(hi))),
@@ -1592,7 +1661,8 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
             "n_matched": len(contrasts),
             "n_edges_sf": n_sf, "n_edges_lf": n_lf,
             "robust_down": downweighted,
-            "n_robust_down": len(downweighted)}
+            "n_robust_down": len(downweighted),
+            "ext_slope_hi": ext_slope, "n_ext_pairs": n_ext}
 
 
 # _curveHealth
@@ -1798,6 +1868,17 @@ def _gatePrint(label, fitted):
     if fitted.get("n_robust_down"):       # the reweight fired: count it
         print(f"    robust solve silenced {fitted['n_robust_down']} "
               f"cells (weight < {ROBUST_AUDIT_W})")
+    # The beyond-span verdict, said out loud either way: for TF pools the
+    # anchor sits past the span, so which line carries the 3200->5000 leg
+    # is the difference between a measured chunk and a tangent guess.
+    if fitted.get("ext_slope_hi") is not None:
+        print(f"    high-side extension: MEASURED k={fitted['ext_slope_hi']:.3f} "
+              f"over {fitted['n_ext_pairs']:,} beyond-span pairs "
+              f"(tangent replaced)")
+    elif fitted.get("n_ext_pairs") is not None:
+        print(f"    high-side extension: tangent "
+              f"({fitted['n_ext_pairs']:,} beyond-span pairs -- under "
+              f"{MIN_EXT_PAIRS} or outside {EXT_SLOPE_BAND})")
     if not _isHealthy(fitted):
         print(f"    GATED: {label} not saved.")
         return None
