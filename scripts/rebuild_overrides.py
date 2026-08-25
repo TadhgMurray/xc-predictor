@@ -2853,16 +2853,33 @@ def pass4(cur, sigma, t1, min_field, min_sub):
         alt_dists = set(at_meet.get(c["meet_id"], []))
         for d, _n in _COURSE_DIST.get(c.get("course_name") or "", []):
             alt_dists.add(float(d))
-        rhos = []
+        # ★ DOWNWARD ONLY, PER RESULT TOO (the policy at the top of
+        #   corrections._DISTANCE_OVERRIDES_XC). With pass 1's slow
+        #   direction closed, every division it used to relabel longer
+        #   arrives here "unfixed" -- and pinning its slow rows to a longer
+        #   at-meet race is the same inference in per-result clothing:
+        #   "they were slow, so they must have run the long one". Measured
+        #   on the 2026-08-24 reset run: 92,184 pins, triple the apply cap,
+        #   almost all upward. A mixed division takes the LOWEST distance
+        #   anyone ran there: the fast subgroup gets its true shorter race
+        #   pinned; a genuinely longer subgroup keeps the short label and
+        #   reads slow, which is the safe direction.
+        rhos, longer_alts = [], 0
         for d in sorted(alt_dists):
             if abs(d - label) / label <= 0.02:
+                continue
+            if d > label:
+                longer_alts += 1
                 continue
             rho = (label / d) ** K
             if abs(rho - 1.0) >= P4_RHO_MIN:
                 rhos.append((d, rho))
         if not rhos:
-            skipped.append((c, "no distinguishable alternative at the meet "
-                               "or in the venue's history"))
+            skipped.append((c, "only longer races at the meet or venue -- "
+                               "downward-only policy leaves the label"
+                            if longer_alts else
+                            "no distinguishable alternative at the meet "
+                            "or in the venue's history"))
             continue
         z_of = {r["result_id"]: (float(r["med"]) + float(r["gap"]))
                                 / float(r["med"])
