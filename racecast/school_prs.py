@@ -54,22 +54,16 @@ def _genderOfPool(pool):
     return None
 
 
-def _runningRows(cur, school, sport):
-    """Every rated-or-timed race for this school in one sport, with the
-    course name for XC. The meets join stays XC-only: `meets` is keyed
-    in the XC div-id space and a TF div id colliding with it would hand
-    a track race a cross country course.
-
-    ⚠ NO NAME LATERAL. A big track program is tens of thousands of rows,
-      and probing the 16M-row athletes table once per row was the page's
-      whole cost -- track worst, since it makes several results per
-      athlete per meet. Gender comes from the pool; names are looked up
-      in ONE bulk query afterwards, for only the rows that display."""
+def runningSql(sport):
+    """The running-rows SQL, exposed so scripts/explain_pages.py can
+    EXPLAIN the exact text the page runs. The meets join stays XC-only:
+    `meets` is keyed in the XC div-id space and a TF div id colliding
+    with it would hand a track race a cross country course."""
     course_sql = (
         "LEFT JOIN meets m ON m.div_id = rr.div_id "
         "AND m.meet_id = rr.meet_id" if sport == "XC" else "")
     course_col = "m.course_name" if sport == "XC" else "NULL"
-    cur.execute(f"""
+    return f"""
         SELECT rr.result_id, rr.person_id, rr.pool, rr.speed_rating,
                rr.time_seconds, rr.distance, rr.race_date, rr.year,
                rr.grade, rr.meet_id, rr.div_id, rr.event_id,
@@ -81,17 +75,13 @@ def _runningRows(cur, school, sport):
           AND  rr.time_seconds > 0
           AND  rr.time_seconds < 86400
           AND  rr.distance IS NOT NULL
-    """, {"school": school, "sport": sport})
-    return cur.fetchall()
+    """
 
 
-def _fieldRows(cur, school):
-    """Every individual field/multi mark for this school. The event name
-    coalesces the meets_tf copy with the result's own, the scoring
-    query's rule. Names AND genders resolve in one bulk lookup after --
-    same reasoning as _runningRows."""
+def fieldSql():
+    """The field-rows SQL, exposed for the same EXPLAIN tooling."""
     from season_year import seasonYearSqlInt
-    cur.execute(f"""
+    return f"""
         SELECT r.result_id, r.person_id, r.athlete_id, r.mark, r.grade,
                r.date, r.meet_id, r.div_id, r.event_id,
                {seasonYearSqlInt('TF', 'r.date')} AS year,
@@ -106,7 +96,28 @@ def _fieldRows(cur, school):
           AND  (r.is_field = 1 OR r.result_kind IN ('field', 'combined'))
           AND  r.mark IS NOT NULL
           AND  r.date IS NOT NULL
-    """, {"school": school})
+    """
+
+
+def _runningRows(cur, school, sport):
+    """Every rated-or-timed race for this school in one sport, with the
+    course name for XC.
+
+    ⚠ NO NAME LATERAL. A big track program is tens of thousands of rows,
+      and probing the 16M-row athletes table once per row was the page's
+      whole cost -- track worst, since it makes several results per
+      athlete per meet. Gender comes from the pool; names are looked up
+      in ONE bulk query afterwards, for only the rows that display."""
+    cur.execute(runningSql(sport), {"school": school, "sport": sport})
+    return cur.fetchall()
+
+
+def _fieldRows(cur, school):
+    """Every individual field/multi mark for this school. The event name
+    coalesces the meets_tf copy with the result's own, the scoring
+    query's rule. Names AND genders resolve in one bulk lookup after --
+    same reasoning as _runningRows."""
+    cur.execute(fieldSql(), {"school": school})
     return cur.fetchall()
 
 

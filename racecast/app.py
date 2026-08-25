@@ -3,6 +3,10 @@ import re
 import time          # _reportThrottled
 
 sys.path.insert(0, "scripts")
+# ★ db_timing BEFORE every other racecast import: it patches
+#   database.getConn so every module's queries are timed. /debug/queries
+#   reads the buffer; slow_queries.log keeps the >250ms offenders.
+import db_timing
 from database import getConn
 # ! THE ONE CLOCK. The athlete page groups its season tables on the academic
 #   year (August-July, named for the year it opens in) like everything else --
@@ -2862,6 +2866,26 @@ def school_prs_page(school_name):
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data,
                            has_hs_view=has_hs_view)
+
+
+@app.route("/debug/queries")
+def debug_queries():
+    """The site's own query log: slowest recent statements and the
+    aggregate per statement, plain text. Local tooling, not a feature
+    page -- the timing layer is db_timing.py."""
+    from flask import Response
+    rows, by_total = db_timing.summary()
+    out = ["SLOWEST RECENT QUERIES (this process)", "=" * 76]
+    for r in rows:
+        out.append(f"{r['ms']:9.1f}ms  {r['path']}")
+        out.append(f"           {r['sql']}")
+    out += ["", "BY STATEMENT (count, total ms, max ms)", "=" * 76]
+    for sql, a in by_total:
+        out.append(f"n={a['n']:<5} total={a['total']:9.1f} "
+                   f"max={a['max']:8.1f}  {sql}")
+    out.append("")
+    out.append(f"slow log (>= {db_timing.SLOW_MS}ms): racecast/slow_queries.log")
+    return Response("\n".join(out), mimetype="text/plain")
 
 
 # ⚠ RECORD LISTS ARE WHERE ONE TYPO TOPS A PAGE FOREVER, so both record
