@@ -364,6 +364,12 @@ td.no-break { white-space: nowrap; }
 .rankings[data-sport="TF"][data-scope="alltime"] .board-pair[data-sport="TF"][data-scope="alltime"] {
     display: block;
 }
+
+/* Latest results follows the sport toggle only -- a list of recent meets
+   has no season/all-time split. */
+.recent-block { display: none; margin-top: 2.2rem; }
+.rankings[data-sport="XC"] .recent-block[data-sport="XC"],
+.rankings[data-sport="TF"] .recent-block[data-sport="TF"] { display: block; }
  
 /* pool chips hide a pool everywhere at once */
 body.hide-hs_m      .pool-block[data-pool="hs_m"],

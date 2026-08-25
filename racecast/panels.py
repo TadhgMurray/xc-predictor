@@ -1153,7 +1153,120 @@ CREATE TABLE IF NOT EXISTS homepage_meta (
     key   text PRIMARY KEY,
     value text
 );
+
+CREATE TABLE IF NOT EXISTS homepage_recent (
+    sport       text    NOT NULL,     -- 'XC' | 'TF'
+    rank        integer NOT NULL,     -- 1..RECENT_N, newest first
+    meet_id     bigint  NOT NULL,
+    meet_name   text,
+    course_name text,                 -- XC: the course; TF: Indoor/Outdoor
+    state       text,
+    date        text,                 -- the meet's newest result date
+    n_results   integer,
+    PRIMARY KEY (sport, rank)
+);
 """
+
+
+# ===================================================================== #
+#  9c. RECENT MEETS -- the landing page's "Latest results" module
+# ===================================================================== #
+#
+# ★ PRECOMPUTED HERE, NOT ON THE ROUTE. "Newest meets" needs a max(date)
+#   GROUP BY over the results tables, and there is no index on date -- a
+#   seq scan that is fine in this nightly build and unacceptable per page
+#   view. The route reads ~30 small rows.
+#
+# ⚠ date IS TEXT AND THE CORPUS HOLDS JUNK YEARS (0023, 2223), so the
+#   window is bounded on BOTH sides: the lower bound is the lookback, the
+#   upper bound (today + 2 days) is what keeps a 2223 row from sitting on
+#   top of the list forever.
+
+RECENT_N = 15                # rows per sport on the module
+RECENT_MIN_RESULTS = 25      # below this a "meet" is a dual-meet sliver
+RECENT_WINDOW_DAYS = 120     # long enough to bridge an off-season gap
+
+_RECENT_SQL = {
+    "XC": """
+        WITH recent AS (
+            SELECT meet_id, max(date) AS date, count(*) AS n_results
+            FROM   results
+            WHERE  date >= %(lo)s AND date <= %(hi)s
+              AND  date ~ '^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$'
+              AND  time_seconds IS NOT NULL
+            GROUP  BY meet_id
+            HAVING count(*) >= %(min_n)s
+            ORDER  BY max(date) DESC
+            LIMIT  %(n)s
+        )
+        SELECT r.meet_id, r.date, r.n_results,
+               COALESCE(m.meet_name, mt.venue_name) AS meet_name,
+               m.course_name, m.state
+        FROM   recent r
+        -- One named division stands in for the meet, same pick the meet
+        -- page's own header makes; the tfrrs lateral is the fallback for
+        -- meets `meets` has never heard of.
+        LEFT JOIN LATERAL (
+            SELECT meet_name, course_name, state
+            FROM   meets m
+            WHERE  m.meet_id = r.meet_id AND m.meet_name IS NOT NULL
+            LIMIT  1
+        ) m ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT venue_name
+            FROM   meets_tfrrs t
+            WHERE  t.meet_id = r.meet_id AND t.sport = 'XC'
+            LIMIT  1
+        ) mt ON TRUE
+        ORDER  BY r.date DESC
+    """,
+    "TF": """
+        WITH recent AS (
+            SELECT meet_id, max(date) AS date, count(*) AS n_results
+            FROM   results_tf
+            WHERE  date >= %(lo)s AND date <= %(hi)s
+              AND  date ~ '^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$'
+              AND  (time_seconds IS NOT NULL OR mark IS NOT NULL)
+            GROUP  BY meet_id
+            HAVING count(*) >= %(min_n)s
+            ORDER  BY max(date) DESC
+            LIMIT  %(n)s
+        )
+        SELECT r.meet_id, r.date, r.n_results,
+               m.meet_name,
+               CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                    THEN 'Indoor' ELSE 'Outdoor' END AS course_name,
+               m.state
+        FROM   recent r
+        LEFT JOIN LATERAL (
+            SELECT meet_name, state, is_indoor
+            FROM   meets_tf m
+            WHERE  m.meet_id = r.meet_id AND m.meet_name IS NOT NULL
+            LIMIT  1
+        ) m ON TRUE
+        ORDER  BY r.date DESC
+    """,
+}
+
+
+def _recentMeets(conn, sport):
+    """The newest RECENT_N meets with real fields, as homepage_recent rows."""
+    today = datetime.date.today()
+    params = {
+        "lo": (today - datetime.timedelta(days=RECENT_WINDOW_DAYS)).isoformat(),
+        "hi": (today + datetime.timedelta(days=2)).isoformat(),
+        "min_n": RECENT_MIN_RESULTS,
+        "n": RECENT_N,
+    }
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(_RECENT_SQL[sport], params)
+        rows = cur.fetchall()
+    # A nameless meet renders as a dead-looking row; filter first, THEN
+    # number, so the ranks stay dense.
+    named = [r for r in rows if r["meet_name"]]
+    return [(sport, i, r["meet_id"], r["meet_name"], r["course_name"],
+             r["state"], r["date"], r["n_results"])
+            for i, r in enumerate(named, start=1)]
 
 
 # ===================================================================== #
@@ -1263,7 +1376,7 @@ def _siteFacts(conn, sports):
     return facts
 
 
-def _writePanels(conn, buckets, meta):
+def _writePanels(conn, buckets, meta, recent=()):
     """Swap in the new panels atomically.
 
     DELETE + INSERT inside ONE transaction: the site either sees the whole old
@@ -1294,6 +1407,18 @@ def _writePanels(conn, buckets, meta):
         psycopg2.extras.execute_values(cur,
             "INSERT INTO homepage_meta (key, value) VALUES %s",
             list(meta.items()))
+
+        # Same transaction, same all-or-nothing swap (and the same caveat a
+        # --sport run already has for the panels: the other sport's rows go
+        # too, so partial runs are partial pages).
+        cur.execute("DELETE FROM homepage_recent")
+        if recent:
+            psycopg2.extras.execute_values(cur, """
+                INSERT INTO homepage_recent
+                    (sport, rank, meet_id, meet_name, course_name,
+                     state, date, n_results)
+                VALUES %s
+            """, list(recent))
     conn.commit()          # one commit: DELETE + INSERT land together or not at all
     return len(rows)
 
@@ -1312,6 +1437,7 @@ def main():
     buckets = defaultdict(list)      # (board, scope, sport, pool) -> heap
     stats = defaultdict(int)
     meta = {}
+    recent = []                      # homepage_recent rows, both sports
 
     with getConn() as conn:                      # app.py's helper, app.py's style
         # Room to work: the aggregates and the temp-table build below are
@@ -1355,6 +1481,10 @@ def main():
             print(f"[{sport}] athlete-seasons scanned: {stats['ath_seen']:,} "
                   f"(no pool: {stats['ath_nopool']:,})")
 
+            recent += _recentMeets(conn, sport)
+            print(f"[{sport}] recent meets: "
+                  f"{sum(1 for r in recent if r[0] == sport)}")
+
         meta["built_at"] = datetime.datetime.now().isoformat(timespec="seconds")
         meta["default_sport"] = _defaultSport(datetime.date.today().month)
 
@@ -1366,8 +1496,9 @@ def main():
                           for k, v in sorted(meta.items())
                           if k.startswith("fact_")) or "[panels] hero facts: none")
 
-        written = _writePanels(conn, buckets, meta)
-        print(f"wrote {written:,} panel rows across {len(buckets)} buckets")
+        written = _writePanels(conn, buckets, meta, recent)
+        print(f"wrote {written:,} panel rows across {len(buckets)} buckets "
+              f"+ {len(recent)} recent-meet rows")
 
 
 if __name__ == "__main__":

@@ -232,12 +232,36 @@ def get_homepage_meta(cur):
     return {r["key"]: r["value"] for r in cur.fetchall()}
 
 
+def get_homepage_recent(cur):
+    """The "Latest results" rows panels.py precomputed, grouped by sport.
+
+    Empty dict on a database whose panels build predates homepage_recent --
+    the module simply doesn't render, same posture as every other
+    missing-table fallback in this file."""
+    try:
+        cur.execute("""
+            SELECT sport, meet_id, meet_name, course_name, state,
+                   date, n_results
+            FROM   homepage_recent
+            ORDER  BY sport, rank
+        """)
+        rows = cur.fetchall()
+    except psycopg2.errors.UndefinedTable:
+        cur.connection.rollback()
+        return {}
+    out = {}
+    for r in rows:
+        out.setdefault(r["sport"], []).append(r)
+    return out
+
+
 @app.route("/")
 def home():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             rows = get_homepage_panels(cur)
             meta = get_homepage_meta(cur)
+            recent = get_homepage_recent(cur)
 
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
@@ -254,6 +278,7 @@ def home():
                            has_hs_view=has_hs_view,
                            panels=panels,
                            meta=meta,
+                           recent=recent,
                            default_sport=default_sport)
 
 
