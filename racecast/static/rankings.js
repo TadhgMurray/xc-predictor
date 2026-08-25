@@ -164,6 +164,25 @@ function rval(r, key) {
 
 
 /*
+ * The Teams tab's course mode: a course in the combo turns the board into
+ * single races at that venue. The page class drives which filter fields
+ * show (see the .teams-course rules in style.css), and the sport pin keeps
+ * a TF selection from 400ing -- course racing is cross country.
+ *
+ * Re-synced from buildQuery, which runs on every load -- and every combo
+ * close with changes triggers a load, so the fields react as soon as the
+ * course panel is dismissed.
+ */
+function syncTeamsCourseMode() {
+  const on = state.board === "teams"
+          && Boolean(combos.course && combos.course.values().length);
+  $("rankings").classList.toggle("teams-course", on);
+  if (on && $("sport").value !== "XC") $("sport").value = "XC";
+  return on;
+}
+
+
+/*
  * Build the query string from the current controls.
  *
  * ONLY SENDS FILTERS THE USER SET. An empty text input would otherwise become
@@ -171,6 +190,7 @@ function rval(r, key) {
  * results" rather than "you sent a bad filter".
  */
 function buildQuery() {
+  syncTeamsCourseMode();
   const q = new URLSearchParams({
     board:  state.board,
     pool:   $("pool").value,
@@ -227,6 +247,21 @@ function buildQuery() {
   }
 
   if (state.board === "teams") {
+    /* ★ A COURSE SWITCHES WHAT THE BOARD IS -- single races at one venue --
+       and the season machinery's filters would 400 by design, so they are
+       not sent: no year, no state, no min_athletes, no sort (the server
+       serves the one honest order). Distance rides along like on
+       Performances: empty means every distance there. */
+    const cv = combos.course ? combos.course.values() : [];
+    if (cv.length) {
+      q.set("course", cv.join(","));
+      q.delete("year");
+      q.delete("state");
+      q.delete("sort");
+      q.delete("dir");
+      if ($("distance").value) q.set("distance", $("distance").value);
+      return q;
+    }
     /* ★ THE SORT IS THE SERVER'S CHOICE UNTIL SOMEBODY CLICKS A HEADER, and
        until then this sends none. The right default depends on whether the
        filtered field is small enough to be raced as one meet -- which takes
@@ -717,6 +752,18 @@ const COLUMNS = {
     { key: "fifth",    label: "5th runner" },
     { key: "athletes", label: "Runners" }
   ],
+  /* The Teams tab with a course picked: single races at one venue, served
+     pre-sorted by top-5 average. No sortable keys -- there is one honest
+     order and the server applies it. NOT a board of its own in state.board;
+     renderBoard picks this head off data.course_mode. */
+  teamscourse: [
+    { key: null, label: "#" },
+    { key: null, label: "Team" },
+    { key: null, label: "Top 5 avg" },
+    { key: null, label: "Distance" },
+    { key: null, label: "Meet" },
+    { key: null, label: "Date" }
+  ],
   /* Time first, because it is what this board ranks. Rating is still shown --
      the gap between a fast time and a modest rating IS the course, and seeing
      both is how somebody learns that. Pool is shown because "all pools" is an
@@ -938,6 +985,19 @@ function ordinal(n) {
 function teamsNote(data) {
   const note = $("teams-note");
   if (!note) return;
+
+  /* ★ COURSE MODE FIRST: none of the season sentences below is true of it.
+     The board is single races at one venue, already in its one honest
+     order. */
+  if (data.course_mode) {
+    const c = (data.filters && data.filters.course || []).join(", ");
+    note.innerHTML =
+      `<strong>Single races at ${esc(c)}:</strong> every race there where `
+      + "a school put five rated finishers across the line, ranked by "
+      + "top-5 average rating. The same squad appears once per race.";
+    return;
+  }
+
   const n = (data.field_size || 0).toLocaleString();
   const subset = Number.isInteger(data.shown_of_field)
               && data.shown_of_field !== data.field_size;
@@ -1063,6 +1123,28 @@ function renderTeams(rows, span) {
 }
 
 
+/*
+ * The teams board in course mode: single races, served best-first, so the
+ * # is the row's place in this list -- the server ranked it and OFFSET
+ * paging keeps the numbering continuous across pages.
+ */
+function renderTeamsCourse(rows) {
+  const body = rows.map((r, i) => `
+    <tr>
+      <td class="rank">${state.offset + i + 1}</td>
+      <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
+      <td>${r.distance}m</td>
+      <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>
+      <td>${r.date}</td>
+    </tr>`).join("");
+
+  return `<table class="rk">${renderHead("teamscourse")}
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+
 /* ------------------------------------------------------------------ *
  *  LOADING
  * ------------------------------------------------------------------ */
@@ -1114,7 +1196,9 @@ function renderBoard(rows, data) {
   return state.board === "ability"    ? renderAbility(rows)
        : state.board === "pr"         ? renderPr(rows)
        : state.board === "courses"    ? renderCourses(rows)
-       : state.board === "teams"      ? renderTeams(rows, data.span)
+       : state.board === "teams"      ? (data.course_mode
+                                          ? renderTeamsCourse(rows)
+                                          : renderTeams(rows, data.span))
        :                                renderPerformance(rows);
 }
 
@@ -1184,9 +1268,20 @@ async function load() {
        the arrow from `state` -- so without this the arrow marks whatever was
        last on screen while the rows are ordered by something else. */
     if (state.board === "teams" && data.filters) {
-      state.sort = data.filters.sort;
-      state.dir = data.filters.sort_explicit
-        ? (data.filters.dir || "").toLowerCase() : "";
+      if (!data.course_mode) {
+        state.sort = data.filters.sort;
+        state.dir = data.filters.sort_explicit
+          ? (data.filters.dir || "").toLowerCase() : "";
+      }
+      /* Course mode retitles the board: the subtitle is the one place that
+         says what changed, and syncBoard's static teams line would be a
+         wrong sentence over these rows. Restored the same way when the
+         course is cleared. */
+      $("subtitle").textContent = data.course_mode
+        ? "Team performances at " + (data.filters.course || []).join(", ")
+          + " · top-5 average rating, one race."
+        : "Teams \u2014 every squad's top seven raced against each other, "
+          + "scored the ordinary way.";
       teamsNote(data);
     }
 
@@ -1475,7 +1570,22 @@ function applyUrlFilters(params) {
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
-  setSelectFromUrl("distance", params.get("distance"));
+  /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the
+       teams board with the course's own distance -- 2900m is real there --
+       and setting a <select> to a value it has no option for silently
+       clears it, so the filter in the address bar would vanish from the
+       request. Grow the menu to fit before setting. */
+  const askedDist = params.get("distance");
+  if (askedDist && state.board === "teams") {
+    const distSel = $("distance");
+    if (distSel && ![...distSel.options].some((o) => o.value === askedDist)) {
+      const opt = document.createElement("option");
+      opt.value = askedDist;
+      opt.textContent = askedDist + "m";
+      distSel.appendChild(opt);
+    }
+  }
+  setSelectFromUrl("distance", askedDist);
 
   /* ⚠ THE COURSE BOARD'S THREE, WHICH LIVE IN THEIR OWN CONTROLS. `distance`
        is spelled the same in the URL on every board but is a different select

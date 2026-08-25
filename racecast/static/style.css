@@ -958,6 +958,20 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .rankings-page[data-board="teams"] .findme       { display: none; }
 .rankings-page[data-board="teams"] p.board-note.teams-only { display: block; }
 
+/* ★ THE COURSE SPECIFIER ON TEAMS. The Course combo is always offered on
+   the Teams tab (teams-ok); once a course is picked, rankings.js stamps
+   .teams-course on the page and the board becomes single races at that
+   venue -- so Distance appears, and the season/geography machinery (Year,
+   Min athletes, Scope, State) goes away, because none of it means anything
+   for one race at one place. The note (p.teams-only) stays: it explains
+   the mode. */
+.rankings-page[data-board="teams"] .perfpr-only.teams-ok { display: flex; }
+.rankings-page[data-board="teams"].teams-course .perfpr-only { display: flex; }
+.rankings-page[data-board="teams"].teams-course .field.teams-only,
+.rankings-page[data-board="teams"].teams-course .year-field,
+.rankings-page[data-board="teams"].teams-course .scope-field,
+.rankings-page[data-board="teams"].teams-course .state-field { display: none; }
+
 .rankings-page .pr-only { display: none; }
 .rankings-page[data-board="pr"] .pr-only      { display: flex; }
 .rankings-page[data-board="pr"] .ability-only { display: none; }

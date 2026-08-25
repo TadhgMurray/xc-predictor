@@ -23,7 +23,8 @@ from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
                        stampRowsHs, stampBoardRows)
-from teams import parseFilters as parseTeamFilters, serveBoard
+from teams import (parseFilters as parseTeamFilters, serveBoard,
+                   getCoursePerformances as getTeamCoursePerformances)
 from courses import (parseFilters as parseCourseFilters,
                      getCourseRankings, countCourses)
 
@@ -291,8 +292,31 @@ _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
 def meets_page():
     """Every recent meet, grouped by month -- the view-all behind the home
     page's Latest results module. Serves the homepage_recent precompute
-    (see panels.py), so it costs one small indexed read per view."""
+    (see panels.py), so it costs one small indexed read per view.
+
+    ?course=X is a different page wearing the same clothes: every meet ever
+    held at one course, grouped by YEAR (a venue spans decades; months are
+    for the rolling recent list), from a live query with no results floor.
+    The course page's meets table links here as its view-all."""
     from panels import RECENT_MIN_RESULTS
+
+    course = (request.args.get("course") or "").strip()
+    if course:
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                rows = get_course_meets(cur, course, dist=None, limit=2000)
+        years, current = [], None
+        for m in rows:
+            d = m.get("last_date")
+            label = str(d.year) if d else "Undated"
+            if current is None or current[0] != label:
+                current = (label, [])
+                years.append(current)
+            current[1].append(m)
+        return render_template("meets.html", course=course, months=years,
+                               n_meets=len(rows), sport="XC",
+                               min_results=RECENT_MIN_RESULTS)
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
@@ -3202,6 +3226,39 @@ def api_teams():
     f, err = parseTeamFilters(request.args)
     if err:
         return jsonify({"error": err}), 400
+
+    # \u2605 A COURSE CHANGES WHAT THE BOARD IS -- single races at one venue, not
+    #   season squads. Served here, before the season machinery, because none
+    #   of serveBoard's questions (raced? which span?) exist for it.
+    if f.get("course"):
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                try:
+                    rows = getTeamCoursePerformances(cur, f)
+                except psycopg2.errors.UndefinedTable:
+                    conn.rollback()
+                    return jsonify({"error": "Course team rankings need "
+                                             "ranking_results: run "
+                                             "racecast/build_ranking_results"
+                                             ".py."}), 400
+                except Exception:
+                    conn.rollback()
+                    app.logger.exception("/api/teams (course) failed")
+                    return jsonify({"error": "Team rankings failed to load. "
+                                             "The server log has the "
+                                             "traceback."}), 500
+        # Rows carry their race distance, so the exact factor applies
+        # rather than the representative one.
+        hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),
+                                    pool=f.get("pool"), sport="XC")
+        return jsonify({"filters": f, "count": len(rows),
+                        "course_mode": True,
+                        # One venue: everyone was measured on the same
+                        # ground, so the cross-state caveat has no work here.
+                        "national_bias": False,
+                        "hs_movable": hs_movable,
+                        "rows": rows})
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

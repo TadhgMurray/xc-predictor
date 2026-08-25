@@ -143,6 +143,38 @@ def parseFilters(args):
     #   it raised a TypeError on the one request that has to work.
     f["span"] = "season" if len(f["year"] or ()) == 1 else "alltime"
 
+    # ★ THE COURSE SPECIFIER, and it changes what the board IS. team_season
+    #   ranks seasons; a course has no season teams, it has team RACES. With
+    #   a course set the route serves getCoursePerformances instead: every
+    #   race there where a school put five rated finishers across the line,
+    #   by top-5 average rating. The season machinery (year, min_athletes,
+    #   scope, the raced/stored spans) has no meaning for a single race, so
+    #   the filters that drive it are refused rather than silently dropped.
+    f["course"] = _multiValue(args, "course")
+    f["distance"] = None
+    dist_raw = args.get("distance")
+    if f["course"]:
+        if sport != "XC":
+            return None, "course team rankings are cross country; set sport=XC"
+        if f["year"]:
+            return None, ("year does not apply with a course; the course "
+                          "view spans all seasons")
+        if states:
+            return None, ("state does not apply with a course; a course is "
+                          "one place")
+        if dist_raw:
+            try:
+                dist = int(dist_raw)
+            except ValueError:
+                return None, "distance must be a number of metres"
+            # Wider than PR_DISTANCES on purpose: a course's own odd 2900m
+            # is a real distance THERE, not a data-entry artefact.
+            if not 1000 <= dist <= 20000:
+                return None, "distance must be between 1000 and 20000 metres"
+            f["distance"] = dist
+    elif dist_raw:
+        return None, "distance applies only when a course is set"
+
     # ! THE DEFAULT IS NOT KNOWN YET -- it depends on whether the field
     #   turns out to be raceable, which takes a row count. serveBoard picks
     #   it; this only records that the caller left the choice open, so a
@@ -450,3 +482,83 @@ def serveBoard(cur, f):
                                      "shown_of_field": None, "span": f["span"],
                                      "reason": reason, "total": None,
                                      "race_cap": RACE_CAP, "unscored": 0}
+
+
+# ------------------------------------------------------------------ #
+#  SINGLE RACES AT A COURSE
+# ------------------------------------------------------------------ #
+
+def getCoursePerformances(cur, f):
+    """Every team race at a course: one row per (race, school) where the
+    school put five rated finishers across the line, ranked by top-5
+    average speed rating. The course page's team tables show each school's
+    best; this is their view-all.
+
+    Runs on ranking_results, same as the individual course boards, so the
+    pool filter means what it means everywhere else -- and the same
+    cross-feed dedup applies: anet and tfrrs both carry the same physical
+    race, keyed by canon_meet_id, so the same squad's same race is kept
+    once (rounded top-5 mean breaks the tie the same way the performance
+    board rounds time_seconds).
+    """
+    params = {"course": f["course"], "dist": f.get("distance"),
+              "pool": f["pool"], "limit": f["limit"], "offset": f["offset"]}
+    school_sql = ""
+    if f["school"]:
+        # The same lookup-not-a-filter posture as _subjectWhere, and the
+        # same normalisation.
+        params["schools"] = [s.strip().lower() for s in f["school"]]
+        school_sql = " AND lower(btrim(school)) = ANY(%(schools)s)"
+
+    cur.execute(f"""
+        WITH finishers AS (
+            SELECT meet_id, div_id, school, speed_rating, race_date,
+                   canon_meet_id, result_id,
+                   round(distance)::int AS distance,
+                   row_number() OVER (PARTITION BY meet_id, div_id, school
+                                      ORDER BY speed_rating DESC) AS tn
+            FROM   ranking_results
+            WHERE  sport = 'XC'
+              AND  pool = %(pool)s
+              AND  speed_rating IS NOT NULL
+              AND  NULLIF(btrim(school), '') IS NOT NULL
+              AND  EXISTS (SELECT 1 FROM meets mm
+                           WHERE mm.meet_id = ranking_results.meet_id
+                             AND mm.div_id  = ranking_results.div_id
+                             AND mm.course_name = ANY(%(course)s))
+              AND  (%(dist)s::int IS NULL
+                    OR round(distance)::int = %(dist)s)
+              {school_sql}
+        ),
+        squads AS (
+            SELECT meet_id, div_id, school,
+                   avg(speed_rating) FILTER (WHERE tn <= 5) AS top5_mean,
+                   min(race_date) AS race_date,
+                   min(distance)  AS distance,
+                   -- min() skips NULLs, so any keyed feed's id wins; a race
+                   -- no feed keyed gets a negative stand-in that cannot
+                   -- collide with a real id.
+                   COALESCE(min(canon_meet_id), -min(result_id)) AS race_key
+            FROM   finishers
+            GROUP  BY meet_id, div_id, school
+            HAVING count(*) >= 5
+        ),
+        deduped AS (
+            SELECT *, row_number() OVER (
+                       PARTITION BY school, race_key,
+                                    round(top5_mean::numeric, 1)
+                       ORDER BY top5_mean DESC) AS dup_rn
+            FROM squads
+        )
+        SELECT s.school, s.top5_mean, s.distance, s.meet_id, s.div_id,
+               to_char(s.race_date, 'YYYY-MM-DD') AS date,
+               (SELECT min(mm.meet_name) FROM meets mm
+                 WHERE mm.meet_id = s.meet_id
+                   AND mm.div_id  = s.div_id) AS meet_name
+        FROM   deduped s
+        WHERE  s.dup_rn = 1
+        ORDER  BY s.top5_mean DESC NULLS LAST, s.race_date DESC, s.school
+        OFFSET %(offset)s
+        LIMIT  %(limit)s
+    """, params)
+    return cur.fetchall()

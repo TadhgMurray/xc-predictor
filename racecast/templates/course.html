@@ -130,6 +130,7 @@
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = team_rating[key] %}
+        {% set bpool = "hs_m" if key == "M" else "hs_f" %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
@@ -150,6 +151,7 @@
                     {{ more_row(rows, 6) }}
                 </tbody>
             </table>
+            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>
             {% else %}<p class="meta">No team put five rated finishers here.</p>{% endif %}
         </div>
         {% endfor %}
@@ -198,6 +200,7 @@
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = team_records[key] %}
+        {% set bpool = "hs_m" if key == "M" else "hs_f" %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
@@ -218,6 +221,10 @@
                     {{ more_row(rows, 6) }}
                 </tbody>
             </table>
+            {# The teams board ranks by top-5 average RATING; this table is
+               top-5 total time. Closest board there is, and it is scoped to
+               the same races. #}
+            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}&distance={{ sel_dist }}">View all on the rankings board →</a></p>
             {% else %}<p class="meta">No team put five finishers here.</p>{% endif %}
         </div>
         {% endfor %}
@@ -273,6 +280,7 @@
             {{ more_row(meets, 4) }}
         </tbody>
     </table>
+    <p class="view-all"><a href="/meets?course={{ course_name|urlencode }}">All meets at this course →</a></p>
     {% else %}<p class="meta">No meets on record.</p>{% endif %}
 
 </main>

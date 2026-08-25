@@ -118,7 +118,7 @@
        foreign athlete rides on whatever thin connection their meet happens to
        have and lands beside a US athlete as though both were measured the
        same way. #}
-    <div class="field not-courses">
+    <div class="field not-courses scope-field">
       <label for="scope">Scope</label>
       <select id="scope">
         <option value="usa">USA only</option>
@@ -132,7 +132,7 @@
          a value that is already applied -- "CA, or California" looked like the
          board was filtered to California. The label above says what the box
          is, and the dropdown shows what it accepts. #}
-    <div class="field wide">
+    <div class="field wide state-field">
       <label for="state-input">State</label>
       <div class="combo" data-field="state"></div>
     </div>
@@ -142,7 +142,7 @@
       <div class="combo" data-field="grade"></div>
     </div>
 
-    <div class="field not-courses">
+    <div class="field not-courses year-field">
       <label for="year-input">Year</label>
       <div class="combo" data-field="year"></div>
     </div>
@@ -152,10 +152,13 @@
       <div class="combo" data-field="school"></div>
     </div>
 
-    {# ★ THE COURSE SPECIFIER, Performances + Best times only. With a course
-       picked those boards scope to one venue: Performances alone is the
-       overall all-distances view, adding a distance narrows it. #}
-    <div class="field wide perfpr-only">
+    {# ★ THE COURSE SPECIFIER, Performances + Best times + Teams. With a
+       course picked those boards scope to one venue: Performances alone is
+       the overall all-distances view, adding a distance narrows it; on
+       Teams a course switches the board to single-race team performances
+       there (see teams.getCoursePerformances). teams-ok keeps this one
+       visible on the Teams tab. #}
+    <div class="field wide perfpr-only teams-ok">
       <label for="course-input">Course</label>
       <div class="combo" data-field="course"></div>
     </div>

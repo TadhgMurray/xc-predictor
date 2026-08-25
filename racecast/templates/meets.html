@@ -12,9 +12,11 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = "Recent meets" %}
-    {% set meta_description = "Every recent cross country and track meet "
-       "with results and speed ratings on one comparable scale." %}
+    {% set meta_title = ("Meets at " ~ course) if course else "Recent meets" %}
+    {% set meta_description = ("Every meet held at " ~ course ~
+       " with results and speed ratings.") if course else
+       ("Every recent cross country and track meet "
+        "with results and speed ratings on one comparable scale.") %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
@@ -22,6 +24,39 @@
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide meets-page">
+{% if course %}
+    {# The course view-all: every meet ever, by year, no results floor.
+       Distance and results describe the whole meet, same as the course
+       page's own table. #}
+    <h1>Meets at {{ course }}</h1>
+    <p class="meta">Every meet held at
+       <a href="/course/{{ course|urlencode }}">{{ course }}</a>,
+       newest first · {{ "{:,}".format(n_meets) }}
+       meet{{ "" if n_meets == 1 else "s" }}.</p>
+
+    {% if not months %}
+    <p class="meta">No meets recorded at this course.</p>
+    {% endif %}
+
+    {% for label, rows in months %}
+    <h2 class="month-head">{{ label }}</h2>
+    <table>
+        <thead>
+            <tr><th>Date</th><th>Meet</th><th>Distance</th><th>Results</th></tr>
+        </thead>
+        <tbody>
+            {% for m in rows %}
+            <tr>
+                <td class="no-break">{{ m.last_date }}</td>
+                <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
+                <td>{{ m.distances|map("int")|join(", ") if m.distances else "—" }}</td>
+                <td>{{ "{:,}".format(m.n_results) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+{% else %}
     <h1>Recent meets</h1>
     <p class="meta">Meets from the last year with real fields
        ({{ min_results }}+ results), newest first.</p>
@@ -68,6 +103,7 @@
         </tbody>
     </table>
     {% endfor %}
+{% endif %}
 
 </main>
 </body>
