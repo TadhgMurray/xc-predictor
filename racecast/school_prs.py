@@ -159,13 +159,18 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
                     if r.get("year")} |
                    {seasonLabel("TF", r["year"]) for r in field
                     if r.get("year")}, reverse=True)
+    # Every course the school has actually RACED (2+ results keeps a
+    # single stray row from minting a chip), most-raced first. Capped
+    # only against pathology -- a long program legitimately wraps a few
+    # rows of chips.
     course_counts = {}
     for r in running:
         c = (r.get("course_name") or "").strip()
         if c:
             course_counts[c] = course_counts.get(c, 0) + 1
-    courses = [c for c, _n in sorted(course_counts.items(),
-                                     key=lambda kv: -kv[1])[:8]]
+    courses = [c for c, n in sorted(course_counts.items(),
+                                    key=lambda kv: (-kv[1], kv[0]))
+               if n >= 2][:24]
 
     if stored:
         running = [r for r in running if r.get("year") == stored]

@@ -64,6 +64,11 @@
        link has to carry so the page comes back to the same season. #}
     {% set season_years = years | selectattr('sport', 'equalto', sport)
                                 | map(attribute='label') | list %}
+    {% if season_rebuilding %}
+    <p class="meta">Season tables are rebuilding. The roster and the year
+       filter return when the rebuild finishes; everything below is live.</p>
+    {% endif %}
+
     {% if season_years %}
     <div class="yearbar">
         <a class="yb{{ ' is-on' if not picked }}"

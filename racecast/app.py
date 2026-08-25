@@ -2743,6 +2743,13 @@ def school_page(school_name):
                                                       "best_rating"),
                                  sport=sport) or has_hs_view
 
+    # ⚠ SAY WHY THE ROSTER IS MISSING. Years and rosters live in
+    #   athlete_season, a rebuilt table that is empty mid-rebuild (and
+    #   was once emptied by crash recovery). A page silently missing its
+    #   roster reads as a broken overhaul; a page that says the season
+    #   tables are rebuilding reads as what it is.
+    season_rebuilding = not years and (roster == []) and bool(best or meets)
+
     # Modal pool per gender, for the view-all links: a rankings board is
     # pool-scoped, so a mixed table links Boys and Girls separately.
     pool_counts = {"M": {}, "F": {}}
@@ -2759,6 +2766,7 @@ def school_page(school_name):
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),
                            sport=sport, pools=pools,
+                           season_rebuilding=season_rebuilding,
                            roster=roster, meets=meets, best=best, top=top,
                            picked=picked)
 
