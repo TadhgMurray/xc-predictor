@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% set meta_title = course_name %}
     {% set meta_description = "Course records, team records and course "
-       "difficulty for " ~ course_name ~ " — how much the course gives or "
+       "difficulty for " ~ course_name ~ ": how much the course gives or "
        "takes, solved from athletes who raced both here and elsewhere." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -37,16 +37,21 @@
 
 <main class="page-wide">
     <h1>{{ course_name }}</h1>
-    {# ★ THE HEADER DIFFICULTY IS THE USUAL DISTANCE'S, and says which --
-       a course is a different course at 2 miles and at 5K, and one bare
-       number silently averaging them claimed more than the fit knows. #}
+    {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
+       the usual distance's, and says which -- a course is a different
+       course at 2 miles and at 5K, and one bare number silently
+       averaging them claimed more than the fit knows. Scoped, both the
+       difficulty and the counts are the selected distance's. #}
     <p class="meta">
         Difficulty:
-        {% if primary_difficulty is not none %}
+        {% if sel_dist %}
+            {% if sel_difficulty is not none %}
+                {{ "%+.3f"|format(sel_difficulty) }}
+                <span class="dist-note-quiet">({{ sel_dist }}m)</span>
+            {% else %}—{% endif %}
+        {% elif primary_difficulty is not none %}
             {{ "%+.3f"|format(primary_difficulty) }}
             <span class="dist-note-quiet">({{ primary_dist }}m, the usual distance here)</span>
-        {% elif header and header.difficulty is not none %}
-            {{ "%+.3f"|format(header.difficulty) }}
         {% else %}—{% endif %}
         {% if header %}
             · {{ "{:,}".format(header.n_results) }} results

@@ -1988,18 +1988,24 @@ def meet_tf(meet_id):
 #  XC COURSE
 # ===================================================================== #
 
-def get_course_header(cur, course_name):
-    """Difficulty and race/athlete counts for one course."""
+def get_course_header(cur, course_name, dist=None):
+    """Result/athlete counts for the header line, counted from the real
+    rows and scoped to one distance when the page is.
+
+    ! NOT course_difficulties' n_results. That table keeps one row per
+      (course, distance) CELL, so the old LIMIT 1 read served one
+      arbitrary cell's fit-sample counts as the whole course's, right
+      above a distance table it visibly disagreed with."""
     cur.execute("""
-        SELECT cd.course_name,
-               cd.difficulty,
-               cd.n_results,
-               cd.n_athletes
-        FROM course_difficulties cd
-        WHERE cd.course_name = %(key)s
-        LIMIT 1
-    """, {"key": "XC:" + course_name})
-    return cur.fetchone()
+        SELECT count(*)                    AS n_results,
+               count(DISTINCT r.person_id) AS n_athletes
+        FROM results r
+        JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+        WHERE m.course_name = %(course)s
+          AND (%(dist)s::int IS NULL OR round(m.distance)::int = %(dist)s)
+    """, {"course": course_name, "dist": dist})
+    row = cur.fetchone()
+    return row if row and row["n_results"] else None
 
 
 def get_course_rating_bests(cur, course_name, dist=None, limit=60):
@@ -2324,7 +2330,6 @@ def get_course_cell_difficulties(cur, course_name):
 def course(course_name):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header    = get_course_header(cur, course_name)
             distances = get_course_distances(cur, course_name)
 
             # ★ THE SELECTED DISTANCE, None = the overview. Chips come from
@@ -2335,6 +2340,11 @@ def course(course_name):
                            for d in distances]
             picked = request.args.get("dist", type=int)
             sel_dist = picked if picked in dist_values else None
+
+            # After sel_dist on purpose: the header counts follow the
+            # selected distance, so the gray line describes what the
+            # page below it is showing.
+            header = get_course_header(cur, course_name, sel_dist)
 
             # Per-distance difficulty; the engine's cells are keyed on the
             # distance rounded to the nearest 100m, so look up the same way.
