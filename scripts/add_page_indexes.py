@@ -34,17 +34,33 @@ def main():
     try:
         cur = conn.cursor()
         todo = []
+        drop_first = []
         for table, col, name in WANTED:
+            # ⚠ VALIDITY, NOT JUST EXISTENCE. A failed CREATE INDEX
+            #   CONCURRENTLY leaves an INVALID index behind: pg_indexes
+            #   lists it, the planner ignores it, and "OK" would be a lie
+            #   while the page stays a sequential scan.
             cur.execute("""
-                SELECT indexdef FROM pg_indexes
-                WHERE tablename = %s AND indexdef ILIKE %s
+                SELECT i.relname, idx.indisvalid, pg_get_indexdef(idx.indexrelid)
+                FROM   pg_index idx
+                JOIN   pg_class i ON i.oid = idx.indexrelid
+                JOIN   pg_class t ON t.oid = idx.indrelid
+                WHERE  t.relname = %s
+                  AND  pg_get_indexdef(idx.indexrelid) ILIKE %s
             """, (table, f"%({col}%"))
-            existing = [r[0] for r in cur.fetchall()]
-            if existing:
-                print(f"OK    {table}({col}): {existing[0][:90]}")
+            rows = cur.fetchall()
+            valid = [r for r in rows if r[1]]
+            invalid = [r for r in rows if not r[1]]
+            if valid:
+                print(f"OK    {table}({col}): {valid[0][2][:90]}")
+                continue
+            if invalid:
+                print(f"BAD   {table}({col}): {invalid[0][0]} is INVALID "
+                      f"(a concurrent build failed) -- will drop and rebuild")
+                drop_first.append(invalid[0][0])
             else:
                 print(f"MISS  {table}({col})")
-                todo.append((table, col, name))
+            todo.append((table, col, name))
 
         if check_only or not todo:
             print("nothing to build" if not todo else "(check only)")
@@ -55,6 +71,9 @@ def main():
         old = conn.autocommit
         conn.autocommit = True
         try:
+            for bad in drop_first:
+                print(f"dropping invalid index {bad}...")
+                cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {bad}")
             for table, col, name in todo:
                 print(f"building {name} on {table}({col}) "
                       f"(concurrent, minutes on the big tables)...")

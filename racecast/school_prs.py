@@ -54,26 +54,17 @@ def _genderOfPool(pool):
     return None
 
 
-_NAME_LATERAL = """
-    LEFT JOIN LATERAL (
-        SELECT NULLIF(TRIM(concat_ws(' ', x.first_name, x.last_name)), '')
-               AS name,
-               x.gender
-        FROM   athletes x
-        WHERE  x.athlete_id = %(pcol)s
-        ORDER  BY (COALESCE(TRIM(x.first_name), '') <> ''
-                OR COALESCE(TRIM(x.last_name),  '') <> '') DESC,
-                  (x.gender IN ('M', 'F')) DESC
-        LIMIT  1
-    ) a ON TRUE
-"""
-
-
 def _runningRows(cur, school, sport):
     """Every rated-or-timed race for this school in one sport, with the
     course name for XC. The meets join stays XC-only: `meets` is keyed
     in the XC div-id space and a TF div id colliding with it would hand
-    a track race a cross country course."""
+    a track race a cross country course.
+
+    ⚠ NO NAME LATERAL. A big track program is tens of thousands of rows,
+      and probing the 16M-row athletes table once per row was the page's
+      whole cost -- track worst, since it makes several results per
+      athlete per meet. Gender comes from the pool; names are looked up
+      in ONE bulk query afterwards, for only the rows that display."""
     course_sql = (
         "LEFT JOIN meets m ON m.div_id = rr.div_id "
         "AND m.meet_id = rr.meet_id" if sport == "XC" else "")
@@ -82,11 +73,9 @@ def _runningRows(cur, school, sport):
         SELECT rr.result_id, rr.person_id, rr.pool, rr.speed_rating,
                rr.time_seconds, rr.distance, rr.race_date, rr.year,
                rr.grade, rr.meet_id, rr.div_id, rr.event_id,
-               {course_col} AS course_name,
-               a.name
+               {course_col} AS course_name
         FROM   ranking_results rr
         {course_sql}
-        {_NAME_LATERAL % {"pcol": "rr.person_id"}}
         WHERE  rr.school = %(school)s
           AND  rr.sport  = %(sport)s
           AND  rr.time_seconds > 0
@@ -97,22 +86,21 @@ def _runningRows(cur, school, sport):
 
 
 def _fieldRows(cur, school):
-    """Every individual field/multi mark for this school. Names ride the
-    same athlete lateral every page uses; the event name coalesces the
-    meets_tf copy with the result's own, the scoring query's rule."""
+    """Every individual field/multi mark for this school. The event name
+    coalesces the meets_tf copy with the result's own, the scoring
+    query's rule. Names AND genders resolve in one bulk lookup after --
+    same reasoning as _runningRows."""
     from season_year import seasonYearSqlInt
     cur.execute(f"""
-        SELECT r.result_id, r.person_id, r.mark, r.grade, r.date,
-               r.meet_id, r.div_id, r.event_id,
+        SELECT r.result_id, r.person_id, r.athlete_id, r.mark, r.grade,
+               r.date, r.meet_id, r.div_id, r.event_id,
                {seasonYearSqlInt('TF', 'r.date')} AS year,
                COALESCE(NULLIF(TRIM(m.event_short), ''),
-                        NULLIF(TRIM(r.event_short), '')) AS event_short,
-               a.name, a.gender
+                        NULLIF(TRIM(r.event_short), '')) AS event_short
         FROM   results_tf r
         LEFT JOIN meets_tf m ON m.meet_id  = r.meet_id
                             AND m.div_id   = r.div_id
                             AND m.event_id = r.event_id
-        {_NAME_LATERAL % {"pcol": "COALESCE(r.person_id, r.athlete_id)"}}
         WHERE  r.school = %(school)s
           AND  COALESCE(r.is_relay, 0) = 0
           AND  (r.is_field = 1 OR r.result_kind IN ('field', 'combined'))
@@ -120,6 +108,35 @@ def _fieldRows(cur, school):
           AND  r.date IS NOT NULL
     """, {"school": school})
     return cur.fetchall()
+
+
+def _athleteInfo(cur, ids):
+    """{athlete_id: {"name", "gender"}} in ONE query -- the bulk
+    replacement for the per-row lateral. Same pick rule: a row with a
+    name beats one without, then a usable gender."""
+    ids = sorted({int(i) for i in ids if i})
+    if not ids:
+        return {}
+    cur.execute("""
+        SELECT DISTINCT ON (athlete_id)
+               athlete_id,
+               NULLIF(TRIM(concat_ws(' ', first_name, last_name)), '')
+                   AS name,
+               gender
+        FROM   athletes
+        WHERE  athlete_id = ANY(%(ids)s)
+        ORDER  BY athlete_id,
+                  (COALESCE(TRIM(first_name), '') <> ''
+                   OR COALESCE(TRIM(last_name), '') <> '') DESC,
+                  (gender IN ('M', 'F')) DESC
+    """, {"ids": ids})
+    out = {}
+    for rec in cur.fetchall():
+        aid, name, g = ((rec["athlete_id"], rec["name"], rec["gender"])
+                        if isinstance(rec, dict)
+                        else (rec[0], rec[1], rec[2]))
+        out[aid] = {"name": name, "gender": g}
+    return out
 
 
 def _bestPer(rows, value_of, key_of):
@@ -153,6 +170,16 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     stored = storedYear(sport, year_label) if year_label else None
     running = _runningRows(cur, school, sport)
     field = _fieldRows(cur, school) if sport == "TF" else []
+
+    # field rows need gender BEFORE grouping (the tables split on it);
+    # one bulk lookup covers every field athlete
+    if field:
+        info = _athleteInfo(cur, (r.get("person_id") or r.get("athlete_id")
+                                  for r in field))
+        for r in field:
+            a = info.get(r.get("person_id") or r.get("athlete_id"), {})
+            r["name"] = a.get("name")
+            r["gender"] = a.get("gender")
 
     # year bar and course chips come from the UNFILTERED rows
     years = sorted({seasonLabel(sport, r["year"]) for r in running
@@ -255,6 +282,23 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
             "tables": tables, "left": left})
     f_sections.sort(key=lambda s: s["label"])
     sections.extend(f_sections)
+
+    # running names last, for exactly the rows that DISPLAY: the whole
+    # point of dropping the per-row lateral
+    need = {}
+    for sec in sections:
+        if sec["kind"] != "running":
+            continue
+        for g in ("M", "F"):
+            for r in sec["tables"][g]:
+                if r.get("person_id") and not r.get("name"):
+                    need.setdefault(r["person_id"], []).append(r)
+    if need:
+        info = _athleteInfo(cur, need.keys())
+        for pid, need_rows in need.items():
+            nm = info.get(pid, {}).get("name")
+            for r in need_rows:
+                r["name"] = nm
 
     return {"sections": sections, "years": years, "courses": courses,
             "pools": pools, "year": year_label, "course": course,
