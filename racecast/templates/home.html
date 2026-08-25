@@ -318,10 +318,8 @@
             <div class="recent-block" data-sport="{{ sport }}">
                 <h2 class="rank-heading">Latest results</h2>
                 <p class="rank-sub">The newest meets on the books.</p>
-                {# 15 shown, the next 20 behind one press (staged.js), and
-                   the full precomputed year lives at /meets. #}
-                {% set rows = recent[sport][:35] %}
-                <table class="recent-table staged" data-step="20">
+                {# 15 rows; the full precomputed year lives at /meets. #}
+                <table class="recent-table">
                     <thead>
                         <tr>
                             <th>Date</th>
@@ -332,8 +330,8 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for m in rows %}
-                        <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
+                        {% for m in recent[sport][:15] %}
+                        <tr>
                             <td class="no-break">{{ m.date }}</td>
                             <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
                             <td>
@@ -345,15 +343,6 @@
                             <td>{{ m.n_results }}</td>
                         </tr>
                         {% endfor %}
-                        {% if rows|length > 15 %}
-                        <tr class="more-row">
-                            <td colspan="5">
-                                <button type="button" class="more-btn">
-                                    Show 20 more <span class="more-left">({{ rows|length - 15 }} here)</span>
-                                </button>
-                            </td>
-                        </tr>
-                        {% endif %}
                     </tbody>
                 </table>
                 <p class="recent-all">
@@ -368,6 +357,5 @@
 
 <script src="{{ url_for('static', filename='home.js') }}"></script>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>
-<script src="{{ url_for('static', filename='staged.js') }}"></script>
 </body>
 </html>
