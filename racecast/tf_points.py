@@ -237,14 +237,44 @@ def displayEvent(event_short):
     return prettyEventName(s)
 
 
+# Imperial field marks: "50-0.25", "22' 10.5\"", "5-10". Feet 1-3
+# digits, inches under 12 (with fraction).
+_IMPERIAL = re.compile(
+    r"^(\d{1,3})\s*[-'’\s]\s*(\d{1,2}(?:\.\d+)?)\s*\"?$")
+
+
+def parseMark(mark):
+    """A field mark or multi score as a float, or None.
+
+    The feed ships marks as STRINGS in whatever unit it had: "15.24m",
+    "50-0.25" (feet-inches), "4,321" multi points. A bare float() call
+    silently zeroed every field event at real meets -- six events per
+    gender scoring nothing, 234 of each 780 points just gone."""
+    if mark is None:
+        return None
+    if isinstance(mark, (int, float)):
+        return float(mark)
+    s = str(mark).strip().lower()
+    s = s.replace("pts", "").replace("points", "").replace(",", "").strip()
+    if s.endswith("m"):
+        s = s[:-1].strip()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    m = _IMPERIAL.match(s)
+    if m and float(m.group(2)) < 12:
+        return int(m.group(1)) * 0.3048 + float(m.group(2)) * 0.0254
+    return None
+
+
 def _value(row):
     """The rankable number, or None. Running/relay: seconds ascending.
     Field and multis: mark descending -- a mark that will not parse as a
     number cannot rank and the row shows without scoring."""
     if row.get("is_field") or (row.get("result_kind") in ("field", "combined")):
-        try:
-            v = float(row.get("mark"))
-        except (TypeError, ValueError):
+        v = parseMark(row.get("mark"))
+        if v is None:
             return None
         return -v                     # negate: one ascending sort ranks both
     t = row.get("time_seconds")
