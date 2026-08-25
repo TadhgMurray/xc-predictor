@@ -5,15 +5,36 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% set meta_title = course_name %}
-    {% set meta_description = "Race history and course difficulty for "
-       ~ course_name ~ " — how much the course gives or takes, solved from "
-       "athletes who raced both here and elsewhere." %}
+    {% set meta_description = "Course records, team records and course "
+       "difficulty for " ~ course_name ~ " — how much the course gives or "
+       "takes, solved from athletes who raced both here and elsewhere." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+
+{# ================================================================= #}
+{#  Two views, one page. The overview (no ?dist) holds the distance  #}
+{#  table, the rating-ranked bests and team bests (all distances,     #}
+{#  comparable BY rating), and the meet list. Picking a distance      #}
+{#  scopes every table to it and adds the time-based records. All     #}
+{#  the big tables reveal in stages (staged.js): 15 rows, +20, all.   #}
+{# ================================================================= #}
+
+{% macro more_row(rows, span) -%}
+    {%- if rows|length > 15 %}
+    <tr class="more-row"><td colspan="{{ span }}">
+        <button type="button" class="more-btn">
+            Show 20 more <span class="more-left">({{ rows|length - 15 }} left)</span>
+        </button>
+    </td></tr>
+    {% endif -%}
+{%- endmacro %}
+
+{% macro hid(i) %}{{ ' class="row-hidden"'|safe if i >= 15 }}{% endmacro %}
+
 <main class="page-wide">
     <h1>{{ course_name }}</h1>
     {# ★ THE HEADER DIFFICULTY IS THE USUAL DISTANCE'S, and says which --
@@ -33,11 +54,10 @@
         {% endif %}
     </p>
 
-    {# Distance chips, most-run first; records and team records below
-       re-render for the picked one. Same chip dress as the school page's
-       year bar. #}
     {% if dist_values %}
     <div class="yearbar">
+        <a class="yb{{ ' is-on' if not sel_dist }}"
+           href="/course/{{ course_name|urlencode }}">All</a>
         {% for d in dist_values %}
         <a class="yb{{ ' is-on' if d == sel_dist }}"
            href="/course/{{ course_name|urlencode }}?dist={{ d }}">{{ d }}m</a>
@@ -47,23 +67,106 @@
 
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
 
-{% if sel_dist and (boys.records or girls.records) %}
+{% if not sel_dist %}
+    {# ============================ OVERVIEW ============================ #}
+    {% if dist_table %}
+    <h2>Distances raced here</h2>
+    <table>
+        <thead><tr><th>Distance</th><th>Difficulty</th><th>Results</th>
+            <th>First</th><th>Last</th></tr></thead>
+        <tbody>
+            {% for d in dist_table %}
+            <tr>
+                <td><a href="/course/{{ course_name|urlencode }}?dist={{ d.distance }}">{{ d.distance }}m</a></td>
+                <td>{{ "%+.3f"|format(d.difficulty) if d.difficulty is not none else "—" }}</td>
+                <td>{{ "{:,}".format(d.n_results) }}</td>
+                <td class="no-break">{{ d.first_date }}</td>
+                <td class="no-break">{{ d.last_date }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <h2>Best speed ratings <span class="dist-note">all distances</span></h2>
+    <div class="rec-pair">
+        {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
+        {% set rows = rating_bests[key] %}
+        <div>
+            <h4 class="rec-gender">{{ label }}</h4>
+            {% if rows %}
+            <table class="staged" data-step="20">
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
+                    <th>Time</th><th>Dist</th><th>School</th><th>Date</th></tr></thead>
+                <tbody>
+                    {% for r in rows %}
+                    <tr{{ hid(loop.index0) }}>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
+                        <td class="no-break">{{ r.display_time }}</td>
+                        <td>{{ r.distance }}m</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
+                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
+                    </tr>
+                    {% endfor %}
+                    {{ more_row(rows, 7) }}
+                </tbody>
+            </table>
+            {% else %}<p class="meta">No rated results.</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <h2>Best team performances by rating
+        <span class="dist-note">top-5 average rating, one race, all distances</span></h2>
+    <div class="rec-pair">
+        {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
+        {% set rows = team_rating[key] %}
+        <div>
+            <h4 class="rec-gender">{{ label }}</h4>
+            {% if rows %}
+            <table class="staged" data-step="20">
+                <thead><tr><th>#</th><th>School</th><th>Top-5 avg</th>
+                    <th>Dist</th><th>Meet</th><th>Date</th></tr></thead>
+                <tbody>
+                    {% for t in rows %}
+                    <tr{{ hid(loop.index0) }}>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                        <td>{{ "%.1f"|format(t.avg5) }}</td>
+                        <td>{{ t.distance }}m</td>
+                        <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
+                        <td class="no-break">{{ t.date }}</td>
+                    </tr>
+                    {% endfor %}
+                    {{ more_row(rows, 6) }}
+                </tbody>
+            </table>
+            {% else %}<p class="meta">No team put five rated finishers here.</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+{% else %}
+    {# ======================== ONE DISTANCE =========================== #}
     <h2>Course records
         <span class="dist-note">{{ sel_dist }}m
             {%- if sel_difficulty is not none %} · difficulty {{ "%+.3f"|format(sel_difficulty) }}{% endif %}
             {%- if sel_n %} · {{ "{:,}".format(sel_n) }} results{% endif %}</span>
     </h2>
     <div class="rec-pair">
-        {% for label, side in [("Boys", boys), ("Girls", girls)] %}
+        {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
+        {% set rows = records[key] %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
-            {% if side.records %}
-            <table>
+            {% if rows %}
+            <table class="staged" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Time</th>
                     <th>Rating</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
-                    {% for r in side.records %}
-                    <tr>
+                    {% for r in rows %}
+                    <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
                         <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
@@ -73,29 +176,28 @@
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
                     </tr>
                     {% endfor %}
+                    {{ more_row(rows, 7) }}
                 </tbody>
             </table>
             {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
         </div>
         {% endfor %}
     </div>
-{% endif %}
 
-{% if sel_dist and (boys.teams or girls.teams) %}
     <h2>Team records
-        <span class="dist-note">{{ sel_dist }}m · top-5 total, one race</span>
-    </h2>
+        <span class="dist-note">{{ sel_dist }}m · top-5 total, one race</span></h2>
     <div class="rec-pair">
-        {% for label, side in [("Boys", boys), ("Girls", girls)] %}
+        {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
+        {% set rows = team_records[key] %}
         <div>
             <h4 class="rec-gender">{{ label }}</h4>
-            {% if side.teams %}
-            <table>
+            {% if rows %}
+            <table class="staged" data-step="20">
                 <thead><tr><th>#</th><th>School</th><th>Top-5 total</th>
                     <th>Average</th><th>Meet</th><th>Date</th></tr></thead>
                 <tbody>
-                    {% for t in side.teams %}
-                    <tr>
+                    {% for t in rows %}
+                    <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
                         <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
                         <td class="no-break">{{ t.display_total }}</td>
@@ -104,98 +206,66 @@
                         <td class="no-break">{{ t.date }}</td>
                     </tr>
                     {% endfor %}
+                    {{ more_row(rows, 6) }}
                 </tbody>
             </table>
             {% else %}<p class="meta">No team put five finishers here.</p>{% endif %}
         </div>
         {% endfor %}
     </div>
+
+    <h2>Best speed ratings <span class="dist-note">{{ sel_dist }}m</span></h2>
+    <div class="rec-pair">
+        {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
+        {% set rows = rating_bests[key] %}
+        <div>
+            <h4 class="rec-gender">{{ label }}</h4>
+            {% if rows %}
+            <table class="staged" data-step="20">
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
+                    <th>Time</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
+                <tbody>
+                    {% for r in rows %}
+                    <tr{{ hid(loop.index0) }}>
+                        <td>{{ loop.index }}</td>
+                        <td><a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
+                        <td class="no-break">{{ r.display_time }}</td>
+                        <td>{{ r.grade if r.grade else "—" }}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% else %}—{% endif %}</td>
+                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date }}</a></td>
+                    </tr>
+                    {% endfor %}
+                    {{ more_row(rows, 7) }}
+                </tbody>
+            </table>
+            {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
 {% endif %}
 
-    <h2>Best performances by rating</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Athlete</th>
-                <th>Time</th>
-                <th>Dist</th>
-                <th>Grade</th>
-                <th>School</th>
-                <th>Meet</th>
-                <th>Date</th>
-                <th>Rating</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in bests %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>
-                    {% if row.person_id %}
-                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
-                    {% else %}
-                        {{ row.name if row.name else "Unknown" }}
-                    {% endif %}
-                </td>
-                <td>{{ row.display_time }}</td>
-                <td>{{ row.distance|int if row.distance else "—" }}m</td>
-                <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{{ row.school if row.school else "—" }}</td>
-                <td><a href="/race/xc/{{ row.meet_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
-                <td>{{ row.date }}</td>
-                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <h2>Meets held here</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Meet</th>
-                <th>Last held</th>
-                <th>Distance</th>
-                <th>Results</th>
-            </tr>
-        </thead>
+    <h2>Meets held here
+        <span class="dist-note">{{ (sel_dist ~ "m") if sel_dist else "all distances" }}</span></h2>
+    {% if meets %}
+    <table class="staged" data-step="20">
+        <thead><tr><th>Meet</th><th>Last held</th><th>Distance</th><th>Results</th></tr></thead>
         <tbody>
             {% for m in meets %}
-            <tr>
-                <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
-                <td>{{ m.last_date }}</td>
-                <td>
-                    {% if m.distances %}
-                        {% for d in m.distances %}{{ d|int }}m{% if not loop.last %}, {% endif %}{% endfor %}
-                    {% else %}
-                        —
-                    {% endif %}
-                </td>
+            <tr{{ hid(loop.index0) }}>
+                <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
+                <td class="no-break">{{ m.last_date }}</td>
+                <td>{{ m.distances|map("int")|join(", ") if m.distances else "—" }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
             </tr>
             {% endfor %}
+            {{ more_row(meets, 4) }}
         </tbody>
     </table>
-
-    <h2>Distances raced here</h2>
-    <table>
-        <thead>
-            <tr><th>Distance</th><th>Results</th><th>First</th><th>Last</th></tr>
-        </thead>
-        <tbody>
-            {% for d in distances %}
-            <tr>
-                <td>{{ d.distance|int }}m</td>
-                <td>{{ "{:,}".format(d.n_results) }}</td>
-                <td>{{ d.first_date }}</td>
-                <td>{{ d.last_date }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    {% else %}<p class="meta">No meets on record.</p>{% endif %}
 
 </main>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ url_for('static', filename='staged.js') }}"></script>
 </body>
 </html>
