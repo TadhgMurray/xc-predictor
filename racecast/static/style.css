@@ -2923,6 +2923,34 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .season td.flags { white-space: normal; }
 .season td.flags .flag { margin-bottom: 2px; }
 
+/* ---- the season rank line (athlete header) ----------------------------- *
+ * One quiet text line under the stat strip: scopes broadest to narrowest,
+ * live ranks in full ink and bold, WIP scopes muted until their data
+ * exists. Links drop the underline (the bold number IS the affordance)
+ * and get it back on hover. */
+.rank-line { margin: 0.6rem 0 0.2rem; font-size: 0.95rem;
+             color: var(--ink); }
+.rank-line .rl-lab {
+    display: inline-block; min-width: 3.6rem; margin-right: 0.5rem;
+    font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #6b7280; }
+.rank-line .sep { color: #d1d5db; margin: 0 0.35rem; }
+.rank-line .rk a { color: var(--ink); font-weight: 700;
+                   font-variant-numeric: tabular-nums;
+                   text-decoration: none; }
+.rank-line .rk a:hover { text-decoration: underline; }
+.rank-line .wip { color: #c2c7cf; }
+/* the "?" at the end: same circled-hint dress as the scale toggle's, but
+   its tooltip keeps the default rightward opening -- this one sits at the
+   LEFT edge of the page. */
+.rank-note {
+    --tip: #374151;
+    background: none; color: #6b7280;
+    border: 1px solid var(--line-2); border-radius: 50%;
+    width: 1.05rem; height: 1.05rem; line-height: 0.95rem;
+    text-align: center; padding: 0; margin-left: 0.5rem;
+    font-size: 10px; display: inline-block; }
+
 /* ---- the 404 page ------------------------------------------------------ */
 .nf-page { max-width: 560px; margin: 4.5rem auto 0; text-align: center;
            padding: 0 1.5rem; }

@@ -387,6 +387,111 @@ def _athletePaces(cur, person_id):
     return {"year": newest, "paces": [], "reason": why}
 
 
+# The season rank line's scope sets, per level (the pool's prefix). Broadest
+# to narrowest, ending at the athlete's place on their own team. "wip:"
+# scopes render muted until their data exists -- HS sections/divisions/
+# leagues and college divisions/regions/conferences are not in the data yet.
+_RANK_SCOPES = {
+    "ms":      ("nation", "state", "team"),
+    "hs":      ("nation", "state", "wip:Section", "wip:Division",
+                "wip:League", "team"),
+    "college": ("nation", "wip:Division", "wip:Region", "wip:Conference",
+                "state", "team"),
+}
+
+
+def buildRankLine(cur, person_id, season):
+    """The entries for the rank line under the athlete's stat strip.
+
+    Nation and state come from the SAME machinery the rankings page's
+    find-yourself feature uses (rankOf with default filters, so the number
+    here matches the board the link lands on); team is the athlete's place
+    on their school's roster for the season, by the same mean-rating order
+    the school page sorts by. All for the athlete's LATEST season -- the one
+    the header rating already describes.
+
+    Returns None when there is nothing real to show (unrankable pool, or no
+    scope produced a number): a line of nothing but "soon" is noise.
+    """
+    from urllib.parse import quote
+    from werkzeug.datastructures import MultiDict
+
+    level = (season.get("pool") or "").split("_", 1)[0]
+    scopes = _RANK_SCOPES.get(level)
+    if not scopes:
+        return None
+
+    sport = season["sport"]
+    label_year = season["year"] + 1 if sport == "TF" else season["year"]
+    state = (season.get("state") or "").strip().upper() or None
+    school = season.get("school")
+
+    def boardArgs(with_state):
+        args = {"board": "ability", "pool": season["pool"], "sport": sport,
+                "year": str(label_year)}
+        if with_state:
+            args["state"] = state
+        return args
+
+    def boardRank(with_state):
+        f, err = parseFilters(MultiDict(boardArgs(with_state)))
+        if err:
+            return None
+        try:
+            # Default sort, so rankOf takes its count-based shortcut -- an
+            # indexed count, not a board sort, safe on the page-load path.
+            return rankOf(cur, f, person_id)
+        except Exception:                # noqa: BLE001 -- a line, not a page
+            cur.connection.rollback()
+            return None
+
+    def boardHref(with_state):
+        q = "&".join(f"{k}={v}" for k, v in boardArgs(with_state).items())
+        return "/rankings?" + q
+
+    entries = []
+    for scope in scopes:
+        if scope.startswith("wip:"):
+            entries.append({"label": scope[4:], "wip": True})
+        elif scope == "nation":
+            r = boardRank(False)
+            if r:
+                entries.append({"label": "Nation", "rank": r,
+                                "href": boardHref(False)})
+        elif scope == "state" and state:
+            r = boardRank(True)
+            if r:
+                entries.append({"label": state, "rank": r,
+                                "href": boardHref(True)})
+        elif scope == "team" and school and season.get("mean_rating") is not None:
+            try:
+                # Strictly-better count + 1 = place on the roster, the same
+                # mean-rating order schoolRoster sorts by; ties share it.
+                cur.execute("""
+                    SELECT count(*) + 1 AS place
+                    FROM   athlete_season t
+                    WHERE  t.school = %(school)s
+                      AND  t.sport  = %(sport)s
+                      AND  t.year   = %(year)s
+                      AND  t.mean_rating > %(mine)s
+                """, {"school": school, "sport": sport,
+                      "year": season["year"],
+                      "mine": season["mean_rating"]})
+                row = cur.fetchone()
+            except Exception:            # noqa: BLE001
+                cur.connection.rollback()
+                row = None
+            if row:
+                entries.append({
+                    "label": "Team", "rank": row["place"],
+                    "href": (f"/school/{quote(school, safe='')}"
+                             f"?sport={sport}&year={label_year}")})
+
+    if not any("rank" in e for e in entries):
+        return None
+    return entries
+
+
 @app.route("/athlete/<int:person_id>")
 def athlete(person_id):
     with getConn() as conn:                # reuse the engine's connection
@@ -418,7 +523,8 @@ def athlete(person_id):
             #   is what a header means; the note under it says which season.
             try:
                 cur.execute("""
-                    SELECT mean_rating, sport, pool, year, n_races
+                    SELECT mean_rating, sport, pool, year, n_races,
+                           state, school
                     FROM   athlete_season
                     WHERE  person_id = %s
                     ORDER  BY last_race DESC NULLS LAST, year DESC,
@@ -430,6 +536,10 @@ def athlete(person_id):
                 # A database that has never run build_ranking_results.
                 conn.rollback()
                 season_rating = None
+
+            # The season rank line under the stat strip -- see buildRankLine.
+            rank_line = (buildRankLine(cur, person_id, season_rating)
+                         if season_rating else None)
 
             # ⚠ THE FALLBACK IS THE OLD TABLE, and it still earns its keep:
             #   athlete_season is built from ranking_results, which is
@@ -610,6 +720,7 @@ def athlete(person_id):
 
     return render_template("athlete.html",
                            athlete=athlete,
+                           rank_line=rank_line,
                            training=training,
                            xc_seasons=xc_seasons,
                            tf_seasons=tf_seasons,

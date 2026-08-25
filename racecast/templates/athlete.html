@@ -270,6 +270,28 @@
         {% endif %}
     </div>
 
+    {# ★ THE SEASON RANK LINE. Where this athlete stands for the same season
+       the header rating describes, broadest scope to narrowest, ending at
+       their place on their own team. Muted scopes are coming; the route
+       omits the whole line when nothing real is rankable. #}
+    {% if rank_line %}
+    <p class="rank-line">
+        <span class="rl-lab">Ranked</span>
+        {%- for e in rank_line %}
+            {%- if not loop.first %}<span class="sep">·</span>{% endif -%}
+            {%- if e.wip -%}
+                <span class="wip" title="Coming soon">{{ e.label }} soon</span>
+            {%- else -%}
+                <span class="rk"><span class="scope">{{ e.label }}</span> <a href="{{ e.href }}">#{{ e.rank }}</a></span>
+            {%- endif -%}
+        {%- endfor %}
+        <span class="flag rank-note" tabindex="0"
+              data-title="Season rankings"
+              data-blurb="Where this athlete stands for their latest season: nationally, in their state, and their place on their own team's roster. National ranks carry a small unresolved state-to-state offset, so treat close national placings as approximate. Greyed scopes are coming soon."
+              aria-label="Season rankings. Where this athlete stands for their latest season: nationally, in their state, and their place on their own team's roster. National ranks carry a small unresolved state-to-state offset. Greyed scopes are coming soon.">?</span>
+    </p>
+    {% endif %}
+
     {# ★ A HANDOFF, NOT A PANEL. Training paces are a TOOL's output, and the
        tool is /conversions -- this page is a record of what somebody ran.
        The link carries the athlete so the tool arrives already filled in. #}
