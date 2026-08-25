@@ -121,12 +121,20 @@ Write-Host "  all 10 files current" -ForegroundColor Green
 # ⚠ AND KILL THE DEV SERVER. app.py reloads on every file change and holds
 #   pooled connections; last night build_ranking_results died with "server
 #   closed the connection unexpectedly" while it was running.
+#
+# ! KILLED, NOT REFUSED. This used to exit 1 and tell the human to stop it
+#   -- which on an unattended overnight run turned a dev server someone
+#   forgot into a dead night. The remedy the message prescribed is
+#   mechanical, so the preflight now performs it. Owner's call, 2026-08-25:
+#   the pipeline never stops for app.py.
 $flask = Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
          Where-Object { $_.CommandLine -like "*app.py*" }
 if ($flask) {
-    Write-Host "  ⚠ racecast\app.py is running (pid $($flask.ProcessId -join ', '))" -ForegroundColor Yellow
-    Write-Host "    stop it before starting -- it reloads on file changes and holds connections."
-    exit 1
+    foreach ($p in $flask) {
+        Write-Host "  ⚠ racecast\app.py was running (pid $($p.ProcessId)) -- killed" -ForegroundColor Yellow
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 2
 }
 Write-Host "  dev server not running" -ForegroundColor Green
 Write-Host "  logging to $dir" -ForegroundColor Cyan

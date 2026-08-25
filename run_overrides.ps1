@@ -1,4 +1,4 @@
-# run_overrides.ps1 -- rebuild the overrides and take them live, unattended.
+﻿# run_overrides.ps1 -- rebuild the overrides and take them live, unattended.
 #
 #     .\run_overrides.ps1
 #     .\run_overrides.ps1 -Reset         # after a wipe -- see -Reset below
@@ -29,6 +29,12 @@ param(
     [switch]$SkipPipeline,
     [switch]$Reset,
     [switch]$Replace,
+    # Owner's call, 2026-08-25: an unattended run ALWAYS applies. The caps
+    # still print their warnings into the log, but they do not stop the
+    # night -- with every proposal direction clamped downward, an over-cap
+    # pass can only over-deflate, never mint fake elites, and a wasted
+    # night costs more than a reviewable excess of caution ever saves.
+    [switch]$ForceApply,
     [double]$Sigma = 4.5
 )
 
@@ -155,7 +161,13 @@ Step "02_pass4"    { python scripts\rebuild_overrides.py --pass 4 --sigma $Sigma
 #   dicts and refuses on a syntax error, an absurd distance, or a volume past
 #   its cap -- BEFORE corrections.py is touched. Running it dry first means
 #   the log carries the counts even when the write goes ahead.
-Step "03_validate" { python scripts\apply_passes.py }
+if ($ForceApply) {
+    # Validation still RUNS (the counts belong in the log), but its
+    # verdict cannot end the night: --force carries past the caps.
+    Step "03_validate" { python scripts\apply_passes.py --force }
+} else {
+    Step "03_validate" { python scripts\apply_passes.py }
+}
 
 if ($DryRun) {
     Write-Host "`n  -DryRun: nothing written. Read $dir\03_validate.log" -ForegroundColor Cyan
@@ -177,7 +189,11 @@ if ($Reset) {
     Step "03b_wipe" { python scripts\wipe_overrides.py --write --keep-sole-source }
 }
 
-Step "04_apply"    { python scripts\apply_passes.py --write }
+if ($ForceApply) {
+    Step "04_apply"    { python scripts\apply_passes.py --write --force }
+} else {
+    Step "04_apply"    { python scripts\apply_passes.py --write }
+}
 
 # ⚠ NOT A PIPELINE STEP, WHICH IS WHY IT IS HERE. dist_override is rebuilt
 #   from corrections.py by this script alone; without it the backfill reads

@@ -51,7 +51,10 @@ function Bail($why) {
 }
 
 # ---- 1. overrides ----------------------------------------------------- #
-$ok = Step "01_overrides" { .\run_overrides.ps1 -Reset -Replace -SkipPipeline }
+# -ForceApply: the owner's rule -- an unattended run ALWAYS applies.
+# The caps warn in the log instead of ending the night; every proposal
+# direction is clamped downward, so an excess can only over-deflate.
+$ok = Step "01_overrides" { .\run_overrides.ps1 -Reset -Replace -SkipPipeline -ForceApply }
 if ($ok) {
     $summary += "overrides: applied"
 } else {
