@@ -2142,6 +2142,121 @@ def school_page(school_name):
                            picked=picked)
 
 
+# ⚠ RECORD LISTS ARE WHERE ONE TYPO TOPS A PAGE FOREVER, so both record
+#   queries carry the engine's pace band (packResults' 0.12-0.72 s/m of the
+#   raw distance): a 6:00 "5000m" or a doubled-time entry never reaches a
+#   records table. The rating-ranked table below is unaffected.
+_REC_PACE_LO, _REC_PACE_HI = 0.12, 0.72
+
+
+def get_course_records(cur, course_name, dist, limit=10):
+    """Fastest times at one distance on this course: best per athlete, top
+    `limit` per gender. Gender from the same athlete lateral every page
+    uses; rows without a linked person or a gender stay off the records
+    (they remain in the rating table below)."""
+    cur.execute(f"""
+        WITH rows AS (
+            SELECT r.person_id, r.result_id, r.time_seconds, r.date,
+                   r.grade, r.school, r.speed_rating,
+                   m.meet_id, m.div_id, m.meet_name,
+                   a.gender, {_name_sql('r')} AS name,
+                   row_number() OVER (PARTITION BY r.person_id
+                                      ORDER BY r.time_seconds ASC) AS pr_rn
+            FROM results r
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            {_athlete_lateral('r')}
+            WHERE m.course_name = %(course)s
+              AND round(m.distance)::int = %(dist)s
+              AND r.person_id IS NOT NULL
+              AND a.gender IN ('M', 'F')
+              AND r.time_seconds IS NOT NULL
+              AND r.time_seconds BETWEEN %(dist)s * {_REC_PACE_LO}
+                                     AND %(dist)s * {_REC_PACE_HI}
+        ),
+        ranked AS (
+            SELECT *, row_number() OVER (PARTITION BY gender
+                                         ORDER BY time_seconds ASC) AS rn
+            FROM rows WHERE pr_rn = 1
+        )
+        SELECT * FROM ranked WHERE rn <= %(limit)s
+        ORDER BY gender, time_seconds ASC
+    """, {"course": course_name, "dist": int(dist), "limit": limit})
+    return cur.fetchall()
+
+
+def get_course_team_records(cur, course_name, dist, limit=10):
+    """Fastest team performances at one distance: top-5 time total within
+    ONE race, best race per school, top `limit` per gender. Ranked by the
+    total; the average is displayed alongside for readability."""
+    cur.execute(f"""
+        WITH finishers AS (
+            SELECT r.meet_id, r.div_id, r.source, r.school, r.time_seconds,
+                   r.date, m.meet_name, a.gender,
+                   row_number() OVER (
+                       PARTITION BY r.meet_id, r.div_id, r.source, r.school
+                       ORDER BY r.time_seconds ASC) AS tn
+            FROM results r
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            {_athlete_lateral('r')}
+            WHERE m.course_name = %(course)s
+              AND round(m.distance)::int = %(dist)s
+              AND NULLIF(TRIM(r.school), '') IS NOT NULL
+              AND a.gender IN ('M', 'F')
+              AND r.time_seconds IS NOT NULL
+              AND r.time_seconds BETWEEN %(dist)s * {_REC_PACE_LO}
+                                     AND %(dist)s * {_REC_PACE_HI}
+        ),
+        teams AS (
+            SELECT meet_id, div_id, school,
+                   sum(time_seconds) FILTER (WHERE tn <= 5) AS total,
+                   min(meet_name)  AS meet_name,
+                   min(date)       AS date,
+                   -- a division is one gender in practice; mode() settles
+                   -- the stray mislabeled row rather than splitting a squad.
+                   mode() WITHIN GROUP (ORDER BY gender) AS gender
+            FROM finishers
+            GROUP BY meet_id, div_id, source, school
+            HAVING count(*) >= 5
+        ),
+        best_per_school AS (
+            SELECT *, row_number() OVER (PARTITION BY school, gender
+                                         ORDER BY total ASC) AS sn
+            FROM teams
+        ),
+        ranked AS (
+            SELECT *, row_number() OVER (PARTITION BY gender
+                                         ORDER BY total ASC) AS rn
+            FROM best_per_school WHERE sn = 1
+        )
+        SELECT * FROM ranked WHERE rn <= %(limit)s
+        ORDER BY gender, total ASC
+    """, {"course": course_name, "dist": int(dist), "limit": limit})
+    return cur.fetchall()
+
+
+def get_course_cell_difficulties(cur, course_name):
+    """{rounded distance -> fitted difficulty} for this course's cells.
+
+    Through course_canonical by NAME: same-named venues merge here exactly
+    as they do everywhere else on this page (the 21-Woodward-Parks caveat);
+    where they collide, the cell with the most results speaks."""
+    try:
+        cur.execute("""
+            SELECT DISTINCT ON (cd.distance_m)
+                   cd.distance_m, cd.difficulty
+            FROM   course_canonical cc
+            JOIN   course_difficulties cd ON cd.canonical_id = cc.canonical_id
+            WHERE  cc.course_name = %(course)s
+              AND  cd.difficulty IS NOT NULL
+            ORDER  BY cd.distance_m, cd.n_results DESC NULLS LAST
+        """, {"course": course_name})
+        return {int(r["distance_m"]): float(r["difficulty"])
+                for r in cur.fetchall()}
+    except Exception:                    # noqa: BLE001
+        cur.connection.rollback()
+        return {}
+
+
 @app.route("/course/<course_name>")
 def course(course_name):
     with getConn() as conn:
@@ -2150,17 +2265,68 @@ def course(course_name):
             bests     = get_course_bests(cur, course_name)
             meets     = get_course_meets(cur, course_name)
             distances = get_course_distances(cur, course_name)
-            # HS-equivalent view: distance varies per row on a course board.
+
+            # ★ THE SELECTED DISTANCE. Chips come from the distances the
+            #   course actually raced, most-run first; the primary (most
+            #   common) is the default, and a ?dist that matches nothing
+            #   falls back to it rather than 404ing a shared link.
+            dist_values = [int(round(float(d["distance"])))
+                           for d in distances]
+            picked = request.args.get("dist", type=int)
+            sel_dist = picked if picked in dist_values else (
+                dist_values[0] if dist_values else None)
+
+            records = (get_course_records(cur, course_name, sel_dist)
+                       if sel_dist else [])
+            team_records = (get_course_team_records(cur, course_name,
+                                                    sel_dist)
+                            if sel_dist else [])
+
+            # Per-distance difficulty; the engine's cells are keyed on the
+            # distance rounded to the nearest 100m, so look up the same way.
+            cells = get_course_cell_difficulties(cur, course_name)
+            def _cell(d):
+                return (cells.get(int(round(d / 100.0) * 100))
+                        if d else None)
+            sel_difficulty = _cell(sel_dist)
+            # The header difficulty is the MOST-RUN distance's, said so.
+            primary_dist = dist_values[0] if dist_values else None
+            primary_difficulty = _cell(primary_dist)
+
+            # HS-equivalent view: per-row distance on the rating board,
+            # one distance for the records table.
             has_hs_view = stampRowsHs(cur, "XC", bests,
                                       distance_key="distance")
+            has_hs_view = stampRowsHs(cur, "XC", records,
+                                      distance=sel_dist) or has_hs_view
 
     for row in bests:
         row["display_time"] = format_time(row["time_seconds"])
+    for row in records:
+        row["display_time"] = format_time(row["time_seconds"])
+    for row in team_records:
+        row["display_total"] = format_time(row["total"])
+        row["display_avg"] = format_time(float(row["total"]) / 5.0)
+
+    boys  = {"records": [r for r in records if r["gender"] == "M"],
+             "teams": [t for t in team_records if t["gender"] == "M"]}
+    girls = {"records": [r for r in records if r["gender"] == "F"],
+             "teams": [t for t in team_records if t["gender"] == "F"]}
+    sel_n = next((d["n_results"] for d in distances
+                  if int(round(float(d["distance"]))) == sel_dist), None)
 
     return render_template("course.html",
                            has_hs_view=has_hs_view,
                            course_name=course_name,
                            header=header,
+                           dist_values=dist_values,
+                           sel_dist=sel_dist,
+                           sel_n=sel_n,
+                           sel_difficulty=sel_difficulty,
+                           primary_dist=primary_dist,
+                           primary_difficulty=primary_difficulty,
+                           boys=boys,
+                           girls=girls,
                            bests=bests,
                            distances=distances,
                            meets=meets)

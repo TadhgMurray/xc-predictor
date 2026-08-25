@@ -2923,6 +2923,20 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .season td.flags { white-space: normal; }
 .season td.flags .flag { margin-bottom: 2px; }
 
+/* ---- course records ----------------------------------------------------- *
+ * Boys and Girls side by side; the section heading carries the selected
+ * distance, its own fitted difficulty and its result count as a quiet
+ * suffix, so the numbers above the table say which course-at-a-distance
+ * they describe. */
+.rec-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+.rec-gender { margin: 0 0 0.35rem; font-size: 0.8rem;
+              text-transform: uppercase; letter-spacing: 0.05em;
+              color: #6b7280; }
+.dist-note { font-size: 0.8rem; color: #6b7280; font-weight: 500;
+             margin-left: 0.6rem; letter-spacing: 0; }
+.dist-note-quiet { color: #9ca3af; }
+@media (max-width: 900px) { .rec-pair { grid-template-columns: 1fr; } }
+
 /* ---- the season rank line (athlete header) ----------------------------- *
  * One quiet text line under the stat strip: scopes broadest to narrowest,
  * live ranks in full ink and bold, WIP scopes muted until their data
