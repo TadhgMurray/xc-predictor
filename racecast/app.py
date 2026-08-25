@@ -2014,12 +2014,41 @@ def _field_gender(results):
     return max(set(genders), key=genders.count)
 
 
+def _reconstruct_heats(rows):
+    """Heats recovered from PLACE RESETS when the heat column is empty.
+
+    The feed enters results heat by heat and its place column restarts
+    at 1 in each -- so in result-id order, a place lower than the one
+    before it marks a heat boundary (ties, place equal, stay together).
+    Gated hard: every reconstructed heat must open at place 1 and there
+    must be as many heats as place-1 rows, else the reconstruction is
+    rejected and the round renders as one block. An event with GLOBAL
+    places trips the gate naturally (one place-1 row, one run).
+    Returns [rows_per_heat] in entry order, or None."""
+    if len(rows) < 3 or any(r.get("place") is None for r in rows):
+        return None
+    ordered = sorted(rows, key=lambda r: r["result_id"])
+    heats = [[]]
+    for r in ordered:
+        if heats[-1] and r["place"] < heats[-1][-1]["place"]:
+            heats.append([])
+        heats[-1].append(r)
+    if len(heats) < 2:
+        return None
+    if any(h[0]["place"] != 1 for h in heats):
+        return None
+    if sum(1 for r in rows if r["place"] == 1) != len(heats):
+        return None
+    return heats
+
+
 def _tf_heat_sections(results, is_field):
     """[{label, rows}] for a race page: rows grouped into the rounds and
-    heats the event was actually run in, finals first. One undivided
-    field renders as a single unlabeled section -- the page looks
-    exactly as before. Each row gets sec_place, its place within its
-    own heat, because a heat's finish order restarts at 1."""
+    heats the event was actually run in, finals first. Heats come from
+    the heat column where the feed filled it, else from place resets
+    (see _reconstruct_heats). One undivided field renders as a single
+    unlabeled section -- the page looks exactly as before. Each row gets
+    sec_place, its place within its own heat."""
     from tf_points import rowRound, parseMark
 
     def heat_no(r):
@@ -2029,14 +2058,8 @@ def _tf_heat_sections(results, is_field):
             return 0
 
     rounds = {rowRound(r) for r in results}
-    heats = {heat_no(r) for r in results}
     multi_round = len(rounds) > 1
-    multi_heat = len(heats) > 1
-
-    def group_key(r):
-        rd = rowRound(r)
-        return ({"final": 0, None: 1, "prelim": 2}.get(rd, 2),
-                heat_no(r) or 999)
+    word = "Flight" if is_field else "Heat"
 
     def sort_in(r):
         if is_field:
@@ -2046,22 +2069,48 @@ def _tf_heat_sections(results, is_field):
         t = r.get("time_seconds")
         return (t is None, t or 0)
 
-    groups = {}
+    # round groups first, finals on top
+    by_round = {}
     for r in results:
-        groups.setdefault(group_key(r), []).append(r)
+        rd = rowRound(r)
+        by_round.setdefault({"final": 0, None: 1,
+                             "prelim": 2}.get(rd, 2), []).append(r)
 
     sections = []
-    for gk in sorted(groups):
-        rows = sorted(groups[gk], key=sort_in)
+    for rk in sorted(by_round):
+        r_rows = by_round[rk]
+        r_label = ({0: "Finals", 2: "Prelims"}.get(rk, "")
+                   if multi_round else "")
+
+        # explicit heat numbers when the feed filled them...
+        heats = {}
+        for r in r_rows:
+            heats.setdefault(heat_no(r), []).append(r)
+        if len(heats) > 1:
+            for hn in sorted(heats):
+                rows = sorted(heats[hn], key=sort_in)
+                for i, r in enumerate(rows):
+                    r["sec_place"] = i + 1
+                hl = f"{word} {hn}" if hn else ""
+                label = " · ".join(x for x in (r_label, hl) if x)
+                sections.append({"label": label, "rows": rows})
+            continue
+
+        # ...else recover them from place resets
+        rebuilt = _reconstruct_heats(r_rows)
+        if rebuilt:
+            for i, rows in enumerate(rebuilt):
+                for r in rows:
+                    r["sec_place"] = r["place"]   # official within-heat place
+                hl = f"{word} {i + 1}"
+                label = " · ".join(x for x in (r_label, hl) if x)
+                sections.append({"label": label, "rows": rows})
+            continue
+
+        rows = sorted(r_rows, key=sort_in)
         for i, r in enumerate(rows):
             r["sec_place"] = i + 1
-        label = ""
-        if multi_round:
-            label = {0: "Finals", 2: "Prelims"}.get(gk[0], "")
-        if multi_heat and gk[1] != 999:
-            word = "Flight" if is_field else "Heat"
-            label = f"{label} · {word} {gk[1]}" if label else f"{word} {gk[1]}"
-        sections.append({"label": label, "rows": rows})
+        sections.append({"label": r_label, "rows": rows})
     return sections
 
 
