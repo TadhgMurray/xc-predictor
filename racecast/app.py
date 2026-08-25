@@ -434,15 +434,24 @@ def buildRankLine(cur, person_id, season):
         return args
 
     def boardRank(with_state):
+        which = "state" if with_state else "nation"
         f, err = parseFilters(MultiDict(boardArgs(with_state)))
         if err:
+            print(f"rank_line: {which} filters refused ({err})", flush=True)
             return None
         try:
             # Default sort, so rankOf takes its count-based shortcut -- an
             # indexed count, not a board sort, safe on the page-load path.
-            return rankOf(cur, f, person_id)
-        except Exception:                # noqa: BLE001 -- a line, not a page
+            # ⚠ ON A PLAIN CURSOR. rankings' rank machinery indexes tuple
+            #   rows (row[0]); the athlete route's RealDict cursor made
+            #   every lookup KeyError and the line silently dropped its
+            #   board scopes.
+            with cur.connection.cursor() as plain:
+                return rankOf(plain, f, person_id)
+        except Exception as exc:         # noqa: BLE001 -- a line, not a page
             cur.connection.rollback()
+            print(f"rank_line: {which} rank failed "
+                  f"({type(exc).__name__}: {exc})", flush=True)
             return None
 
     def boardHref(with_state):
