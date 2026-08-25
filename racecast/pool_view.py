@@ -378,7 +378,15 @@ def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
                 SELECT result_id, pool FROM ranking_results
                 WHERE  sport = %s AND result_id = ANY(%s)
             """, (sport, ids))
-            pools = {rid: p for rid, p in cur.fetchall() if p}
+            # ! EVERY CALLER PASSES A RealDictCursor. Unpacking a dict row
+            #   as `rid, p` silently binds its KEYS ("result_id", "pool"),
+            #   which mapped every row to the literal pool "pool", failed
+            #   every factor, and hid the toggle on all result pages.
+            for rec in cur.fetchall():
+                rid, p = ((rec["result_id"], rec["pool"])
+                          if isinstance(rec, dict) else (rec[0], rec[1]))
+                if p:
+                    pools[rid] = p
         except Exception:                # noqa: BLE001 -- UndefinedTable et al.
             cur.connection.rollback()
             pools = {}
