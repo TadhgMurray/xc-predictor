@@ -345,6 +345,100 @@ def meets_page():
                            min_results=RECENT_MIN_RESULTS)
 
 
+# ===================================================================== #
+#  HEAD TO HEAD
+# ===================================================================== #
+
+@app.route("/compare")
+def compare_page():
+    """Two athletes, one page: the record where they actually raced each
+    other, seasons side by side, PRs, and both careers on one chart.
+    Query builders live in compare.py; this route only assembles and
+    stamps the HS-equivalent values."""
+    from compare import (athleteCard, meetings, record, seasonRows,
+                         bestRows, bestRatingRows, ratingSeries)
+
+    a = request.args.get("a", type=int)
+    b = request.args.get("b", type=int)
+    ctx = {"card_a": None, "card_b": None, "same": bool(a and a == b)}
+
+    # Arriving from an athlete page carries one id: prefill that picker so
+    # the reader only has to find the rival.
+    if bool(a) != bool(b):
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if a:
+                    ctx["card_a"] = athleteCard(cur, a)
+                else:
+                    ctx["card_b"] = athleteCard(cur, b)
+
+    if a and b and a != b:
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                card_a = athleteCard(cur, a)
+                card_b = athleteCard(cur, b)
+                if card_a and card_b:
+                    # ! DEFAULT BEFORE STAMPING. rv() treats a missing key as
+                    #   "has an alternate" (Undefined is not None in Jinja),
+                    #   so a card that never gets stamped must carry an
+                    #   explicit None.
+                    card_a["season_rating_hs"] = None
+                    card_b["season_rating_hs"] = None
+                    mtgs = meetings(cur, a, b)
+                    wa, wb, ties, avg = record(mtgs)
+                    seasons = seasonRows(card_a, card_b)
+                    bests = bestRows(cur, a, b)
+                    brate = bestRatingRows(cur, a, b)
+                    series_a = ratingSeries(cur, a)
+                    series_b = ratingSeries(cur, b)
+
+                    # HS-equivalent view: chart points get exact per-race
+                    # factors; season means and the best-rated race carry
+                    # their pool and take the board treatment.
+                    has_hs = False
+                    for sport in ("XC", "TF"):
+                        for series in (series_a, series_b):
+                            sub = [p for p in series if p["sport"] == sport]
+                            has_hs = stampRowsHs(cur, sport, sub,
+                                                 distance_key="distance") \
+                                     or has_hs
+                    cells = [c[s] for c in seasons for s in ("a", "b")
+                             if c.get(s)]
+                    has_hs = stampBoardRows(cells, rating_keys=("rating",)) \
+                             or has_hs
+                    head_cells = []
+                    for card in (card_a, card_b):
+                        if card["season_rating"] is not None:
+                            cell = {"rating": card["season_rating"],
+                                    "pool": card["pool"],
+                                    "sport": card["season_sport"]}
+                            head_cells.append((card, cell))
+                    has_hs = stampBoardRows([c for _p, c in head_cells],
+                                            rating_keys=("rating",)) or has_hs
+                    for card, cell in head_cells:
+                        card["season_rating_hs"] = cell.get("hs_rating")
+                    has_hs = stampBoardRows(
+                        list(brate.values()),
+                        rating_keys=("speed_rating",)) or has_hs
+
+                    ctx.update(card_a=card_a, card_b=card_b,
+                               meetings=mtgs, wins_a=wa, wins_b=wb,
+                               ties=ties, avg_margin=avg,
+                               seasons=seasons, bests=bests, brate=brate,
+                               series_a=series_a, series_b=series_b,
+                               has_hs_view=has_hs)
+
+    # Short names for the margin and edge labels: the last word carries
+    # the identity in almost every real name.
+    for key in ("card_a", "card_b"):
+        card = ctx.get(key)
+        if card:
+            card["short"] = card["name"].split()[-1]
+    return render_template("compare.html", **ctx)
+
+
 # ★ TRAINING PACES FROM THE ATHLETE'S OWN RACES, which is the only place this
 #   works. Critical speed is the slope of a distance-time line, so it needs two
 #   races at different distances -- and the conversions page takes ONE result,

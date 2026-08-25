@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% set meta_title = ("Head to head: " ~ card_a.name ~ " vs " ~ card_b.name)
+       if card_a and card_b else "Head to head" %}
+    {% set meta_description = "Two athletes side by side: their record in "
+       "the races they both ran, season ratings, best performances, and "
+       "both careers on one chart." %}
+    {% include "_meta.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+{# One-line row cap + reveal, same mechanics as the course page. #}
+{% macro more_row(rows, span) -%}
+    {%- if rows|length > 15 %}
+    <tr class="more-row"><td colspan="{{ span }}">
+        <button type="button" class="more-btn">
+            Show 20 more <span class="more-left">({{ rows|length - 15 }} left)</span>
+        </button>
+    </td></tr>
+    {% endif -%}
+{%- endmacro %}
+{% macro hid(i) %}{{ ' class="row-hidden"'|safe if i >= 15 }}{% endmacro %}
+
+<main class="page-wide">
+    <h1>Head to head</h1>
+
+    <div class="h2h-pick">
+        <div class="field">
+            <label for="h2h-a">Athlete A</label>
+            <div class="h2h-search">
+                <input id="h2h-a" autocomplete="off"
+                       data-pid="{{ card_a.person_id if card_a else '' }}"
+                       value="{{ card_a.name if card_a else '' }}">
+                <div class="h2h-sug hidden" id="h2h-a-sug"></div>
+            </div>
+        </div>
+        <div class="field">
+            <label for="h2h-b">Athlete B</label>
+            <div class="h2h-search">
+                <input id="h2h-b" autocomplete="off"
+                       data-pid="{{ card_b.person_id if card_b else '' }}"
+                       value="{{ card_b.name if card_b else '' }}">
+                <div class="h2h-sug hidden" id="h2h-b-sug"></div>
+            </div>
+        </div>
+        <button type="button" class="more-btn h2h-go" id="h2h-go">Compare</button>
+    </div>
+
+{% if same %}
+    <p class="meta">That is the same athlete twice. Pick two different people.</p>
+{% endif %}
+
+{% if card_a and card_b %}
+    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+
+    <div class="h2h-head">
+        <div class="h2h-card a">
+            <div class="nm"><a href="/athlete/{{ card_a.person_id }}">{{ card_a.name }}</a></div>
+            <div class="sub">
+                {% if card_a.school %}<a href="/school/{{ card_a.school|urlencode }}">{{ card_a.school }}</a>{% else %}—{% endif %}
+                {% if card_a.grade %} · Grade {{ card_a.grade }}{% endif %}
+            </div>
+            {% if card_a.season_rating is not none %}
+            <div class="big"><span class="lbl">{{ card_a.season_label }} rating</span>
+                {{ rv(card_a.season_rating, card_a.season_rating_hs) }}</div>
+            <div class="sub">{{ card_a.season_races }} races
+                {%- if card_a.best_rating %} · best race {{ "%.1f"|format(card_a.best_rating) }}{% endif %}</div>
+            {% endif %}
+        </div>
+        <div class="h2h-rec">
+            <div class="wl"><span class="a">{{ wins_a }}</span> &ndash; <span class="b">{{ wins_b }}</span></div>
+            <div class="note">{{ meetings|length }} meeting{{ "" if meetings|length == 1 else "s" }}
+                {%- if ties %} · {{ ties }} dead heat{{ "" if ties == 1 else "s" }}{% endif %}</div>
+            {% if meetings %}
+            {% if avg_margin > 0.05 %}<div class="note">avg margin {{ "%.1f"|format(avg_margin) }}s to {{ card_a.short }}</div>
+            {% elif avg_margin < -0.05 %}<div class="note">avg margin {{ "%.1f"|format(-avg_margin) }}s to {{ card_b.short }}</div>
+            {% endif %}
+            <div class="note">last met {{ meetings[0].date }}</div>
+            {% endif %}
+        </div>
+        <div class="h2h-card b">
+            <div class="nm"><a href="/athlete/{{ card_b.person_id }}">{{ card_b.name }}</a></div>
+            <div class="sub">
+                {% if card_b.school %}<a href="/school/{{ card_b.school|urlencode }}">{{ card_b.school }}</a>{% else %}—{% endif %}
+                {% if card_b.grade %} · Grade {{ card_b.grade }}{% endif %}
+            </div>
+            {% if card_b.season_rating is not none %}
+            <div class="big"><span class="lbl">{{ card_b.season_label }} rating</span>
+                {{ rv(card_b.season_rating, card_b.season_rating_hs) }}</div>
+            <div class="sub">{{ card_b.season_races }} races
+                {%- if card_b.best_rating %} · best race {{ "%.1f"|format(card_b.best_rating) }}{% endif %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <h2>Meetings <span class="dist-note">same race, head to head</span></h2>
+    {% if meetings %}
+    <table class="staged h2h-meet" data-step="20">
+        <thead><tr><th>Date</th><th>Meet</th><th>Distance</th>
+            <th><span class="h2h-dot dot-a"></span>{{ card_a.short }}</th>
+            <th><span class="h2h-dot dot-b"></span>{{ card_b.short }}</th>
+            <th>Margin</th></tr></thead>
+        <tbody>
+            {% for m in meetings %}
+            <tr{{ hid(loop.index0) }}>
+                <td class="no-break">{{ m.date }}</td>
+                <td><a href="/race/{{ 'xc' if m.sport == 'XC' else 'tf' }}/{{ m.meet_id }}/{{ m.div_id }}" title="{{ m.meet_name }}">{{ m.meet_name }}</a></td>
+                <td>{{ m.distance }}m{{ " · TF" if m.sport == "TF" }}</td>
+                <td{{ ' class="win"'|safe if m.winner == "a" }}>{{ m.time_a }}</td>
+                <td{{ ' class="win"'|safe if m.winner == "b" }}>{{ m.time_b }}</td>
+                {% if m.winner == "a" %}<td class="margin-a">+{{ "%.1f"|format(m.margin) }}s {{ card_a.short }}</td>
+                {% elif m.winner == "b" %}<td class="margin-b">+{{ "%.1f"|format(m.margin) }}s {{ card_b.short }}</td>
+                {% else %}<td>dead heat</td>{% endif %}
+            </tr>
+            {% endfor %}
+            {{ more_row(meetings, 6) }}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="meta">These two have never been in the same race.</p>
+    {% endif %}
+
+    {% if seasons %}
+    <h2>Season by season</h2>
+    <table class="h2h-seasons">
+        <thead><tr><th>Season</th>
+            <th><span class="h2h-dot dot-a"></span>{{ card_a.short }}</th>
+            <th><span class="h2h-dot dot-b"></span>{{ card_b.short }}</th>
+            <th>Edge</th></tr></thead>
+        <tbody>
+            {% for s in seasons %}
+            <tr>
+                <td>{{ s.year }} {{ s.sport }}</td>
+                <td{{ ' class="win"'|safe if s.edge == "a" }}>
+                    {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %}—{% endif %}</td>
+                <td{{ ' class="win"'|safe if s.edge == "b" }}>
+                    {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){% else %}—{% endif %}</td>
+                {% if s.edge == "a" %}<td class="margin-a">{{ card_a.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
+                {% elif s.edge == "b" %}<td class="margin-b">{{ card_b.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
+                {% else %}<td>—</td>{% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if bests or brate %}
+    <h2>Best performances</h2>
+    <table class="h2h-bests">
+        <thead><tr><th>Event</th>
+            <th><span class="h2h-dot dot-a"></span>{{ card_a.short }}</th>
+            <th><span class="h2h-dot dot-b"></span>{{ card_b.short }}</th></tr></thead>
+        <tbody>
+            {% for r in bests %}
+            <tr>
+                <td>{{ r.label }}</td>
+                <td{{ ' class="win"'|safe if r.edge == "a" }}>{{ r.a or "—" }}</td>
+                <td{{ ' class="win"'|safe if r.edge == "b" }}>{{ r.b or "—" }}</td>
+            </tr>
+            {% endfor %}
+            {% if brate %}
+            <tr>
+                <td>Best speed rating</td>
+                {% set ba = brate.get("a") %}{% set bb = brate.get("b") %}
+                <td{{ ' class="win"'|safe if ba and bb and ba.speed_rating > bb.speed_rating }}>
+                    {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{% else %}—{% endif %}</td>
+                <td{{ ' class="win"'|safe if ba and bb and bb.speed_rating > ba.speed_rating }}>
+                    {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if series_a or series_b %}
+    <h2>Ratings over time</h2>
+    <div class="h2h-chart">
+        <div class="h2h-legend"><span class="h2h-dot dot-a"></span>{{ card_a.short }}
+            &nbsp;&nbsp;<span class="h2h-dot dot-b"></span>{{ card_b.short }}</div>
+        <svg id="h2h-svg" viewBox="0 0 720 200" width="100%" height="200"
+             preserveAspectRatio="none"></svg>
+    </div>
+    <script type="application/json" id="h2h-data">
+        {{ {"a": series_a, "b": series_b}|tojson }}
+    </script>
+    {% endif %}
+
+{% elif not same %}
+    <p class="meta">Pick two athletes and compare: their record in the races
+       they both ran, season ratings side by side, best performances, and
+       both careers on one chart.</p>
+{% endif %}
+
+</main>
+<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ url_for('static', filename='staged.js') }}"></script>
+<script src="{{ url_for('static', filename='compare.js') }}"></script>
+</body>
+</html>
