@@ -313,7 +313,28 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         SELECT r.result_id, r.person_id, r.normalized_time,
                r.grade, r.source, r.school, r.date,
                'XC' AS sport,
-               CASE WHEN lower(btrim(COALESCE(m.course_name, mt.venue_name)))
+               -- ★ A CORRECTED DIVISION VOTES ON NO COURSE (owner's rule,
+               --   2026-08-27: a corrected distance CANNOT change the
+               --   difficulty). A division whose distance was overridden was
+               --   mislabelled once already; letting its renormalized times
+               --   vote difficulty lets one correction move every OTHER race
+               --   at the venue -- the second-order effect measured at
+               --   Cabell Midland (+0.155, ~19 fake points on a clean race).
+               --   Venue NULL = the row still informs its athlete's ability
+               --   and votes on nothing, the loader's own venueless rule.
+               --   Agreement entries (override == stored) keep their venue.
+               CASE WHEN dov.distance IS NOT NULL
+                     AND COALESCE(m.distance,
+                                  (mt.division_distances -> r.div_id::text
+                                     ->> 'distance')::real,
+                                  mt.distance) IS NOT NULL
+                     AND abs(dov.distance
+                             - COALESCE(m.distance,
+                                        (mt.division_distances -> r.div_id::text
+                                           ->> 'distance')::real,
+                                        mt.distance)) >= 1
+                    THEN NULL
+                    WHEN lower(btrim(COALESCE(m.course_name, mt.venue_name)))
                          IN ({_placeholderSql()})
                     THEN NULL
                     WHEN COALESCE(m.course_name, mt.venue_name) IS NULL
@@ -359,6 +380,10 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                 = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
               AND round(cc.gps_long::numeric, 5)
                 = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
+        -- (meet_id, div_id) is dist_override's whole key -- no source column,
+        -- no fan-out. Same join every other reader uses.
+        LEFT JOIN dist_override dov
+               ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
         LEFT JOIN LATERAL (
                SELECT a.gender FROM athletes a
                WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)

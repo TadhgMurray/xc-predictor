@@ -143,6 +143,17 @@ def block(names, keep=None):
         "# Undo with: python scripts/wipe_overrides.py --undo",
     ]
     lines += [f"{n}.clear()" for n in names]
+    # ★ THE RESTORED-FROM-HISTORY LAYER SURVIVES EVERY WIPE. The owner's
+    #   2026-08-27 restoration (scripts/restore_old_overrides.py) lives in
+    #   _DISTANCE_RESTORED_* dicts precisely so a reset cannot lose it
+    #   again; this re-seeds them below the clear, fill-only, and the pass
+    #   block appended after still wins any key it proposes.
+    lines += [
+        "for _rk, _rv in globals().get(\"_DISTANCE_RESTORED_XC\", {}).items():",
+        "    _DISTANCE_OVERRIDES_XC.setdefault(_rk, _rv)",
+        "for _rk, _rv in globals().get(\"_DISTANCE_RESTORED_TF\", {}).items():",
+        "    _DISTANCE_OVERRIDES_TF.setdefault(_rk, _rv)",
+    ]
     body = "\n".join(lines) + "\n"
     return body + restate(keep or {}) + "# === END WIPE ===\n"
 

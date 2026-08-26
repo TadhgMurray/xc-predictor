@@ -34,6 +34,7 @@ import pstats                         # --profile: format the report
 import sys
 import time
 import math                           # ln() for the distance-aware pace floor
+import re                             # the wheelchair/seated title pattern
 import heapq                          # fixed-size top/bottom-N heaps (sanity panel)
 import random                         # bounded reservoir sample (approx percentiles)
 import argparse
@@ -84,6 +85,20 @@ class _SkipReason:
                                          #  anet twin is normalized; this one is
                                          #  dropped so the physical result is
                                          #  counted ONCE.
+    WHEELCHAIR      = "wheelchair"       # wheelchair/seated division or event. A
+                                         # racing chair covers distance far faster
+                                         #  than a runner, so a normalized "time"
+                                         #  is meaningless on the running scale
+                                         #  and the athlete minted ~147 in a youth
+                                         #  pool. Nuked HERE (owner's call,
+                                         #  2026-08-27) so no normalized_time
+                                         #  exists for the engine, the fill, the
+                                         #  boards or the model to price. The
+                                         #  engine's own SQL filter on
+                                         #  meets.division covered anet XC only;
+                                         #  fill_ratings then priced what the
+                                         #  engine refused, which is how chairs
+                                         #  reached the boards.
     NO_DISTANCE     = "no_distance"      # no event distance resolvable for the row
     INSANE_DISTANCE = "insane_distance"  # distance outside [MIN,MAX] — corrupt
                                          # (e.g. the *1609.344 double-conversion
@@ -118,6 +133,7 @@ _SKIP_ORDER = [
     _SkipReason.MANUAL_DROP,
     _SkipReason.DEDUP_TWIN,
     _SkipReason.SENTINEL_TIME,
+    _SkipReason.WHEELCHAIR,
     _SkipReason.NO_DISTANCE,
     _SkipReason.INSANE_DISTANCE,
     _SkipReason.INSANE_PACE,
@@ -804,6 +820,21 @@ def _loadMeetDistances(cur):
     return {d: dist for d, dist in cur}
 
 
+# ★ ONE PATTERN FOR EVERY WHEELCHAIR SEAM. The engine's _xcQuery carries the
+#   same trio in SQL ('wheelchair|seated|ambulator') for anet XC; this is the
+#   Python spelling for the two seams SQL could not reach (tfrrs blob titles,
+#   TF event names) plus the anet set below. Change one, change both.
+_WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
+
+
+# anet XC divisions whose TITLE says wheelchair/seated -- resolved once to a
+# set so the hot loop pays a membership test, exactly like _RESULT_DROP.
+def _loadWheelchairDivs(cur):
+    cur.execute("SELECT div_id FROM meets "
+                "WHERE division ~* 'wheelchair|seated|ambulator'")
+    return frozenset(d for (d,) in cur)
+
+
 # (meet_id, div_id) -> {"distance": float, "div_name": str} for TFRRS XC,
 # from the jsonb blob meets_tfrrs.division_distances.
 #
@@ -1450,7 +1481,8 @@ def _callLibrary(cfg, row, distance, gender, track_type, track_length, race_date
 #
 def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                tfrrs_distances,
-               matched_twins, canon_distances, wx_idx):
+               matched_twins, canon_distances, wx_idx,
+               wheel_divs=frozenset()):
     # PER-SPORT selection happens HERE, once, in the closure's constant pool --
     # the per-row checks below stay bare set/dict membership tests, so the
     # sport fix costs the hot loop nothing.
@@ -1476,6 +1508,22 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         # 1) SENTINEL TIME — cheapest reject; never call anything on a non-time.
         if _isSentinelTime(row[_TIME]):
             return row[_ID], None, _SkipReason.SENTINEL_TIME, None
+
+        # 1b) WHEELCHAIR/SEATED -- not a running race, so no normalized_time
+        #     at all (see _SkipReason.WHEELCHAIR). Three seams, one pattern:
+        #     TF reads the event name, tfrrs XC the blob's division title,
+        #     anet XC the preloaded division set.
+        if cfg.distance_src == "event_short":
+            ev = row[_EVENT_SHORT]
+            if ev and _WHEELCHAIR_RX.search(ev):
+                return row[_ID], None, _SkipReason.WHEELCHAIR, None
+        elif row[_SRC] == "tfrrs":
+            info = tfrrs_distances.get((row[_MEET], row[_DIV]))
+            if info and info.get("div_name") \
+                    and _WHEELCHAIR_RX.search(info["div_name"]):
+                return row[_ID], None, _SkipReason.WHEELCHAIR, None
+        elif row[_DIV] in wheel_divs:
+            return row[_ID], None, _SkipReason.WHEELCHAIR, None
 
         # 2) NO DISTANCE — can't put a time on the 5K scale without a distance.
         #    tfrrs XC falls back to the division_distances blob (keyed by
@@ -2409,6 +2457,10 @@ def _buildLookups(read_conn, cfg):
         # borrowed). Both use the dedup layer's person_id + canon_meet_id.
         matched_twins = _loadMatchedTwinKeys(cur, cfg.table)
         canon_distances = _loadCanonTfrrsDistances(cur, cfg.table, tfrrs_distances)
+        # anet XC wheelchair/seated divisions by title; TF and tfrrs XC are
+        # matched per row (event name / blob title) and need no preload.
+        wheel_divs = (_loadWheelchairDivs(cur)
+                      if cfg.sport == "XC" else frozenset())
         # WEATHER index: heavy (aggregates weather_grid), built ONLY when the
         # per-sport artifact exists; otherwise weather stays a clean no-op.
         wx_idx = WeatherIndex.build(cur, cfg.sport) if _weatherEnabled(cfg.sport) else None
@@ -2424,9 +2476,12 @@ def _buildLookups(read_conn, cfg):
               f"ACTIVE for {cfg.sport}")
     else:
         print(f"  weather: no artifact for {cfg.sport} -- no-op")
+    if wheel_divs:
+        print(f"  wheelchair: {len(wheel_divs):,} anet XC divisions nuked "
+              "by title")
     return (geom_idx, genders, season_levels, meet_distances,
             tfrrs_distances,
-            matched_twins, canon_distances, wx_idx)
+            matched_twins, canon_distances, wx_idx, wheel_divs)
 
 
 # _accumulate
@@ -2501,10 +2556,11 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
     _assertDistinctBackends(read_conn, write_conn)
 
     (geom_idx, genders, season_levels, meet_distances, tfrrs_distances,
-     matched_twins, canon_distances, wx_idx) = _buildLookups(read_conn, cfg)
+     matched_twins, canon_distances, wx_idx,
+     wheel_divs) = _buildLookups(read_conn, cfg)
     row_fn = _makeRowFn(cfg, geom_idx, genders, season_levels,
                         meet_distances, tfrrs_distances, matched_twins,
-                        canon_distances, wx_idx)
+                        canon_distances, wx_idx, wheel_divs=wheel_divs)
 
     # WHERE the buffer lands. On the copy path it is the scratch table; on the
     # update path it is the results table itself. One variable, decided once.

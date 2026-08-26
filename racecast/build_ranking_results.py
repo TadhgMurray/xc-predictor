@@ -25,6 +25,7 @@ COST
 """
 
 import io
+import re
 import sys
 import time
 import argparse
@@ -429,6 +430,15 @@ _SQL = {
                --   in meets_tfrrs and was missing entirely. See
                --   prepareXcTfrrsDistTemp.
                COALESCE(dov.distance, m.distance, xtd.distance) AS distance,
+               -- ! FOR THE CORRECTED-DIVISION GATE below. An override that
+               --   DISAGREES with the scrape marks a division whose recorded
+               --   distance was wrong; owner's rule (2026-08-27): such a
+               --   division is displayed, never ranked. Agreement entries
+               --   and sole-source fills are not corrections and pass.
+               (dov.distance IS NOT NULL
+                AND COALESCE(m.distance, xtd.distance) IS NOT NULL
+                AND abs(dov.distance - COALESCE(m.distance, xtd.distance))
+                    >= 1)                             AS dist_corrected,
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -667,9 +677,15 @@ def raceCeiling(pool):
 
 # What the two rails did, per sport, so a build that stops gating says so.
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0, "outside_band": 0},
+                "outside_pool": 0, "outside_band": 0,
+                "corrected": 0, "wheelchair": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0, "outside_band": 0}}
+                "outside_pool": 0, "outside_band": 0,
+                "corrected": 0, "wheelchair": 0}}
+
+# Same trio as the engine loader and the backfill nuke -- one pattern,
+# three spellings, all named "wheelchair" so a grep finds the family.
+_WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
 
 
 def isRankablePool(pool):
@@ -786,6 +802,32 @@ def prepareRow(row, sport):
         if not lo <= float(nt) <= hi:
             _GATE[sport]["outside_band"] += 1
             return None
+
+    # ★ A CORRECTED DIVISION IS DISPLAYED, NEVER RANKED (owner's rule,
+    #   2026-08-27). Its recorded distance was wrong once already; a board
+    #   place built on a corrected number is a claim the correction
+    #   machinery should not get to mint. The race page keeps the rating
+    #   and says "corrected"; the boards decline the row. XC carries the
+    #   verdict from the query (dist_corrected); TF compares its override
+    #   against the event name's own distance here.
+    if sport == "XC":
+        if getattr(row, "dist_corrected", False):
+            _GATE[sport]["corrected"] += 1
+            return None
+    else:
+        _ev = getattr(row, "event_short", None)
+        # Wheelchair belt for the boards: the backfill nuke removes these
+        # rows at the NEXT full backfill; this keeps chairs off boards
+        # rebuilt from the current disk in the meantime.
+        if _ev and _WHEELCHAIR_RX.search(_ev):
+            _GATE[sport]["wheelchair"] += 1
+            return None
+        if row.distance is not None:
+            _ev_d = _tfDistance(_ev)
+            if _ev_d is not None and abs(float(row.distance)
+                                         - float(_ev_d)) >= 1:
+                _GATE[sport]["corrected"] += 1
+                return None
 
     # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
     #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
@@ -1014,6 +1056,14 @@ def buildSport(conn, sport, since, stats):
               f"outside the engine's pace band -- filled ratings the solve "
               f"refused to stand behind (visible on the race page, never "
               f"on a board)")
+    if g["corrected"]:
+        print(f"    corrected distance: {g['corrected']:,} races in "
+              f"overridden divisions -- displayed, never ranked "
+              f"(owner's rule)")
+    if g["wheelchair"]:
+        print(f"    wheelchair: {g['wheelchair']:,} races dropped by event "
+              f"title (belt; the backfill nuke removes them at the next "
+              f"full run)")
     print(f"    {sport}: {seen:,} read, {stats[f'{sport}_written']:,} written, "
           f"{stats[f'{sport}_dropped']:,} dropped")
 

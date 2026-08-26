@@ -122,6 +122,28 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   page's indexed query. Read its SQL against the page route's, EXPLAIN
   both, fix the shape. Owner hit this twice mid-pipeline; --resume and
   the 1200 cap are the workaround, not the fix.
+- **#18 Wheelchair/seated rows minted runner ratings.** SHIPPED
+  2026-08-27, lands with the next full backfill: the engine's old SQL
+  filter covered anet XC only, and fill_ratings then priced what the
+  engine refused. Now nuked at the backfill (three seams, one pattern:
+  TF event names, tfrrs blob titles, anet division titles -- census
+  reason "wheelchair"), with a board-gate belt for TF until the rebuild.
+- **#19 A corrected distance poisoned its venue's difficulty.** Measured
+  at Cabell Midland: +0.155, ~19 fake points on a clean 3000. Policy
+  shipped 2026-08-27: a corrected division votes on NO course (engine
+  loader nulls its venue) and is DISPLAYED, NEVER RANKED
+  (build_ranking_results gate, both sports). Verify any suspect venue
+  with scripts/explain_course_cell.py.
+- **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
+  every race in Men's events, appeared on a female board. Boards take
+  gender from `athletes` rows (first school alphabetically wins a
+  disagreement), so one bad F row flips a person. Needs a detector:
+  athletes whose event/division titles are overwhelmingly one gender but
+  whose athletes.gender says the other -> report + gender_fix.
+- **Triage ids from the owner, 2026-08-27, unexplained "fake races":**
+  26063/2 (weird high difficulty), 25531/1, 267944/1064960,
+  262560/1041852. Run explain_course_cell / find_dropped_divisions
+  --meet on each with the DB in reach.
 - **Model iteration.** Confidence intervals, retrain cadence after
   correction waves, batch-size/LR tuning against the measured epoch time.
 
