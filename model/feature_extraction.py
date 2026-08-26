@@ -649,6 +649,19 @@ def streamTFResults(conn):
                        (TF_DEFAULT_HOUR, MIN_NORMALIZED_TIME), "tf_stream")
 
 
+def personResultsSql(sport):
+    """The SAME corpus row SQL, filtered to a handful of athletes -- the
+    inference path (racecast/predict.py) must build its sequences from
+    byte-for-byte the rows training saw, or the model reads a different
+    world at predict time than it learned from. Params: the stream's own
+    (hour, min_normalized_time) plus the id array."""
+    base = _XC_SQL if sport == "XC" else _TF_SQL
+    return base.replace(
+        _ORDER_BY,
+        "        AND COALESCE(r.person_id, r.athlete_id) = ANY(%s)\n"
+        + _ORDER_BY)
+
+
 # ------------------------------------------------------------------ #
 # The streaming merge: two identity-sorted streams -> one athlete at a time
 # ------------------------------------------------------------------ #

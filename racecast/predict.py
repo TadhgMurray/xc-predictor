@@ -36,8 +36,10 @@ import os
 
 from meet_compile import isTeam
 
-# Where train.py writes its checkpoint. Absent until the model is trained.
-MODEL_PATH = os.environ.get("RACECAST_MODEL", "model/checkpoint.pt")
+# Where train.py writes its artifacts. model.pt is a bare state_dict;
+# target_stats/encoders/venue_vocab ride beside it in model/data.
+MODEL_PATH = os.environ.get("RACECAST_MODEL", "model/data/model.pt")
+MODEL_DATA = os.path.dirname(MODEL_PATH) or "model/data"
 
 # Scoring: the top N runners per team count, and the next M displace.
 # Standard cross country is 5 scorers, 2 displacers.
@@ -45,34 +47,76 @@ TEAM_SCORERS = 5
 TEAM_DISPLACERS = 2
 
 _model = None
+_artifacts = None
 _load_error = None
 
 
+def _fx():
+    """feature_extraction, imported lazily -- it parses corrections.py at
+    import, which is seconds the pages that never predict should not pay."""
+    import sys
+    sys.path.insert(0, "model")
+    import feature_extraction
+    return feature_extraction
+
+
 def _loadModel():
-    """The trained network, or None.
+    """The trained network plus everything inference needs, or None.
 
     Cached after the first attempt -- including the failure, so a missing file
     is not re-stat-ed on every request.
+
+    ★ FOUR ARTIFACTS OR NOTHING. The weights alone cannot predict: the
+      target stats un-z-score the output, the encoders make grade/school
+      match training's integers, and the venue vocabulary maps a course
+      to the embedding row it trained into. A partial set predicts
+      garbage that looks like a number, so a missing piece is a refusal.
+
+    ★ n_venues FROM THE CHECKPOINT ITSELF (the saved embedding's row
+      count) -- any other number either crashes the load or silently
+      reindexes every venue.
     """
-    global _model, _load_error
+    global _model, _artifacts, _load_error
     if _model is not None or _load_error is not None:
         return _model
 
-    if not os.path.exists(MODEL_PATH):
-        _load_error = (f"The prediction model has not been trained yet "
-                       f"(no checkpoint at {MODEL_PATH}).")
-        return None
+    stats_path = os.path.join(MODEL_DATA, "target_stats.pkl")
+    enc_path = os.path.join(MODEL_DATA, "encoders.pkl")
+    vocab_path = os.path.join(MODEL_DATA, "venue_vocab.pkl")
+    for path, what in ((MODEL_PATH, "checkpoint"),
+                       (stats_path, "target stats"),
+                       (enc_path, "encoders"),
+                       (vocab_path, "venue vocabulary")):
+        if not os.path.exists(path):
+            _load_error = (f"The prediction model has not been trained yet "
+                           f"(no {what} at {path}).")
+            return None
 
     try:
+        import pickle
         import torch
         import sys
         sys.path.insert(0, "model")
         from transformer import XCPredictor
 
         blob = torch.load(MODEL_PATH, map_location="cpu")
-        model = XCPredictor(n_venues=blob.get("n_venues", 1))
-        model.load_state_dict(blob["state_dict"])
+        # train.py saves a bare state_dict; an older wrapper dict still loads
+        state = blob["state_dict"] if isinstance(blob, dict) and \
+            "state_dict" in blob else blob
+        n_venues = state["venue_embedding.weight"].shape[0]
+        model = XCPredictor(n_venues=n_venues)
+        model.load_state_dict(state)
         model.eval()
+
+        with open(stats_path, "rb") as f:
+            stats = pickle.load(f)
+        with open(enc_path, "rb") as f:
+            encoders = pickle.load(f)
+        with open(vocab_path, "rb") as f:
+            vocab = pickle.load(f)["vocab"]
+
+        _artifacts = {"mean": float(stats["mean"]), "std": float(stats["std"]),
+                      "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
         # ⚠ A BROKEN CHECKPOINT MUST NOT 500 THE PAGE. It reads as
@@ -113,7 +157,12 @@ def predictIndividual(cur, person_id, target):
         return {"available": False,
                 "reason": "No rated races found for this athlete."}
 
-    return _predictTimes(cur, [person_id], target)[0]
+    out = _predictTimes(cur, [person_id], target)[0]
+    if out.get("seconds") is None:
+        return {"available": False,
+                "reason": out.get("reason",
+                                  "No rated races found for this athlete.")}
+    return {"available": True, **out}
 
 
 # ------------------------------------------------------------------ #
@@ -162,7 +211,11 @@ def _score(field, preds):
       team depth. Dropping them would make a deep team and a top-heavy one
       score identically.
     """
-    order = sorted(zip(field, preds), key=lambda t: t[1]["seconds"])
+    # An athlete the corpus cannot predict (no rated rows) is left out of
+    # the predicted race rather than handed an invented time.
+    order = sorted(((f, p) for f, p in zip(field, preds)
+                    if p.get("seconds") is not None),
+                   key=lambda t: t[1]["seconds"])
 
     # ★ PASS 1 -- WHO CAN ACTUALLY SCORE. Only runners from a complete team
     #   occupy places in the scoring order, so the set has to be known before
@@ -233,16 +286,238 @@ def _score(field, preds):
 # ------------------------------------------------------------------ #
 
 def _predictTimes(cur, person_ids, target):
-    """[{seconds, low, high, ...}] -- one per person_id, in order.
+    """[{seconds, ...}] -- one per person_id, in order.
 
-    ★ THIS IS THE SWAP POINT. When the model is trained, this builds the same
-      feature vectors feature_extraction.py writes -- sequence, mask, context,
-      venue index, is_forecast=1 -- runs the network, and un-z-scores the
-      output. Everything else in this file already works against its return
-      shape.
+    ★ THE SWAP POINT, NOW SWAPPED. Builds the same feature vectors
+      feature_extraction.py writes -- the corpus row SQL filtered to
+      these athletes, the same base-vector/context builders, the venue
+      vocabulary index, is_forecast=1 -- runs the network, un-z-scores.
+      `seconds` is a NORMALIZED time (the flat-5K-equivalent the model
+      trains on), which is also what makes fields on different courses
+      comparable; the page formats it as a time.
+
+    An athlete the corpus has no rated rows for gets {"seconds": None,
+    "reason": ...} -- no fallback number, the module's standing rule.
     """
-    raise NotImplementedError(
-        "predict._predictTimes: wire this to the trained model")
+    import torch
+
+    fx = _fx()
+    _loadModel()
+    model, art = _model, _artifacts
+    encoders, vocab = art["encoders"], art["vocab"]
+
+    by_person = _historyRows(cur, person_ids)
+    spec = _targetSpec(cur, target)
+
+    entries = [None] * len(person_ids)
+    batch = []                        # (slot, sequence, context, venue)
+    for slot, pid in enumerate(person_ids):
+        hist = by_person.get(pid)
+        if not hist:
+            entries[slot] = {"seconds": None,
+                             "reason": "No rated races in the corpus."}
+            continue
+        target_row = _targetRow(spec, hist[-1])
+        seq, ctx = _forecastExample(fx, hist, target_row, encoders)
+        batch.append((slot, seq, ctx, fx.venueIndex(target_row, vocab)))
+        # rerun: the athlete's ACTUAL normalized time at the original
+        # running, for the "vs what happened" readout
+        if target.get("mode") == "rerun":
+            orig = [r for r in hist if r.get("meet_id") == spec.get("meet_id")]
+            if orig:
+                entries[slot] = {"actual": float(orig[-1]["normalized_time"])}
+
+    if batch:
+        longest = max(len(s) for _i, s, _c, _v in batch)
+        width = fx.SEQUENCE_FEATURES
+        seqs = torch.zeros(len(batch), longest, width)
+        masks = torch.zeros(len(batch), longest, dtype=torch.bool)
+        ctxs = torch.zeros(len(batch), len(batch[0][2]))
+        vens = torch.zeros(len(batch), dtype=torch.long)
+        for i, (_slot, s, c, v) in enumerate(batch):
+            seqs[i, :len(s)] = torch.tensor(s, dtype=torch.float32)
+            masks[i, :len(s)] = True
+            ctxs[i] = torch.tensor(c, dtype=torch.float32)
+            vens[i] = v
+        with torch.no_grad():
+            z = model(seqs, masks, ctxs, vens)
+        for (slot, s, _c, _v), zi in zip(batch, z):
+            entry = entries[slot] or {}
+            entry.update({
+                "seconds": round(float(zi) * art["std"] + art["mean"], 1),
+                "n_races": len(s)})
+            entries[slot] = entry
+    return entries
+
+
+def _forecastExample(fx, hist, target_row, encoders):
+    """(sequence, context) for one athlete's hypothetical next race --
+    the exact vectors buildAthleteExamples would emit for this target,
+    built directly so a 60-race athlete costs one example, not sixty.
+    is_forecast is always True: see predictIndividual's header."""
+    base = fx._baseVectors(hist, encoders)
+    tdate = fx._parseDate(target_row["date"])
+    seq = []
+    for j, r in enumerate(hist):
+        v = base[j].copy()
+        v[2] = float((tdate - fx._parseDate(r["date"])).days)
+        seq.append(v)
+    seq = seq[-fx.MAX_SEQ_LEN:]
+    prior = hist[-fx.MAX_SEQ_LEN:]
+    ctx = fx._buildContextVector(target_row, seq, prior, encoders,
+                                 is_forecast=True)
+    return seq, ctx
+
+
+def _historyRows(cur, person_ids):
+    """{person_id: [corpus rows, chronological]} for a whole field in
+    two queries -- feature_extraction's own row SQL with an id filter,
+    both sports merged by date, exactly the shape training grouped."""
+    fx = _fx()
+    ids = sorted({int(p) for p in person_ids if p})
+    if not ids:
+        return {}
+    out = {}
+    for sport, hour in (("XC", fx.XC_DEFAULT_HOUR), ("TF", fx.TF_DEFAULT_HOUR)):
+        cur.execute(fx.personResultsSql(sport),
+                    (hour, fx.MIN_NORMALIZED_TIME, ids))
+        for r in cur.fetchall():
+            row = dict(r)
+            pid = row.get("person_id") or row.get("athlete_id")
+            out.setdefault(pid, []).append(row)
+    for rows in out.values():
+        rows.sort(key=lambda r: r["date"])
+    return out
+
+
+def _targetSpec(cur, target):
+    """The target race's own features, resolved once for the whole
+    field: date, distance, venue identity, difficulty, geography.
+    Weather stays None -- the future's weather is not known, and the
+    training rows carried missing weather often enough that zeros are a
+    shape the model has seen.
+    """
+    mode = target.get("mode")
+    sport = (target.get("sport") or "XC").upper()
+    spec = {"sport": sport, "is_xc": sport == "XC",
+            "meet_id": target.get("meet_id")}
+
+    if mode in ("meet", "rerun"):
+        meet_id = int(target["meet_id"])
+        div = target.get("div_id")
+        div = int(div) if div and str(div).isdigit() else None
+        if sport == "XC":
+            cur.execute("""
+                SELECT m.course_name, m.distance AS distance_meters,
+                       m.gps_lat, m.gps_long, m.altitude_meters,
+                       cc.canonical_id,
+                       COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+                       (SELECT min(r.date) FROM results r
+                        WHERE r.meet_id = m.meet_id) AS date
+                FROM meets m
+                LEFT JOIN course_canonical cc
+                       ON cc.course_name = m.course_name
+                      AND round(cc.gps_lat::numeric, 5)
+                          = round(m.gps_lat::numeric, 5)
+                      AND round(cc.gps_long::numeric, 5)
+                          = round(m.gps_long::numeric, 5)
+                LEFT JOIN course_difficulties cd
+                       ON cd.canonical_id = cc.canonical_id
+                      AND cd.distance_m =
+                          (round(m.distance / 100.0) * 100)::int
+                WHERE m.meet_id = %(meet)s
+                  AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                LIMIT 1
+            """, {"meet": meet_id, "div": div})
+        else:
+            cur.execute("""
+                SELECT NULL AS course_name, m.distance_meters,
+                       NULL AS gps_lat, NULL AS gps_long,
+                       NULL AS altitude_meters,
+                       NULL AS canonical_id, 0.0 AS course_difficulty,
+                       m.location_id, m.is_indoor,
+                       (SELECT min(r.date) FROM results_tf r
+                        WHERE r.meet_id = m.meet_id) AS date
+                FROM meets_tf m
+                WHERE m.meet_id = %(meet)s
+                  AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                  AND m.distance_meters IS NOT NULL
+                LIMIT 1
+            """, {"meet": meet_id, "div": div})
+        row = cur.fetchone()
+        if row:
+            spec.update(dict(row))
+        if mode == "rerun" and spec.get("date"):
+            # same course, same day of year, the target season's year
+            year = target.get("year")
+            if year and str(year).isdigit():
+                spec["date"] = f"{int(year)}{str(spec['date'])[4:]}"
+    else:                                          # manual
+        spec["date"] = target["date"]
+        d = target.get("distance")
+        spec["distance_meters"] = (float(d) if d else
+                                   5000.0 if sport == "XC" else 1600.0)
+        course = (target.get("course") or "").strip()
+        if course and sport == "XC":
+            cur.execute("""
+                SELECT m.course_name, m.gps_lat, m.gps_long,
+                       m.altitude_meters, cc.canonical_id,
+                       COALESCE(cd.difficulty, 0.0) AS course_difficulty
+                FROM meets m
+                LEFT JOIN course_canonical cc
+                       ON cc.course_name = m.course_name
+                      AND round(cc.gps_lat::numeric, 5)
+                          = round(m.gps_lat::numeric, 5)
+                      AND round(cc.gps_long::numeric, 5)
+                          = round(m.gps_long::numeric, 5)
+                LEFT JOIN course_difficulties cd
+                       ON cd.canonical_id = cc.canonical_id
+                      AND cd.distance_m =
+                          (round(%(dist)s / 100.0) * 100)::int
+                WHERE m.course_name = %(course)s
+                ORDER BY (cc.canonical_id IS NULL), (cd.difficulty IS NULL)
+                LIMIT 1
+            """, {"course": course, "dist": spec["distance_meters"]})
+            row = cur.fetchone()
+            if row:
+                spec.update({k: v for k, v in dict(row).items()
+                             if v is not None})
+    return spec
+
+
+# every corpus column the vector builders touch; the athlete's own
+# facts come from their latest real row, the race's from the spec
+_RACE_FIELDS = ("course_name", "distance_meters", "gps_lat", "gps_long",
+                "altitude_meters", "canonical_id", "course_difficulty",
+                "location_id", "is_indoor", "meet_id", "date")
+_WEATHER_FIELDS = ("temp_c", "dew_point_c", "humidity", "apparent_temp_c",
+                   "precipitation_mm", "pressure_hpa", "cloud_cover",
+                   "wind_speed_km", "wind_dir")
+
+
+def _targetRow(spec, last_row):
+    """The hypothetical race as a corpus-shaped row: the athlete as they
+    last raced, at the target's venue on the target's date."""
+    row = dict(last_row)
+    row["is_xc"] = spec["is_xc"]
+    row["is_indoor"] = None if spec["is_xc"] else bool(spec.get("is_indoor"))
+    for f in _RACE_FIELDS:
+        row[f] = spec.get(f)
+    # the context vector floats these two unconditionally; the corpus
+    # COALESCEs them, so an unknown course means 0.0 there too
+    row["course_difficulty"] = float(spec.get("course_difficulty") or 0.0)
+    row["distance_meters"] = float(spec.get("distance_meters") or
+                                   (5000.0 if spec["is_xc"] else 1600.0))
+    for f in _WEATHER_FIELDS:
+        row[f] = None
+    row["place"] = None            # leakage guard: unknown by definition
+    row["normalized_time"] = 0.0   # dummy; nothing reads a target's target
+    row["time_seconds"] = None
+    if spec["is_xc"]:
+        row["location_id"] = None
+    else:
+        row["canonical_id"] = None
+    return row
 
 
 def _athleteHistory(cur, person_id):
