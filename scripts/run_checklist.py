@@ -127,6 +127,39 @@ def checkCorrections(cur):
         _mark("SKIP", "corrected never ranked", "ranking_results absent")
 
 
+# ---- 2b. the RESTORED old corrections actually reach the DB ----------- #
+#   restore_old_overrides seeds _DISTANCE_RESTORED_XC fill-only; a wipe or
+#   precedence bug could silently shed them. Every restored key must be in
+#   dist_override unless a later drop or hand override superseded it.
+def checkRestored(cur):
+    import corrections
+    restored = getattr(corrections, "_DISTANCE_RESTORED_XC", {})
+    if not restored:
+        _mark("SKIP", "restored corrections",
+              "no _DISTANCE_RESTORED_XC block in corrections.py")
+        return
+    dropped = corrections._DISTANCE_DROP_BY_SPORT.get("XC", set())
+    keys = [k for k in restored if k not in dropped]
+    if not keys:
+        _mark("SKIP", "restored corrections",
+              "every restored key superseded by a drop")
+        return
+    cur.execute("CREATE TEMP TABLE _chk_restored "
+                "(meet_id bigint, div_id bigint)")
+    args = ",".join(cur.mogrify("(%s,%s)", k).decode() for k in keys)
+    cur.execute("INSERT INTO _chk_restored VALUES " + args)
+    cur.execute("""
+        SELECT count(*) FROM _chk_restored c
+        WHERE NOT EXISTS (SELECT 1 FROM dist_override d
+                          WHERE d.meet_id = c.meet_id
+                            AND d.div_id = c.div_id)""")
+    missing = cur.fetchone()[0]
+    _mark("FAIL" if missing else "PASS", "restored corrections",
+          f"{missing:,} of {len(keys):,} restored overrides MISSING from "
+          "dist_override" if missing else
+          f"all {len(keys):,} restored overrides present in dist_override")
+
+
 # ---- 3. canaries ------------------------------------------------------ #
 def _career(cur, pid):
     rows = []
@@ -189,6 +222,7 @@ def main():
     checkDrops()
     with getConn() as conn, conn.cursor() as cur:
         checkCorrections(cur)
+        checkRestored(cur)
         checkCanaries(cur)
         checkWheelchair(cur)
     fails = [r for r in _results if r[0] == "FAIL"]
