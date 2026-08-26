@@ -263,9 +263,19 @@ def _stageFlagged(cur, rows):
 
 # _countEchoes : echoes per flagged row, in one query. `self` fetches the
 #   flagged row's own date (the worksheet does not carry it); `r` is every
-#   other rated race by the same athlete; the echo conditions live in the
-#   JOIN's ON clause. INNER join drops zero-echo rows -- the caller defaults
-#   missing result_ids to 0 with dict.get.
+#   other NORMALIZED race by the same athlete; the echo conditions live in
+#   the JOIN's ON clause. INNER join drops zero-echo rows -- the caller
+#   defaults missing result_ids to 0 with dict.get.
+#
+# ! ALIBIS ARE NORMALIZED ROWS, NOT RATED ROWS (2026-08-27 lesson, person
+#   23947175). This join used to demand `r.speed_rating > 0`, so only RATED
+#   races could vouch for a flagged one. Dropped rows never get a
+#   normalized_time, so each triage round's drops erased the next round's
+#   alibis -- an improving athlete whose only rated races were his slow
+#   freshman self had EVERY later season condemned as a one-off. nt > 0 is
+#   the widest honest bar: the row survived every backfill sanity gate.
+#   Rows already in _RESULT_DROP still have nt NULL and still cannot alibi;
+#   scripts/amnesty_result_drops.py is the drop-blind retrial for those.
 def _countEchoes(cur, table, window):
     t = _ident(table)
     cur.execute(f"""
@@ -278,7 +288,7 @@ def _countEchoes(cur, table, window):
          AND r.meet_id   <> f.meet
          AND r.date IS NOT NULL AND self.date IS NOT NULL
          AND r.date <> self.date
-         AND r.speed_rating > 0
+         AND r.normalized_time > 0
          AND r.normalized_time BETWEEN f.nt * (1 - %s) AND f.nt * (1 + %s)
         GROUP BY f.result_id
     """, (window, window))

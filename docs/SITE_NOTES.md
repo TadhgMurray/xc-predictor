@@ -167,6 +167,34 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   total the whole gate aborts and says so. 133 venues flagged on the
   2026-08-27 scan; the display/label-correction channel remains open as
   a future refinement.
+- **#23 SOLVED (cause) 2026-08-27: the mass-drop spiral -- why honest
+  athletes go permanently unrated.** The 2026-07-13..17 triage/diag
+  passes put ~1.4M auto-generated result_ids into `_RESULT_DROP` (a
+  container documented as "hand-confirmed cooked individual rows"). The
+  condemnation rule ("swings too far from the athlete's own norm") fired
+  at swings as small as -13% -- ordinary improvement -- and the
+  exoneration rule only accepted RATED races as alibis
+  (`r.speed_rating > 0` in the echo join). Dropped rows never get a
+  normalized_time, so each round's drops erased the next round's alibis:
+  the block sizes show the spiral (280k, then 92k/35k/15k/8k/4.6k/2.7k/
+  1.7k convergence rounds on 07-16, then 521k on 07-17). Signature case:
+  person 23947175 (Tufts), rated 2019-2020, every 2021+ row manual_drop
+  (anet) or dedup_twin of a dropped anet row (tfrrs). Found via
+  `why_unrated.py --replay`, which runs the backfill's real row function
+  and prints the exact census bucket per row.
+  FIX SHIPPED 2026-08-27, two parts. (1) `amnesty_result_drops.py`:
+  rebuilds the backfill row function with the drop list DISABLED,
+  recomputes would-be normalized times for every affected career, and
+  re-runs the echo test DROP-BLIND -- a convicted row with >= 1
+  same-person alibi within 5% (different meet, different day) is
+  pardoned via an appended `difference_update` block in corrections.py;
+  true one-off islands stay dropped, as do rows skipped for any other
+  reason and rows with no identity. Report-first; `--write` to apply;
+  `--canary <person_id>` prints a full retrial. (2) triage_suspects'
+  echo join now accepts any NORMALIZED row as an alibi (nt > 0, not
+  speed_rating > 0), so a future triage run cannot rebuild the spiral.
+  Doctrine: _RESULT_DROP is for individually-verified rows; any future
+  mass generation must pass the drop-blind echo test before applying.
 - **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
   every race in Men's events, appeared on a female board. Boards take
   gender from `athletes` rows (first school alphabetically wins a
