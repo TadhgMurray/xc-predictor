@@ -388,9 +388,15 @@ def _historyRows(cur, person_ids):
     ids = sorted({int(p) for p in person_ids if p})
     if not ids:
         return {}
+    # a database with no weather table serves NULL weather, same as an
+    # unfetched meet -- the guard training itself runs under
+    cur.execute("SELECT to_regclass('public.weather')")
+    row = cur.fetchone()
+    has_weather = (row[0] if not isinstance(row, dict)
+                   else row.get("to_regclass")) is not None
     out = {}
     for sport, hour in (("XC", fx.XC_DEFAULT_HOUR), ("TF", fx.TF_DEFAULT_HOUR)):
-        cur.execute(fx.personResultsSql(sport),
+        cur.execute(fx.personResultsSql(sport, has_weather=has_weather),
                     (hour, fx.MIN_NORMALIZED_TIME, ids))
         for r in cur.fetchall():
             row = dict(r)

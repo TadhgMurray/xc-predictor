@@ -297,7 +297,7 @@ _XC_SQL = f"""
                 w.precipitation_mm,
                 w.pressure_hpa,
                 w.cloud_cover,
-                w.wind_speed_km,
+                w.wind_speed_kmh AS wind_speed_km,
                 w.wind_dir,
                        
                 -- Altitude of the meet location.
@@ -390,6 +390,7 @@ _XC_SQL = f"""
         -- meet_id matches, hour matches our XC default.
         LEFT JOIN weather w
             ON  m.meet_id = w.meet_id
+            AND w.source  = m.source
             AND w.hour    = %s
                        
         -- ★ THE FIVE FACTS resolvePool NEEDS. Byte-for-byte the joins in
@@ -469,9 +470,45 @@ def _streamRows(conn, sql, params, name):
     cursor.close()
 
 
+# A weather-shaped nothing, for a database where the table was never
+# created: the LEFT JOIN produces the same NULLs an unfetched meet does,
+# so the run survives instead of dying six hours in with UndefinedTable
+# (2026-08-25: it did, and the night's summary lied about it).
+_WEATHER_STUB = """(SELECT NULL::bigint AS meet_id, NULL::text AS source,
+            NULL::int AS hour, NULL::real AS temp_c,
+            NULL::real AS dew_point_c, NULL::real AS humidity,
+            NULL::real AS apparent_temp_c, NULL::real AS precipitation_mm,
+            NULL::real AS pressure_hpa, NULL::int AS cloud_cover,
+            NULL::real AS wind_speed_kmh, NULL::real AS wind_dir
+        WHERE FALSE)"""
+
+
+def weatherlessSql(sql):
+    """The same query against a database with no weather table."""
+    return sql.replace("LEFT JOIN weather w",
+                       f"LEFT JOIN {_WEATHER_STUB} w")
+
+
+def hasWeatherTable(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.weather')")
+    row = cur.fetchone()
+    v = row[0] if not isinstance(row, dict) else row.get("to_regclass")
+    return v is not None
+
+
+def _corpusSql(conn, sql):
+    if hasWeatherTable(conn):
+        return sql
+    print("WARNING: no weather table in this database -- weather "
+          "features will be all zero. backfill/weather_backfill.py "
+          "creates and fills it.")
+    return weatherlessSql(sql)
+
+
 def streamXCResults(conn):
     """All rated XC rows, identity-ordered, streamed."""
-    return _streamRows(conn, _XC_SQL,
+    return _streamRows(conn, _corpusSql(conn, _XC_SQL),
                        (XC_DEFAULT_HOUR, MIN_NORMALIZED_TIME), "xc_stream")
 
 
@@ -520,7 +557,7 @@ _TF_SQL = f"""
                 w.precipitation_mm,
                 w.pressure_hpa,
                 w.cloud_cover,
-                w.wind_speed_km,
+                w.wind_speed_kmh AS wind_speed_km,
                 w.wind_dir,
  
                 -- Altitude
@@ -587,6 +624,7 @@ _TF_SQL = f"""
  
             LEFT JOIN weather w
                 ON  m.meet_id = w.meet_id
+            AND w.source  = m.source
                 AND w.hour    = %s
  
             -- ★ THE FIVE FACTS resolvePool NEEDS. Byte-for-byte the joins in
@@ -645,17 +683,19 @@ _TF_SQL = f"""
 
 def streamTFResults(conn):
     """All rated TF distance rows, identity-ordered, streamed."""
-    return _streamRows(conn, _TF_SQL,
+    return _streamRows(conn, _corpusSql(conn, _TF_SQL),
                        (TF_DEFAULT_HOUR, MIN_NORMALIZED_TIME), "tf_stream")
 
 
-def personResultsSql(sport):
+def personResultsSql(sport, has_weather=True):
     """The SAME corpus row SQL, filtered to a handful of athletes -- the
     inference path (racecast/predict.py) must build its sequences from
     byte-for-byte the rows training saw, or the model reads a different
     world at predict time than it learned from. Params: the stream's own
     (hour, min_normalized_time) plus the id array."""
     base = _XC_SQL if sport == "XC" else _TF_SQL
+    if not has_weather:
+        base = weatherlessSql(base)
     return base.replace(
         _ORDER_BY,
         "        AND COALESCE(r.person_id, r.athlete_id) = ANY(%s)\n"
