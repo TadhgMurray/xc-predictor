@@ -79,7 +79,8 @@ def main():
         courses = [r["course_name"] for r in cur.fetchall()]
         if args.limit:
             courses = courses[:args.limit]
-        print(f"building boards for {len(courses):,} courses")
+        print(f"building boards for {len(courses):,} courses",
+              flush=True)
 
         built = skipped = failed = 0
         batch = []
@@ -97,7 +98,8 @@ def main():
             except Exception as exc:      # noqa: BLE001 -- one course, not the run
                 conn.rollback()
                 failed += 1
-                print(f"  ! {cname}: {type(exc).__name__}: {exc}")
+                print(f"  ! {cname}: {type(exc).__name__}: {exc}",
+                      flush=True)
                 continue
             if len(batch) >= 200:
                 psycopg2.extras.execute_values(cur, """
