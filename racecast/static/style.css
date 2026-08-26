@@ -3507,3 +3507,7 @@ button.yb-more { cursor: pointer; font: inherit; color: var(--accent, #14477d); 
     margin: 0 0 1rem;
 }
 .about-chip code { font-family: ui-monospace, Consolas, monospace; font-size: .82em; }
+
+/* Arrived-from-a-profile row highlight: the meet/race page scrolls to the
+   clicked result (?r=) and tints its row so the eye lands with it. */
+tr.row-hi > td { background: #fdf3cd; }

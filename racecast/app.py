@@ -2738,6 +2738,22 @@ def meet_tf(meet_id):
             # no linkable events at all -> list the results themselves
             loose = ([] if events else
                      get_tf_loose_results(cur, meet_id, source=src))
+            # ?r= (the profile row the reader clicked) also picks the
+            # SCROLL TARGET: their exact row on a loose page, their
+            # event's row on an events page.
+            anchor = None
+            rid = request.args.get("r")
+            if rid and rid.isdigit():
+                if loose:
+                    anchor = f"r{int(rid)}"
+                else:
+                    cur.execute("SELECT div_id, event_id FROM results_tf "
+                                "WHERE result_id = %s AND meet_id = %s "
+                                "LIMIT 1", (int(rid), meet_id))
+                    prow = cur.fetchone()
+                    if prow and prow["div_id"] is not None \
+                            and prow["event_id"] is not None:
+                        anchor = f"ev-{prow['div_id']}-{prow['event_id']}"
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, scoring_rows)
@@ -2799,7 +2815,7 @@ def meet_tf(meet_id):
             e["dup_ix"] = seen[k]
 
     return render_template("meet_tf.html", header=header, events=events,
-                           loose=loose,
+                           loose=loose, anchor=anchor,
                            meet_date=meet_date, scored=scored,
                            alt_idx=alt_idx, other_sources=other_sources)
 

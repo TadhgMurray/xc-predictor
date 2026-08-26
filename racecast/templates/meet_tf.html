@@ -53,7 +53,7 @@
         </thead>
         <tbody>
             {% for e in events %}
-            <tr>
+            <tr id="ev-{{ e.div_id }}-{{ e.event_id }}">
                 <td>
                     <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}">
                         {{ e.display_name }}{% if e.dup_ix %} <span class="dist-note">· {{ e.dup_ix }}</span>{% endif %}
@@ -79,7 +79,7 @@
         </thead>
         <tbody>
             {% for r in ev.rows %}
-            <tr>
+            <tr id="r{{ r.result_id }}">
                 <td>{{ r.row_place }}</td>
                 <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or "—" }}</a>{% else %}{{ r.athlete_name or "—" }}{% endif %}</td>
                 <td>{{ r.grade or "—" }}</td>
@@ -94,6 +94,16 @@
     {% else %}
     <h2>Events</h2>
     <p class="meta">No results are attached to this meet.</p>
+    {% endif %}
+
+    {% if anchor %}
+    {# scroll to the clicked result's row (or its event's row) and tint it;
+       `anchor` is server-built from integer ids only #}
+    <script>(function () {
+        var el = document.getElementById("{{ anchor }}");
+        if (el) { el.classList.add("row-hi");
+                  el.scrollIntoView({ block: "center" }); }
+    })();</script>
     {% endif %}
 
 </main>

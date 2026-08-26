@@ -62,7 +62,7 @@
             <tr class="heat-row"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>
             {% endif %}
             {% for row in sec.rows %}
-            <tr>
+            <tr id="r{{ row.result_id }}">
                 <td>{{ row.sec_place }}</td>
                 <td>
                     {% if row.person_id %}
@@ -86,6 +86,15 @@
     <div class="page-report">Something wrong on this page?
         <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 
+    {% set rid = request.args.get('r') %}
+    {% if rid and rid.isdigit() %}
+    {# arrived from a profile: scroll to and tint the clicked result #}
+    <script>(function () {
+        var el = document.getElementById("r{{ rid }}");
+        if (el) { el.classList.add("row-hi");
+                  el.scrollIntoView({ block: "center" }); }
+    })();</script>
+    {% endif %}
 </main>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>

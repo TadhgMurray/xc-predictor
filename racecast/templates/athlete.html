@@ -188,7 +188,7 @@
                            /race/tf/None/... 404s for those). A nameless
                            race still links, as "Race results". #}
                         {% if race.sport == 'XC' and race.meet_id and race.div_id is not none %}
-                            <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
+                            <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}?r={{ race.result_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
                             {# ?r= pins the page to THIS row's source: the
