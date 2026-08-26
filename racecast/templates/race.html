@@ -172,10 +172,11 @@
         <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 
     {% set rid = request.args.get('r') %}
-    {% if rid and rid.isdigit() %}
+    {# lstrip('-'): tfrrs result ids are NEGATIVE bignums #}
+    {% if rid and rid.lstrip('-').isdigit() %}
     {# arrived from a profile: scroll to and tint the clicked result #}
     <script>(function () {
-        var el = document.getElementById("r{{ rid }}");
+        var el = document.getElementById("r{{ rid|int }}");
         if (el) { el.classList.add("row-hi");
                   el.scrollIntoView({ block: "center" }); }
     })();</script>

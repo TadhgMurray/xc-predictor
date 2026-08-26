@@ -1976,6 +1976,18 @@ def pick_source(sources, alt):
     return sources[idx]["source"], idx, others
 
 
+def _ridArg(args):
+    """?r= (the clicked result id) as an int, or None.
+
+    ! NOT isdigit(). tfrrs result ids are NEGATIVE bignums, and isdigit
+      rejects the minus sign -- which silently disabled the source pin
+      and the scroll-to-row for exactly the rows they were built for."""
+    rid = args.get("r")
+    if rid and re.fullmatch(r"-?\d+", rid):
+        return int(rid)
+    return None
+
+
 def _tf_meet_sources(cur, meet_id, args):
     """(src, alt_idx, others) for a TF meet page, three rules deep:
     meets_tf first; results_tf when the meet has no meets_tf coverage at
@@ -1987,11 +1999,11 @@ def _tf_meet_sources(cur, meet_id, args):
     if not sources:
         sources = meet_sources(cur, "results_tf", meet_id)
     alt = args.get("alt")
-    rid = args.get("r")
-    if rid and rid.isdigit():
+    rid = _ridArg(args)
+    if rid is not None:
         cur.execute("SELECT source FROM results_tf "
                     "WHERE result_id = %s AND meet_id = %s LIMIT 1",
-                    (int(rid), meet_id))
+                    (rid, meet_id))
         pin = cur.fetchone()
         if pin and pin["source"]:
             for i, s in enumerate(sources):
@@ -2331,11 +2343,11 @@ def race_tf(meet_id, event_id, div_id):
             #   source of the triple decides, as the points cache always
             #   did.
             race_src = None
-            rid = request.args.get("r")
-            if rid and rid.isdigit():
+            rid = _ridArg(request.args)
+            if rid is not None:
                 cur.execute("SELECT source FROM results_tf "
                             "WHERE result_id = %s AND meet_id = %s LIMIT 1",
-                            (int(rid), meet_id))
+                            (rid, meet_id))
                 pin = cur.fetchone()
                 race_src = pin["source"] if pin else None
             if race_src is None:
@@ -2742,14 +2754,14 @@ def meet_tf(meet_id):
             # SCROLL TARGET: their exact row on a loose page, their
             # event's row on an events page.
             anchor = None
-            rid = request.args.get("r")
-            if rid and rid.isdigit():
+            rid = _ridArg(request.args)
+            if rid is not None:
                 if loose:
-                    anchor = f"r{int(rid)}"
+                    anchor = f"r{rid}"
                 else:
                     cur.execute("SELECT div_id, event_id FROM results_tf "
                                 "WHERE result_id = %s AND meet_id = %s "
-                                "LIMIT 1", (int(rid), meet_id))
+                                "LIMIT 1", (rid, meet_id))
                     prow = cur.fetchone()
                     if prow and prow["div_id"] is not None \
                             and prow["event_id"] is not None:
