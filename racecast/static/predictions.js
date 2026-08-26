@@ -251,7 +251,8 @@ async function chooseMeet(data) {
        ${state.meet.date ? `ran ${esc(state.meet.date)} \u00b7 ` : ""}
        ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
      </div>
-     <button class="mc-change" data-clear="meet">Change</button>`;
+     <button class="mc-change" data-clear="meet">Change</button>
+     <div class="mc-races" id="mc-races"></div>`;
   $("meet-chosen").classList.remove("hidden");
   $("meet-search").classList.add("hidden");
 
@@ -260,7 +261,55 @@ async function chooseMeet(data) {
   showStep("who", true);
   $("actions").classList.remove("hidden");
 
+  loadRaces();
   await loadField();
+}
+
+
+/*
+ * ★ A MEET IS SEVERAL RACES, AND MIXING THEM IS A RACE NOBODY RAN. An XC
+ *   championship holds Boys D1 next to Girls D5 under one meet_id;
+ *   predicting "the meet" merges fields that never raced each other. The
+ *   picker defaults to one race when there is only one, and otherwise asks
+ *   -- "All races" stays available because compiled predictions are still a
+ *   thing people want.
+ */
+async function loadRaces() {
+  const box = document.getElementById("mc-races");
+  if (!box) return;
+  box.innerHTML = "";
+  try {
+    const q = new URLSearchParams({ meet_id: state.meet.id,
+                                    sport: state.meet.sport });
+    const res = await fetch("/api/predict/races?" + q.toString());
+    const data = await res.json();
+    const races = (data.races || []);
+    if (races.length < 2) {
+      if (races.length === 1) state.meet.div = String(races[0].div_id);
+      return;
+    }
+    const chip = (label, div, on) =>
+      `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}">` +
+      `${esc(label)}</button>`;
+    box.innerHTML =
+      `<span class="mc-races-label">Race:</span>` +
+      chip("All races", "", !state.meet.div) +
+      races.map((r) => {
+        const bits = [r.label];
+        if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
+        if (r.distance) bits.push(`${Math.round(r.distance)}m`);
+        return chip(`${bits.join(" \u00b7 ")} (${r.n_results})`,
+                    String(r.div_id), state.meet.div === String(r.div_id));
+      }).join("");
+    box.querySelectorAll(".race-chip").forEach((b) => {
+      b.addEventListener("click", () => {
+        state.meet.div = b.dataset.div || null;
+        box.querySelectorAll(".race-chip").forEach((x) =>
+          x.classList.toggle("is-on", x === b));
+        loadField();          // a different race is a different field
+      });
+    });
+  } catch (err) { /* no picker is just the whole meet, as before */ }
 }
 
 

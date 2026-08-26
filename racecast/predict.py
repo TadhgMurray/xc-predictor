@@ -785,11 +785,39 @@ def _exactField(cur, meet_id, div_id, sport):
             for r in cur.fetchall()]
 
 
+# The class that graduates out of a level at season's end: a 12 leaves
+# high school, an SR leaves college. Everyone else carries forward.
+_TERMINAL_GRADES = ("12", "SR", "sr", "Sr")
+
+
 def _currentSquads(cur, schools, sport, season_year):
-    """{school: [runners best-first]} for this season, one bulk query."""
+    """{school: [runners best-first]} for this season.
+
+    ★ A NEW SEASON STARTS EMPTY, SO LAST YEAR'S ROSTER CARRIES FORWARD
+      MINUS THE GRADUATING CLASS. In August the current season has no
+      rows yet and a naive query predicts a meet with nobody in it.
+      A school with no current-season row takes its previous season's
+      squad with the 12s/SRs aged out -- they are the one group the
+      data KNOWS is gone; everyone else is presumed back until real
+      results say otherwise. Ratings shown are last season's."""
     schools = [s for s in schools if s]
     if not schools or season_year is None:
         return {}
+    squads = _squadsForYear(cur, schools, sport, season_year)
+    missing = [s for s in schools if not squads.get(s)]
+    if missing:
+        prev = _squadsForYear(cur, missing, sport, season_year - 1,
+                              exclude_terminal=True)
+        for sch, rows in prev.items():
+            for r in rows:
+                r["carried"] = True    # last season's roster, aged forward
+            squads[sch] = rows
+    return squads
+
+
+def _squadsForYear(cur, schools, sport, year, exclude_terminal=False):
+    grade_clause = ("AND COALESCE(s.grade, '') NOT IN %(term)s"
+                    if exclude_terminal else "")
     cur.execute(f"""
         SELECT s.school, s.person_id,
                COALESCE(a.first_name, '') || ' '
@@ -800,8 +828,10 @@ def _currentSquads(cur, schools, sport, season_year):
         WHERE  s.school = ANY(%(schools)s)
           AND  s.year   = %(yr)s
           AND  s.sport  = %(sport)s
+          {grade_clause}
         ORDER  BY s.school, s.mean_rating DESC NULLS LAST
-    """, {"schools": schools, "yr": season_year, "sport": sport})
+    """, {"schools": schools, "yr": year, "sport": sport,
+          "term": _TERMINAL_GRADES})
     out = {}
     for r in cur.fetchall():
         out.setdefault(r["school"], []).append({

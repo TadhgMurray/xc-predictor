@@ -4308,6 +4308,46 @@ def api_predict_field():
     return jsonify(out)
 
 
+@app.route("/api/predict/races")
+def api_predict_races():
+    """The races inside a meet, so the page can predict ONE of them.
+
+    An XC championship is several races sharing one meet_id (Boys D1,
+    Girls D2...); predicting the whole meet mixes fields that never
+    raced each other. Works without the model -- a database question.
+    """
+    meet = (request.args.get("meet_id") or "").strip()
+    if not meet.isdigit():
+        return jsonify({"error": "meet_id is required."}), 400
+    sport = (request.args.get("sport") or "XC").strip().upper()
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if sport == "XC":
+                rows = get_meet_divisions(cur, int(meet))
+                races = [{"div_id": r["div_id"],
+                          "label": r.get("division") or f"Race {r['div_id']}",
+                          "distance": r.get("distance"),
+                          "gender": r.get("gender"),
+                          "n_results": r["n_results"]} for r in rows]
+            else:
+                cur.execute("""
+                    SELECT r.div_id, m.division,
+                           count(*) AS n_results
+                    FROM   results_tf r
+                    LEFT JOIN meets_tf m ON m.meet_id = r.meet_id
+                                        AND m.div_id  = r.div_id
+                    WHERE  r.meet_id = %(meet)s
+                    GROUP  BY r.div_id, m.division
+                    ORDER  BY m.division NULLS LAST, r.div_id
+                """, {"meet": int(meet)})
+                races = [{"div_id": r["div_id"],
+                          "label": r.get("division") or f"Division {r['div_id']}",
+                          "distance": None, "gender": None,
+                          "n_results": r["n_results"]} for r in cur.fetchall()]
+    return jsonify({"races": races})
+
+
 @app.route("/api/predict/squad")
 def api_predict_squad():
     """Everyone racing for a school this season, best first.

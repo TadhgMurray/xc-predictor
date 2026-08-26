@@ -109,20 +109,15 @@ if (-not (Step "04_features" { python model\feature_extraction.py })) {
 }
 $summary += "features: extracted"
 
-$train = "model\train.py"
-$orig = Get-Content $train -Raw
-if (-not $FullChunks) {
-    Set-Content $train ($orig -replace "(?m)^MAX_CHUNKS = .*$", "MAX_CHUNKS = 20") -NoNewline
-}
-try {
-    if (Step "05_train" { python model\train.py }) {
-        $summary += if ($FullChunks) { "train: full run complete" }
-                    else { "train: smoke run complete (MAX_CHUNKS=20)" }
-    } else {
-        $summary += "train: FAILED. See 05_train.log"
-    }
-} finally {
-    if (-not $FullChunks) { Set-Content $train $orig -NoNewline }
+# --max-chunks replaces the old rewrite-the-file-and-restore dance,
+# which left train.py dirty whenever the night died mid-train.
+$trainOk = if ($FullChunks) { Step "05_train" { python model\train.py } }
+           else { Step "05_train" { python model\train.py --max-chunks 20 } }
+if ($trainOk) {
+    $summary += if ($FullChunks) { "train: full run complete" }
+                else { "train: smoke run complete (--max-chunks 20)" }
+} else {
+    $summary += "train: FAILED. See 05_train.log"
 }
 
 $summary | Out-File "$dir\SUMMARY.txt" -Encoding utf8

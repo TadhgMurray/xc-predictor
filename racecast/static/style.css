@@ -3408,3 +3408,13 @@ td.pts { font-weight: 700; }
 /* folded course chips on the school PRs page */
 .chip-hidden { display: none; }
 button.yb-more { cursor: pointer; font: inherit; color: var(--accent, #14477d); }
+
+/* The race picker inside the chosen-meet card: one chip per division. */
+.mc-races { margin-top: 0.45rem; display: flex; flex-wrap: wrap;
+            gap: 0.3rem; align-items: center; }
+.mc-races-label { font-size: 0.78rem; color: #6b7280; margin-right: 0.15rem; }
+.race-chip {
+    font-size: 0.78rem; padding: 0.15rem 0.55rem; border-radius: 999px;
+    border: 1px solid #d1d5db; background: #fff; cursor: pointer;
+}
+.race-chip.is-on { background: #111827; color: #fff; border-color: #111827; }

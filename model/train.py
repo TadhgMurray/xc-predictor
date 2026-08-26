@@ -874,4 +874,13 @@ def main():
 # importing train.py to reuse a helper won't accidentally kick off a full
 # training run.
 if __name__ == "__main__":
+    # --max-chunks 20: the smoke run, without editing this file. The
+    # overnight used to rewrite MAX_CHUNKS in place and restore it after,
+    # which left the file dirty whenever the night died mid-train.
+    import argparse
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--max-chunks", type=int, default=None)
+    _args = _ap.parse_args()
+    if _args.max_chunks:
+        MAX_CHUNKS = _args.max_chunks
     main()
