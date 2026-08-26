@@ -158,18 +158,21 @@ def main():
                   AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
             """, {"meet": args.meet})
 
-        print("\nindexes on the big tables:")
+        print("\nindexes on the big tables (full definitions -- a WHERE "
+              "clause means PARTIAL, unusable for plain lookups):")
         for t in BIG_TABLES:
             cur.execute("""
-                SELECT i.relname, idx.indisvalid
+                SELECT i.relname, idx.indisvalid,
+                       pg_get_indexdef(idx.indexrelid)
                 FROM   pg_index idx
                 JOIN   pg_class i ON i.oid = idx.indexrelid
                 JOIN   pg_class tt ON tt.oid = idx.indrelid
                 WHERE  tt.relname = %s
             """, (t,))
-            for name, valid in cur.fetchall():
+            for name, valid, idxdef in cur.fetchall():
                 flag = "" if valid else "   <-- INVALID"
-                print(f"  {t}: {name}{flag}")
+                tail = idxdef.split(" USING ", 1)[-1]
+                print(f"  {t}: {name}  {tail[:100]}{flag}")
     finally:
         cm.__exit__(None, None, None)
 

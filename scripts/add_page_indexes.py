@@ -58,17 +58,32 @@ def main():
                        ~* ('\(\s*' || %s || '\s*[,)]')
             """, (table, col))
             rows = cur.fetchall()
-            valid = [r for r in rows if r[1]]
+            # ⚠ A PARTIAL INDEX DOES NOT COUNT. An index built with a
+            #   WHERE clause only serves queries whose predicate implies
+            #   it -- the planner showed a valid school index while
+            #   seq-scanning 63M rows for a plain school lookup. Usable
+            #   here means valid AND unconditional.
+            usable = [r for r in rows if r[1] and " where " not in r[2].lower()]
+            partial = [r for r in rows if r[1] and " where " in r[2].lower()]
             invalid = [r for r in rows if not r[1]]
-            if valid:
-                print(f"OK    {table}({col}): {valid[0][2][:90]}")
+            if usable:
+                print(f"OK    {table}({col}): {usable[0][2][:110]}")
                 continue
+            if partial:
+                print(f"PART  {table}({col}): only a PARTIAL index exists "
+                      f"({partial[0][0]}) -- unusable for page lookups, "
+                      f"building a full one")
+                print(f"      {partial[0][2][:110]}")
             if invalid:
                 print(f"BAD   {table}({col}): {invalid[0][0]} is INVALID "
                       f"(a concurrent build failed) -- will drop and rebuild")
                 drop_first.append(invalid[0][0])
-            else:
+            if not partial and not invalid:
                 print(f"MISS  {table}({col})")
+            # never collide with an existing name (the partial may own it)
+            taken = {r[0] for r in rows}
+            while name in taken:
+                name += "_f"
             todo.append((table, col, name))
 
         if check_only or not todo:
