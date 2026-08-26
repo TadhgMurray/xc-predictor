@@ -114,6 +114,46 @@ def main():
                       f"grade {str(r.grade):<5} src {r.source:<6}")
                 print(f"      {_verdict(r, args.sport)}")
 
+            # ★ BACKFILL-SIDE FACTS. The board build resolves gender through
+            #   the PERSON link; the backfill looks up genders by each row's
+            #   own athlete_id. A post-transfer row under a new source
+            #   profile that is absent (or genderless) in `athletes` dies as
+            #   unknown_pool in the backfill while every person-level fact
+            #   looks pristine -- which is exactly the 23947175 signature.
+            table = "results" if args.sport == "XC" else "results_tf"
+            cur.execute(f"""
+                SELECT result_id, athlete_id, person_id, date, source
+                FROM {table}
+                WHERE COALESCE(person_id, athlete_id) = %(pid)s
+                ORDER BY date""", {"pid": args.person_id})
+            raw = cur.fetchall()
+            aids = sorted({r.athlete_id for r in raw
+                           if r.athlete_id is not None})
+            cur.execute("SELECT athlete_id, gender, school FROM athletes "
+                        "WHERE athlete_id = ANY(%s)", (aids,))
+            known = {}
+            for a in cur.fetchall():
+                known.setdefault(a.athlete_id, []).append(
+                    (a.gender, a.school))
+            print("\n  backfill-side identity (gender is looked up by the "
+                  "row's OWN athlete_id):")
+            for aid in aids:
+                rows_n = sum(1 for r in raw if r.athlete_id == aid)
+                span = [r.date for r in raw if r.athlete_id == aid]
+                if aid not in known:
+                    tag = "MISSING FROM athletes -> backfill unknown_pool"
+                elif not any(g in ("M", "F") for g, _ in known[aid]):
+                    tag = (f"no M/F gender in athletes {known[aid][:3]} "
+                           "-> backfill unknown_pool")
+                else:
+                    tag = f"ok {known[aid][:2]}"
+                print(f"    athlete_id {aid}: {rows_n} rows "
+                      f"({min(span)}..{max(span)})  {tag}")
+            n_null = sum(1 for r in raw if r.athlete_id is None)
+            if n_null:
+                print(f"    athlete_id NULL: {n_null} rows -- backfill "
+                      "gender lookup has no key at all")
+
             print("\n  person-level verdict tables (what resolvePool "
                   "consults):")
             pid = args.person_id
