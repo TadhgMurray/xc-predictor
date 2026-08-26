@@ -1718,7 +1718,8 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
 
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
 def race_xc(meet_id, div_id):
-    from meet_compile import scoreRows, publishedScores, annotateScoring
+    from meet_compile import (scoreRows, publishedScores, annotateScoring,
+                              splitCollisionTeams, unsplitTeams)
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1763,6 +1764,15 @@ def race_xc(meet_id, div_id):
               for i, r in enumerate(results, start=1)
               if r.get("time_seconds") is not None]
 
+    # ★ IDENTITY-SPLIT COLLIDING NAMES BEFORE SCORING (NXN 2025: two
+    #   Jesuits, two Lincolns under one string each). Scoring the string
+    #   merges two schools into one impossible team and mislabels both
+    #   with the biggest namesake's state. The rows here are copies, so
+    #   the rendered table is untouched.
+    if ranked:
+        with getConn() as _conn, _conn.cursor() as _cur:
+            splitCollisionTeams(_cur, ranked)
+
     # ★ PUBLISHED FIRST, COMPUTED AS A FALLBACK. What the meet reported
     #   includes whatever local scoring applied -- byes, exhibition runners,
     #   an incomplete team scored anyway -- and recomputing would quietly
@@ -1777,24 +1787,38 @@ def race_xc(meet_id, div_id):
     #   carries points and a finishing place but NOT which runners scored --
     #   so on its own it cannot fill the 1-7 columns. Computing alongside gives
     #   the scorers while the published points stay authoritative.
-    computed = scoreRows(ranked) if ranked else {"teams": [], "incomplete": []}
-    by_school = {t["school"]: t for t in computed["teams"]}
+    computed = (unsplitTeams(scoreRows(ranked)) if ranked
+                else {"teams": [], "incomplete": []})
 
     if pub:
-        # Published points and order win; the scorers are grafted on by name.
-        # ⚠ A NAME MISS IS SILENT AND HARMLESS -- meet_extras spells schools
-        #   its own way ("Name" vs "rawName"), so a team whose spelling differs
-        #   simply shows no scorers rather than the wrong ones.
-        # ⚠ AND A DUPLICATED NAME GRAFTS TO NOBODY. NXN 2025 published two
-        #   Jesuits (287 and 336 points) and two Lincolns -- different
-        #   schools, one string. Grafting by name gave both the SAME seven
-        #   runners; no scorers shown is honest, the same seven twice is not.
-        from collections import Counter
-        dup = {s for s, c in Counter(t["school"] for t in pub).items()
-               if c > 1}
-        teams = [{**t, "runners": ([] if t["school"] in dup else
-                                   by_school.get(t["school"], {})
-                                   .get("runners", []))}
+        # ★ GRAFT BY IDENTITY, NOT BY STRING. Published rows carry points
+        #   and order but not scorers. Names match NORMALIZED (meet_extras
+        #   spells schools its own way); a name published TWICE -- two real
+        #   schools -- is paired with the identity-split computed teams in
+        #   points order, so each Jesuit gets its OWN seven runners and its
+        #   own state tag instead of the old all-blank columns. A name with
+        #   no computed counterpart still shows no scorers -- honest blank.
+        from collections import defaultdict
+
+        def _norm(s):
+            return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+        comp_by, pub_by = defaultdict(list), defaultdict(list)
+        for t in computed["teams"]:
+            comp_by[_norm(t["school"])].append(t)
+        for t in pub:
+            pub_by[_norm(t["school"])].append(t)
+        graft = {}
+        for nm, group in pub_by.items():
+            cands = sorted(comp_by.get(nm, []), key=lambda c: c["points"])
+            for p, c in zip(sorted(group,
+                                   key=lambda p: (p.get("points") is None,
+                                                  p.get("points"))),
+                            cands):
+                graft[id(p)] = c
+        teams = [{**t,
+                  "runners": graft.get(id(t), {}).get("runners", []),
+                  "state": graft.get(id(t), {}).get("state")}
                  for t in pub]
         scores = {"teams": teams, "incomplete": computed["incomplete"],
                   "source": "published"}
@@ -2887,6 +2911,13 @@ def school_page(school_name):
             state = (request.args.get("state") or "").strip().upper() or None
             if state and not any(c["state"] == state for c in chips):
                 state = None
+            # ★ NO MERGED PAGE (owner's rule 2026-08-27). A name shared by
+            #   several real schools is several PAGES: the bare URL is the
+            #   biggest namesake's page, the rest are linked from it. The
+            #   old "All" view -- one roster mixing Indiana and
+            #   Massachusetts kids -- no longer exists.
+            if chips and not state:
+                state = primary_state
 
             years = schoolYears(cur, school_name)
 
@@ -2976,6 +3007,9 @@ def school_prs_page(school_name):
             state = (request.args.get("state") or "").strip().upper() or None
             if state and not any(c["state"] == state for c in chips):
                 state = None
+            # no merged PR page either -- same per-school rule as school_page
+            if chips and not state:
+                state = primary_state
             data = schoolPrData(cur, school_name, sport,
                                 year_label=year, course=course,
                                 state=state, primary=primary_state)

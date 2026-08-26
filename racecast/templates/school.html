@@ -37,18 +37,15 @@
         <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
     </p>
 
+    {# Same name, different schools: each is its OWN page now -- there is
+       no merged view. This line is the only crossing between them. #}
     {% if state_chips %}
-    {# Same name, two schools: each chip is one home-state cluster of
-       this name's athletes; every table on the page scopes with it. #}
-    <p class="meta">Multiple schools share this name. Pick a state:</p>
-    <div class="yearbar">
-        <a class="yb{{ ' is-on' if not state }}"
-           href="/school/{{ school|urlencode }}?sport={{ sport }}">All</a>
-        {% for c in state_chips %}
-          <a class="yb{{ ' is-on' if state == c.state }}"
-             href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ c.state }} ({{ c.n }} athletes)</a>
-        {% endfor %}
-    </div>
+    {% set others = state_chips|rejectattr("state", "equalto", state)|list %}
+    {% if others %}
+    <p class="meta">Different schools share this name &mdash;
+        {% for c in others %}<a href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    {% endif %}
     {% endif %}
 
 {# The two-gender view-all: a rankings board is pool-scoped, so a mixed

@@ -57,7 +57,7 @@
         No team had five finishers, so nothing can be scored.
         {% if scores.incomplete %}
             Finishers per team:
-            {% for i in scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+            {% for i in scores.incomplete %}{{ i.school }}{% if i.state %} ({{ i.state }}){% endif %} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
         {% endif %}
     </p>
 {% else %}
@@ -81,7 +81,10 @@
             {% for t in scores.teams %}
             <tr>
                 <td>{{ t.place if t.place else loop.index }}</td>
-                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school|school_label }}</a></td>
+                {# identity-split teams carry their OWN state (two Jesuits =
+                   two schools); only unsplit ones fall back to the global
+                   label filter #}
+                <td><a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label }}{% endif %}</a></td>
                 <td>{{ t.points if t.points is not none else "—" }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO
                    displace, and hiding them makes a deep team look like a
@@ -111,7 +114,7 @@
             Computed: five scorers, two displacers, incomplete teams removed.
             {% if scores.incomplete %}
                 Not scored, fewer than five finishers:
-                {% for i in scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+                {% for i in scores.incomplete %}{{ i.school }}{% if i.state %} ({{ i.state }}){% endif %} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
             {% endif %}
         {% endif %}
     </p>

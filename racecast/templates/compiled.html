@@ -75,7 +75,7 @@
             {% for t in group.scores.teams %}
             <tr>
                 <td>{{ t.place }}</td>
-                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school|school_label }}</a></td>
+                <td><a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label }}{% endif %}</a></td>
                 <td>{{ t.points }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO displace,
                    and hiding them makes a deep team look like a top-heavy one. #}

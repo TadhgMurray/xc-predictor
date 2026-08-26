@@ -239,7 +239,11 @@ def compiledResults(cur, meet_id, source=None):
         for i, r in enumerate(g["results"], start=1):
             r["place"] = i
         g["divisions"] = sorted(g["divisions"])
-        g["scores"] = scoreRows(g["results"])
+        # identity-split colliding school names for scoring, then restore
+        # the row dicts (the results table renders row.school directly)
+        splitCollisionTeams(cur, g["results"])
+        g["scores"] = unsplitTeams(scoreRows(g["results"]))
+        unstampRows(g["results"])
         out.append(g)
 
     out.sort(key=lambda g: -len(g["results"]))
@@ -302,6 +306,76 @@ def annotateScoring(rows):
             place += 1
             r["score_place"] = place
     return rows
+
+
+# ★ SAME STRING, DIFFERENT SCHOOLS, ONE RACE (NXN 2025: two Jesuits, two
+#   Lincolns). Scoring by the school STRING merges them into one impossible
+#   team, mislabels both with the biggest namesake's state, and forced the
+#   published-score graft to give dup names NO scorers at all. The fix is
+#   identity: before scoring, stamp each collision row's school with its
+#   athlete's home state (school_identity says which names collide;
+#   person_home_state says who is from where); after scoring, unsplit the
+#   key back into school + state for display and links.
+_KEYSEP = "\x00"
+
+
+def splitCollisionTeams(cur, rows):
+    """Stamp rows of colliding school names with a home-state identity.
+    Mutates rows in place (callers score COPIES). No-op mid-rebuild."""
+    def _has(t):
+        cur.execute("SELECT to_regclass(%s)", (t,))
+        return cur.fetchone()[0] is not None
+    schools = sorted({r["school"] for r in rows if r.get("school")})
+    if not schools or not _has("school_identity") \
+            or not _has("person_home_state"):
+        return
+    cur.execute("""
+        SELECT school, state FROM school_identity
+        WHERE school = ANY(%s) AND n_athletes >= 3 AND share >= 0.10
+        ORDER BY school, n_athletes DESC""", (schools,))
+    clus = {}
+    for row in cur.fetchall():
+        s, st = (row["school"], row["state"]) if isinstance(row, dict) \
+            else (row[0], row[1])
+        clus.setdefault(s, []).append(st)
+    multi = {s for s, sts in clus.items() if len(sts) >= 2}
+    if not multi:
+        return
+    pids = sorted({r["person_id"] for r in rows
+                   if r.get("school") in multi and r.get("person_id")})
+    home = {}
+    if pids:
+        cur.execute("SELECT person_id, state FROM person_home_state "
+                    "WHERE person_id = ANY(%s)", (pids,))
+        for row in cur.fetchall():
+            p, st = (row["person_id"], row["state"]) \
+                if isinstance(row, dict) else (row[0], row[1])
+            home[p] = st
+    for r in rows:
+        s = r.get("school")
+        if s in multi:
+            # the athlete's own home state; an unknown falls to the name's
+            # biggest cluster so nobody vanishes from scoring
+            st = home.get(r.get("person_id")) or clus[s][0]
+            r["school"] = f"{s}{_KEYSEP}{st}"
+
+
+def unsplitTeams(scores):
+    """Fold the identity key back into school + state on a scoreRows
+    result, so templates render 'Jesuit (CA)' and link with ?state=CA."""
+    for t in scores.get("teams", []) + scores.get("incomplete", []):
+        if _KEYSEP in (t.get("school") or ""):
+            t["school"], t["state"] = t["school"].split(_KEYSEP, 1)
+    return scores
+
+
+def unstampRows(rows):
+    """Strip the identity key off row dicts that get rendered directly
+    (the compiled results table links row.school)."""
+    for r in rows:
+        s = r.get("school")
+        if s and _KEYSEP in s:
+            r["school"] = s.split(_KEYSEP, 1)[0]
 
 
 def scoreRows(rows):

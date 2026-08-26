@@ -99,15 +99,14 @@
         {% endfor %}
     </div>
 
+    {# each namesake school has its own PR page; no "All states" view #}
     {% if state_chips %}
-    <div class="yearbar">
-        <a class="yb{{ ' is-on' if not data.state }}"
-           href="/school/{{ school|urlencode }}/prs?sport={{ sport }}">All states</a>
-        {% for c in state_chips %}
-          <a class="yb{{ ' is-on' if data.state == c.state }}"
-             href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ c.state }}</a>
-        {% endfor %}
-    </div>
+    {% set others = state_chips|rejectattr("state", "equalto", data.state)|list %}
+    {% if others %}
+    <p class="meta">Different schools share this name &mdash;
+        {% for c in others %}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    {% endif %}
     {% endif %}
 
     {% if data.years %}
