@@ -30,7 +30,23 @@ param(
     #   pools from a stale grade_fix -- the disagreement that was measured at
     #   a 64 percent rating error, frozen into the row. -From is for a run
     #   where you know what changed and it was downstream.
-    [string]$From = "01"
+    [string]$From = "01",
+
+    # ---------------------------------------------------------------- #
+    #  -SkipBackfill -- SKIP THE 3-HOUR POOL/DISTANCE RESOLUTION
+    # ---------------------------------------------------------------- #
+    #
+    # 05_backfill re-resolves pool, gender and normalized distance for
+    # EVERY result -- the full-corpus pass that dominates the night. Its
+    # inputs are the distance corrections/overrides, grade_fix, and the
+    # pool/parse rules; when NONE of those changed since the last full
+    # run, its output is byte-identical and the three hours buy nothing.
+    #
+    # ⚠ NOT AFTER AN OVERRIDE RUN. Changed corrections resolve into
+    #   different distances and pools ONLY through this step; skipping it
+    #   then freezes the old resolution under a new solve. When in doubt,
+    #   let it run.
+    [switch]$SkipBackfill
 )
 
 # ! RESOLVED HERE, ABOVE ITS FIRST USE. PowerShell does not hoist, so a
@@ -212,7 +228,11 @@ Step "04_grade_sanity" { python engine\grade_sanity.py --write }
 #   grade_fix, and since per-pool anchors a disagreement between its pooling
 #   and the engine's writes normalized_time on the wrong SCALE -- measured at
 #   a 64% rating error, frozen into the row.
-Step "05_backfill"     { python backfill\backfill_normalize.py --sport both --apply }
+if ($SkipBackfill) {
+    Write-Host "  05_backfill skipped (-SkipBackfill: corrections, grade rules and pool rules unchanged)" -ForegroundColor Yellow
+} else {
+    Step "05_backfill" { python backfill\backfill_normalize.py --sport both --apply }
+}
 
 # ---- pack and solve -------------------------------------------------- #
 # Both caches must go: packed_XC_TF.npz is checked for existence only, and
@@ -256,6 +276,11 @@ Step "11_teams"        { python racecast\build_team_season.py }
 #   how a collapsed one gets noticed.
 Step "12_courses"      { python racecast\build_course_rank.py }
 Step "13_panels"       { python racecast\panels.py }
+# ! IDEMPOTENT: reports what exists, builds only what is missing or
+#   INVALID (CONCURRENTLY, no locks). ranking_results' own indexes are
+#   canonical inside build_ranking_results; this covers the permanent
+#   tables and repairs anything a failed concurrent build left behind.
+Step "14_indexes"      { python scripts\add_page_indexes.py }
 
 
 # ------------------------------------------------------------------ #

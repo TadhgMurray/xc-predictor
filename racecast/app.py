@@ -189,6 +189,21 @@ def _xc_distance_sql(r="r"):
 # Creates the app; __name__ tells Flask where "here" is
 app = Flask(__name__)
 
+# ★ TRACEBACKS SURVIVE THE SCROLLBACK. A 500's stack trace used to exist
+#   only in the console window running the server -- gone by the time
+#   anyone asked "where is that traceback". Flask routes unhandled
+#   exceptions through app.logger; this handler lands them (with the
+#   full stack) in racecast/errors.log.
+import logging as _logging
+import os as _os
+_err_handler = _logging.FileHandler(
+    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                  "errors.log"))
+_err_handler.setLevel(_logging.ERROR)
+_err_handler.setFormatter(_logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s"))
+app.logger.addHandler(_err_handler)
+
 
 @app.errorhandler(404)
 def not_found(_err):
