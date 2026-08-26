@@ -234,10 +234,13 @@ if ($SkipPipeline) {
 
 # ★ THE FULL PIPELINE, NOT run_ratings.ps1. Distances change normalized_time,
 #   which is upstream of the pack and the solve, so 05_backfill has to run.
-Write-Host "`n  starting the full pipeline (~4h). Distances feed the pack, so" -ForegroundColor Cyan
-Write-Host "  05_backfill must recompute normalized_time -- run_ratings.ps1" -ForegroundColor Cyan
+Write-Host "`n  starting the pipeline from 05 (~4h). Distances feed the pack," -ForegroundColor Cyan
+Write-Host "  so 05_backfill must recompute normalized_time -- run_ratings.ps1" -ForegroundColor Cyan
 Write-Host "  would skip it and rebuild from the OLD distances." -ForegroundColor Cyan
-Step "06_pipeline" { .\run_pipeline.ps1 }
+# -From 05: an override run changes distances only, and the pipeline's own
+# header says the verdict steps (01-04) decide nothing a distance touches.
+# Pool membership reruns on an explicit overnight -Pools night, not here.
+Step "06_pipeline" { .\run_pipeline.ps1 -From 05 }
 
 $total = [math]::Round(((Get-Date) - $t_start).TotalMinutes, 1)
 Write-Host "`n$('=' * 70)"

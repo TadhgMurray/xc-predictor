@@ -2,6 +2,7 @@
 #
 #     .\scripts\overnight.ps1              # smoke-capped training at the end
 #     .\scripts\overnight.ps1 -FullChunks  # full training (GPU nights)
+#     .\scripts\overnight.ps1 -Pools       # ALSO rerun the pool verdicts
 #
 # Chain: overrides rebuild -> spline refit -> full pipeline -> feature
 # extraction -> training. The one design rule: a failure DEGRADES instead
@@ -21,7 +22,21 @@
 #   features / train fail            the site is already rebuilt; only the
 #                                    model run is lost.
 
-param([switch]$FullChunks)
+# ★ THE POOL VERDICTS DO NOT RUN OVERNIGHT (owner's call, 2026-08-26).
+#   Pipeline steps 01-04 -- season_year, drop_old, pro_flag, grade_sanity --
+#   decide pool MEMBERSHIP: who is a pro, what grade and level each
+#   athlete-season is. None of them reads a distance, so an overnight built
+#   around override/rating churn re-derives them for nothing, and the owner
+#   wants them off the nightly path. The default is therefore -From 05,
+#   which is the pipeline's own documented override-only start.
+#
+# ⚠ RUN -Pools AFTER NEW DATA OR VERDICT CHANGES. New scrape imports, a
+#   grade_fix edit, school-level changes -- anything that moves pool
+#   membership resolves into the corpus ONLY through 01-04 + backfill.
+#   Skipping them then freezes stale verdicts into every row (the measured
+#   64 percent rating error in run_pipeline's own header). When in doubt
+#   after a big import, run one -Pools night.
+param([switch]$FullChunks, [switch]$Pools)
 
 $ErrorActionPreference = "Continue"
 $env:PYTHONUTF8 = "1"
@@ -118,7 +133,13 @@ if (-not (Step "02_fit_spline" { python engine\fit_distance_exponent.py --fresh 
 $summary += "spline: refit (see 02_fit_spline.log for the MEASURED extension lines)"
 
 # ---- 3. the pipeline -------------------------------------------------- #
-if (-not (Step "03_pipeline" { .\run_pipeline.ps1 })) {
+# ! A HASHTABLE, NOT AN ARRAY. Array splatting passes elements
+#   POSITIONALLY -- @("-From","05") would bind the literal string "-From"
+#   as $From (digitless -> silently step 1, the exact thing -Pools exists
+#   to gate) and then fail to place "05" at all. Hashtable splatting binds
+#   by name. Measured before shipping, not after.
+$pipeArgs = if ($Pools) { @{} } else { @{ From = "05" } }
+if (-not (Step "03_pipeline" { .\run_pipeline.ps1 @pipeArgs })) {
     Bail "pipeline failed -- database may be mid-rebuild. See 03_pipeline.log and the pipeline's own logs dir"
 }
 $summary += "pipeline: complete"
