@@ -280,6 +280,16 @@ def parseMark(mark):
     return None
 
 
+def _scoreVal(row):
+    """The feed's own published points for a result, or None. Zero is
+    'did not score', which for coverage purposes is the same as absent."""
+    try:
+        v = float(row.get("score"))
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
 def _value(row):
     """The rankable number, or None. Running/relay: seconds ascending.
     Field and multis: mark descending -- a mark that will not parse as a
@@ -377,19 +387,47 @@ def _award(entries):
     return out
 
 
+def _standings(teams_dict):
+    """Sorted standings rows from {school_lower: {school, points, wins}},
+    tie-aware T-places, formatted points -- one rule for the computed
+    table and the official one."""
+    teams = sorted(teams_dict.values(),
+                   key=lambda t: (-t["points"], t["school"]))
+    i = 0
+    while i < len(teams):
+        j = i
+        while (j + 1 < len(teams) and
+               teams[j + 1]["points"] == teams[i]["points"]):
+            j += 1
+        label = f"T{i + 1}" if j > i else str(i + 1)
+        for p in range(i, j + 1):
+            teams[p]["place_label"] = label
+        i = j + 1
+    for t in teams:
+        t["display"] = fmtPoints(t["points"])
+    return teams
+
+
 def scoreMeet(rows):
     """All of one meet's scoring in one pass.
 
     rows: dicts carrying result_id, event_id, event_short, division,
     distance_meters, school, athlete_name, person_id, gender,
     time_seconds, mark, result_kind, is_field, is_relay, speed_rating,
-    grade. Output:
+    grade, and (when the feed shipped one) the official per-result
+    score. Output:
 
       {"divisions": [{"name", "teams": {"M": [...], "F": [...]},
+                      "official": {"M": [...] | None, "F": ... },
                       "events": [{"name", "gender", "is_relay",
                                   "is_field", "distance", "rows"}]}],
        "points_by_result": {result_id: "10"},
        "n_scored_events": int}
+
+    "official" holds standings summed from the feed's own published
+    per-result points -- the meet's actual rules, multis included where
+    the feed carries their results. It is None unless coverage is 100%:
+    see the gate in the finalize loop.
     """
     # ---- majority gender per raw event -------------------------------- #
     # For rows whose name and athlete both stay silent: strict majority
@@ -649,27 +687,70 @@ def scoreMeet(rows):
                 if win:
                     cell["wins"] += 1
 
+        # ---- official sums --------------------------------------------- #
+        # The feed's own per-result `score`, summed as published -- the
+        # meet's actual rules (its own point table, its multis, its
+        # tie resolutions) instead of our standard one. Tracked per
+        # gender so the coverage gate can judge each standings table.
+        off = div.setdefault("_official", {
+            "M": {"teams": {}, "events": 0, "gaps": 0},
+            "F": {"teams": {}, "events": 0, "gaps": 0}, "bad": False})
+        o_rows = [(r, s) for r in rows_g
+                  if (s := _scoreVal(r)) is not None]
+        if o_rows:
+            if not gendered:
+                # published points with no standings to put them in --
+                # official totals for this division would be missing
+                # them, so the whole division's official view is off
+                off["bad"] = True
+            else:
+                o = off[grp["gender"]]
+                o["events"] += 1
+                # a win, officially: holding the event's top score
+                # (once per school -- a same-school tie is one win)
+                top = max(s for _r, s in o_rows)
+                won = set()
+                for r, s in o_rows:
+                    school = scorableSchool(r.get("school"))
+                    if not school:
+                        continue
+                    cell = o["teams"].setdefault(
+                        school.lower(),
+                        {"school": school, "points": 0.0, "wins": 0})
+                    cell["points"] += s
+                    if s == top and school.lower() not in won:
+                        cell["wins"] += 1
+                        won.add(school.lower())
+        elif gendered and any(pts > 0 for _l, pts, _w, _r in awarded):
+            # we scored it, the meet's data did not: a coverage gap
+            off[grp["gender"]]["gaps"] += 1
+
     out_divs = []
     for dkey in sorted(divisions):
         div = divisions[dkey]
+        off = div.pop("_official", None)
+        div["official"] = {"M": None, "F": None}
         for g in ("M", "F"):
-            teams = sorted(div["teams"].get(g, {}).values(),
-                           key=lambda t: (-t["points"], t["school"]))
             # standings places, tie-aware: two schools on the same total
             # share a T-place, same convention as the event rows
-            i = 0
-            while i < len(teams):
-                j = i
-                while (j + 1 < len(teams) and
-                       teams[j + 1]["points"] == teams[i]["points"]):
-                    j += 1
-                label = f"T{i + 1}" if j > i else str(i + 1)
-                for p in range(i, j + 1):
-                    teams[p]["place_label"] = label
-                i = j + 1
-            for t in teams:
-                t["display"] = fmtPoints(t["points"])
-            div["teams"][g] = teams
+            div["teams"][g] = _standings(div["teams"].get(g, {}))
+
+            # ★ THE 100% GATE, per standings table. Official totals show
+            #   only when every event WE could score also carries the
+            #   meet's published points (gaps == 0) and no published
+            #   points sit in an event without a gender to stand in
+            #   (bad). A partial sum is worse than none: it reads as a
+            #   final score while silently missing events.
+            o = off and off[g]
+            if (o and o["events"] > 0 and o["gaps"] == 0
+                    and not off["bad"]):
+                # same rule as computed: every school that showed up
+                # gets a row -- a zero is information too
+                for t in div["teams"][g]:
+                    o["teams"].setdefault(
+                        t["school"].lower(),
+                        {"school": t["school"], "points": 0.0, "wins": 0})
+                div["official"][g] = _standings(o["teams"])
         # events in a stable reading order: running by distance (parsed
         # from the name when the column is empty, so the 200 stops
         # sorting after the 3200), then field/multis, relays last,

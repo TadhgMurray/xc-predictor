@@ -2,36 +2,59 @@
   _tf_points.html -- the TF team-points block, shared by the meet page
   and the compiled-results page so the two can never disagree.
 
-  ★ COMPUTED, NEVER OFFICIAL, AND THE NOTE SAYS SO. No meet publishes its
-    scoring rules into this data, so the block scores every meet one
-    honest way (the standard 8-place table) and labels the result as a
-    computed score. See tf_points.py for the rules themselves.
+  ★ OFFICIAL WHERE THE MEET'S OWN POINTS COVER EVERYTHING, computed
+    everywhere else. The feed sometimes ships each result's published
+    score; when every event we could score carries them (tf_points'
+    100% gate), that standings table shows the official sums -- the
+    meet's actual rules, its multis, its tie calls -- marked Official.
+    Any coverage gap and the table stays our computed one, because a
+    partial official sum reads as a final score while silently missing
+    events. ?score=computed shows the computed table regardless.
+
+  ★ THE COMPUTED SCORE STAYS ONE HONEST WAY: the standard 8-place
+    table, labelled as computed. See tf_points.py for the rules.
 ===================================================================== #}
 
 {% macro tf_team_block(divisions) -%}
+{% set official_on = request.args.get('score') != 'computed' %}
+{# does any division actually pass the coverage gate? decides the note #}
+{% set ns = namespace(has_official=false) %}
+{% for d in divisions %}
+  {% if d.official and (d.official.M or d.official.F) %}{% set ns.has_official = true %}{% endif %}
+{% endfor %}
+{# toggle links keep the page's other query args (?alt source picking) #}
+{% set qa_c = request.args.to_dict() %}{% set _ = qa_c.update({'score': 'computed'}) %}
+{% set qa_o = request.args.to_dict() %}{% set _ = qa_o.pop('score', none) %}
 {% for div in divisions %}
 {% if div.teams.M or div.teams.F %}
     <h2>Team points{% if div.name and div.name != "All divisions" %} <span class="dist-note">{{ div.name }}</span>{% endif %}</h2>
     {% if loop.first %}
-    <p class="meta tfp-note">Scored from the results with the standard
+    <p class="meta tfp-note">{% if ns.has_official and official_on %}Tables marked
+       <strong>Official</strong> sum the meet's own published points
+       (<a href="?{{ qa_c|urlencode }}">view our computed score</a>);
+       the rest are scored{% else %}{% if ns.has_official %}<a href="?{{ qa_o|urlencode }}">Back
+       to the official score</a>. {% endif %}Scored{% endif %} from the results with the standard
        8-place table (10-8-6-5-4-3-2-1). Finals score where the meet
        marked them; otherwise each athlete's best mark ranks the event.
        Relays count once per school, field events by mark, multis by
        points, ties split. Unattached athletes keep their place but
        score nothing. Multi-events (pentathlon, heptathlon, decathlon)
-       count only when their standings appear in the results, so a meet
-       that ran one may differ here by those points. Not the meet's
-       official score.</p>
+       count only when their standings appear in the results, so a
+       computed score for a meet that ran one may differ by those
+       points.{% if not (ns.has_official and official_on) %} Not the
+       meet's official score.{% endif %}</p>
     {% endif %}
     <div class="rec-pair">
         {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
-        {% if div.teams[g] %}
+        {% set official = div.official and div.official[g] if official_on else None %}
+        {% set standings = official or div.teams[g] %}
+        {% if standings %}
         <div>
-            <h4 class="rec-gender">{{ g_label }}</h4>
+            <h4 class="rec-gender">{{ g_label }}{% if official %} <span class="tfp-off">Official</span>{% endif %}</h4>
             <table class="tfp-team">
                 <thead><tr><th>#</th><th>School</th><th>Points</th><th>Event wins</th></tr></thead>
                 <tbody>
-                    {% for t in div.teams[g] %}
+                    {% for t in standings %}
                     <tr>
                         <td>{{ t.place_label }}</td>
                         <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>

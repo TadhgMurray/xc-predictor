@@ -2332,6 +2332,7 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                r.grade,
                r.school,
                r.speed_rating,
+               r.score,
                r.date,
                -- The meets_tf name when it has one; else the RESULT's own
                -- event_short -- the per-row copy is populated on plenty of
@@ -3475,6 +3476,11 @@ def _searchTerms(raw, prefix="t"):
         params[f"{k}_w"] = f"% {tok}%"
         params[f"{k}_s"] = f"{tok}%"
     params[f"{prefix}_first"] = tokens[0] + "%"
+    # the typed words as one contiguous phrase, anchored at the start --
+    # for a non-meet row that is "the NAME begins with what was typed",
+    # since every loader puts the name first. See _ORDER_TAIL for why
+    # this key exists and why meets are exempt from it.
+    params[f"{prefix}_phrase"] = " ".join(tokens) + "%"
 
     # How many tokens land on a word boundary. A row matching every token at a
     # word start is a better hit than one matching them mid-word -- it is what
@@ -3514,7 +3520,26 @@ def _searchTerms(raw, prefix="t"):
 #   whole ranking, and word_score leads it -- meets are stored with the year
 #   and edition number in front, so "starts with" is a weak signal here and
 #   "every token on a word boundary" is a strong one.
+# ⚠ NAME MATCHES BEAT NAME+SCHOOL COINCIDENCES, and this key is why.
+#   Athlete search_text is "name school", and the tokens match order-free
+#   anywhere in it -- so "jackson spencer" is equally satisfied by the
+#   runner Jackson Spencer, by a Spencer Jackson, and by any kid named
+#   Jackson AT a Spencer school. The career-size tiebreak below then
+#   crowns whichever coincidence raced most: type "jackson spence" and a
+#   big-career Jackson Spence tops the list looking exactly right, add
+#   the r and he vanishes, promoting some Spencer-school stranger. The
+#   phrase key ranks rows whose text STARTS with the typed words, in
+#   order, above every scattered match -- the person actually named what
+#   was typed wins.
+#
+#   Meets are exempt: their year sits in front of the name ("2026
+#   arcadia invitational"), so a phrase-prefix boost would resurrect the
+#   "a 2009 meet named without a year outranks every recent edition"
+#   bug this ranking already fixed once.
 _ORDER_TAIL = """
+          (CASE WHEN kind <> 'meet'
+                AND search_text LIKE %({p}_phrase)s THEN 1 ELSE 0 END)
+              DESC,
           (CASE WHEN kind = 'meet' THEN sort_year  ELSE sort_count END)
               DESC NULLS LAST,
           (CASE WHEN kind = 'meet' THEN sort_count ELSE sort_year  END)

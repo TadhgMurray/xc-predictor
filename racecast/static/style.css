@@ -3360,6 +3360,13 @@ td.pts { font-weight: 700; }
 .tfp-team th:nth-child(1) { width: 3.4rem; }
 .tfp-team th:nth-child(3) { width: 4.5rem; }
 .tfp-team th:nth-child(4) { width: 7.4rem; }
+/* The "this table is the meet's own published score" badge */
+.tfp-off {
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; color: #166534; background: #dcfce7;
+    border: 1px solid #bbf7d0; border-radius: 3px;
+    padding: 0.08rem 0.35rem; vertical-align: 0.1rem; margin-left: 0.35rem;
+}
 /* Round/heat divider rows inside a race table */
 .heat-row td {
     background: #f3f4f6;
