@@ -162,7 +162,7 @@
             {{ year }} {{ sport }}
             <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
-        <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school }}</a> · Grade {{ season.grade }}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
+        <p class="season-meta"><a href="/school/{{ season.school|urlencode }}">{{ season.school|school_label }}</a> · Grade {{ season.grade }}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
             <thead>
                 <tr>
@@ -234,7 +234,7 @@
 {% endmacro %}
 
     <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+    <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the

@@ -29,7 +29,7 @@
 {% include "_topbar.html" %}
 
 {% macro qs(sport_v, year_v, course_v) -%}
-?sport={{ sport_v }}{% if year_v %}&amp;year={{ year_v }}{% endif %}{% if course_v %}&amp;course={{ course_v|urlencode }}{% endif %}
+?sport={{ sport_v }}{% if year_v %}&amp;year={{ year_v }}{% endif %}{% if course_v %}&amp;course={{ course_v|urlencode }}{% endif %}{% if data.state %}&amp;state={{ data.state }}{% endif %}
 {%- endmacro %}
 
 {% macro pr_table(sec, g, with_course) -%}
@@ -86,7 +86,7 @@
 {%- endmacro %}
 
 <main class="page-wide">
-    <h1>{{ school }} <span class="dist-note">School PRs</span></h1>
+    <h1>{{ school }} <span class="dist-note">School PRs{% if data.state %} · {{ data.state }}{% endif %}</span></h1>
     <p class="meta">Best mark per athlete, every event the school has
        contested. A year narrows to that season's bests{% if sport == 'XC' %};
        a course narrows to bests run there{% endif %}.
@@ -95,9 +95,20 @@
     <div class="seg">
         {% for s in ['XC', 'TF'] %}
           <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/school/{{ school|urlencode }}/prs?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/school/{{ school|urlencode }}/prs?sport={{ s }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
         {% endfor %}
     </div>
+
+    {% if state_chips %}
+    <div class="yearbar">
+        <a class="yb{{ ' is-on' if not data.state }}"
+           href="/school/{{ school|urlencode }}/prs?sport={{ sport }}">All states</a>
+        {% for c in state_chips %}
+          <a class="yb{{ ' is-on' if data.state == c.state }}"
+             href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ c.state }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     {% if data.years %}
     <div class="yearbar">

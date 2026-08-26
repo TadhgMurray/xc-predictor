@@ -268,6 +268,12 @@ Step "10_rankings"     { python racecast\build_ranking_results.py }
 #   run's athletes. It was in run_rest.ps1 and missing here, so a full
 #   pipeline rebuilt every board except the team one, which then served a
 #   season older than everything around it.
+# ! SCHOOL IDENTITY FROM RANKINGS. An athlete's home state is the state
+#   they race in most; a school string's identities are its athletes
+#   clustered by home state ("Highland" UT vs CA). Reads ranking_results,
+#   so after 10; the search index, school chips, meet-scoring splits and
+#   the site-wide "Name (ST)" labels all read what this writes.
+Step "10b_school_ids"  { python racecast\build_school_identity.py }
 Step "11_teams"        { python racecast\build_team_season.py }
 # ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
 #   that step touches it, so this only has to be after the pack -- but it sits

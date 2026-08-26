@@ -78,11 +78,15 @@ CREATE INDEX IF NOT EXISTS idx_search_trgm
 # When the underlying results change, rebuild those three tables (see the SQL
 # at the top of the file / in chat). During development they're static.
 
+# {ph_join}/{ph_col} fill in the home-state join only when pipeline 10b
+# has built person_home_state -- the state that qualifies the school in
+# the sublabel and makes "jackson highland ut" findable.
 _ATHLETE_SQL = """
-SELECT n.person_id, n.name, s.school, a.last_year, a.n_races
+SELECT n.person_id, n.name, s.school, a.last_year, a.n_races{ph_col}
 FROM   athlete_named  n
 JOIN   athlete_agg    a USING (person_id)
 LEFT JOIN athlete_school s USING (person_id)
+{ph_join}
 WHERE  n.name IS NOT NULL
   AND  n.name NOT LIKE '%<%'
 """
@@ -91,6 +95,31 @@ WHERE  n.name IS NOT NULL
 # ===================================================================== #
 #  HELPERS
 # ===================================================================== #
+
+def _identity(conn):
+    """{school: [(state, n_athletes, share, is_primary)]} from
+    school_identity (pipeline 10b), empty when it is not built yet --
+    the index then carries plain names, exactly as before."""
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.school_identity')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cur.execute("""
+        SELECT school, state, n_athletes, share, is_primary
+        FROM   school_identity
+        ORDER  BY school, n_athletes DESC
+    """)
+    out = {}
+    for s, st, n, share, prim in cur.fetchall():
+        out.setdefault(s, []).append((st, n, float(share), prim))
+    return out
+
+
+def _hasHomeStates(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.person_home_state')")
+    return cur.fetchone()[0] is not None
+
 
 def _stream_cursor(conn, name):
     """Server-side cursor so millions of rows don't load into Python at once."""
@@ -128,17 +157,27 @@ def _strip_year(name):
 
 def _load_athletes(conn):
     """Stream the (now cheap) athlete query, insert in batches."""
+    has_ph = _hasHomeStates(conn)
     read = _stream_cursor(conn, "athlete_src")
-    read.execute(_ATHLETE_SQL)
+    read.execute(_ATHLETE_SQL.format(
+        ph_col=", ph.state AS home_state" if has_ph else ", NULL AS home_state",
+        ph_join="LEFT JOIN person_home_state ph USING (person_id)"
+                if has_ph else ""))
 
     write = conn.cursor()
     batch, total = [], 0
     for row in read:
         name   = row["name"]
         school = row.get("school")
+        st     = row.get("home_state")
+        # the school qualifies with the athlete's own home state --
+        # "Highland (UT)" -- the site-wide label convention
+        if school and st:
+            school = f"{school} ({st})"
         parts  = name.split()
         last   = parts[-1].lower() if parts else ""
-        # search_text = name + school so "carcamo northgate" can match
+        # search_text = name + school (+ state) so "carcamo northgate"
+        # and "jackson highland ut" both match
         search_text = f"{name} {school or ''}".strip().lower()
 
         batch.append((
@@ -162,7 +201,16 @@ def _load_athletes(conn):
 
 
 def _load_schools(conn):
-    """Distinct schools, sorted by athlete count."""
+    """One row per real-world school, sorted by athlete count.
+
+    ★ SPLIT NAMES GET A ROW PER STATE. school_identity clusters a
+      name's athletes by home state; where two clusters are real
+      (>= 3 athletes, >= 10% share), "Highland" becomes "Highland (UT)"
+      and "Highland (CA)", each linking the page scoped to its state --
+      the search box stops being a coin flip. Every other school gets
+      its primary "(ST)" in the label and search text, the site-wide
+      convention."""
+    ident = _identity(conn)
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     wr  = conn.cursor()
     cur.execute("""
@@ -177,21 +225,37 @@ def _load_schools(conn):
         GROUP BY 1
     """)
     rows = []
+    n_split = 0
     for r in cur.fetchall():
         s = r["school"]
         if not s:
             continue
+        # The school PAGE. This linked a filtered athlete search from
+        # before /school existed, and the stale index outlived the
+        # route by months -- scripts/fix_school_search_links.py
+        # repoints an already-built index without a full rebuild.
+        link = f"/school/{quote(s, safe='')}"
+        clusters = ident.get(s) or []
+        real = [c for c in clusters if c[1] >= 3 and c[2] >= 0.10]
+        if len(real) >= 2:
+            n_split += 1
+            for st, n, _share, _prim in real:
+                rows.append((
+                    "school", f"{s} ({st})", f"{n} athletes",
+                    f"{link}?state={st}",
+                    f"{s} {st}".lower(), s.lower(),
+                    0, n,
+                ))
+            continue
+        st = clusters[0][0] if clusters else None
         rows.append((
-            "school", s, f"{r['n_ath']} athletes",
-            # The school PAGE. This linked a filtered athlete search from
-            # before /school existed, and the stale index outlived the
-            # route by months -- scripts/fix_school_search_links.py
-            # repoints an already-built index without a full rebuild.
-            f"/school/{quote(s, safe='')}",
-            s.lower(), s.lower(),
+            "school", f"{s} ({st})" if st else s, f"{r['n_ath']} athletes",
+            link,
+            f"{s} {st}".lower() if st else s.lower(), s.lower(),
             0, r["n_ath"] or 0,
         ))
-    _flush(wr, rows); conn.commit(); print(f"  schools: {len(rows):,}")
+    _flush(wr, rows); conn.commit()
+    print(f"  schools: {len(rows):,} ({n_split:,} names split by state)")
 
 
 def _load_courses(conn):

@@ -207,6 +207,16 @@ _err_handler.setFormatter(_logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s"))
 app.logger.addHandler(_err_handler)
 
+# ★ "Name (ST)" IS THE SITE-WIDE DEFAULT for a school. The raw tables
+#   keep the raw strings (the scrapers would fight anything else); the
+#   qualified label lives in the derived layer -- school_identity, built
+#   at pipeline 10b -- and renders through this filter. Loaded once per
+#   process; restart after a pipeline to pick up fresh labels. Missing
+#   table (old database, mid-rebuild) = plain names, never an error.
+import school_identity
+school_identity.loadLabels(getConn)
+app.template_filter("school_label")(school_identity.schoolLabel)
+
 
 @app.errorhandler(404)
 def not_found(_err):
@@ -2307,6 +2317,17 @@ def get_tf_meet_events(cur, meet_id, source=None):
     return cur.fetchall()
 
 
+def stamp_home_states(cur, rows):
+    """Stamp each scoring row with its athlete's home state (the modal
+    state of their racing history, person_home_state at pipeline 10b).
+    tf_points' _splitMap reads it to split a school name two real
+    schools share. No table yet = no stamps = no splits."""
+    from school_identity import homeStates
+    hs = homeStates(cur, {r.get("person_id") for r in rows})
+    for r in rows:
+        r["home_state"] = hs.get(r.get("person_id"))
+
+
 def get_tf_meet_scoring_rows(cur, meet_id, source=None):
     """Every result in a TF meet with the event context tf_points needs.
 
@@ -2505,6 +2526,7 @@ def meet_tf(meet_id):
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, scoring_rows)
+            stamp_home_states(cur, scoring_rows)
 
     if header is None:
         abort(404)
@@ -2581,6 +2603,7 @@ def compiled_tf(meet_id):
             header = get_tf_meet_header(cur, meet_id, source=src)
             rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, rows)
+            stamp_home_states(cur, rows)
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             # Stamp BEFORE scoreMeet: it copies rows into its event
             # sections, so hs_rating and display_result must already be on
@@ -2783,6 +2806,7 @@ def school_page(school_name):
     from school import (schoolHeader, schoolYears, schoolRoster, schoolMeets,
                         schoolBest, schoolTopAthletes, currentSeason,
                         seasonLabel, storedYear)
+    from school_identity import stateChips
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
@@ -2793,6 +2817,13 @@ def school_page(school_name):
             header = schoolHeader(cur, school_name)
             if header is None:
                 abort(404)
+
+            # same name, two schools: state chips scope every table to
+            # one home-state cluster (see school_identity.py)
+            chips, primary_state = stateChips(cur, school_name)
+            state = (request.args.get("state") or "").strip().upper() or None
+            if state and not any(c["state"] == state for c in chips):
+                state = None
 
             years = schoolYears(cur, school_name)
 
@@ -2811,12 +2842,17 @@ def school_page(school_name):
             picked_stored = storedYear(sport, picked)
 
             year   = picked_stored or currentSeason(cur, school_name, sport)
-            roster = schoolRoster(cur, school_name, year, sport) if year else []
-            meets  = schoolMeets(cur, school_name, sport, year=picked_stored)
+            roster = (schoolRoster(cur, school_name, year, sport,
+                                   state=state, primary=primary_state)
+                      if year else [])
+            meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
+                                 state=state, primary=primary_state)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
-            best   = schoolBest(cur, school_name, sport, limit=100)
-            top    = schoolTopAthletes(cur, school_name, sport, limit=100)
+            best   = schoolBest(cur, school_name, sport, limit=100,
+                                state=state, primary=primary_state)
+            top    = schoolTopAthletes(cur, school_name, sport, limit=100,
+                                       state=state, primary=primary_state)
 
     # HS-equivalent view: rows carry their pool straight from
     # ranking_results / athlete_season, so no lookup is needed.
@@ -2847,6 +2883,7 @@ def school_page(school_name):
              for g, c in pool_counts.items()}
 
     return render_template("school.html", school=school_name, header=header,
+                           state_chips=chips, state=state,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),
                            sport=sport, pools=pools,
@@ -2861,6 +2898,7 @@ def school_prs_page(school_name):
     ?sport=XC|TF, ?year=<label> narrows to a season's bests, ?course=
     (XC) narrows to bests run there."""
     from school_prs import schoolPrData
+    from school_identity import stateChips
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
@@ -2871,8 +2909,13 @@ def school_prs_page(school_name):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            chips, primary_state = stateChips(cur, school_name)
+            state = (request.args.get("state") or "").strip().upper() or None
+            if state and not any(c["state"] == state for c in chips):
+                state = None
             data = schoolPrData(cur, school_name, sport,
-                                year_label=year, course=course)
+                                year_label=year, course=course,
+                                state=state, primary=primary_state)
 
     if not data["any"] and not year and not course:
         abort(404)
@@ -2902,7 +2945,7 @@ def school_prs_page(school_name):
                     r["display_mark"] = r.get("mark") or "—"
 
     return render_template("school_prs.html", school=school_name,
-                           sport=sport, data=data,
+                           sport=sport, data=data, state_chips=chips,
                            has_hs_view=has_hs_view)
 
 

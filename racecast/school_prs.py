@@ -217,8 +217,24 @@ def _person(r):
     return r.get("person_id") or ((r.get("name") or "").strip().lower() or None)
 
 
+def _stateFilter(cur, rows_lists, state, primary):
+    """Keep only athletes ASSIGNED to `state` (their home-state cluster;
+    unknowns follow the primary cluster) -- the same-name-two-schools
+    chips, applied in Python over the already-fetched rows."""
+    from school_identity import homeStates
+    ids = set()
+    for rows in rows_lists:
+        ids |= {r.get("person_id") or r.get("athlete_id") for r in rows}
+    hs = homeStates(cur, ids)
+
+    def keep(r):
+        pid = r.get("person_id") or r.get("athlete_id")
+        return hs.get(pid, primary) == state
+    return [[r for r in rows if keep(r)] for rows in rows_lists]
+
+
 def schoolPrData(cur, school, sport, year_label=None, course=None,
-                 per_table=100):
+                 per_table=100, state=None, primary=None):
     """Everything the PRs page renders, one dict.
 
     {"sections": [{label, dist_note, kind, on_board, distance,
@@ -232,6 +248,9 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     running = _runningRows(cur, school, sport)
     field = _fieldRows(cur, school) if sport == "TF" else []
     hurdles = _hurdleRows(cur, school) if sport == "TF" else []
+    if state:
+        running, field, hurdles = _stateFilter(
+            cur, [running, field, hurdles], state, primary)
 
     # field and hurdle rows need gender BEFORE grouping (the tables
     # split on it); one bulk lookup covers every athlete in both. A
@@ -411,4 +430,4 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
 
     return {"sections": sections, "years": years, "courses": courses,
             "pools": pools, "year": year_label, "course": course,
-            "any": bool(sections)}
+            "state": state, "any": bool(sections)}

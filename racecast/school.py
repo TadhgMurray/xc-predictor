@@ -42,6 +42,7 @@ import sys
 
 sys.path.insert(0, "engine")
 from season_year import seasonYearSqlInt
+from school_identity import stateFilterSql
 
 
 def seasonLabel(sport, year):
@@ -132,9 +133,12 @@ def schoolHeader(cur, school):
     return row if row and row["athletes"] else None
 
 
-def schoolRoster(cur, school, year, sport):
-    """Everyone who raced for this school in one season, best first."""
-    cur.execute("""
+def schoolRoster(cur, school, year, sport, state=None, primary=None):
+    """Everyone who raced for this school in one season, best first.
+    `state` narrows to athletes ASSIGNED to that home-state cluster --
+    the same-name-two-schools chips (school_identity)."""
+    sf, sfp = stateFilterSql("s", state, primary)
+    cur.execute(f"""
         SELECT s.person_id,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
@@ -157,12 +161,14 @@ def schoolRoster(cur, school, year, sport):
         WHERE  s.school = %(school)s
           AND  s.year   = %(year)s
           AND  s.sport  = %(sport)s
+          {sf}
         ORDER  BY s.mean_rating DESC NULLS LAST
-    """, {"school": school, "year": year, "sport": sport})
+    """, {"school": school, "year": year, "sport": sport, **sfp})
     return cur.fetchall()
 
 
-def schoolMeets(cur, school, sport, year=None, limit=2000):
+def schoolMeets(cur, school, sport, year=None, limit=2000,
+                state=None, primary=None):
     """Every meet this school has raced, newest first. One season if `year`.
 
     ⚠ LEFT JOIN ON meets, WITH A tfrrs FALLBACK. `meets` is anet-only: an
@@ -180,6 +186,7 @@ def schoolMeets(cur, school, sport, year=None, limit=2000):
     # Omitted entirely when no year is given: the school page is a history.
     year_clause = (f"AND {seasonYearSqlInt(sport, 'r.date')} = %(year)s"
                    if year else "")
+    sf, sfp = stateFilterSql("r", state, primary)
 
     cur.execute(f"""
         SELECT r.meet_id,
@@ -198,10 +205,12 @@ def schoolMeets(cur, school, sport, year=None, limit=2000):
         WHERE  r.school = %(school)s
           AND  r.speed_rating IS NOT NULL
           {year_clause}
+          {sf}
         GROUP  BY r.meet_id, r.div_id, m.meet_name, mt.meet_name
         ORDER  BY date DESC
         LIMIT  %(lim)s
-    """, {"school": school, "year": year, "tsport": tfrrs_sport, "lim": limit})
+    """, {"school": school, "year": year, "tsport": tfrrs_sport,
+          "lim": limit, **sfp})
     return cur.fetchall()
 
 
@@ -220,7 +229,7 @@ def currentSeason(cur, school, sport):
     return row["y"] if row else None
 
 
-def schoolBest(cur, school, sport, limit=25):
+def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
     """The school's best single performances, all time.
 
     ★ EVERY PERFORMANCE, NOT ONE PER ATHLETE. A performance board is a list of
@@ -228,7 +237,8 @@ def schoolBest(cur, school, sport, limit=25):
       school's history. Collapsing to one row each answers a different
       question, and the roster tables above already answer that one.
     """
-    cur.execute("""
+    sf, sfp = stateFilterSql("rr", state, primary)
+    cur.execute(f"""
         SELECT rr.person_id,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
@@ -256,20 +266,23 @@ def schoolBest(cur, school, sport, limit=25):
         WHERE  rr.school = %(school)s
           AND  rr.sport  = %(sport)s
           AND  rr.speed_rating IS NOT NULL
+          {sf}
         ORDER  BY rr.speed_rating DESC
         LIMIT  %(lim)s
-    """, {"school": school, "sport": sport, "lim": limit})
+    """, {"school": school, "sport": sport, "lim": limit, **sfp})
     return cur.fetchall()
 
 
-def schoolTopAthletes(cur, school, sport, limit=12):
+def schoolTopAthletes(cur, school, sport, limit=12,
+                      state=None, primary=None):
     """Best career rating per athlete, for the chart.
 
     ★ THIS is where one-per-athlete belongs: the chart asks "who are the best
       runners this school has had", which is a question about people. The
       performance table asks about races, and keeps every one.
     """
-    cur.execute("""
+    sf, sfp = stateFilterSql("s", state, primary)
+    cur.execute(f"""
         SELECT person_id, name, best, seasons, first_year, last_year
         FROM (
             SELECT s.person_id,
@@ -296,9 +309,10 @@ def schoolTopAthletes(cur, school, sport, limit=12):
             WHERE  s.school = %(school)s
               AND  s.sport  = %(sport)s
               AND  s.best_rating IS NOT NULL
+              {sf}
             GROUP  BY s.person_id
         ) x
         ORDER  BY best DESC
         LIMIT  %(lim)s
-    """, {"school": school, "sport": sport, "lim": limit})
+    """, {"school": school, "sport": sport, "lim": limit, **sfp})
     return cur.fetchall()

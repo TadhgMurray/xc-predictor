@@ -73,7 +73,7 @@
             {% for t in scores.teams %}
             <tr>
                 <td>{{ t.place if t.place else loop.index }}</td>
-                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                <td><a href="/school/{{ t.school|urlencode }}">{{ t.school|school_label }}</a></td>
                 <td>{{ t.points if t.points is not none else "—" }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO
                    displace, and hiding them makes a deep team look like a
@@ -138,7 +138,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 <td>{{ row.score_place if row.score_place else "—" }}</td>

@@ -29,13 +29,27 @@
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide">
-    <h1>{{ school }}</h1>
+    <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
     <p class="meta">
         {% if header.state %}{{ header.state }} · {% endif %}
         {{ header.athletes }} athletes ·
         {{ header.first_year }} to {{ header.last_year }} ·
-        <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}">School PRs →</a>
+        <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
     </p>
+
+    {% if state_chips %}
+    {# Same name, two schools: each chip is one home-state cluster of
+       this name's athletes; every table on the page scopes with it. #}
+    <p class="meta">Multiple schools share this name. Pick a state:</p>
+    <div class="yearbar">
+        <a class="yb{{ ' is-on' if not state }}"
+           href="/school/{{ school|urlencode }}?sport={{ sport }}">All</a>
+        {% for c in state_chips %}
+          <a class="yb{{ ' is-on' if state == c.state }}"
+             href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ c.state }} ({{ c.n }} athletes)</a>
+        {% endfor %}
+    </div>
+    {% endif %}
 
 {# The two-gender view-all: a rankings board is pool-scoped, so a mixed
    table links each side separately. #}

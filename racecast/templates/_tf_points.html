@@ -59,7 +59,9 @@
                     {% for t in standings %}
                     <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 20 }}>
                         <td>{{ t.place_label }}</td>
-                        <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
+                        {# a split team row links its raw name scoped to its
+                           state; school_label suffixes the rest "(ST)" #}
+                        <td><a href="/school/{{ (t.link_school or t.school)|urlencode }}{% if t.link_state %}?state={{ t.link_state }}{% endif %}">{{ t.school|school_label }}</a></td>
                         <td{{ ' class="pts"'|safe if t.place_label in ("1", "T1") }}>{{ t.display }}</td>
                         <td>{{ t.wins }}</td>
                     </tr>

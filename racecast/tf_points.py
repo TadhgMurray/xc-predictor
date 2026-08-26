@@ -413,6 +413,49 @@ def _award(entries):
     return out
 
 
+def _splitMap(rows):
+    """{school_lower: (real_states, primary_state)} for school strings
+    that arrive at THIS meet with athletes from two or more states --
+    two real schools wearing one name (plain 'Highland', UT and CA,
+    both at a national invite).
+
+    The gate is two-plus-two: a state counts only with >= 2 distinct
+    athletes here, and a split needs >= 2 such states -- one traveling
+    transfer must not mint a phantom school. Rows carry home_state
+    stamped by the route from person_home_state (the athlete's modal
+    racing state); meets without the stamp split nothing."""
+    by_school = {}
+    for r in rows:
+        school = scorableSchool(r.get("school"))
+        st = r.get("home_state")
+        if not school or not st:
+            continue
+        d = by_school.setdefault(school.lower(), {})
+        d.setdefault(st, set()).add(r.get("person_id") or id(r))
+    split = {}
+    for key, by_st in by_school.items():
+        real = {st for st, ppl in by_st.items() if len(ppl) >= 2}
+        if len(real) >= 2:
+            split[key] = (real, max(by_st, key=lambda s: len(by_st[s])))
+    return split
+
+
+def _teamIdentity(r, split):
+    """(display_school, link_state) for a result's team row. Split
+    names qualify as 'Name (ST)'; an athlete whose state is unknown or
+    below the gate stands with the school's biggest cluster here."""
+    school = scorableSchool(r.get("school"))
+    if not school:
+        return None, None
+    info = split.get(school.lower())
+    if not info:
+        return school, None
+    real, primary = info
+    st = r.get("home_state")
+    st = st if st in real else primary
+    return f"{school} ({st})", st
+
+
 def _standings(teams_dict):
     """Sorted standings rows from {school_lower: {school, points, wins}},
     tie-aware T-places, formatted points -- one rule for the computed
@@ -455,6 +498,9 @@ def scoreMeet(rows):
     the feed carries their results. It is None unless coverage is 100%:
     see the gate in the finalize loop.
     """
+    # same name, two schools: the home-state split (see _splitMap)
+    split = _splitMap(rows)
+
     # ---- majority gender per raw event -------------------------------- #
     # For rows whose name and athlete both stay silent: strict majority
     # of the KNOWN genders in the same raw event (div_id, event_id), so
@@ -705,13 +751,14 @@ def scoreMeet(rows):
             # every school that showed up gets a standings row, scoring
             # or not -- a zero is information too
             for r in rows_g:
-                school = scorableSchool(r.get("school"))
+                school, link_st = _teamIdentity(r, split)
                 if school:
-                    teams.setdefault(school.lower(),
-                                     {"school": school, "points": 0.0,
-                                      "wins": 0})
+                    teams.setdefault(school.lower(), {
+                        "school": school, "points": 0.0, "wins": 0,
+                        "link_school": scorableSchool(r.get("school")),
+                        "link_state": link_st})
             for label, pts, win, row in awarded:
-                school = scorableSchool(row.get("school"))
+                school, _st = _teamIdentity(row, split)
                 if not school or pts <= 0:
                     continue
                 cell = teams[school.lower()]
@@ -745,12 +792,13 @@ def scoreMeet(rows):
                 top = max(s for _r, s in o_rows)
                 won = set()
                 for r, s in o_rows:
-                    school = scorableSchool(r.get("school"))
+                    school, link_st = _teamIdentity(r, split)
                     if not school:
                         continue
-                    cell = o["teams"].setdefault(
-                        school.lower(),
-                        {"school": school, "points": 0.0, "wins": 0})
+                    cell = o["teams"].setdefault(school.lower(), {
+                        "school": school, "points": 0.0, "wins": 0,
+                        "link_school": scorableSchool(r.get("school")),
+                        "link_state": link_st})
                     cell["points"] += s
                     if s == top and school.lower() not in won:
                         cell["wins"] += 1
@@ -781,9 +829,10 @@ def scoreMeet(rows):
                 # same rule as computed: every school that showed up
                 # gets a row -- a zero is information too
                 for t in div["teams"][g]:
-                    o["teams"].setdefault(
-                        t["school"].lower(),
-                        {"school": t["school"], "points": 0.0, "wins": 0})
+                    o["teams"].setdefault(t["school"].lower(), {
+                        "school": t["school"], "points": 0.0, "wins": 0,
+                        "link_school": t.get("link_school"),
+                        "link_state": t.get("link_state")})
                 div["official"][g] = _standings(o["teams"])
         # events in a stable reading order: running by distance (parsed
         # from the name when the column is empty, so the 200 stops
