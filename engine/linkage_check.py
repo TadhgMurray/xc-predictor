@@ -33,6 +33,7 @@ results.speed_rating unless you pass --golive.
 """
 
 import os
+import re
 import sys
 import time
 
@@ -376,6 +377,65 @@ def externalFraction(D):
 LINK_MIN = 0.22
 DAYS_MIN = 3
 
+# ★ THE SELF-REFERENCE GATE (owner's call, 2026-08-27). The days leg of the
+#   conjunction below assumes race days pin a cell over time -- and they do,
+#   but only when the returning athletes are measured anywhere else. A venue
+#   that hosts its own population's whole season is self-reference stacked
+#   deep: Cabell Midland's d3000 cell holds ~1,200 middle-school rows whose
+#   careers live at that venue, eight race days of them, and the solve read
+#   their below-pool-mean field strength as +0.155 of course difficulty --
+#   ~19 fake points on the varsity race sharing the cell.
+#
+#   externalFraction cannot see this class: a fully venue-locked group has
+#   (cells - 1) = 0 links and contributes NOTHING to the fraction, so the
+#   cell's frac is computed from the handful of travelled athletes while the
+#   vote mass is the locked crowd. bridgeFraction counts the crowd directly:
+#   the share of a cell's DISTINCT GROUPS that race at any OTHER venue at
+#   all. Below BRIDGE_MIN the cell's scale rests mostly on athletes the
+#   corpus cannot place, and per the binary doctrine above it is replaced,
+#   not shrunk.
+#
+# ⚠ XC ONLY, TODAY. TF cells are home tracks, where high locking is normal
+#   and deltas are small; gating them needs its own measurement. The printed
+#   distribution is the calibration evidence for both knobs.
+BRIDGE_MIN = 0.35
+
+
+def bridgeFraction(D):
+    """Per cell: share of its distinct groups that race any OTHER venue.
+
+    Venue BASE, not cell: the :d<meters> suffix is stripped, so an athlete
+    racing two distances at one park is still venue-locked there.
+    """
+    course, group = np.asarray(D["course"]), np.asarray(D["group"])
+    n_cells, n_groups = D["n_cells"], D["n_groups"]
+    keys = D.get("keys")
+    if not keys:
+        return np.ones(n_cells)
+    bases = [re.sub(r":d\w+$", "", str(k)) for k in keys]
+    base_id = {b: i for i, b in enumerate(sorted(set(bases)))}
+    base_of = np.array([base_id[b] for b in bases], dtype=np.int64)
+    n_bases = len(base_id)
+
+    ok = course >= 0
+    g, c = group[ok].astype(np.int64), course[ok].astype(np.int64)
+
+    # distinct venues per group -> which groups bridge anywhere
+    uniq = np.unique(g * n_bases + base_of[c])
+    bases_per_group = np.bincount(uniq // n_bases, minlength=n_groups)
+    bridged = bases_per_group >= 2
+
+    # distinct (group, cell) memberships -> per-cell bridged share
+    uniq2 = np.unique(g * n_cells + c)
+    g2, c2 = uniq2 // n_cells, uniq2 % n_cells
+    tot = np.bincount(c2, minlength=n_cells).astype(np.float64)
+    num = np.bincount(c2, weights=bridged[g2].astype(np.float64),
+                      minlength=n_cells)
+    out = np.ones(n_cells)
+    nz = tot > 0
+    out[nz] = num[nz] / tot[nz]
+    return out
+
 
 def sportDefault(D, delta_s, identified):
     """
@@ -446,7 +506,41 @@ def shrinkByLinkage(D, delta_s):
     days = np.asarray(D.get("cell_days", D["degree"]))
     days_min = DAYS_MIN if D.get("cell_days") is not None else DAYS_MIN * 4
 
-    dead = D["solved"] & (frac < LINK_MIN) & (days < days_min)
+    dead_link = D["solved"] & (frac < LINK_MIN) & (days < days_min)
+
+    # The self-reference gate -- see BRIDGE_MIN above. XC cells whose
+    # distinct-group population mostly never leaves the venue are replaced,
+    # race days notwithstanding: days of a locked population are the SAME
+    # fact restated, not identification.
+    keys = D.get("keys") or []
+    bridge = bridgeFraction(D)
+    is_xc = (np.array([str(k).startswith("XC:") for k in keys], dtype=bool)
+             if len(keys) == D["n_cells"]
+             else np.zeros(D["n_cells"], dtype=bool))
+    dead_bridge = D["solved"] & is_xc & (bridge < BRIDGE_MIN) & ~dead_link
+
+    # ! THE CALIBRATION EVIDENCE, printed every run: the deciles say where
+    #   BRIDGE_MIN sits in the real distribution, and the worst list is
+    #   checkable against pages (Cabell Midland is the reference case).
+    solved_xc = D["solved"] & is_xc
+    if solved_xc.any():
+        q = np.percentile(bridge[solved_xc], [1, 5, 10, 25, 50])
+        print(f"    [link] bridge fraction over {int(solved_xc.sum()):,} "
+              f"solved XC cells: p1 {q[0]:.2f}  p5 {q[1]:.2f}  "
+              f"p10 {q[2]:.2f}  p25 {q[3]:.2f}  p50 {q[4]:.2f}  "
+              f"(gate at {BRIDGE_MIN:.2f})")
+    if dead_bridge.any():
+        worst = np.argsort(np.where(dead_bridge, -np.abs(delta_s), np.inf))
+        print(f"    [link] {int(dead_bridge.sum()):,} XC cells "
+              f"SELF-REFERENTIAL (bridge < {BRIDGE_MIN:.0%}) -> sport "
+              f"default. Largest deltas replaced:")
+        for i in worst[:12]:
+            if not dead_bridge[i]:
+                break
+            print(f"        {str(keys[i]):<34} delta {delta_s[i]:+.3f}  "
+                  f"bridge {bridge[i]:.2f}  days {int(days[i])}")
+
+    dead = dead_link | dead_bridge
     if not dead.any():
         print("    [link] no unidentified cells")
         return delta_s
@@ -456,9 +550,12 @@ def shrinkByLinkage(D, delta_s):
     out[dead] = default[dead]
 
     worst = np.abs(delta_s[dead]).max()
-    print(f"    [link] {dead.sum():,} of {D['solved'].sum():,} solved cells "
-          f"UNIDENTIFIED (ext < {LINK_MIN:.0%} AND days < {days_min}) "
-          f"-> sport default")
+    print(f"    [link] {int(dead.sum()):,} of {int(D['solved'].sum()):,} "
+          f"solved cells replaced by sport default: "
+          f"{int(dead_link.sum()):,} unidentified "
+          f"(ext < {LINK_MIN:.0%} AND days < {days_min}), "
+          f"{int(dead_bridge.sum()):,} self-referential "
+          f"(bridge < {BRIDGE_MIN:.0%})")
     print(f"    [link] largest delta discarded {worst:+.3f}; "
           f"all other cells untouched")
     return out
