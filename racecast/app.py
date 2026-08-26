@@ -3018,8 +3018,22 @@ def get_course_cell_difficulties(cur, course_name):
         return {}
 
 
+# ★ A COURSE PAGE IS A HISTORY, AND HISTORY ONLY CHANGES AT THE PIPELINE.
+#   Mt. SAC's records/bests queries are real work (window functions over
+#   hundreds of thousands of rows -- 39s measured cold), so the finished
+#   render context caches per (course, distance) like the TF points do.
+_COURSE_CACHE = {}
+_COURSE_TTL = 6 * 3600
+_COURSE_MAX = 64
+
+
 @app.route("/course/<course_name>")
 def course(course_name):
+    cache_key = (course_name, request.args.get("dist", type=int))
+    hit = _COURSE_CACHE.get(cache_key)
+    if hit and time.time() - hit[0] < _COURSE_TTL:
+        return render_template("course.html", **hit[1])
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             distances = get_course_distances(cur, course_name)
@@ -3091,23 +3105,27 @@ def course(course_name):
     sel_n = next((d["n_results"] for d in distances
                   if int(round(float(d["distance"]))) == sel_dist), None)
 
-    return render_template("course.html",
-                           has_hs_view=has_hs_view,
-                           course_name=course_name,
-                           header=header,
-                           dist_values=dist_values,
-                           dist_table=dist_table,
-                           sel_dist=sel_dist,
-                           pr_ok=(sel_dist in PR_DISTANCES) if sel_dist else False,
-                           sel_n=sel_n,
-                           sel_difficulty=sel_difficulty,
-                           primary_dist=primary_dist,
-                           primary_difficulty=primary_difficulty,
-                           records=bySex(records),
-                           team_records=bySex(team_records),
-                           rating_bests=bySex(rating_bests),
-                           team_rating=bySex(team_rating),
-                           meets=meets)
+    ctx = dict(has_hs_view=has_hs_view,
+               course_name=course_name,
+               header=header,
+               dist_values=dist_values,
+               dist_table=dist_table,
+               sel_dist=sel_dist,
+               pr_ok=(sel_dist in PR_DISTANCES) if sel_dist else False,
+               sel_n=sel_n,
+               sel_difficulty=sel_difficulty,
+               primary_dist=primary_dist,
+               primary_difficulty=primary_difficulty,
+               records=bySex(records),
+               team_records=bySex(team_records),
+               rating_bests=bySex(rating_bests),
+               team_rating=bySex(team_rating),
+               meets=meets)
+    _COURSE_CACHE[cache_key] = (time.time(), ctx)
+    if len(_COURSE_CACHE) > _COURSE_MAX:
+        oldest = min(_COURSE_CACHE, key=lambda k: _COURSE_CACHE[k][0])
+        _COURSE_CACHE.pop(oldest, None)
+    return render_template("course.html", **ctx)
 
 
 # ===================================================================== #

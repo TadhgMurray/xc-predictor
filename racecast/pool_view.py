@@ -142,6 +142,47 @@ _CONST_CACHE = {}              # (pool, sport) -> constant or None
 _CONST_SAMPLE = 1500           # rows to median over; a constant needs few
 _CONST_MIN_ROWS = 50           # below this the median is an anecdote
 
+# ★ THE CONSTANTS SURVIVE RESTARTS. Twenty cold samples made the first
+#   home page of every fresh process cost ~6s; the constants only drift
+#   when a pipeline rewrites ratings, and a day-stale constant moves a
+#   factor by ~1% -- under what the toggle can even display. So they
+#   persist to a JSON sidecar for a day and the first page pays nothing.
+_CONST_FILE = None
+_CONST_FILE_TTL = 24 * 3600
+
+
+def _constFile():
+    import os
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "pool_constants_cache.json")
+
+
+def _loadConstFile():
+    import json, os, time
+    try:
+        path = _constFile()
+        if time.time() - os.path.getmtime(path) > _CONST_FILE_TTL:
+            return
+        with open(path) as fh:
+            for k, v in json.load(fh).items():
+                pool, _, sport = k.partition("|")
+                _CONST_CACHE[(pool, sport)] = v
+    except Exception:                    # noqa: BLE001 -- cache, not truth
+        pass
+
+
+def _saveConstFile():
+    import json
+    try:
+        with open(_constFile(), "w") as fh:
+            json.dump({f"{p}|{s}": v
+                       for (p, s), v in _CONST_CACHE.items()}, fh)
+    except Exception:                    # noqa: BLE001
+        pass
+
+
+_loadConstFile()
+
 
 def _poolConstant(pool, sport):
     """C(pool, sport): median of rating*nt/(1+difficulty)/100 over rows the
@@ -175,6 +216,7 @@ def _poolConstant(pool, sport):
         print(f"pool_view: constant for {pool}/{sport} unavailable "
               f"({len(vals)} usable rows, need {_CONST_MIN_ROWS})", flush=True)
     _CONST_CACHE[key] = value
+    _saveConstFile()
     return value
 
 
