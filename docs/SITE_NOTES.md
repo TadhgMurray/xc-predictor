@@ -22,6 +22,13 @@ UI work that gets a mock for approval before any code, per the house rule.
 3. **TF distance detection is weaker than XC.** Track distance comes from
    event names; the pass tools and pace tests are XC-centric. A mislabeled
    TF event mostly relies on the anchor gate at board build.
+   Related, already handled, do not re-fix: TF normalizing to the 5K
+   anchor from spans that stop at 3200 is counteracted in
+   fit_distance_exponent (_sampleClamped + _extensionSlopeHigh: the
+   3200->5000 stretch uses a slope MEASURED from dual-distance athlete
+   pairs, not the cubic's tangent; refit every overnight at
+   02_fit_spline). Per-sport anchors (hs_m|TF etc.) exist in
+   POOL_TARGET_METERS but are deliberately inert under the merged solve.
 4. **Apparent temperature is inflated 20-35 C daytime.** The grid writer
    feeds raw solar irradiance where net absorbed radiation belongs
    (Steadman term). Consistent, so usable as a model feature; wrong for
