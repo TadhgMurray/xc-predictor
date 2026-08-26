@@ -81,8 +81,13 @@ SEED = 42
 # model useless for inference.
 STATS_OUT = "model/data/target_stats.pkl"
 
-# Where the maths runs. This box is an AMD RX 6900/6950 XT on ROCm.
-# Non-obvious bit: PyTorch's ROCm build REUSES the CUDA API — the same
+# Where the maths runs. This box is an AMD RX 7900 XTX (RDNA3, gfx1100)
+# on ROCm -- verified 2026-08-26 by torch.cuda.get_device_name; an older
+# note here claimed a 6900/6950 XT and sent the install down the RDNA2
+# staging wheel, which is the wrong channel for this card. The right
+# wheel on Windows is the gfx110X index:
+#   pip install --pre torch --index-url https://rocm.nightlies.amd.com/v2/gfx110X-all/
+# Non-obvious bit: PyTorch's ROCm build REUSES the CUDA API -- the same
 # "cuda" device string and the same torch.cuda.is_available(). So this
 # line is already correct for AMD; you never write "rocm" anywhere in
 # the code. The ONLY thing that differs is which PyTorch you install
