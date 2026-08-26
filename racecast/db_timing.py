@@ -49,11 +49,19 @@ def _record(sql, ms):
     RECENT.append({"ts": time.time(), "ms": ms, "sql": _head(sql),
                    "path": path})
     if ms >= SLOW_MS:
+        # ⚠ encoding= IS THE FIX FOR A REAL 500. Without it Windows opens
+        #   the log as cp1252, and the first slow query whose SQL contained
+        #   a ★ comment blew up the WRITE -- inside cursor.execute, taking
+        #   the page down. /search was "broken" for two sweeps because the
+        #   PROFILER crashed logging the evidence that search was slow.
+        # ⚠ except Exception, not OSError. UnicodeEncodeError is a
+        #   ValueError, so the old guard let it through. A recorder is
+        #   never allowed to hurt the page it measures.
         try:
-            with open(_LOG_PATH, "a") as fh:
+            with open(_LOG_PATH, "a", encoding="utf-8") as fh:
                 fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
                          f"{ms:8.1f}ms  {path}  {_head(sql)}\n")
-        except OSError:
+        except Exception:                # noqa: BLE001
             pass
 
 

@@ -196,9 +196,12 @@ app = Flask(__name__)
 #   full stack) in racecast/errors.log.
 import logging as _logging
 import os as _os
+# encoding=: Windows would open this cp1252 and a traceback quoting a
+# source line with ★ in it would be dropped (logging eats the error, but
+# the evidence is lost -- same disease that 500'd /search via db_timing).
 _err_handler = _logging.FileHandler(
     _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                  "errors.log"))
+                  "errors.log"), encoding="utf-8")
 _err_handler.setLevel(_logging.ERROR)
 _err_handler.setFormatter(_logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s"))
