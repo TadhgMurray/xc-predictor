@@ -52,10 +52,21 @@ systemctl restart postgresql
 
 echo "== app =="
 id -u xcp &>/dev/null || useradd -m -s /bin/bash xcp
+# ! PRIVATE REPO. Set XCP_REPO_URL to a tokened URL first:
+#     GitHub -> Settings -> Developer settings -> fine-grained token,
+#     read-only on TadhgMurray/xc-predictor, then
+#     export XCP_REPO_URL='https://<token>@github.com/TadhgMurray/xc-predictor'
+#   (or skip: scp the repo to /srv/xc-predictor yourself and re-run.)
 if [ ! -d /srv/xc-predictor ]; then
-    git clone https://github.com/TadhgMurray/xc-predictor /srv/xc-predictor
+    if [ -n "${XCP_REPO_URL:-}" ]; then
+        git clone "$XCP_REPO_URL" /srv/xc-predictor
+    else
+        echo "no /srv/xc-predictor and no XCP_REPO_URL set -- clone or scp" \
+             "the repo, then re-run" >&2
+        exit 1
+    fi
 fi
-cd /srv/xc-predictor && git pull
+cd /srv/xc-predictor && git pull --ff-only || true
 python3 -m venv /srv/venv 2>/dev/null || true
 /srv/venv/bin/pip install -q --upgrade pip
 /srv/venv/bin/pip install -q flask gunicorn psycopg2-binary numpy scipy torch \
