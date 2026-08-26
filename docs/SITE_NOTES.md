@@ -15,6 +15,15 @@ Issue ids (#n) are stable -- commits and conversation reference them.
    cross-sport comparisons. Instruments: the _reportDelta XC<->TF spread
    on the engine run, and the "high-side extension" lines in
    02_fit_spline.log (see appendix).
+   PLUMBED 2026-08-27 as a closed loop: 08_golive applies
+   measured_bbar from engine\data\sport_gap_bbar.json (solve's own
+   estimate when absent) and records what it applied; new step 10c_gap
+   runs measure_sport_gap --emit, which writes measured = applied + D
+   for the NEXT night. D converges to 0 across nights unattended. To
+   pin the fix BEFORE the next run (the drifted solve estimate is what
+   over-rates XC vs TF -- the "9:01 should be the best race" case):
+   `python scripts\measure_sport_gap.py --emit --applied X` with X from
+   the last 08 log's "[all] sport recentre: bbar X" line.
 3. Check the small training thing that happened at the end (of the last
    train run).
 4. Check that all the noticeable races actually got corrected: Ox Bow /
@@ -195,6 +204,18 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   speed_rating > 0), so a future triage run cannot rebuild the spiral.
   Doctrine: _RESULT_DROP is for individually-verified rows; any future
   mass generation must pass the drop-blind echo test before applying.
+  FOLLOW-UP SHIPPED 2026-08-27 (owner's rules: never compare across
+  pools to condemn; judge against the races directly around the row;
+  make it a pipeline step): (a) diag_suspects' bracket now carries a
+  LEVEL BUCKET (ms/hs/college from grade, tfrrs = college) and a
+  residual is only computed against same-bucket races -- a NULL bucket
+  abstains -- so a pool transition can never manufacture a swing;
+  (b) the rowguard is pipeline steps 15/16 (diag -> triage echo court ->
+  apply_triage), with a 2,000-per-list rail that DIVERTS oversized drop
+  lists to an .OVER-CAP file apply_triage cannot merge, and apply_triage
+  no longer merges diag's echo-untested result_drop_<sport>.py at all
+  (that file carried the July waves; it is a report now) and skips
+  empty additions so quiet nights add nothing to corrections.py.
 - **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
   every race in Men's events, appeared on a female board. Boards take
   gender from `athletes` rows (first school alphabetically wins a

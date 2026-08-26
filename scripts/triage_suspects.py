@@ -458,6 +458,21 @@ def _writeIdentWorklist(path, repeat):
             f.write(f"{i}\t{len(meets[i])}\t{nrows[i]}\t\n")
 
 
+# ★ THE MASS-DROP RAIL (2026-08-27, issue #23). The 2026-07 waves put
+#   hundreds of thousands of auto-generated ids into _RESULT_DROP in single
+#   files. A drop list past the cap is DIVERTED to a name apply_triage
+#   cannot merge (it matches *.py exactly), so an unattended pipeline can
+#   propose at scale but never convict at scale -- the list survives for a
+#   human to read. Same shape as shrinkByLinkage's athlete rails.
+_MAX_DROPS = 2000
+
+
+def _railed(path, n, cap):
+    if n <= cap:
+        return path, False
+    return f"{path}.OVER-CAP-{n}.txt", True
+
+
 # _writeDropList : corrections.py-ready block for the island one-offs.
 def _writeDropList(path, drops, window, required):
     drops = sorted(drops, key=lambda r: r["swing"])   # worst first
@@ -552,7 +567,8 @@ def _proposalSummary(proposals, n_auto):
 
 
 def _run(sport, in_dir, out_dir, window, required, clump_min, repeat_min,
-         snap_tol, slow_base_lo, slow_pct_lo, slow_base_hi, slow_pct_hi, dry):
+         snap_tol, slow_base_lo, slow_pct_lo, slow_base_hi, slow_pct_hi, dry,
+         max_drops=_MAX_DROPS):
     row_path = os.path.join(in_dir, f"suspects_row_{sport.lower()}.tsv")
     div_path = os.path.join(in_dir, f"suspects_div_{sport.lower()}.tsv")
     rows = _loadRows(row_path, "FAST")
@@ -577,7 +593,12 @@ def _run(sport, in_dir, out_dir, window, required, clump_min, repeat_min,
     lo = (slow_base_lo, slow_pct_lo)
     hi = (slow_base_hi, slow_pct_hi)
     slow_drops = _slowDeepTail(slow, div_flagged, lo, hi)
+    sv, sv_over = _railed(sv, len(slow_drops), max_drops)
     _writeSlowDropList(sv, slow_drops)
+    if sv_over:
+        print(f"\n  !! RAIL: {len(slow_drops):,} slow drops exceed the "
+              f"{max_drops:,} cap -- DIVERTED to\n     {sv}\n     "
+              "(apply_triage will not merge it; a human reads it first)")
     _proposalSummary(proposals, n_auto)
     print(f"  slow line (+{slow_pct_lo:.0f}% at {slow_base_lo:.0f}s .. "
           f"+{slow_pct_hi:.0f}% at {slow_base_hi:.0f}s): "
@@ -598,8 +619,13 @@ def _run(sport, in_dir, out_dir, window, required, clump_min, repeat_min,
     keeps, drops = _verdicts(oneoff, echoes, required)
     dp = os.path.join(out_dir, f"result_drop_oneoff_{sport.lower()}.py")
     kp = os.path.join(out_dir, f"triage_keep_{sport.lower()}.tsv")
+    dp, dp_over = _railed(dp, len(drops), max_drops)
     _writeDropList(dp, drops, window, required)
     _writeKeepAudit(kp, keeps)
+    if dp_over:
+        print(f"\n  !! RAIL: {len(drops):,} one-off drops exceed the "
+              f"{max_drops:,} cap -- DIVERTED to\n     {dp}\n     "
+              "(apply_triage will not merge it; a human reads it first)")
 
     print(f"\n  one-off verdicts: KEEP {len(keeps):,}  DROP {len(drops):,}")
     print(f"  (echo = other race within {window:.0%}, different meet+day; "
@@ -645,13 +671,17 @@ def main():
                          "a canonical one to propose it (default 0.06)")
     ap.add_argument("--dry", action="store_true",
                     help="lanes + distance proposals only; skip the DB pass")
+    ap.add_argument("--max-drops", type=int, default=_MAX_DROPS,
+                    help="drop lists past this size are diverted to a "
+                         ".OVER-CAP file apply_triage cannot merge "
+                         f"(default {_MAX_DROPS})")
     args = ap.parse_args()
     if not args.dry:
         initPool()
     _run(args.sport, args.in_dir, args.out, args.echo_window, args.echoes,
          args.clump_min, args.repeat_min, args.snap_tol,
          args.slow_base_lo, args.slow_pct_lo, args.slow_base_hi,
-         args.slow_pct_hi, args.dry)
+         args.slow_pct_hi, args.dry, args.max_drops)
 
 
 if __name__ == "__main__":

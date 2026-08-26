@@ -590,6 +590,15 @@ def main():
     ap.add_argument("--self-test", action="store_true", dest="self_test",
                     help="check the estimator against synthetic athletes with "
                          "a known gap and known improvement. No database.")
+    ap.add_argument("--emit", action="store_true",
+                    help="close the loop: write measured_bbar = applied + D "
+                         "to engine/data/sport_gap_bbar.json for the next "
+                         "solve to apply (requires --from rating and a "
+                         "recorded applied_bbar, or --applied)")
+    ap.add_argument("--applied", type=float, default=None,
+                    help="override the applied bbar for --emit (first seed, "
+                         "read from the last 08 log's '[all] sport recentre: "
+                         "bbar X' line)")
     args = ap.parse_args()
 
     if args.self_test:
@@ -640,7 +649,52 @@ def main():
 
     if d is not None:
         _implications(d, args.bbar, args.source)
+    if args.emit:
+        return _emit(d, args)
     print()
+    return 0
+
+
+# ---- the loop-closing write. measured_bbar = applied + D goes to the json
+#      pair_recenter loads at the NEXT solve. Unattended-safe: every refusal
+#      is a printed reason and exit 0, never a stop.
+def _emit(d, args):
+    import datetime
+    import json
+    path = os.path.join("engine", "data", "sport_gap_bbar.json")
+    if args.source != "rating":
+        print(f"\n  --emit REFUSED: only --from rating measures the gap "
+              "ERROR\n  (--from norm is the raw discrepancy the difficulty "
+              "exists to correct).\n")
+        return 0
+    if d is None:
+        print("\n  --emit SKIPPED: no D measured.\n")
+        return 0
+    doc = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        pass
+    applied = (args.applied if args.applied is not None
+               else doc.get("applied_bbar"))
+    if applied is None:
+        print("\n  --emit SKIPPED: no applied bbar on record. The 08 golive "
+              "records it\n  after its recentre; for a first seed pass "
+              "--applied X (X from the last\n  08 log's '[all] sport "
+              "recentre: bbar X' line).\n")
+        return 0
+    doc.update({"measured_bbar": float(applied) + float(d),
+                "applied_bbar": float(applied),
+                "D": float(d),
+                "measured_date": datetime.date.today().isoformat()})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+    print(f"\n  EMITTED {path}: measured_bbar {doc['measured_bbar']:+.5f} "
+          f"(applied {float(applied):+.5f} + D {float(d):+.5f}).\n  The next "
+          "solve applies it; D converging toward 0 across runs is the loop "
+          "working.\n")
     return 0
 
 

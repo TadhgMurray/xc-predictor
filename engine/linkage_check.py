@@ -239,11 +239,17 @@ def recenterSport(D):
         # measured constant is the telemetry that says when to re-measure.
         own, _ = prc.meanOffset(D["beta"], D["sc"], D["group"], D["n_groups"])
         print(f"[all] sport recentre: bbar {bbar:+.5f} MEASURED "
-              f"(pair_recenter.MEASURED_BBAR; solve's own estimate {own:+.5f} "
+              f"(data/sport_gap_bbar.json; solve's own estimate {own:+.5f} "
               f"from {n_ident:,} dual-sport athlete-seasons)")
     else:
         print(f"[all] sport recentre: bbar {bbar:+.5f} from {n_ident:,} "
               f"dual-sport athlete-seasons")
+    # ★ CLOSE THE LOOP: record what was actually applied, so the gap step
+    #   (measure_sport_gap --emit, after rankings) can write
+    #   measured_bbar = applied + D for the NEXT solve to pick up.
+    prc.recordApplied(bbar)
+    print(f"[all] sport recentre: applied bbar recorded to "
+          f"data/sport_gap_bbar.json for the --emit gap step")
     print(f"[all] TF - XC difficulty gap now {gap:+.5f} "
           f"(shared-ability solve gave -0.043)")
 

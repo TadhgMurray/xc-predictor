@@ -93,18 +93,57 @@ def meanOffset(beta, sc, group, n_groups):
 #   reparameterisation below is prediction-preserving for ANY constant, so
 #   applying a measured one instead is algebraically free.
 #
-#   HOW TO SET IT, exactly (delta_bbar = +D, not 2D -- D is the error in the
-#   GAP and each sport carries half):
-#     1. after a golive, run scripts/measure_sport_gap.py on the live ratings;
-#        it prints D, the XC-minus-interpolated-TF residual in log-rating
-#     2. read the bbar that golive ACTUALLY APPLIED from its log:
-#        "[all] sport recentre: bbar X"
-#     3. set MEASURED_BBAR = X + D here
-#   Iterate after the next golive: measure D again, nudge by +D again. D
-#   converging toward 0 is the loop working; None reverts to the solve's own
-#   estimate. Production (pair_all) applies this; the diagnostics
-#   (linkage_check, this file's main) keep measuring the solve's own value.
-MEASURED_BBAR = None
+#   THE LOOP IS CLOSED THROUGH A FILE NOW (2026-08-27), not a hand-pinned
+#   constant. data/sport_gap_bbar.json carries:
+#       measured_bbar   what the NEXT solve should apply (X + D)
+#       applied_bbar    what the LAST solve actually applied (recordApplied,
+#                       called by the golive after recentring)
+#       D               the last measured gap error, for telemetry
+#   The nightly sequence: 08 golive applies measured_bbar (or the solve's
+#   own estimate when the file is absent) and records applied_bbar; the gap
+#   step after rankings runs measure_sport_gap --emit, which reads
+#   applied_bbar, measures D on the fresh ratings, and writes
+#   measured_bbar = applied + D (delta_bbar = +D, not 2D -- D is the error
+#   in the GAP and each sport carries half). D converging toward 0 across
+#   nights is the loop working. Delete the file to revert to the solve's
+#   own estimate.
+
+_GAP_JSON = os.path.join(_HERE, "data", "sport_gap_bbar.json")
+
+
+def _loadMeasured():
+    import json
+    try:
+        with open(_GAP_JSON, encoding="utf-8") as f:
+            v = json.load(f).get("measured_bbar")
+    except (OSError, ValueError):
+        return None
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# recordApplied : the golive calls this with the bbar it ACTUALLY applied,
+#   so the measure step can compute measured = applied + D without reading
+#   logs. Merges into the json; never drops measured_bbar.
+def recordApplied(bbar):
+    import datetime
+    import json
+    doc = {}
+    try:
+        with open(_GAP_JSON, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        pass
+    doc["applied_bbar"] = float(bbar)
+    doc["applied_date"] = datetime.date.today().isoformat()
+    os.makedirs(os.path.dirname(_GAP_JSON), exist_ok=True)
+    with open(_GAP_JSON, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+
+
+MEASURED_BBAR = _loadMeasured()
 
 
 def recenter(delta, alpha, beta, sc, group, sport, course, n_cells, n_groups,

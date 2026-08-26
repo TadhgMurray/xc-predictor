@@ -56,7 +56,14 @@ _MERGES = (
     # files defining the same name cannot bleed into each other.
     ("result_override_gender_{s}.py", "_RESULT_OVERRIDE_ADDITIONS",
      "_RESULT_OVERRIDE_{S}"),
-    ("result_drop_{s}.py", "_RESULT_DROP_ADDITIONS", "_RESULT_DROP_{S}"),
+    # ! result_drop_{s}.py -- diag_suspects' DIRECT auto-drop lane -- is NOT
+    #   merged any more (2026-08-27, issue #23). That file carried the July
+    #   mass-drop waves (280k and 521k ids in single blocks), and its rows
+    #   never pass the echo court: diag flags against a bracket, but only
+    #   triage_suspects corroborates against the athlete's career. The
+    #   doctrine now: NOTHING enters _RESULT_DROP without an echo verdict.
+    #   diag still writes the file as a report; merging it is a deliberate
+    #   human act, never this script's.
 )
 _SPORTS = ("xc", "tf")
 
@@ -153,9 +160,32 @@ def _plan(gen_dir, corr_text):
             if digest in corr_text:
                 notes.append(f"  [skip] {fname}: this exact version already applied")
                 continue
+            # ! EMPTY ADDITIONS ARE NOT APPLIED (2026-08-27). The nightly
+            #   rowguard regenerates these files even when nothing flagged;
+            #   appending a no-op block per night would grow corrections.py
+            #   forever. An additions literal with no entries has nothing to
+            #   merge -- skip it, and the same file with real content later
+            #   hashes differently and applies normally.
+            if _isEmpty(path, var):
+                notes.append(f"  [skip] {fname}: additions are empty")
+                continue
             blocks.append(_blockFor(path, var, target, digest))
             notes.append(f"  [apply] {fname} -> {target}")
     return blocks, notes
+
+
+# _isEmpty : True when the generated file defines its *_ADDITIONS as an
+#   empty literal. Executed in isolation (these files are pure literals by
+#   construction); any exec failure counts as NOT empty so a malformed file
+#   still surfaces at merge time instead of being silently skipped.
+def _isEmpty(path, var):
+    ns = {}
+    try:
+        exec(open(path, encoding="utf-8").read(), {}, ns)
+    except Exception:
+        return False
+    obj = ns.get(var)
+    return obj is not None and len(obj) == 0
 
 
 # ================================================================== #

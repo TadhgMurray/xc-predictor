@@ -191,6 +191,25 @@ def _buildResid(cur, table):
         SELECT r.result_id, r.source, r.meet_id, r.div_id,
                COALESCE(r.person_id, r.athlete_id)  AS ident,
                ln(r.speed_rating)                   AS lsr,
+               -- ★ LEVEL BUCKET (2026-08-27, owner's rule: NEVER compare
+               --   across pools to condemn a row). speed_rating is a
+               --   PER-POOL scale: hs, college and ms carry different
+               --   anchors, so a bracket spanning 8th grade -> 9th, or
+               --   senior spring -> college fall, mixes two scales and
+               --   manufactures a swing exactly at the transition -- the
+               --   place an improving athlete is most vulnerable. The
+               --   bucket is the grade's level (tfrrs rows, grade NULL,
+               --   are college by the standing rule); a NULL bucket gets
+               --   no residual at all -- the method abstains rather than
+               --   guesses. Pro years inside the college bucket are the
+               --   one residual blind spot; accepted, they are rare and
+               --   pro rows are board-gated anyway.
+               CASE
+                 WHEN r.grade ~ '^(K|0?[1-8])$'      THEN 'ms'
+                 WHEN r.grade ~ '^(9|10|11|12)$'     THEN 'hs'
+                 WHEN r.grade ~* '^(fr|so|jr|sr)'    THEN 'col'
+                 WHEN r.source = 'tfrrs'             THEN 'col'
+               END                                  AS lvl,
                r.normalized_time                    AS nt,
                (substring(r.date, 1, 4))::int * 10000
                  + COALESCE(NULLIF(substring(r.date, 6, 2), '')::int, 0) * 100
@@ -228,6 +247,10 @@ def _buildResid(cur, table):
           ON nb.ident = a.ident
          AND nb.drank BETWEEN a.drank - {_BRACKET_SIDE} AND a.drank + {_BRACKET_SIDE}
          AND nb.drank <> a.drank
+         -- same level bucket only: a residual is only ever computed against
+         -- races on the SAME rating scale (see lvl above). NULL abstains.
+         AND a.lvl IS NOT NULL
+         AND nb.lvl = a.lvl
         GROUP BY a.result_id, a.source, a.meet_id, a.div_id, a.ident, a.dn, a.nt, a.lsr
         HAVING count(*) >= {_BRACKET_MIN}
     """)
@@ -769,7 +792,13 @@ def _run(sport, c_thr, fast_pct, slow_pct, min_field, row_limit, out_dir,
             print(f"       meet {d['meet']} div {d['div']} ({d['already']}) "
                   f"c={_pct(d['c']):+.1f}%")
     print(f"\n  wrote:\n    {div_path}\n    {row_path}\n    {txt_path}\n    {drop_path}")
-    print("  merge result_drop_*.py into corrections.py; re-run to confirm they clear.")
+    # ! result_drop_<sport>.py is a REPORT now, not a verdict (2026-08-27,
+    #   issue #23): apply_triage no longer merges it, because its rows never
+    #   passed the echo court -- this file is what carried the July mass-drop
+    #   waves. The applied lane is triage_suspects' echo-tested output.
+    print("  result_drop_*.py is a report; run triage_suspects.py (echo "
+          "court) and\n  apply_triage.py to convict. Re-run this to confirm "
+          "corrections clear.")
 
 
 # ================================================================== #

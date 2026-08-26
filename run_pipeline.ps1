@@ -280,6 +280,14 @@ Step "10_rankings"     { python racecast\build_ranking_results.py }
 #   so after 10; the search index, school chips, meet-scoring splits and
 #   the site-wide "Name (ST)" labels all read what this writes.
 Step "10b_school_ids"  { python racecast\build_school_identity.py }
+# ★ THE SPORT-GAP LOOP CLOSES HERE (2026-08-27). 08_golive applied a bbar
+#   and recorded it to engine\data\sport_gap_bbar.json; this measures D on
+#   the ratings that solve produced and writes measured_bbar = applied + D
+#   for the NEXT night's solve. D converging toward 0 across nights is the
+#   loop working -- watch "EMITTED" in this step's log. Reads ratings, so
+#   after 10. Unattended-safe: --emit refuses with a printed reason and
+#   exit 0 rather than stopping the pipeline.
+Step "10c_gap"         { python scripts\measure_sport_gap.py --emit }
 Step "11_teams"        { python racecast\build_team_season.py }
 # ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
 #   that step touches it, so this only has to be after the pack -- but it sits
@@ -304,6 +312,20 @@ Step "13b_pool_consts" { python scripts\warm_pool_constants.py }
 #   canonical inside build_ranking_results; this covers the permanent
 #   tables and repairs anything a failed concurrent build left behind.
 Step "14_indexes"      { python scripts\add_page_indexes.py }
+# ★ THE ROW GUARD (2026-08-27, issue #23). The continuous, fair version of
+#   the July one-off triage waves: diag flags rows against a LOCAL bracket
+#   of the athlete's own races on the SAME rating scale (never across a
+#   pool change); triage exonerates by echo, where any NORMALIZED race is
+#   an alibi (not just rated ones -- the rated-only alibi rule is what
+#   built the 1.4M-drop spiral); apply_triage merges the survivors.
+#   Rails: a drop list past 2,000 is DIVERTED to an .OVER-CAP file
+#   apply_triage cannot merge -- an unattended run proposes at scale but
+#   never convicts at scale. Last, so a bad night's boards still built.
+Step "15_rowguard_diag_xc"   { python scripts\diag_suspects.py --sport XC }
+Step "15_rowguard_diag_tf"   { python scripts\diag_suspects.py --sport TF }
+Step "15_rowguard_triage_xc" { python scripts\triage_suspects.py --sport XC }
+Step "15_rowguard_triage_tf" { python scripts\triage_suspects.py --sport TF }
+Step "16_rowguard_apply"     { python scripts\apply_triage.py }
 
 
 # ------------------------------------------------------------------ #
@@ -319,8 +341,11 @@ $keys = @(
     'nobody in the race graded', 'grade never advanced',
     'school grade after college', 'off the progression',
     'mixed seasons', 'numeric values rejected', 'written as',
-    # the sport offset: bbar should land near -0.039
-    'sport recentre', 'difficulty gap', 'sport defaults',
+    # the sport offset: bbar should land near -0.039; EMITTED is the gap
+    # loop writing next night's measured_bbar (D -> 0 across nights)
+    'sport recentre', 'difficulty gap', 'sport defaults', 'EMITTED',
+    # the row guard's mass-drop rail firing (a human must read the file)
+    'RAIL', 'OVER-CAP',
     # proof the new speed_ratings ran at all
     'census', 'outside_pool_band',
     # and anything that went wrong quietly
