@@ -126,10 +126,17 @@ _ENROUTE = re.compile(r"\ben\s*-?\s*route\b|enroute", re.IGNORECASE)
 
 
 def scorableSchool(school):
-    """The school name if it names an actual team, else None."""
+    """The school name if it names an actual team, else None.
+
+    unattached/unaffiliated match ANYWHERE, meet_compile's rule (kept
+    in step in spirit, per its header): no school is named with them,
+    and the corpus writes both "Unattached - Nike" and "Nike
+    Unattached". The other placeholders stay whole-string --
+    "Independence HS" is a school, "Independent" is a shrug."""
     s = (school or "").strip()
     low = s.lower()
-    if not s or low in _NON_TEAMS or low.startswith("unattached"):
+    if (not s or low in _NON_TEAMS or "unattached" in low
+            or "unaffiliated" in low):
         return None
     return s
 
