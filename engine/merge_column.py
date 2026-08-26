@@ -56,14 +56,19 @@
 #   staging match KEEP THEIR EXISTING VALUE (COALESCE), so this is an upsert of a
 #   single column, not a destructive rewrite.
 #
-#   All of it runs in ONE transaction. A crash rolls back everything; `table` is
-#   never seen half-rebuilt. The old heap survives as `<table>_old` until the
-#   caller drops it -- that is the undo button, and dropping it is irreversible.
+#   The BUILD runs in one transaction and COMMITS as `<table>_new`; the SWAP is
+#   a second, instant transaction retried under _swapSiege, so a lost lock
+#   fight cannot discard the rebuild (2026-08-25: it did -- see _swapSiege).
+#   `table` itself is still never seen half-rebuilt: the swap stays atomic. The
+#   old heap survives as `<table>_old` until the caller drops it -- that is the
+#   undo button, and dropping it is irreversible.
 #
 #   REQUIRES exclusive access. Rows written to `table` by anyone else during the
 #   rebuild land in `<table>_old` and are LOST. Run with the launcher OFF.
 
 import time
+
+import psycopg2.errors
 
 
 # ================================================================== #
@@ -388,22 +393,115 @@ def _swap(cur, table, cap):
     print(f"    swapped: {table}_new -> {table};  old kept as {table}_old")
 
 
+# _blockers
+# Purpose : who is holding ANY lock on `table` right now.
+# The swap's ACCESS EXCLUSIVE conflicts with every lock class, so every holder
+#   counts -- a plain SELECT's ACCESS SHARE is enough to beat the rename.
+def _blockers(cur, table):
+    cur.execute("""
+        SELECT DISTINCT a.pid, a.application_name, a.state,
+               left(coalesce(a.query, ''), 140)
+        FROM pg_locks l
+        JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE l.relation = %s::regclass
+          AND l.pid <> pg_backend_pid()
+    """, (table,))
+    return cur.fetchall()
+
+
+# _swapSiege
+# Purpose : run _swap in its OWN short transaction, and refuse to lose.
+#
+# The swap needs ACCESS EXCLUSIVE on `table` for a metadata instant, and ANY
+# concurrent lock beats it -- a page view's SELECT, an EXPLAIN, a CREATE INDEX
+# CONCURRENTLY queued hours earlier. 2026-08-25 that cost the whole night:
+# 08_golive's rename on `results` waited out its 2-minute lock_timeout five
+# hours in, and the one-transaction design took the finished rebuild down with
+# it. Two changes follow. The build is COMMITTED before this runs, so a lost
+# siege keeps the heap. And the siege ESCALATES instead of dying:
+#
+#   rounds 1..14   wait 30s each, naming the blockers -- ~7 minutes of
+#                  patience, enough for any query to finish
+#   rounds 15..20  pg_terminate_backend the blockers first. The owner's rule
+#                  for unattended runs, applied to the database: the pipeline
+#                  never stops because app.py or a stray index build is
+#                  running. A terminated CREATE INDEX CONCURRENTLY leaves an
+#                  INVALID index behind; scripts/add_page_indexes.py already
+#                  detects those and rebuilds them.
+_SIEGE_ROUNDS = 20
+_SIEGE_POLITE = 14
+_SIEGE_WAIT_S = 30
+
+
+def _swapSiege(conn, table, cap):
+    for rnd in range(1, _SIEGE_ROUNDS + 1):
+        if rnd > _SIEGE_POLITE:
+            try:
+                with conn.cursor() as cur:
+                    for pid, app, state, q in _blockers(cur, table):
+                        cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                        print(f"    ! terminated pid {pid} "
+                              f"({app or 'no app name'}, {state}): {q}")
+                conn.commit()
+            except Exception as exc:                    # noqa: BLE001
+                conn.rollback()
+                print(f"    ! could not terminate blockers: {exc}")
+            time.sleep(2)      # a beat for the postmaster to reap them
+        try:
+            with conn.cursor() as cur:
+                # per-ROUND timeout; short, because the retry is the patience
+                cur.execute("SET LOCAL lock_timeout = '10s'")
+                _swap(cur, table, cap)
+            conn.commit()
+            return
+        except psycopg2.errors.LockNotAvailable:
+            conn.rollback()
+            with conn.cursor() as cur:
+                who = _blockers(cur, table)
+            conn.rollback()    # hold nothing while sleeping
+            print(f"    swap round {rnd}/{_SIEGE_ROUNDS}: "
+                  f"{table} is locked by:")
+            if not who:
+                print("      (blocker gone already; racing a busy queue)")
+            for pid, app, state, q in who:
+                print(f"      pid {pid} ({app or 'no app name'}, {state}): {q}")
+            if rnd < _SIEGE_ROUNDS:
+                nxt = ("terminating blockers next round"
+                       if rnd + 1 > _SIEGE_POLITE
+                       else f"retrying in {_SIEGE_WAIT_S}s")
+                print(f"      {nxt}", flush=True)
+                time.sleep(_SIEGE_WAIT_S)
+    raise RuntimeError(
+        f"could not take the swap lock on {table} after {_SIEGE_ROUNDS} "
+        f"rounds, terminations included. {table}_new is committed and kept; "
+        f"rerun this step once the blocker is gone (the next run drops and "
+        f"rebuilds it).")
+
+
 # ================================================================== #
 # ENTRY POINT
 # ================================================================== #
 
-# _assertNoLeftovers
-# Purpose : FAIL AT SECOND ZERO if a previous run left <table>_old or _new behind.
-# The swap is the LAST step, ~15 minutes of rebuild later. A pre-existing _old
-#   raises DuplicateTable at that point and the whole transaction rolls back.
-#   Observed once, for real: 834 seconds discarded.
-def _assertNoLeftovers(cur, table):
-    for suffix in ("_old", "_new"):
-        cur.execute("SELECT to_regclass(%s)", (f"public.{table}{suffix}",))
-        if cur.fetchone()[0] is not None:
-            raise RuntimeError(
-                f"{table}{suffix} already exists. The swap would fail AFTER the "
-                f"rebuild. Drop it (or verify and drop {table}_old) first.")
+# _clearLeftovers
+# Purpose : deal with <table>_old / <table>_new leftovers at second zero, not
+#   at swap time ~15 minutes of rebuild later (observed once, for real: a
+#   pre-existing _old raised DuplicateTable at the swap and discarded 834s).
+# _old is a HARD STOP: it is the previous swap's undo copy, and only a human
+#   (or the pipeline's 02_drop_old, which owns that judgment) may drop it.
+# _new is DROPPED here: nothing ever reads it -- the swap is its only
+#   consumer -- so an existing one is the abandoned build of a run that lost
+#   its swap siege, and the rebuild about to happen replaces it anyway.
+def _clearLeftovers(cur, table):
+    cur.execute("SELECT to_regclass(%s)", (f"public.{table}_old",))
+    if cur.fetchone()[0] is not None:
+        raise RuntimeError(
+            f"{table}_old already exists. The swap would fail AFTER the "
+            f"rebuild. Verify it is disposable, then DROP TABLE {table}_old "
+            f"and rerun.")
+    cur.execute("SELECT to_regclass(%s)", (f"public.{table}_new",))
+    if cur.fetchone()[0] is not None:
+        print(f"    dropping {table}_new left by an earlier run's failed swap")
+        cur.execute(f"DROP TABLE {table}_new")
 
 
 # mergeColumn
@@ -432,7 +530,9 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         # is exactly how _constraints' blocklist bug shipped.
         cur.execute("SHOW server_version")
         print(f"    postgres {cur.fetchone()[0]}")
-        _assertNoLeftovers(cur, table)
+        _clearLeftovers(cur, table)
+        # the BUILD transaction only -- the swap sets its own per-round
+        # timeout inside _swapSiege
         cur.execute("SET LOCAL lock_timeout = '2min'")   # fail loudly, do not hang
         _timed(cur, f"ANALYZE {staging}", f"ANALYZE {staging} (size the hash join)")
 
@@ -476,8 +576,15 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         _restoreShape(cur, table, cap)
         _restoreIndexes(cur, table, cap)
         _restoreConstraints(cur, table, cap)
-        _swap(cur, table, cap)
-    conn.commit()                                  # the swap becomes visible HERE
+
+    # ! COMMIT BEFORE THE SWAP. The build is minutes of work; the swap is a
+    #   metadata flip that needs an ACCESS EXCLUSIVE instant. When both shared
+    #   one transaction, one stray reader at the rename aborted the lot --
+    #   2026-08-25, five hours of pipeline died at 08_golive's lock timeout.
+    #   Committed, {table}_new outlives a lost siege. Nobody reads it, so
+    #   nothing observes a half-done state; `table` still flips atomically.
+    conn.commit()
+    _swapSiege(conn, table, cap)                   # the swap becomes visible HERE
 
     with conn.cursor() as cur:
         _timed(cur, f"ANALYZE {table}", f"ANALYZE {table} (fresh planner stats)")
