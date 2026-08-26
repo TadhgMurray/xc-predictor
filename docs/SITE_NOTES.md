@@ -135,18 +135,20 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   (build_ranking_results gate, both sports). Verify any suspect venue
   with scripts/explain_course_cell.py.
 - **#21 Field strength leaks into difficulty at MS-dominated venues.**
-  Found 2026-08-27 via explain_course_cell at Cabell Midland: the +0.155
-  d3000 cell holds ~170 HS varsity rows against ~1,200 middle-school and
-  MS-JV rows (median paces 0.30-0.44 s/m), and NOT ONE corrected
-  division -- the second-order-correction hypothesis is disproved for
-  this venue (the no-vote rule still closes that class in general).
-  Mechanism: local MS fields whose careers live entirely at this venue
-  are weakly identified, so their below-pool-mean strength reads as
-  course slowness and inflates the shared cell the HS race lives in
-  (Dial's 9:22 3000 wore ~19 points of it). Fix direction: weight
-  difficulty votes by the athlete's EXTERNAL linkage (races away from
-  this venue), or solve MS-heavy cells separately -- measure with the
-  engine's linkage census before choosing. Needs the DB.
+  Found and SHIPPED 2026-08-27. Cabell Midland's +0.155 d3000 cell:
+  ~170 HS varsity rows against ~1,200 middle-school rows whose careers
+  live at that venue, zero corrected divisions (the second-order
+  hypothesis disproved there; the no-vote rule still closes that class
+  in general). Fix: the self-reference gate in
+  linkage_check.shrinkByLinkage -- bridgeFraction counts the share of a
+  cell's distinct groups racing any OTHER venue; a solved XC cell under
+  BRIDGE_MIN (0.35) is replaced by its sport default, race days
+  notwithstanding (days of a locked population are the same fact
+  restated). Binary per house doctrine. Every 08_golive run prints the
+  bridge deciles and the worst replaced cells -- retune BRIDGE_MIN from
+  that evidence after the first rebuild. TF exempt for now (home tracks
+  lock normally; needs its own measurement).
+
 - **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
   every race in Men's events, appeared on a female board. Boards take
   gender from `athletes` rows (first school alphabetically wins a
