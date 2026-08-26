@@ -170,13 +170,30 @@ _SHAPE_PLATEAU_DAY = float(_SHAPE_KNOT_DAYS[-1])
 #   TO FIX: re-run the fixed-effects week table with ar.pool changed, one pool
 #   at a time, and replace the number here. ms_m and college_m bracket the
 #   range and are the two worth doing first.
+# ★ RE-MEASURED 2026-08-27 (scripts/fit_rust_amplitude.py, all pools in one
+#   pass, board rows, demeaned within cell x pool). The estimator reproduces
+#   the original hs_m week table EXACTLY through week 4 and diverges after
+#   -- late weeks are selection (wk8 retention: hs 37%, college 73%, ms 5%),
+#   so ABSOLUTE spans read high, but the CROSS-POOL RATIOS share the bias
+#   and are trusted. Values below = 0.0295 x (pool span / hs_m span), which
+#   keeps hs_m at its careful paired-estimator value and moves the others by
+#   what the same instrument measured on the same rows.
+#
+#     measured spans: hs_m .0511  hs_f .0532  ms_m .0486  ms_f .0469
+#                     college_m .0249  college_f .0293
+#
+#   The headline: hs_f tracks hs_m within +-0.002 at EVERY week yet carried
+#   half its amplitude; college carried a quarter of its measured share.
+#   ms scales out BELOW its v1 carry-over (.028 vs .034) -- but its week-8
+#   sample is 5% survivors, so lowering it on that evidence is not
+#   justified; ms holds at v1 until a within-athlete estimator rules.
 _AMPLITUDE_AT_100 = {
-    "hs_m":      0.0295,    # MEASURED
-    "hs_f":      0.01458,   # v1 carry-over: 0.243 %/wk x 6
-    "ms_m":      0.03402,   # v1 carry-over: 0.567 %/wk x 6
-    "ms_f":      0.03564,   # v1 carry-over: 0.594 %/wk x 6
-    "college_m": 0.00648,   # v1 carry-over: 0.108 %/wk x 6
-    "college_f": 0.00648,   # borrowed from college_m; own fit was noise
+    "hs_m":      0.0295,    # MEASURED (v2 paired estimator; ratified 8/27)
+    "hs_f":      0.0307,    # MEASURED 8/27: tracks hs_m week-for-week
+    "ms_m":      0.03402,   # v1 carry-over HELD -- see note above
+    "ms_f":      0.03564,   # v1 carry-over HELD -- see note above
+    "college_m": 0.0143,    # MEASURED 8/27 (was 0.00648, a v1 carry-over)
+    "college_f": 0.0169,    # MEASURED 8/27 (was borrowed college_m)
     "elem_m":    0.03402,   # borrowed from ms_m until the elem split lands
     "elem_f":    0.03564,
 }
