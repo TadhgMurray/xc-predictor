@@ -3418,3 +3418,92 @@ button.yb-more { cursor: pointer; font: inherit; color: var(--accent, #14477d); 
     border: 1px solid #d1d5db; background: #fff; cursor: pointer;
 }
 .race-chip.is-on { background: #111827; color: #fff; border-color: #111827; }
+
+/* ---- race-page additions ---------------------------------------------- *
+ * The corrected-distance star, the race-day weather line, the withheld-
+ * ratings banner, and the per-page report link. All four are amber-family
+ * where they caution: like .flag--warn, they are notes about where numbers
+ * come from, never errors about the numbers. */
+
+/* The star beside a corrected distance. A REAL-element tooltip, not the
+ * .flag data-attribute machinery: this bubble carries a live "report it"
+ * link, and a ::after pseudo-element cannot hold one. Same visual language
+ * as the flag bubbles (white card, 2px colored border, opens up-right);
+ * shown on :hover and :focus-within so keyboard and touch reach it too. */
+.dist-note {
+    position: relative;
+    color: #a05a00;
+    cursor: help;
+    margin-left: 2px;
+}
+.dist-note:focus { outline: none; }
+.dist-note:focus-visible { outline: 2px solid #a05a00; outline-offset: 1px; }
+.dist-tip {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: -6px;
+    z-index: 60;
+    /* the hover bridge: padding, not a gap, so the pointer can travel from
+       the star into the bubble without the tooltip closing under it */
+    padding-bottom: 8px;
+}
+.dist-note:hover .dist-tip,
+.dist-note:focus-within .dist-tip { display: block; }
+.dist-tip-box {
+    display: block;
+    width: 270px;
+    padding: 9px 12px;
+    border: 2px solid #a05a00;
+    border-radius: 9px;
+    background: #fff;
+    color: #222;
+    font-size: 11.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: 0;
+    text-align: left;
+}
+.dist-tip-box b { color: #5c2a0c; }
+.dist-tip-box a { display: inline-block; margin-top: 3px; }
+
+/* Race-day weather: a quiet second meta line; bold only the numbers. */
+.wx { color: #6b7280; }
+.wx b { color: #374151; font-weight: 600; }
+
+/* Ratings-withheld banner, between the Results heading and the table. */
+.withheld {
+    background: #fef3c7;
+    border: 1px solid #e8d59a;
+    border-left: 4px solid #a05a00;
+    border-radius: 6px;
+    padding: .7rem .95rem;
+    margin: .8rem 0 1rem;
+    font-size: .93rem;
+    color: #78350f;
+    max-width: 46rem;
+}
+.withheld b { color: #5c2a0c; }
+
+/* The per-page report link, quiet, after the results table. */
+.page-report {
+    margin-top: 1.6rem;
+    padding-top: .8rem;
+    border-top: 1px solid #e5e7eb;
+    font-size: .85rem;
+    color: #6b7280;
+}
+
+/* The report page's context chip when arriving via ?about=. */
+.about-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    background: #e8eef6;
+    color: #14477d;
+    border-radius: 6px;
+    padding: .3rem .6rem;
+    font-size: .85rem;
+    margin: 0 0 1rem;
+}
+.about-chip code { font-family: ui-monospace, Consolas, monospace; font-size: .82em; }

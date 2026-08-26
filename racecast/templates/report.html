@@ -35,16 +35,22 @@
     general — a link and a sentence about what looks off is enough.
   </p>
 
+  {% if about %}
+  <div class="about-chip">Reporting about: <code>{{ about }}</code></div>
+  {% endif %}
+
   <div class="form-row">
     <label for="kind">What kind of issue</label>
+    {# `kind` preselects from ?kind= -- a race page's correction link lands
+       here already set to the meet/distance option. #}
     <select id="kind">
-      <option value="rating">A rating looks wrong</option>
-      <option value="pool">Someone is on the wrong board (HS / MS / college)</option>
-      <option value="identity">Wrong name, or two people merged into one</option>
-      <option value="missing">A result or meet is missing</option>
-      <option value="meet">Meet, course or distance is wrong</option>
-      <option value="bug">Something on the site is broken</option>
-      <option value="other">Something else</option>
+      <option value="rating" {{ "selected" if kind == "rating" }}>A rating looks wrong</option>
+      <option value="pool" {{ "selected" if kind == "pool" }}>Someone is on the wrong board (HS / MS / college)</option>
+      <option value="identity" {{ "selected" if kind == "identity" }}>Wrong name, or two people merged into one</option>
+      <option value="missing" {{ "selected" if kind == "missing" }}>A result or meet is missing</option>
+      <option value="meet" {{ "selected" if kind == "meet" }}>Meet, course or distance is wrong</option>
+      <option value="bug" {{ "selected" if kind == "bug" }}>Something on the site is broken</option>
+      <option value="other" {{ "selected" if kind == "other" }}>Something else</option>
     </select>
   </div>
 

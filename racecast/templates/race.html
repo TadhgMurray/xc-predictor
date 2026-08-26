@@ -23,7 +23,7 @@
            be escaped or the browser reads them as URL structure and the link
            silently truncates. #}
         <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
-        {{ header.distance|int if header.distance else "—" }}m ·
+        {{ header.distance|int if header.distance else "—" }}m{% if corrected %}<span class="dist-note" tabindex="0" aria-label="Distance corrected. This race was listed at {{ header.listed_distance|int }} meters; a verified correction rates it at {{ header.distance|int }} meters.">★<span class="dist-tip"><span class="dist-tip-box"><b>Distance corrected.</b> This race was listed at {{ header.listed_distance|int }}&thinsp;m; times are rated at the verified {{ header.distance|int }}&thinsp;m. <a href="/report?about={{ request.path|urlencode }}&kind=meet">Is the correction wrong? Report it →</a></span></span></span>{% endif %} ·
         {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "—" }} ·
         {{ header.division }} ·
         {{ race_date if race_date else "—" }}
@@ -33,6 +33,14 @@
         Course difficulty:
         {{ "%+.3f"|format(header.difficulty) if header.difficulty is not none else "—" }}
     </p>
+    {% if extras and extras.weather %}
+    <p class="meta wx">
+        Race-day weather: <b>{{ extras.weather.temp_f }}&deg;F</b>
+        {% if extras.weather.wind_mph is not none %} · wind <b>{{ extras.weather.wind_mph }}&nbsp;mph</b>{% endif %}
+        {% if extras.weather.humidity is not none %} · humidity <b>{{ extras.weather.humidity }}%</b>{% endif %}
+        {% if extras.weather.rain %} · rain before the race{% endif %}
+    </p>
+    {% endif %}
 
     <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
 
@@ -110,6 +118,16 @@
 {% endif %}
 
     <h2>Results</h2>
+    {% if extras and extras.withheld %}
+    <div class="withheld">
+        <b>Ratings withheld.</b> The recorded distance
+        ({{ header.listed_distance|int if header.listed_distance else "unknown" }}&thinsp;m)
+        fails plausibility for these times, and no verified correction exists
+        yet. Times are shown as recorded; this race is excluded from rankings
+        until the distance is verified. Know the real distance?
+        <a href="/report?about={{ request.path|urlencode }}&kind=meet">Report it →</a>
+    </div>
+    {% endif %}
     {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
     <table>
         <thead>
@@ -146,6 +164,9 @@
             {% endfor %}
         </tbody>
     </table>
+
+    <div class="page-report">Something wrong on this page?
+        <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 
 </main>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>

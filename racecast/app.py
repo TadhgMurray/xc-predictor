@@ -1539,6 +1539,11 @@ def get_race_header(cur, meet_id, div_id):
         SELECT COALESCE(m.meet_name, mt.venue_name)          AS meet_name,
                {_xc_course_sql('r')}                         AS course_name,
                {_xc_distance_sql('r')}                       AS distance,
+               -- The SCRAPED value alone, so the page can say "corrected --
+               -- listed 8046 m" when the override changed it. NULL-safe:
+               -- equal to `distance` whenever no override is in play.
+               COALESCE(m.distance, {_blob('r')}::real)      AS listed_distance,
+               dov.distance::real                            AS corrected_distance,
                COALESCE(m.division,
                         mt.division_distances -> %(divtext)s ->> 'div_name')
                                                              AS division,
@@ -1577,6 +1582,52 @@ def get_race_header(cur, meet_id, div_id):
         LIMIT 1
     """, {"meet": meet_id, "div": div_id, "divtext": str(div_id)})
     return cur.fetchone()
+
+
+# The hour the weather line reads. Same constant as the model's feature
+# extraction (XC_DEFAULT_HOUR = 9), so the number on the page is the number
+# the model trained on -- two readers, one clock.
+_XC_RACE_HOUR = 9
+
+
+def raceExtras(cur, meet_id, div_id, source):
+    """Withheld-ratings flag + race-day weather for one XC race page.
+
+    Both degrade to absent when their table does not exist yet (dist_drop
+    arrives with the next dump_overrides run, weather with the grid
+    derivation), so the page renders on any database vintage.
+    """
+    out = {"withheld": False, "weather": None}
+    cur.execute("SELECT to_regclass('dist_drop') AS d, "
+                "to_regclass('weather') AS w")
+    reg = cur.fetchone()
+    if reg["d"]:
+        cur.execute("SELECT 1 FROM dist_drop WHERE sport = 'XC' "
+                    "AND meet_id = %s AND div_id = %s", (meet_id, div_id))
+        out["withheld"] = cur.fetchone() is not None
+    if reg["w"] and source:
+        cur.execute("""
+            SELECT temp_c, wind_speed_kmh, humidity,
+                   (SELECT sum(precipitation_mm) FROM weather p
+                     WHERE p.meet_id = %(m)s AND p.source = %(s)s
+                       AND p.hour <= %(h)s)   AS precip
+              FROM weather
+             WHERE meet_id = %(m)s AND source = %(s)s AND hour = %(h)s
+        """, {"m": meet_id, "s": source, "h": _XC_RACE_HOUR})
+        w = cur.fetchone()
+        if w and w["temp_c"] is not None:
+            # US units on the page; the table stores metric.
+            out["weather"] = {
+                "temp_f":   round(w["temp_c"] * 9 / 5 + 32),
+                "wind_mph": (round(w["wind_speed_kmh"] / 1.609)
+                             if w["wind_speed_kmh"] is not None else None),
+                "humidity": (round(w["humidity"])
+                             if w["humidity"] is not None else None),
+                # >= 0.5 mm accumulated by race hour: enough to have been
+                # felt underfoot, not a trace reading.
+                "rain":     (w["precip"] or 0) >= 0.5,
+            }
+    return out
 
 
 def get_race_results(cur, meet_id, div_id):
@@ -1674,6 +1725,8 @@ def race_xc(meet_id, div_id):
             header  = get_race_header(cur, meet_id, div_id)
             results = get_race_results(cur, meet_id, div_id)
             published = publishedScores(cur, meet_id)
+            extras = (raceExtras(cur, meet_id, div_id, header.get("source"))
+                      if header else {"withheld": False, "weather": None})
             # HS-equivalent view: one race, one distance; pools per row.
             has_hs_view = (stampRowsHs(cur, "XC", results,
                                        distance=header.get("distance"))
@@ -1751,12 +1804,22 @@ def race_xc(meet_id, div_id):
         scores = {"teams": [], "incomplete": computed["incomplete"],
                   "source": "computed"}
 
+    # Corrected = an override is in play AND it disagrees with the scrape.
+    # Agreement entries (override == stored) change nothing and get no star;
+    # a sole-source fill (no scraped value at all) has nothing to contrast.
+    corrected = (header.get("corrected_distance") is not None
+                 and header.get("listed_distance") is not None
+                 and abs(header["corrected_distance"]
+                         - header["listed_distance"]) >= 1)
+
     return render_template("race.html",
                            has_hs_view=has_hs_view,
                            header=header,
                            results=results,
                            race_date=race_date,
-                           scores=scores)
+                           scores=scores,
+                           corrected=corrected,
+                           extras=extras)
 
 
 # ===================================================================== #
@@ -4534,7 +4597,14 @@ def report_page():
     about = (request.args.get("about") or "").strip()
     if not about.startswith("/") or about.startswith("//"):
         about = ""
-    return render_template("report.html", about=about[:200])
+    # `kind` preselects the issue type -- a race page's "correction wrong?"
+    # link lands on "Meet, course or distance is wrong" instead of making
+    # the reporter find it. Whitelisted to the form's own option values.
+    kind = (request.args.get("kind") or "").strip()
+    if kind not in ("rating", "pool", "identity", "missing", "meet",
+                    "bug", "other"):
+        kind = ""
+    return render_template("report.html", about=about[:200], kind=kind)
 
 
 @app.route("/api/report", methods=["POST"])

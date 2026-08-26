@@ -89,6 +89,24 @@ with getConn() as conn, conn.cursor() as cur:
     execute_values(cur, "INSERT INTO dist_override VALUES %s", rows,
                    page_size=5000)
     cur.execute("ANALYZE dist_override")
+
+    # ★ THE DROPS TOO, so the SITE can say why a division has no ratings.
+    #   backfill_normalize reads _DISTANCE_DROP straight from corrections;
+    #   the race page cannot (importing a 1.45M-line module per request is
+    #   not a thing), so the same set lands in a table and the page joins
+    #   it to render "ratings withheld" instead of an unexplained dash
+    #   column. Same lifecycle as dist_override: rebuilt on every dump.
+    drop_rows = [(sport, m, d)
+                 for sport, drops in corrections._DISTANCE_DROP_BY_SPORT.items()
+                 for (m, d) in drops]
+    cur.execute("DROP TABLE IF EXISTS dist_drop")
+    cur.execute("""CREATE TABLE dist_drop (
+                       sport text, meet_id bigint, div_id bigint,
+                       PRIMARY KEY (sport, meet_id, div_id))""")
+    if drop_rows:
+        execute_values(cur, "INSERT INTO dist_drop VALUES %s", drop_rows,
+                       page_size=5000)
+    cur.execute("ANALYZE dist_drop")
     conn.commit()
 
-print("wrote dist_override")
+print(f"wrote dist_override; dist_drop ({len(drop_rows):,} divisions)")

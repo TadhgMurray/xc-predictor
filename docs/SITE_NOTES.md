@@ -8,6 +8,26 @@ Issue ids (#n) are stable -- commits and conversation reference them.
 
 ---
 
+## Tomorrow -- 2026-08-27 (owner's list, in order)
+
+1. Check whether there is still a STATE offset.
+2. Check for a SPORT offset -- or any offset that shows itself in
+   cross-sport comparisons. Instruments: the _reportDelta XC<->TF spread
+   on the engine run, and the "high-side extension" lines in
+   02_fit_spline.log (see appendix).
+3. Check the small training thing that happened at the end (of the last
+   train run).
+4. Check that all the noticeable races actually got corrected: Ox Bow /
+   NLC pages, then `python scripts\find_dropped_divisions.py --min-gap 20`
+   for the residual.
+5. Decide whether 80% for speed rating is correct or not.
+6. Then rerun the engine as necessary.
+7. Then run the model NO MATTER WHAT.
+8. Then transfer everything to Hetzner (or another online DB) and get the
+   site online.
+
+---
+
 ## Section 1 -- MVP
 
 ### 1a. Needs a pipeline night

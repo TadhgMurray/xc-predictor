@@ -83,6 +83,9 @@
         </tbody>
     </table>
 
+    <div class="page-report">Something wrong on this page?
+        <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
+
 </main>
 <script src="{{ url_for('static', filename='scale-view.js') }}"></script>
 </body>
