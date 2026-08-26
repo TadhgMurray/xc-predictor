@@ -62,8 +62,15 @@ WITH rows AS (
       AND  r.normalized_time > 0
       AND  rr.race_date IS NOT NULL
 ), cellmean AS (
-    SELECT *, avg(lnt) OVER (PARTITION BY cell)        AS cm,
-              count(*) OVER (PARTITION BY cell)        AS cn
+    -- ⚠ PER (cell, POOL). The first run demeaned within the cell alone and
+    --   the credibility check refused it: hs_m read 0.0549 against the
+    --   original 0.0295, with residual LEVELS of -0.06 (hs_m) and +0.14
+    --   (hs_f) -- pool-vs-cellmates offsets, because boys, girls and MS
+    --   share cells. The original was run on one pool at a time, so its
+    --   cell means were per-pool by construction; this partition is that,
+    --   in the all-pools pass.
+    SELECT *, avg(lnt) OVER (PARTITION BY cell, pool)  AS cm,
+              count(*) OVER (PARTITION BY cell, pool)  AS cn
     FROM   rows
 ), opener AS (
     SELECT *, min(d) OVER (PARTITION BY person_id, season) AS o
