@@ -54,8 +54,19 @@ def _json(ctx):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=None,
-                    help="only this many courses (smoke runs)")
+    # ⚠ THE DEFAULT IS THE HEAD, NOT THE WORLD. Measured 2026-08-26:
+    #   19,922 courses, and the top 500 alone took an hour -- the full
+    #   sweep extrapolates past a day, inside a pipeline step. The
+    #   precompute exists for the venues whose history is big enough to
+    #   be slow cold; the long tail renders live in a few hundred ms and
+    #   never needed a board. --all remains for a deliberate full build.
+    ap.add_argument("--limit", type=int, default=1200,
+                    help="build the N biggest courses (default 1200)")
+    ap.add_argument("--all", action="store_true",
+                    help="every course, however long it takes")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep what course_boards_new already holds and "
+                         "skip those courses (continue an interrupted run)")
     args = ap.parse_args()
 
     # app imports flask; on the pipeline machine that is the same env the
@@ -65,9 +76,18 @@ def main():
     t0 = time.time()
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("DROP TABLE IF EXISTS course_boards_new")
-        cur.execute(_DDL)
+        if not args.resume:
+            cur.execute("DROP TABLE IF EXISTS course_boards_new")
+        cur.execute("SELECT to_regclass('public.course_boards_new')")
+        if next(iter(cur.fetchone().values())) is None:
+            cur.execute(_DDL)
         conn.commit()
+        done = set()
+        if args.resume:
+            cur.execute("SELECT DISTINCT course_name FROM course_boards_new")
+            done = {r["course_name"] for r in cur.fetchall()}
+            print(f"resuming: {len(done):,} courses already built",
+                  flush=True)
 
         cur.execute("""
             SELECT course_name, count(DISTINCT div_id) AS n
@@ -77,8 +97,10 @@ def main():
             ORDER BY n DESC
         """)
         courses = [r["course_name"] for r in cur.fetchall()]
-        if args.limit:
+        if not args.all and args.limit:
             courses = courses[:args.limit]
+        if done:
+            courses = [c for c in courses if c not in done]
         print(f"building boards for {len(courses):,} courses",
               flush=True)
 

@@ -284,7 +284,11 @@ Step "12_courses"      { python racecast\build_course_rank.py }
 # ! COLD TIME IS THE PRODUCT: precompute every course PAGE (overview and
 #   each distance scope) so the first viewer costs a PK lookup, not a
 #   19-second history recompute. Reads ranking_results, so after 10.
-Step "12b_course_pages" { python racecast\build_course_boards.py }
+# ! TOP 1200 ONLY. 19,922 courses at head-of-list pace extrapolated past
+#   a DAY (2026-08-26, measured); the tail renders live in a few hundred
+#   ms and never needed a precomputed board. build_course_boards --all
+#   exists for a deliberate full build outside the pipeline.
+Step "12b_course_pages" { python racecast\build_course_boards.py --limit 1200 }
 Step "13_panels"       { python racecast\panels.py }
 # the HS-view pool constants, computed once here instead of by the first
 # page of a fresh process
