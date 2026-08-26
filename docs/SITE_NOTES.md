@@ -149,6 +149,22 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   that evidence after the first rebuild. TF exempt for now (home tracks
   lock normally; needs its own measurement).
 
+- **#22 SOLVED (cause) 2026-08-27: short distance labels -- the Cabell
+  Midland answer.** The venue's three short cells (labels 3000/3200/3300,
+  difficulties +0.155/+0.092/+0.066) all imply the SAME true distance,
+  ~3.4 km: one 2.1-mile course under three wrong names, with the solve
+  absorbing each shortfall as terrain. The mirror image of Ox Bow:
+  too-long labels trip every guard, too-short labels trip none and
+  downward-only forbids the override. Ratings mostly survive (the solve
+  launders the error); the label, displayed difficulty, distance-scoped
+  PRs, and any honest race sharing the cell do not.
+  Detector SHIPPED: scripts/check_label_short.py scans the whole corpus
+  from pair_difficulty.npz for multi-cell convergence. Fix is a POLICY
+  decision: (a) leave it (ratings fine, labels lie) + a display note;
+  (b) a display/metadata-only label correction channel -- never touches
+  normalized_time, so it cannot mint elites and does not violate the
+  downward-only rationale; (c) gated upward corrections where
+  convergence proves the true distance. Owner to choose.
 - **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
   every race in Men's events, appeared on a female board. Boards take
   gender from `athletes` rows (first school alphabetically wins a
