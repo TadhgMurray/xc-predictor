@@ -14,15 +14,14 @@ resumable, and a long job you run when you want real weather features.
 import sys
 
 sys.path.insert(0, "scripts")
-sys.path.insert(0, "backfill")
 
 from database import getConn                      # noqa: E402
-from weather_backfill import _createWeatherTable  # noqa: E402
+from weather_from_grid import ensureWeatherTable  # noqa: E402
 
 
 def main():
     with getConn() as conn:
-        _createWeatherTable(conn)
+        ensureWeatherTable(conn)
         conn.commit()
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM weather")
