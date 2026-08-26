@@ -333,7 +333,7 @@ def _predictTimes(cur, person_ids, target):
         batch.append((slot, seq, ctx, fx.venueIndex(target_row, vocab)))
         # rerun: the athlete's ACTUAL normalized time at the original
         # running, for the "vs what happened" readout
-        if target.get("mode") == "rerun":
+        if target.get("mode") in ("rerun", "rerun_exact"):
             orig = [r for r in hist if r.get("meet_id") == spec.get("meet_id")]
             if orig:
                 entries[slot] = {"actual": float(orig[-1]["normalized_time"])}
@@ -413,7 +413,7 @@ def _targetSpec(cur, target):
     spec = {"sport": sport, "is_xc": sport == "XC",
             "meet_id": target.get("meet_id")}
 
-    if mode in ("meet", "rerun"):
+    if mode in ("meet", "rerun", "rerun_exact"):
         meet_id = int(target["meet_id"])
         div = target.get("div_id")
         div = int(div) if div and str(div).isdigit() else None
@@ -458,11 +458,16 @@ def _targetSpec(cur, target):
         row = cur.fetchone()
         if row:
             spec.update(dict(row))
+        # rerun_exact keeps the original date: "as it ran" is the
+        # honest backtest. rerun takes the page's editable date (same
+        # month and day this year by default); a bare year still shifts.
         if mode == "rerun" and spec.get("date"):
-            # same course, same day of year, the target season's year
-            year = target.get("year")
-            if year and str(year).isdigit():
-                spec["date"] = f"{int(year)}{str(spec['date'])[4:]}"
+            if target.get("date"):
+                spec["date"] = target["date"]
+            else:
+                year = target.get("year")
+                if year and str(year).isdigit():
+                    spec["date"] = f"{int(year)}{str(spec['date'])[4:]}"
     else:                                          # manual
         spec["date"] = target["date"]
         d = target.get("distance")
@@ -562,8 +567,19 @@ def _athleteHistory(cur, person_id):
 MAX_PER_TEAM = 7          # a cross country team enters seven
 
 
-def meetField(cur, meet_id, div_id, sport, season_year=None):
-    """Who ran this meet, grouped by school, marked as returning or not.
+def meetField(cur, meet_id, div_id, sport, season_year=None,
+              when="thisyear"):
+    """The field for a re-run, grouped by school -- and WHEN decides who.
+
+    ★ asran: EXACTLY the people who raced it. No season gate, nobody
+      dropped -- "as it actually ran" means that field, graduated
+      seniors included, because they really were there.
+
+    ★ thisyear: each attending school's CURRENT squad, top seven as the
+      predicted lineup, the rest listed for hand-editing -- including
+      this year's freshmen, who were not at the original running. The
+      original participants with no current-season row show under
+      dropped so an injured athlete can be added back by hand.
 
     ★ "RETURNER" MEANS "HAS RACED THIS SEASON". A graduated senior has no
       current-season result and drops out on its own -- no roster, no class
@@ -582,68 +598,45 @@ def meetField(cur, meet_id, div_id, sport, season_year=None):
     if season_year is None:
         season_year = _currentSeason(cur, sport)
 
-    table = "results" if sport == "XC" else "results_tf"
-    div_clause = "AND r.div_id = %(div)s" if div_id else ""
+    if when == "asran":
+        by_school = {}
+        for r in _exactField(cur, meet_id, div_id, sport):
+            school = r["school"] or "Unattached"
+            team = by_school.setdefault(school, {"school": school,
+                                                 "runners": [], "dropped": []})
+            team["runners"].append({"person_id": r["person_id"],
+                                    "name": r["name"], "rating": None,
+                                    "n_races": None})
+        teams = sorted(by_school.values(),
+                       key=lambda t: (-len(t["runners"]), t["school"]))
+        for t in teams:
+            t["runners"].sort(key=lambda x: x["name"])
+        return {"season_year": season_year, "when": when, "teams": teams}
 
-    cur.execute(f"""
-        WITH ran AS (
-            SELECT DISTINCT r.person_id, r.school
-            FROM   {table} r
-            WHERE  r.meet_id = %(meet)s {div_clause}
-              AND  r.person_id IS NOT NULL
-        )
-        SELECT ran.person_id,
-               ran.school,
-               COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '')          AS name,
-               s.mean_rating,
-               s.n_races
-        FROM   ran
-        -- ⚠ NOT `ath`. That is a TEMP table panels.py builds in its own
-        --   session; in the web app it does not exist and this would fail at
-        --   runtime. The lateral is the same shape app.py uses elsewhere:
-        --   `athletes` has roughly one row per (person, school), and the
-        --   linking scripts mint some with no name, so a bare LIMIT 1 returns
-        --   an arbitrary one. Named rows sort first.
-        LEFT JOIN LATERAL (
-            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
-                   NULLIF(TRIM(x.last_name),  '') AS last_name
-            FROM   athletes x
-            WHERE  x.athlete_id = ran.person_id
-            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
-            LIMIT  1
-        ) a ON TRUE
-        -- The CURRENT season, not the meet's. A row here is what "still
-        -- racing" means; its absence is what makes someone a non-returner.
-        LEFT JOIN athlete_season s
-               ON s.person_id = ran.person_id
-              AND s.year = %(yr)s
-              AND s.sport = %(sport)s
-        ORDER  BY ran.school, s.mean_rating DESC NULLS LAST
-    """, {"meet": meet_id, "div": div_id, "yr": season_year, "sport": sport})
-
+    originals = _exactField(cur, meet_id, div_id, sport)
+    at_meet = sorted({r["school"] for r in originals if r.get("school")})
+    squads = _currentSquads(cur, at_meet, sport, season_year)
+    current_ids = {e["person_id"] for sq in squads.values() for e in sq}
     by_school = {}
-    for row in cur.fetchall():
-        team = by_school.setdefault(row["school"] or "Unattached",
-                                    {"school": row["school"] or "Unattached",
-                                     "runners": [], "dropped": []})
-        entry = {"person_id": row["person_id"],
-                 "name": row["name"].strip() or "Unknown",
-                 "rating": (round(float(row["mean_rating"]), 1)
-                            if row["mean_rating"] is not None else None),
-                 "n_races": row["n_races"]}
-        if row["mean_rating"] is None:
-            # Not racing this season -- shown separately so it can be added
-            # back by hand, since an injury looks the same as a graduation.
-            team["dropped"].append(entry)
-        elif len(team["runners"]) < MAX_PER_TEAM:
-            team["runners"].append(entry)
-        else:
-            team["dropped"].append(entry)
-
+    for school in at_meet:
+        sq = squads.get(school, [])
+        by_school[school] = {"school": school,
+                             "runners": sq[:MAX_PER_TEAM],
+                             "dropped": list(sq[MAX_PER_TEAM:])}
+    for r in originals:
+        # an original participant with no current-season row: graduated
+        # or injured, and the data cannot tell -- listed for the human
+        if r["person_id"] in current_ids or not r.get("school"):
+            continue
+        team = by_school.setdefault(r["school"], {"school": r["school"],
+                                                  "runners": [],
+                                                  "dropped": []})
+        team["dropped"].append({"person_id": r["person_id"],
+                                "name": r["name"], "rating": None,
+                                "n_races": None})
     teams = sorted(by_school.values(),
                    key=lambda t: (-len(t["runners"]), t["school"]))
-    return {"season_year": season_year, "teams": teams}
+    return {"season_year": season_year, "when": when, "teams": teams}
 
 
 def schoolSquad(cur, school, sport, season_year=None, limit=40):
@@ -706,10 +699,156 @@ def _currentSeason(cur, sport):
 
 
 def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
-    """The field for the target, after the page's edits."""
-    raise NotImplementedError("predict._teamRosters")
+    """The field for the target, after the page's edits.
+
+    ★ THE MODE DECIDES WHO RACES. rerun_exact is the original field,
+      every person who actually ran, exactly -- that is what "as it ran"
+      means, and it is also the honest backtest. rerun ("run it this
+      year") is each attending school's CURRENT squad, top seven --
+      whoever is racing now, including the freshman who was not at last
+      year's running. A manual target with named schools takes their
+      current top sevens the same way.
+    """
+    mode = target.get("mode")
+    sport = (target.get("sport") or "XC").upper()
+    div = target.get("div_id")
+    div = int(div) if div and str(div).isdigit() else None
+
+    entries = []
+    if target.get("meet_id"):
+        originals = _exactField(cur, int(target["meet_id"]), div, sport)
+        if mode == "rerun_exact":
+            entries = originals
+        else:
+            at_meet = sorted({r["school"] for r in originals
+                              if isTeam(r.get("school"))})
+            squads = _currentSquads(cur, at_meet, sport,
+                                    _currentSeason(cur, sport))
+            entries = [e for sch in sorted(squads)
+                       for e in squads[sch][:MAX_PER_TEAM]]
+    elif schools:
+        squads = _currentSquads(cur, schools, sport,
+                                _currentSeason(cur, sport))
+        entries = [e for sch in sorted(squads)
+                   for e in squads[sch][:MAX_PER_TEAM]]
+
+    rm = {int(x) for x in remove if str(x).isdigit()}
+    entries = [e for e in entries if e["person_id"] not in rm]
+    have = {e["person_id"] for e in entries}
+    add_ids = {int(x) for x in add if str(x).isdigit()} - have
+    if add_ids:
+        entries.extend(_athleteEntries(cur, add_ids, sport,
+                                       _currentSeason(cur, sport)))
+    return entries
 
 
 def _fullField(cur, roster, target):
-    """Everyone expected at the target race, not just the named teams."""
-    raise NotImplementedError("predict._fullField")
+    """Everyone expected at the target race, not just the named teams.
+
+    For a meet-based target the roster IS already the whole field -- the
+    page sends edits against the meet's own entrants, never a subset --
+    and for a manual target nothing beyond the named teams is knowable.
+    The head_to_head split upstream is what changes: it scores the
+    remaining teams as if nobody else raced."""
+    return roster
+
+
+_NAME_LATERAL = """
+        LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
+                   NULLIF(TRIM(x.last_name),  '') AS last_name
+            FROM   athletes x
+            WHERE  x.athlete_id = {pid}
+            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
+            LIMIT  1
+        ) a ON TRUE
+"""
+
+
+def _exactField(cur, meet_id, div_id, sport):
+    """Everyone who actually ran a meet: person, name, school."""
+    table = "results" if sport == "XC" else "results_tf"
+    div_clause = "AND r.div_id = %(div)s" if div_id else ""
+    cur.execute(f"""
+        SELECT DISTINCT ON (r.person_id)
+               r.person_id, r.school,
+               COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '') AS name
+        FROM   {table} r
+        {_NAME_LATERAL.format(pid="r.person_id")}
+        WHERE  r.meet_id = %(meet)s {div_clause}
+          AND  r.person_id IS NOT NULL
+        ORDER  BY r.person_id
+    """, {"meet": meet_id, "div": div_id})
+    return [{"person_id": r["person_id"], "school": r["school"],
+             "name": (r["name"] or "").strip() or "Unknown"}
+            for r in cur.fetchall()]
+
+
+def _currentSquads(cur, schools, sport, season_year):
+    """{school: [runners best-first]} for this season, one bulk query."""
+    schools = [s for s in schools if s]
+    if not schools or season_year is None:
+        return {}
+    cur.execute(f"""
+        SELECT s.school, s.person_id,
+               COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '') AS name,
+               s.mean_rating, s.n_races
+        FROM   athlete_season s
+        {_NAME_LATERAL.format(pid="s.person_id")}
+        WHERE  s.school = ANY(%(schools)s)
+          AND  s.year   = %(yr)s
+          AND  s.sport  = %(sport)s
+        ORDER  BY s.school, s.mean_rating DESC NULLS LAST
+    """, {"schools": schools, "yr": season_year, "sport": sport})
+    out = {}
+    for r in cur.fetchall():
+        out.setdefault(r["school"], []).append({
+            "person_id": r["person_id"], "school": r["school"],
+            "name": (r["name"] or "").strip() or "Unknown",
+            "rating": (round(float(r["mean_rating"]), 1)
+                       if r["mean_rating"] is not None else None),
+            "n_races": r["n_races"]})
+    return out
+
+
+def _athleteEntries(cur, person_ids, sport, season_year):
+    """name + school for hand-added athletes: this season's row first,
+    the athletes table for anyone without one."""
+    ids = sorted(person_ids)
+    if not ids:
+        return []
+    out, seen = [], set()
+    if season_year is not None:
+        cur.execute(f"""
+            SELECT s.person_id, s.school,
+                   COALESCE(a.first_name, '') || ' '
+                       || COALESCE(a.last_name, '') AS name
+            FROM   athlete_season s
+            {_NAME_LATERAL.format(pid="s.person_id")}
+            WHERE  s.person_id = ANY(%(ids)s)
+              AND  s.year = %(yr)s AND s.sport = %(sport)s
+        """, {"ids": ids, "yr": season_year, "sport": sport})
+        for r in cur.fetchall():
+            if r["person_id"] in seen:
+                continue
+            seen.add(r["person_id"])
+            out.append({"person_id": r["person_id"], "school": r["school"],
+                        "name": (r["name"] or "").strip() or "Unknown"})
+    rest = [i for i in ids if i not in seen]
+    if rest:
+        cur.execute("""
+            SELECT DISTINCT ON (athlete_id) athlete_id AS person_id,
+                   school,
+                   NULLIF(TRIM(concat_ws(' ', first_name, last_name)), '')
+                       AS name
+            FROM   athletes
+            WHERE  athlete_id = ANY(%(ids)s)
+            ORDER  BY athlete_id,
+                      (COALESCE(TRIM(first_name), '') <> '') DESC
+        """, {"ids": rest})
+        for r in cur.fetchall():
+            out.append({"person_id": r["person_id"], "school": r["school"],
+                        "name": r["name"] or "Unknown"})
+    return out

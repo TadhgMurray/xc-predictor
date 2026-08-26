@@ -4250,11 +4250,11 @@ def _target(args):
       that owns requests.
     """
     mode = (args.get("mode") or "meet").strip()
-    if mode not in ("meet", "rerun", "manual"):
-        return None, "mode must be meet, rerun or manual"
+    if mode not in ("meet", "rerun", "rerun_exact", "manual"):
+        return None, "mode must be meet, rerun, rerun_exact or manual"
 
     t = {"mode": mode}
-    if mode in ("meet", "rerun"):
+    if mode in ("meet", "rerun", "rerun_exact"):
         raw = (args.get("meet_id") or "").strip()
         if not raw.isdigit():
             return None, "meet_id is required for that mode"
@@ -4262,8 +4262,10 @@ def _target(args):
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
         if mode == "rerun":
-            # The year the re-run is FOR. Defaults to the current season, so
-            # "run last year's state meet again" needs no extra input.
+            # The date the re-run is FOR: the page sends its editable
+            # date (same month and day this year by default). A bare
+            # year still works and shifts the original date.
+            t["date"] = (args.get("date") or "").strip() or None
             t["year"] = args.get("year")
     else:
         t["date"] = (args.get("date") or "").strip()
@@ -4295,10 +4297,14 @@ def api_predict_field():
     if sport not in ("XC", "TF"):
         return jsonify({"error": "sport must be XC or TF."}), 400
 
+    when = (request.args.get("when") or "thisyear").strip()
+    if when not in ("thisyear", "asran"):
+        when = "thisyear"
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             out = meetField(cur, int(meet), int(div) if div.isdigit() else None,
-                            sport)
+                            sport, when=when)
     return jsonify(out)
 
 

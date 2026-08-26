@@ -296,7 +296,8 @@ async function loadField() {
   state.added = [];
 
   const q = new URLSearchParams({ meet_id: state.meet.id,
-                                  sport: state.meet.sport });
+                                  sport: state.meet.sport,
+                                  when: state.when });
   // Omitted, not sent empty: URLSearchParams turns null into the STRING
   // "null", which the server would try to parse as a division id.
   if (state.meet.div) q.set("div_id", state.meet.div);
@@ -328,7 +329,11 @@ function renderField() {
 
   $("field-summary").innerHTML =
     `<strong>${teams.length}</strong> teams, <strong>${kept}</strong> runners ` +
-    `\u2014 everyone from this meet still racing in ${esc(f.season_year)}.` +
+    (f.when === "asran"
+      ? `\u2014 the field that actually raced this meet.`
+      : `\u2014 each team's current squad, top ${7} predicted; the rest and ` +
+        `the original runners without a ${esc(f.season_year)} season are ` +
+        `listed to add by hand.`) +
     // ★ ONE CONTROL, THREE STATES, MUTUALLY EXCLUSIVE. "Expand all" and
     //   "Hide teams" were two independent toggles whose combinations did not
     //   all mean anything -- hidden-and-expanded is not a state, and neither
@@ -679,11 +684,16 @@ async function loadSquad(school) {
 
 document.querySelectorAll(".card[data-when]").forEach((btn) => {
   btn.addEventListener("click", () => {
+    const changed = state.when !== btn.dataset.when;
     state.when = btn.dataset.when;
     document.querySelectorAll(".card[data-when]").forEach((b) =>
       b.classList.toggle("is-on", b === btn));
     document.querySelectorAll(".when-pane").forEach((p) =>
       p.classList.toggle("hidden", p.dataset.pane !== state.when));
+    // The WHEN decides WHO: "as it ran" is the original field, "this
+    // year" is the current squads -- so flipping it reloads the field
+    // (and clears the edits, which described the other population).
+    if (changed && state.meet) loadField();
   });
 });
 
