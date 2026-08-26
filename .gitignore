@@ -205,3 +205,4 @@ peek.py
 fuck.pyracecast/slow_queries.log
 racecast/errors.log
 racecast/pool_constants_cache.json
+scripts/config_local.py
