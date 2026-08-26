@@ -1045,11 +1045,13 @@ def get_races(cur, person_id):
             SELECT m.meet_name, m.location_id, m.is_indoor
             FROM   meets_tf m
             WHERE  m.meet_id = r.meet_id
-            -- meet_id is the ONLY key that crosses sources. div_id, event_id
-            -- and source are all anet-local and do not match tfrrs results.
-            -- meet_name and location_id are constant across a meet's rows, so
-            -- picking any one is safe. DISTANCE IS NOT -- it varies per event,
-            -- so it is deliberately not selected here.
+              -- ! SAME SOURCE ONLY (meet 48789, 2026-08-27). meet_id is
+              --   NOT one meet across sources -- the id spaces collide, and
+              --   an unscoped pick named a tfrrs college meet after its
+              --   colliding anet HS meet ("Lakwview 4-way"). A row whose
+              --   own feed has no meets_tf coverage gets NO name (and links
+              --   as "Meet results ->") rather than the wrong meet's.
+              AND  m.source = r.source
             LIMIT  1
         ) m ON TRUE
         LEFT JOIN course_difficulties cd
@@ -1996,8 +1998,15 @@ def _tf_meet_sources(cur, meet_id, args):
     (the id spaces collide, and "biggest source wins" picks the WRONG
     meet for a link that came from the smaller one)."""
     sources = meet_sources(cur, "meets_tf", meet_id)
-    if not sources:
-        sources = meet_sources(cur, "results_tf", meet_id)
+    # ! MERGE, NOT FALLBACK (meet 48789). A feed can exist ONLY on the
+    #   results side while the other feed covers meets_tf -- fallback-only
+    #   made the tfrrs pin unmatchable, so the reader landed on the
+    #   colliding anet meet. meets_tf sources keep their order (the
+    #   unpinned default is unchanged); results-only feeds append.
+    known = {s["source"] for s in sources}
+    sources = list(sources) + [
+        s for s in meet_sources(cur, "results_tf", meet_id)
+        if s["source"] not in known]
     alt = args.get("alt")
     rid = _ridArg(args)
     if rid is not None:
