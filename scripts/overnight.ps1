@@ -38,7 +38,18 @@ function Step($name, $cmd) {
     $log = "$dir\$name.log"
     Write-Host "`n$('=' * 70)`n  $name    $(Get-Date -Format 'HH:mm:ss')`n$('=' * 70)" -ForegroundColor Yellow
     $global:LASTEXITCODE = 0
-    & $cmd 2>&1 | Tee-Object -FilePath $log
+    # ! OUT-HOST, OR THE BOOLEAN IS BURIED. Tee-Object passes every line
+    #   THROUGH, and a function's unconsumed pipeline output joins its
+    #   return value -- so without Out-Host this returned
+    #   [line, line, ..., $false], a non-empty array, which is TRUTHY.
+    #   `if (-not (Step ...))` could never fire: the 2026-08-25 night died
+    #   at 08_golive, ran features+train anyway, and the summary said
+    #   "pipeline: complete". Out-Host prints each line to the console
+    #   (live -- the old version silently swallowed step output too) and
+    #   emits nothing, leaving the boolean below as the ONLY return value.
+    #   The exit code itself was never the problem: a child .ps1's `exit 1`
+    #   does reach $LASTEXITCODE through `&` and the pipe.
+    & $cmd 2>&1 | Tee-Object -FilePath $log | Out-Host
     return ($LASTEXITCODE -eq 0)
 }
 
