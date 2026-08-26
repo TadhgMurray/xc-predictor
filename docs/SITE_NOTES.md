@@ -24,7 +24,21 @@ Issue ids (#n) are stable -- commits and conversation reference them.
 6. Then rerun the engine as necessary.
 7. Then run the model NO MATTER WHAT.
 8. Then transfer everything to Hetzner (or another online DB) and get the
-   site online.
+   site online. Decisions made 2026-08-26:
+   - **Architecture (c): the pipeline runs ON the server, weekly.** The
+     server is sized for the full rebuild (dedicated NVMe box, 64-128 GB
+     RAM, 1 TB+ disk), the overnight runs there on a weekly cron, and the
+     scrapers feed it directly.
+   - **GPU stays local**, so training splits from the pipeline: features
+     are extracted server-side after each weekly rebuild, chunk files sync
+     down to the 7900 XTX box, train runs there, and model.pt + the three
+     sidecar artifacts push back up. A small sync script each way.
+   - **Clean the DB first -- it is over 200 GB.** Before the dump: drop
+     the known leftovers (any *_old undo copies, results_speed_rating
+     backups once the rebuild is trusted, ovr_shift / reb_* / pair_*
+     staging, dist_override_snap regenerates), then VACUUM FULL or
+     pg_repack the big tables to return the space. Audit first with the
+     size query in the appendix; deletes need eyes, not a script.
 
 ---
 
@@ -144,6 +158,13 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   builder; save/share via URL state; confidence intervals (needs #13).
 - **Search**: keyboard navigation; type-filter chips (after #9).
 - **Conversions**: URL state. Low priority.
+- **Forum.** [mock] Owner wants one. Scope question before anything:
+  off-the-shelf (Discourse or NodeBB on a subdomain, own auth, running on
+  the same server -- days to stand up, moderation tools included) versus
+  homegrown threads hung off meets/athletes/schools (integrated with site
+  identity, but auth + moderation + abuse handling become our code).
+  Recommendation: off-the-shelf first; revisit integration once it has
+  users.
 
 ---
 
@@ -159,3 +180,11 @@ means the 3200->5000 leg is data, "tangent" names why not):
 Morning lists after a reset night: 05c_lost (overrides the wipe lost),
 pass 0's NUKED section, pass 4's nuke counts, then
 `python scripts\find_dropped_divisions.py --min-gap 20` for the residual.
+
+What the 200 GB actually is (run before any cleanup; TOAST and indexes
+included per relation):
+
+    SELECT relname, pg_size_pretty(pg_total_relation_size(c.oid)) AS size
+    FROM   pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE  n.nspname = 'public' AND c.relkind = 'r'
+    ORDER  BY pg_total_relation_size(c.oid) DESC LIMIT 30;
