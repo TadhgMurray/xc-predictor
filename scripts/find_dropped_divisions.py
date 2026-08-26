@@ -76,6 +76,40 @@ MIN_SURVIVORS = 1
 # field of survivors 30+ points above their own heads is not a coaching story.
 MIN_GAP = 25.0
 
+# ------------------------------------------------------------------ #
+#  THE NUKE (owner's call, 2026-08-26)
+# ------------------------------------------------------------------ #
+#
+# ★ A DIVISION THAT IS PROVABLY BROKEN BUT HAS NO DEFENSIBLE ANSWER IS
+#   DROPPED, NOT LEFT LIVE-WRONG. The old flow reported it and waited for a
+#   human plus another four-hour rebuild; the owner's ruling is the reverse:
+#   "I'd rather nuke than have to rerun." A _DISTANCE_DROP entry removes the
+#   division from normalization entirely -- times stay on the page, no
+#   rating is invented -- and it is fully reversible: the entry lives in the
+#   pass block, is re-derived on every reset, and a later hand-verified
+#   override simply outbids it by making the division stop flagging.
+#
+# ⚠ THE NO-SURVIVOR CASE NEEDS ITS OWN EVIDENCE. Board share can be low for
+#   reasons that are not a distance fault at all -- a field of unlinked,
+#   foreign or DODEA athletes is board-ineligible and perfectly fine. With
+#   survivors, the gap bar is that evidence. Without them, the field's own
+#   MEDIAN pace at the stored label decides: no full field's median
+#   approaches world-record pace (0.151 s/m for the 5k WR), and none walks.
+NUKE_FAST_SM = 0.18    # 3:00/km at the label -- the label is too long
+NUKE_SLOW_SM = 0.90    # 15:00/km at the label -- the label is too short
+
+
+def paceImpossible(med_time, label):
+    """A reason string when the field's median pace refutes the label."""
+    if not med_time or not label:
+        return None
+    sm = float(med_time) / float(label)
+    if sm < NUKE_FAST_SM:
+        return f"median pace {sm:.3f} s/m at {label:.0f} -- beyond any human"
+    if sm > NUKE_SLOW_SM:
+        return f"median pace {sm:.3f} s/m at {label:.0f} -- slower than a walk"
+    return None
+
 # ⚠ "RATED" NOW MEANS "ON A BOARD", NOT "speed_rating IS NOT NULL".
 #   fill_ratings prices every row after each rebuild, so a NULL rating
 #   stopped being the engine's verdict -- the verdict moved to
@@ -105,6 +139,10 @@ div AS (
                FILTER (WHERE k.result_id IS NOT NULL)  AS rating,
            avg(o.med)
                FILTER (WHERE k.result_id IS NOT NULL)  AS own_med,
+           -- ! FOR THE NUKE'S NO-SURVIVOR GUARD. The field's median raw
+           --   time, so a division nothing rated can still testify.
+           percentile_cont(0.5) WITHIN GROUP
+               (ORDER BY r.time_seconds)               AS med_time,
            min(r.date)                                 AS date
     FROM   results r
     LEFT   JOIN ranking_results k ON k.result_id = r.result_id
@@ -260,7 +298,7 @@ def main():
 
     census(rows)
 
-    flagged = []
+    flagged, nukes = [], []
     for r in rows:
         if r["n_rated"] / r["n_rows"] > args.max_frac:
             continue
@@ -272,6 +310,15 @@ def main():
         #   one survivor and fourteen siblings is not, and the filter could
         #   not tell them apart from where it was.
         if not r["own_med"] or not r["rating"]:
+            # ★ NOTHING RATED TO SIZE IT. No survivors means no proposal --
+            #   but the field's own median pace can still PROVE the label
+            #   wrong, and a proven-wrong division with no answer is nuked
+            #   rather than left live (see THE NUKE above). Low share alone
+            #   is never enough: unlinked or foreign fields are
+            #   board-ineligible and fine.
+            pi = paceImpossible(r["med_time"], r["label"])
+            if pi:
+                nukes.append({**r, "why": f"{pi}; nothing rated to size it"})
             continue
         gap = float(r["rating"]) - float(r["own_med"])
         if abs(gap) < args.min_gap:
@@ -287,10 +334,27 @@ def main():
     # ! NOW the survivor test, counting the pool. `pooled` is the summed
     #   survivor count across everything mislabelled the same way; a lone
     #   division falls back to its own.
+    thin = [r for r in flagged
+            if r.get("pooled", r["n_rated"]) < args.min_surv]
     flagged = [r for r in flagged
                if r.get("pooled", r["n_rated"]) >= args.min_surv]
     flagged.sort(key=lambda r: -abs(r["gap"]))
     good = [r for r in flagged if abs(r["err"]) <= SNAP_TOL]
+    # The other two unanswerable classes, nuked rather than reported:
+    #   - enough survivors, but the implied distance lands on no real rung:
+    #     the gap already proves the label; there is just no answer to write.
+    #   - too few survivors to trust a proposal, AND the median pace proves
+    #     the label on its own.
+    for r in flagged:
+        if abs(r["err"]) > SNAP_TOL:
+            nukes.append({**r, "why": f"survivors {r['gap']:+.0f} off their "
+                          f"own heads, implied {r['implied']:.0f} snaps to "
+                          f"no rung (err {r['err']:+.0%})"})
+    for r in thin:
+        pi = paceImpossible(r["med_time"], r["label"])
+        if pi:
+            nukes.append({**r, "why": f"{pi}; only "
+                          f"{r.get('pooled', r['n_rated'])} survivor(s)"})
 
     print(f"\n\n  DIVISIONS WHOSE EVIDENCE WAS DELETED "
           f"({len(flagged):,} flagged, {len(good):,} snap to a real rung)\n")
@@ -318,18 +382,42 @@ def main():
         print(f"\n    * pooling moved this division off the rung its own "
               f"survivors implied.")
 
-    if args.out and good:
+    if nukes:
+        print(f"\n\n  NUKED -- BROKEN WITH NO DEFENSIBLE ANSWER "
+              f"({len(nukes):,} divisions dropped from normalization)\n")
+        print("    Reversible: these live in the pass block, are re-derived "
+              "each reset, and a\n    hand-verified distance override "
+              "un-nukes a division by making it stop flagging.\n")
+        for r in sorted(nukes, key=lambda x: -x["n_rows"])[:args.limit]:
+            print(f"    {str(r['meet_id']) + '/' + str(r['div_id']):>14}"
+                  f"{r['n_rows']:>6} rows"
+                  f"{(r['label'] or 0):>8.0f}m"
+                  f"  {(r['course_name'] or '?')[:24]:<26} {r['why']}")
+        if len(nukes) > args.limit:
+            print(f"    ... and {len(nukes) - args.limit} more")
+
+    if args.out and (good or nukes):
         lines = [f"({r['meet_id']}, {r['div_id']}): {r['snapped']:.0f},"
                  f"  # was {r['label']:.0f}; {r['n_rated']} of {r['n_rows']} "
                  f"finishers rated, survivors {r['gap']:+.0f} over their own "
                  f"heads, snap {r['err']:+.1%}"
                  for r in good]
-        emit(args.out, "XC", [("_DISTANCE_OVERRIDES_XC", lines)],
+        # ! A SET BLOCK, NOT A DICT: entries carry no value, and emit's
+        #   .update({...}) over comma-only lines is a set literal, which is
+        #   exactly how apply_passes validates _DISTANCE_DROP names.
+        drop_lines = [f"({r['meet_id']}, {r['div_id']}),"
+                      f"  # {r['n_rows']} rows at {(r['label'] or 0):.0f}m: "
+                      f"{r['why']}"
+                      for r in sorted(nukes, key=lambda x: -x["n_rows"])]
+        emit(args.out, "XC", [("_DISTANCE_OVERRIDES_XC", lines),
+                              ("_DISTANCE_DROP_XC", drop_lines)],
              f"# GENERATED by scripts/find_dropped_divisions.py\n"
-             f"#\n# {len(lines)} entries. Each is a division where <= "
+             f"#\n# {len(lines)} overrides. Each is a division where <= "
              f"{args.max_frac:.0%} of finishers kept a\n"
-             f"# rating and the survivors sit {args.min_gap:.0f}+ points off "
-             f"their own medians.\n")
+             f"# board-eligible rating and the survivors sit "
+             f"{args.min_gap:.0f}+ points off their own medians.\n"
+             f"#\n# {len(drop_lines)} drops (owner's rule: nuke the "
+             f"unanswerable rather than leave it live).\n")
     return 0
 
 

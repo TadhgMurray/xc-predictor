@@ -2747,9 +2747,18 @@ LIMIT  %(limit)s
 # ! BOTH DIRECTIONS, BECAUSE THE WITNESS CARRIES IT. A slow subgroup pinned
 #   to a longer at-meet race RAISES those rows' ratings; the policy bar for
 #   raising is blatancy, and "the meet ran a 10k and these rows sit exactly
-#   on the 10k ratio" is blatant. A subgroup matching NO real race (the -55
-#   cluster: nothing at that meet is 2x the label) is REPORTED, never
-#   pinned and never dropped here.
+#   on the 10k ratio" is blatant.
+#
+# ★ AND THE UNANSWERABLE REMAINDER IS NUKED, NOT PARKED (owner's call,
+#   2026-08-26: "I'd rather nuke than have to rerun"). A subgroup past the
+#   bar matching NO real race (the -55 cluster: nothing at that meet is 2x
+#   the label) used to be reported and left LIVE-WRONG until a human read
+#   the log and reran the pipeline. Now those rows go to _RESULT_DROP --
+#   times stay on the page, the invented ratings go -- and the two
+#   division-level refusals (label fits almost nobody; pinning would cover
+#   most of the field) go to _DISTANCE_DROP whole. Every entry lands in the
+#   pass block, so it is re-derived from scratch each reset and reversed the
+#   moment a hand-verified distance makes the division stop flagging.
 P4_ZTOL = 0.06          # how near a row's rating/median ratio must sit to
                         # an alternative's rho (~6 points at a 100 median)
 P4_RHO_MIN = 0.11       # an alternative closer than this to 1.0 cannot be
@@ -2885,7 +2894,7 @@ def pass4(cur, sigma, t1, min_field, min_sub):
                                 / float(r["med"])
                 for r in rows if r["med"]}
         main_n = sum(1 for z in z_of.values() if abs(z - 1.0) <= P4_ZTOL)
-        matched, unmatched_over = {}, 0
+        matched, unmatched = {}, []
         for r in rows:
             z = z_of.get(r["result_id"])
             if z is None or abs(z - 1.0) <= P4_ZTOL:
@@ -2894,7 +2903,10 @@ def pass4(cur, sigma, t1, min_field, min_sub):
             if len(hits) == 1:
                 matched.setdefault(hits[0][0], []).append(r)
             elif not hits and abs(z - 1.0) * 100.0 >= bar:
-                unmatched_over += 1
+                # The ids, not a count: past the bar and matching nothing
+                # real is exactly what the nuke removes.
+                unmatched.append(r["result_id"])
+        unmatched_over = len(unmatched)
             # two hits = two alternatives' rhos overlap at this z: ambiguous
             # by construction, the row is left alone.
         div_pins = []
@@ -2911,17 +2923,20 @@ def pass4(cur, sigma, t1, min_field, min_sub):
                             for r in sub)
         if not div_pins:
             if unmatched_over >= min_sub:
-                report.append({**c, "why": f"{unmatched_over} rows past the "
-                               f"bar match NO race at the meet"})
+                report.append({**c, "nuke_rows": unmatched,
+                               "why": f"{unmatched_over} rows past the "
+                               f"bar match NO race at the meet -- dropped"})
             continue
         if main_n < min_sub:
-            report.append({**c, "why": f"label fits only {main_n} rows -- "
-                           f"a division-level question, not a pin"})
+            report.append({**c, "nuke_div": True,
+                           "why": f"label fits only {main_n} rows -- "
+                           f"division nuked"})
             continue
         if len(div_pins) > P4_MAX_PIN_SHARE * len(rows):
-            report.append({**c, "why": f"would pin {len(div_pins)} of "
+            report.append({**c, "nuke_div": True,
+                           "why": f"would pin {len(div_pins)} of "
                            f"{len(rows)} rows -- the label is the minority "
-                           f"answer"})
+                           f"answer; division nuked"})
             continue
         for rid, d, z, rho in div_pins:
             pins.append({"meet_id": c["meet_id"], "div_id": c["div_id"],
@@ -2929,9 +2944,10 @@ def pass4(cur, sigma, t1, min_field, min_sub):
                          "z": z, "rho": rho,
                          "course_name": c.get("course_name")})
         if unmatched_over >= min_sub:
-            report.append({**c, "why": f"pinned {len(div_pins)}, and "
+            report.append({**c, "nuke_rows": unmatched,
+                           "why": f"pinned {len(div_pins)}, and "
                            f"{unmatched_over} MORE rows match no race at "
-                           f"the meet"})
+                           f"the meet -- dropped"})
     return pins, report, skipped
 
 
@@ -2946,7 +2962,11 @@ def report4(pins, report, skipped, args):
     if len(moves) > 20:
         print(f"    ... and {len(moves) - 20} more label -> race pairs")
     if report:
-        print(f"\n    {len(report):,} divisions REPORTED, not touched:")
+        n_div = sum(1 for r in report if r.get("nuke_div"))
+        n_row = sum(len(r.get("nuke_rows", ())) for r in report)
+        print(f"\n    {len(report):,} divisions beyond pinning -- "
+              f"{n_div} nuked whole, {n_row:,} rows dropped, the rest "
+              f"listed:")
         why = Counter(("no-witness" if "NO race" in r["why"]
                        else "label-minority" if "minority" in r["why"]
                        else "label-fits-nobody" if "fits only" in r["why"]
@@ -3561,11 +3581,33 @@ def main():
                              f"{p['pin']:.0f}-under-{p['distance']:.0f} "
                              f"ratio {p['rho']:.2f}"
                              for p in pins]
-                    emit(args.out, args.sport,
-                         [(f"_RESULT_OVERRIDE_{args.sport}", lines)],
-                         _HEADER.format(what="pass 4: mixed divisions, "
-                                             "witnessed per-result pins",
-                                        n=len(lines),
+                    # ★ THE NUKES RIDE THE SAME FILE (owner's rule: drop the
+                    #   unanswerable rather than leave it live until a rerun).
+                    #   Set blocks: comma-only entries, exactly how
+                    #   apply_passes validates the _*_DROP names.
+                    row_drops = sorted({rid for r in p4_report
+                                        for rid in r.get("nuke_rows", ())})
+                    div_why = {(r["meet_id"], r["div_id"]): r["why"]
+                               for r in p4_report if r.get("nuke_div")}
+                    blocks = [(f"_RESULT_OVERRIDE_{args.sport}", lines)]
+                    if row_drops:
+                        blocks.append(
+                            (f"_RESULT_DROP_{args.sport}",
+                             [f"{rid},  # past the bar, matches no race "
+                              f"at its meet (pass 4)"
+                              for rid in row_drops]))
+                    if div_why:
+                        blocks.append(
+                            (f"_DISTANCE_DROP_{args.sport}",
+                             [f"({m}, {d}),  # pass 4: {why}"
+                              for (m, d), why in sorted(div_why.items())]))
+                    emit(args.out, args.sport, blocks,
+                         _HEADER.format(what="pass 4: mixed divisions -- "
+                                             "witnessed per-result pins, "
+                                             "plus nukes for the "
+                                             "unanswerable remainder",
+                                        n=len(lines) + len(row_drops)
+                                          + len(div_why),
                                         bar=args.t1 * args.sigma))
                 return 0
 
