@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 sys.path.insert(0, "racecast")
+sys.path.insert(0, "backfill")
 
 from database import getConn                          # noqa: E402
 import psycopg2.extras                                # noqa: E402
@@ -88,10 +89,45 @@ def _table(cur, name, sql, params):
         print(f"    {name}: {dict(r._asdict()) if hasattr(r, '_asdict') else r}")
 
 
+# ★ THE ANSWER MACHINE. Every theory about WHY the backfill skipped a row
+#   is a guess until the backfill itself is asked. This builds the real
+#   lookup tables, bakes the real row function, and runs it on this one
+#   person's raw rows -- the printed reason IS the census bucket each row
+#   fell into, not a reconstruction. Loading the lookups is the cost (the
+#   full genders/twins/blob dicts; a few minutes on the production DB).
+#   Weather is monkeypatched off: it only nudges the VALUE, never the
+#   skip reason, and its index is the slowest load of all.
+def _replay(conn, sport, pid):
+    import backfill_normalize as BF
+    BF._weatherEnabled = lambda s: False        # reason-preserving, minutes saved
+    cfg = BF._configFor(sport)
+    print("\n  REPLAY: building the backfill's own lookups "
+          "(this is the slow part) ...")
+    lookups = BF._buildLookups(conn, cfg)
+    row_fn = BF._makeRowFn(cfg, *lookups)
+    with conn.cursor() as cur:
+        cur.execute(BF._streamSQL(cfg)
+                    + " WHERE COALESCE(person_id, athlete_id) = %(pid)s"
+                    " ORDER BY date", {"pid": pid})
+        rows = cur.fetchall()
+    print(f"\n  REPLAY: the backfill's verdict on each of {len(rows)} "
+          "raw rows (no weather):")
+    for row in rows:
+        rid, value, reason, _trace = row_fn(row)
+        out = (f"WRITES nt {value:.1f}" if value is not None
+               else f"SKIP: {reason}")
+        print(f"    {row[BF._DATE]}  src {str(row[BF._SRC]):<6} "
+              f"meet {row[BF._MEET]}/{row[BF._DIV]}  "
+              f"aid {row[BF._AID]}  {out}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("person_id", type=int)
     ap.add_argument("--sport", choices=("XC", "TF"), default="XC")
+    ap.add_argument("--replay", action="store_true",
+                    help="run the backfill's real row function on this "
+                         "person's raw rows and print the exact skip reason")
     args = ap.parse_args()
 
     with getConn() as conn:
@@ -169,11 +205,13 @@ def main():
             _table(cur, "college_first_season",
                    "SELECT * FROM college_first_season "
                    "WHERE person_id = %s", (pid,))
-            print("\n  READ: a season whose rows say NO NORMALIZED TIME "
-                  "died in the backfill --\n  check the verdict tables for "
-                  "the season's level/grade verdict. POOL\n  UNRESOLVABLE "
-                  "with sane facts = a resolvePool gate; paste this output "
-                  "back.")
+        if args.replay:
+            _replay(conn, args.sport, args.person_id)
+        print("\n  READ: a season whose rows say NO NORMALIZED TIME "
+              "died in the backfill --\n  the REPLAY section (--replay) "
+              "names the exact census bucket. POOL\n  UNRESOLVABLE "
+              "with sane facts = a resolvePool gate; paste this output "
+              "back.")
 
 
 if __name__ == "__main__":
