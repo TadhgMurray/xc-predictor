@@ -114,6 +114,14 @@ Issue ids (#n) are stable -- commits and conversation reference them.
 - **#10 Incremental course boards.** Top 1200 precomputed; the tail
   renders live (fine warm, hundreds of ms cold). Build-on-first-request
   and persist.
+- **#17 Course-boards builder is orders slower than the page query**
+  (measured twice: the live page renders a course in a few hundred ms,
+  the builder spends minutes per course -- 500 courses took 64 min).
+  Correct budget is ~2 s/course (page query + write), so the builder is
+  recomputing something corpus-wide per course instead of reusing the
+  page's indexed query. Read its SQL against the page route's, EXPLAIN
+  both, fix the shape. Owner hit this twice mid-pipeline; --resume and
+  the 1200 cap are the workaround, not the fix.
 - **Model iteration.** Confidence intervals, retrain cadence after
   correction waves, batch-size/LR tuning against the measured epoch time.
 
