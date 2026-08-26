@@ -2491,6 +2491,45 @@ def get_tf_meet_events(cur, meet_id, source=None):
     return cur.fetchall()
 
 
+# ⚠ SOME MEETS HAVE NO USABLE EVENT IDS AT ALL (tfrrs fragments: rows with
+#   NULL div/event and no meets_tf coverage). No race pages can exist, but
+#   the rows still carry their own event names -- so the meet page lists
+#   the results directly, grouped by event, instead of rendering an empty
+#   Events table under a synthesized header.
+def get_tf_loose_results(cur, meet_id, source=None):
+    cur.execute(f"""
+        SELECT r.result_id, r.person_id,
+               NULLIF(TRIM(r.event_short), '') AS event_short,
+               r.time_seconds, r.mark, r.is_field, r.place,
+               r.grade, r.school, r.speed_rating,
+               {_name_sql('r')} AS athlete_name
+        FROM results_tf r
+        {_athlete_lateral('r')}
+        WHERE r.meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR r.source = %(src)s)
+          AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
+        ORDER BY r.event_short, r.time_seconds ASC NULLS LAST
+    """, {"meet": meet_id, "src": source})
+    from tf_points import prettyEventName
+    groups, order = {}, []
+    for r in cur.fetchall():
+        r = dict(r)
+        if r["is_field"]:
+            r["display_result"] = r["mark"] or "—"
+        elif r["time_seconds"] is not None and r["time_seconds"] < 999999:
+            r["display_result"] = format_time(r["time_seconds"])
+        else:
+            continue                     # DNS/DNF sentinel: nothing to list
+        name = (prettyEventName(r["event_short"]) if r["event_short"]
+                else "Other results")
+        if name not in groups:
+            groups[name] = []
+            order.append(name)
+        r["row_place"] = len(groups[name]) + 1
+        groups[name].append(r)
+    return [{"name": n, "rows": groups[n]} for n in order]
+
+
 def stamp_home_states(cur, rows):
     """Stamp each scoring row with its athlete's home state (the modal
     state of their racing history, person_home_state at pipeline 10b).
@@ -2696,6 +2735,9 @@ def meet_tf(meet_id):
                 cur, meet_id, request.args)
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
+            # no linkable events at all -> list the results themselves
+            loose = ([] if events else
+                     get_tf_loose_results(cur, meet_id, source=src))
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, scoring_rows)
@@ -2757,6 +2799,7 @@ def meet_tf(meet_id):
             e["dup_ix"] = seen[k]
 
     return render_template("meet_tf.html", header=header, events=events,
+                           loose=loose,
                            meet_date=meet_date, scored=scored,
                            alt_idx=alt_idx, other_sources=other_sources)
 

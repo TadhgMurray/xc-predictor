@@ -40,6 +40,7 @@
     {{ tf_team_block(scored.divisions) }}
     {% endif %}
 
+    {% if events %}
     <h2>Events</h2>
     <table>
         <thead>
@@ -65,6 +66,35 @@
             {% endfor %}
         </tbody>
     </table>
+    {% elif loose %}
+    {# No event ids exist for this meet, so there are no race pages to
+       link -- the results themselves render here, grouped by each row's
+       own event name. #}
+    {% for ev in loose %}
+    <h2>{{ ev.name }}</h2>
+    <table>
+        <thead>
+            <tr><th>Place</th><th>Athlete</th><th>Grade</th><th>School</th>
+                <th>Result</th><th>Rating</th></tr>
+        </thead>
+        <tbody>
+            {% for r in ev.rows %}
+            <tr>
+                <td>{{ r.row_place }}</td>
+                <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or "—" }}</a>{% else %}{{ r.athlete_name or "—" }}{% endif %}</td>
+                <td>{{ r.grade or "—" }}</td>
+                <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label }}</a>{% else %}—{% endif %}</td>
+                <td>{{ r.display_result }}</td>
+                <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+    {% else %}
+    <h2>Events</h2>
+    <p class="meta">No results are attached to this meet.</p>
+    {% endif %}
 
 </main>
 <script src="{{ url_for('static', filename='staged.js') }}"></script>
