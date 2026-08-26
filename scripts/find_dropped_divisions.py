@@ -76,26 +76,39 @@ MIN_SURVIVORS = 1
 # field of survivors 30+ points above their own heads is not a coaching story.
 MIN_GAP = 25.0
 
+# ⚠ "RATED" NOW MEANS "ON A BOARD", NOT "speed_rating IS NOT NULL".
+#   fill_ratings prices every row after each rebuild, so a NULL rating
+#   stopped being the engine's verdict -- the verdict moved to
+#   ranking_results, whose build gates on the same pace band the pack
+#   drops on. Counting the column would read every division as 100%
+#   healthy and this tool would never flag anything again. The survivor
+#   medians are scoped the same way, so a filled garbage rating can
+#   never pollute an athlete's own median.
 _SQL = """
 WITH own AS (
-    SELECT COALESCE(person_id, athlete_id) AS ident,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
-    FROM   results
-    WHERE  speed_rating IS NOT NULL AND speed_rating > 0
-      AND  COALESCE(person_id, athlete_id) IS NOT NULL
+    SELECT COALESCE(r.person_id, r.athlete_id) AS ident,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating) AS med
+    FROM   results r
+    JOIN   ranking_results k ON k.result_id = r.result_id AND k.sport = 'XC'
+    WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0
+      AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
     GROUP  BY 1
     HAVING count(*) >= 3
 ),
 div AS (
     SELECT r.meet_id, r.div_id,
            count(*)                                    AS n_rows,
-           count(r.speed_rating)                       AS n_rated,
+           count(k.result_id)                          AS n_rated,
            -- ! THE SURVIVORS' OWN VERDICT, carried up with them. avg over a
            --   handful of rows, because that is all a broken division leaves.
-           avg(r.speed_rating)                         AS rating,
-           avg(o.med) FILTER (WHERE r.speed_rating IS NOT NULL) AS own_med,
+           avg(r.speed_rating)
+               FILTER (WHERE k.result_id IS NOT NULL)  AS rating,
+           avg(o.med)
+               FILTER (WHERE k.result_id IS NOT NULL)  AS own_med,
            min(r.date)                                 AS date
     FROM   results r
+    LEFT   JOIN ranking_results k ON k.result_id = r.result_id
+                                 AND k.sport = 'XC'
     LEFT   JOIN own o ON o.ident = COALESCE(r.person_id, r.athlete_id)
     GROUP  BY 1, 2
     HAVING count(*) >= %(min_rows)s
@@ -147,7 +160,7 @@ def census(rows):
                 rowsum[i] += r["n_rows"]
                 break
     total = sum(counts)
-    print(f"\n  HOW MANY FINISHERS KEEP A RATING  "
+    print(f"\n  HOW MANY FINISHERS KEEP A BOARD-ELIGIBLE RATING  "
           f"({total:,} divisions of {MIN_ROWS}+ finishers)\n")
     print(f"    {'rated share':<16}{'divisions':>12}{'%':>8}{'finishers':>14}")
     print("    " + "-" * 50)

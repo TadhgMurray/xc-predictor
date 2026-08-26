@@ -260,6 +260,12 @@ Step "07_pack"         { python engine\speed_ratings.py --sport merged --cache -
 Step "08_golive"       { python engine\linkage_check.py --golive --split }
 
 Step "09_tilt"         { python engine\apply_tilt.py --refresh --write }
+# ! EVERY ROW GETS A RATING (owner's rule). The solve's own writes leave a
+#   band-refused row NULL; this prices those from the engine's published
+#   constants so race pages never show a dash for a row that has a
+#   normalized time. Rated is not ranked: 10_rankings gates the boards on
+#   the same pace band, so a filled rating is visible but never ranked.
+Step "09b_fill"        { python engine\fill_ratings.py }
 
 # ---- the site -------------------------------------------------------- #
 Step "10_rankings"     { python racecast\build_ranking_results.py }

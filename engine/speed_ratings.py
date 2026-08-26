@@ -263,8 +263,13 @@ _poolCache = {}
 #
 #      0.12 s/m = 2:00/km   -- faster than any human over any distance
 #      0.72 s/m = 12:00/km  -- slower than walking
-_PACE_FLOOR = 0.12
-_PACE_CEIL = 0.72
+#
+#  ! DEFINED IN normalize_distance NOW, because the band stopped being the
+#    engine's private business: every row gets a rating (fill_ratings), so
+#    the BOARDS gate on this same band, and two copies of the numbers would
+#    drift. The aliases keep this file's forty readers unchanged.
+from normalize_distance import PACE_FLOOR as _PACE_FLOOR      # noqa: E402
+from normalize_distance import PACE_CEIL as _PACE_CEIL        # noqa: E402
 _band_cache = {}
 
 

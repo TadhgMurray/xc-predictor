@@ -985,6 +985,29 @@ def targetFor(pool, sport=None):
     return float(targets.get(base) or (_SPLINES or {}).get("target", 5000.0))
 
 
+# ★ THE ENGINE'S SANITY BAND, DEFINED ONCE. speed_ratings.packResults keeps a
+#   row out of the SOLVE when its normalized_time falls outside this pace
+#   band; since every row now still receives a rating (fill_ratings), the
+#   band is ALSO what the boards gate on -- build_ranking_results and
+#   panels.py refuse out-of-band rows a place in a ranking. Both readers and
+#   the engine must agree on the numbers or a row could be solved on but
+#   unrankable, or ranked on a rating the solve refused to stand behind.
+#
+#     0.12 s/m = 2:00/km   -- faster than any human over any distance
+#     0.72 s/m = 12:00/km  -- slower than walking
+PACE_FLOOR = 0.12
+PACE_CEIL = 0.72
+
+
+# poolBandFor
+# Purpose:   (lo, hi) normalized_time bounds for one pool.
+# Arguments: pool -- bare or sport-suffixed; sport -- optional, as targetFor.
+# Output:    tuple of floats.
+def poolBandFor(pool, sport=None):
+    t = targetFor(pool, sport)
+    return (PACE_FLOOR * t, PACE_CEIL * t)
+
+
 def _normalizeWithPotential(time_seconds, distance_meters, pool, sport=None):
     entry = _distancePotentialEntry(pool, sport)
     # ★ THE ENTRY'S OWN ANCHOR, FALLING BACK TO THE ARTIFACT'S GLOBAL ONE.

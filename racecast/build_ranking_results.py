@@ -47,7 +47,7 @@ sys.path.insert(0, "engine")
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 
 try:
-    from normalize_distance import poolFor
+    from normalize_distance import poolFor, poolBandFor
     from anchor_check import mismatch as anchorMismatch
     # ★ THE SAME READER THE ENGINE AND anchor_check USE. Track keeps its
     #   distance in the event name and event_parse is where that is read; a
@@ -667,9 +667,9 @@ def raceCeiling(pool):
 
 # What the two rails did, per sport, so a build that stops gating says so.
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0},
+                "outside_pool": 0, "outside_band": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0}}
+                "outside_pool": 0, "outside_band": 0}}
 
 
 def isRankablePool(pool):
@@ -770,6 +770,22 @@ def prepareRow(row, sport):
     #   ranking nothing.
     if row.grade_trust == "low":
         return None
+
+    # ★ THE ENGINE'S SANITY BAND, ENFORCED HERE NOW THAT EVERY ROW CARRIES A
+    #   RATING. packResults keeps an out-of-band row out of the SOLVE, and
+    #   fill_ratings then prices it anyway so the race page shows a number
+    #   instead of a dash -- which means "speed_rating IS NOT NULL" stopped
+    #   implying "the engine stood behind this". The band is that missing
+    #   distinction: a normalized_time outside 2:00-12:00/km of the pool's
+    #   own anchor is a row the solve refused, and it gets a rating but never
+    #   a place on a board. Same constants as the engine, imported, not
+    #   copied (normalize_distance.PACE_FLOOR / PACE_CEIL).
+    nt = row.normalized_time
+    if nt is not None:
+        lo, hi = poolBandFor(pool, sport)
+        if not lo <= float(nt) <= hi:
+            _GATE[sport]["outside_band"] += 1
+            return None
 
     # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
     #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
@@ -993,6 +1009,11 @@ def buildSport(conn, sport, since, stats):
     if g["outside_pool"]:
         print(f"    pool ceiling: {g['outside_pool']:,} races dropped as "
               f"implausible for their pool (see RACE_MARGIN)")
+    if g["outside_band"]:
+        print(f"    sanity band: {g['outside_band']:,} races rated but "
+              f"outside the engine's pace band -- filled ratings the solve "
+              f"refused to stand behind (visible on the race page, never "
+              f"on a board)")
     print(f"    {sport}: {seen:,} read, {stats[f'{sport}_written']:,} written, "
           f"{stats[f'{sport}_dropped']:,} dropped")
 

@@ -206,22 +206,34 @@ _BUILD_SHIFT = """
     --   re-applied here. The COALESCE is for the rows that predate it.
     DROP TABLE IF EXISTS ovr_shift;
     CREATE TABLE ovr_shift AS
+    -- ⚠ MEDIANS AND SCALES FROM BOARD ROWS ONLY. fill_ratings now prices
+    --   every row, including the ones the solve refused -- which is what
+    --   lets a wrong-distance division testify with its whole field below.
+    --   But an athlete's own median must stay a fact about the athlete, so
+    --   both anchors here join ranking_results, whose build gates on the
+    --   engine's pace band: a filled garbage rating can be EVIDENCE (in
+    --   `rated`) but never a BASELINE.
     WITH med AS (
-        SELECT person_id, substring(date, 1, 4)::int AS yr,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
-        FROM   results
-        WHERE  speed_rating IS NOT NULL AND speed_rating > 0
-          AND  person_id IS NOT NULL
+        SELECT r.person_id, substring(r.date, 1, 4)::int AS yr,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating)
+                   AS med
+        FROM   results r
+        JOIN   ranking_results kk ON kk.result_id = r.result_id
+                                 AND kk.sport = 'XC'
+        WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0
+          AND  r.person_id IS NOT NULL
         GROUP  BY 1, 2
     ), scale AS (
         -- pool_mean * 100 for each athlete, from their own rated races.
-        SELECT person_id,
+        SELECT r.person_id,
                percentile_cont(0.5) WITHIN GROUP
-                   (ORDER BY speed_rating * normalized_time) AS k
-        FROM   results
-        WHERE  speed_rating IS NOT NULL AND speed_rating > 0
-          AND  normalized_time IS NOT NULL AND normalized_time > 0
-          AND  person_id IS NOT NULL
+                   (ORDER BY r.speed_rating * r.normalized_time) AS k
+        FROM   results r
+        JOIN   ranking_results kk ON kk.result_id = r.result_id
+                                 AND kk.sport = 'XC'
+        WHERE  r.speed_rating IS NOT NULL AND r.speed_rating > 0
+          AND  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+          AND  r.person_id IS NOT NULL
         GROUP  BY 1
         HAVING count(*) >= {min_rated}
     ), rated AS (
