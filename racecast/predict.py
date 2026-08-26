@@ -38,8 +38,13 @@ from meet_compile import isTeam
 
 # Where train.py writes its artifacts. model.pt is a bare state_dict;
 # target_stats/encoders/venue_vocab ride beside it in model/data.
-MODEL_PATH = os.environ.get("RACECAST_MODEL", "model/data/model.pt")
-MODEL_DATA = os.path.dirname(MODEL_PATH) or "model/data"
+# Anchored on THIS file, not the working directory -- the app launches
+# from wherever the owner's shell happens to be.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.environ.get(
+    "RACECAST_MODEL", os.path.join(_ROOT, "model", "data", "model.pt"))
+MODEL_DATA = os.path.dirname(MODEL_PATH) or os.path.join(_ROOT, "model",
+                                                         "data")
 
 # Scoring: the top N runners per team count, and the next M displace.
 # Standard cross country is 5 scorers, 2 displacers.
@@ -53,9 +58,13 @@ _load_error = None
 
 def _fx():
     """feature_extraction, imported lazily -- it parses corrections.py at
-    import, which is seconds the pages that never predict should not pay."""
+    import, which is seconds the pages that never predict should not pay.
+    Absolute paths: its own relative inserts assume the repo root."""
     import sys
-    sys.path.insert(0, "model")
+    for sub in ("model", "scripts", "engine"):
+        p = os.path.join(_ROOT, sub)
+        if p not in sys.path:
+            sys.path.insert(0, p)
     import feature_extraction
     return feature_extraction
 
@@ -96,7 +105,9 @@ def _loadModel():
         import pickle
         import torch
         import sys
-        sys.path.insert(0, "model")
+        p = os.path.join(_ROOT, "model")
+        if p not in sys.path:
+            sys.path.insert(0, p)
         from transformer import XCPredictor
 
         blob = torch.load(MODEL_PATH, map_location="cpu")
