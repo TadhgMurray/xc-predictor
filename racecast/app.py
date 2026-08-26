@@ -1976,6 +1976,31 @@ def pick_source(sources, alt):
     return sources[idx]["source"], idx, others
 
 
+def _tf_meet_sources(cur, meet_id, args):
+    """(src, alt_idx, others) for a TF meet page, three rules deep:
+    meets_tf first; results_tf when the meet has no meets_tf coverage at
+    all (tfrrs fragments used to 404); and ?r=<result_id> pins the page
+    to the clicked row's source -- opaque (no feed names in URLs), exact
+    (the id spaces collide, and "biggest source wins" picks the WRONG
+    meet for a link that came from the smaller one)."""
+    sources = meet_sources(cur, "meets_tf", meet_id)
+    if not sources:
+        sources = meet_sources(cur, "results_tf", meet_id)
+    alt = args.get("alt")
+    rid = args.get("r")
+    if rid and rid.isdigit():
+        cur.execute("SELECT source FROM results_tf "
+                    "WHERE result_id = %s AND meet_id = %s LIMIT 1",
+                    (int(rid), meet_id))
+        pin = cur.fetchone()
+        if pin and pin["source"]:
+            for i, s in enumerate(sources):
+                if s["source"] == pin["source"]:
+                    alt = i
+                    break
+    return pick_source(sources, alt)
+
+
 @app.route("/meet/xc/<int:meet_id>")
 def meet_xc(meet_id):
     from meet_compile import compiledResults, publishedScores
@@ -2076,7 +2101,7 @@ def api_meet_compiled(meet_id):
 #  TF RACE
 # ===================================================================== #
 
-def get_tf_race_header(cur, meet_id, div_id, event_id):
+def get_tf_race_header(cur, meet_id, div_id, event_id, source=None):
     cur.execute("""
         SELECT m.meet_name,
                m.event_short,
@@ -2096,12 +2121,14 @@ def get_tf_race_header(cur, meet_id, div_id, event_id):
         WHERE m.meet_id  = %(meet)s
           AND m.div_id   = %(div)s
           AND m.event_id = %(event)s
+          AND (%(src)s::text IS NULL OR m.source = %(src)s)
         LIMIT 1
-    """, {"meet": meet_id, "div": div_id, "event": event_id})
+    """, {"meet": meet_id, "div": div_id, "event": event_id,
+          "src": source})
     return cur.fetchone()
 
 
-def get_tf_race_results(cur, meet_id, div_id, event_id):
+def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
     cur.execute(f"""
         SELECT r.result_id,
                r.person_id,
@@ -2123,9 +2150,11 @@ def get_tf_race_results(cur, meet_id, div_id, event_id):
         WHERE r.meet_id  = %(meet)s
           AND r.div_id   = %(div)s
           AND r.event_id = %(event)s
+          AND (%(src)s::text IS NULL OR r.source = %(src)s)
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
         ORDER BY r.time_seconds ASC NULLS LAST
-    """, {"meet": meet_id, "div": div_id, "event": event_id})
+    """, {"meet": meet_id, "div": div_id, "event": event_id,
+          "src": source})
     return cur.fetchall()
 
 
@@ -2294,8 +2323,34 @@ def race_tf(meet_id, event_id, div_id):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header  = get_tf_race_header(cur, meet_id, div_id, event_id)
-            results = get_tf_race_results(cur, meet_id, div_id, event_id)
+            # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
+            #   collide on (meet, div, event) too -- a source-blind lookup
+            #   can serve the OTHER feed's event under this URL.
+            #   ?r=<result_id> pins the clicked row's source exactly
+            #   (opaque -- no feed names in URLs); without it the modal
+            #   source of the triple decides, as the points cache always
+            #   did.
+            race_src = None
+            rid = request.args.get("r")
+            if rid and rid.isdigit():
+                cur.execute("SELECT source FROM results_tf "
+                            "WHERE result_id = %s AND meet_id = %s LIMIT 1",
+                            (int(rid), meet_id))
+                pin = cur.fetchone()
+                race_src = pin["source"] if pin else None
+            if race_src is None:
+                cur.execute("""
+                    SELECT source FROM results_tf
+                    WHERE meet_id = %(meet)s AND div_id = %(div)s
+                      AND event_id = %(event)s AND source IS NOT NULL
+                    GROUP BY source ORDER BY count(*) DESC LIMIT 1
+                """, {"meet": meet_id, "div": div_id, "event": event_id})
+                srow = cur.fetchone()
+                race_src = srow["source"] if srow else None
+            header  = get_tf_race_header(cur, meet_id, div_id, event_id,
+                                         source=race_src)
+            results = get_tf_race_results(cur, meet_id, div_id, event_id,
+                                          source=race_src)
             # HS-equivalent view: the event's distance; pools per row.
             has_hs_view = (stampRowsHs(cur, "TF", results,
                                        distance=header.get("distance_meters"))
@@ -2311,14 +2366,7 @@ def race_tf(meet_id, event_id, div_id):
             # only the first race page of a meet pays for the scoring.
             points_by_result, event_names = {}, {}
             if header and results:
-                cur.execute("""
-                    SELECT source FROM results_tf
-                    WHERE meet_id = %(meet)s AND div_id = %(div)s
-                      AND event_id = %(event)s AND source IS NOT NULL
-                    GROUP BY source ORDER BY count(*) DESC LIMIT 1
-                """, {"meet": meet_id, "div": div_id, "event": event_id})
-                srow = cur.fetchone()
-                race_src = srow["source"] if srow else None
+                # race_src was resolved above, before the header lookup
                 points_by_result, event_names = _tf_points_cached(
                     cur, meet_id, race_src)
 
@@ -2372,7 +2420,21 @@ def get_tf_meet_header(cur, meet_id, source=None):
           AND (%(src)s::text IS NULL OR source = %(src)s)
         LIMIT 1
     """, {"meet": meet_id, "src": source})
-    return cur.fetchone()
+    row = cur.fetchone()
+    if row:
+        return row
+    # ⚠ NO meets_tf ROW AT ALL, but the meet is real -- results_tf holds
+    #   its races (tfrrs fragments). A synthesized header keeps the page
+    #   alive instead of 404ing a meet an athlete profile links to.
+    cur.execute("""
+        SELECT count(*) AS n FROM results_tf
+        WHERE meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR source = %(src)s)
+    """, {"meet": meet_id, "src": source})
+    if cur.fetchone()["n"]:
+        return {"meet_name": "Track meet", "state": None, "is_indoor": None,
+                "meet_id": meet_id, "location_id": None}
+    return None
 
 
 def get_tf_meet_events(cur, meet_id, source=None):
@@ -2404,6 +2466,27 @@ def get_tf_meet_events(cur, meet_id, source=None):
           AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
         ORDER BY m.division, m.distance_meters NULLS LAST, m.event_short
+    """, {"meet": meet_id, "src": source})
+    rows = cur.fetchall()
+    if rows:
+        return rows
+    # ⚠ A MEET CAN LIVE ONLY IN results_tf -- no meets_tf coverage at all
+    #   (tfrrs fragments). Its events are still derivable from the result
+    #   rows' own event names; only id-less rows stay unlisted (they have
+    #   no race page to link, but the scoring table still shows them).
+    cur.execute("""
+        SELECT div_id, event_id,
+               mode() WITHIN GROUP (
+                   ORDER BY NULLIF(TRIM(event_short), '')) AS event_short,
+               NULL::text AS division,
+               NULL::real AS distance_meters,
+               count(*)   AS n_results
+        FROM results_tf
+        WHERE meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR source = %(src)s)
+          AND div_id IS NOT NULL AND event_id IS NOT NULL
+        GROUP BY div_id, event_id
+        ORDER BY div_id, event_id
     """, {"meet": meet_id, "src": source})
     return cur.fetchall()
 
@@ -2609,9 +2692,8 @@ def meet_tf(meet_id):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            sources = meet_sources(cur, "meets_tf", meet_id)
-            src, alt_idx, other_sources = pick_source(
-                sources, request.args.get("alt"))
+            src, alt_idx, other_sources = _tf_meet_sources(
+                cur, meet_id, request.args)
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
@@ -2688,9 +2770,8 @@ def compiled_tf(meet_id):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            sources = meet_sources(cur, "meets_tf", meet_id)
-            src, alt_idx, other_sources = pick_source(
-                sources, request.args.get("alt"))
+            src, alt_idx, other_sources = _tf_meet_sources(
+                cur, meet_id, request.args)
             header = get_tf_meet_header(cur, meet_id, source=src)
             rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, rows)

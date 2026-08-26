@@ -191,10 +191,13 @@
                             <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
-                            <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}"
+                            {# ?r= pins the page to THIS row's source: the
+                               feeds' id spaces collide, and a bare URL can
+                               resolve to the other feed's event #}
+                            <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}?r={{ race.result_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.meet_id %}
-                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}"
+                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}{% if race.sport == 'TF' %}?r={{ race.result_id }}{% endif %}"
                                title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
                         {% else %}
                             <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or "—" }}</span>
