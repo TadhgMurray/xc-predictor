@@ -1,213 +1,141 @@
-# Site notes -- current issues and the page-by-page catalogue
+# Site notes -- the MVP cut and everything else
 
-Updated 2026-08-26. Two lists: what is wrong or at risk right now, and what
-each page of the site could gain or should change. Items marked [mock] are
-UI work that gets a mock for approval before any code, per the house rule.
-
----
-
-## Part 1 -- Current issues
-
-### Data correctness
-
-1. **Duplicate races across feeds** (backlog id "9c"). The same real-world
-   race often exists once per feed with different meet/div keys. Splits an
-   athlete's results, double-counts on boards, and made the Ox Bow fix
-   confusing (one copy corrected, the twin not). Needs a canonical-race
-   sweep keyed on (canon_meet_id, person overlap, date).
-2. **Small distance errors survive detection.** Labels 10-20 percent too
-   long sit inside athlete-variance noise; the bars are deliberately above
-   it. Accepted trade -- lowering the bars re-creates the 378-bad-proposals
-   failure. Documented so nobody mistakes it for a bug later.
-3. **TF distance detection is weaker than XC.** Track distance comes from
-   event names; the pass tools and pace tests are XC-centric. A mislabeled
-   TF event mostly relies on the anchor gate at board build.
-   Related, already handled, do not re-fix: TF normalizing to the 5K
-   anchor from spans that stop at 3200 is counteracted in
-   fit_distance_exponent (_sampleClamped + _extensionSlopeHigh: the
-   3200->5000 stretch uses a slope MEASURED from dual-distance athlete
-   pairs, not the cubic's tangent; refit every overnight at
-   02_fit_spline). Per-sport anchors (hs_m|TF etc.) exist in
-   POOL_TARGET_METERS but are deliberately inert under the merged solve.
-4. **Apparent temperature is inflated 20-35 C daytime.** The grid writer
-   feeds raw solar irradiance where net absorbed radiation belongs
-   (Steadman term). Consistent, so usable as a model feature; wrong for
-   display or for the weather-correction refit. Proper fix = derivation fix
-   in atmost_era5_zarr + grid column rebuild + correction refit.
-5. **One-night blindness in the reset.** Pass 0 judges the pre-wipe state,
-   so an override the wipe removes and the passes fail to re-propose is
-   wrong for exactly one night. It is named the same evening in 05c_lost
-   and self-nuked on the next reset; residual risk accepted.
-6. **School alias variants.** Identity clustering splits on home state but
-   cannot join spelling/campus variants ("Highland - P"). Needs a small
-   hand alias map consulted by school_identity.
-7. **Unpriceable rows still show dashes.** No person link, no gender, or no
-   resolvable pool means no rating on any scale. Honest, but the counts
-   should be watched in fill_ratings' census -- growth means a linking
-   regression upstream.
-
-### Site behavior
-
-8. **About page is out of date.** It describes the pre-fill world. It must
-   now say: every row with a normalized time carries a rating; out-of-band
-   rows are visible but excluded from every board by the pace band.
-9. **Search cold tail ~2.6 s.** Needs the pg_trgm index on search_text.
-10. **Course boards beyond the top 1200 render live.** Fast enough warm;
-    first hit on an obscure course pays hundreds of ms. Incremental builder
-    (build on first request, persist) would close it.
-11. **Venue TF pages are thin.** Meets list + best performances only; no
-    per-event records grid, unlike the course page's full treatment.
-12. **Meet TF division naming.** "Open 1/2/3" style shards and identical
-    twin divisions still render as separate sections (Arcadia items 2 and
-    3, discussed, awaiting go).
-
-### Operational / model
-
-13. **Model untrained until the first successful features+train night.**
-    Predictions tab is fully wired but refuses without artifacts; chunk
-    files did not exist before the weather fix.
-14. **Post-rebuild canaries not yet re-verified** after this correction
-    wave: rosters and home boards populated, 9:01 3200 rating in 135-137,
-    normalized 5K around 15:05-15:10, Ox Bow / NLC pages corrected or
-    dropped, record-flag covering index in use, then the cold sweep
-    benchmark.
-15. **Metric drift after fill.** Tools that counted `speed_rating IS NULL`
-    as "refused" (audit_overrides, the pass "recovered" counter,
-    n_shadow) now read near zero. Print-only, but a reader who remembers
-    the old meaning will be misled; re-point them at ranking_results
-    membership when next touched.
-16. **scripts/config.py carries the DB password in git.** Private repo and
-    a local-only database, but it should move to an env var or an ignored
-    local file before the repo is ever shared.
+Updated 2026-08-26. Split the way the work is actually scheduled: Section 1
+is what the MVP needs, divided into items that ride a pipeline night and
+items that are pure display/app work; Section 2 is everything that can wait.
+Issue ids (#n) are stable -- commits and conversation reference them.
+[mock] items get a mock for approval before code, per the house rule.
 
 ---
 
-## Part 2 -- Page-by-page catalogue
+## Section 1 -- MVP
 
-Route map: home, /meets, /search, /rankings, /predictions, /compare,
-/conversions, /athlete, /race/xc, /meet/xc, compiled XC, /race/tf,
-/meet/tf, compiled TF, /school, /school/prs, /course, /venue/tf, /about,
-/report.
+### 1a. Needs a pipeline night
 
-### Home `/`
-Has: rankings snapshot, latest results.
-- Add an **upcoming meets strip** once future meets exist in the tables --
-  the natural front door in season. [mock]
-- Persist the visitor's **state filter** (localStorage) so the snapshot
-  opens on their state.
-- Surface the **Predictions tab** from the home page once the model ships;
-  it is currently only reachable if you know it exists.
+- **#1 Twin-race sweep.** The same real-world race exists once per feed
+  with different keys: split athlete results, double-counted boards, and
+  the Ox Bow one-copy-fixed confusion. Canonical-race keying, then a
+  rebuild to apply it. Unlocks the twin-race banner and cleans every board.
+- **#6 School alias map.** Identity clustering cannot join spelling and
+  campus variants ("Highland - P"). Hand alias map consulted by
+  school_identity, then rerun 10b + search index (partial pipeline).
+- **#9 Search trigram index.** pg_trgm on search_text kills the ~2.6 s
+  cold tail. One migration in add_page_indexes; rides any night. Do it
+  before any search feature work.
+- **#13 First full model train.** Features + train after the first clean
+  rebuild (chunks now exist only after the weather fix). The Predictions
+  tab is wired and waiting; GPU venv is proven. Arguably post-MVP if
+  launch pressure demands, but the tab is a headline feature.
+- **#14 Canary verification.** The launch gate, not a feature: rosters and
+  home boards populated, 9:01 3200 rating in 135-137, normalized 5K near
+  15:05-15:10, Ox Bow / NLC pages corrected or dropped, record-flag
+  covering index in use, cold sweep benchmark. Requires a completed
+  rebuild to check.
 
-### Meets `/meets`
-Has: recent meets grouped by month; per-course listing.
-- **State and sport filters** (XC/TF badge per row).
-- A season picker rather than infinite recency.
+### 1b. No rebuild needed (display / app layer)
 
-### Race XC `/race/xc/<meet>/<div>`
-Has: team scores, results with ratings/PR flags, difficulty, scale toggle.
-- **Corrected-distance badge**: when dist_override changed the label, show
-  "listed 8046 m, corrected to 5000 m" instead of silently rendering the
-  corrected number. Builds trust and catches bad corrections via reports.
-- **Withheld-ratings notice** for nuked divisions: "ratings withheld --
-  recorded distance fails plausibility" beats a silent column of dashes.
-- **Race-day weather line** (temp, wind, humidity at race hour) -- the
-  weather table now exists and is joined per meet; displaying it is cheap.
-- **Twin-race banner** when the same race exists from the other feed
-  (depends on issue 1).
-- Per-km pace column next to time.
+- **#8 About page rewrite.** It describes the pre-fill world. Must say:
+  every row with a normalized time carries a rating; out-of-band rows are
+  visible but board-excluded by the pace band. Add a short "how distances
+  get corrected" section -- badge-clickers will land here.
+- **Corrected-distance badge** on race pages: "listed 8046 m, corrected to
+  5000 m" instead of silently rendering the corrected number. Trust, plus
+  free error reports when a correction is wrong.
+- **Withheld-ratings notice** on nuked divisions: "ratings withheld --
+  recorded distance fails plausibility" instead of a silent dash column.
+- **Race-day weather line** on race pages (temp, wind, humidity at race
+  hour). The weather table exists; display is cheap.
+- **Meet TF cleanup**: fold "Open 1/2/3" into the bare stem when one
+  exists (Arcadia 2); dedupe identical twin divisions (Arcadia 3).
+  Display-layer.
+- **Report page prefill** (URL, meet/div ids) + a "received" state, so
+  reports arrive actionable. The badge/notice work above will increase
+  report volume; this makes it useful.
+- **#16 DB password out of scripts/config.py.** Env var or ignored local
+  file. Required before the repo is ever shared; trivial.
 
-### Meet XC `/meet/xc/<meet>` and compiled
-Has: division list, compiled boards by distance/gender.
-- Show each division's (corrected) distance and rated share in the list --
-  a broken division is then visible from the meet page.
+---
 
-### Race TF `/race/tf/...`
-Has: results, event naming via prettifiers, staged standings.
-- Event-record flags (meet record, venue record) like XC's record flags.
-- Wind display for sprint/jump events if the feed ever carries it.
+## Section 2 -- Everything else
 
-### Meet TF `/meet/tf/<meet>` and compiled
-Has: per-division tables, computed + official scores with 100 percent
-coverage gate, hurdle/steeple naming, EnRoute exclusion, school links.
-- **Combined headline team table** with per-division collapsed under it
+### Data / engine (pipeline-bound, post-MVP)
+
+- **#4 Apparent-temperature fix.** Grid writer feeds raw solar irradiance
+  where net absorbed radiation belongs; daytime feels-like inflated
+  20-35 C. Consistent, so fine as a model feature; wrong for display or a
+  weather-correction refit. Fix = derivation change + grid column rebuild
+  + correction refit.
+- **#3 TF distance detection depth.** Track distance comes from event
+  names; pass tools and pace tests are XC-centric; a mislabeled TF event
+  leans on the anchor gate at board build.
+  Related, already handled, do not re-fix: TF normalizing to the 5K
+  anchor from spans that stop at 3200 is counteracted in
+  fit_distance_exponent (_sampleClamped + _extensionSlopeHigh: the
+  3200->5000 stretch uses a slope MEASURED from dual-distance athlete
+  pairs, not the cubic's tangent; refit every overnight at 02_fit_spline,
+  which prints "high-side extension: MEASURED k=..." per pool). Per-sport
+  anchors (hs_m|TF etc.) exist in POOL_TARGET_METERS but are deliberately
+  inert under the merged solve; unmerging is only on the table if
+  _reportDelta ever shows the XC<->TF ability gap is not a constant.
+- **#10 Incremental course boards.** Top 1200 precomputed; the tail
+  renders live (fine warm, hundreds of ms cold). Build-on-first-request
+  and persist.
+- **Model iteration.** Confidence intervals, retrain cadence after
+  correction waves, batch-size/LR tuning against the measured epoch time.
+
+### Accepted trades and watch items (documented, not scheduled)
+
+- **#2 Small distance errors survive detection.** Labels 10-20 percent too
+  long sit inside athlete-variance noise; bars deliberately above it
+  (lowering them re-creates the 378-bad-proposals failure).
+- **#5 One-night reset blindness.** Pass 0 judges the pre-wipe state; a
+  wipe-lost, un-reproposed override is wrong for one night, named the same
+  evening in 05c_lost, self-nuked next reset.
+- **#7 Unpriceable rows dash.** No person/gender/pool = no honest rating.
+  Watch fill_ratings' census counts; growth means an upstream linking
+  regression.
+- **#15 Metric drift after fill.** Tools counting NULL ratings as
+  "refused" (audit_overrides, pass "recovered", n_shadow) now read near
+  zero. Print-only; re-point at ranking_results membership when touched.
+
+### Site features (post-MVP, no rebuild unless noted)
+
+- **Home**: upcoming meets strip [mock]; persist state filter
+  (localStorage); surface Predictions once the model ships.
+- **Meets index**: state + sport filters, XC/TF badges, season picker.
+- **Race XC**: twin-race banner (needs #1); per-km pace column.
+- **Meet XC**: show each division's corrected distance and rated share.
+- **Race TF**: event/venue record flags; wind display if the feed ever
+  carries it.
+- **Meet TF**: combined headline team table with divisions collapsed
   [mock -- proposed, awaiting go].
-- **Fold "Open 1/2/3" into the stem** when a bare stem exists (Arcadia 2).
-- **Twin-division dedupe** (Arcadia 3).
-
-### Athlete `/athlete/<id>`
-Has: XC and TF sections, charts, per-row ratings, scale toggle.
-- **PR progression chart** per event/distance over career.
-- **Season-best summary strip** (SB, PR, rating percentile in pool).
-- Quick **"compare with..."** action wired to /compare.
-- Filled-but-out-of-band rows could carry a subtle marker (tooltip: "rating
-  outside the plausibility band, not ranked") so absurd numbers on a
-  wrong-distance race read as data problems, not achievements.
-
-### Compare `/compare`
-Has: head-to-head, meetings, season by season, bests, ratings over time.
-- **Three-plus athletes** instead of pairs.
-- Shareable URL state (probably already partial; verify).
-
-### School `/school/<name>` and `/school/<name>/prs`
-Has: identity chips with state split, roster, PR boards including hurdles.
-- **Team season trajectory** (top-5 average rating over the season, per
-  year). [mock]
-- **Dual-meet simulator**: pick an opponent school, predictions engine
-  scores a hypothetical dual. Reuses /api/predict plumbing. [mock]
-- Relay PRs section on the PR page (currently individual events only).
-
-### Course `/course/<name>`
-Has: distances raced, best ratings, team performances, records, meets.
-- **Map embed** from stored GPS.
-- **Difficulty context**: show n races and days behind the difficulty
-  number, and a same-state course comparison ("runs ~12 s slower than X").
-- Typical race-day weather (the grid has decades of hours).
-
-### Venue TF `/venue/tf/<loc>/<indoor>`
-Has: meets, best performances.
-- Per-event records grid to match the course page's depth (issue 11).
-
-### Rankings `/rankings`
-Has: pool/sport/year boards via API.
-- **Filters: state, grade/class year** on top of pool.
-- Jump-to-athlete ("where am I") exists in API; surface it in UI.
-
-### Predictions `/predictions`
-Has: meet picker, three target modes, race chips, mode-aware fields with
-top-7 display, aged-out carry, individual + team predictions.
-- **Confidence intervals** once the model ships (predict variance or
-  quantile head later; even a fixed +-MAE band helps).
-- **Weather scenario knob** (hot/cold/wet day) -- the model consumes
-  weather features, so the UI can expose them. [mock]
-- **Hypothetical meet builder**: pick arbitrary teams, no source meet.
-- Save/share a scenario via URL state.
-
-### Search `/search`
-Has: ranked multi-kind results, phrase boost, school identity rows.
-- Keyboard navigation and type-filter chips (athlete/school/meet/course).
-- The trigram index (issue 9) before any feature work.
-
-### Conversions `/conversions`
-Has: XC and TF converters, training paces.
-- URL state so a conversion is linkable. Low priority.
-
-### About `/about`
-- Rewrite the rating explanation for the fill/band world (issue 8), and
-  add a short "how distances get corrected" section -- users who see a
-  corrected-distance badge will land here.
-
-### Report `/report`
-Has: free-text report with API.
-- Prefill the reporting page's context (URL, meet/div ids) so reports
-  arrive actionable; show a simple "received" state.
+- **#11 Venue TF**: per-event records grid to match the course page.
+- **Athlete**: PR progression chart; season-best strip (SB/PR/percentile);
+  "compare with..." quick action; subtle marker on out-of-band filled rows
+  ("outside the plausibility band, not ranked").
+- **Compare**: three-plus athletes; verify URL state round-trips.
+- **School**: team season trajectory [mock]; dual-meet simulator on the
+  predictions plumbing [mock]; relay PRs.
+- **Course**: map embed from GPS; difficulty context (n races, days,
+  same-state comparison); typical race-day weather.
+- **Rankings**: state and grade/class filters; surface the "where am I"
+  jump the API already has.
+- **Predictions**: weather scenario knob [mock]; hypothetical meet
+  builder; save/share via URL state; confidence intervals (needs #13).
+- **Search**: keyboard navigation; type-filter chips (after #9).
+- **Conversions**: URL state. Low priority.
 
 ---
 
-## Suggested order
+## Appendix -- verification commands
 
-Quick wins first: trigram index, About rewrite, corrected-distance badge +
-withheld-ratings notice, race-day weather line, report prefill. Then the
-approved-pending TF meet work (combined table mock, Open-fold, twin
-dedupe). Then the bigger mocks: dual-meet simulator, team trajectory,
-weather scenario knob. Data issues 1 (twin races) and 6 (alias map) unlock
-several of the above and should ride along early.
+Latest overnight's measured extension lines (one per pool; "MEASURED k="
+means the 3200->5000 leg is data, "tangent" names why not):
+
+    Get-ChildItem logs -Directory -Filter "*-overnight" | Sort-Object Name -Descending |
+      Select-Object -First 1 | ForEach-Object {
+        Select-String -Path "$($_.FullName)\02_fit_spline.log" -Pattern "high-side extension" }
+
+Morning lists after a reset night: 05c_lost (overrides the wipe lost),
+pass 0's NUKED section, pass 4's nuke counts, then
+`python scripts\find_dropped_divisions.py --min-gap 20` for the residual.
