@@ -916,9 +916,13 @@ def get_races(cur, person_id):
         -- ================= XC half: results + meets =================
         SELECT r.date,
                'XC'                          AS sport,
-               -- COALESCE across sources: `meets` is anet-only, so a tfrrs row
-               -- has to take its name from meets_tfrrs or render as "Unlinked".
-               {_xc_course_sql('r')}         AS meet,
+               -- COALESCE across sources AND name kinds: `meets` is
+               -- anet-only, so a tfrrs row takes meets_tfrrs; and a meet
+               -- with no COURSE name still has a MEET name -- falling all
+               -- the way through is what rendered "Unlinked meet" on rows
+               -- whose race page existed the whole time.
+               COALESCE({_xc_course_sql('r')},
+                        m.meet_name, mt.meet_name) AS meet,
                -- XC "event" is the race distance. anet keeps it on `meets`;
                -- tfrrs keeps it PER DIVISION inside a jsonb blob.
                -- ::text so this column is text in BOTH halves (types must match).

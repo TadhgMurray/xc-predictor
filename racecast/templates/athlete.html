@@ -181,22 +181,17 @@
                 <tr id="race-{{ race.result_id }}">
                     <td>{{ race.date }}</td>
                     <td class="meet-cell">
-                        {% if race.sport == 'XC' and race.meet_id %}
-                            {% if race.meet %}
-                                <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
-                                   title="{{ race.meet }}">{{ race.meet }}</a>
-                            {% else %}
-                                <span class="muted">Unlinked meet</span>
-                            {% endif %}
-                        {% elif race.sport == 'TF' and race.meet_id %}
-                            {% if race.meet %}
-                                <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}"
-                                   title="{{ race.meet }}">{{ race.meet }}</a>
-                            {% else %}
-                                <span class="muted">Unlinked meet</span>
-                            {% endif %}
+                        {# a race with ids ALWAYS links -- its race page
+                           exists whether or not a name was scraped. A
+                           nameless one links as "Race results". #}
+                        {% if race.sport == 'XC' and race.meet_id and race.div_id is not none %}
+                            <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
+                               title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
+                        {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
+                            <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}"
+                               title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% else %}
-                            <span class="meet-name" title="{{ race.meet }}">{{ race.meet }}</span>
+                            <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or "—" }}</span>
                         {% endif %}
                     </td>
                     <td>{{ race.event|event_label }}</td>
