@@ -2547,6 +2547,20 @@ def meet_tf(meet_id):
                                  e.get("distance_meters"))) else 1e9,
         e["display_name"], e.get("gender") or "?"))
 
+    # Sections shipped as separate event_ids render as identical rows
+    # ("300m Hurdles / Boys / Open", twice). Number the duplicates so
+    # each link has an identity; the scorer already merges them.
+    tally = {}
+    for e in events:
+        k = (e["display_name"], e.get("gender"), e.get("division"))
+        tally[k] = tally.get(k, 0) + 1
+    seen = {}
+    for e in events:
+        k = (e["display_name"], e.get("gender"), e.get("division"))
+        if tally[k] > 1:
+            seen[k] = seen.get(k, 0) + 1
+            e["dup_ix"] = seen[k]
+
     return render_template("meet_tf.html", header=header, events=events,
                            meet_date=meet_date, scored=scored,
                            alt_idx=alt_idx, other_sources=other_sources)

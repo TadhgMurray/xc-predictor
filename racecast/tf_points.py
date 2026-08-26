@@ -111,6 +111,19 @@ _LEAD_NUM = re.compile(r"^(\d{2,5})(?=\D|$)")
 _HURDLE_CODE = re.compile(r"^(\d{2,4})\s*m?\s*[hli]?h$", re.IGNORECASE)
 _STEEPLE_CODE = re.compile(r"^(\d{3,4})\s*m?\s*sc$", re.IGNORECASE)
 
+# Shuttle hurdle relays, code or word form ("100shuttleh", "4x110 Shuttle
+# Hurdles"). The hurdle SPEC carries the gender: the 100m shuttle is a
+# girls' event and the 110m a boys' one by definition of the hurdles
+# themselves -- the one place gender is knowable from the event alone.
+_SHUTTLE = re.compile(
+    r"^(?:\d\s*x\s*)?(\d{2,3})\s*m?\s*(?:shuttle\s*h\w*|sh)\b",
+    re.IGNORECASE)
+
+# An "EnRoute" division holds split reads taken INSIDE other races (the
+# 1600 en route to a mile). They are not races: scoring them invents
+# points and double-counts the athletes' real events.
+_ENROUTE = re.compile(r"\ben\s*-?\s*route\b|enroute", re.IGNORECASE)
+
 
 def scorableSchool(school):
     """The school name if it names an actual team, else None."""
@@ -128,6 +141,9 @@ def prettyEventName(event_short):
     low = s.lower()
     if low in _CODE_NAMES:
         return _CODE_NAMES[low]
+    m = _SHUTTLE.match(low)
+    if m and low.endswith(("h", "hurdle", "hurdles")):
+        return f"{m.group(1)}m Shuttle Hurdles"
     m = _HURDLE_CODE.match(low)
     if m:
         return f"{m.group(1)}m Hurdles"
@@ -231,6 +247,16 @@ def genderOf(event_short):
     if not m:
         return None
     return "M" if m.group(1).lower() in _MALE_WORDS else "F"
+
+
+def shuttleGender(event_short):
+    """'F' | 'M' | None from a shuttle hurdle relay's hurdle spec -- the
+    one event whose gender is knowable from its name without a gender
+    word in it. 55/60 shuttles stay None: both genders run those."""
+    m = _SHUTTLE.match(canonicalEvent(event_short))
+    if not m:
+        return None
+    return {"100": "F", "110": "M"}.get(m.group(1))
 
 
 def canonicalEvent(event_short):
@@ -563,7 +589,8 @@ def scoreMeet(rows):
                  f"#{r.get('div_id')}:{r.get('event_id')}")
         ekey = (r.get("div_id"), r.get("event_id"))
         g = (genderOf(r.get("event_short")) or r.get("gender") or
-             majority.get(ekey) or relay_gender.get(ekey) or "?")
+             majority.get(ekey) or relay_gender.get(ekey) or
+             shuttleGender(r.get("event_short")) or "?")
         key = (div.lower(), canon, g)
         grp = groups.setdefault(key, {"division": div, "gender": g,
                                       "canon": canon, "rows": []})
@@ -598,7 +625,12 @@ def scoreMeet(rows):
         # No gender means no standings to put points in: the event still
         # displays with its places, but awards nothing.
         gendered = grp["gender"] in ("M", "F")
-        if not gendered:
+        # An EnRoute division's rows are split reads inside other races:
+        # display them, score nothing -- points here would double-count
+        # the athlete's real event in the parent division.
+        enroute = bool(_ENROUTE.search(grp["division"] or ""))
+        scoreable = gendered and not enroute
+        if not scoreable:
             awarded = [(label, 0.0, False, row)
                        for label, _pts, _win, row in awarded]
         n_scored += 1 if any(pts > 0 for _l, pts, _w, _r in awarded) else 0
@@ -662,13 +694,13 @@ def scoreMeet(rows):
             "name": ev_name,
             "gender": grp["gender"], "is_relay": is_relay,
             "is_field": is_field, "distance": dist, "rows": ev_rows,
-            "scored": gendered,
+            "scored": scoreable,
             # The Finals tag marks an actual cut -- an event whose rows
             # are ALL finals is just an event, not news.
             "scored_finals": bool(finals) and len(finals) < len(rows_g)})
 
         # ---- team sums ------------------------------------------------ #
-        if gendered:
+        if scoreable:
             teams = div["teams"].setdefault(grp["gender"], {})
             # every school that showed up gets a standings row, scoring
             # or not -- a zero is information too
@@ -695,8 +727,10 @@ def scoreMeet(rows):
         off = div.setdefault("_official", {
             "M": {"teams": {}, "events": 0, "gaps": 0},
             "F": {"teams": {}, "events": 0, "gaps": 0}, "bad": False})
-        o_rows = [(r, s) for r in rows_g
-                  if (s := _scoreVal(r)) is not None]
+        # an EnRoute division never scores, so published points inside
+        # one neither pay nor poison nor count as coverage
+        o_rows = [] if enroute else [
+            (r, s) for r in rows_g if (s := _scoreVal(r)) is not None]
         if o_rows:
             if not gendered:
                 # published points with no standings to put them in --
@@ -721,7 +755,7 @@ def scoreMeet(rows):
                     if s == top and school.lower() not in won:
                         cell["wins"] += 1
                         won.add(school.lower())
-        elif gendered and any(pts > 0 for _l, pts, _w, _r in awarded):
+        elif scoreable and any(pts > 0 for _l, pts, _w, _r in awarded):
             # we scored it, the meet's data did not: a coverage gap
             off[grp["gender"]]["gaps"] += 1
 

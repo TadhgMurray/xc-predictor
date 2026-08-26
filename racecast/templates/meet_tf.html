@@ -55,7 +55,7 @@
             <tr>
                 <td>
                     <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}">
-                        {{ e.display_name }}
+                        {{ e.display_name }}{% if e.dup_ix %} <span class="dist-note">· {{ e.dup_ix }}</span>{% endif %}
                     </a>
                 </td>
                 <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else "—" }}</td>
@@ -67,5 +67,6 @@
     </table>
 
 </main>
+<script src="{{ url_for('static', filename='staged.js') }}"></script>
 </body>
 </html>

@@ -51,17 +51,26 @@
         {% if standings %}
         <div>
             <h4 class="rec-gender">{{ g_label }}{% if official %} <span class="tfp-off">Official</span>{% endif %}</h4>
-            <table class="tfp-team">
+            {# staged: a big invite lists hundreds of schools, most on
+               zero -- the top 20 answer the team fight, the rest fold #}
+            <table class="tfp-team staged" data-step="50">
                 <thead><tr><th>#</th><th>School</th><th>Points</th><th>Event wins</th></tr></thead>
                 <tbody>
                     {% for t in standings %}
-                    <tr>
+                    <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 20 }}>
                         <td>{{ t.place_label }}</td>
                         <td><a href="/school/{{ t.school|urlencode }}">{{ t.school }}</a></td>
                         <td{{ ' class="pts"'|safe if t.place_label in ("1", "T1") }}>{{ t.display }}</td>
                         <td>{{ t.wins }}</td>
                     </tr>
                     {% endfor %}
+                    {% if standings|length > 20 %}
+                    <tr class="more-row"><td colspan="4">
+                        <button type="button" class="more-btn">
+                            Show 50 more <span class="more-left">({{ standings|length - 20 }} left)</span>
+                        </button>
+                    </td></tr>
+                    {% endif %}
                 </tbody>
             </table>
         </div>
