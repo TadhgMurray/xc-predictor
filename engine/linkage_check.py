@@ -219,16 +219,31 @@ def recenterSport(D):
     """
     import pair_recenter as prc
 
+    # ★ THE MEASURED CONSTANT APPLIES IN PRODUCTION. pair_recenter documents
+    #   the loop (measure_sport_gap -> set MEASURED_BBAR -> iterate), and
+    #   pair_all got the application on 2026-08-24 -- but the pipeline's
+    #   step 08 runs THIS file, which never did. Ported 2026-08-27 so a
+    #   pinned value cannot silently fail to reach the site. None (the
+    #   default) keeps the solve's own estimate, exactly as before.
     delta, alpha, beta, bbar, n_ident = prc.recenter(
         D["delta"], D["alpha"], D["beta"], D["sc"], D["group"],
-        D["sport"], D["course"], D["n_cells"], D["n_groups"])
+        D["sport"], D["course"], D["n_cells"], D["n_groups"],
+        bbar=prc.MEASURED_BBAR)
 
     s_cell = prc.cellSport(D["course"], D["sport"], D["n_cells"])
     xc = D["solved"] & (s_cell < 0)
     tf = D["solved"] & (s_cell > 0)
     gap = float(delta[tf].mean() - delta[xc].mean())
-    print(f"[all] sport recentre: bbar {bbar:+.5f} from {n_ident:,} dual-sport "
-          f"athlete-seasons")
+    if prc.MEASURED_BBAR is not None:
+        # The solve's own estimate still prints: its drift AWAY from the
+        # measured constant is the telemetry that says when to re-measure.
+        own, _ = prc.meanOffset(D["beta"], D["sc"], D["group"], D["n_groups"])
+        print(f"[all] sport recentre: bbar {bbar:+.5f} MEASURED "
+              f"(pair_recenter.MEASURED_BBAR; solve's own estimate {own:+.5f} "
+              f"from {n_ident:,} dual-sport athlete-seasons)")
+    else:
+        print(f"[all] sport recentre: bbar {bbar:+.5f} from {n_ident:,} "
+              f"dual-sport athlete-seasons")
     print(f"[all] TF - XC difficulty gap now {gap:+.5f} "
           f"(shared-ability solve gave -0.043)")
 
