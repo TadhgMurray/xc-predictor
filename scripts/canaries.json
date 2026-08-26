@@ -1,0 +1,15 @@
+{
+  "_howto": "Each canary is a person the checklist re-verifies after every run. Fields: person_id (required), label, rated_since (needs >=1 rated row on/after this date), top_race_date (the career's top-rated row must be on this date, YYYY-MM-DD prefix). Add the De La Salle runner's person_id with top_race_date 2025-04-12 so the 9:01 check goes live.",
+  "canaries": [
+    {
+      "person_id": 23947175,
+      "label": "Tufts runner (issue #23)",
+      "rated_since": "2021-09-01"
+    },
+    {
+      "person_id": 0,
+      "label": "De La Salle 9:01 -- FILL IN person_id to arm",
+      "top_race_date": "2025-04-12"
+    }
+  ]
+}

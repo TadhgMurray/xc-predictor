@@ -691,10 +691,19 @@ def _emit(d, args):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
-    print(f"\n  EMITTED {path}: measured_bbar {doc['measured_bbar']:+.5f} "
-          f"(applied {float(applied):+.5f} + D {float(d):+.5f}).\n  The next "
-          "solve applies it; D converging toward 0 across runs is the loop "
-          "working.\n")
+    # ★ THE NUDGE, IN POINTS. Owner asked for prominence (2026-08-27):
+    #   each sport carries half of D, so translate that half into rating
+    #   points at the 130 level, where the eye actually lives.
+    half = float(d) / 2.0
+    pts = 130.0 * (math.exp(abs(half)) - 1.0)
+    xc_dir, tf_dir = ("-", "+") if d > 0 else ("+", "-")
+    print("\n  " + "=" * 66)
+    print(f"  SPORT GAP NUDGE   bbar {float(applied):+.5f}  ->  "
+          f"{doc['measured_bbar']:+.5f}   (D {float(d):+.5f})")
+    print(f"  next run: XC {xc_dir}{abs(half):.3%}, TF {tf_dir}"
+          f"{abs(half):.3%}  ~=  {pts:.1f} rating points each way at 130")
+    print("  D toward 0 across nights = the loop converging")
+    print("  " + "=" * 66 + f"\n  written to {path}\n")
     return 0
 
 

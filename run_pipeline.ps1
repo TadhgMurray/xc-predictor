@@ -326,6 +326,12 @@ Step "15_rowguard_diag_tf"   { python scripts\diag_suspects.py --sport TF }
 Step "15_rowguard_triage_xc" { python scripts\triage_suspects.py --sport XC }
 Step "15_rowguard_triage_tf" { python scripts\triage_suspects.py --sport TF }
 Step "16_rowguard_apply"     { python scripts\apply_triage.py }
+# ★ THE OWNER'S GO/NO-GO CHECKLIST (2026-08-27), verified against the live
+#   DB after everything else: no drop block past the rail today, overrides
+#   downward-only and never ranked, canaries right (scripts\canaries.json),
+#   zero rated wheelchair rows. LAST on purpose: a FAIL is loud in the
+#   morning summary but cannot stop any build work.
+Step "17_checklist"          { python scripts\run_checklist.py }
 
 
 # ------------------------------------------------------------------ #
@@ -344,6 +350,7 @@ $keys = @(
     # the sport offset: bbar should land near -0.039; EMITTED is the gap
     # loop writing next night's measured_bbar (D -> 0 across nights)
     'sport recentre', 'difficulty gap', 'sport defaults', 'EMITTED',
+    'SPORT GAP NUDGE', 'CHECKLIST',
     # the row guard's mass-drop rail firing (a human must read the file)
     'RAIL', 'OVER-CAP',
     # proof the new speed_ratings ran at all
