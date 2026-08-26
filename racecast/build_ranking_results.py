@@ -1105,6 +1105,14 @@ _CANONICAL_INDEXES = {
         #   each of those pages seq-scans 56M rows (measured 11.6s a hit,
         #   56s across one page sweep).
         ("rr_result_idx", "(result_id)"),
+        # stampRecordFlags (the PR/SR badges on every race page) reads a
+        #   field's worth of athletes' careers: person probes were 1.4s
+        #   COLD because every row was a random heap fetch. INCLUDE makes
+        #   it an index-only scan -- the badge query never touches the
+        #   heap at all.
+        ("rr_person_cover_idx",
+         "(person_id) INCLUDE (sport, race_date, year, distance, "
+         "time_seconds)"),
         # rankings performance boards: pool/sport/year equality, then
         #   ORDER BY speed_rating DESC LIMIT cand
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),

@@ -3027,62 +3027,87 @@ _COURSE_TTL = 6 * 3600
 _COURSE_MAX = 64
 
 
-@app.route("/course/<course_name>")
-def course(course_name):
-    cache_key = (course_name, request.args.get("dist", type=int))
-    hit = _COURSE_CACHE.get(cache_key)
-    if hit and time.time() - hit[0] < _COURSE_TTL:
-        return render_template("course.html", **hit[1])
+def loadCourseBoard(cur, course_name, picked):
+    """The PRECOMPUTED render context from course_boards, or None.
 
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            distances = get_course_distances(cur, course_name)
+    ★ COLD TIME IS THE PRODUCT. Warm caches only help the second viewer
+      of the same course within the TTL, which on this site is rare; the
+      builder (build_course_boards.py, pipeline step 12b) computes every
+      course's page once per pipeline, so the FIRST viewer gets the same
+      milliseconds. An unknown (course, dist) falls back to the overview
+      row, matching the live route's dist handling; a course not built
+      yet falls back to live compute."""
+    try:
+        cur.execute("""
+            SELECT ctx FROM course_boards
+            WHERE course_name = %(c)s AND dist = %(d)s
+        """, {"c": course_name, "d": picked or 0})
+        row = cur.fetchone()
+        if row is None and picked:
+            cur.execute("""
+                SELECT ctx FROM course_boards
+                WHERE course_name = %(c)s AND dist = 0
+            """, {"c": course_name})
+            row = cur.fetchone()
+    except Exception:                    # noqa: BLE001 -- table not built yet
+        cur.connection.rollback()
+        return None
+    if row is None:
+        return None
+    return row["ctx"] if isinstance(row, dict) else row[0]
 
-            # ★ THE SELECTED DISTANCE, None = the overview. Chips come from
-            #   the distances the course actually raced, most-run first; a
-            #   ?dist that matches nothing falls back to the overview rather
-            #   than 404ing a shared link.
-            dist_values = [int(round(float(d["distance"])))
-                           for d in distances]
-            picked = request.args.get("dist", type=int)
-            sel_dist = picked if picked in dist_values else None
 
-            # After sel_dist on purpose: the header counts follow the
-            # selected distance, so the gray line describes what the
-            # page below it is showing.
-            header = get_course_header(cur, course_name, sel_dist)
+def buildCourseCtx(cur, course_name, picked):
+    """Everything course.html renders, computed live. The route uses it
+    as the fallback; build_course_boards.py uses it as the builder --
+    ONE code path, so the precomputed page can never drift from the live
+    one. Returns None for a course with no results."""
+    distances = get_course_distances(cur, course_name)
 
-            # Per-distance difficulty; the engine's cells are keyed on the
-            # distance rounded to the nearest 100m, so look up the same way.
-            cells = get_course_cell_difficulties(cur, course_name)
+    # ★ THE SELECTED DISTANCE, None = the overview. Chips come from
+    #   the distances the course actually raced, most-run first; a
+    #   ?dist that matches nothing falls back to the overview rather
+    #   than 404ing a shared link.
+    dist_values = [int(round(float(d["distance"])))
+                   for d in distances]
+    sel_dist = picked if picked in dist_values else None
 
-            def _cell(d):
-                return (cells.get(int(round(d / 100.0) * 100))
-                        if d else None)
+    # After sel_dist on purpose: the header counts follow the
+    # selected distance, so the gray line describes what the
+    # page below it is showing.
+    header = get_course_header(cur, course_name, sel_dist)
 
-            # The header difficulty is the MOST-RUN distance's, said so.
-            primary_dist = dist_values[0] if dist_values else None
-            primary_difficulty = _cell(primary_dist)
-            sel_difficulty = _cell(sel_dist)
+    # Per-distance difficulty; the engine's cells are keyed on the
+    # distance rounded to the nearest 100m, so look up the same way.
+    cells = get_course_cell_difficulties(cur, course_name)
 
-            rating_bests = get_course_rating_bests(cur, course_name,
-                                                   sel_dist)
-            if sel_dist:
-                records = get_course_records(cur, course_name, sel_dist)
-                team_records = get_course_team_records(cur, course_name,
-                                                       sel_dist)
-                team_rating = []
-            else:
-                records, team_records = [], []
-                team_rating = get_course_team_rating_bests(cur, course_name)
-            meets = get_course_meets(cur, course_name, dist=sel_dist)
+    def _cell(d):
+        return (cells.get(int(round(d / 100.0) * 100))
+                if d else None)
 
-            # HS-equivalent view: per-row distance on the overview, one
-            # distance when scoped.
-            has_hs_view = stampRowsHs(cur, "XC", rating_bests,
-                                      distance_key="distance")
-            has_hs_view = stampRowsHs(cur, "XC", records,
-                                      distance=sel_dist) or has_hs_view
+    # The header difficulty is the MOST-RUN distance's, said so.
+    primary_dist = dist_values[0] if dist_values else None
+    primary_difficulty = _cell(primary_dist)
+    sel_difficulty = _cell(sel_dist)
+
+    rating_bests = get_course_rating_bests(cur, course_name,
+                                           sel_dist)
+    if sel_dist:
+        records = get_course_records(cur, course_name, sel_dist)
+        team_records = get_course_team_records(cur, course_name,
+                                               sel_dist)
+        team_rating = []
+    else:
+        records, team_records = [], []
+        team_rating = get_course_team_rating_bests(cur, course_name)
+    meets = get_course_meets(cur, course_name, dist=sel_dist)
+
+    # HS-equivalent view: per-row distance on the overview, one
+    # distance when scoped.
+    has_hs_view = stampRowsHs(cur, "XC", rating_bests,
+                              distance_key="distance")
+    has_hs_view = stampRowsHs(cur, "XC", records,
+                              distance=sel_dist) or has_hs_view
 
     for row in records + rating_bests:
         row["display_time"] = format_time(row["time_seconds"])
@@ -3105,26 +3130,46 @@ def course(course_name):
     sel_n = next((d["n_results"] for d in distances
                   if int(round(float(d["distance"]))) == sel_dist), None)
 
-    ctx = dict(has_hs_view=has_hs_view,
-               course_name=course_name,
-               header=header,
-               dist_values=dist_values,
-               dist_table=dist_table,
-               sel_dist=sel_dist,
-               pr_ok=(sel_dist in PR_DISTANCES) if sel_dist else False,
-               sel_n=sel_n,
-               sel_difficulty=sel_difficulty,
-               primary_dist=primary_dist,
-               primary_difficulty=primary_difficulty,
-               records=bySex(records),
-               team_records=bySex(team_records),
-               rating_bests=bySex(rating_bests),
-               team_rating=bySex(team_rating),
-               meets=meets)
-    _COURSE_CACHE[cache_key] = (time.time(), ctx)
-    if len(_COURSE_CACHE) > _COURSE_MAX:
-        oldest = min(_COURSE_CACHE, key=lambda k: _COURSE_CACHE[k][0])
-        _COURSE_CACHE.pop(oldest, None)
+    return dict(has_hs_view=has_hs_view,
+                course_name=course_name,
+                header=header,
+                dist_values=dist_values,
+                dist_table=dist_table,
+                sel_dist=sel_dist,
+                pr_ok=(sel_dist in PR_DISTANCES) if sel_dist else False,
+                sel_n=sel_n,
+                sel_difficulty=sel_difficulty,
+                primary_dist=primary_dist,
+                primary_difficulty=primary_difficulty,
+                records=bySex(records),
+                team_records=bySex(team_records),
+                rating_bests=bySex(rating_bests),
+                team_rating=bySex(team_rating),
+                meets=meets)
+
+
+@app.route("/course/<course_name>")
+def course(course_name):
+    picked = request.args.get("dist", type=int)
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # precomputed page first (pipeline step 12b): the COLD path
+            # is one PK lookup
+            ctx = loadCourseBoard(cur, course_name, picked)
+            if ctx is None:
+                cache_key = (course_name, picked)
+                hit = _COURSE_CACHE.get(cache_key)
+                if hit and time.time() - hit[0] < _COURSE_TTL:
+                    ctx = hit[1]
+                else:
+                    ctx = buildCourseCtx(cur, course_name, picked)
+                    _COURSE_CACHE[cache_key] = (time.time(), ctx)
+                    if len(_COURSE_CACHE) > _COURSE_MAX:
+                        oldest = min(_COURSE_CACHE,
+                                     key=lambda k: _COURSE_CACHE[k][0])
+                        _COURSE_CACHE.pop(oldest, None)
+
     return render_template("course.html", **ctx)
 
 

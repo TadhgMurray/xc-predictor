@@ -18,15 +18,24 @@ import sys
 sys.path.insert(0, "scripts")
 from database import getConn   # noqa: E402
 
+# (table, leading column, name, full spec or None). With a spec, the
+# check requires an index whose WHOLE definition matches it -- a plain
+# leading-column index does not satisfy a covering INCLUDE spec.
 WANTED = [
     # stampRowsHs on every race/compiled/course/compare page -- without
     # this each of those pages seq-scans ranking_results (56M rows).
-    ("ranking_results", "result_id", "idx_rr_result"),
-    ("ranking_results", "school",  "idx_rr_school"),
-    ("results_tf",      "school",  "idx_results_tf_school"),
-    ("results_tf",      "meet_id", "idx_results_tf_meet"),
-    ("results",         "school",  "idx_results_school"),
-    ("athlete_season",  "school",  "idx_athlete_season_school"),
+    ("ranking_results", "result_id", "idx_rr_result", None),
+    ("ranking_results", "school",  "idx_rr_school", None),
+    # stampRecordFlags: index-only career reads for the PR/SR badges
+    # (1.4s of random heap fetches per race page without it)
+    ("ranking_results", "person_id", "idx_rr_person_cover",
+     "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)"),
+    ("results_tf",      "school",  "idx_results_tf_school", None),
+    ("results_tf",      "meet_id", "idx_results_tf_meet", None),
+    ("results",         "school",  "idx_results_school", None),
+    # the course pages' driving filter (live fallback + board builds)
+    ("meets",           "course_name", "idx_meets_course_name", None),
+    ("athlete_season",  "school",  "idx_athlete_season_school", None),
 ]
 
 
@@ -38,7 +47,7 @@ def main():
         cur = conn.cursor()
         todo = []
         drop_first = []
-        for table, col, name in WANTED:
+        for table, col, name, spec in WANTED:
             # ⚠ VALIDITY, NOT JUST EXISTENCE. A failed CREATE INDEX
             #   CONCURRENTLY leaves an INVALID index behind: pg_indexes
             #   lists it, the planner ignores it, and "OK" would be a lie
@@ -58,12 +67,24 @@ def main():
                        ~* ('\(\s*' || %s || '\s*[,)]')
             """, (table, col))
             rows = cur.fetchall()
+
             # ⚠ A PARTIAL INDEX DOES NOT COUNT. An index built with a
             #   WHERE clause only serves queries whose predicate implies
             #   it -- the planner showed a valid school index while
             #   seq-scanning 63M rows for a plain school lookup. Usable
-            #   here means valid AND unconditional.
-            usable = [r for r in rows if r[1] and " where " not in r[2].lower()]
+            #   here means valid AND unconditional -- AND matching the
+            #   full spec where one is given (a covering INCLUDE index is
+            #   not satisfied by a plain one on the same column).
+            def norm(s):
+                i = s.find("(")
+                return s[i:].replace(" ", "").lower() if i >= 0 else s
+
+            def fits(idxdef):
+                return norm(idxdef) == norm(spec) if spec else True
+
+            usable = [r for r in rows
+                      if r[1] and " where " not in r[2].lower()
+                      and fits(r[2])]
             partial = [r for r in rows if r[1] and " where " in r[2].lower()]
             invalid = [r for r in rows if not r[1]]
             if usable:
@@ -84,7 +105,7 @@ def main():
             taken = {r[0] for r in rows}
             while name in taken:
                 name += "_f"
-            todo.append((table, col, name))
+            todo.append((table, name, spec or f"({col})"))
 
         if check_only or not todo:
             print("nothing to build" if not todo else "(check only)")
@@ -98,11 +119,11 @@ def main():
             for bad in drop_first:
                 print(f"dropping invalid index {bad}...")
                 cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {bad}")
-            for table, col, name in todo:
-                print(f"building {name} on {table}({col}) "
+            for table, name, spec in todo:
+                print(f"building {name} on {table} {spec} "
                       f"(concurrent, minutes on the big tables)...")
                 cur.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-                            f"{name} ON {table} ({col})")
+                            f"{name} ON {table} {spec}")
                 print(f"  done {name}")
         finally:
             conn.autocommit = old

@@ -148,7 +148,10 @@ _CONST_MIN_ROWS = 50           # below this the median is an anecdote
 #   factor by ~1% -- under what the toggle can even display. So they
 #   persist to a JSON sidecar for a day and the first page pays nothing.
 _CONST_FILE = None
-_CONST_FILE_TTL = 24 * 3600
+# 7 days: the pipeline's warm step (13b) rewrites the file on
+# every rebuild, so the TTL is only a backstop against a very
+# stale sidecar on a machine that stopped running pipelines.
+_CONST_FILE_TTL = 7 * 24 * 3600
 
 
 def _constFile():

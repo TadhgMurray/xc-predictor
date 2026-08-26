@@ -275,7 +275,14 @@ Step "11_teams"        { python racecast\build_team_season.py }
 #   for it, and because a course count printed next to the athlete counts is
 #   how a collapsed one gets noticed.
 Step "12_courses"      { python racecast\build_course_rank.py }
+# ! COLD TIME IS THE PRODUCT: precompute every course PAGE (overview and
+#   each distance scope) so the first viewer costs a PK lookup, not a
+#   19-second history recompute. Reads ranking_results, so after 10.
+Step "12b_course_pages" { python racecast\build_course_boards.py }
 Step "13_panels"       { python racecast\panels.py }
+# the HS-view pool constants, computed once here instead of by the first
+# page of a fresh process
+Step "13b_pool_consts" { python scripts\warm_pool_constants.py }
 # ! IDEMPOTENT: reports what exists, builds only what is missing or
 #   INVALID (CONCURRENTLY, no locks). ranking_results' own indexes are
 #   canonical inside build_ranking_results; this covers the permanent
