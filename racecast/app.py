@@ -2137,7 +2137,39 @@ def get_tf_race_header(cur, meet_id, div_id, event_id, source=None):
         LIMIT 1
     """, {"meet": meet_id, "div": div_id, "event": event_id,
           "src": source})
-    return cur.fetchone()
+    row = cur.fetchone()
+    if row:
+        return row
+    # ⚠ RESULTS-ONLY EVENT: result rows carry (div, event) ids meets_tf has
+    #   no row for (id drift between scrape vintages -- Lakeview 4-way,
+    #   2026-08-27: the athlete's event existed only on the results side).
+    #   Synthesize the header from the rows so the race page renders them.
+    cur.execute("""
+        SELECT mode() WITHIN GROUP (
+                   ORDER BY NULLIF(TRIM(event_short), '')) AS event_short,
+               count(*) AS n
+        FROM results_tf
+        WHERE meet_id = %(meet)s AND div_id = %(div)s
+          AND event_id = %(event)s
+          AND (%(src)s::text IS NULL OR source = %(src)s)
+    """, {"meet": meet_id, "div": div_id, "event": event_id,
+          "src": source})
+    r2 = cur.fetchone()
+    if not r2 or not r2["n"]:
+        return None
+    cur.execute("""
+        SELECT meet_name, state, is_indoor, location_id FROM meets_tf
+        WHERE meet_id = %(meet)s
+          AND (%(src)s::text IS NULL OR source = %(src)s)
+        LIMIT 1
+    """, {"meet": meet_id, "src": source})
+    m = cur.fetchone() or {}
+    return {"meet_name": m.get("meet_name") or "Track meet",
+            "event_short": r2["event_short"],
+            "distance_meters": None, "division": None,
+            "state": m.get("state"), "is_indoor": m.get("is_indoor"),
+            "meet_id": meet_id, "div_id": div_id, "event_id": event_id,
+            "difficulty": None, "location_id": m.get("location_id")}
 
 
 def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
@@ -2480,12 +2512,12 @@ def get_tf_meet_events(cur, meet_id, source=None):
         ORDER BY m.division, m.distance_meters NULLS LAST, m.event_short
     """, {"meet": meet_id, "src": source})
     rows = cur.fetchall()
-    if rows:
-        return rows
-    # ⚠ A MEET CAN LIVE ONLY IN results_tf -- no meets_tf coverage at all
-    #   (tfrrs fragments). Its events are still derivable from the result
-    #   rows' own event names; only id-less rows stay unlisted (they have
-    #   no race page to link, but the scoring table still shows them).
+    # ⚠ THE RESULTS SIDE CAN KNOW EVENTS meets_tf DOES NOT -- a meet with
+    #   no meets_tf coverage at all (tfrrs fragments), or result rows whose
+    #   (div, event) ids drifted between scrape vintages (Lakeview 4-way:
+    #   the athlete's event was invisible on the meet page and his row
+    #   unreachable from any listed event). Result-side events append to
+    #   whatever meets_tf listed; only id-less rows stay unlisted.
     cur.execute("""
         SELECT div_id, event_id,
                mode() WITHIN GROUP (
@@ -2500,7 +2532,10 @@ def get_tf_meet_events(cur, meet_id, source=None):
         GROUP BY div_id, event_id
         ORDER BY div_id, event_id
     """, {"meet": meet_id, "src": source})
-    return cur.fetchall()
+    listed = {(r["div_id"], r["event_id"]) for r in rows}
+    extras = [r for r in cur.fetchall()
+              if (r["div_id"], r["event_id"]) not in listed]
+    return rows + extras
 
 
 # ⚠ SOME MEETS HAVE NO USABLE EVENT IDS AT ALL (tfrrs fragments: rows with
@@ -2587,18 +2622,22 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                         NULLIF(TRIM(r.event_short), '')) AS event_short,
                m.division,
                m.distance_meters,
-               m.div_id,
-               m.event_id,
+               -- ! COALESCE + LEFT JOIN: result rows whose (div, event)
+               --   ids have no meets_tf row (scrape-vintage drift) used
+               --   to fall out of scoring entirely via the inner join.
+               --   They keep their own ids and their own event_short.
+               COALESCE(m.div_id,   r.div_id)   AS div_id,
+               COALESCE(m.event_id, r.event_id) AS event_id,
                {_name_sql('r')} AS athlete_name,
                a.gender          AS gender
         FROM results_tf r
-        JOIN meets_tf m ON m.meet_id  = r.meet_id
+        LEFT JOIN meets_tf m ON m.meet_id  = r.meet_id
                        AND m.div_id   = r.div_id
                        AND m.event_id = r.event_id
+                       AND (%(src)s::text IS NULL OR m.source = %(src)s)
         {_athlete_lateral('r')}
         WHERE r.meet_id = %(meet)s
-          AND (%(src)s::text IS NULL
-               OR (r.source = %(src)s AND m.source = %(src)s))
+          AND (%(src)s::text IS NULL OR r.source = %(src)s)
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
         ORDER BY r.time_seconds ASC NULLS LAST
     """, {"meet": meet_id, "src": source})
