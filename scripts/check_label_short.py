@@ -57,7 +57,13 @@ def main():
 
     npz = np.load(args.diff, allow_pickle=True)
     keys = [str(k) for k in npz["course_keys"]]
-    diff = np.asarray(npz["difficulty"], dtype=np.float64)
+    # ! difficulty_raw, NOT difficulty. The linkage step now NUKES the
+    #   convergence-proven cells to their sport default before the shipped
+    #   difficulty is written -- reading the shipped column would blind this
+    #   detector to exactly the cells it exists to find. The raw column is
+    #   the pre-shrink solve and keeps the evidence.
+    diff = np.asarray(npz.get("difficulty_raw", npz["difficulty"]),
+                      dtype=np.float64)
     solved = np.asarray(npz["solved"], dtype=bool)
     degree = np.asarray(npz["degree"])
 
@@ -78,8 +84,12 @@ def main():
         cells.sort()
         ref_label, ref_i = cells[-1]            # longest = the honest label
         d_ref = diff[ref_i]
+        if not np.isfinite(d_ref) or d_ref <= -1.0:
+            continue
         implied = []
         for label, i in cells[:-1]:
+            if label <= 0 or not np.isfinite(diff[i]) or diff[i] <= -1.0:
+                continue
             t = label * (((1.0 + diff[i]) / (1.0 + d_ref)) ** (1.0 / K))
             implied.append((label, i, t))
         # the short cells whose implied true exceeds their label

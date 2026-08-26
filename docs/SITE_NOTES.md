@@ -158,13 +158,15 @@ Issue ids (#n) are stable -- commits and conversation reference them.
   downward-only forbids the override. Ratings mostly survive (the solve
   launders the error); the label, displayed difficulty, distance-scoped
   PRs, and any honest race sharing the cell do not.
-  Detector SHIPPED: scripts/check_label_short.py scans the whole corpus
-  from pair_difficulty.npz for multi-cell convergence. Fix is a POLICY
-  decision: (a) leave it (ratings fine, labels lie) + a display note;
-  (b) a display/metadata-only label correction channel -- never touches
-  normalized_time, so it cannot mint elites and does not violate the
-  downward-only rationale; (c) gated upward corrections where
-  convergence proves the true distance. Owner to choose.
+  Detector SHIPPED (check_label_short, reads difficulty_raw) and the
+  FIX SHIPPED 2026-08-27, owner's ruling: NUKE THE DIFFICULTY.
+  Convergence-proven short-label cells go to the sport default in
+  shrinkByLinkage (same thresholds as the detector), deflating their
+  ratings by the shortfall -- the safe direction. Athlete rails: a cell
+  over 2,500 athlete-seasons is reported and left alone; over 60,000
+  total the whole gate aborts and says so. 133 venues flagged on the
+  2026-08-27 scan; the display/label-correction channel remains open as
+  a future refinement.
 - **#20 Gender on the wrong board.** Olalekan Fadesere (Katy Tompkins):
   every race in Men's events, appeared on a female board. Boards take
   gender from `athletes` rows (first school alphabetically wins a

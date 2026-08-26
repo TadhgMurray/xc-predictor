@@ -415,6 +415,72 @@ DAYS_MIN = 3
 #   distribution is the calibration evidence for both knobs.
 BRIDGE_MIN = 0.35
 
+# ★ THE SHORT-LABEL NUKE (owner's call, 2026-08-27: "nuke the difficulty,
+#   as long as not too many athletes"). check_label_short found 133 venues
+#   where two or more short cells' difficulty-implied true distances
+#   converge on one longer value -- one course under several short labels,
+#   each shortfall absorbed by the solve as fake terrain. The labels cannot
+#   be overridden (downward-only forbids raising), so the DIFFICULTY is
+#   nuked instead: convergence-proven cells go to the sport default, which
+#   deflates their ratings by the shortfall -- the safe direction, per the
+#   corrections doctrine -- and stops the solve laundering a lie into
+#   plausible numbers.
+#
+#   Same thresholds as the detector, so the scan and the gate agree; the
+#   athlete caps are the "not too many" rail: a cell with more
+#   athlete-seasons than the cap is REPORTED and left alone, and if the
+#   whole class exceeds the total cap something is miscalibrated and
+#   nothing is nuked.
+K_DIST = 1.06                  # the normaliser's distance exponent
+SHORT_MIN_EXCESS = 0.05        # implied true >= 5% over the label
+SHORT_CONVERGE_TOL = 0.04      # hot cells agree within 4%
+SHORT_MAX_GROUPS_CELL = 2500   # per-cell athlete-season cap
+SHORT_MAX_GROUPS_TOTAL = 60000  # class-wide abort bar
+
+
+def shortLabelDead(D, delta_s):
+    """(mask, skipped) -- convergence-proven short-label cells to nuke.
+
+    Works in delta space, where the anchoring constant cancels in the
+    within-venue difference: implied = label * exp((d_i - d_ref)/K).
+    """
+    keys = D.get("keys") or []
+    n_cells = D["n_cells"]
+    mask = np.zeros(n_cells, dtype=bool)
+    skipped = []
+    if len(keys) != n_cells:
+        return mask, skipped
+    venues = {}
+    for i, k in enumerate(keys):
+        m = re.match(r"^(XC:.+):d(\d+)$", str(k))
+        if m and D["solved"][i]:
+            venues.setdefault(m.group(1), []).append((float(m.group(2)), i))
+    degree = np.asarray(D["degree"])
+    for base, cells in venues.items():
+        if len(cells) < 3:            # 2 hot + the reference, minimum
+            continue
+        cells.sort()
+        _ref_label, ref_i = cells[-1]
+        hot = []
+        for label, i in cells[:-1]:
+            if label <= 0:
+                continue
+            implied = label * np.exp((delta_s[i] - delta_s[ref_i]) / K_DIST)
+            if implied / label - 1.0 >= SHORT_MIN_EXCESS:
+                hot.append((label, i, implied))
+        if len(hot) < 2:
+            continue
+        ts = np.array([t for _, _, t in hot])
+        center = float(np.median(ts))
+        if not np.all(np.abs(ts / center - 1.0) <= SHORT_CONVERGE_TOL):
+            continue
+        for label, i, implied in hot:
+            if degree[i] > SHORT_MAX_GROUPS_CELL:
+                skipped.append((str(keys[i]), int(degree[i])))
+            else:
+                mask[i] = True
+    return mask, skipped
+
 
 def bridgeFraction(D):
     """Per cell: share of its distinct groups that race any OTHER venue.
@@ -555,7 +621,33 @@ def shrinkByLinkage(D, delta_s):
             print(f"        {str(keys[i]):<34} delta {delta_s[i]:+.3f}  "
                   f"bridge {bridge[i]:.2f}  days {int(days[i])}")
 
-    dead = dead_link | dead_bridge
+    # The short-label nuke -- see SHORT_MIN_EXCESS above. Runs after the
+    # other two so its report never double-counts a cell already dead.
+    dead_short, short_skipped = shortLabelDead(D, delta_s)
+    dead_short &= ~(dead_link | dead_bridge)
+    if dead_short.any() or short_skipped:
+        n_groups_hit = int(np.asarray(D["degree"])[dead_short].sum())
+        if n_groups_hit > SHORT_MAX_GROUPS_TOTAL:
+            print(f"    [link] short-label nuke ABORTED: would touch "
+                  f"{n_groups_hit:,} athlete-seasons (cap "
+                  f"{SHORT_MAX_GROUPS_TOTAL:,}) -- thresholds need eyes")
+            dead_short[:] = False
+        else:
+            print(f"    [link] {int(dead_short.sum()):,} SHORT-LABEL cells "
+                  f"(convergence-proven, {n_groups_hit:,} athlete-seasons) "
+                  f"-> sport default; their ratings deflate by the "
+                  f"shortfall, the safe direction")
+            worst = np.argsort(np.where(dead_short, -np.abs(delta_s),
+                                        np.inf))
+            for i in worst[:10]:
+                if not dead_short[i]:
+                    break
+                print(f"        {str(keys[i]):<34} delta {delta_s[i]:+.3f}")
+        for k, n in short_skipped[:8]:
+            print(f"    [link] short-label SKIPPED over per-cell cap: "
+                  f"{k} ({n:,} athlete-seasons)")
+
+    dead = dead_link | dead_bridge | dead_short
     if not dead.any():
         print("    [link] no unidentified cells")
         return delta_s
@@ -570,7 +662,8 @@ def shrinkByLinkage(D, delta_s):
           f"{int(dead_link.sum()):,} unidentified "
           f"(ext < {LINK_MIN:.0%} AND days < {days_min}), "
           f"{int(dead_bridge.sum()):,} self-referential "
-          f"(bridge < {BRIDGE_MIN:.0%})")
+          f"(bridge < {BRIDGE_MIN:.0%}), "
+          f"{int(dead_short.sum()):,} short-label")
     print(f"    [link] largest delta discarded {worst:+.3f}; "
           f"all other cells untouched")
     return out
