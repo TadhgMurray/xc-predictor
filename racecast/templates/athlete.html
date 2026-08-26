@@ -181,15 +181,21 @@
                 <tr id="race-{{ race.result_id }}">
                     <td>{{ race.date }}</td>
                     <td class="meet-cell">
-                        {# a race with ids ALWAYS links -- its race page
-                           exists whether or not a name was scraped. A
-                           nameless one links as "Race results". #}
+                        {# EVERY race with a meet_id links somewhere real:
+                           the race page when the division ids exist, the
+                           MEET page when they do not (tfrrs TF rows carry
+                           NULL event/div -- the old template minted
+                           /race/tf/None/... 404s for those). A nameless
+                           race still links, as "Race results". #}
                         {% if race.sport == 'XC' and race.meet_id and race.div_id is not none %}
                             <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
                             <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
+                        {% elif race.meet_id %}
+                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}"
+                               title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
                         {% else %}
                             <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or "—" }}</span>
                         {% endif %}
