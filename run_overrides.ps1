@@ -99,6 +99,13 @@ $t_start = Get-Date
 #   the uncommitted override work on this disk.
 Step "01_backup"   { python scripts\backup_corrections.py }
 
+# ★ WHAT IS THERE NOW, so 05c_lost can say what tonight removed. The wipe
+#   trusts the passes to re-propose every correct override, and a division
+#   whose evidence deleted itself is exactly where that trust fails -- NLC
+#   Round #1 2025 was page-verified to 5000 in July, wiped by the 2026-08-25
+#   reset, re-proposed by nothing, and found weeks later on a broken page.
+Step "01c_snapshot" { python scripts\override_diff.py --snapshot }
+
 # ---------------------------------------------------------------------- #
 #  THE STALE PASS BLOCK, CHECKED FIRST RATHER THAN LAST
 # ---------------------------------------------------------------------- #
@@ -211,6 +218,12 @@ Step "05_dump"     { python engine\dump_overrides.py }
 #   common (Van Cortlandt runs 2500, 4023 and 5000), so a split is a prompt to
 #   read, not a fault. It sorts the genuinely suspect ones to the top.
 Step "05b_coherence" { python scripts\check_override_coherence.py --worst 30 }
+
+# ! REPORT ONLY, like the coherence check. Compares the fresh dist_override
+#   against 01c's snapshot and NAMES every override the night lost, with a
+#   paste-ready block to restore them -- while there is still time to do it
+#   before 05_backfill normalizes the corpus without them.
+Step "05c_lost"    { python scripts\override_diff.py --report }
 
 if ($SkipPipeline) {
     Write-Host "`n  -SkipPipeline: overrides are applied and dist_override is" -ForegroundColor Cyan
