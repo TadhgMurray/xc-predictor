@@ -34,6 +34,28 @@ New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $summary = @()
 Write-Host "  overnight run -- logging to $dir" -ForegroundColor Cyan
 
+# ★ THE WRONG-PYTHON PREFLIGHT. The 2026-08-26 night was launched from the
+#   rocm-train venv (torch + numpy and nothing else), so pass 0 died on
+#   psycopg2 and the spline on scipy fifteen minutes in -- an entire night
+#   lost to which prompt the command was typed at. Fail in the first second
+#   instead, and say what happened. The training venv is for
+#   model\train.py ONLY; everything here runs on the site's Python.
+python -c "import psycopg2, scipy, numpy, torch" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "  WRONG PYTHON: this python cannot import the site's own" -ForegroundColor Red
+    Write-Host "  dependencies (psycopg2/scipy/numpy/torch)." -ForegroundColor Red
+    if ($env:VIRTUAL_ENV) {
+        Write-Host "  You are inside the '$([IO.Path]::GetFileName($env:VIRTUAL_ENV))' venv. Run:" -ForegroundColor Yellow
+        Write-Host "      deactivate"
+        Write-Host "      .\scripts\overnight.ps1"
+    } else {
+        Write-Host "  Install the missing packages into this environment first." -ForegroundColor Yellow
+    }
+    Write-Host ""
+    exit 1
+}
+
 function Step($name, $cmd) {
     $log = "$dir\$name.log"
     Write-Host "`n$('=' * 70)`n  $name    $(Get-Date -Format 'HH:mm:ss')`n$('=' * 70)" -ForegroundColor Yellow
