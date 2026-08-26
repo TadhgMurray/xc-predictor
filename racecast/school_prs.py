@@ -13,6 +13,12 @@ school_prs.py -- one school's PRs, per distance/event.
   straight from results_tf with tf_points' canonical-event and mark
   parsing -- the exact code the meet scorer uses.
 
+★ HURDLES AND STEEPLE ARE A THIRD SOURCE for the same reason twice
+  over: the engine rates flat races only, so they never reach
+  ranking_results, and they are times, so fieldSql refuses them. They
+  come from results_tf too, picked out by what the event calls itself
+  (hurdleSql's pattern), ranked on time_seconds.
+
 Filters: a season label narrows to that season's bests; an XC course
 narrows to bests run THERE. Both are cut in Python over one fetch,
 because the year list and the course chips need the unfiltered rows
@@ -21,7 +27,8 @@ anyway.
 
 from rankings import PR_DISTANCES, PR_DISTANCE_TOL
 from school import seasonLabel, storedYear
-from tf_points import canonicalEvent, displayEvent, parseMark
+from tf_points import (canonicalEvent, displayEvent, eventDistance,
+                       genderOf, parseMark)
 
 # ranking_results stores metres as the meet recorded them; label the
 # imperial ones the way the people who ran them say them.
@@ -99,6 +106,43 @@ def fieldSql():
     """
 
 
+# What a hurdle or steeple race calls itself. The word forms catch
+# "110m Hurdles" / "3000m Steeplechase"; the code arm catches the bare
+# feed spellings -- a distance, then h/hh/lh/ih or sc as its own word
+# ("110h", "100mH", "60 H", "2kSC"). Digit-first keeps "hj" a high jump
+# and "5th" a grade. \M is Postgres for end-of-word.
+HURDLE_PATTERN = r"(hurd|steeple|[0-9]\s*[km]?\s*(sc|[hli]?h)\M)"
+
+
+def hurdleSql():
+    """The hurdle/steeple rows SQL, exposed for the EXPLAIN tooling.
+    These races live only in results_tf: the engine rates flat races, so
+    ranking_results never sees them, and fieldSql refuses times. The
+    relay guard is doubled -- the flag, plus the name ("Shuttle Hurdle
+    Relay" with a dropped flag would otherwise mint a section)."""
+    from season_year import seasonYearSqlInt
+    name_sql = ("COALESCE(NULLIF(TRIM(m.event_short), ''), "
+                "NULLIF(TRIM(r.event_short), ''))")
+    return f"""
+        SELECT r.result_id, r.person_id, r.athlete_id, r.time_seconds,
+               r.mark, r.grade, r.date, r.meet_id, r.div_id, r.event_id,
+               {seasonYearSqlInt('TF', 'r.date')} AS year,
+               {name_sql} AS event_short
+        FROM   results_tf r
+        LEFT JOIN meets_tf m ON m.meet_id  = r.meet_id
+                            AND m.div_id   = r.div_id
+                            AND m.event_id = r.event_id
+        WHERE  r.school = %(school)s
+          AND  COALESCE(r.is_relay, 0) = 0
+          AND  COALESCE(r.is_field, 0) = 0
+          AND  COALESCE(r.result_kind, '') NOT IN ('field', 'combined')
+          AND  r.time_seconds > 0
+          AND  r.date IS NOT NULL
+          AND  {name_sql} ~* %(pat)s
+          AND  {name_sql} !~* '(relay|[0-9]\\s*x\\s*[0-9])'
+    """
+
+
 def _runningRows(cur, school, sport):
     """Every rated-or-timed race for this school in one sport, with the
     course name for XC.
@@ -118,6 +162,12 @@ def _fieldRows(cur, school):
     query's rule. Names AND genders resolve in one bulk lookup after --
     same reasoning as _runningRows."""
     cur.execute(fieldSql(), {"school": school})
+    return cur.fetchall()
+
+
+def _hurdleRows(cur, school):
+    """Every individual hurdle/steeple time for this school."""
+    cur.execute(hurdleSql(), {"school": school, "pat": HURDLE_PATTERN})
     return cur.fetchall()
 
 
@@ -181,21 +231,28 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     stored = storedYear(sport, year_label) if year_label else None
     running = _runningRows(cur, school, sport)
     field = _fieldRows(cur, school) if sport == "TF" else []
+    hurdles = _hurdleRows(cur, school) if sport == "TF" else []
 
-    # field rows need gender BEFORE grouping (the tables split on it);
-    # one bulk lookup covers every field athlete
-    if field:
+    # field and hurdle rows need gender BEFORE grouping (the tables
+    # split on it); one bulk lookup covers every athlete in both. A
+    # hurdle event usually names its gender itself, so that wins first
+    # -- the scorer's own layering.
+    if field or hurdles:
         info = _athleteInfo(cur, (r.get("person_id") or r.get("athlete_id")
-                                  for r in field))
+                                  for r in field + hurdles))
         for r in field:
             a = info.get(r.get("person_id") or r.get("athlete_id"), {})
             r["name"] = a.get("name")
             r["gender"] = a.get("gender")
+        for r in hurdles:
+            a = info.get(r.get("person_id") or r.get("athlete_id"), {})
+            r["name"] = a.get("name")
+            r["gender"] = genderOf(r.get("event_short")) or a.get("gender")
 
     # year bar and course chips come from the UNFILTERED rows
     years = sorted({seasonLabel(sport, r["year"]) for r in running
                     if r.get("year")} |
-                   {seasonLabel("TF", r["year"]) for r in field
+                   {seasonLabel("TF", r["year"]) for r in field + hurdles
                     if r.get("year")}, reverse=True)
     # Every course the school has actually RACED (2+ results keeps a
     # single stray row from minting a chip), most-raced first. The
@@ -213,6 +270,7 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     if stored:
         running = [r for r in running if r.get("year") == stored]
         field = [r for r in field if r.get("year") == stored]
+        hurdles = [r for r in hurdles if r.get("year") == stored]
     if course and sport == "XC":
         running = [r for r in running
                    if (r.get("course_name") or "").strip() == course]
@@ -258,6 +316,46 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
         sections.sort(key=lambda s: -s["n"])       # most-raced first
     else:
         sections.sort(key=lambda s: s["distance"])
+
+    # ---- hurdle/steeple sections (TF): canonical event, best time ---- #
+    # Running-shaped tables (a time, no rating -- the engine never rates
+    # these), sorted by the distance their name leads with so the 60H
+    # stops sorting after the 300H. No board takes hurdle times, so no
+    # view-all link -- the standing rule for off-board sections.
+    h_groups = {}
+    for r in hurdles:
+        canon = (canonicalEvent(r.get("event_short")) or
+                 f"#{r.get('event_id')}")
+        h_groups.setdefault(canon, []).append(r)
+    h_sections = []
+    for canon, rows_g in h_groups.items():
+        by_g = {"M": [], "F": []}
+        for r in rows_g:
+            if r.get("gender") in ("M", "F"):
+                by_g[r["gender"]].append(r)
+        tables, left = {}, {}
+        for g in ("M", "F"):
+            ranked = _bestPer(
+                by_g[g],
+                lambda r: (float(t) if (t := r.get("time_seconds")) and
+                           float(t) > 0 else None),
+                _person)
+            rows = [dict(r) for _v, r in ranked]
+            left[g] = max(0, len(rows) - per_table)
+            tables[g] = rows[:per_table]
+        if not (tables["M"] or tables["F"]):
+            continue
+        name_src = next((r.get("event_short") for r in rows_g
+                         if r.get("event_short")), None)
+        h_sections.append({
+            "label": (displayEvent(name_src) if name_src
+                      else f"Event {rows_g[0].get('event_id')}"),
+            "dist_note": "", "kind": "hurdles",
+            "distance": eventDistance(name_src) if name_src else None,
+            "on_board": False, "n": len(rows_g),
+            "tables": tables, "left": left})
+    h_sections.sort(key=lambda s: (s["distance"] or 1e9, s["label"]))
+    sections.extend(h_sections)
 
     # ---- field sections (TF): canonical event, best mark ------------- #
     f_groups = {}

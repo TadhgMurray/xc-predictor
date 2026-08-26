@@ -36,10 +36,12 @@
     {% set rows = sec.tables[g] %}
     {% if rows %}
     <h4 class="rec-gender">{{ "Boys" if g == "M" else "Girls" }}</h4>
-    <table class="staged {{ 'prs-course' if with_course else 'prs-tbl' }}{{ ' prs-field' if sec.kind == 'field' }}" data-step="20">
+    {# hurdles share the field table shape (a value, no rating), just
+       with the clock's word for the value #}
+    <table class="staged {{ 'prs-course' if with_course else 'prs-tbl' }}{{ ' prs-field' if sec.kind != 'running' }}" data-step="20">
         <thead><tr>
             <th>#</th><th>Athlete</th>
-            <th>{{ "Time" if sec.kind == "running" else "Mark" }}</th>
+            <th>{{ "Mark" if sec.kind == "field" else "Time" }}</th>
             {% if sec.kind == "running" %}<th>Rating</th>{% endif %}
             <th>Grade</th>
             {% if with_course %}<th>Course</th>{% endif %}

@@ -105,6 +105,12 @@ _MEDLEY = re.compile(r"^(sprint|dist(?:ance)?)\s*med(?:ley)?\s*([\d,.x]+)?$",
 # not \b, because "200m" has no word boundary before the m.
 _LEAD_NUM = re.compile(r"^(\d{2,5})(?=\D|$)")
 
+# Bare hurdle/steeple codes, display only ("110h" -> "110m Hurdles",
+# "3000sc" -> "3000m Steeplechase"). Digit-first keeps "hj" a high
+# jump; the optional letter admits the hh/lh/ih spellings.
+_HURDLE_CODE = re.compile(r"^(\d{2,4})\s*m?\s*[hli]?h$", re.IGNORECASE)
+_STEEPLE_CODE = re.compile(r"^(\d{3,4})\s*m?\s*sc$", re.IGNORECASE)
+
 
 def scorableSchool(school):
     """The school name if it names an actual team, else None."""
@@ -122,6 +128,12 @@ def prettyEventName(event_short):
     low = s.lower()
     if low in _CODE_NAMES:
         return _CODE_NAMES[low]
+    m = _HURDLE_CODE.match(low)
+    if m:
+        return f"{m.group(1)}m Hurdles"
+    m = _STEEPLE_CODE.match(low)
+    if m:
+        return f"{m.group(1)}m Steeplechase"
     m = _MEDLEY.match(low)
     if m:
         kind = "Sprint Medley" if m.group(1).lower() == "sprint" \

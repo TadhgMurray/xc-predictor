@@ -2878,6 +2878,11 @@ def school_prs_page(school_name):
             for r in sec["tables"][g]:
                 if sec["kind"] == "running":
                     r["display_mark"] = format_time(r["time_seconds"])
+                elif sec["kind"] == "hurdles":
+                    # the feed's own clock string when it has one --
+                    # "15.24" should not re-round through float
+                    r["display_mark"] = (r.get("mark") or
+                                         format_time(r["time_seconds"]))
                 else:
                     r["display_mark"] = r.get("mark") or "—"
 
