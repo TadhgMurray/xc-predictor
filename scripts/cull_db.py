@@ -39,6 +39,14 @@ _PRODUCTION = {
     "results", "results_tf", "meets", "meets_tf", "meets_tfrrs",
     "athletes", "ranking_results", "athlete_season", "team_season",
     "school_identity", "person_home_state", "grade_fix",
+    # ! school_unit IS rebuilt by a pipeline step (10d), which by the
+    #   letter of the rule below would make it REGENERABLE -- but
+    #   REGENERABLE means "excluded from the dump, the server's first
+    #   full run recreates it", and the server RESTORES AND SERVES
+    #   before it ever runs a pipeline. The pages read it on load, so it
+    #   ships. Same reasoning as school_identity, rebuilt at 10b and
+    #   listed here for the same reason. It is a few MB.
+    "school_unit",
     "athlete_season_level", "pro_athlete_season", "college_first_season",
     "dist_override", "dist_drop", "dist_override_snap",
     "course_canonical", "course_difficulties", "course_boards",
