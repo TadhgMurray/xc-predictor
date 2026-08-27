@@ -288,6 +288,14 @@ Step "10b_school_ids"  { python racecast\build_school_identity.py }
 #   after 10. Unattended-safe: --emit refuses with a printed reason and
 #   exit 0 rather than stopping the pipeline.
 Step "10c_gap"         { python scripts\measure_sport_gap.py --emit }
+# ! SCHOOL UNITS: league / section / division per school, inferred from
+#   who shows up at the late-season championship series (the LCD meet).
+#   Reads ranking_results for the college-vs-HS level call, so after 10;
+#   reads school identity's state split, so after 10b. The census that
+#   feeds it is scripts\check_school_units.py -- run that with
+#   --conflicts after a build to see what the latest season disagreed
+#   about, and fix it in engine\school_unit_overrides.py.
+Step "10d_school_units" { python racecast\build_school_units.py }
 Step "11_teams"        { python racecast\build_team_season.py }
 # ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
 #   that step touches it, so this only has to be after the pack -- but it sits

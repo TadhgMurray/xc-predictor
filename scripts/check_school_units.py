@@ -598,6 +598,79 @@ def _rows(cur, sport, lo, hi):
         yield from cur.fetchall()
 
 
+# ---- resolution (shared by the census and the writer) ---------------- #
+#   The owner's rule: the most recent season is the end-all. Older
+#   seasons are provenance, never the answer.
+def current(counter):
+    """(unit, latest_yr, conflict) or None."""
+    if not counter:
+        return None
+    latest = max(yr for (_u, yr) in counter)
+    in_latest = Counter()
+    for (u, yr), n in counter.items():
+        if yr == latest:
+            in_latest[u] += n
+    top = in_latest.most_common()
+    conflict = len(top) > 1 and top[1][1] >= 2
+    return top[0][0], latest, conflict
+
+
+def rivals(counter):
+    """Every unit voted in the LATEST season, richest first."""
+    latest = max(yr for (_u, yr) in counter)
+    out = Counter()
+    for (u, yr), n in counter.items():
+        if yr == latest:
+            out[u] += n
+    return out.most_common()
+
+
+def buildVotes(cur, sport, state_filter=None):
+    """(votes, seasons, unit_eg, stats) over one sport's late season.
+
+    votes[(school, state)][kind][(unit, year)] = n. This is the single
+    place the corpus is turned into units -- the census prints it, the
+    writer stores it, and neither can drift from the other."""
+    lo, hi = _WINDOW[sport]
+    votes = defaultdict(lambda: defaultdict(Counter))
+    seasons = defaultdict(set)
+    unit_eg = {}
+    st_ = {"rows": 0, "excluded": 0, "hits": 0, "lvl": 0, "name": 0}
+    name_hits, name_miss = Counter(), Counter()
+    maps = _levelMaps(cur)          # BEFORE _rows: same cursor
+    for school, yr, meet_name, div_title, state, feed in _rows(
+            cur, sport, lo, hi):
+        st_["rows"] += 1
+        st = (state or "").upper()
+        if state_filter and st != state_filter.upper():
+            continue
+        is_coll = _schoolIsCollege(school, st, maps)
+        if is_coll is None:
+            st_["name"] += 1
+            is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
+        else:
+            st_["lvl"] += 1
+        if st in _FOREIGN_ST or (meet_name and (
+                _NEVER_RX.search(meet_name)
+                or (not is_coll and _NATIONALS_RX.search(meet_name)))):
+            st_["excluded"] += 1
+            continue
+        facts = parseUnits(meet_name, div_title, college=is_coll, state=st)
+        if not facts:
+            name_miss[meet_name] += 1
+            continue
+        name_hits[meet_name] += 1
+        key = (school, st)
+        for kind, unit in facts:
+            if kind == "state" and unit == "STATE":
+                unit = st or "STATE"
+            votes[key][kind][(unit, yr)] += 1
+            unit_eg.setdefault((kind, unit), (meet_name or "", school, st))
+        seasons[key].add(yr)
+    st_["hits"] = sum(name_hits.values())
+    return votes, seasons, unit_eg, (st_, name_hits, name_miss)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sport", choices=("XC", "TF"), default="XC")
@@ -613,75 +686,20 @@ def main():
     args = ap.parse_args()
     lo, hi = _WINDOW[args.sport]
 
-    # ★ VOTES KEY ON (school, MEET'S STATE) -- the LCD meet is local, so
-    #   the meet's own state cleanly splits string collisions ("Highland"
-    #   with a Mississippi league and a CIF section is two Highlands).
-    # ★ AND EVERY VOTE CARRIES ITS SEASON, because the owner's rule is
-    #   "most recent is the end-all": resolution takes the latest season's
-    #   verdict; older seasons are provenance, never the answer.
-    votes = defaultdict(lambda: defaultdict(Counter))   # key -> kind -> (unit, yr)
-    seasons = defaultdict(set)
-    # (kind, unit) -> a meet name that produced it, for --conflicts. The
-    # school alone never said WHICH meet disagreed, which made the class
-    # conflicts guesswork.
-    unit_eg = {}
-    name_hits, name_miss = Counter(), Counter()
-    n_rows = n_excluded = 0
-
     with getConn() as conn, conn.cursor() as cur:
-        # BEFORE _rows: it streams on this same cursor
-        maps = _levelMaps(cur)
-        n_lvl = n_name = 0
-        for school, yr, meet_name, div_title, state, feed in _rows(
-                cur, args.sport, lo, hi):
-            n_rows += 1
-            st = (state or "").upper()
-            if args.state and st != args.state.upper():
-                continue
-            # the school's own pool decides; the name heuristic is only
-            # the fallback for schools that never reached a board
-            is_coll = _schoolIsCollege(school, st, maps)
-            if is_coll is None:
-                n_name += 1
-                is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
-            else:
-                n_lvl += 1
-            # excluded (club/foreign/shoe-company postseason) is not a
-            # parser MISS -- keep the --unparsed list pure signal. A
-            # college nationals meet is only "excluded" for an HS school;
-            # for a college it still votes its division.
-            if st in _FOREIGN_ST or (meet_name and (
-                    _NEVER_RX.search(meet_name)
-                    or (not is_coll
-                        and _NATIONALS_RX.search(meet_name)))):
-                n_excluded += 1
-                continue
-            facts = parseUnits(meet_name, div_title, college=is_coll,
-                               state=st)
-            if facts:
-                name_hits[meet_name] += 1
-                key = (school, st)
-                for kind, unit in facts:
-                    # a state vote names WHICH state: the meet's own
-                    # code first, the captured state name as fallback
-                    if kind == "state" and unit == "STATE":
-                        unit = st or "STATE"
-                    votes[key][kind][(unit, yr)] += 1
-                    unit_eg.setdefault((kind, unit),
-                                       (meet_name or "", school, st))
-                seasons[key].add(yr)
-            else:
-                name_miss[meet_name] += 1
+        votes, seasons, unit_eg, (st_, name_hits, name_miss) = buildVotes(
+            cur, args.sport, args.state)
 
     print(f"\n  {args.sport} late-season window months {lo}-{hi}: "
-          f"{n_rows:,} (school, championship-meet) attendance rows")
-    print(f"  parsed into units: {sum(name_hits.values()):,} rows across "
+          f"{st_['rows']:,} (school, championship-meet) attendance rows")
+    print(f"  parsed into units: {st_['hits']:,} rows across "
           f"{len(name_hits):,} distinct meet names")
-    print(f"  excluded (club/foreign/shoe postseason): {n_excluded:,} rows")
+    print(f"  excluded (club/foreign/shoe postseason): "
+          f"{st_['excluded']:,} rows")
     print(f"  championship-gated but NO unit extracted: "
           f"{sum(name_miss.values()):,} rows, {len(name_miss):,} names")
-    print(f"  level from the school's own pool: {n_lvl:,} rows; "
-          f"name heuristic fallback: {n_name:,} rows")
+    print(f"  level from the school's own pool: {st_['lvl']:,} rows; "
+          f"name heuristic fallback: {st_['name']:,} rows")
 
     if args.unparsed:
         print("\n  the unparsed names, biggest first (parser work lives "
@@ -689,21 +707,6 @@ def main():
         for name, n in name_miss.most_common(args.limit):
             print(f"    {n:>6,}  {name[:70]}")
         return
-
-    # ---- recency resolution: latest season decides; conflict only when
-    #      the LATEST season itself carries two corroborated units.
-    def current(counter):
-        """(unit, latest_yr, conflict) or None."""
-        if not counter:
-            return None
-        latest = max(yr for (_u, yr) in counter)
-        in_latest = Counter()
-        for (u, yr), n in counter.items():
-            if yr == latest:
-                in_latest[u] += n
-        top = in_latest.most_common()
-        conflict = len(top) > 1 and top[1][1] >= 2
-        return top[0][0], latest, conflict
 
     def history(counter, skip_unit):
         """'earlier: BVAL (to 2015), ...' for --school provenance."""
@@ -715,15 +718,6 @@ def main():
                          for u, y in sorted(last.items(),
                                             key=lambda kv: -int(kv[1]))[:4])
 
-
-    def rivals(counter):
-        """Every unit voted in the LATEST season, richest first."""
-        latest = max(yr for (_u, yr) in counter)
-        out = Counter()
-        for (u, yr), n in counter.items():
-            if yr == latest:
-                out[u] += n
-        return out.most_common()
 
     if args.conflicts:
         # ★ WHY THE ! WALL. Every flagged school, grouped by what the
