@@ -206,3 +206,14 @@ fuck.pyracecast/slow_queries.log
 racecast/errors.log
 racecast/pool_constants_cache.json
 scripts/config_local.py
+
+# ---- trained model artifacts ---------------------------------------- #
+# feature_extraction writes chunk_NNNN.pt + metadata.pkl here and
+# train.py writes model.pt beside them. These are BUILD OUTPUT, often
+# hundreds of MB: GitHub rejects anything over 100 MB outright, and
+# anything smaller still lives in the history forever. They travel by
+# scp to wherever they are served (racecast/predict.py reads
+# model/data/model.pt, or $RACECAST_MODEL).
+model/data/*.pt
+model/data/*.pkl
+model/data/chunk_*
