@@ -108,9 +108,17 @@ After=postgresql.service
 
 [Service]
 User=xcp
-WorkingDirectory=/srv/xc-predictor/racecast
+# ! WORKING DIRECTORY IS THE REPO ROOT, NOT racecast/. app.py does
+#   sys.path.insert(0, "scripts") -- a RELATIVE path, resolved against
+#   the working directory -- so from racecast/ it looks for
+#   racecast/scripts, which does not exist, and every worker dies with
+#   ModuleNotFoundError: No module named 'database'. The owner runs the
+#   dev server from the repo root, which is why it only fails here.
+WorkingDirectory=/srv/xc-predictor
 EnvironmentFile=/etc/xc-predictor.env
-ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 -b 127.0.0.1:8000 app:app
+ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 \
+    --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
+    -b 127.0.0.1:8000 app:app
 Restart=always
 
 [Install]
