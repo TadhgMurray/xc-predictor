@@ -67,7 +67,7 @@ _NEVER_RX = re.compile(
     # coast all-comers, but never the West Coast CONFERENCE (a real league)
     r"\b(?:east|west) coast (?:track|champ|national)|"
     r"midwest meet of champions|larry steeb|honor roll|\busa junior\b|"
-    r"\busa youth\b|"
+    r"\busa youth\b|\busa (?:outdoor|indoor|track|national)|"
     # round 4: club meets, coaches-assoc MoCs, more foreign, venue-named
     r"\bclub\b|\botca\b|mid-?east meet of champions|hay bale|"
     r"bc high school|saskatch|elysian park|"
@@ -110,7 +110,13 @@ _SECTION_ACRONYMS = {"NCS", "CCS", "CIF-SS", "CIFSS", "SJS", "SDS"}
 # ! NOT a unit by itself: CIF is the state body, "STATE" is the state rule's
 #   job, and a section acronym must not double-vote as a league.
 _NOT_A_LEAGUE = _SECTION_ACRONYMS | {"CIF", "STATE", "NCAA", "NAIA", "NJCAA",
-                                     "USATF", "AAU"}
+                                     "USATF", "AAU",
+                                     # level words, not leagues
+                                     "MIDDLE SCHOOL", "HIGH SCHOOL",
+                                     "ELEMENTARY", "JUNIOR HIGH",
+                                     # "Liberty League Cross Country Only"
+                                     "CROSS COUNTRY ONLY", "CROSS COUNTRY",
+                                     "TRACK AND FIELD", "TRACK & FIELD"}
 
 # state athletic associations: an explicit list plus the suffix families
 # (…SIAA, …PHSAA/PHAA, …SHSAA, …HSAA). Their bare championships and Meet
@@ -183,6 +189,24 @@ def _schoolIsCollege(school, st, maps):
         if got and got[1] >= _LEVEL_MIN:
             return got[0] * 2 >= got[1]
     return None
+
+
+_STATE_CODE = {
+    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR",
+    "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT",
+    "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI",
+    "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA",
+    "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME",
+    "MARYLAND": "MD", "MASSACHUSETTS": "MA", "MICHIGAN": "MI",
+    "MINNESOTA": "MN", "MISSISSIPPI": "MS", "MISSOURI": "MO",
+    "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV",
+    "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM",
+    "NEW YORK": "NY", "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND",
+    "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA",
+    "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC", "SOUTH DAKOTA": "SD",
+    "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT",
+    "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV",
+    "WISCONSIN": "WI", "WYOMING": "WY"}
 
 
 def _isCollegeName(name):
@@ -266,6 +290,7 @@ def _collegeUnits(name):
             unit = re.sub(
                 r"(?:\s+(?:OUTDOOR|INDOOR|XC|CROSS[- ]?COUNTRY|TRACK|"
                 r"FIELD|T&F|AND|&|MEN'S|WOMEN'S))+$", "", unit)
+            unit = re.sub(r"\s+ONLY$", "", unit)
             if unit and unit not in _NOT_A_LEAGUE \
                     and not _ASSOC_RX.search(unit) \
                     and not _COLLEGE_ORG_RX.search(unit) \
@@ -318,6 +343,11 @@ def _cleanUnit(kind, unit):
     unit = _YEAR_RX.sub("", unit)
     unit = _ORDINAL_RX.sub("", unit)
     unit = re.sub(r"\s{2,}", " ", unit).strip(" -")
+    if kind in ("league", "conference"):
+        # "METRO LEAGUE" and "METRO", "AMAC CHAMPIONSHIP-AP" and "AMAC"
+        # are one unit voting against itself every season.
+        unit = re.sub(r"\s+(?:LEAGUE|CONFERENCE|CHAMPIONSHIPS?|MEET|"
+                      r"FINALS?)\b.*$", "", unit).strip(" -")
     if kind == "section":
         unit = re.sub(r"^CIF[- ]?", "", unit).strip(" -")
         # ★ THE CALIFORNIA ! WALL (2026-08-27). The bare-CIF rule
@@ -326,11 +356,11 @@ def _cleanUnit(kind, unit):
         #   "CENTRAL SECTION DIVISION II", which then fought the real
         #   "CENTRAL" for the same kind every single season. The section
         #   name ends where the words Section or Division begin.
-        unit = re.split(r"\s+(?:SECTION|DIVISION)\b", unit)[0].strip(" -")
+        unit = re.split(r"\s+(?:SECTIONS?|DIVISIONS?)\b", unit)[0].strip(" -")
     return unit
 
 
-def parseUnits(meet_name, div_title, college=False):
+def parseUnits(meet_name, div_title, college=False, state=None):
     """[(kind, unit)] independent facts from one meet+race title pair.
     Empty when the championship gate fails. college=True (the tfrrs
     feed) uses the division -> region -> conference hierarchy instead
@@ -364,6 +394,12 @@ def parseUnits(meet_name, div_title, college=False):
         # "CIF State ..." is the state meet, not a section named STATE
         if kind == "section" and unit in ("STATE", "CIF"):
             continue
+        # ! A BARE KIND WORD IS NOT A UNIT. "League Championships" with
+        #   no name in front votes LEAGUE, which then fights the real
+        #   league. Same lesson as STATE and REGION. State is exempt --
+        #   main resolves a bare STATE to the meet's own state code.
+        if kind != "state" and unit == kind.upper():
+            continue
         facts.append((kind, unit))
     # ★ PEEL GLUED CLASS PREFIXES off unit names ("2A EVERGREEN",
     #   "4A KINGCO"): the unit is the rest, and a SINGLE peeled token is
@@ -372,10 +408,10 @@ def parseUnits(meet_name, div_title, college=False):
     peeled, fixed = [], []
     for kind, unit in facts:
         if kind in ("league", "county", "section"):
-            m = re.match(r"^([1-6]A(?:\s*[&/]\s*[1-6]A)*)\s+(.+)$", unit)
+            m = re.match(r"^([1-6]A(?:\s*[-&/]\s*[1-6]A)*)\s+(.+)$", unit)
             if m:
                 unit = m.group(2).strip()
-                if "&" not in m.group(1) and "/" not in m.group(1):
+                if not re.search(r"[-&/]", m.group(1)):
                     peeled.append(("class", m.group(1)))
         fixed.append((kind, unit))
     facts = fixed + peeled
@@ -394,14 +430,24 @@ def parseUnits(meet_name, div_title, college=False):
     if not any(k != "class" for k, _ in facts):
         sm = _STATE_NAME_RX.search(name)
         if sm:
-            # the state NAME is the unit -- "STATE" says nothing
-            facts.append(("state", sm.group(1).upper()))
+            # ★ ONE SPELLING. "Alabama" and AL were two units fighting
+            #   for the same kind every season -- the code wins, because
+            #   that is what the bare-STATE rule resolves to.
+            code = _STATE_CODE.get(sm.group(1).upper())
+            # ! AND IT MUST BE THIS MEET'S STATE. "Mississippi 8
+            #   Conference" is a MINNESOTA league; the bare state name
+            #   inside a league title is not a state series.
+            st_here = (state or "").upper()
+            if not (code and st_here and code != st_here):
+                facts.append(("state", code or sm.group(1).upper()))
     # ! class/div from BOTH the meet name and the race/division title --
     #   the token survives in whichever one kept it.
     for src in (name, div_title or ""):
         # a multi-class combine in the NAME ("2A & 1A KingCo") votes no
         # class -- the school could be either; the race title still may
-        if src is name and re.search(r"[1-6]A\s*[&/]\s*[1-6]A", src):
+        # (both sources, and a hyphen is a combine separator too:
+        #  "2A-3A District Meet" names a shared meet, not a class)
+        if re.search(r"[1-6]A\s*[-&/]\s*[1-6]A", src):
             continue
         for rx in _CLASS_RX:
             m = rx.search(src)
@@ -530,7 +576,8 @@ def main():
                                   and _NATIONALS_RX.search(meet_name))):
                 n_excluded += 1
                 continue
-            facts = parseUnits(meet_name, div_title, college=is_coll)
+            facts = parseUnits(meet_name, div_title, college=is_coll,
+                               state=st)
             if facts:
                 name_hits[meet_name] += 1
                 key = (school, st)
