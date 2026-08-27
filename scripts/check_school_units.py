@@ -45,9 +45,16 @@ _WINDOW = {"XC": (10, 12), "TF": (5, 6)}
 
 _CHAMP_RX = re.compile(
     r"champ|meet of champions|finals?\b|\bstate meet\b", re.I)
+# invitationals, plus championship-NAMED meets that are not school units:
+# club postseason (USATF/AAU Junior Olympics), shoe-company nationals,
+# foreign systems (OFSAA/provincials, ekiden), regional all-comers
 _NEVER_RX = re.compile(
     r"invit|classic|festival|preview|opener|relays\b|scrimmage|jamboree|"
-    r"time trial|last chance|qualifier meet|carnival|series\b", re.I)
+    r"time trial|last chance|qualifier meet|carnival|series\b|"
+    r"usatf|\baau\b|junior olympic|foot ?locker|\bnike\b|\bnxn\b|"
+    r"new balance|adidas|runninglane|brooks\b|hoka\b|garrett companies|"
+    r"mitca|ekiden|ofsaa|provincial|\byouth\b|xc town|festival of champions|"
+    r"new england|all japan|\bbc hs\b", re.I)
 
 # class/div tokens, meet name or race title:  5A, AAA, Class B, Division
 # III, D3, Group 2 (NJ), Open Division
@@ -70,22 +77,47 @@ _SECTION_ACRONYMS = {"NCS", "CCS", "CIF-SS", "CIFSS", "SJS", "SDS"}
 _NOT_A_LEAGUE = _SECTION_ACRONYMS | {"CIF", "STATE", "NCAA", "NAIA", "NJCAA",
                                      "USATF", "AAU"}
 
+# state athletic associations: an explicit list plus the suffix families
+# (…SIAA, …PHSAA/PHAA, …SHSAA, …HSAA). Their bare championships and Meet
+# of Champions ARE the state series (NJSIAA MoC, NYSPHSAA Champs).
+_ASSOC_RX = re.compile(
+    r"\b(?:[A-Z]{1,5}(?:SIAA|PHS?AA|SHSAA?|SHSL|HSAA|HSSA)|UIL|OSAA|WIAA|"
+    r"GHSA|FHSAA|OHSAA|PIAA|VHSL|TSSAA|KHSAA|LHSAA|AHSAA|IHSAA?|MSHSL|"
+    r"MHSAA|MSHSAA|MIAA|HHSAA|SDHSAA|NDHSAA|WVSSAC|SCHSL|NCHSAA)\b")
+
 _UNIT_RULES = [
-    # "Meet of Champions" is NOT state evidence -- sections hold MoCs too
-    # (NCS MoC); the unit comes from the acronym beside it.
     ("state",    re.compile(r"\b(state|all-state)\b", re.I), None),
+    ("state",    _ASSOC_RX, None),
     ("section",  re.compile(r"\b([\w .&'-]+?)\s+section(?:al)?s?\b", re.I), 1),
     ("section",  re.compile(r"\b(NCS|CCS|CIF-?SS|SJS|SDS)\b"), 1),
     ("district", re.compile(r"\bdistrict\s*([\dA-Z-]{0,6})\b", re.I), 1),
     ("region",   re.compile(r"\bregion(?:al)?s?\s*([\dA-Z-]{0,4})\b", re.I),
      1),
+    # county championships are a real unit (Orange County, Bergen County)
+    ("county",   re.compile(r"\b([\w .'-]+?)\s+county\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+league\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+conference\b", re.I), 1),
+    ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL)\b"), 1),
     # bare all-caps acronym before Champ/Finals = a league (EBAL, WCAL) --
     # scoped (?i:) so "Championships" matches while the acronym stays
     # case-sensitive; the exclusion set stops section/state double-votes
     ("league",   re.compile(r"\b([A-Z]{3,6})\s+(?i:champ|finals?)"), 1),
 ]
+
+_YEAR_RX = re.compile(r"\b(?:19|20)\d\d\b")
+_ORDINAL_RX = re.compile(r"\b\d+(?:st|nd|rd|th)\s+annual\b", re.I)
+
+
+def _cleanUnit(kind, unit):
+    """Strip year prefixes, ordinals and the redundant CIF prefix so
+    '2022 CIF LOS ANGELES' and 'CIF NORTH COAST' collapse toward their
+    real names. Alias merging (NCS = NORTH COAST) is the writer's job."""
+    unit = _YEAR_RX.sub("", unit)
+    unit = _ORDINAL_RX.sub("", unit)
+    unit = re.sub(r"\s{2,}", " ", unit).strip(" -")
+    if kind == "section":
+        unit = re.sub(r"^CIF[- ]?", "", unit).strip(" -")
+    return unit
 
 
 def parseUnits(meet_name, div_title):
@@ -101,8 +133,11 @@ def parseUnits(meet_name, div_title):
             continue
         unit = (m.group(grp).strip() if grp and m.group(grp)
                 else ("STATE" if kind == "state" else ""))
-        unit = unit.upper() if unit else kind.upper()
-        if kind == "league" and unit in _NOT_A_LEAGUE:
+        unit = _cleanUnit(kind, unit.upper() if unit else kind.upper())
+        if not unit:
+            continue
+        if kind == "league" and (unit in _NOT_A_LEAGUE
+                                 or _ASSOC_RX.search(unit)):
             continue
         facts.append((kind, unit))
     # ! class/div from BOTH the meet name and the race/division title --
@@ -174,24 +209,36 @@ def main():
     args = ap.parse_args()
     lo, hi = _WINDOW[args.sport]
 
-    # (school) -> kind -> Counter(unit); plus per-name parse bookkeeping
-    votes = defaultdict(lambda: defaultdict(Counter))
+    # ★ VOTES KEY ON (school, MEET'S STATE) -- the LCD meet is local, so
+    #   the meet's own state cleanly splits string collisions ("Highland"
+    #   with a Mississippi league and a CIF section is two Highlands).
+    # ★ AND EVERY VOTE CARRIES ITS SEASON, because the owner's rule is
+    #   "most recent is the end-all": resolution takes the latest season's
+    #   verdict; older seasons are provenance, never the answer.
+    votes = defaultdict(lambda: defaultdict(Counter))   # key -> kind -> (unit, yr)
     seasons = defaultdict(set)
     name_hits, name_miss = Counter(), Counter()
-    n_rows = 0
+    n_rows = n_excluded = 0
 
     with getConn() as conn, conn.cursor() as cur:
         for school, yr, meet_name, div_title, state in _rows(
                 cur, args.sport, lo, hi):
             n_rows += 1
-            if args.state and (state or "").upper() != args.state.upper():
+            st = (state or "").upper()
+            if args.state and st != args.state.upper():
+                continue
+            # excluded (club/foreign/shoe-company postseason) is not a
+            # parser MISS -- keep the --unparsed list pure signal
+            if meet_name and _NEVER_RX.search(meet_name):
+                n_excluded += 1
                 continue
             facts = parseUnits(meet_name, div_title)
             if facts:
                 name_hits[meet_name] += 1
+                key = (school, st)
                 for kind, unit in facts:
-                    votes[school][kind][unit] += 1
-                seasons[school].add(yr)
+                    votes[key][kind][(unit, yr)] += 1
+                seasons[key].add(yr)
             else:
                 name_miss[meet_name] += 1
 
@@ -199,6 +246,7 @@ def main():
           f"{n_rows:,} (school, championship-meet) attendance rows")
     print(f"  parsed into units: {sum(name_hits.values()):,} rows across "
           f"{len(name_hits):,} distinct meet names")
+    print(f"  excluded (club/foreign/shoe postseason): {n_excluded:,} rows")
     print(f"  championship-gated but NO unit extracted: "
           f"{sum(name_miss.values()):,} rows, {len(name_miss):,} names")
 
@@ -209,49 +257,79 @@ def main():
             print(f"    {n:>6,}  {name[:70]}")
         return
 
+    # ---- recency resolution: latest season decides; conflict only when
+    #      the LATEST season itself carries two corroborated units.
+    def current(counter):
+        """(unit, latest_yr, conflict) or None."""
+        if not counter:
+            return None
+        latest = max(yr for (_u, yr) in counter)
+        in_latest = Counter()
+        for (u, yr), n in counter.items():
+            if yr == latest:
+                in_latest[u] += n
+        top = in_latest.most_common()
+        conflict = len(top) > 1 and top[1][1] >= 2
+        return top[0][0], latest, conflict
+
+    def history(counter, skip_unit):
+        """'earlier: BVAL (to 2015), ...' for --school provenance."""
+        last = {}
+        for (u, yr), _n in counter.items():
+            if u != skip_unit:
+                last[u] = max(last.get(u, ""), yr)
+        return ", ".join(f"{u} (to {y})"
+                         for u, y in sorted(last.items(),
+                                            key=lambda kv: -int(kv[1]))[:4])
+
     if args.school:
         pat = args.school.lower()
-        for school in sorted(votes):
+        for (school, st) in sorted(votes):
             if pat not in school.lower():
                 continue
-            print(f"\n  {school}  (seasons: "
-                  f"{', '.join(sorted(seasons[school]))})")
-            for kind in ("league", "conference", "section", "district",
+            key = (school, st)
+            print(f"\n  {school} ({st or '??'})  seasons "
+                  f"{min(seasons[key])}-{max(seasons[key])}")
+            for kind in ("league", "section", "district", "county",
                          "region", "state", "class"):
-                if votes[school].get(kind):
-                    top = votes[school][kind].most_common(4)
-                    line = ", ".join(f"{u} ({n})" for u, n in top)
-                    flag = ("   !! CONFLICT" if kind == "class"
-                            and len([1 for _, n in top if n >= 2]) > 1
-                            else "")
-                    print(f"    {kind:<9} {line}{flag}")
+                c = votes[key].get(kind)
+                if not c:
+                    continue
+                cur_u, yr, conflict = current(c)
+                n_total = sum(n for (u, _), n in c.items() if u == cur_u)
+                line = f"    {kind:<9} {cur_u}  ({yr}, {n_total} votes)"
+                if conflict:
+                    line += "   !! CONFLICT in latest season"
+                past = history(c, cur_u)
+                if past:
+                    line += f"   earlier: {past}"
+                print(line)
         return
 
-    # the sample table: schools with the most corroborated units
-    print(f"\n    {'school':<34} {'league':<18} {'section':<12} "
-          f"{'class':<8} votes")
-    print("    " + "-" * 78)
+    # the sample table: current (most-recent-season) verdicts only
+    print(f"\n    {'school':<28} {'st':<3} {'league':<18} {'section':<14} "
+          f"{'class':<7} asof")
+    print("    " + "-" * 82)
     ranked = sorted(votes.items(),
                     key=lambda kv: -sum(sum(c.values())
                                         for c in kv[1].values()))
-    shown = 0
-    for school, kinds in ranked:
-        if shown >= args.limit:
-            break
-        lg = (kinds["league"].most_common(1) or [("", 0)])[0]
-        sec = (kinds["section"].most_common(1) or [("", 0)])[0]
-        cl = (kinds["class"].most_common(1) or [("", 0)])[0]
-        total = sum(sum(c.values()) for c in kinds.values())
-        cl_flag = ("!" if len([1 for _, n in
-                               kinds["class"].most_common(3)
-                               if n >= 2]) > 1 else " ")
-        print(f"    {school[:34]:<34} {lg[0][:18]:<18} {sec[0][:12]:<12} "
-              f"{cl[0][:7]:<7}{cl_flag} {total:>5}")
-        shown += 1
-    print("\n  ! beside a class = conflicting corroborated class votes "
-          "(realignment or\n  a parse bug -- eyes needed). Rerun with "
-          "--unparsed to see what the parser\n  misses, --school NAME for "
-          "one school's full evidence.")
+    for (school, st), kinds in ranked[:args.limit]:
+        cells, asof, flag = {}, "", " "
+        for kind in ("league", "section", "class"):
+            got = current(kinds.get(kind, Counter()))
+            if got:
+                cells[kind] = got[0]
+                asof = max(asof, got[1])
+                if got[2]:
+                    flag = "!"
+        print(f"    {school[:28]:<28} {st:<3} "
+              f"{cells.get('league', '')[:18]:<18} "
+              f"{cells.get('section', '')[:14]:<14} "
+              f"{cells.get('class', '')[:6]:<6}{flag} {asof}")
+    print("\n  Current = the most recent season's verdict (owner's rule); "
+          "! = that latest\n  season itself holds two corroborated units "
+          "(true ambiguity -- eyes). Use\n  --unparsed for parser misses, "
+          "--school NAME for full provenance.")
 
 
 if __name__ == "__main__":
