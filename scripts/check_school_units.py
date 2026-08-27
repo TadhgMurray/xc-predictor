@@ -124,7 +124,13 @@ _NOT_A_LEAGUE = _SECTION_ACRONYMS | {"CIF", "STATE", "NCAA", "NAIA", "NJCAA",
                                      # conferences at once -- an organiser,
                                      # not a membership unit. It was voting
                                      # itself against Ivy, Patriot and MAAC.
-                                     "ECAC", "IC4A", "ECAC/IC4A", "IC4A/ECAC"}
+                                     "ECAC", "IC4A", "ECAC/IC4A", "IC4A/ECAC",
+                                     # generic, and everywhere
+                                     "CITY", "COUNTY", "OPEN", "VARSITY"}
+
+# a school DISTRICT running its own meet is not a league: FCPS (Frederick
+# County Public Schools), LPS (Lincoln), LAUSD, CKSD, SKSD, DPS.
+_DISTRICT_RX = re.compile(r"^[A-Z]{1,4}(?:PS|SD|USD|ISD)$")
 
 # coaches associations run MoCs and invitationals; they are organisers,
 # not leagues (NJCTC, MSCCA, TSTCA, KTCCCA, RGVCCCA ...)
@@ -253,7 +259,11 @@ def _collegeUnits(name):
         div = _ROMAN.get(dm.group(1).upper(), dm.group(1).upper())
         facts.append(("division",
                       f"{org.group(1) if org else 'NCAA'} D{div}"))
-    elif org and org.group(1) != "NCAA":
+    elif org and org.group(1) != "NCAA" \
+            and not _COLLEGE_REGION_RX.search(name):
+        # ! only when the name is NOT a regional: "GCAA/NJCAA Region 17"
+        #   names the org but says nothing about DI/DII/DIII, and the
+        #   bare org then fought the real "NJCAA DI National" verdict.
         facts.append(("division", org.group(1)))
     rm = _COLLEGE_REGION_RX.search(name)
     if rm:
@@ -333,10 +343,14 @@ _UNIT_RULES = [
     # "WPIAL Section IV" fed both rules and voted WPIAL against IV.
     ("section#", re.compile(r"\bsection\s+([IVX0-9]{1,4})\b", re.I), 1),
     ("district", re.compile(r"\bdistrict\s*([\dA-Z-]{0,6})\b", re.I), 1),
+    # (TX writes "District 7-3A" = district 7, class 3A -- split and the
+    #  leading zero stripped in _cleanUnit so 07 and 7 are one district)
     ("region",   re.compile(r"\bregion(?:al)?s?\s*([\dA-Z-]{0,4})\b", re.I),
      1),
     # county championships are a real unit (Orange County, Bergen County)
     ("county",   re.compile(r"\b([\w .'-]+?)\s+county\b", re.I), 1),
+    # ! ...but not TRI/BI/MULTI County, which are league names wearing
+    #   the word county -- filtered in parseUnits by _NOT_A_COUNTY.
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+league\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+conference\b", re.I), 1),
     ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL|CPS|BCPS)\b"), 1),
@@ -352,6 +366,8 @@ _UNIT_RULES = [
         r"(?i:champ|finals?)"), 1),
 ]
 
+_NOT_A_COUNTY = {"TRI", "BI", "MULTI", "DUAL", "ALL", "INTER"}
+
 _YEAR_RX = re.compile(r"\b(?:19|20)\d\d\b")
 _ORDINAL_RX = re.compile(r"\b\d+(?:st|nd|rd|th)\s+annual\b", re.I)
 
@@ -363,6 +379,9 @@ def _cleanUnit(kind, unit):
     unit = _YEAR_RX.sub("", unit)
     unit = _ORDINAL_RX.sub("", unit)
     unit = re.sub(r"\s{2,}", " ", unit).strip(" -")
+    if kind == "district":
+        unit = re.sub(r"-[1-6]A$", "", unit)        # TX: 7-3A -> 7
+        unit = re.sub(r"^0+(?=\d)", "", unit)       # 07 -> 7
     if kind in ("league", "conference"):
         # "METRO LEAGUE" and "METRO", "AMAC CHAMPIONSHIP-AP" and "AMAC"
         # are one unit voting against itself every season.
@@ -386,6 +405,11 @@ def parseUnits(meet_name, div_title, college=False, state=None):
     feed) uses the division -> region -> conference hierarchy instead
     of the HS rules."""
     name = (meet_name or "").strip()
+    # ★ THE PARENTHETICAL IS AN ALIAS, NOT A SECOND LEAGUE. "ISAL
+    #   Championship (Independent School Athletic League)" voted ISAL
+    #   against its own expansion every season. The acronym outside the
+    #   brackets wins because that is what the short names elsewhere use.
+    name = re.sub(r"\s*\([^)]*\)", " ", name).strip()
     if (state or "").upper() in _FOREIGN_ST:
         return []
     if not name or not _CHAMP_RX.search(name) or _NEVER_RX.search(name):
@@ -396,6 +420,16 @@ def parseUnits(meet_name, div_title, college=False, state=None):
                 if f[0] == "division"] if college else []
     if college:
         return _collegeUnits(name)
+    # ★ A COMBINED MEET NAMES NO ONE LEAGUE. "Northern Conference /
+    #   Longs Peak League Championships", "East Valley, Valley Mission,
+    #   Northern, Western League Finals" and "EAL-SRL Championships" are
+    #   several leagues sharing a race, exactly like a 2A/1A class
+    #   combine -- the school could be in any of them, so none votes.
+    multi_league = (
+        len(re.findall(r"\b(?:league|conference)\b", name, re.I)) > 1
+        or name.count(",") >= 2
+        or re.search(r"\b[A-Z]{2,4}-[A-Z]{2,4}\b", name))
+
     facts = []
     # ! A bare "Sectionals" names no section -- but it still says the
     #   division token belongs to the SECTION, not to a class. Voting and
@@ -417,12 +451,19 @@ def parseUnits(meet_name, div_title, college=False, state=None):
         # ! "NCAA Division III Championships" put a league named III on
         #   every college school the name heuristic misrouted. A bare
         #   division token is never a league on either path.
+        if kind == "league" and multi_league:
+            continue
         if kind == "league" and (unit in _NOT_A_LEAGUE
                                  or re.fullmatch(r"A{1,4}", unit)
+                                 or re.fullmatch(r"[IVXL]+", unit)
+                                 or _DISTRICT_RX.match(unit)
+                                 or "SCHOOL DISTRICT" in unit
                                  or _COACHES_RX.match(unit)
                                  or _ASSOC_RX.search(unit)
                                  or re.fullmatch(r"D?(?:I{1,3}|IV|V|[1-6])",
                                                  unit)):
+            continue
+        if kind == "county" and unit in _NOT_A_COUNTY:
             continue
         # "CIF State ..." is the state meet, not a section named STATE
         if kind == "section" and unit in ("STATE", "CIF"):
@@ -626,7 +667,8 @@ def main():
                     if kind == "state" and unit == "STATE":
                         unit = st or "STATE"
                     votes[key][kind][(unit, yr)] += 1
-                    unit_eg.setdefault((kind, unit), meet_name or "")
+                    unit_eg.setdefault((kind, unit),
+                                       (meet_name or "", school, st))
                 seasons[key].add(yr)
             else:
                 name_miss[meet_name] += 1
@@ -708,7 +750,11 @@ def main():
             for u in (a, b):
                 eg = unit_eg.get((kind, u))
                 if eg:
-                    print(f"{'':>12}  {u[:18]:<18} <- {eg[:62]}")
+                    # ! the school is printed because the example is the
+                    #   first meet ANYWHERE that produced this unit; it
+                    #   is not necessarily the flagged school's own meet
+                    print(f"{'':>12}  {u[:18]:<18} <- {eg[0][:52]}"
+                          f"   [{eg[1][:18]} {eg[2]}]")
         return
 
     if args.school:
