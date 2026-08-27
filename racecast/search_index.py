@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS search_index (
 # ! idx_search_prefix STILL EARNS ITS PLACE: the ranking asks
 #   `search_text LIKE 'tok%'`, which is left-anchored and does use a btree.
 _INDEX = """
+-- the extension must exist before gin_trgm_ops means anything; a fresh
+-- server without it fails the index create with a cryptic operator-class
+-- error (harmless everywhere it is already installed)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_search_prefix
     ON search_index (search_text text_pattern_ops);
 CREATE INDEX IF NOT EXISTS idx_search_trgm

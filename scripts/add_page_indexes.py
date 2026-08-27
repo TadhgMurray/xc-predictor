@@ -35,6 +35,14 @@ WANTED = [
     ("results",         "school",  "idx_results_school", None),
     # the course pages' driving filter (live fallback + board builds)
     ("meets",           "course_name", "idx_meets_course_name", None),
+    # ★ ISSUE #17 (2026-08-27). Every course helper joins
+    #   `results ON r.div_id = m.div_id` after filtering meets by
+    #   course_name -- with no div_id-leading index the planner hash-joins
+    #   by scanning all 39M result rows PER QUERY, ~6 queries per course:
+    #   the measured 7-19s per course, and why the board build
+    #   extrapolated past a day. With it, each query is a handful of
+    #   index probes and the full --all build becomes an hour, not a day.
+    ("results",         "div_id",  "idx_results_div", None),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
 ]
 

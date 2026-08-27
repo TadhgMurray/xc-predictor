@@ -62,7 +62,10 @@ Issue ids (#n) are stable -- commits and conversation reference them.
 - **#6 School alias map.** Identity clustering cannot join spelling and
   campus variants ("Highland - P"). Hand alias map consulted by
   school_identity, then rerun 10b + search index (partial pipeline).
-- **#9 Search trigram index.** pg_trgm on search_text kills the ~2.6 s
+- **#9 SHIPPED (was already live).** The GIN trigram index has been in
+  search_index.py's DDL all along (idx_search_trgm); 2026-08-27 added
+  CREATE EXTENSION IF NOT EXISTS pg_trgm so a fresh server cannot fail
+  the create. Original note: pg_trgm on search_text kills the ~2.6 s
   cold tail. One migration in add_page_indexes; rides any night. Do it
   before any search feature work.
 - **#13 First full model train.** Features + train after the first clean
@@ -123,7 +126,15 @@ Issue ids (#n) are stable -- commits and conversation reference them.
 - **#10 Incremental course boards.** Top 1200 precomputed; the tail
   renders live (fine warm, hundreds of ms cold). Build-on-first-request
   and persist.
-- **#17 Course-boards builder is orders slower than the page query**
+- **#17 ROOT CAUSE FOUND + FIX SHIPPED 2026-08-27.** `results` had no
+  div_id-leading index, and every course helper joins
+  `results ON r.div_id = m.div_id` after filtering meets by
+  course_name -- so the planner hash-joined by scanning all 39M
+  result rows per query, ~6 queries per course. idx_results_div is
+  now in add_page_indexes (step 14 builds it CONCURRENTLY on the
+  next run); expect the builder near ~1 s/course and --all to become
+  an hour, not a day. Verify post-run: re-time 12b, then consider
+  raising --limit or going --all. Original note:
   (measured twice: the live page renders a course in a few hundred ms,
   the builder spends minutes per course -- 500 courses took 64 min).
   Correct budget is ~2 s/course (page query + write), so the builder is
