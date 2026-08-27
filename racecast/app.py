@@ -550,12 +550,18 @@ def _athletePaces(cur, person_id):
 # to narrowest, ending at the athlete's place on their own team. "wip:"
 # scopes render muted until their data exists -- HS sections/divisions/
 # leagues and college divisions/regions/conferences are not in the data yet.
+# ★ THE UNIT SCOPES ARE REAL NOW (2026-08-27). They were "wip:" for as
+#   long as nothing knew a school's league; school_unit knows, and the
+#   boards filter on it, so a section rank is the ordinary board rank
+#   with one more filter. A scope the athlete has no unit for prints
+#   NOTHING rather than a greyed word -- "Section soon" on a school we
+#   simply have no section for is a promise, not information.
 _RANK_SCOPES = {
     "ms":      ("nation", "state", "team"),
-    "hs":      ("nation", "state", "wip:Section", "wip:Division",
-                "wip:League", "team"),
-    "college": ("nation", "wip:Division", "wip:Region", "wip:Conference",
-                "state", "team"),
+    "hs":      ("nation", "state", "unit:section", "unit:section_div",
+                "unit:league", "team"),
+    "college": ("nation", "unit:division", "unit:region",
+                "unit:conference", "state", "team"),
 }
 
 
@@ -623,10 +629,55 @@ def buildRankLine(cur, person_id, season):
         q = "&".join(f"{k}={v}" for k, v in boardArgs(with_state).items())
         return "/rankings?" + q
 
+    # the athlete's own units, once -- three scopes read from this
+    from school_units import unitsFor, applyUnitFilters, homeStateOf
+    units = {u["kind"]: u for u in unitsFor(cur, school,
+                                            state or homeStateOf(cur, person_id))
+             } if school else {}
+
+    def unitArgs(kind, raw):
+        args = boardArgs(False)
+        args[kind] = raw
+        return args
+
+    def unitRank(kind, raw):
+        """The athlete's place on the board narrowed to their own unit."""
+        args = unitArgs(kind, raw)
+        f, err = parseFilters(MultiDict(args))
+        if err:
+            return None
+        try:
+            with cur.connection.cursor() as plain:
+                # parseFilters does not know about units; the fold turns
+                # the unit into the school list the board already speaks
+                if applyUnitFilters(plain, f, args):
+                    return None
+                return rankOf(plain, f, person_id)
+        except Exception as exc:         # noqa: BLE001 -- a line, not a page
+            cur.connection.rollback()
+            print(f"rank_line: {kind} rank failed "
+                  f"({type(exc).__name__}: {exc})", flush=True)
+            return None
+
     entries = []
     for scope in scopes:
         if scope.startswith("wip:"):
             entries.append({"label": scope[4:], "wip": True})
+        elif scope.startswith("unit:"):
+            kind = scope[5:]
+            u = units.get(kind)
+            # HS "Division" means the one that pairs with their section;
+            # a school with only a state division still gets a number
+            if u is None and kind == "section_div":
+                u = units.get("state_div") or units.get("class")
+            if u is None:
+                continue
+            r = unitRank(u["kind"], u["raw"])
+            if r:
+                q = "&".join(f"{k}={v}" for k, v
+                             in unitArgs(u["kind"], u["raw"]).items())
+                entries.append({"label": u["label"], "rank": r,
+                                "href": "/rankings?" + q})
         elif scope == "nation":
             r = boardRank(False)
             if r:

@@ -45,7 +45,9 @@ _LONG_SUFFIX = {"section": "Section", "region": "Region",
 
 def _label(kind, value, long):
     if kind in ("section_div", "state_div"):
-        return f"Division {value}"
+        # short form rides the athlete meta line and the rank line, where
+        # it sits beside "CA #55" and must not dwarf it
+        return f"Division {value}" if long else f"D{value}"
     if kind == "class":
         return f"Class {value}" if long else value
     if kind == "district":
@@ -123,6 +125,10 @@ def unitsFor(cur, school, state=None, sport="XC", long=False):
         if not value:
             continue
         out.append({"kind": col,
+                    # raw is what you FILTER on; label is what you show.
+                    # The rank line needs both and they are not the same
+                    # string once the labeller has been through it.
+                    "raw": value,
                     "label": _label(col, value, long),
                     "conflict": bool(row["conflict"]),
                     "asof": row["asof"]})
