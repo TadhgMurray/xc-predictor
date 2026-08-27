@@ -59,6 +59,16 @@ for OLD in $(pg_lsclusters -h | awk -v t="$TARGET" '$1 != t {print $1}'); do
     pg_dropcluster --stop "${OLD}" main
 done
 
+# ! THE PACKAGE DOES NOT ALWAYS CREATE ITS CLUSTER. Debian's postinst
+#   skips auto-creation when port 5432 is already taken -- which it is,
+#   by the OLD cluster, because the install has to happen before the
+#   drop. So the new cluster can simply not exist at this point, and
+#   the next line would fail on a missing postgresql.conf.
+if [ ! -d "/etc/postgresql/${TARGET}/main" ]; then
+    echo "== creating cluster ${TARGET}/main =="
+    pg_createcluster "${TARGET}" main --port=5432
+fi
+
 echo "== put ${TARGET} on port 5432 =="
 CONF="/etc/postgresql/${TARGET}/main/postgresql.conf"
 sed -i "s/^#\?port *=.*/port = 5432/" "$CONF"
