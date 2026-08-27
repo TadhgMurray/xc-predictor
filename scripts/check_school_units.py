@@ -65,7 +65,10 @@ _NEVER_RX = re.compile(
     # coast all-comers, but never the West Coast CONFERENCE (a real league)
     r"\b(?:east|west) coast (?:track|champ|national)|"
     r"midwest meet of champions|larry steeb|honor roll|\busa junior\b|"
-    r"\busa youth\b|ncaa\s+d\S*(?!.*region)", re.I)
+    r"\busa youth\b|ncaa\s+d\S*(?!.*region)|"
+    # round 4: club meets, coaches-assoc MoCs, more foreign, venue-named
+    r"\bclub\b|\botca\b|mid-?east meet of champions|hay bale|"
+    r"bc high school|saskatch|elysian park", re.I)
 
 # class/div tokens, meet name or race title:  5A, AAA, Class B, Division
 # III, D3, Group 2 (NJ), Open Division
@@ -97,7 +100,7 @@ _ASSOC_RX = re.compile(
     r"\b(?:[A-Z]{1,5}(?:SIAA|PHS?AA|SHSAA?|SHSL|HSAA|HSSA)|UIL|OSAA|WIAA|"
     r"GHSA|FHSAA|OHSAA|PIAA|VHSL|TSSAA|KHSAA|LHSAA|AHSAA|IHSAA?|MSHSL|"
     r"MHSAA|MSHSAA|MIAA|HHSAA|SDHSAA|NDHSAA|WVSSAC|SCHSL|NCHSAA|"
-    r"NHIAA|DIAA|CIAC|ASAA|VISAA|NCSAA|SCISA|NYSAIS)\b")
+    r"NHIAA|DIAA|CIAC|ASAA|VISAA|NCSAA|SCISA|NYSAIS|MPSSAA)\b")
 
 # US state names: the LAST-RESORT state rule ("Michigan Meet of Champions",
 # "Nebraska Championship Meet") -- applied only when NO other unit matched,
@@ -111,6 +114,19 @@ _STATE_NAME_RX = re.compile(
     r"Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|"
     r"South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|"
     r"West Virginia|Wisconsin|Wyoming)\b", re.I)
+
+# ! FEED IS NOT LEVEL. Maryland, Florida and other HS state series ride
+#   the tfrrs feed: an association acronym or an HS marker in the name
+#   forces the HS parser regardless of feed.
+_HS_MARK_RX = re.compile(
+    r"high school|\bh\.?s\.?\b|middle school|\bm\.?s\.?\b|"
+    r"\bclass\s+[A-Z0-9]|\bgroup\s+[0-9]|\b[1-6]A\b", re.I)
+
+
+def _isCollegeName(name):
+    n = name or ""
+    return not (_ASSOC_RX.search(n) or _HS_MARK_RX.search(n))
+
 
 # ---- COLLEGE (tfrrs feed): the owner's hierarchy is
 #          division -> region -> conference
@@ -149,7 +165,8 @@ def _collegeUnits(name):
         if not m or not m.group(grp):
             continue
         unit = _cleanUnit("league", m.group(grp).strip().upper())
-        if not unit or unit in _NOT_A_LEAGUE or _ASSOC_RX.search(unit):
+        if not unit or unit in _NOT_A_LEAGUE or _ASSOC_RX.search(unit) \
+                or re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit):
             continue
         facts.append(("conference", unit))
         break
@@ -173,6 +190,7 @@ def _collegeUnits(name):
             if unit and unit not in _NOT_A_LEAGUE \
                     and not _ASSOC_RX.search(unit) \
                     and not _COLLEGE_ORG_RX.search(unit) \
+                    and not re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit) \
                     and "REGION" not in unit and "DIVISION" not in unit:
                 facts.append(("conference", unit))
     return facts
@@ -188,6 +206,8 @@ _UNIT_RULES = [
     # directly after CIF with no "Section" word at all
     ("section",  re.compile(r"\bCIF\s+([A-Z][\w .&'-]+?)\s+"
                             r"(?i:cross|xc|x-|track|champ|finals)"), 1),
+    # NY-style numbered sections: "Section 5", "Section XI"
+    ("section",  re.compile(r"\bsection\s+([IVX0-9]{1,4})\b", re.I), 1),
     ("district", re.compile(r"\bdistrict\s*([\dA-Z-]{0,6})\b", re.I), 1),
     ("region",   re.compile(r"\bregion(?:al)?s?\s*([\dA-Z-]{0,4})\b", re.I),
      1),
@@ -195,7 +215,7 @@ _UNIT_RULES = [
     ("county",   re.compile(r"\b([\w .'-]+?)\s+county\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+league\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+conference\b", re.I), 1),
-    ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL)\b"), 1),
+    ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL|CPS|BCPS)\b"), 1),
     # bare all-caps acronym before Champ/Finals = a league (EBAL, WCAL,
     # and with the sport-word filler allowed: "MAC Cross Country
     # Championships", "SEC XC Championship Meet", "NJIC Divisional") --
@@ -268,6 +288,7 @@ def parseUnits(meet_name, div_title, college=False):
     # Meet of Champions", "Nebraska Championship Meet") is the state
     # series -- but ONLY when no real unit matched, so "Mississippi
     # Valley Conference" stays a league.
+    facts = list(dict.fromkeys(facts))   # two rules, one fact, one vote
     if not any(k != "class" for k, _ in facts):
         sm = _STATE_NAME_RX.search(name)
         if sm:
@@ -283,7 +304,13 @@ def parseUnits(meet_name, div_title, college=False):
         for rx in _CLASS_RX:
             m = rx.search(src)
             if m:
-                facts.append(("class", m.group(1).upper()))
+                tok = m.group(1).upper()
+                # Roman and Arabic name the SAME class -- normalize, or
+                # "II" vs "2" reads as a conflict every season
+                tok = {"I": "1", "II": "2", "III": "3", "IV": "4",
+                       "V": "5", "ONE": "1", "TWO": "2", "THREE": "3",
+                       "FOUR": "4", "FIVE": "5"}.get(tok, tok)
+                facts.append(("class", tok))
                 break
         else:
             continue
@@ -322,14 +349,21 @@ def _rows(cur, sport, lo, hi):
         yield from cur.fetchall()
     else:
         cur.execute("""
+            -- ! MEET-GRAIN LATERAL, not the (div, event) triple: result ids
+            --   drift between scrape vintages and the exact join erased
+            --   modern college meets entirely (Tufts stopped at 2016).
+            --   meet_name is meet-level, so any row of the meet names it.
             SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
                    m.meet_name, m.division, m.state, r.source
             FROM results_tf r
-            JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
-                           AND m.event_id = r.event_id AND m.source = r.source
+            JOIN LATERAL (
+                SELECT mm.meet_name, mm.division, mm.state
+                FROM meets_tf mm
+                WHERE mm.meet_id = r.meet_id AND mm.source = r.source
+                LIMIT 1
+            ) m ON m.meet_name ~* 'champ|finals|meet of champions'
             WHERE COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
-              AND m.meet_name ~* 'champ|finals|meet of champions'
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
 
@@ -371,7 +405,8 @@ def main():
                 n_excluded += 1
                 continue
             facts = parseUnits(meet_name, div_title,
-                               college=(feed == 'tfrrs'))
+                               college=(feed == 'tfrrs'
+                                        and _isCollegeName(meet_name)))
             if facts:
                 name_hits[meet_name] += 1
                 key = (school, st)
