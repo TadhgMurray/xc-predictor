@@ -68,7 +68,13 @@ _NEVER_RX = re.compile(
     r"\busa youth\b|ncaa\s+d\S*(?!.*region)|"
     # round 4: club meets, coaches-assoc MoCs, more foreign, venue-named
     r"\bclub\b|\botca\b|mid-?east meet of champions|hay bale|"
-    r"bc high school|saskatch|elysian park", re.I)
+    r"bc high school|saskatch|elysian park|"
+    # round 5: NAIA/NJCAA/NIRCA NATIONALS (regionals still vote),
+    # sub-varsity and grade-school meets, Kinney (old Foot Locker),
+    # Ontario ROPSSAA, Fraser Valley (BC)
+    r"\bnaia\b(?!.*region)|\bnjcaa\b(?!.*region)|\bnirca\b|"
+    r"\bkinney\b|\bropssaa\b|fraser valley|\bfrosh\b|freshman|"
+    r"\bjv\b|junior varsity|\bes[-/ ]?ms\b|elementary", re.I)
 
 # class/div tokens, meet name or race title:  5A, AAA, Class B, Division
 # III, D3, Group 2 (NJ), Open Division
@@ -176,7 +182,7 @@ def _collegeUnits(name):
     # conference. HS never gets this rule -- it would eat city MoCs.
     if not any(k == "conference" for k, _ in facts):
         lm = re.match(
-            r"\s*(?:the\s+)?([A-Z][\w'&.-]*(?:\s+[A-Z][\w'&.-]*){0,3})\s+"
+            r"\s*(?:the\s+)?([A-Z][\w'&.-]*(?:\s+(?:[A-Z][\w'&.-]*|[0-9]{1,2})){0,3})\s+"
             r"(?:(?i:men's|women's|outdoor|indoor|cross[- ]?country|xc|"
             r"track(?:\s*(?:&|and)\s*field)?|t&f|and|field)\s+)*"
             r"(?i:champ)", name)
@@ -310,7 +316,14 @@ def parseUnits(meet_name, div_title, college=False):
                 tok = {"I": "1", "II": "2", "III": "3", "IV": "4",
                        "V": "5", "ONE": "1", "TWO": "2", "THREE": "3",
                        "FOUR": "4", "FIVE": "5"}.get(tok, tok)
-                facts.append(("class", tok))
+                # ★ THE OWNER'S ORIGINAL SPEC: state/div and section/div
+                #   are SEPARATE facts (California carries both at once,
+                #   and one 'class' kind made them fight every season).
+                #   The div attaches to the unit that carried it.
+                kinds_here = {k for k, _ in facts}
+                dk = ("section_div" if "section" in kinds_here else
+                      "state_div" if "state" in kinds_here else "class")
+                facts.append((dk, tok))
                 break
         else:
             continue
@@ -469,8 +482,8 @@ def main():
             print(f"\n  {school} ({st or '??'})  seasons "
                   f"{min(seasons[key])}-{max(seasons[key])}")
             for kind in ("division", "conference", "league", "section",
-                         "district", "county", "region", "state",
-                         "class"):
+                         "section_div", "district", "county", "region",
+                         "state", "state_div", "class"):
                 c = votes[key].get(kind)
                 if not c:
                     continue
@@ -502,17 +515,20 @@ def main():
                              for k in kv[1])]
     for (school, st), kinds in hs_ranked[:args.limit]:
         cells, asof, flag = {}, "", " "
-        for kind in ("league", "section", "class"):
+        for kind in ("league", "section", "section_div", "state_div",
+                     "class"):
             got = current(kinds.get(kind, Counter()))
             if got:
                 cells[kind] = got[0]
                 asof = max(asof, got[1])
                 if got[2]:
                     flag = "!"
+        div_cell = (cells.get("section_div") or cells.get("state_div")
+                    or cells.get("class") or "")
         print(f"    {school[:28]:<28} {st:<3} "
               f"{cells.get('league', '')[:18]:<18} "
               f"{cells.get('section', '')[:14]:<14} "
-              f"{cells.get('class', '')[:6]:<6}{flag} {asof}")
+              f"{div_cell[:6]:<6}{flag} {asof}")
     if college_ranked:
         print(f"\n    {'college':<28} {'conference':<18} {'region':<14} "
               f"{'division':<10} asof")
