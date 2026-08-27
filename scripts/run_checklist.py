@@ -212,9 +212,35 @@ def checkWheelchair(cur):
         WHERE m.division ~* '{_WHEEL_RX}'
           AND r.speed_rating IS NOT NULL""")
     n = cur.fetchone()[0]
-    _mark("FAIL" if n else "PASS", "wheelchair",
-          f"{n:,} rated rows in wheelchair-titled divisions"
-          if n else "no rated row in any wheelchair-titled division")
+    # the TF seam too -- the 2026-08-27 stale rows were mostly here
+    cur.execute(f"""
+        SELECT count(*) FROM results_tf
+        WHERE event_short ~* '{_WHEEL_RX}'
+          AND speed_rating IS NOT NULL""")
+    n_tf = cur.fetchone()[0]
+    _mark("FAIL" if n or n_tf else "PASS", "wheelchair",
+          f"{n:,} XC + {n_tf:,} TF rated rows in wheelchair "
+          "divisions/events" if n or n_tf
+          else "no rated row in any wheelchair division or event")
+
+
+# ---- 4b. the stale-rating invariant (2026-08-27 postmortem) ----------- #
+#   The backfill NULLs normalized_time for skipped rows but never touched
+#   speed_rating; every nuked row kept its pre-nuke rating. fill_ratings
+#   scrubs this each run -- this check proves the invariant held.
+def checkStale(cur):
+    bad = []
+    for t in ("results", "results_tf"):
+        cur.execute(f"SELECT count(*) FROM {t} "
+                    f"WHERE normalized_time IS NULL "
+                    f"AND speed_rating IS NOT NULL")
+        n = cur.fetchone()[0]
+        if n:
+            bad.append(f"{t}: {n:,}")
+    _mark("FAIL" if bad else "PASS", "no-nt-no-rating invariant",
+          "STALE ratings survive (rating with no normalized_time): "
+          + "; ".join(bad) if bad
+          else "every rating has a normalized_time behind it")
 
 
 def main():
@@ -225,6 +251,7 @@ def main():
         checkRestored(cur)
         checkCanaries(cur)
         checkWheelchair(cur)
+        checkStale(cur)
     fails = [r for r in _results if r[0] == "FAIL"]
     warns = [r for r in _results if r[0] == "WARN"]
     print(f"\n  CHECKLIST {'FAIL' if fails else 'PASS'}: "

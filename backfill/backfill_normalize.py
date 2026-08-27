@@ -2024,7 +2024,10 @@ def _createStaging(write_conn, sport):
 # Note    : column order here is (result_id, nt) -- the STAGING table's order --
 #           while the buffer holds (nt, rid). The swap happens right here, once.
 def _bufferToCopyText(updates):
-    payload = "".join(f"{rid}\t{nt}\n" for nt, rid in updates)
+    # \N is COPY's NULL literal -- skips now ride the buffer too
+    payload = "".join(
+        f"{rid}\t{nt if nt is not None else chr(92) + 'N'}\n"
+        for nt, rid in updates)
     return io.StringIO(payload)
 
 
@@ -2499,6 +2502,12 @@ def _accumulate(row_fn, row, updates, census):
     rid, value, reason, trace = row_fn(row)
     census.record(value, reason, trace)            # ALWAYS tally (skip or write)
     if value is None:
+        # ! SKIPS WRITE NULL (2026-08-27). The copy-mode merge already
+        #   NULLs unstaged rows, but the UPDATE fallback path never
+        #   touched them -- a skipped row kept its fossil normalized_time
+        #   forever, and downstream its fossil rating. An examined-and-
+        #   refused row must LAND as NULL on every write path.
+        updates.append((None, rid))
         return 1                                   # skipped (some _SkipReason.*)
     updates.append((value, rid))                   # (value, id) matches VALUES(nt, rid)
     return 0

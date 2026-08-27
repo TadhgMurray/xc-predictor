@@ -207,6 +207,21 @@ def main():
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
     with getConn() as conn:
+        # ★ THE INVARIANT, ENFORCED EVERY RUN (2026-08-27): no normalized
+        #   time => no rating. The backfill's merge NULLs nt for skipped
+        #   rows (wheelchair, nuked divisions, drops) but carries the old
+        #   speed_rating across untouched -- and race pages display that
+        #   column directly. Every nuked row kept its pre-nuke rating
+        #   through every rebuild until this scrub existed.
+        if not args.dry_run:
+            with conn.cursor() as cur:
+                for t in ("results", "results_tf"):
+                    cur.execute(f"UPDATE {t} SET speed_rating = NULL "
+                                f"WHERE normalized_time IS NULL "
+                                f"AND speed_rating IS NOT NULL")
+                    print(f"[fill] {t}: scrubbed {cur.rowcount:,} stale "
+                          f"ratings (rating with no normalized_time)")
+            conn.commit()
         # The board query's temp tables, prepared exactly as the board build
         # prepares them -- the reused SQL joins them per sport.
         B.prepareGenderTemp(conn)
