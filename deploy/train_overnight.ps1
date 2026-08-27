@@ -157,11 +157,39 @@ if ($LASTEXITCODE -ne 0) {
 Say "key auth works -- uploading the model" "Cyan"
 & ssh $Server "mkdir -p /srv/xc-predictor/model/data"
 $paths = $need | ForEach-Object { Join-Path "model\data" $_ }
-& scp @paths "${Server}:/srv/xc-predictor/model/data/"
-if ($LASTEXITCODE -eq 0) {
-    Say "MODEL UPLOADED. Verify on the server:" "Green"
-    Say "  /srv/venv/bin/python /srv/xc-predictor/model/predict_check.py" "Green"
-} else {
-    Say "upload failed (exit $LASTEXITCODE) -- the model is still on disk." "Red"
+
+# ! RETRY. A multi-hundred-MB transfer on a home connection drops, and
+#   a single attempt would leave the model sitting on a machine that is
+#   about to be gone.
+$sent = $false
+for ($i = 1; $i -le 4; $i++) {
+    Say "  upload attempt $i of 4"
+    & scp @paths "${Server}:/srv/xc-predictor/model/data/"
+    if ($LASTEXITCODE -eq 0) { $sent = $true; break }
+    $wait = [math]::Pow(2, $i)
+    Say "  scp failed (exit $LASTEXITCODE); retry in $wait s" "Yellow"
+    Start-Sleep -Seconds $wait
 }
+
+if (-not $sent) {
+    Say "upload failed after 4 attempts -- the model is still on disk." "Red"
+    Say "  .\deploy\ship_when_ready.ps1 -Only model -AcceptExistingModel" "Red"
+    exit 1
+}
+
+# ! THE SITE RUNS AS xcp AND THIS UPLOADS AS root. 644 happens to be
+#   readable, but the directory was chowned to xcp during setup and a
+#   root-owned file in it is an accident waiting for the next person.
+& ssh $Server "chown -R xcp:xcp /srv/xc-predictor/model/data"
+
+# prove all four landed rather than trusting the exit code
+$remote = (& ssh $Server "ls /srv/xc-predictor/model/data" 2>&1) -join "`n"
+$absent = $need | Where-Object { $remote -notmatch [regex]::Escape($_) }
+if ($absent) {
+    Say "ON THE SERVER, MISSING: $($absent -join ', ')" "Red"
+    exit 1
+}
+Say "MODEL UPLOADED -- all four artifacts confirmed on the server." "Green"
+Say "  verify: /srv/venv/bin/python /srv/xc-predictor/model/predict_check.py" "Green"
+Say "  then:   systemctl restart xc-predictor" "Green"
 Say "DONE"
