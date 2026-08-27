@@ -201,8 +201,18 @@ def main():
         print(f"\n  DUMP COMMAND (ships {kept / 1e9:,.1f} GB live; "
               "compresses further):\n")
         flags = " ".join(f'-T "{n}"' for n in excluded)
-        print(f"    pg_dump -Fc -Z 6 {flags} -f xc_predictor.dump "
-              "xc_predictor\n")
+        # ! -U IS NOT OPTIONAL ON WINDOWS. pg_dump defaults to the OS
+        #   user, and "Tadhg Murray" is not a Postgres role -- the
+        #   command fails auth before it reads a single row. Name the
+        #   user the rest of the code connects as.
+        from config import PG_CONFIG as _pg
+        user = _pg.get("user", "postgres")
+        db = _pg.get("dbname", "xc_predictor")
+        print(f"    pg_dump -U {user} -Fc -Z 6 {flags} "
+              f"-f xc_predictor.dump {db}\n")
+        print("    (it prompts for that user's password; to skip the "
+              "prompt, first run\n"
+              "     $env:PGPASSWORD = '<your local postgres password>')\n")
 
         if args.drop and droppable:
             print("\n  ⚠ RUN ONLY WITH THE PIPELINE IDLE: a *_new table is "
