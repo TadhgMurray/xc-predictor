@@ -438,7 +438,13 @@ _XC_SQL = f"""
               AND pas.season = substring(r.date, 1, 4)::int
         LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
         LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
-        WHERE r.normalized_time IS NOT NULL
+        -- ! AND IT MUST HAVE A DISTANCE. The override COALESCE can
+        --   resolve to NULL when the scraped distance is NULL and no
+        --   override covers it, and _buildSequenceVector calls bare
+        --   float() on it -- which killed a 68-minute run at the one
+        --   athlete in the corpus who had such a race behind them.
+        WHERE COALESCE({_OV_COALESCE_XC} m.distance) IS NOT NULL
+        AND   r.normalized_time IS NOT NULL
         -- Makes normalized time be a reasonable value.
         AND   r.normalized_time > %s
         AND   r.date IS NOT NULL
@@ -670,7 +676,9 @@ _TF_SQL = f"""
                   AND pas.season = substring(r.date, 1, 4)::int
             LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
             LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
-            WHERE r.normalized_time IS NOT NULL
+            -- ! same distance guard as the XC stream above
+            WHERE COALESCE({_OV_COALESCE_TF} m.distance_meters) IS NOT NULL
+            AND   r.normalized_time IS NOT NULL
             AND   r.normalized_time > %s
             AND   r.date IS NOT NULL
             AND   r.date != ''
@@ -1462,11 +1470,15 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
                         races_before_prior: list[dict],
                         encoders: dict) -> list[float]:
 
+    # ★ THE QUERY ALREADY EXCLUDES THESE, and this is the belt. A bare
+    #   float(None) anywhere in here ends the whole extraction an hour
+    #   in, over one row, and the file already learned that lesson once
+    #   for is_indoor. One bad prior race is worth a zero, never a night.
     return [
-        float(prior_result["normalized_time"]),
-        float(prior_result["course_difficulty"]),
+        _orZero(prior_result["normalized_time"]),
+        _orZero(prior_result["course_difficulty"]),
         float(_daysAgo(prior_result["date"], target_date_str)),
-        float(prior_result["distance_meters"]),
+        _orZero(prior_result["distance_meters"]),
         _encodeGrade(prior_result["grade"], encoders["grade"]),
  
         # bool -> float: True becomes 1.0, False becomes 0.0.
@@ -2068,11 +2080,28 @@ def saveAll(athletes, encoders: dict, vocab: dict,
 
     # For each athlete builds training examples and context, stamps the
     # athlete-level validation flag, and saves in shuffled chunks.
+    n_seen = n_skipped = 0
     for identity, athlete_results in athletes:
         career_lengths.append(len(athlete_results))
+        n_seen += 1
+        if n_seen % 25_000 == 0:
+            print(f"  ... {n_seen:,} athletes, {total_examples:,} examples, "
+                  f"{chunk_idx} chunks, {n_skipped} skipped", flush=True)
 
-        examples = buildAthleteExamples(athlete_results, encoders, rng)
-        addContextToExamples(examples, encoders)
+        # ★ ONE MALFORMED CAREER IS NOT THE NIGHT. On a 4.3M-athlete
+        #   corpus a handful of skips is a rounding error in the
+        #   training set; a crash at athlete 3,000,000 costs the whole
+        #   run, and the machine this trains on is going away. Every
+        #   skip is printed with its identity so it can be chased later.
+        try:
+            examples = buildAthleteExamples(athlete_results, encoders, rng)
+            addContextToExamples(examples, encoders)
+        except Exception as exc:                      # noqa: BLE001
+            n_skipped += 1
+            if n_skipped <= 50:
+                print(f"  SKIP athlete {identity}: "
+                      f"{type(exc).__name__}: {exc}", flush=True)
+            continue
 
         # ★ THE WHOLE ATHLETE IS TRAIN OR VAL, NEVER BOTH. See _isValAthlete:
         #   splitting by example lets the model meet every val athlete during
@@ -2341,6 +2370,19 @@ def addContextToExamples(examples: list[dict], encoders: dict) -> None:
 # ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
+    # ★ SMOKE MODE EXISTS BECAUSE THE FULL RUN IS AN HOUR. A crash at
+    #   minute 68 over one malformed row costs a night; the same crash
+    #   over the first few thousand athletes costs minutes and points at
+    #   the same line. --max-athletes runs the ENTIRE path -- encoders,
+    #   vocab, stream, example build, chunk write -- just less of it.
+    import argparse as _argparse
+    _ap = _argparse.ArgumentParser()
+    _ap.add_argument("--max-athletes", type=int, default=None,
+                     help="stop after N athletes (smoke run)")
+    _ap.add_argument("--out", default=OUTPUT_DIR,
+                     help="write chunks here instead of model/data")
+    _args = _ap.parse_args()
+    OUTPUT_DIR = _args.out
 
     # Creates a directory and all its parent directories if they don't exist.
     # exist_ok says don't crash if it already exists. It creates model/
@@ -2361,7 +2403,13 @@ if __name__ == "__main__":
             # Then ONE streamed pass: two identity-sorted server-side
             # cursors, heap-merged, one athlete in RAM at a time.
             print("Streaming athletes and saving chunked tensors...")
-            saveAll(streamAthletes(conn), encoders, vocab, OUTPUT_DIR)
+            _stream = streamAthletes(conn)
+            if _args.max_athletes:
+                import itertools as _it
+                print(f"  SMOKE RUN: stopping after "
+                      f"{_args.max_athletes:,} athletes")
+                _stream = _it.islice(_stream, _args.max_athletes)
+            saveAll(_stream, encoders, vocab, OUTPUT_DIR)
 
     finally:
         closePool()

@@ -23,7 +23,9 @@ param(
     [string] $Python  = "C:\venvs\rocm-train\Scripts\python.exe",
     [string] $Server  = "root@104.243.32.7",
     [switch] $SkipExtract,
-    [switch] $SkipUpload
+    [switch] $SkipUpload,
+    [switch] $SkipSmoke,
+    [int]    $SmokeAthletes = 4000
 )
 
 $ErrorActionPreference = "Continue"
@@ -84,6 +86,30 @@ if ($free -lt 30) { Say "under 30 GB free -- chunks may not fit." "Yellow" }
 
 # ---- 1. extract ------------------------------------------------------ #
 if (-not $SkipExtract) {
+    # ★ SMOKE FIRST. The full extraction is an hour, and a crash at
+    #   minute 68 over one malformed row costs the night. This runs the
+    #   entire path -- encoders, vocab, stream, example build, chunk
+    #   write -- over a few thousand athletes, so a fault shows up in
+    #   minutes and points at the same line. -SkipSmoke to bypass.
+    if (-not $SkipSmoke) {
+        Remove-Item -Recurse -Force model\data_smoke -ErrorAction SilentlyContinue
+        if (-not (Run-Stage "smoke (extraction, $SmokeAthletes athletes)" @(
+                "model\feature_extraction.py",
+                "--max-athletes", "$SmokeAthletes",
+                "--out", "model\data_smoke"))) {
+            Say "The SMOKE run failed, so the full run would fail the same way." "Red"
+            Say "Nothing was wasted. Fix the error above and re-run." "Red"
+            exit 1
+        }
+        foreach ($f in @("metadata.pkl", "encoders.pkl", "venue_vocab.pkl")) {
+            if (-not (Test-Path (Join-Path "model\data_smoke" $f))) {
+                Say "smoke run produced no $f -- stopping before the long run." "Red"
+                exit 1
+            }
+        }
+        Say "SMOKE PASSED -- the full path works on real data." "Green"
+        Remove-Item -Recurse -Force model\data_smoke -ErrorAction SilentlyContinue
+    }
     if (-not (Run-Stage "feature_extraction" @("model\feature_extraction.py"))) { exit 1 }
 } else {
     Say "SKIPPED feature_extraction (-SkipExtract)" "Yellow"
