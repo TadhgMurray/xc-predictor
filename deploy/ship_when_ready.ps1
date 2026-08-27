@@ -76,7 +76,27 @@ function Wait-Stable {
 function Ship-Dump {
     Write-Host "`n=== DATABASE DUMP ===" -ForegroundColor Cyan
 
-    $verText = (& pg_dump --version) 2>&1 | Out-String
+    # ! pg_dump IS RARELY ON PATH ON WINDOWS. The installer does not add
+    #   it, so find it under Program Files rather than failing the guard
+    #   -- a skipped version check is exactly the check worth having.
+    $pgExe = "pg_dump"
+    if (-not (Get-Command pg_dump -ErrorAction SilentlyContinue)) {
+        $found = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\pg_dump.exe" `
+            -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($found) {
+            $pgExe = $found.FullName
+            Write-Host "  found pg_dump at $pgExe"
+        } else {
+            Write-Host "  pg_dump not found on PATH or under Program Files;" `
+                -ForegroundColor Yellow
+            Write-Host "  version guard SKIPPED -- if your local Postgres is" `
+                -ForegroundColor Yellow
+            Write-Host "  newer than $ServerMajor, the restore will refuse the dump." `
+                -ForegroundColor Yellow
+        }
+    }
+    $verText = (& $pgExe --version) 2>&1 | Out-String
     if ($verText -match '(\d+)\.(\d+)') {
         $localMajor = [int]$Matches[1]
         if ($localMajor -gt $ServerMajor) {
