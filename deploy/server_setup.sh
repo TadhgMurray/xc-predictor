@@ -86,6 +86,13 @@ if [ ! -d /srv/xc-predictor ]; then
     fi
 fi
 cd /srv/xc-predictor && git pull --ff-only || true
+# ! THE SERVICE USER MUST OWN THE CHECKOUT. app.py opens
+#   racecast/errors.log with a logging.FileHandler at IMPORT time, and
+#   Python writes __pycache__ beside every module -- both inside the
+#   repo. Cloned as root, the xcp workers die on PermissionError before
+#   the app object exists, which surfaces only as "Worker failed to
+#   boot" with the real cause buried above gunicorn's own traceback.
+chown -R xcp:xcp /srv/xc-predictor
 python3 -m venv /srv/venv 2>/dev/null || true
 /srv/venv/bin/pip install -q --upgrade pip
 /srv/venv/bin/pip install -q flask gunicorn psycopg2-binary numpy scipy torch \
