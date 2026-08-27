@@ -56,7 +56,9 @@ _NEVER_RX = re.compile(
     r"usatf|\baau\b|junior olympic|foot ?locker|\bnike\b|\bnxn\b|"
     r"new balance|adidas|runninglane|brooks\b|hoka\b|garrett companies|"
     r"mitca|ekiden|ofsaa|provincial|\byouth\b|xc town|festival of champions|"
-    r"new england|all japan|\bbc hs\b|"
+    # ! "new england" killed the NCAA DIII New England REGIONAL along
+    #   with the all-comers meet it was written for -- regionals vote
+    r"new england(?!.*region)|all japan|\bbc hs\b|"
     # round 3 (2026-08-27 corpus): youth orgs, foreign systems, national
     # finals and regional all-comers that are not membership units.
     # NCAA NATIONALS excluded; NCAA REGIONALS still vote (region + class).
@@ -129,6 +131,49 @@ _HS_MARK_RX = re.compile(
     r"\bclass\s+[A-Z0-9]|\bgroup\s+[0-9]|\b[1-6]A\b", re.I)
 
 
+# ★ COLLEGE-NESS IS THE SCHOOL'S, NOT THE MEET NAME'S (owner's rule:
+#   "decided by the school's pool"). ranking_results already carries the
+#   engine's own pool verdict per row, so the level is READ rather than
+#   guessed -- which is what stopped four Massachusetts high schools
+#   (Bay State Conference) printing in the college table, and what puts
+#   Tufts on the college parser instead of reading "Division III" as an
+#   HS league named III with class 3.
+#
+#   Keyed (school, state) first because "Columbia" is both a university
+#   and a high school; school-only is the fallback, and a school that
+#   never reached a board falls through to the NAME heuristic below.
+_LEVEL_MIN = 3                # below this many board rows, trust nothing
+
+
+def _levelMaps(cur):
+    cur.execute("SELECT to_regclass('ranking_results')")
+    if cur.fetchone()[0] is None:
+        return {}, {}
+    cur.execute("""
+        SELECT upper(TRIM(school)), upper(COALESCE(state, '')),
+               count(*) FILTER (WHERE pool LIKE 'college!_%' ESCAPE '!'),
+               count(*)
+        FROM   ranking_results
+        WHERE  COALESCE(TRIM(school), '') <> ''
+        GROUP  BY 1, 2""")
+    pair, solo = {}, {}
+    for school, st, coll, n in cur.fetchall():
+        pair[(school, st)] = (coll, n)
+        c0, n0 = solo.get(school, (0, 0))
+        solo[school] = (c0 + coll, n0 + n)
+    return pair, solo
+
+
+def _schoolIsCollege(school, st, maps):
+    """True/False from the school's own pool mix, or None if unknown."""
+    pair, solo = maps
+    key = upper = (school or "").strip().upper()
+    for got in (pair.get((upper, (st or "").upper())), solo.get(key)):
+        if got and got[1] >= _LEVEL_MIN:
+            return got[0] * 2 >= got[1]
+    return None
+
+
 def _isCollegeName(name):
     n = name or ""
     return not (_ASSOC_RX.search(n) or _HS_MARK_RX.search(n))
@@ -163,7 +208,24 @@ def _collegeUnits(name):
         unit = re.sub(r"^(?:NCAA|NAIA|NJCAA|USCAA|CCCAA)\s*", "", unit)
         unit = re.sub(r"^D(?:IVISION)?[-. ]?(?:I{1,3}|[123])\s*", "",
                       unit).strip(" -")
-        facts.append(("region", unit or "REGION"))
+        # sport words ride along on both ends ("MIAA XC Regional")
+        unit = re.sub(r"^(?:MEN'S|WOMEN'S|OUTDOOR|INDOOR|XC|CROSS[- ]?"
+                      r"COUNTRY|TRACK|FIELD|T&F|AND|&)\s+", "", unit)
+        unit = re.sub(r"(?:\s+(?:MEN'S|WOMEN'S|OUTDOOR|INDOOR|XC|CROSS"
+                      r"[- ]?COUNTRY|TRACK|FIELD|T&F|AND|&))+$", "", unit)
+        # ! A BARE "Regionals" NAMES NO REGION -- the same lesson STATE
+        #   taught. An empty capture, a division token or a lone number
+        #   is not a unit, and "REGION" as a region is worse than none.
+        if unit and not re.fullmatch(r"D?(?:I{1,3}|IV|V|[1-9]\d?)", unit) \
+                and re.search(r"[A-Z]{3}", unit):
+            # "MIAA Regional", "Michigan Intercollegiate ... Regional":
+            # the body running its own regional is a CONFERENCE, and
+            # calling it a region loses the hierarchy the owner set.
+            if _ASSOC_RX.search(unit) or re.search(
+                    r"\b(?:ASSOCIATION|CONFERENCE)$", unit):
+                facts.append(("conference", unit))
+            else:
+                facts.append(("region", unit))
     for kind, rx, grp in _UNIT_RULES:
         if kind != "league":
             continue
@@ -247,6 +309,13 @@ def _cleanUnit(kind, unit):
     unit = re.sub(r"\s{2,}", " ", unit).strip(" -")
     if kind == "section":
         unit = re.sub(r"^CIF[- ]?", "", unit).strip(" -")
+        # ★ THE CALIFORNIA ! WALL (2026-08-27). The bare-CIF rule
+        #   ("CIF Central Section Division II Championships") captures
+        #   greedily up to Champ and produced a SECOND section fact,
+        #   "CENTRAL SECTION DIVISION II", which then fought the real
+        #   "CENTRAL" for the same kind every single season. The section
+        #   name ends where the words Section or Division begin.
+        unit = re.split(r"\s+(?:SECTION|DIVISION)\b", unit)[0].strip(" -")
     return unit
 
 
@@ -269,8 +338,13 @@ def parseUnits(meet_name, div_title, college=False):
         unit = (m.group(grp).strip() if grp and m.group(grp)
                 else ("STATE" if kind == "state" else kind.upper()))
         unit = _cleanUnit(kind, unit.upper()) or kind.upper()
+        # ! "NCAA Division III Championships" put a league named III on
+        #   every college school the name heuristic misrouted. A bare
+        #   division token is never a league on either path.
         if kind == "league" and (unit in _NOT_A_LEAGUE
-                                 or _ASSOC_RX.search(unit)):
+                                 or _ASSOC_RX.search(unit)
+                                 or re.fullmatch(r"D?(?:I{1,3}|IV|V|[1-6])",
+                                                 unit)):
             continue
         # "CIF State ..." is the state meet, not a section named STATE
         if kind == "section" and unit in ("STATE", "CIF"):
@@ -290,6 +364,13 @@ def parseUnits(meet_name, div_title, college=False):
                     peeled.append(("class", m.group(1)))
         fixed.append((kind, unit))
     facts = fixed + peeled
+    # ! A LEAGUE NAMED ...STATE IS NOT A STATE MEET. "Bay State
+    #   Conference", "Golden State League" tripped the bare state rule
+    #   and voted a phantom state series onto every member school.
+    if any(k == "state" and u == "STATE" for k, u in facts) and any(
+            k != "state" and "STATE" in u for k, u in facts):
+        facts = [(k, u) for k, u in facts
+                 if not (k == "state" and u == "STATE")]
     # last resort: a bare state name in a championship title ("Michigan
     # Meet of Champions", "Nebraska Championship Meet") is the state
     # series -- but ONLY when no real unit matched, so "Mississippi
@@ -388,6 +469,8 @@ def main():
                     help="print one school's full unit evidence")
     ap.add_argument("--state", default=None,
                     help="restrict the sample table to one state")
+    ap.add_argument("--conflicts", action="store_true",
+                    help="what the ! flags actually disagree about")
     ap.add_argument("--unparsed", action="store_true",
                     help="championship-gated names that yielded NO unit")
     ap.add_argument("--limit", type=int, default=40)
@@ -406,6 +489,9 @@ def main():
     n_rows = n_excluded = 0
 
     with getConn() as conn, conn.cursor() as cur:
+        # BEFORE _rows: it streams on this same cursor
+        maps = _levelMaps(cur)
+        n_lvl = n_name = 0
         for school, yr, meet_name, div_title, state, feed in _rows(
                 cur, args.sport, lo, hi):
             n_rows += 1
@@ -417,9 +503,15 @@ def main():
             if meet_name and _NEVER_RX.search(meet_name):
                 n_excluded += 1
                 continue
-            facts = parseUnits(meet_name, div_title,
-                               college=(feed == 'tfrrs'
-                                        and _isCollegeName(meet_name)))
+            # the school's own pool decides; the name heuristic is only
+            # the fallback for schools that never reached a board
+            is_coll = _schoolIsCollege(school, st, maps)
+            if is_coll is None:
+                n_name += 1
+                is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
+            else:
+                n_lvl += 1
+            facts = parseUnits(meet_name, div_title, college=is_coll)
             if facts:
                 name_hits[meet_name] += 1
                 key = (school, st)
@@ -440,6 +532,8 @@ def main():
     print(f"  excluded (club/foreign/shoe postseason): {n_excluded:,} rows")
     print(f"  championship-gated but NO unit extracted: "
           f"{sum(name_miss.values()):,} rows, {len(name_miss):,} names")
+    print(f"  level from the school's own pool: {n_lvl:,} rows; "
+          f"name heuristic fallback: {n_name:,} rows")
 
     if args.unparsed:
         print("\n  the unparsed names, biggest first (parser work lives "
@@ -473,6 +567,40 @@ def main():
                          for u, y in sorted(last.items(),
                                             key=lambda kv: -int(kv[1]))[:4])
 
+
+    def rivals(counter):
+        """Every unit voted in the LATEST season, richest first."""
+        latest = max(yr for (_u, yr) in counter)
+        out = Counter()
+        for (u, yr), n in counter.items():
+            if yr == latest:
+                out[u] += n
+        return out.most_common()
+
+    if args.conflicts:
+        # ★ WHY THE ! WALL. Every flagged school, grouped by what the
+        #   latest season actually disagreed about -- the shape of the
+        #   disagreement is the parser bug, not the individual school.
+        shapes, examples = Counter(), {}
+        for (school, st), kinds in votes.items():
+            for kind, c in kinds.items():
+                got = current(c)
+                if not got or not got[2]:
+                    continue
+                top = rivals(c)
+                shape = (kind, top[0][0], top[1][0])
+                shapes[shape] += 1
+                examples.setdefault(shape, f"{school} ({st}) {got[1]}")
+        print(f"\n  {sum(shapes.values()):,} flagged (school, kind) pairs, "
+              f"{len(shapes):,} distinct disagreements:\n")
+        print(f"    {'n':>6}  {'kind':<12} {'winner':<20} {'rival':<20} "
+              "example")
+        print("    " + "-" * 88)
+        for (kind, a, b), n in shapes.most_common(args.limit):
+            print(f"    {n:>6,}  {kind:<12} {a[:20]:<20} {b[:20]:<20} "
+                  f"{examples[(kind, a, b)][:28]}")
+        return
+
     if args.school:
         pat = args.school.lower()
         for (school, st) in sorted(votes):
@@ -491,7 +619,9 @@ def main():
                 n_total = sum(n for (u, _), n in c.items() if u == cur_u)
                 line = f"    {kind:<9} {cur_u}  ({yr}, {n_total} votes)"
                 if conflict:
-                    line += "   !! CONFLICT in latest season"
+                    line += ("   !! CONFLICT in " + str(yr) + ": "
+                             + ", ".join(f"{u} x{n}"
+                                         for u, n in rivals(c)[:4]))
                 past = history(c, cur_u)
                 if past:
                     line += f"   earlier: {past}"
