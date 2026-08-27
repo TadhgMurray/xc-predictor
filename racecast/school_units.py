@@ -21,8 +21,18 @@ _SHORT_TO_LONG = {
 }
 
 # (column, prefix, long-form suffix) in display order.
-_HS_CHIPS = ("league", "section", "section_div", "district", "county",
-             "class")
+# ★ A DIVISION IS NOT ITS OWN UNIT (owner, 2026-08-27). You are not in
+#   "Division 1", you are in NCS Division 1 -- and separately in CA
+#   Division 4. The division is always spoken with the unit it belongs
+#   to, and the order runs widest-first down each branch: state, state's
+#   division, section, section's division.
+#
+#   So section_div carries its section in the label and section itself is
+#   NOT a separate chip: "NCS" and "NCS D1" side by side says NCS twice.
+#   The RANK LINE still ranks both, because placing 12th in the section
+#   and 4th in your division are different facts.
+_HS_CHIPS = ("league", "state_div", "section_div", "section",
+             "district", "county", "class")
 _COLLEGE_CHIPS = ("division", "region", "conference")
 
 
@@ -43,11 +53,19 @@ _LONG_SUFFIX = {"section": "Section", "region": "Region",
                 "county": "County"}
 
 
-def _label(kind, value, long):
+def _label(kind, value, long, row=None):
+    row = row or {}
     if kind in ("section_div", "state_div"):
+        parent = (row.get("section") if kind == "section_div"
+                  else (row.get("state_unit") or row.get("state")))
+        if kind == "section_div" and parent and long:
+            parent = _SHORT_TO_LONG.get(parent, parent)
+        if long:
+            return (f"{parent} Division {value}" if parent
+                    else f"Division {value}")
         # short form rides the athlete meta line and the rank line, where
         # it sits beside "CA #55" and must not dwarf it
-        return f"Division {value}" if long else f"D{value}"
+        return f"{parent} D{value}" if parent else f"D{value}"
     if kind == "class":
         return f"Class {value}" if long else value
     if kind == "district":
@@ -87,7 +105,8 @@ def homeStateOf(cur, person_id):
     return _scalar(cur.fetchone())
 
 
-def unitsFor(cur, school, state=None, sport="XC", long=False):
+def unitsFor(cur, school, state=None, sport="XC", long=False,
+             collapse=True):
     """[{label, kind, conflict}] for one school, or [] when unknown.
 
     state narrows a shared name to one real school; without it the row
@@ -97,7 +116,7 @@ def unitsFor(cur, school, state=None, sport="XC", long=False):
         return []
     cols = ("league", "section", "section_div", "district", "county",
             "region", "state_unit", "state_div", "class", "conference",
-            "division", "is_college", "conflict", "asof")
+            "division", "is_college", "conflict", "asof", "state")
     args = [school, sport]
     sql = ("SELECT " + ", ".join('"%s"' % c for c in cols) +
            " FROM school_unit WHERE school = %s AND sport = %s")
@@ -124,12 +143,18 @@ def unitsFor(cur, school, state=None, sport="XC", long=False):
         value = row.get(col)
         if not value:
             continue
+        # ! DISPLAY collapses, RANKING does not. "NCS" adds nothing
+        #   beside "NCS D1" on a meta line -- but placing 12th in the
+        #   section and 4th in your division are different facts, so the
+        #   rank line asks for collapse=False and gets both.
+        if collapse and col == "section" and row.get("section_div"):
+            continue
         out.append({"kind": col,
                     # raw is what you FILTER on; label is what you show.
                     # The rank line needs both and they are not the same
                     # string once the labeller has been through it.
                     "raw": value,
-                    "label": _label(col, value, long),
+                    "label": _label(col, value, long, row),
                     "conflict": bool(row["conflict"]),
                     "asof": row["asof"]})
     # the conflict flag is per ROW, so mark only the first chip -- the

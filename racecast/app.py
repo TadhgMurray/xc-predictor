@@ -558,8 +558,13 @@ def _athletePaces(cur, person_id):
 #   simply have no section for is a promise, not information.
 _RANK_SCOPES = {
     "ms":      ("nation", "state", "team"),
-    "hs":      ("nation", "state", "unit:section", "unit:section_div",
-                "unit:league", "team"),
+    # ! ORDER IS THE HIERARCHY, WIDEST FIRST DOWN EACH BRANCH (owner):
+    #   state, that state's division, section, that section's division.
+    #   A division is never a scope on its own -- "D1" alone ranks an
+    #   athlete against every Division 1 school in the country, which is
+    #   not a thing anybody is in.
+    "hs":      ("nation", "state", "unit:state_div", "unit:section",
+                "unit:section_div", "unit:league", "team"),
     "college": ("nation", "unit:division", "unit:region",
                 "unit:conference", "state", "team"),
 }
@@ -631,9 +636,9 @@ def buildRankLine(cur, person_id, season):
 
     # the athlete's own units, once -- three scopes read from this
     from school_units import unitsFor, applyUnitFilters, homeStateOf
-    units = {u["kind"]: u for u in unitsFor(cur, school,
-                                            state or homeStateOf(cur, person_id))
-             } if school else {}
+    units = {u["kind"]: u for u in unitsFor(
+        cur, school, state or homeStateOf(cur, person_id),
+        collapse=False)} if school else {}
 
     def unitArgs(kind, raw):
         args = boardArgs(False)
@@ -666,10 +671,6 @@ def buildRankLine(cur, person_id, season):
         elif scope.startswith("unit:"):
             kind = scope[5:]
             u = units.get(kind)
-            # HS "Division" means the one that pairs with their section;
-            # a school with only a state division still gets a number
-            if u is None and kind == "section_div":
-                u = units.get("state_div") or units.get("class")
             if u is None:
                 continue
             r = unitRank(u["kind"], u["raw"])
