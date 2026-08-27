@@ -221,3 +221,28 @@ scripts/config_local.py
 # model/data/model.pt, or $RACECAST_MODEL).
 model/data/
 
+
+
+# ------------------------------------------------------------------ #
+#  ⚠ CORRECTIONS: 165 MB, AND GITHUB'S HARD LIMIT IS 100 MB
+# ------------------------------------------------------------------ #
+#
+# engine/corrections.py is 3M+ lines of dict literals -- the adjudicated
+# distance overrides and result drops. It cannot be pushed: GitHub
+# rejects any file over 100 MB outright, LFS or nothing.
+#
+# ! SO IT TRAVELS OUT OF BAND, and every machine that runs the pipeline
+#   needs it copied by hand:
+#
+#       scp engine/corrections.py root@<server>:/srv/xc-predictor/engine/
+#
+#   AND AFTER EVERY git pull ON A SERVER, copy it again -- the pull can
+#   remove or revert it, and a missing corrections.py does not crash
+#   anything. It silently un-applies every correction.
+#
+# ★ THE REAL FIX IS TO STOP IT BEING A FILE. These are DATA pretending
+#   to be code: dist_override and dist_drop are already tables, the
+#   drops belong beside them, and then corrections ship in the database
+#   dump like everything else -- no hand copy, no 42 MB .pyc, no import
+#   cost in every process. Post-launch work, but this is the reason.
+engine/corrections.py
