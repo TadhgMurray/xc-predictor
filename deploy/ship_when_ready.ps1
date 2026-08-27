@@ -34,7 +34,8 @@ param(
     [string] $Server      = "root@104.243.32.7",
     [string] $Dump        = "xc_predictor.dump",
     [string] $ModelDir    = "model\data",
-    [int]    $ServerMajor = 16,      # ReliableSite box: PostgreSQL 16.15
+    # Fallback only -- the server is ASKED first, see Ship-Dump.
+    [int]    $ServerMajor = 18,
     [int]    $Retries     = 4,
     [switch] $AcceptExistingModel    # skip the "newer than now" rule
 )
@@ -96,6 +97,20 @@ function Ship-Dump {
                 -ForegroundColor Yellow
         }
     }
+    # ★ ASK THE SERVER, DO NOT ASSUME IT. A hardcoded major goes stale
+    #   the moment the server is upgraded, and then the guard blocks a
+    #   perfectly good upload -- which is exactly what a stale 16 did
+    #   here after the box moved to 18. The parameter is the fallback
+    #   for when ssh cannot answer.
+    $probe = (& ssh $Server "sudo -u postgres psql -tAc 'SHOW server_version'" 2>&1) | Out-String
+    if ($probe -match '(\d+)') {
+        $ServerMajor = [int]$Matches[1]
+        Write-Host "  server reports PostgreSQL $ServerMajor"
+    } else {
+        Write-Host "  could not read the server version over ssh; using $ServerMajor" `
+            -ForegroundColor Yellow
+    }
+
     $verText = (& $pgExe --version) 2>&1 | Out-String
     if ($verText -match '(\d+)\.(\d+)') {
         $localMajor = [int]$Matches[1]
