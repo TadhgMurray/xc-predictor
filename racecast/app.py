@@ -4307,6 +4307,14 @@ def api_rankings():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # ★ A UNIT FILTER IS A SCHOOL FILTER (school_units.py). Folded
+            #   in here rather than in parseFilters, which is pure and has
+            #   no cursor -- and folded BEFORE the board runs, so every
+            #   board gets units without knowing they exist.
+            from school_units import applyUnitFilters
+            uerr = applyUnitFilters(cur, f, request.args)
+            if uerr:
+                return jsonify({"error": uerr}), 400
             try:
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,
@@ -4366,6 +4374,19 @@ def api_teams():
     f, err = parseTeamFilters(request.args)
     if err:
         return jsonify({"error": err}), 400
+
+    # ★ THE SAME UNIT FOLD AS THE ATHLETE BOARDS. This is what makes
+    #   "every NCS team, on this course" a single request: the unit
+    #   becomes a school list, and the course filter below is untouched.
+    #   The connection is opened only when a unit was actually asked for
+    #   -- this endpoint opens its own further down, per branch, and an
+    #   unconditional one here would double every team-board request.
+    from school_units import hasUnitArgs, applyUnitFilters
+    if hasUnitArgs(request.args):
+        with getConn() as _uc, _uc.cursor() as _ucur:
+            uerr = applyUnitFilters(_ucur, f, request.args)
+        if uerr:
+            return jsonify({"error": uerr}), 400
 
     # \u2605 A COURSE CHANGES WHAT THE BOARD IS -- single races at one venue, not
     #   season squads. Served here, before the season machinery, because none

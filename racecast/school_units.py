@@ -131,3 +131,83 @@ def unitsFor(cur, school, state=None, sport="XC", long=False):
     for chip in out[1:]:
         chip["conflict"] = False
     return out
+
+
+# ---- filtering a board BY unit --------------------------------------- #
+# ★ A UNIT FILTER IS A SCHOOL FILTER. "Every NCS team" resolves to the
+#   list of schools whose section is NCS, and then rides the boards'
+#   existing `school = ANY(...)` path -- already indexed, already tested,
+#   and it composes with every other filter (course included) for free.
+#
+#   The alternative, an EXISTS against school_unit inside _whereClauses,
+#   would have to qualify its outer reference by table, and the boards do
+#   not agree on one: the performance boards select from unaliased
+#   ranking_results, the ability board from an aliased athlete_season. An
+#   unqualified `school` inside the subquery binds to school_unit's OWN
+#   column, which is silently always-true rather than an error.
+_FILTERABLE = ("league", "section", "section_div", "district", "county",
+               "class", "conference", "region", "division")
+
+
+def hasUnitArgs(args):
+    """Did the request name any unit at all? Lets a caller skip opening a
+    connection for a fold that would do nothing."""
+    return any((args.get(k) or "").strip() for k in _FILTERABLE)
+
+
+def schoolsInUnits(cur, wanted, state=None):
+    """Schools matching {kind: [values]}, as a sorted list of names.
+
+    An empty result is meaningful and returned as [] -- the caller must
+    NOT treat it as "no filter", or asking for a unit nobody is in would
+    silently return the whole board."""
+    if not _exists(cur, "school_unit"):
+        return None
+    clauses, args = [], []
+    for kind, values in wanted.items():
+        if kind not in _FILTERABLE or not values:
+            continue
+        clauses.append('"%s" = ANY(%%s)' % kind)
+        args.append([str(v).upper() for v in values])
+    if not clauses:
+        return None
+    sql = ("SELECT DISTINCT school FROM school_unit WHERE "
+           + " AND ".join(clauses))
+    if state:
+        sql += " AND state = ANY(%s)"
+        args.append([s.upper() for s in state])
+    cur.execute(sql, args)
+    return sorted({_scalar(r) if not isinstance(r, (tuple, list)) else r[0]
+                   for r in cur.fetchall()})
+
+
+def applyUnitFilters(cur, f, args):
+    """Fold any unit filters in `args` into f["school"]. Returns an error
+    string, or None.
+
+    ⚠ INTERSECTS with an explicit school filter rather than replacing it:
+      asking for NCS *and* two named schools means those two, if they are
+      in NCS -- never all of NCS."""
+    wanted = {k: [v.strip() for v in (args.get(k) or "").split(",")
+                  if v.strip()]
+              for k in _FILTERABLE}
+    wanted = {k: v for k, v in wanted.items() if v}
+    if not wanted:
+        return None
+    schools = schoolsInUnits(cur, wanted, f.get("state"))
+    if schools is None:
+        return ("Units are not built yet -- run the pipeline through "
+                "10d_school_units.")
+    if not schools:
+        return ("No school on record belongs to "
+                + ", ".join(f"{k} {'/'.join(v)}" for k, v in wanted.items())
+                + ".")
+    if f.get("school"):
+        keep = set(f["school"]) & set(schools)
+        if not keep:
+            return "None of those schools are in that unit."
+        f["school"] = sorted(keep)
+    else:
+        f["school"] = schools
+    f["unit_filter"] = wanted
+    return None
