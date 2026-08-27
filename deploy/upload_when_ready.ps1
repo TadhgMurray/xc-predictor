@@ -6,6 +6,10 @@
 #     .\deploy\upload_when_ready.ps1
 #     .\deploy\upload_when_ready.ps1 -Target root@1.2.3.4:/srv/
 #
+# ! SUPERSEDED by ship_when_ready.ps1, which does this AND waits for
+#   training to finish and uploads the model beside it. This one still
+#   works and is safe to leave running; use the other for a fresh start.
+#
 # ! THE VERSION GUARD RUNS FIRST, AND IT IS THE POINT. pg_restore will
 #   not load a dump written by a NEWER pg_dump than the server's own
 #   Postgres. Discovering that after a two-hour upload is the expensive
