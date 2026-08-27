@@ -835,6 +835,54 @@ def _loadWheelchairDivs(cur):
     return frozenset(d for (d,) in cur)
 
 
+# ★ THE PERSON CARRIES IT, NOT THE RACE (2026-08-27, owner's call).
+#   Division titles only label SOME of a wheelchair athlete's races. The
+#   unlabelled ones were being priced on the running scale -- a chair
+#   5000m is far faster than a runner's, so those rows rated absurdly
+#   high and fed straight into pool means and course difficulties. One
+#   labelled race is proof of how the athlete competes, so every row of
+#   theirs is withheld, both sports, both feeds.
+#
+#   Identity follows the codebase's career key: person_id when the
+#   dedup layer linked one, else (source, athlete_id) -- NOT athlete_id
+#   alone, whose id space is per-feed and would over-catch across them.
+def _loadWheelchairPeople(cur, tfrrs_distances):
+    wheel_pairs = [(m, d) for (m, d), info in tfrrs_distances.items()
+                   if info.get("div_name")
+                   and _WHEELCHAIR_RX.search(info["div_name"])]
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS _wcp"
+                "(meet_id bigint, div_id bigint)")
+    cur.execute("TRUNCATE _wcp")
+    if wheel_pairs:
+        psycopg2.extras.execute_values(
+            cur, "INSERT INTO _wcp VALUES %s", wheel_pairs, page_size=5000)
+    cur.execute("""
+        WITH wc AS (
+            SELECT r.person_id, r.athlete_id, r.source
+            FROM   results r
+            JOIN   meets m ON m.div_id = r.div_id
+                          AND m.meet_id = r.meet_id
+                          AND m.source = r.source
+            WHERE  m.division ~* 'wheelchair|seated|ambulator'
+            UNION ALL
+            SELECT r.person_id, r.athlete_id, r.source
+            FROM   results r JOIN _wcp w ON w.meet_id = r.meet_id
+                                        AND w.div_id = r.div_id
+            WHERE  r.source = 'tfrrs'
+            UNION ALL
+            SELECT r.person_id, r.athlete_id, r.source
+            FROM   results_tf r
+            WHERE  r.event_short ~* 'wheelchair|seated|ambulator')
+        SELECT DISTINCT person_id, athlete_id, source FROM wc""")
+    persons, athletes = set(), set()
+    for person_id, athlete_id, source in cur:
+        if person_id is not None:
+            persons.add(person_id)
+        elif athlete_id is not None:
+            athletes.add((source, athlete_id))
+    return frozenset(persons), frozenset(athletes)
+
+
 # (meet_id, div_id) -> {"distance": float, "div_name": str} for TFRRS XC,
 # from the jsonb blob meets_tfrrs.division_distances.
 #
@@ -1482,7 +1530,8 @@ def _callLibrary(cfg, row, distance, gender, track_type, track_length, race_date
 def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                tfrrs_distances,
                matched_twins, canon_distances, wx_idx,
-               wheel_divs=frozenset()):
+               wheel_divs=frozenset(), wheel_persons=frozenset(),
+               wheel_athletes=frozenset()):
     # PER-SPORT selection happens HERE, once, in the closure's constant pool --
     # the per-row checks below stay bare set/dict membership tests, so the
     # sport fix costs the hot loop nothing.
@@ -1513,6 +1562,14 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #     at all (see _SkipReason.WHEELCHAIR). Three seams, one pattern:
         #     TF reads the event name, tfrrs XC the blob's division title,
         #     anet XC the preloaded division set.
+        #     THE PERSON FIRST: one labelled race withholds every race
+        #     they ran, because the labels are incomplete (see
+        #     _loadWheelchairPeople).
+        if row[_PERSON] is not None:
+            if row[_PERSON] in wheel_persons:
+                return row[_ID], None, _SkipReason.WHEELCHAIR, None
+        elif (row[_SRC], row[_AID]) in wheel_athletes:
+            return row[_ID], None, _SkipReason.WHEELCHAIR, None
         if cfg.distance_src == "event_short":
             ev = row[_EVENT_SHORT]
             if ev and _WHEELCHAIR_RX.search(ev):
@@ -2464,6 +2521,9 @@ def _buildLookups(read_conn, cfg):
         # matched per row (event name / blob title) and need no preload.
         wheel_divs = (_loadWheelchairDivs(cur)
                       if cfg.sport == "XC" else frozenset())
+        # cross-sport and cross-feed: built from ALL three seams at once
+        wheel_persons, wheel_athletes = _loadWheelchairPeople(
+            cur, tfrrs_distances)
         # WEATHER index: heavy (aggregates weather_grid), built ONLY when the
         # per-sport artifact exists; otherwise weather stays a clean no-op.
         wx_idx = WeatherIndex.build(cur, cfg.sport) if _weatherEnabled(cfg.sport) else None
@@ -2482,9 +2542,12 @@ def _buildLookups(read_conn, cfg):
     if wheel_divs:
         print(f"  wheelchair: {len(wheel_divs):,} anet XC divisions nuked "
               "by title")
+    print(f"  wheelchair athletes: {len(wheel_persons):,} linked people + "
+          f"{len(wheel_athletes):,} unlinked -- ALL their races withheld")
     return (geom_idx, genders, season_levels, meet_distances,
             tfrrs_distances,
-            matched_twins, canon_distances, wx_idx, wheel_divs)
+            matched_twins, canon_distances, wx_idx, wheel_divs,
+            wheel_persons, wheel_athletes)
 
 
 # _accumulate
@@ -2566,10 +2629,13 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
 
     (geom_idx, genders, season_levels, meet_distances, tfrrs_distances,
      matched_twins, canon_distances, wx_idx,
-     wheel_divs) = _buildLookups(read_conn, cfg)
+     wheel_divs, wheel_persons, wheel_athletes) = _buildLookups(
+        read_conn, cfg)
     row_fn = _makeRowFn(cfg, geom_idx, genders, season_levels,
                         meet_distances, tfrrs_distances, matched_twins,
-                        canon_distances, wx_idx, wheel_divs=wheel_divs)
+                        canon_distances, wx_idx, wheel_divs=wheel_divs,
+                        wheel_persons=wheel_persons,
+                        wheel_athletes=wheel_athletes)
 
     # WHERE the buffer lands. On the copy path it is the scratch table; on the
     # update path it is the results table itself. One variable, decided once.

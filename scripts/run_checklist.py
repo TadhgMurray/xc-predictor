@@ -11,7 +11,9 @@
 #            3. The canary athletes look right (scripts/canaries.json --
 #               e.g. the 9:01 tops that career, the Tufts runner is rated
 #               again after 2021).
-#            4. No wheelchair division carries a rating anywhere.
+#            4. No wheelchair division carries a rating anywhere, and
+#               no athlete who ever raced one carries a rating on ANY
+#               of their races (the division titles label only some).
 #
 #     python scripts/run_checklist.py          # exit 0 = all PASS/SKIP
 #
@@ -224,6 +226,47 @@ def checkWheelchair(cur):
           else "no rated row in any wheelchair division or event")
 
 
+# ---- 4a. and NOT ONE RACE of a wheelchair athlete -------------------- #
+#   The labels are incomplete: a chair athlete's unlabelled races were
+#   priced on the running scale and rated absurdly high. One labelled
+#   race withholds every race they ran (backfill _loadWheelchairPeople),
+#   and this proves the propagation actually reached the whole career.
+def checkWheelchairPeople(cur):
+    cur.execute(f"""
+        CREATE TEMP TABLE _ck_wcp AS
+        WITH wc AS (
+            SELECT r.person_id, r.athlete_id, r.source
+            FROM   results r JOIN meets m ON m.div_id = r.div_id
+                          AND m.meet_id = r.meet_id
+                          AND m.source = r.source
+            WHERE  m.division ~* '{_WHEEL_RX}'
+            UNION ALL
+            SELECT r.person_id, r.athlete_id, r.source
+            FROM   results_tf r
+            WHERE  r.event_short ~* '{_WHEEL_RX}')
+        SELECT DISTINCT person_id, athlete_id, source FROM wc""")
+    bad = []
+    for t in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT count(*) FROM {t}
+            WHERE {t}.speed_rating IS NOT NULL
+              AND (EXISTS (SELECT 1 FROM _ck_wcp w
+                           WHERE w.person_id IS NOT NULL
+                             AND w.person_id = {t}.person_id)
+                OR ({t}.person_id IS NULL AND EXISTS (
+                     SELECT 1 FROM _ck_wcp w
+                     WHERE w.person_id IS NULL AND w.source = {t}.source
+                       AND w.athlete_id = {t}.athlete_id)))""")
+        n = cur.fetchone()[0]
+        if n:
+            bad.append(f"{t}: {n:,}")
+    _mark("FAIL" if bad else "PASS", "wheelchair athletes",
+          "rated rows survive for athletes who raced a wheelchair "
+          "division: " + "; ".join(bad) if bad
+          else "no rated row for any athlete who raced a wheelchair "
+               "division")
+
+
 # ---- 4b. the stale-rating invariant (2026-08-27 postmortem) ----------- #
 #   The backfill NULLs normalized_time for skipped rows but never touched
 #   speed_rating; every nuked row kept its pre-nuke rating. fill_ratings
@@ -251,6 +294,7 @@ def main():
         checkRestored(cur)
         checkCanaries(cur)
         checkWheelchair(cur)
+        checkWheelchairPeople(cur)
         checkStale(cur)
     fails = [r for r in _results if r[0] == "FAIL"]
     warns = [r for r in _results if r[0] == "WARN"]

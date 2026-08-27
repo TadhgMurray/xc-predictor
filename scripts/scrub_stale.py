@@ -84,8 +84,8 @@ def main():
         wrx = _re.compile(_WHEEL, _re.IGNORECASE)
         wheel_pairs = [(m, d) for (m, d), info in blob.items()
                        if info.get("div_name") and wrx.search(info["div_name"])]
+        cur.execute("CREATE TEMP TABLE _wc(meet_id bigint, div_id bigint)")
         if wheel_pairs:
-            cur.execute("CREATE TEMP TABLE _wc(meet_id bigint, div_id bigint)")
             psycopg2.extras.execute_values(
                 cur, "INSERT INTO _wc VALUES %s", wheel_pairs,
                 page_size=5000)
@@ -107,6 +107,55 @@ def main():
                              AND (normalized_time IS NOT NULL
                                   OR speed_rating IS NOT NULL)""",
                        write=w)
+
+        # ★ PERSON PROPAGATION (owner's call, 2026-08-27). Division
+        #   titles label only SOME of a wheelchair athlete's races; the
+        #   unlabelled ones were priced on the running scale and rated
+        #   absurdly high. One labelled race withholds every race they
+        #   ran, both sports, both feeds. Identity is person_id when the
+        #   dedup layer linked one, else (source, athlete_id) -- never
+        #   athlete_id alone, whose id space is per-feed.
+        cur.execute("CREATE TEMP TABLE _wcp AS "
+                    "WITH wc AS ("
+                    "  SELECT r.person_id, r.athlete_id, r.source"
+                    "  FROM results r JOIN meets m"
+                    "    ON m.div_id = r.div_id AND m.meet_id = r.meet_id"
+                    "   AND m.source = r.source"
+                    "  WHERE m.division ~* %(rx)s"
+                    "  UNION ALL"
+                    "  SELECT r.person_id, r.athlete_id, r.source"
+                    "  FROM results r JOIN _wc w"
+                    "    ON w.meet_id = r.meet_id AND w.div_id = r.div_id"
+                    "  WHERE r.source = 'tfrrs'"
+                    "  UNION ALL"
+                    "  SELECT r.person_id, r.athlete_id, r.source"
+                    "  FROM results_tf r WHERE r.event_short ~* %(rx)s)"
+                    "SELECT DISTINCT person_id, athlete_id, source FROM wc",
+                    {"rx": _WHEEL})
+        cur.execute("SELECT count(*) FILTER (WHERE person_id IS NOT NULL), "
+                    "count(*) FROM _wcp")
+        n_linked, n_all = cur.fetchone()
+        print(f"    {n_linked:>10,}  wheelchair athletes linked "
+              f"({n_all - n_linked:,} unlinked) -- every race of theirs:")
+        cur.execute("CREATE INDEX ON _wcp (person_id)")
+        cur.execute("CREATE INDEX ON _wcp (source, athlete_id)")
+        for sport, t in (("XC", "results"), ("TF", "results_tf")):
+            total += _step(cur, f"{sport} rows of wheelchair athletes",
+                           f"""UPDATE {t} SET normalized_time = NULL,
+                                   speed_rating = NULL
+                               WHERE ({t}.normalized_time IS NOT NULL
+                                      OR {t}.speed_rating IS NOT NULL)
+                                 AND (EXISTS (
+                                       SELECT 1 FROM _wcp w
+                                       WHERE w.person_id IS NOT NULL
+                                         AND w.person_id = {t}.person_id)
+                                   OR ({t}.person_id IS NULL AND EXISTS (
+                                       SELECT 1 FROM _wcp w
+                                       WHERE w.person_id IS NULL
+                                         AND w.source = {t}.source
+                                         AND w.athlete_id =
+                                             {t}.athlete_id)))""",
+                           write=w)
 
         # dropped (nuked) divisions, per sport
         for sport, t in (("XC", "results"), ("TF", "results_tf")):
