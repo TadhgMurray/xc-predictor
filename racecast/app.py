@@ -1170,8 +1170,15 @@ def format_time(seconds):
     Precision is NOT fixed at two places. Printing '19:57.60' on a value stored
     as 1197.6 would claim hundredth accuracy the scrape never captured. We show
     the decimals that exist and nothing more.
+
+    ! SENTINELS ARE NOT TIMES. DNF/DNS/DQ are stored as huge values
+      (999999 and friends); one leaked onto a page as '277:46:39'
+      (2026-08-27, Walters State Opener). Same line the backfill draws:
+      nothing past 100,000 seconds is a running time.
     """
     seconds = float(seconds)
+    if seconds >= 100_000:
+        return "—"
     whole   = int(seconds)                       # truncate, never round
     frac    = seconds - whole
 
