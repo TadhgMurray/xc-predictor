@@ -39,13 +39,19 @@ function Say {
 }
 
 function Run-Stage {
-    param([string] $Name, [string[]] $Args)
+    # ! NOT $Args. Like $Host, it is a PowerShell AUTOMATIC variable --
+    #   the array of arguments to the function -- so a parameter by that
+    #   name does not bind, @Args expands to nothing, and the stage runs
+    #   bare `python -u`, which opens a REPL and waits on stdin forever.
+    #   It looks exactly like a hung job: START printed, a 21 MB python
+    #   process, zero CPU, no database activity.
+    param([string] $Name, [string[]] $ScriptArgs)
     Say "START $Name" "Cyan"
     # ! -u IS NOT OPTIONAL HERE. Piping to Tee-Object makes stdout a pipe,
     #   and Python block-buffers a pipe -- so the log stays empty for
     #   hours and the run looks hung when it is fine. Unbuffered means
     #   every "Saved chunk_NNNN.pt" lands the moment it happens.
-    & $Python -u @Args 2>&1 | Tee-Object -FilePath $log -Append
+    & $Python -u @ScriptArgs 2>&1 | Tee-Object -FilePath $log -Append
     if ($LASTEXITCODE -ne 0) {
         Say "FAILED $Name (exit $LASTEXITCODE) -- chain stops here." "Red"
         return $false
