@@ -44,7 +44,9 @@ _WINDOW = {"XC": (10, 12), "TF": (5, 6)}
 # probed on the division/race title.
 
 _CHAMP_RX = re.compile(
-    r"champ|meet of champions|finals?\b|\bstate meet\b", re.I)
+    r"champ|meet of champions|finals?\b|\bstate meet\b|"
+    # the qualifying rounds ARE the LCD meets in most states
+    r"sectionals?\b|regionals?\b|districts?\b", re.I)
 # invitationals, plus championship-NAMED meets that are not school units:
 # club postseason (USATF/AAU Junior Olympics), shoe-company nationals,
 # foreign systems (OFSAA/provincials, ekiden), regional all-comers
@@ -54,13 +56,24 @@ _NEVER_RX = re.compile(
     r"usatf|\baau\b|junior olympic|foot ?locker|\bnike\b|\bnxn\b|"
     r"new balance|adidas|runninglane|brooks\b|hoka\b|garrett companies|"
     r"mitca|ekiden|ofsaa|provincial|\byouth\b|xc town|festival of champions|"
-    r"new england|all japan|\bbc hs\b", re.I)
+    r"new england|all japan|\bbc hs\b|"
+    # round 3 (2026-08-27 corpus): youth orgs, foreign systems, national
+    # finals and regional all-comers that are not membership units.
+    # NCAA NATIONALS excluded; NCAA REGIONALS still vote (region + class).
+    r"\bcyo\b|insp?orts|mayor's cup|alberta|manitoba|canadian|toronto|"
+    r"british columbia|neicaaa|track houston|"
+    # coast all-comers, but never the West Coast CONFERENCE (a real league)
+    r"\b(?:east|west) coast (?:track|champ|national)|"
+    r"midwest meet of champions|larry steeb|honor roll|\busa junior\b|"
+    r"\busa youth\b|ncaa\s+d\S*(?!.*region)", re.I)
 
 # class/div tokens, meet name or race title:  5A, AAA, Class B, Division
 # III, D3, Group 2 (NJ), Open Division
 _CLASS_RX = [
     re.compile(r"\b([1-9]-?A{1,4})\b"),
-    re.compile(r"\bclass\s+([A-D]{1,4}|[1-9][A-D]?)\b", re.I),
+    # letters cover CT-style L/M/S/LL too; \b keeps "Class Championships"
+    # from matching (no boundary three letters into "Championships")
+    re.compile(r"\bclass\s+([A-Z]{1,3}|[1-9][A-D]?)\b", re.I),
     re.compile(r"\bdivision\s+(I{1,3}V?|VI?|[1-9]|One|Two|Three|Four|Five)\b",
                re.I),
     re.compile(r"\bD-?([1-5])\b"),
@@ -83,13 +96,32 @@ _NOT_A_LEAGUE = _SECTION_ACRONYMS | {"CIF", "STATE", "NCAA", "NAIA", "NJCAA",
 _ASSOC_RX = re.compile(
     r"\b(?:[A-Z]{1,5}(?:SIAA|PHS?AA|SHSAA?|SHSL|HSAA|HSSA)|UIL|OSAA|WIAA|"
     r"GHSA|FHSAA|OHSAA|PIAA|VHSL|TSSAA|KHSAA|LHSAA|AHSAA|IHSAA?|MSHSL|"
-    r"MHSAA|MSHSAA|MIAA|HHSAA|SDHSAA|NDHSAA|WVSSAC|SCHSL|NCHSAA)\b")
+    r"MHSAA|MSHSAA|MIAA|HHSAA|SDHSAA|NDHSAA|WVSSAC|SCHSL|NCHSAA|"
+    r"NHIAA|DIAA|CIAC|ASAA|VISAA|NCSAA|SCISA|NYSAIS)\b")
+
+# US state names: the LAST-RESORT state rule ("Michigan Meet of Champions",
+# "Nebraska Championship Meet") -- applied only when NO other unit matched,
+# so "Mississippi Valley Conference" stays a league, never a state vote.
+_STATE_NAME_RX = re.compile(
+    r"\b(Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|"
+    r"Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|"
+    r"Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|"
+    r"Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|"
+    r"New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|"
+    r"Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|"
+    r"South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|"
+    r"West Virginia|Wisconsin|Wyoming)\b", re.I)
 
 _UNIT_RULES = [
-    ("state",    re.compile(r"\b(state|all-state)\b", re.I), None),
+    ("state",    re.compile(r"\b(state|all-state|federation)\b", re.I),
+     None),
     ("state",    _ASSOC_RX, None),
     ("section",  re.compile(r"\b([\w .&'-]+?)\s+section(?:al)?s?\b", re.I), 1),
     ("section",  re.compile(r"\b(NCS|CCS|CIF-?SS|SJS|SDS)\b"), 1),
+    # "CIF Sac-Joaquin Cross Country Championships": the section name sits
+    # directly after CIF with no "Section" word at all
+    ("section",  re.compile(r"\bCIF\s+([A-Z][\w .&'-]+?)\s+"
+                            r"(?i:cross|xc|x-|track|champ|finals)"), 1),
     ("district", re.compile(r"\bdistrict\s*([\dA-Z-]{0,6})\b", re.I), 1),
     ("region",   re.compile(r"\bregion(?:al)?s?\s*([\dA-Z-]{0,4})\b", re.I),
      1),
@@ -98,10 +130,16 @@ _UNIT_RULES = [
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+league\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+conference\b", re.I), 1),
     ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL)\b"), 1),
-    # bare all-caps acronym before Champ/Finals = a league (EBAL, WCAL) --
+    # bare all-caps acronym before Champ/Finals = a league (EBAL, WCAL,
+    # and with the sport-word filler allowed: "MAC Cross Country
+    # Championships", "SEC XC Championship Meet", "NJIC Divisional") --
     # scoped (?i:) so "Championships" matches while the acronym stays
     # case-sensitive; the exclusion set stops section/state double-votes
-    ("league",   re.compile(r"\b([A-Z]{3,6})\s+(?i:champ|finals?)"), 1),
+    ("league",   re.compile(
+        r"\b([A-Z]{3,6})\s+"
+        r"(?:(?i:cross[- ]?country|xc|x-country|cc|track(?:\s*(?:&|and)\s*"
+        r"field)?|t&f|outdoor|indoor|division(?:al)?)\s+)*"
+        r"(?i:champ|finals?)"), 1),
 ]
 
 _YEAR_RX = re.compile(r"\b(?:19|20)\d\d\b")
@@ -131,18 +169,45 @@ def parseUnits(meet_name, div_title):
         m = rx.search(name)
         if not m:
             continue
+        # an empty capture (bare "Regionals") keeps the KIND as the unit
         unit = (m.group(grp).strip() if grp and m.group(grp)
-                else ("STATE" if kind == "state" else ""))
-        unit = _cleanUnit(kind, unit.upper() if unit else kind.upper())
-        if not unit:
-            continue
+                else ("STATE" if kind == "state" else kind.upper()))
+        unit = _cleanUnit(kind, unit.upper()) or kind.upper()
         if kind == "league" and (unit in _NOT_A_LEAGUE
                                  or _ASSOC_RX.search(unit)):
             continue
+        # "CIF State ..." is the state meet, not a section named STATE
+        if kind == "section" and unit in ("STATE", "CIF"):
+            continue
         facts.append((kind, unit))
+    # ★ PEEL GLUED CLASS PREFIXES off unit names ("2A EVERGREEN",
+    #   "4A KINGCO"): the unit is the rest, and a SINGLE peeled token is
+    #   class evidence -- a multi-class combine ("2A & 1A KINGCO") names a
+    #   shared meet and votes no class at all.
+    peeled, fixed = [], []
+    for kind, unit in facts:
+        if kind in ("league", "county", "section"):
+            m = re.match(r"^([1-6]A(?:\s*[&/]\s*[1-6]A)*)\s+(.+)$", unit)
+            if m:
+                unit = m.group(2).strip()
+                if "&" not in m.group(1) and "/" not in m.group(1):
+                    peeled.append(("class", m.group(1)))
+        fixed.append((kind, unit))
+    facts = fixed + peeled
+    # last resort: a bare state name in a championship title ("Michigan
+    # Meet of Champions", "Nebraska Championship Meet") is the state
+    # series -- but ONLY when no real unit matched, so "Mississippi
+    # Valley Conference" stays a league.
+    if not any(k != "class" for k, _ in facts) \
+            and _STATE_NAME_RX.search(name):
+        facts.append(("state", "STATE"))
     # ! class/div from BOTH the meet name and the race/division title --
     #   the token survives in whichever one kept it.
     for src in (name, div_title or ""):
+        # a multi-class combine in the NAME ("2A & 1A KingCo") votes no
+        # class -- the school could be either; the race title still may
+        if src is name and re.search(r"[1-6]A\s*[&/]\s*[1-6]A", src):
+            continue
         for rx in _CLASS_RX:
             m = rx.search(src)
             if m:
