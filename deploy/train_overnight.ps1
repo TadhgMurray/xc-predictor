@@ -41,7 +41,11 @@ function Say {
 function Run-Stage {
     param([string] $Name, [string[]] $Args)
     Say "START $Name" "Cyan"
-    & $Python @Args 2>&1 | Tee-Object -FilePath $log -Append
+    # ! -u IS NOT OPTIONAL HERE. Piping to Tee-Object makes stdout a pipe,
+    #   and Python block-buffers a pipe -- so the log stays empty for
+    #   hours and the run looks hung when it is fine. Unbuffered means
+    #   every "Saved chunk_NNNN.pt" lands the moment it happens.
+    & $Python -u @Args 2>&1 | Tee-Object -FilePath $log -Append
     if ($LASTEXITCODE -ne 0) {
         Say "FAILED $Name (exit $LASTEXITCODE) -- chain stops here." "Red"
         return $false
@@ -102,7 +106,7 @@ if ($missing) {
     exit 1
 }
 Say "all four site artifacts present" "Green"
-& $Python "model\predict_check.py" 2>&1 | Tee-Object -FilePath $log -Append
+& $Python -u "model\predict_check.py" 2>&1 | Tee-Object -FilePath $log -Append
 
 # ---- 4. upload, but only if nothing will prompt ---------------------- #
 if ($SkipUpload) { Say "upload skipped (-SkipUpload)"; exit 0 }
