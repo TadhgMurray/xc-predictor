@@ -112,6 +112,72 @@ _STATE_NAME_RX = re.compile(
     r"South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|"
     r"West Virginia|Wisconsin|Wyoming)\b", re.I)
 
+# ---- COLLEGE (tfrrs feed): the owner's hierarchy is
+#          division -> region -> conference
+# "Division III" is the DIVISION unit (NCAA DIII), never a class token;
+# regionals are named ("Great Lakes Regional") and vote region;
+# conference championships vote conference. HS rules do not apply.
+_ROMAN = {"1": "I", "2": "II", "3": "III"}
+_COLLEGE_ORG_RX = re.compile(r"\b(NCAA|NAIA|NJCAA|USCAA|CCCAA)\b")
+_COLLEGE_DIV_RX = re.compile(
+    r"\b(?:division\s*|D)[-. ]?(I{1,3}|[123])\b", re.I)
+_COLLEGE_REGION_RX = re.compile(
+    r"\b([\w .&'-]+?)\s+region(?:al)?s?\b", re.I)
+
+
+def _collegeUnits(name):
+    facts = []
+    org = _COLLEGE_ORG_RX.search(name)
+    dm = _COLLEGE_DIV_RX.search(name)
+    if dm:
+        div = _ROMAN.get(dm.group(1).upper(), dm.group(1).upper())
+        facts.append(("division",
+                      f"{org.group(1) if org else 'NCAA'} D{div}"))
+    elif org and org.group(1) != "NCAA":
+        facts.append(("division", org.group(1)))
+    rm = _COLLEGE_REGION_RX.search(name)
+    if rm:
+        unit = _cleanUnit("region", rm.group(1).upper())
+        unit = re.sub(r"^(?:NCAA|NAIA|NJCAA|USCAA|CCCAA)\s*", "", unit)
+        unit = re.sub(r"^D(?:IVISION)?[-. ]?(?:I{1,3}|[123])\s*", "",
+                      unit).strip(" -")
+        facts.append(("region", unit or "REGION"))
+    for kind, rx, grp in _UNIT_RULES:
+        if kind != "league":
+            continue
+        m = rx.search(name)
+        if not m or not m.group(grp):
+            continue
+        unit = _cleanUnit("league", m.group(grp).strip().upper())
+        if not unit or unit in _NOT_A_LEAGUE or _ASSOC_RX.search(unit):
+            continue
+        facts.append(("conference", unit))
+        break
+    # mixed-case conference names carry no League/Conference word at all
+    # ("Big Ten Outdoor Track & Field Championships"): on the COLLEGE feed
+    # a leading title-cased phrase before the sport words + Champ is the
+    # conference. HS never gets this rule -- it would eat city MoCs.
+    if not any(k == "conference" for k, _ in facts):
+        lm = re.match(
+            r"\s*(?:the\s+)?([A-Z][\w'&.-]*(?:\s+[A-Z][\w'&.-]*){0,3})\s+"
+            r"(?:(?i:men's|women's|outdoor|indoor|cross[- ]?country|xc|"
+            r"track(?:\s*(?:&|and)\s*field)?|t&f|and|field)\s+)*"
+            r"(?i:champ)", name)
+        if lm:
+            unit = _cleanUnit("league", lm.group(1).upper())
+            # the title-cased phrase greedily swallows capitalized sport
+            # words ("Big Ten Outdoor") -- trim them off the tail
+            unit = re.sub(
+                r"(?:\s+(?:OUTDOOR|INDOOR|XC|CROSS[- ]?COUNTRY|TRACK|"
+                r"FIELD|T&F|AND|&|MEN'S|WOMEN'S))+$", "", unit)
+            if unit and unit not in _NOT_A_LEAGUE \
+                    and not _ASSOC_RX.search(unit) \
+                    and not _COLLEGE_ORG_RX.search(unit) \
+                    and "REGION" not in unit and "DIVISION" not in unit:
+                facts.append(("conference", unit))
+    return facts
+
+
 _UNIT_RULES = [
     ("state",    re.compile(r"\b(state|all-state|federation)\b", re.I),
      None),
@@ -158,12 +224,16 @@ def _cleanUnit(kind, unit):
     return unit
 
 
-def parseUnits(meet_name, div_title):
+def parseUnits(meet_name, div_title, college=False):
     """[(kind, unit)] independent facts from one meet+race title pair.
-    Empty when the championship gate fails."""
+    Empty when the championship gate fails. college=True (the tfrrs
+    feed) uses the division -> region -> conference hierarchy instead
+    of the HS rules."""
     name = (meet_name or "").strip()
     if not name or not _CHAMP_RX.search(name) or _NEVER_RX.search(name):
         return []
+    if college:
+        return _collegeUnits(name)
     facts = []
     for kind, rx, grp in _UNIT_RULES:
         m = rx.search(name)
@@ -198,9 +268,11 @@ def parseUnits(meet_name, div_title):
     # Meet of Champions", "Nebraska Championship Meet") is the state
     # series -- but ONLY when no real unit matched, so "Mississippi
     # Valley Conference" stays a league.
-    if not any(k != "class" for k, _ in facts) \
-            and _STATE_NAME_RX.search(name):
-        facts.append(("state", "STATE"))
+    if not any(k != "class" for k, _ in facts):
+        sm = _STATE_NAME_RX.search(name)
+        if sm:
+            # the state NAME is the unit -- "STATE" says nothing
+            facts.append(("state", sm.group(1).upper()))
     # ! class/div from BOTH the meet name and the race/division title --
     #   the token survives in whichever one kept it.
     for src in (name, div_title or ""):
@@ -226,7 +298,7 @@ def _rows(cur, sport, lo, hi):
     if sport == "XC":
         cur.execute("""
             SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state
+                   m.meet_name, m.division, m.state, r.source
             FROM results r
             JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                         AND m.source = r.source
@@ -237,7 +309,8 @@ def _rows(cur, sport, lo, hi):
         yield from cur.fetchall()
         cur.execute("""
             SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
-                   mt.meet_name, NULL::text AS division, mt.state
+                   mt.meet_name, NULL::text AS division, mt.state,
+                   'tfrrs'::text AS source
             FROM results r
             JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                AND mt.source = 'tfrrs'
@@ -250,7 +323,7 @@ def _rows(cur, sport, lo, hi):
     else:
         cur.execute("""
             SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state
+                   m.meet_name, m.division, m.state, r.source
             FROM results_tf r
             JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                            AND m.event_id = r.event_id AND m.source = r.source
@@ -286,7 +359,7 @@ def main():
     n_rows = n_excluded = 0
 
     with getConn() as conn, conn.cursor() as cur:
-        for school, yr, meet_name, div_title, state in _rows(
+        for school, yr, meet_name, div_title, state, feed in _rows(
                 cur, args.sport, lo, hi):
             n_rows += 1
             st = (state or "").upper()
@@ -297,11 +370,16 @@ def main():
             if meet_name and _NEVER_RX.search(meet_name):
                 n_excluded += 1
                 continue
-            facts = parseUnits(meet_name, div_title)
+            facts = parseUnits(meet_name, div_title,
+                               college=(feed == 'tfrrs'))
             if facts:
                 name_hits[meet_name] += 1
                 key = (school, st)
                 for kind, unit in facts:
+                    # a state vote names WHICH state: the meet's own
+                    # code first, the captured state name as fallback
+                    if kind == "state" and unit == "STATE":
+                        unit = st or "STATE"
                     votes[key][kind][(unit, yr)] += 1
                 seasons[key].add(yr)
             else:
@@ -355,8 +433,9 @@ def main():
             key = (school, st)
             print(f"\n  {school} ({st or '??'})  seasons "
                   f"{min(seasons[key])}-{max(seasons[key])}")
-            for kind in ("league", "section", "district", "county",
-                         "region", "state", "class"):
+            for kind in ("division", "conference", "league", "section",
+                         "district", "county", "region", "state",
+                         "class"):
                 c = votes[key].get(kind)
                 if not c:
                     continue
@@ -378,7 +457,15 @@ def main():
     ranked = sorted(votes.items(),
                     key=lambda kv: -sum(sum(c.values())
                                         for c in kv[1].values()))
-    for (school, st), kinds in ranked[:args.limit]:
+    # college keys (tfrrs feed voted division/conference) print their own
+    # table below with the owner's hierarchy: division -> region -> conf
+    hs_ranked = [kv for kv in ranked
+                 if not any(k in ("division", "conference")
+                            for k in kv[1])]
+    college_ranked = [kv for kv in ranked
+                      if any(k in ("division", "conference")
+                             for k in kv[1])]
+    for (school, st), kinds in hs_ranked[:args.limit]:
         cells, asof, flag = {}, "", " "
         for kind in ("league", "section", "class"):
             got = current(kinds.get(kind, Counter()))
@@ -391,6 +478,23 @@ def main():
               f"{cells.get('league', '')[:18]:<18} "
               f"{cells.get('section', '')[:14]:<14} "
               f"{cells.get('class', '')[:6]:<6}{flag} {asof}")
+    if college_ranked:
+        print(f"\n    {'college':<28} {'conference':<18} {'region':<14} "
+              f"{'division':<10} asof")
+        print("    " + "-" * 78)
+        for (school, st), kinds in college_ranked[:args.limit]:
+            cells, asof, flag = {}, "", " "
+            for kind in ("conference", "region", "division"):
+                got = current(kinds.get(kind, Counter()))
+                if got:
+                    cells[kind] = got[0]
+                    asof = max(asof, got[1])
+                    if got[2]:
+                        flag = "!"
+            print(f"    {school[:28]:<28} "
+                  f"{cells.get('conference', '')[:18]:<18} "
+                  f"{cells.get('region', '')[:14]:<14} "
+                  f"{cells.get('division', '')[:9]:<9}{flag} {asof}")
     print("\n  Current = the most recent season's verdict (owner's rule); "
           "! = that latest\n  season itself holds two corroborated units "
           "(true ambiguity -- eyes). Use\n  --unparsed for parser misses, "
