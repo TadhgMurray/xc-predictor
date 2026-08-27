@@ -51,7 +51,10 @@ _PRODUCTION = {
     "dist_override", "dist_drop", "dist_override_snap",
     "course_canonical", "course_difficulties", "course_boards",
     "athlete_ratings", "tfrrs_meet_geometry", "meet_extras",
-    "weather_grid", "person_split", "reports",
+    # ! THE TABLE IS issue_reports. "reports" was a name that never
+    #   existed, so the real one would have landed in REVIEW -- unlisted,
+    #   and one careless read away from being dropped.
+    "weather_grid", "person_split", "issue_reports",
     # site-serving (app/panels/search/predict read these)
     "search_index", "athlete_agg", "athlete_named", "athlete_school",
     "meet_agg_xc", "course_distances", "course_rank",
