@@ -33,6 +33,10 @@ _SHORT_TO_LONG = {
 #   and 4th in your division are different facts.
 _HS_CHIPS = ("league", "state_div", "section_div", "section",
              "district", "county", "class")
+# ! AND COLLEGE IS THE OPPOSITE CASE. A division IS its own unit here,
+#   and it is the TOP of the hierarchy: division, region, conference.
+#   Nothing above applies -- no parent qualifies it, and it is never
+#   collapsed away. Guarded by tests/test_school_units.py.
 _COLLEGE_CHIPS = ("division", "region", "conference")
 
 

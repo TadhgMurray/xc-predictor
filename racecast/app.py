@@ -565,6 +565,13 @@ _RANK_SCOPES = {
     #   not a thing anybody is in.
     "hs":      ("nation", "state", "unit:state_div", "unit:section",
                 "unit:section_div", "unit:league", "team"),
+    # ! COLLEGE IS THE OTHER WAY AROUND, and deliberately so (owner):
+    #   a division IS its own unit here and it LEADS -- national,
+    #   division, region, conference. The high-school rule above (never
+    #   a bare division) must never be applied to this line: "NCAA DIII"
+    #   standing alone is exactly right. tests/test_school_units.py
+    #   holds both shapes so an edit to one cannot quietly reshape the
+    #   other.
     "college": ("nation", "unit:division", "unit:region",
                 "unit:conference", "state", "team"),
 }
