@@ -93,6 +93,9 @@ _NATIONALS_RX = re.compile(
 # III, D3, Group 2 (NJ), Open Division
 _CLASS_RX = [
     re.compile(r"\b([1-9]-?A{1,4})\b"),
+    # bare AA/AAA/AAAA (PA, TN, GA) -- two chars minimum, since a lone
+    # "A" turns up inside too much else to trust
+    re.compile(r"\b(A{2,4})\b"),
     # letters cover CT-style L/M/S/LL too; \b keeps "Class Championships"
     # from matching (no boundary three letters into "Championships")
     re.compile(r"\bclass\s+([A-Z]{1,3}|[1-9][A-D]?)\b", re.I),
@@ -116,7 +119,16 @@ _NOT_A_LEAGUE = _SECTION_ACRONYMS | {"CIF", "STATE", "NCAA", "NAIA", "NJCAA",
                                      "ELEMENTARY", "JUNIOR HIGH",
                                      # "Liberty League Cross Country Only"
                                      "CROSS COUNTRY ONLY", "CROSS COUNTRY",
-                                     "TRACK AND FIELD", "TRACK & FIELD"}
+                                     "TRACK AND FIELD", "TRACK & FIELD",
+                                     # ECAC/IC4A run championships for many
+                                     # conferences at once -- an organiser,
+                                     # not a membership unit. It was voting
+                                     # itself against Ivy, Patriot and MAAC.
+                                     "ECAC", "IC4A", "ECAC/IC4A", "IC4A/ECAC"}
+
+# coaches associations run MoCs and invitationals; they are organisers,
+# not leagues (NJCTC, MSCCA, TSTCA, KTCCCA, RGVCCCA ...)
+_COACHES_RX = re.compile(r"^[A-Z]{2,6}(?:TCCCA|CCCA|CTCA|CTC|TCA|CCA)$")
 
 # state athletic associations: an explicit list plus the suffix families
 # (…SIAA, …PHSAA/PHAA, …SHSAA, …HSAA). Their bare championships and Meet
@@ -190,6 +202,12 @@ def _schoolIsCollege(school, st, maps):
             return got[0] * 2 >= got[1]
     return None
 
+
+# Canadian provinces (and other non-US codes that ride the feeds). Their
+# leagues are real, but they are not the unit system this table models,
+# and they were voting HWIAC against SOSSA on Ontario schools forever.
+_FOREIGN_ST = {"ON", "BC", "AB", "SK", "MB", "QC", "NS", "NB", "NL",
+               "PE", "YT", "NT", "NU"}
 
 _STATE_CODE = {
     "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR",
@@ -310,8 +328,10 @@ _UNIT_RULES = [
     # directly after CIF with no "Section" word at all
     ("section",  re.compile(r"\bCIF\s+([A-Z][\w .&'-]+?)\s+"
                             r"(?i:cross|xc|x-|track|champ|finals)"), 1),
-    # NY-style numbered sections: "Section 5", "Section XI"
-    ("section",  re.compile(r"\bsection\s+([IVX0-9]{1,4})\b", re.I), 1),
+    # NY-style numbered sections: "Section 5", "Section XI". LAST of the
+    # section rules and skipped when a NAMED section already matched --
+    # "WPIAL Section IV" fed both rules and voted WPIAL against IV.
+    ("section#", re.compile(r"\bsection\s+([IVX0-9]{1,4})\b", re.I), 1),
     ("district", re.compile(r"\bdistrict\s*([\dA-Z-]{0,6})\b", re.I), 1),
     ("region",   re.compile(r"\bregion(?:al)?s?\s*([\dA-Z-]{0,4})\b", re.I),
      1),
@@ -366,6 +386,8 @@ def parseUnits(meet_name, div_title, college=False, state=None):
     feed) uses the division -> region -> conference hierarchy instead
     of the HS rules."""
     name = (meet_name or "").strip()
+    if (state or "").upper() in _FOREIGN_ST:
+        return []
     if not name or not _CHAMP_RX.search(name) or _NEVER_RX.search(name):
         return []
     if _NATIONALS_RX.search(name):
@@ -375,11 +397,20 @@ def parseUnits(meet_name, div_title, college=False, state=None):
     if college:
         return _collegeUnits(name)
     facts = []
+    # ! A bare "Sectionals" names no section -- but it still says the
+    #   division token belongs to the SECTION, not to a class. Voting and
+    #   scoping are different jobs; round 7 conflated them and sent 24k
+    #   rows to the unparsed list.
+    bare_kinds = set()
     for kind, rx, grp in _UNIT_RULES:
         m = rx.search(name)
         if not m:
             continue
         # an empty capture (bare "Regionals") keeps the KIND as the unit
+        if kind == "section#":
+            if any(k == "section" for k, _ in facts):
+                continue
+            kind = "section"
         unit = (m.group(grp).strip() if grp and m.group(grp)
                 else ("STATE" if kind == "state" else kind.upper()))
         unit = _cleanUnit(kind, unit.upper()) or kind.upper()
@@ -387,6 +418,8 @@ def parseUnits(meet_name, div_title, college=False, state=None):
         #   every college school the name heuristic misrouted. A bare
         #   division token is never a league on either path.
         if kind == "league" and (unit in _NOT_A_LEAGUE
+                                 or re.fullmatch(r"A{1,4}", unit)
+                                 or _COACHES_RX.match(unit)
                                  or _ASSOC_RX.search(unit)
                                  or re.fullmatch(r"D?(?:I{1,3}|IV|V|[1-6])",
                                                  unit)):
@@ -399,6 +432,7 @@ def parseUnits(meet_name, div_title, college=False, state=None):
         #   league. Same lesson as STATE and REGION. State is exempt --
         #   main resolves a bare STATE to the meet's own state code.
         if kind != "state" and unit == kind.upper():
+            bare_kinds.add(kind)
             continue
         facts.append((kind, unit))
     # ★ PEEL GLUED CLASS PREFIXES off unit names ("2A EVERGREEN",
@@ -462,7 +496,7 @@ def parseUnits(meet_name, div_title, college=False, state=None):
                 #   are SEPARATE facts (California carries both at once,
                 #   and one 'class' kind made them fight every season).
                 #   The div attaches to the unit that carried it.
-                kinds_here = {k for k, _ in facts}
+                kinds_here = {k for k, _ in facts} | bare_kinds
                 dk = ("section_div" if "section" in kinds_here else
                       "state_div" if "state" in kinds_here else "class")
                 facts.append((dk, tok))
@@ -546,6 +580,10 @@ def main():
     #   verdict; older seasons are provenance, never the answer.
     votes = defaultdict(lambda: defaultdict(Counter))   # key -> kind -> (unit, yr)
     seasons = defaultdict(set)
+    # (kind, unit) -> a meet name that produced it, for --conflicts. The
+    # school alone never said WHICH meet disagreed, which made the class
+    # conflicts guesswork.
+    unit_eg = {}
     name_hits, name_miss = Counter(), Counter()
     n_rows = n_excluded = 0
 
@@ -571,9 +609,10 @@ def main():
             # parser MISS -- keep the --unparsed list pure signal. A
             # college nationals meet is only "excluded" for an HS school;
             # for a college it still votes its division.
-            if meet_name and (_NEVER_RX.search(meet_name)
-                              or (not is_coll
-                                  and _NATIONALS_RX.search(meet_name))):
+            if st in _FOREIGN_ST or (meet_name and (
+                    _NEVER_RX.search(meet_name)
+                    or (not is_coll
+                        and _NATIONALS_RX.search(meet_name)))):
                 n_excluded += 1
                 continue
             facts = parseUnits(meet_name, div_title, college=is_coll,
@@ -587,6 +626,7 @@ def main():
                     if kind == "state" and unit == "STATE":
                         unit = st or "STATE"
                     votes[key][kind][(unit, yr)] += 1
+                    unit_eg.setdefault((kind, unit), meet_name or "")
                 seasons[key].add(yr)
             else:
                 name_miss[meet_name] += 1
@@ -659,12 +699,16 @@ def main():
                 examples.setdefault(shape, f"{school} ({st}) {got[1]}")
         print(f"\n  {sum(shapes.values()):,} flagged (school, kind) pairs, "
               f"{len(shapes):,} distinct disagreements:\n")
-        print(f"    {'n':>6}  {'kind':<12} {'winner':<20} {'rival':<20} "
-              "example")
-        print("    " + "-" * 88)
+        print(f"    {'n':>6}  {'kind':<10} {'winner':<18} {'rival':<18} "
+              "example school / the two meets")
+        print("    " + "-" * 100)
         for (kind, a, b), n in shapes.most_common(args.limit):
-            print(f"    {n:>6,}  {kind:<12} {a[:20]:<20} {b[:20]:<20} "
-                  f"{examples[(kind, a, b)][:28]}")
+            print(f"    {n:>6,}  {kind:<10} {a[:18]:<18} {b[:18]:<18} "
+                  f"{examples[(kind, a, b)][:30]}")
+            for u in (a, b):
+                eg = unit_eg.get((kind, u))
+                if eg:
+                    print(f"{'':>12}  {u[:18]:<18} <- {eg[:62]}")
         return
 
     if args.school:
