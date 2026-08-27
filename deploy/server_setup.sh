@@ -4,8 +4,14 @@
 # Purpose: One-paste bootstrap for a fresh Ubuntu 24.04 server (ReliableSite
 #          5950X, 2026-08). Run as root. Idempotent enough to re-run.
 #
+#   0. FIRST, on a bare box:   apt-get update -q && apt-get install -y git
+#      This script installs git -- but you need git to CLONE this script,
+#      so a fresh server cannot bootstrap itself. Install it, clone, then:
+#
 #   1. On the server:   export XCP_DB_PASSWORD='<new strong password>'
-#                       bash deploy/server_setup.sh
+#                       export XCP_REPO_URL='https://<token>@github.com/TadhgMurray/xc-predictor'
+#                       git clone "$XCP_REPO_URL" /srv/xc-predictor
+#                       bash /srv/xc-predictor/deploy/server_setup.sh
 #   2. From home:       scp xc_predictor.dump root@<ip>:/srv/
 #   3. On the server:   bash deploy/server_restore.sh /srv/xc_predictor.dump
 #
@@ -13,6 +19,19 @@
 # server, then run:  certbot --nginx -d racecast.com -d www.racecast.com
 
 set -euo pipefail
+
+# ! A BARE SERVER HAS NO git AND NO apt CERTAINTY. Check both before
+#   touching anything, so the failure names its own fix instead of
+#   surfacing as "No such file or directory" three commands later.
+if ! command -v apt-get >/dev/null; then
+    echo "this script is for Debian/Ubuntu (no apt-get here)." >&2
+    echo "check: cat /etc/os-release" >&2
+    exit 1
+fi
+if ! command -v git >/dev/null; then
+    echo "git is missing -- run:  apt-get update -q && apt-get install -y git" >&2
+    exit 1
+fi
 
 if [ -z "${XCP_DB_PASSWORD:-}" ]; then
     echo "set XCP_DB_PASSWORD first:  export XCP_DB_PASSWORD='...'" >&2
