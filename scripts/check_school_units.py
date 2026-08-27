@@ -67,16 +67,27 @@ _NEVER_RX = re.compile(
     # coast all-comers, but never the West Coast CONFERENCE (a real league)
     r"\b(?:east|west) coast (?:track|champ|national)|"
     r"midwest meet of champions|larry steeb|honor roll|\busa junior\b|"
-    r"\busa youth\b|ncaa\s+d\S*(?!.*region)|"
+    r"\busa youth\b|"
     # round 4: club meets, coaches-assoc MoCs, more foreign, venue-named
     r"\bclub\b|\botca\b|mid-?east meet of champions|hay bale|"
     r"bc high school|saskatch|elysian park|"
     # round 5: NAIA/NJCAA/NIRCA NATIONALS (regionals still vote),
     # sub-varsity and grade-school meets, Kinney (old Foot Locker),
     # Ontario ROPSSAA, Fraser Valley (BC)
-    r"\bnaia\b(?!.*region)|\bnjcaa\b(?!.*region)|\bnirca\b|"
+    r"\bnirca\b|"
     r"\bkinney\b|\bropssaa\b|fraser valley|\bfrosh\b|freshman|"
     r"\bjv\b|junior varsity|\bes[-/ ]?ms\b|elementary", re.I)
+
+# ★ NATIONALS VOTE DIVISION, AND ONLY DIVISION (2026-08-27). A school at
+#   the NCAA DIII meet IS DIII -- that is the least ambiguous division
+#   evidence in the whole corpus, and excluding these names outright threw
+#   it away. What nationals are NOT is a membership unit: they name no
+#   conference and no region, so those kinds stay unvoted here.
+#   The (?!.*region) lookaheads keep REGIONALS on the normal path, where
+#   they vote region and division both.
+_NATIONALS_RX = re.compile(
+    r"ncaa\s+d\S*(?!.*region)|\bnaia\b(?!.*region)|"
+    r"\bnjcaa\b(?!.*region)", re.I)
 
 # class/div tokens, meet name or race title:  5A, AAA, Class B, Division
 # III, D3, Group 2 (NJ), Open Division
@@ -327,6 +338,10 @@ def parseUnits(meet_name, div_title, college=False):
     name = (meet_name or "").strip()
     if not name or not _CHAMP_RX.search(name) or _NEVER_RX.search(name):
         return []
+    if _NATIONALS_RX.search(name):
+        # division is real evidence; conference/region are not named here
+        return [f for f in _collegeUnits(name)
+                if f[0] == "division"] if college else []
     if college:
         return _collegeUnits(name)
     facts = []
@@ -498,11 +513,6 @@ def main():
             st = (state or "").upper()
             if args.state and st != args.state.upper():
                 continue
-            # excluded (club/foreign/shoe-company postseason) is not a
-            # parser MISS -- keep the --unparsed list pure signal
-            if meet_name and _NEVER_RX.search(meet_name):
-                n_excluded += 1
-                continue
             # the school's own pool decides; the name heuristic is only
             # the fallback for schools that never reached a board
             is_coll = _schoolIsCollege(school, st, maps)
@@ -511,6 +521,15 @@ def main():
                 is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
             else:
                 n_lvl += 1
+            # excluded (club/foreign/shoe-company postseason) is not a
+            # parser MISS -- keep the --unparsed list pure signal. A
+            # college nationals meet is only "excluded" for an HS school;
+            # for a college it still votes its division.
+            if meet_name and (_NEVER_RX.search(meet_name)
+                              or (not is_coll
+                                  and _NATIONALS_RX.search(meet_name))):
+                n_excluded += 1
+                continue
             facts = parseUnits(meet_name, div_title, college=is_coll)
             if facts:
                 name_hits[meet_name] += 1
