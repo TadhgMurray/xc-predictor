@@ -1,0 +1,9 @@
+{# ---------------------------------------------------------------------
+   SCHOOL UNIT CHIPS -- league / section / division, from school_unit.
+   Outlined, not filled: a filled pill means a record was set, and a
+   league is not an achievement. A conflicted verdict keeps its unit and
+   wears an amber "?" that says what else the latest season voted.
+   ------------------------------------------------------------------ #}
+{% macro unit_chips(units) -%}
+{%- for u in units %}<span class="unit">{{ u.label }}{% if u.conflict %}<span class="unit-q" title="The most recent season ({{ u.asof }}) corroborated more than one unit here, so this is the best-supported answer rather than a certain one.">?</span>{% endif %}</span>{% endfor -%}
+{%- endmacro %}

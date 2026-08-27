@@ -27,9 +27,13 @@
 </head>
 <script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
 <body>
+{% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
 <main class="page-wide">
     <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    {# the school's own facts, long-form: this line is not shared with a
+       grade and a compare link, so there is room to spell them out #}
+    {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}
     <p class="meta">
         {% if header.state %}{{ header.state }} · {% endif %}
         {{ header.athletes }} athletes ·

@@ -688,6 +688,13 @@ def athlete(person_id):
             if athlete is None:
                 abort(404)
 
+            # League / section / division for the header line. Read
+            # through school_units so every page phrases them alike.
+            from school_units import unitsFor, homeStateOf
+            units = (unitsFor(cur, athlete["school"],
+                              homeStateOf(cur, person_id))
+                     if athlete.get("school") else [])
+
             # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
             #   boards rank -- so the number up top is one the athlete can go
             #   find on /rankings. The old source, athlete_ratings, holds one
@@ -894,6 +901,7 @@ def athlete(person_id):
 
     return render_template("athlete.html",
                            athlete=athlete,
+                           units=units,
                            rank_line=rank_line,
                            training=training,
                            xc_seasons=xc_seasons,
@@ -3129,6 +3137,13 @@ def school_page(school_name):
             #   Massachusetts kids -- no longer exists.
             if chips and not state:
                 state = primary_state
+            # long form here: this line is not shared with a grade and a
+            # compare link, so "Sac-Joaquin Section" fits where SJS had to.
+            # Computed AFTER the identity is settled, so the units belong
+            # to the school on screen, not the biggest namesake.
+            from school_units import unitsFor
+            units = unitsFor(cur, school_name, state or primary_state,
+                             sport, long=True)
 
             years = schoolYears(cur, school_name)
 
@@ -3188,6 +3203,7 @@ def school_page(school_name):
              for g, c in pool_counts.items()}
 
     return render_template("school.html", school=school_name, header=header,
+                           units=units,
                            state_chips=chips, state=state,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),

@@ -3511,3 +3511,30 @@ button.yb-more { cursor: pointer; font: inherit; color: var(--accent, #14477d); 
 /* Arrived-from-a-profile row highlight: the meet/race page scrolls to the
    clicked result (?r=) and tints its row so the eye lands with it. */
 tr.row-hi > td { background: #fdf3cd; }
+
+/* ---- SCHOOL UNITS: league / section / division ------------------------
+   OUTLINED, never filled. The filled .flag pills mean a RECORD was set;
+   a league is a fact about where the school competes, not an
+   achievement, so the two must not read as the same class of thing.
+   Slate rather than any flag colour, for the same reason. */
+.unit {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border: 1px solid #3d566e;
+  border-radius: 3px;
+  color: #3d566e;
+  background: transparent;
+  vertical-align: middle;
+}
+/* The census found two corroborated units in the latest season and
+   recorded the disagreement rather than resolving it. Amber, matching
+   .flag--warn: a caution about confidence, never an error. */
+.unit-q {
+  color: #a05a00;
+  font-weight: 700;
+  margin-left: 3px;
+  cursor: help;
+}
