@@ -37,6 +37,25 @@ people that the pack then reads. Issue #14.
 ! IT FLAGS, IT NEVER DELETES. The rows stay in results; the athlete keeps
   their page. wheelchair_person is a list the raters consult, so the decision
   is one DROP TABLE away from being reversed.
+
+★ AMBULATORY ATHLETES ARE EXCLUDED PER-PERSON TOO -- OWNER'S CALL,
+  2026-08-29, AND IT WAS PUT AS A QUESTION BECAUSE IT IS NOT THE SAME
+  ARGUMENT AS THE CHAIR.
+
+  A racing chair is different equipment, so a chair time on a runner's scale
+  is meaningless and the exclusion is physics. Ambulatory means running on
+  legs, and those open-race times are legitimate results -- so this is a
+  policy about who the boards are for, not a measurement. The alternative
+  considered and rejected was to keep 'ambulator' as a RACE filter only.
+
+⚠ SO KNOW WHAT IT COSTS. Measured on the corpus at the time of the decision:
+  481 people, 2,904 chair-or-ambulatory races, and 20,796 results withheld in
+  total -- most of that second number being ORDINARY races by athletes who
+  ran them. The review list is dominated by ambulatory sprints and field
+  events (100m dashes, javelin, shot put), which the engine never rated
+  anyway: _tfQuery already excludes is_field and everything under 800m. What
+  this rule actually withholds, over and above the filter it replaces, is
+  those athletes' 800m-and-up races.
 """
 
 import argparse
@@ -165,6 +184,9 @@ def main():
                     help="build wheelchair_race and wheelchair_person")
     ap.add_argument("--review", type=int, default=0, metavar="N",
                     help="list N athletes whose chair races are a minority")
+    ap.add_argument("--census", action="store_true",
+                    help="races and people per source, so the two-feed claim "
+                         "can be checked rather than assumed")
     args = ap.parse_args()
 
     with getConn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -186,6 +208,18 @@ def main():
         print(f"  found via TF event names: {s['via_tf']:,}")
         print(f"  chair races are a MINORITY of the career for "
               f"{s['minority']:,} -- read those with --review")
+
+        # ! THE PER-PERSON `via` IS A mode(), SO THE SUMMARY CANNOT ANSWER
+        #   "did reading the tfrrs blob find anything". Someone with one
+        #   tfrrs row and three TF rows reports as TF. This counts RACES.
+        if args.census:
+            cur.execute("SELECT via, sport, count(*) AS races, "
+                        "count(DISTINCT person_id) AS people "
+                        "FROM wheelchair_race GROUP BY 1, 2 ORDER BY 3 DESC")
+            print("\ncensus by source:")
+            for r in cur.fetchall():
+                print(f"  {r['via']:<16} {r['sport']:<3} "
+                      f"{r['races']:>7,} races  {r['people']:>6,} people")
 
         if args.review:
             cur.execute(_REVIEW, {"lim": args.review})
