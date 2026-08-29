@@ -16,7 +16,7 @@
 #   3. On the server:   bash deploy/server_restore.sh /srv/xc_predictor.dump
 #
 # The site then serves on port 80. TLS: point the domain's A record at the
-# server, then run:  certbot --nginx -d racecast.com -d www.racecast.com
+# server, then run:  certbot --nginx -d racecast.co -d www.racecast.co
 
 set -euo pipefail
 
