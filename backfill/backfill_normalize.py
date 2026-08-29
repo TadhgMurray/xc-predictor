@@ -46,6 +46,7 @@ from datetime import date            # date.fromisoformat parses the text date c
 sys.path.insert(0, "engine")
 sys.path.insert(0, "scripts")
 
+import psycopg2.errors           # LockNotAvailable, for the swap retry
 import psycopg2.extras
 from database import getConn, initPool
 # poolFor + metersFromDistance are the SINGLE SOURCE OF TRUTH for pool + distance
@@ -2342,6 +2343,58 @@ def _buildIndexes(cur, table, index_defs):
 #     drop it by hand. That is your undo button, and it is why this is safe.
 #   * Index names are renamed back so nothing downstream that hardcodes an index
 #     name breaks.
+# ★ AND IT WAITS IMPATIENTLY, SO THE SITE CAN STAY UP THROUGH A RUN.
+#
+#   Every statement below needs ACCESS EXCLUSIVE, which conflicts with the
+#   ACCESS SHARE any reader holds. With the site stopped that is free. With
+#   it serving, gunicorn's workers are readers -- and Postgres queues lock
+#   requests IN ORDER, so a rename waiting behind one slow page load makes
+#   every NEW request queue behind the rename. One slow query freezes the
+#   whole site, which is a worse outage than the maintenance window it was
+#   meant to avoid, and it arrives unannounced.
+#
+#   lock_timeout makes the attempt give up instead of queueing. On timeout
+#   the queue drains, readers finish, and the next attempt takes the gap.
+#   This is the standard online-DDL pattern and it is the ONLY thing between
+#   "the pipeline runs weekly with the site up" and a random freeze.
+#
+# ! LOCAL, so it dies with the transaction and never leaks into the session
+#   that runs the rest of the merge.
+#
+# ⚠ AND IT MUST BE ALL-OR-NOTHING. The renames are ONE transaction: half a
+#   swap leaves `results_old` claiming `results_pkey` with no `results` at
+#   all. A timeout mid-sequence rolls the whole thing back, which is why the
+#   retry can simply start over.
+SWAP_LOCK_TIMEOUT = "3s"
+SWAP_ATTEMPTS = 20
+SWAP_BACKOFF = 15          # seconds between attempts; 20 x 15s = 5 minutes
+
+
+def _swapWithRetry(cur, body, what):
+    """Run `body(cur)` inside a transaction that refuses to queue for locks."""
+    for attempt in range(1, SWAP_ATTEMPTS + 1):
+        try:
+            cur.execute("BEGIN")
+            cur.execute(f"SET LOCAL lock_timeout = '{SWAP_LOCK_TIMEOUT}'")
+            body(cur)
+            cur.execute("COMMIT")
+            if attempt > 1:
+                print(f"    {what}: took the lock on attempt {attempt}")
+            return
+        except psycopg2.errors.LockNotAvailable:
+            cur.execute("ROLLBACK")
+            print(f"    {what}: readers hold the table, attempt {attempt}"
+                  f"/{SWAP_ATTEMPTS} -- retrying in {SWAP_BACKOFF}s")
+            time.sleep(SWAP_BACKOFF)
+    # ! A FAILURE HERE COSTS NOTHING BUT THE SWAP. The heap and its indexes
+    #   are built and committed; <table>_new survives, so a rerun resumes
+    #   rather than rebuilding. Raising beats swapping half of it.
+    raise RuntimeError(
+        f"{what}: could not take ACCESS EXCLUSIVE in "
+        f"{SWAP_ATTEMPTS} attempts. Something is holding a long read -- "
+        f"check pg_stat_activity. <table>_new is built and waiting.")
+
+
 def _swapTables(cur, table, index_defs):
     # No SET LOGGED here: _buildNewTable already created the table LOGGED.
     # SET LOGGED would rewrite the heap AND all the indexes we just built.
@@ -2354,18 +2407,21 @@ def _swapTables(cur, table, index_defs):
     #       ERROR: relation "results_pkey" already exists
     #   Reproduced on PG16 before this comment was written.
     # Hence: move the OLD names out of the way FIRST, then claim them.
-    cur.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    def _rename(c):
+        c.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
 
-    # Step out of the way. results_pkey -> results_old_pkey, etc.
-    cur.execute(f"ALTER INDEX {table}_pkey RENAME TO {table}_old_pkey")
-    for name, _ in index_defs:
-        cur.execute(f"ALTER INDEX {name} RENAME TO {name}_old")
+        # Step out of the way. results_pkey -> results_old_pkey, etc.
+        c.execute(f"ALTER INDEX {table}_pkey RENAME TO {table}_old_pkey")
+        for name, _ in index_defs:
+            c.execute(f"ALTER INDEX {name} RENAME TO {name}_old")
 
-    # Now the names are free.
-    cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
-    cur.execute(f"ALTER INDEX {table}_new_pkey RENAME TO {table}_pkey")
-    for name, _ in index_defs:
-        cur.execute(f"ALTER INDEX {name}_new RENAME TO {name}")
+        # Now the names are free.
+        c.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+        c.execute(f"ALTER INDEX {table}_new_pkey RENAME TO {table}_pkey")
+        for name, _ in index_defs:
+            c.execute(f"ALTER INDEX {name}_new RENAME TO {name}")
+
+    _swapWithRetry(cur, _rename, f"{table} swap")
     print(f"    swapped: {table}_new -> {table};  old kept as {table}_old")
 
 

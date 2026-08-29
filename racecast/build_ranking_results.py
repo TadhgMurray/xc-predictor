@@ -32,6 +32,7 @@ import argparse
 import datetime
 import concurrent.futures as cf
 
+import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
@@ -550,6 +551,12 @@ _SQL = {
           AND r.date >= %(since)s
     """,
 }
+
+# The swap's patience. See the comment at the rename below.
+_SWAP_LOCK_TIMEOUT = "3s"
+_SWAP_ATTEMPTS = 20
+_SWAP_BACKOFF = 15
+
 
 _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             "race_date", "year", "state", "school", "grade",
@@ -1413,12 +1420,43 @@ def swapIn(conn):
         conn.commit()
         print(f"    [{time.time() - t0:7.1f}s] set logged (both tables)")
 
-        cur.execute("BEGIN")
-        cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
-        cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
-        cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
-        cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
-        conn.commit()
+        # ★ IMPATIENT, SO THE SITE CAN STAY UP THROUGH A PIPELINE RUN.
+        #   These renames need ACCESS EXCLUSIVE, which conflicts with the
+        #   ACCESS SHARE every gunicorn worker holds while it reads. Postgres
+        #   queues lock requests IN ORDER, so a rename waiting behind one slow
+        #   page makes every NEW request queue behind the rename -- one slow
+        #   query freezes the whole site. lock_timeout gives up instead of
+        #   queueing, the backlog drains, and the next attempt takes the gap.
+        #   Same pattern and constants as backfill_normalize._swapWithRetry.
+        #
+        # ⚠ ALL FOUR IN ONE TRANSACTION. Half a swap leaves ranking_results
+        #   renamed away with nothing in its place, and every page 500s. A
+        #   timeout rolls the whole thing back, which is what makes the retry
+        #   safe to simply start over.
+        for attempt in range(1, _SWAP_ATTEMPTS + 1):
+            try:
+                cur.execute("BEGIN")
+                cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
+                cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
+                cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
+                cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
+                cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
+                conn.commit()
+                break
+            except psycopg2.errors.LockNotAvailable:
+                conn.rollback()
+                if attempt == _SWAP_ATTEMPTS:
+                    # ! THE SHADOW SURVIVES, so a rerun resumes at the swap
+                    #   rather than reloading 61.6M rows. Raising beats
+                    #   swapping half of it.
+                    raise RuntimeError(
+                        "ranking_results swap: could not take ACCESS "
+                        f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
+                        "pg_stat_activity for a long read; the shadow "
+                        "tables are loaded and waiting.")
+                print(f"    readers hold the tables, attempt {attempt}"
+                      f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s")
+                time.sleep(_SWAP_BACKOFF)
     print("  swapped. dropping the old copies...")
 
     # The old ranking_results is ~23GB. Timed because a drop that size is not
