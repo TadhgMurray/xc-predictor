@@ -208,6 +208,50 @@ def _dedupJoin(tw: str) -> str:
 def _dedupFilter(tw: str) -> str:
     return "          AND tw.person_id IS NULL" if tw else ""
 
+
+# _chairFilter
+# Purpose:   exclude every athlete who races a chair, by PERSON, from both
+#            sports. Issue #14.
+# Output:    a SQL fragment, or "" when wheelchair_person has not been built.
+# Detail:
+#   ★ THE PERSON, NOT THE RACE, AND THAT IS THE WHOLE CHANGE. The division
+#     match this replaced kept a chair race out of the solve and let the
+#     ATHLETE in. One chair race under an ordinarily-named division sets an
+#     ability a racing chair earned, every ordinary race of theirs is rated
+#     against it, and the pair solve carries the error out to everyone they
+#     raced. engine/wheelchair_flag.py resolves the question once, reading
+#     BOTH feeds -- meets.division is anet-only and a tfrrs wheelchair
+#     division was invisible to the old test.
+#
+#   ! IT DEGRADES RATHER THAN CRASHES. wheelchair_flag.py is a new step and
+#     an older database has not run it; a missing optional table must leave
+#     the engine runnable, exactly as loadCanonicalNames does for
+#     course_canonical. It says so out loud, once, because silently rating
+#     chair athletes is the bug this closes.
+#
+#   ! PROBED ONCE PER PROCESS. Both query builders call this and the pack
+#     builds many queries; to_regclass per call would be a round trip each
+#     time for an answer that cannot change mid-run.
+_CHAIR_READY = None
+
+
+def _chairFilter() -> str:
+    global _CHAIR_READY
+    if _CHAIR_READY is None:
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.wheelchair_person')")
+                _CHAIR_READY = cur.fetchone()[0] is not None
+        except Exception:                               # noqa: BLE001
+            _CHAIR_READY = False
+        if not _CHAIR_READY:
+            print("[db] wheelchair_person not found -- chair athletes will be "
+                  "RATED. Run engine/wheelchair_flag.py --write first.")
+    if not _CHAIR_READY:
+        return ""
+    return ("\n          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc"
+            "\n                          WHERE wc.person_id = r.person_id)")
+
 # loadCanonicalNames
 # Purpose:   {canonical_id_as_text: canonical_name} for display.
 # Output:    dict, or {} if course_canonical does not exist yet.
@@ -404,6 +448,13 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   running divisions -- so this drops the event class without
           --   touching a single runner.
           AND COALESCE(m.division, '') !~* '(wheelchair|seated|ambulator)'
+          -- ★ AND THE ATHLETE TOO, NOT ONLY THE RACE. The line above is a
+          --   RACE filter on an anet-only column; one chair race under an
+          --   ordinarily-named division, or any tfrrs chair division at all,
+          --   slipped past it and set that athlete's ability. See
+          --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
+          --   division test is KEPT: it costs nothing and still holds when
+          --   wheelchair_person has not been built.{_chairFilter()}
 {_dedupFilter(tw)}
     """
 
@@ -453,6 +504,13 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   running divisions -- so this drops the event class without
           --   touching a single runner.
           AND COALESCE(m.division, '') !~* '(wheelchair|seated|ambulator)'
+          -- ★ AND THE ATHLETE TOO, NOT ONLY THE RACE. The line above is a
+          --   RACE filter on an anet-only column; one chair race under an
+          --   ordinarily-named division, or any tfrrs chair division at all,
+          --   slipped past it and set that athlete's ability. See
+          --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
+          --   division test is KEPT: it costs nothing and still holds when
+          --   wheelchair_person has not been built.{_chairFilter()}
 {_dedupFilter(tw)}
     """
 
