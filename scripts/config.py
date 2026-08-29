@@ -80,6 +80,32 @@ PG_CONFIG = {
     "dbname":   _setting("NAME", "xc_predictor"),
     "user":     _setting("USER", "postgres"),
     "password": _setting("PASSWORD"),
+    # ★ ASKED FOR EXPLICITLY, BECAUSE THE DEFAULT IS THE DATABASE'S OWN
+    #   ENCODING AND THAT IS NOT ALWAYS UTF8.
+    #
+    #   The server's cluster was built by server_setup.sh's bare `createdb`,
+    #   which inherits whatever initdb chose -- and initdb on a bare Ubuntu
+    #   box with no LANG set chooses SQL_ASCII. psycopg2 then maps SQL_ASCII
+    #   to Python's `ascii` codec, so the FIRST accented character in the
+    #   corpus raises
+    #
+    #       UnicodeDecodeError: 'ascii' codec can't decode byte 0xc2
+    #
+    #   out of cur.fetchall() -- 0xc2 being the lead byte of a UTF-8 pair.
+    #   The bytes are fine; only the decoder was wrong.
+    #
+    # ! AND SAYING UTF8 IS SAFE AGAINST EITHER SERVER ENCODING. Against a
+    #   UTF8 database this is what already happens and the line is a no-op.
+    #   Against a SQL_ASCII one, SQL_ASCII performs no conversion in either
+    #   direction, so the stored UTF-8 bytes arrive intact and are now
+    #   decoded as what they actually are.
+    #
+    # ⚠ THIS IS A DECODER FIX, NOT AN ENCODING FIX. A SQL_ASCII database
+    #   still cannot validate, collate or upper-case non-ASCII text
+    #   correctly. The real repair is a dump and restore into a UTF8
+    #   database, and server_setup.sh should be creating one:
+    #       createdb --encoding=UTF8 --locale=C.UTF-8 --template=template0
+    "client_encoding": "UTF8",
 }
 
 if not PG_CONFIG["password"]:
