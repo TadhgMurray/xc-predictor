@@ -19,11 +19,20 @@ people that the pack then reads. Issue #14.
   everyone they raced. Excluding the person is the only version of this that
   actually holds.
 
-⚠ AND THE OLD FILTER READ meets.division, WHICH IS anet ONLY. tfrrs keeps its
-  XC division titles in meets_tfrrs.division_distances -> <div_id> ->>
-  'div_name' -- the same blob the distances live in, and the same blind spot
-  that hid Thetford from every distance tool until propose_distances read
-  both sources. A tfrrs wheelchair division was invisible. Both are read here.
+! THE OLD FILTER READ meets.division, WHICH IS anet ONLY, SO THE tfrrs BLOB
+  IS READ HERE TOO -- AND MEASURING IT DID NOT VINDICATE THE REASON I ADDED
+  IT. An earlier draft of this comment asserted that a tfrrs wheelchair
+  division "was invisible" to the old filter, by analogy with Thetford and
+  the distance tools. --census says otherwise: of 2,904 chair races,
+  2,571 come from TF event names and 333 from anet XC divisions, and
+  meets_tfrrs.division_distances -> <div_id> ->> 'div_name' contributes
+  EXACTLY ZERO. tfrrs XC, in this corpus, has no chair divisions.
+
+  The read stays -- it costs one LEFT JOIN, it is correct if such a division
+  ever appears, and a filter that covers both feeds needs no caveat about
+  which one it covers. But it is closing a hole nothing was falling through,
+  not recovering athletes the old filter lost, and the comment should not
+  claim otherwise.
 
 ★ ANY CONFIRMED CHAIR RACE CONDEMNS THE WHOLE CAREER, AND THAT ASYMMETRY IS
   DELIBERATE. The two mistakes are not equal: excluding a runner costs one
@@ -96,7 +105,11 @@ _RACES = """
                COALESCE(m.division,
                         mt.division_distances -> r.div_id::text ->> 'div_name')
                                                               AS label,
-               CASE WHEN COALESCE(m.division, '') ~* '{rx}'
+               -- ! anet FIRST IN THE TEST, NOT JUST IN THE COALESCE. A row
+           --   matching on both would otherwise have to be attributed by
+           --   guess; --census is the only thing that can say which source
+           --   is doing the work, so it must not be an artefact of ordering.
+           CASE WHEN COALESCE(m.division, '') ~* '{rx}'
                     THEN 'anet.division' ELSE 'tfrrs.div_name' END AS via
         FROM   results r
         LEFT   JOIN meets m
