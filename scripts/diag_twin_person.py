@@ -6,6 +6,7 @@ person_ids. Issue #15.
     python scripts/diag_twin_person.py --days 3
     python scripts/diag_twin_person.py --person 12345   # one athlete
     python scripts/diag_twin_person.py --write          # drop the tfrrs copies
+    python scripts/diag_twin_person.py --unwrite        # remove what --write wrote
 
 Run from the PROJECT ROOT. Reads results + meets; --write appends to
 corrections.py and nothing else.
@@ -235,6 +236,56 @@ def writable(pair, seen_key):
     return abs((pair["anet_date"] - pair["tfrrs_date"]).days) <= DEFAULT_DAYS
 
 
+# stripGenerated
+# Purpose: remove every block this tool has ever appended.
+# Detail:
+#   ⚠ THIS EXISTS BECAUSE THE FIRST VERSION SHIPPED A BAD KEY AND WAS RUN.
+#     Before the venue gate, the detector matched on (time, place) alone and
+#     reported 307,466 pairs; --write took the 137,045 that cleared its bar
+#     and appended them to _RESULT_DROP_XC, and the next backfill duly
+#     refused to rate 137,045 mostly-legitimate races. The corrected detector
+#     finds 5,577 pairs and writes at most 1,527.
+#
+#   ! A GENERATED BLOCK MUST BE REMOVABLE AS A UNIT, which is the whole
+#     reason it carries a MARKER and lives in its own dict. Deleting the
+#     lines one by one would be indistinguishable from deleting a
+#     hand-written drop somebody meant.
+#
+#   ! AND THE MERGE LINES GO WITH IT. `_RESULT_DROP_XC.update(...)` after a
+#     deleted dict is a NameError on import, and corrections.py is imported
+#     by the whole backfill -- the exact hazard propose_distances.
+#     stripDeadBlocks was written for.
+def stripGenerated(path=os.path.join("engine", "corrections.py")):
+    text = io.open(path, encoding="utf-8", newline="").read()
+    io.open(path + ".bak", "w", encoding="utf-8", newline="").write(text)
+    lines = text.splitlines(keepends=True)
+    out, i, blocks, dropped = [], 0, 0, 0
+    while i < len(lines):
+        if lines[i].startswith(MARKER):
+            blocks += 1
+            # Walk back over the comment header this tool wrote above it.
+            while out and (out[-1].lstrip().startswith("#") or not out[-1].strip()):
+                out.pop()
+            # Forward to the end of the block: the dict, its closing brace at
+            # column zero, and the two merge lines that follow.
+            while i < len(lines) and not lines[i].startswith("}"):
+                dropped += lines[i].strip().rstrip(",").isdigit()
+                i += 1
+            i += 1                                  # the closing brace
+            while i < len(lines) and (
+                    lines[i].startswith("_RESULT_DROP_XC.update(")
+                    or lines[i].startswith("del _RESULT_DROP_ADDITIONS")):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    io.open(path, "w", encoding="utf-8", newline="").write("".join(out))
+    print(f"[twin] removed {blocks} generated block(s), {dropped:,} result_ids")
+    print(f"       backup at {path}.bak")
+    print("       ⚠ those rows stay unrated until backfill_normalize reruns")
+    return dropped
+
+
 def appendDrops(pairs, path=os.path.join("engine", "corrections.py")):
     """Add the tfrrs copies to _RESULT_DROP_XC. Same block shape as every
     other generated section: its own name, merged, then deleted.
@@ -277,7 +328,16 @@ def main():
     ap.add_argument("--no-rebuild", action="store_true")
     ap.add_argument("--write", action="store_true",
                     help="append the tfrrs copies to _RESULT_DROP_XC")
+    ap.add_argument("--unwrite", action="store_true",
+                    help="remove every block this tool has appended, and stop")
     args = ap.parse_args()
+
+    # ! FIRST, AND IT TOUCHES NO DATABASE. Undoing a bad write must not
+    #   require the corpus to be readable, or a mistake made during a
+    #   pipeline run could not be undone until the pipeline finished.
+    if args.unwrite:
+        stripGenerated()
+        return
 
     with getConn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         if not args.no_rebuild:
