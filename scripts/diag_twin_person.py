@@ -29,12 +29,20 @@ corrections.py and nothing else.
   So building more dedup does not fix this, and #9c's canon-key sweep will
   not catch it.
 
-★ THE SIGNAL IS (time, place), AND place IS THE HALF THAT MAKES IT SAFE.
-  Two athletes can run 15:45.5 on the same weekend. Two athletes cannot both
-  finish 49th in the same race. Requiring an exact finishing position as well
-  as a time to the hundredth is what turns "suspiciously similar" into "this
-  is one row written twice", with no name matching and no fuzzy scoring
-  anywhere in the test.
+★ THE SIGNAL IS (venue, time, place), AND ALL THREE ARE LOAD-BEARING.
+  Two athletes cannot both finish 49th in one race, so an exact finishing
+  position beside an exact time turns "suspiciously similar" into "one row
+  written twice" -- with no name matching and no fuzzy scoring anywhere.
+
+⚠ AND THE VENUE IS NOT OPTIONAL, WHICH THE FIRST VERSION OF THIS FILE GOT
+  WRONG AT SOME COST. It joined on (time, place) alone so that the
+  one-day-apart case could still match, and reported 307,466 duplicates
+  across 161,413 people -- Jonathon Bacigalupi at Killens Pond paired with
+  Nick Riley at Cass Benton Park, one tfrrs id matching three unrelated anet
+  ones. Pre-2015 times are recorded to WHOLE SECONDS, so the hundredths
+  carry no information, and 15th place in 20:12 recurs across every
+  September Saturday in the corpus. The venue is what makes the rest mean
+  anything; the date is the field allowed to disagree, not the place.
 
 ⚠ WHAT IT COSTS WHEN IT IS WRONG, AND WHY --write ONLY DROPS. The clean
   repair is to move the rows to the right person. This does not do that:
@@ -80,8 +88,31 @@ _KEYS = """
                r.canon_meet_id,
                r.date::date                            AS d,
                (r.time_seconds * 100)::bigint          AS cs,
-               r.place
+               r.place,
+               -- ★ THE VENUE, AND IT IS THE GATE THAT MAKES THE REST MEAN
+               --   ANYTHING. The first version of this file joined on
+               --   (time, place) alone, so a race could match another race
+               --   at a different course on the same weekend. Measured on
+               --   the corpus: 307,466 "duplicates" across 161,413 people --
+               --   Jonathon Bacigalupi at Killens Pond paired with Nick
+               --   Riley at Cass Benton Park. Pre-2015 times are recorded to
+               --   WHOLE SECONDS, so the hundredths carry no information and
+               --   15th place in 20:12 happens many times every September.
+               --
+               -- ⚠ AND IT CANNOT BE STRING EQUALITY, because the two feeds
+               --   write the same venue differently -- "WakeMed Soccer Park"
+               --   against "WakeMed Soccer Park -- Cary NC". Exact matching
+               --   would reject the very case this file was written for. The
+               --   first 12 alphanumerics survive that suffix and still
+               --   separate one park from another.
+               left(regexp_replace(
+                        lower(COALESCE(ma.course_name, mt.venue_name, '')),
+                        '[^a-z0-9]', '', 'g'), 12)     AS venue_key
         FROM   results r
+        LEFT   JOIN meets ma
+                    ON ma.div_id = r.div_id AND r.source = 'anet'
+        LEFT   JOIN meets_tfrrs mt
+                    ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
         WHERE  r.person_id IS NOT NULL
           AND  r.time_seconds IS NOT NULL AND r.time_seconds > 0
           -- ⚠ place 0 AND NULL BOTH MEAN "NOT RECORDED", and treating either
@@ -89,7 +120,8 @@ _KEYS = """
           --   other one. The test has no strength without it, so rows
           --   without a place are simply not examined.
           AND  r.place IS NOT NULL AND r.place > 0;
-    CREATE INDEX ON twin_key (cs, place);
+    DELETE FROM twin_key WHERE venue_key = '';
+    CREATE INDEX ON twin_key (cs, place, venue_key);
     CREATE INDEX ON twin_key (person_id);
     ANALYZE twin_key;
 """
@@ -110,6 +142,7 @@ _PAIRS = """
            t.meet_id        AS tfrrs_meet,
            (a.canon_meet_id IS NOT NULL
             AND a.canon_meet_id = t.canon_meet_id) AS shares_canon,
+           a.venue_key,
            ma.course_name,
            an.first_name, an.last_name,
            -- how many OTHER races each id holds, so a whole-career
@@ -120,6 +153,9 @@ _PAIRS = """
     JOIN   twin_key t
            ON  t.cs    = a.cs
            AND t.place = a.place
+           -- ★ SAME GROUND, ALWAYS -- even when the dates disagree. See
+           --   venue_key: without this the test has no discriminating power.
+           AND t.venue_key = a.venue_key
            AND t.d BETWEEN a.d - %(days)s AND a.d + %(days)s
            -- ★ THE DEFECT ITSELF: same race, different person.
            AND t.person_id <> a.person_id
@@ -146,7 +182,12 @@ _PAIRS = """
 #          placeholder), and dropping on it would delete real rows in bulk.
 #          Only a pair that stands alone is acted on.
 def writable(pair, seen_key):
-    if seen_key[(pair["place"], round(pair["secs"], 2))] != 1:
+    # ! THE UNIQUENESS KEY CARRIES THE VENUE TOO. Keyed on (place, time)
+    #   alone it counted collisions across the whole corpus, so a genuine
+    #   duplicate at a busy venue was held back by an unrelated race
+    #   elsewhere that happened to share a time.
+    if seen_key[(pair["place"], round(pair["secs"], 2),
+                 pair["venue_key"])] != 1:
         return False
     return abs((pair["anet_date"] - pair["tfrrs_date"]).days) <= DEFAULT_DAYS
 
@@ -210,7 +251,8 @@ def main():
         return
 
     from collections import Counter
-    seen_key = Counter((p["place"], round(p["secs"], 2)) for p in pairs)
+    seen_key = Counter((p["place"], round(p["secs"], 2), p["venue_key"])
+                       for p in pairs)
 
     people = {p["tfrrs_person"] for p in pairs}
     same_day = sum(1 for p in pairs if p["anet_date"] == p["tfrrs_date"])
