@@ -2099,9 +2099,34 @@ def _bufferToCopyText(updates):
 #           the payload lands or the whole statement raises. That is stronger
 #           than a rowcount, not weaker.
 def _copyToStaging(write_conn, table, updates):
-    with write_conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} (result_id, nt) FROM STDIN",
-                        _bufferToCopyText(updates))
+    # ★ A SKIPPED ROW IS OMITTED FROM STAGING, NOT STAGED AS NULL -- AND ON
+    #   THIS PATH THAT IS HOW IT BECOMES NULL.
+    #
+    #   _accumulate queues (None, rid) for every skip so the UPDATE fallback
+    #   erases a fossil normalized_time in place. That is right for UPDATE and
+    #   fatal here: this table is `nt real NOT NULL`, so the first batch
+    #   carrying any skip died with
+    #
+    #       NotNullViolation: null value in column "nt" of relation
+    #       "bf_staging_xc"        COPY line 14: "60176255 \N"
+    #
+    #   and the whole COPY is one statement, so the batch took the good rows
+    #   down with it.
+    #
+    # ! AND OMITTING THEM IS NOT A COMPROMISE -- IT IS THE DESIGN.
+    #   _mergeSelectList emits `s.nt AS normalized_time` with NO COALESCE, so
+    #   a row that staging does not mention comes out of the LEFT JOIN as
+    #   NULL already. Staging the NULL would write the same value the join
+    #   produces for free. _accumulate's own comment says as much.
+    #
+    # ! len(updates) STILL, NOT len(rows). The caller counts these as resolved,
+    #   and a skip IS resolved -- to NULL. Returning the copied count would
+    #   silently restate the census the drain loop already keeps.
+    rows = [u for u in updates if u[0] is not None]
+    if rows:
+        with write_conn.cursor() as cur:
+            cur.copy_expert(f"COPY {table} (result_id, nt) FROM STDIN",
+                            _bufferToCopyText(rows))
     write_conn.commit()                    # bounded memory; the table is unlogged
     return len(updates)
 
