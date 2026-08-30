@@ -365,6 +365,30 @@ def parseFilters(args):
     if pool not in allowed:
         return None, f"pool must be one of {sorted(allowed)}"
 
+    # ★ GENDER IS ONLY A SUFFIX ON THE POOL, WHICH IS WHY 'all' MIXES IT.
+    #
+    #   Every pool name carries its gender -- hs_m, college_f -- so filtering
+    #   by pool has always filtered by gender as a side effect, and nothing
+    #   ever needed a gender axis. Then the Best times board added 'all',
+    #   _whereClauses correctly adds no pool clause for it, and the only
+    #   thing constraining gender vanished with it. A board of the fastest
+    #   5000s then ranks men and women together, which is not a board.
+    #
+    # ! SO 'all' MEANS ALL LEVELS, NOT ALL PEOPLE. gender=m|f narrows to the
+    #   pools ending in that suffix; omitted, behaviour is exactly as before,
+    #   so no existing link changes meaning.
+    #
+    # ⚠ AND IT IS REFUSED WHERE IT WOULD LIE. On a gendered pool the suffix
+    #   already decides, and accepting a contradicting gender ("pool=hs_m&
+    #   gender=f") would return an empty board with no explanation. Say so.
+    gender = (args.get("gender") or "").strip().lower() or None
+    if gender is not None:
+        if gender not in ("m", "f"):
+            return None, "gender must be m or f"
+        if pool != "all" and not pool.endswith(f"_{gender}"):
+            return None, (f"pool {pool} is already {pool.rsplit('_', 1)[1]}; "
+                          f"drop the gender filter or change the pool")
+
     distance = None
     if board == "pr":
         # ⚠ THE COLUMN IS NEWER THAN THE TABLE. `distance` is written by
@@ -417,6 +441,7 @@ def parseFilters(args):
         "distance": distance,
         # Lists, not scalars -- see _multiValue. None when absent, so
         # _whereClauses still adds no clause at all for an unset filter.
+        "gender": gender,
         "state":  _multiValue(args, "state", upper=True),
         "course": course,
         "school": _multiValue(args, "school"),
@@ -493,6 +518,13 @@ def _whereClauses(f, params, with_dates):
     if f["pool"] != "all":
         params["pool"] = f["pool"]
         parts.append(" AND pool = %(pool)s")
+    elif f.get("gender"):
+        # ! A SUFFIX TEST, NOT AN IN-LIST. The pools are hs_m / college_f and
+        #   so on, so one gender is every pool ending '_m'. LIKE on a trailing
+        #   two characters cannot use the pool index either way, and this
+        #   stays right if a level is ever added.
+        params["gender"] = f"%\_{f['gender']}"
+        parts.append(" AND pool LIKE %(gender)s")
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A
