@@ -380,7 +380,64 @@ td.no-break { white-space: nowrap; }
     letter-spacing: 0.05em;
     color: #6b7280;
 }
- 
+
+/* /meets filter bar. A plain GET form, so these are real <input>/<select>
+   elements rather than the rankings page's combo divs -- the browser gives
+   us focus, keyboard and autofill for nothing, and the resulting URL is
+   shareable. Laid out as a wrapping row so it collapses to one column on a
+   phone with no media query. */
+.meets-page .meet-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+    margin: 1rem 0 0.5rem;
+    padding: 0.85rem 1rem;
+    background: #faf9f6;
+    border: 1px solid #e6e5e0;
+    border-radius: 8px;
+}
+.meets-page .meet-filters .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.meets-page .meet-filters label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+}
+.meets-page .meet-filters input,
+.meets-page .meet-filters select {
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    min-width: 9rem;
+}
+.meets-page .meet-filters input.narrow { min-width: 5.5rem; }
+.meets-page .meet-filters button {
+    padding: 0.45rem 1.1rem;
+    border: 1px solid #1f2937;
+    border-radius: 4px;
+    background: #1f2937;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.meets-page .meet-filters button:hover { background: #111827; }
+.meets-page .meet-filters .clear-filters {
+    display: inline-block;
+    padding: 0.45rem 0.2rem;
+    font-size: 0.9rem;
+    color: #6b7280;
+}
+
 /* pool chips hide a pool everywhere at once */
 body.hide-hs_m      .pool-block[data-pool="hs_m"],
 body.hide-hs_f      .pool-block[data-pool="hs_f"],

@@ -373,8 +373,19 @@ def meets_page():
     ?course=X is a different page wearing the same clothes: every meet ever
     held at one course, grouped by YEAR (a venue spans decades; months are
     for the rolling recent list), from a live query with no results floor.
-    The course page's meets table links here as its view-all."""
+    The course page's meets table links here as its view-all.
+
+    ?state= / ?school= / ?q= / ?year= is the THIRD mode: a live filtered
+    query (meets_filter.py), also grouped by year because it is a history
+    rather than a rolling window. The school page's meet table links here as
+    its view-all, carrying ?school= and ?sport=."""
     from panels import RECENT_MIN_RESULTS
+    # ! ALIASED. `parseFilters` at module scope is rankings' own, and a
+    #   function-local rebinding of that name reads like a bug even where it
+    #   is not one.
+    from meets_filter import (parseFilters as parseMeetFilters, filteredMeets,
+                              groupByYear, describe, MAX_MEETS)
+    from rankings import US_STATES
 
     course = (request.args.get("course") or "").strip()
     if course:
@@ -390,13 +401,33 @@ def meets_page():
                 current = (label, [])
                 years.append(current)
             current[1].append(m)
+        # filters/states ride along so meets.html sees one context shape in
+        # all three modes -- Jinja's default Undefined RAISES on attribute
+        # access, so a missing name here is a 500 on the course view.
         return render_template("meets.html", course=course, months=years,
-                               n_meets=len(rows), sport="XC",
+                               n_meets=len(rows), sport="XC", filters=None,
+                               states=US_STATES,
                                min_results=RECENT_MIN_RESULTS)
 
-    sport = (request.args.get("sport") or "XC").strip().upper()
-    if sport not in ("XC", "TF"):
-        sport = "XC"
+    # ★ THE THIRD MODE: any filter beyond sport, and the page stops being the
+    #   precompute and runs its own query. Filtering homepage_recent would
+    #   answer about thirty meets while appearing to answer about the corpus
+    #   -- see meets_filter.py's opening note.
+    f = parseMeetFilters(request.args)
+    if f["active"]:
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                rows = filteredMeets(cur, f)
+        return render_template("meets.html", sport=f["sport"], filters=f,
+                               months=groupByYear(rows), n_meets=len(rows),
+                               filter_text=describe(f),
+                               capped=(len(rows) >= MAX_MEETS),
+                               max_meets=MAX_MEETS,
+                               states=US_STATES,
+                               min_results=RECENT_MIN_RESULTS)
+
+    sport = f["sport"]
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -418,6 +449,7 @@ def meets_page():
         current[1].append(m)
 
     return render_template("meets.html", sport=sport, months=months,
+                           filters=f, states=US_STATES,
                            min_results=RECENT_MIN_RESULTS)
 
 
