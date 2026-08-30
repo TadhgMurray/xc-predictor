@@ -491,9 +491,20 @@ function makeCombo(host) {
   const input = host.querySelector(".combo-input");
   const opts = host.querySelector(".combo-opts");
 
+  /* ★ A SEARCHED FIELD'S LABEL IS NOT ITS VALUE. Schools are indexed as
+     "Tufts (MA)" -- the site-wide display convention -- while
+     ranking_results.school stores "Tufts". So the panel and the trigger show
+     the label, and everything that filters sends the value.
+
+     `seen` remembers labels for values already chosen, because the search
+     box is cleared afterwards: without it, picking Tufts and then typing
+     something else turns the trigger back into a bare "Tufts". */
+  const seen = new Map();
+
   function labelFor(value) {
     const hit = options.find((o) => o[0] === value);
-    return hit ? hit[1] : value;
+    if (hit) return hit[1];
+    return seen.get(value) || value;
   }
 
   /* ★ THE TRIGGER NEVER CHANGES SIZE. Listing the selections on the button is
@@ -520,9 +531,9 @@ function makeCombo(host) {
       /* Chosen first so they can always be unticked, then whatever the last
          search returned. Without the chosen rows, a school you added would
          vanish from the panel the moment you cleared the box. */
-      const picked = [...chosen].map((v) => row(v, v, null));
-      const hits = found.filter((f) => !chosen.has(f))
-                        .map((f) => row(f, f, null));
+      const picked = [...chosen].map((v) => row(v, labelFor(v), null));
+      const hits = found.filter((f) => !chosen.has(f.v))
+                        .map((f) => row(f.v, f.label, null));
       opts.innerHTML = picked.concat(hits).join("") ||
         `<div class="combo-none">Type at least two letters</div>`;
       return;
@@ -556,11 +567,20 @@ function makeCombo(host) {
     try {
       const res = await fetch("/search/api?kind=" + kind + "&q=" + encodeURIComponent(q));
       const rows = await res.json();
-      found = (rows || [])
-        .filter((r) => r.kind === kind)
-        .map((r) => r.label)
-        .filter((v, i, a) => v && a.indexOf(v) === i)
-        .slice(0, 40);
+      /* ! DEDUPED ON THE VALUE, NOT THE LABEL. A school split across two
+         real state clusters is indexed twice -- "Tufts (MA)" and
+         "Tufts (CT)" -- and both filter to the same bare "Tufts", so
+         deduping on the label would offer one option that does nothing
+         different from the other. */
+      const byValue = new Map();
+      for (const r of (rows || [])) {
+        if (r.kind !== kind) continue;
+        const v = r.value || r.label;
+        if (!v || byValue.has(v)) continue;
+        byValue.set(v, r.label || v);
+        seen.set(v, r.label || v);
+      }
+      found = [...byValue.entries()].slice(0, 40).map(([v, label]) => ({ v, label }));
     } catch (err) {
       found = [];
     }

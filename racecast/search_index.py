@@ -204,6 +204,26 @@ def _load_athletes(conn):
     return total
 
 
+# ! THE INVERSE OF THE LABEL _load_schools BUILDS, AND IT LIVES HERE FOR THAT
+#   REASON. Schools are indexed as f"{s} ({st})" -- "Tufts (MA)" -- because
+#   that is the site-wide display convention. But ranking_results.school
+#   stores the BARE string, so any picker that filters by school has to send
+#   "Tufts". A copy of this rule in rankings.js would be a copy that drifts
+#   the first time the label changes.
+#
+# ⚠ TWO UPPERCASE LETTERS IN TRAILING PARENTHESES, ANCHORED. Loose enough and
+#   it would eat a real name; a school called "Academy (Old)" keeps its
+#   suffix because "Old" is not two capitals.
+_STATE_SUFFIX = re.compile(r"\s+\(([A-Z]{2})\)$")
+
+
+def bareSchool(label):
+    """'Tufts (MA)' -> 'Tufts'. Unlabelled names come back untouched."""
+    if not label:
+        return label
+    return _STATE_SUFFIX.sub("", label)
+
+
 def _load_schools(conn):
     """One row per real-world school, sorted by athlete count.
 

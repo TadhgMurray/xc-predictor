@@ -217,6 +217,11 @@ import school_identity
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
 
+# ! FOR bareSchool ONLY -- the inverse of the "(ST)" label convention, which
+#   /search/api needs so a picker can show one string and filter on another.
+#   No load, no cache: it is a regex beside the code that builds the label.
+import search_index
+
 
 @app.errorhandler(404)
 def not_found(_err):
@@ -3860,6 +3865,17 @@ def search_api():
                 LIMIT  %(lim)s
             """, params)
             rows = cur.fetchall()
+
+    # ★ A SCHOOL ROW CARRIES ITS FILTER VALUE AS WELL AS ITS LABEL, because
+    #   they are not the same string. The index stores "Tufts (MA)" -- the
+    #   display convention -- while ranking_results.school stores "Tufts".
+    #   A picker that used the label for both showed the right thing and
+    #   filtered on a value that matches no row.
+    #
+    # ! ADDED FOR EVERY KIND, so a caller never has to know which kinds carry
+    #   a suffix. bareSchool leaves an unsuffixed label alone.
+    for _r in rows:
+        _r["value"] = search_index.bareSchool(_r.get("label"))
 
     return jsonify(rows)
 
