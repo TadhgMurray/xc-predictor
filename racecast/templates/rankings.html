@@ -388,7 +388,11 @@
   <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
   <div id="results"></div>
 
+  {# ★ FIRST, THEN PREV. Deep in a board, "Prev" is a fifty-row crawl back to
+     the top -- the pager could walk you forward indefinitely and only
+     backward one step at a time. #}
   <div class="pager hidden" id="pager">
+    <button id="first" title="Back to the first page">&laquo; First</button>
     <button id="prev">&larr; Prev</button>
     <span class="page" id="pageLabel"></span>
     <button id="next">Next &rarr;</button>

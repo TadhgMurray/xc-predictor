@@ -1303,6 +1303,10 @@ async function load() {
       $("pager").classList.remove("hidden");
     }
 
+    /* Both back-controls share one condition: there is nothing behind
+       page one. Disabling them together stops "First" looking live on a
+       board that is already at its top. */
+    $("first").disabled = state.offset === 0;
     $("prev").disabled = state.offset === 0;
     // The API sends no total count, so "is there a next page" is INFERRED: a
     // full page probably has more behind it, a short page is the end. The only
@@ -1487,6 +1491,16 @@ $("pool").addEventListener("change", () => {
 /* Kept as an explicit refresh -- it costs nothing and it is where the eye
    goes when someone wants to be sure the board matches the controls. */
 $("apply").addEventListener("click", applyNow);
+
+/* ★ FIRST IS NOT "PREV, REPEATEDLY". Fifty rows a click is not a way back
+   from page twelve, and `next` will happily take you there. Same reset the
+   filter controls use -- offset to zero and reload -- so the two paths back
+   to the top of a board cannot drift apart. */
+$("first").addEventListener("click", () => {
+  if (state.offset === 0) return;
+  state.offset = 0;
+  load();
+});
 
 $("prev").addEventListener("click", () => {
   state.offset = Math.max(0, state.offset - PAGE_SIZE);
