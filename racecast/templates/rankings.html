@@ -371,7 +371,11 @@
      filter searches both columns -- see rankings.UNIT_COLUMNS. #}
   <div class="unit-row hs-units hidden" id="hs-units">
     <div class="field not-courses">
-      <label>State division / class</label>
+      {# The hint's TEXT is set by rankings.js, not a class toggle -- an empty
+         span occupies nothing, so there is no second state to keep in step.
+         syncUnitDeps owns it. #}
+      <label>State division / class <span class="dep-hint"
+             data-dep="state_div"></span></label>
       <div class="combo" data-field="state_div"></div>
     </div>
     <div class="field not-courses">
@@ -379,7 +383,8 @@
       <div class="combo" data-field="section"></div>
     </div>
     <div class="field not-courses">
-      <label>Section division</label>
+      <label>Section division <span class="dep-hint"
+             data-dep="section_div"></span></label>
       <div class="combo" data-field="section_div"></div>
     </div>
     <div class="field not-courses">

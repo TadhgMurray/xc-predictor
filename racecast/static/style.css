@@ -1124,6 +1124,16 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .rankings-page .field.is-locked { opacity: 0.45; }
 .rankings-page .field.is-locked .combo { pointer-events: none; }
 
+/* ! FULL OPACITY DESPITE THE DIMMED FIELD. The hint is the one thing in a
+   locked field that must stay readable -- it is the reason the rest is
+   dimmed. */
+.rankings-page .dep-hint {
+  font-weight: normal;
+  font-size: 0.82em;
+  color: #777;
+  opacity: 1;
+}
+
 /* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
 /*
  * ★ WHY THESE NEED display:inline EXPLICITLY.

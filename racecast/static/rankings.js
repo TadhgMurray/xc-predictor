@@ -1556,11 +1556,16 @@ function syncUnitDeps() {
     if (!host) continue;
     const field = host.closest(".field");
     const ready = Boolean(combos[parent] && combos[parent].values().length);
+    const parentLabel = parent === "state" ? "State" : "Section";
     field.classList.toggle("is-locked", !ready);
     field.title = ready ? "" :
-      `Choose a ${parent === "state" ? "State" : "Section"} first — `
-      + `every ${parent === "state" ? "state" : "section"} has its own `
-      + `divisions, so this filter needs one to mean anything.`;
+      `Choose a ${parentLabel} first — every ${parentLabel.toLowerCase()} `
+      + `has its own divisions, so this filter needs one to mean anything.`;
+    /* ★ SAID ON THE LABEL, NOT ONLY IN A TOOLTIP. A greyed control with no
+       visible reason reads as broken; a tooltip is only found by someone who
+       already suspects there is one. */
+    const hint = field.querySelector(`.dep-hint[data-dep="${child}"]`);
+    if (hint) hint.textContent = ready ? "" : `(select ${parentLabel} first)`;
     if (!ready && combos[child] && combos[child].values().length) {
       combos[child].set([]);
     }
