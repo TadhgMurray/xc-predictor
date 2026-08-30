@@ -1530,10 +1530,20 @@ $("scope").addEventListener("change", applyNow);
 /* ★ THE FIELD FOLLOWS THE POOL. A Gender control beside a pool that already
    names one is a control that can only be wrong, so it appears exactly when
    the pool stops deciding. */
+/* ⚠ THREE STATES, NOT TWO. The first version asked "is this college?" and
+   gave everything else the high-school group -- so a middle school board
+   offered League, Section and Division, none of which a middle school is
+   placed into. Middle school and elementary get NO unit filters until
+   somebody decides what a middle school's units even are (issue #56). */
 function syncUnitRows() {
-  const isCollege = $("pool").value.startsWith("college");
-  $("college-units").classList.toggle("hidden", !isCollege);
-  $("hs-units").classList.toggle("hidden", isCollege);
+  const pool = $("pool").value;
+  const level = pool === "all" ? "" : pool.split("_")[0];
+  $("college-units").classList.toggle("hidden", level !== "college");
+  $("hs-units").classList.toggle("hidden", level !== "hs");
+  /* The whole disclosure goes with them -- an empty "League & division
+     filters" that opens onto nothing is worse than no control. */
+  $("units").classList.toggle("hidden",
+                              level !== "college" && level !== "hs");
 }
 
 $("pool").addEventListener("change", syncUnitRows);

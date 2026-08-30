@@ -1115,7 +1115,8 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    control and both unit groups rendered at once, on a board where each
    should have shown one or none. */
 .rankings-page .field.hidden,
-.rankings-page .unit-row.hidden { display: none; }
+.rankings-page .unit-row.hidden,
+.rankings-page details.units.hidden { display: none; }
 
 /* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
 /*
