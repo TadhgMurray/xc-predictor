@@ -126,6 +126,20 @@
       </select>
     </div>
 
+    {# ★ ONLY MEANINGFUL WHEN THE POOL IS "All". Every other pool name carries
+       its gender as a suffix -- hs_m, college_f -- so the pool already
+       decides, and the API refuses a gender that contradicts it rather than
+       returning an empty board. rankings.js hides this field unless the pool
+       is All. #}
+    <div class="field not-courses gender-field hidden" id="gender-field">
+      <label for="gender">Gender</label>
+      <select id="gender">
+        <option value="">Any</option>
+        <option value="m">Men</option>
+        <option value="f">Women</option>
+      </select>
+    </div>
+
     {# Multi-value comboboxes. Type or pick; Enter adds a token.
 
        ★ NO PLACEHOLDER TEXT. Grey example text inside an empty filter reads as

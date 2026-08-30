@@ -203,6 +203,13 @@ function buildQuery() {
     offset: state.offset
   });
 
+  /* ! SENT ONLY WHEN IT MEANS SOMETHING. On a gendered pool the API refuses
+     a gender filter -- correctly, since one of the two would have to be
+     ignored -- so sending an empty or contradicting value would turn a
+     working board into a 400. */
+  const gender = $("gender") ? $("gender").value : "";
+  if (gender && $("pool").value === "all") query.set("gender", gender);
+
   /* The multi-value filters. Several chips become ONE comma-separated
      parameter -- the API splits it and binds the list as a Postgres array, so
      "CA,TX" is one bind, not two clauses. An empty combo sends NOTHING, which
@@ -1491,6 +1498,18 @@ $("results").addEventListener("click", (e) => {
 function applyNow() { state.offset = 0; load(); }
 
 $("scope").addEventListener("change", applyNow);
+
+/* ★ THE FIELD FOLLOWS THE POOL. A Gender control beside a pool that already
+   names one is a control that can only be wrong, so it appears exactly when
+   the pool stops deciding. */
+function syncGenderField() {
+  const on = $("pool").value === "all";
+  $("gender-field").classList.toggle("hidden", !on);
+  if (!on) $("gender").value = "";
+}
+$("pool").addEventListener("change", syncGenderField);
+$("gender").addEventListener("change", applyNow);
+syncGenderField();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
 $("date_from").addEventListener("change", applyNow);
@@ -1604,6 +1623,8 @@ function applyUrlFilters(params) {
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
+  setSelectFromUrl("gender", params.get("gender"));
+  syncGenderField();
   /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the
        teams board with the course's own distance -- 2900m is real there --
        and setting a <select> to a value it has no option for silently
