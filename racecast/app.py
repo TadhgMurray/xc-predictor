@@ -4400,6 +4400,20 @@ def api_rankings():
     # a pool=all board the hs column can read unsorted; rankings.js says so.
     hs_movable = stampBoardRows(rows, rating_keys=("rating", "best_rating"))
 
+    # ★ THE SCHOOL'S HOME STATE, BESIDE THE RESULT'S STATE, NOT INSTEAD OF IT.
+    #   ranking_results.state says where the RACE was, which is the right
+    #   answer for a performance and the wrong one for a school column: a
+    #   Tufts board rendered "Tufts IA", "Tufts CT" and "Tufts MA" down one
+    #   column, three labels for one school, because a Tufts athlete raced in
+    #   Iowa. school_identity has known the home state all along.
+    #
+    # ! ADDED, NOT SUBSTITUTED. Boards that want the race's location keep it;
+    #   only the school cell prefers this. And an unknown school gets None,
+    #   so the old behaviour is exactly what happens when the identity table
+    #   has nothing to say.
+    for _r in rows:
+        _r["school_state"] = school_identity.primaryState(_r.get("school"))
+
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not
                     #   apply to a board of raw times. The per-state offset is

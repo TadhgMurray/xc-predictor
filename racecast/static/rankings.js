@@ -872,7 +872,7 @@ function renderAbility(rows) {
     <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       <td>${r.year}</td>
@@ -906,7 +906,7 @@ function renderPerformance(rows) {
     <tr>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
@@ -948,7 +948,7 @@ function renderPr(rows) {
     <tr>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
