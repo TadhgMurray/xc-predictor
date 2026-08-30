@@ -24,9 +24,11 @@ const PAGE_SIZE = 50;
 /* College is division/region/conference; high school is league/division/
    section/district/county/class. The sets do not overlap, so one group is
    shown at a time -- see the note in rankings.html. */
-const UNIT_KEYS = ["division", "conference", "region", "league",
-                   "state_div", "section", "section_div", "district",
-                   "county", "class"];
+/* Biggest grouping first, league last. college / high school, and the two
+   sets never mix -- see the note in rankings.py. */
+const COLLEGE_UNITS = ["division", "region", "conference"];
+const HS_UNITS = ["state_div", "section", "section_div", "league"];
+const UNIT_KEYS = COLLEGE_UNITS.concat(HS_UNITS);
 
 /*
  * Page state.
@@ -214,14 +216,15 @@ function buildQuery() {
      URL stays short enough to share. _multiValue on the server splits on
      commas, so "DI, DII" is two values and the spaces do not survive. */
   for (const k of UNIT_KEYS) {
-    const el = $(k + "-input");
-    const v = el ? el.value.trim() : "";
-    /* ! ONLY FROM THE VISIBLE GROUP. A college division left in the box
-       while the pool says hs would filter a high school board by an NCAA
-       division and return nothing, with no clue why. */
-    if (v && !el.closest(".unit-row").classList.contains("hidden")) {
-      query.set(k, v);
+    const host = document.querySelector(`.combo[data-field="${k}"]`);
+    /* ! ONLY FROM THE VISIBLE GROUP. A college division left selected while
+       the pool says hs would filter a high school board by an NCAA division
+       and return nothing, with no clue why. */
+    if (!host || host.closest(".unit-row").classList.contains("hidden")) {
+      continue;
     }
+    const vals = combos[k] ? combos[k].values() : [];
+    if (vals.length) query.set(k, vals.join(","));
   }
 
   /* The multi-value filters. Several chips become ONE comma-separated
@@ -447,6 +450,16 @@ const PANEL = {
      Column-major over a variable-length result list would move every entry
      each time a letter is typed. One column, top to bottom, is already the
      reading order. */
+  /* ★ SEARCHED, LIKE School, BUT AGAINST /api/units. Units have no
+     search_index rows -- that table holds things with a page, and a league
+     has none -- so the combo needs a per-field endpoint rather than the
+     hardcoded /search/api. Issue #55. */
+  ...Object.fromEntries(
+    ["division", "region", "conference",
+     "state_div", "section", "section_div", "league"].map((k) => [k, {
+       cols: 1, width: 320, searched: true, kind: k,
+       endpoint: "/api/units", hint: "Search\u2026",
+     }])),
   school: { cols: 1, width: 340, searched: true, kind: "school",
             hint: "Search schools\u2026" },
   /* The course specifier (Performances + Best times). Same searched shape
@@ -586,7 +599,8 @@ function makeCombo(host) {
     const q = input.value.trim();
     if (q.length < 2) { found = []; renderOptions(); return; }
     try {
-      const res = await fetch("/search/api?kind=" + kind + "&q=" + encodeURIComponent(q));
+      const res = await fetch((cfg.endpoint || "/search/api")
+        + "?kind=" + kind + "&q=" + encodeURIComponent(q));
       const rows = await res.json();
       /* ! DEDUPED ON THE VALUE, NOT THE LABEL. A school split across two
          real state clusters is indexed twice -- "Tufts (MA)" and
@@ -1524,13 +1538,6 @@ function syncUnitRows() {
 
 $("pool").addEventListener("change", syncUnitRows);
 
-/* Enter in a unit box applies, like every other filter input. */
-UNIT_KEYS.forEach((k) => {
-  const el = $(k + "-input");
-  if (el) el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); applyNow(); }
-  });
-});
 syncUnitRows();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
@@ -1647,8 +1654,7 @@ function applyUrlFilters(params) {
   setSelectFromUrl("scope", params.get("scope"));
   syncUnitRows();
   for (const k of UNIT_KEYS) {
-    const el = $(k + "-input");
-    if (el && params.get(k)) el.value = params.get(k);
+    if (combos[k] && params.get(k)) combos[k].set(params.get(k).split(","));
   }
   syncGenderField();
   /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the

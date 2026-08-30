@@ -353,49 +353,38 @@
     <summary>League &amp; division filters</summary>
   <div class="unit-row college-units" id="college-units">
     <div class="field not-courses">
-      <label for="division-input">Division</label>
-      <input id="division-input" autocomplete="off" placeholder="DI, DII"
-             title="NCAA division. Comma-separated.">
+      <label>Division</label>
+      <div class="combo" data-field="division"></div>
     </div>
     <div class="field not-courses">
-      <label for="conference-input">Conference</label>
-      <input id="conference-input" autocomplete="off" placeholder="PAC-12">
+      <label>Region</label>
+      <div class="combo" data-field="region"></div>
     </div>
     <div class="field not-courses">
-      <label for="region-input">Region</label>
-      <input id="region-input" autocomplete="off" placeholder="WEST">
+      <label>Conference</label>
+      <div class="combo" data-field="conference"></div>
     </div>
   </div>
 
+  {# ! ONE BOX FOR Division AND Class. A state writes its tier as "D2" or as
+     "Class AA" and nobody looking for one means to exclude the other, so the
+     filter searches both columns -- see rankings.UNIT_COLUMNS. #}
   <div class="unit-row hs-units hidden" id="hs-units">
     <div class="field not-courses">
-      <label for="league-input">League</label>
-      <input id="league-input" autocomplete="off" placeholder="MARMONTE">
+      <label>Division / Class</label>
+      <div class="combo" data-field="state_div"></div>
     </div>
     <div class="field not-courses">
-      <label for="state_div-input">State division</label>
-      <input id="state_div-input" autocomplete="off" placeholder="D2">
+      <label>Section</label>
+      <div class="combo" data-field="section"></div>
     </div>
     <div class="field not-courses">
-      <label for="section-input">Section</label>
-      <input id="section-input" autocomplete="off" placeholder="CIF-SS"
-             title="A section only means something inside its state -- every state has a D1 -- so set State too if the name is not unique.">
+      <label>Section division</label>
+      <div class="combo" data-field="section_div"></div>
     </div>
     <div class="field not-courses">
-      <label for="section_div-input">Section division</label>
-      <input id="section_div-input" autocomplete="off" placeholder="D2 CIF-SS">
-    </div>
-    <div class="field not-courses">
-      <label for="district-input">District</label>
-      <input id="district-input" autocomplete="off">
-    </div>
-    <div class="field not-courses">
-      <label for="county-input">County</label>
-      <input id="county-input" autocomplete="off" placeholder="VENTURA">
-    </div>
-    <div class="field not-courses">
-      <label for="class-input">Class</label>
-      <input id="class-input" autocomplete="off">
+      <label>League</label>
+      <div class="combo" data-field="league"></div>
     </div>
   </div>
 

@@ -159,27 +159,39 @@ PR_POOLS = POOLS | {"all"}
 
 # ★ THE UNITS SPLIT BY LEVEL, AND THE TWO SETS DO NOT OVERLAP.
 #
-#   school_units._COLLEGE_CHIPS is (division, region, conference) and
-#   _HS_CHIPS is (league, state_div, section_div, section, district, county,
-#   class). A high school has no conference and a college has no league, so a
-#   filter bar offering all ten at once offers seven that can only ever
-#   return nothing for whoever is looking.
+#   A high school has no conference and a college has no league, so a filter
+#   bar offering all of them at once offers several that can only ever return
+#   nothing for whoever is looking.
 #
-# ! IMPORTED, NOT RETYPED. school_units owns the split and the athlete page's
-#   chips already read it; a second copy here would drift the first time a
-#   unit is added, and the drift would look like a filter that silently
-#   matches no rows.
-try:
-    from school_units import _COLLEGE_CHIPS as COLLEGE_UNITS
-    from school_units import _HS_CHIPS as HS_UNITS
-except ImportError:                          # school_units is optional
-    COLLEGE_UNITS, HS_UNITS = (), ()
+# ★ AND THE ORDER IS THE HIERARCHY, BIGGEST FIRST (owner, 2026-08-30).
+#   College: division, then region, then conference. High school: the state's
+#   division, then the section, then that section's division, then the
+#   league -- the smallest grouping, and last.
+#
+# ! division AND class ARE ONE FILTER. The corpus writes a state's tier as
+#   either -- "D2" in one state, "Class AA" in another -- and nobody looking
+#   for one means to exclude the other. One box searches both columns.
+#
+# ⚠ county AND district ARE GONE. They parsed out of meet and division names
+#   (see check_school_units' _NOT_A_COUNTY), they are not a unit anyone
+#   competes in, and they were the two boxes on the bar that answered no
+#   question. The COLUMNS stay in school_unit; only the filters go.
+COLLEGE_UNITS = ("division", "region", "conference")
+HS_UNITS = ("state_div", "section", "section_div", "league")
 
-UNIT_FILTERS = tuple(dict.fromkeys(COLLEGE_UNITS + HS_UNITS))
+UNIT_FILTERS = COLLEGE_UNITS + HS_UNITS
 
-# ! UPPER-CASED ONLY WHERE THE CORPUS SHOUTS. "DI" and "WEST" are stored
-#   upper; a league or county is a proper name and upper-casing it would
-#   match nothing.
+# One filter key -> the school_unit columns it searches.
+UNIT_COLUMNS = {
+    "division":    ("division",),
+    "region":      ("region",),
+    "conference":  ("conference",),
+    "state_div":   ("state_div", "class"),
+    "section":     ("section",),
+    "section_div": ("section_div",),
+    "league":      ("league",),
+}
+
 _UPPER_UNITS = {"division", "region", "state_div", "section", "section_div",
                 "class"}
 
@@ -580,8 +592,13 @@ def _whereClauses(f, params, with_dates):
     for _key in UNIT_FILTERS:
         if f.get(_key):
             params[_key] = f[_key]
+            # ! ONE SUBQUERY PER FILTER, OR-ING ITS COLUMNS INSIDE. Splitting
+            #   state_div and class into two ANDed clauses would require a
+            #   school to be in both, which no school is.
+            _ors = " OR ".join(f'u."{c}" = ANY(%({_key})s)'
+                               for c in UNIT_COLUMNS[_key])
             parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
-                         f' WHERE u."{_key}" = ANY(%({_key})s))')
+                         f' WHERE {_ors})')
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A

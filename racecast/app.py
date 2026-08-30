@@ -3806,6 +3806,51 @@ def pad_pool_pairs(panels):
 
 from flask import request, jsonify
 
+@app.route("/api/units")
+def api_units():
+    """Distinct unit values for one filter, for the pickers. Issue #55.
+
+    ★ A SEPARATE ENDPOINT BECAUSE UNITS ARE NOT IN search_index. That table
+      holds athletes, schools, courses, meets and venues -- things with a
+      page. A league has no page; it is a column on school_unit, and there
+      are few enough of them that DISTINCT over an indexed column answers in
+      milliseconds without an index of its own.
+
+    ! IT RETURNS THE SAME SHAPE /search/api DOES -- kind, label, value -- so
+      the combobox that already consumes one can consume the other with no
+      new rendering path. label and value are equal here (a league is its own
+      name), but the field exists because the school picker's are not.
+
+    ⚠ AND IT SEARCHES EVERY COLUMN THE FILTER SEARCHES. state_div covers both
+      state_div and class, so its options must come from both or the picker
+      would offer half of what the filter accepts.
+    """
+    from flask import request, jsonify
+    kind = (request.args.get("kind") or "").strip()
+    cols = UNIT_COLUMNS.get(kind)
+    if not cols:
+        return jsonify([])
+    q = (request.args.get("q") or "").strip()
+
+    # ! ONE UNION, NOT ONE QUERY PER COLUMN. state_div is the only two-column
+    #   filter today, but a loop that grows with the mapping is a loop that
+    #   grows with the mapping.
+    union = " UNION ".join(
+        f'SELECT DISTINCT "{c}" AS v FROM school_unit '
+        f'WHERE "{c}" IS NOT NULL AND "{c}" <> \'\' '
+        f'AND (%(q)s = \'\' OR "{c}" ILIKE %(like)s)'
+        for c in cols)
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT v FROM ({union}) t ORDER BY v LIMIT 40",
+                            {"q": q, "like": f"%{q}%"})
+                rows = [r[0] for r in cur.fetchall()]
+    except Exception:                    # noqa: BLE001 -- a picker, not a page
+        return jsonify([])
+    return jsonify([{"kind": kind, "label": v, "value": v} for v in rows])
+
+
 @app.route("/search/api")
 def search_api():
     """The typeahead endpoint. Used by the topbar and by every picker.
@@ -4409,7 +4454,7 @@ def athlete_results():
             return jsonify(cur.fetchall())
 
 
-from rankings import (parseFilters, getPerformanceRankings, getPrRankings,
+from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
                       getAbilityRankings, rankOf, PR_DISTANCES)
 
 
