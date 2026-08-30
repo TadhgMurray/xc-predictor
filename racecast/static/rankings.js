@@ -210,6 +210,15 @@ function buildQuery() {
   const gender = $("gender") ? $("gender").value : "";
   if (gender && $("pool").value === "all") query.set("gender", gender);
 
+  /* ! SENT ONLY WHEN NON-EMPTY, so an untouched box adds no clause and the
+     URL stays short enough to share. _multiValue on the server splits on
+     commas, so "DI, DII" is two values and the spaces do not survive. */
+  for (const k of ["division", "conference", "region"]) {
+    const el = $(k + "-input");
+    const v = el ? el.value.trim() : "";
+    if (v) query.set(k, v);
+  }
+
   /* The multi-value filters. Several chips become ONE comma-separated
      parameter -- the API splits it and binds the list as a Postgres array, so
      "CA,TX" is one bind, not two clauses. An empty combo sends NOTHING, which
@@ -1509,6 +1518,14 @@ function syncGenderField() {
 }
 $("pool").addEventListener("change", syncGenderField);
 $("gender").addEventListener("change", applyNow);
+
+/* Enter in a unit box applies, like every other filter input. */
+["division", "conference", "region"].forEach((k) => {
+  const el = $(k + "-input");
+  if (el) el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applyNow(); }
+  });
+});
 syncGenderField();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
@@ -1624,6 +1641,10 @@ function applyUrlFilters(params) {
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
   setSelectFromUrl("gender", params.get("gender"));
+  for (const k of ["division", "conference", "region"]) {
+    const el = $(k + "-input");
+    if (el && params.get(k)) el.value = params.get(k);
+  }
   syncGenderField();
   /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the
        teams board with the course's own distance -- 2900m is real there --

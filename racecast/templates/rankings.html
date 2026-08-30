@@ -331,33 +331,50 @@
     <button class="go" id="apply">Apply</button>
   </div>
 
-  {# ★ NOT BUILT, AND HONEST ABOUT IT. None of these has a column anywhere in
-     ranking_results or athlete_season. They are disabled rather than absent so
-     the plan is visible, and titled so hovering explains why. #}
+  {# ★ THESE READ school_unit, THE SAME TABLE THE ATHLETE PAGE'S CHIPS USE.
+     They were "coming soon" because ranking_results carries no unit column --
+     but it does not need one: rankings._whereClauses semi-joins school_unit
+     on the school, which is one small indexed table rather than a column on
+     61.6M rows.
+
+     ⚠ NATION IS GONE, NOT DISABLED. It promised something Scope already
+       delivers: scope=usa filters to the explicit 51-code list, which IS the
+       nation. A second control for the same thing is worse than none.
+
+     ! Section stays disabled: school_unit has the column, but a section is
+       only meaningful inside its state, so a bare section filter would merge
+       every state's "D1". It wants the state to be set first -- a rule the
+       filter bar has no way to express yet. #}
+  {# ! PLAIN INPUTS, NOT COMBOBOXES. The combo panels list a bounded option
+     set (56 states, 12 grades) or search an index (schools). These have
+     neither: the values live in school_unit with no endpoint to search and
+     no list short enough to show. A text box that accepts "DI" or
+     "DI,DII" costs nothing and works today; a picker can replace it once
+     something serves the option list. Comma-separated, which is exactly
+     what _multiValue already parses. #}
+  <div class="unit-row">
+    <div class="field not-courses">
+      <label for="division-input">Division</label>
+      <input id="division-input" autocomplete="off" placeholder="DI, DII"
+             title="NCAA division, or a state's high school division. Comma-separated.">
+    </div>
+    <div class="field not-courses">
+      <label for="conference-input">Conference</label>
+      <input id="conference-input" autocomplete="off" placeholder="PAC-12">
+    </div>
+    <div class="field not-courses">
+      <label for="region-input">Region</label>
+      <input id="region-input" autocomplete="off" placeholder="WEST">
+    </div>
+  </div>
+
   <details class="wip">
     <summary>Coming soon</summary>
     <div class="wip-row">
       <div class="field">
-        <label>Nation</label>
-        <input disabled placeholder="Not built"
-               title="No nation column exists yet. State is the only geography stored.">
-      </div>
-      <div class="field">
-        <label>Division</label>
-        <input disabled placeholder="Not built"
-               title="Division is per meet, not per athlete-season. Needs a new column.">
-      </div>
-      <div class="field">
         <label>Section</label>
-        <input disabled placeholder="Not built" title="No section data yet.">
-      </div>
-      <div class="field">
-        <label>Conference</label>
-        <input disabled placeholder="Not built" title="No conference data yet.">
-      </div>
-      <div class="field">
-        <label>Region</label>
-        <input disabled placeholder="Not built" title="No region data yet.">
+        <input disabled placeholder="Needs a state"
+               title="A section only means something inside its state -- every state has a D1. Set State first; the filter bar cannot express that dependency yet.">
       </div>
     </div>
   </details>

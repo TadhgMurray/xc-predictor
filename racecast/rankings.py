@@ -443,6 +443,12 @@ def parseFilters(args):
         # _whereClauses still adds no clause at all for an unset filter.
         "gender": gender,
         "state":  _multiValue(args, "state", upper=True),
+        # ★ THE UNIT FILTERS. school_unit already carries these per school --
+        #   the athlete page's NCAA DI / WEST / PAC-12 chips read the same
+        #   columns -- they were simply never reachable from a board.
+        "division":   _multiValue(args, "division", upper=True),
+        "region":     _multiValue(args, "region"),
+        "conference": _multiValue(args, "conference"),
         "course": course,
         "school": _multiValue(args, "school"),
         "grade":  _multiValue(args, "grade"),
@@ -525,6 +531,33 @@ def _whereClauses(f, params, with_dates):
         #   stays right if a level is ever added.
         params["gender"] = f"%\_{f['gender']}"
         parts.append(" AND pool LIKE %(gender)s")
+
+    # ★ A SEMI-JOIN, NOT A SCHOOL IN-LIST. The alternative considered was
+    #   folding a unit into the list of schools it contains and filtering on
+    #   that -- which is how the athlete page's chips work and needs no new
+    #   anything. It also ships a several-thousand-element IN-list into every
+    #   query, and the site is already slow (owner, 2026-08-30).
+    #
+    #   `school IN (SELECT ...)` lets the planner build ONE hash of the
+    #   matching schools and probe it, instead of parsing a literal list per
+    #   request. school_unit is one row per (school, sport, state) -- small
+    #   enough to hash, large enough that an IN-list of its members is not.
+    #
+    # ! UNQUALIFIED `school` ON THE OUTER SIDE ON PURPOSE. Every other clause
+    #   here is unqualified too -- the boards alias their table differently
+    #   (s, p) and _whereClauses is shared -- and the subquery names its own
+    #   side `u.`, so there is nothing for `school` to bind to but the board.
+    #
+    # ⚠ AND IT IS NOT A JOIN. A JOIN would multiply rows when a school has
+    #   several school_unit rows (one per sport, plus shared names across
+    #   states), silently duplicating athletes on the board. IN stops at the
+    #   first match by construction.
+    for _key, _col in (("division", "division"), ("region", "region"),
+                       ("conference", "conference")):
+        if f.get(_key):
+            params[_key] = f[_key]
+            parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
+                         f' WHERE u."{_col}" = ANY(%({_key})s))')
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A
