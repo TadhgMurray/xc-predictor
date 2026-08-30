@@ -687,6 +687,11 @@ function makeCombo(host) {
     if (on) chosen.add(value); else chosen.delete(value);
     dirty = true;
     renderButton();
+    /* ! ANNOUNCED, SO ONE FILTER CAN DEPEND ON ANOTHER. State division only
+       means something once a State is chosen -- every state has a D2 -- and
+       the page cannot know a combo changed without being told. */
+    host.dispatchEvent(new CustomEvent("combochange",
+                                       { bubbles: true, detail: { field } }));
   }
 
   opts.addEventListener("change", (e) => {
@@ -1535,6 +1540,35 @@ $("scope").addEventListener("change", applyNow);
    offered League, Section and Division, none of which a middle school is
    placed into. Middle school and elementary get NO unit filters until
    somebody decides what a middle school's units even are (issue #56). */
+/* ★ A DIVISION IS MEANINGLESS WITHOUT ITS PARENT. Every state has a "D2"
+   and every section has one too, so "state_div=D2" alone matches schools in
+   forty states that have nothing to do with each other. The dependent box is
+   therefore disabled, and cleared, until its parent has a value -- rather
+   than accepted and then quietly returning a nonsense board.
+
+   ! CLEARED, NOT JUST DISABLED. A value left behind a disabled control is a
+     filter nobody can see and nobody can remove. */
+const UNIT_PARENT = { state_div: "state", section_div: "section" };
+
+function syncUnitDeps() {
+  for (const [child, parent] of Object.entries(UNIT_PARENT)) {
+    const host = document.querySelector(`.combo[data-field="${child}"]`);
+    if (!host) continue;
+    const field = host.closest(".field");
+    const ready = Boolean(combos[parent] && combos[parent].values().length);
+    field.classList.toggle("is-locked", !ready);
+    field.title = ready ? "" :
+      `Choose a ${parent === "state" ? "State" : "Section"} first — `
+      + `every ${parent === "state" ? "state" : "section"} has its own `
+      + `divisions, so this filter needs one to mean anything.`;
+    if (!ready && combos[child] && combos[child].values().length) {
+      combos[child].set([]);
+    }
+  }
+}
+
+document.addEventListener("combochange", syncUnitDeps);
+
 function syncUnitRows() {
   const pool = $("pool").value;
   const level = pool === "all" ? "" : pool.split("_")[0];
@@ -1544,6 +1578,7 @@ function syncUnitRows() {
      filters" that opens onto nothing is worse than no control. */
   $("units").classList.toggle("hidden",
                               level !== "college" && level !== "hs");
+  syncUnitDeps();
 }
 
 $("pool").addEventListener("change", syncUnitRows);

@@ -1118,6 +1118,12 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .rankings-page .unit-row.hidden,
 .rankings-page details.units.hidden { display: none; }
 
+/* A filter waiting on its parent: visibly inert, still readable, and the
+   title says which parent. Not [disabled] -- the control is a div, not an
+   input, so pointer-events is what actually stops it opening. */
+.rankings-page .field.is-locked { opacity: 0.45; }
+.rankings-page .field.is-locked .combo { pointer-events: none; }
+
 /* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
 /*
  * ★ WHY THESE NEED display:inline EXPLICITLY.
