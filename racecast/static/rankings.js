@@ -209,13 +209,6 @@ function buildQuery() {
     offset: state.offset
   });
 
-  /* ! SENT ONLY WHEN IT MEANS SOMETHING. On a gendered pool the API refuses
-     a gender filter -- correctly, since one of the two would have to be
-     ignored -- so sending an empty or contradicting value would turn a
-     working board into a 400. */
-  const gender = $("gender") ? $("gender").value : "";
-  if (gender && $("pool").value === "all") query.set("gender", gender);
-
   /* ! SENT ONLY WHEN NON-EMPTY, so an untouched box adds no clause and the
      URL stays short enough to share. _multiValue on the server splits on
      commas, so "DI, DII" is two values and the spaces do not survive. */
@@ -1528,14 +1521,7 @@ function syncUnitRows() {
   $("hs-units").classList.toggle("hidden", isCollege);
 }
 
-function syncGenderField() {
-  const on = $("pool").value === "all";
-  $("gender-field").classList.toggle("hidden", !on);
-  if (!on) $("gender").value = "";
-}
-$("pool").addEventListener("change", syncGenderField);
 $("pool").addEventListener("change", syncUnitRows);
-$("gender").addEventListener("change", applyNow);
 
 /* Enter in a unit box applies, like every other filter input. */
 UNIT_KEYS.forEach((k) => {
@@ -1544,7 +1530,6 @@ UNIT_KEYS.forEach((k) => {
     if (e.key === "Enter") { e.preventDefault(); applyNow(); }
   });
 });
-syncGenderField();
 syncUnitRows();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
@@ -1659,7 +1644,6 @@ function applyUrlFilters(params) {
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
-  setSelectFromUrl("gender", params.get("gender"));
   syncUnitRows();
   for (const k of UNIT_KEYS) {
     const el = $(k + "-input");
