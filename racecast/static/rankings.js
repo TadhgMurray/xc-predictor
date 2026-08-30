@@ -21,6 +21,12 @@
 
 const PAGE_SIZE = 50;
 
+/* College is division/region/conference; high school is league/division/
+   section/district/county/class. The sets do not overlap, so one group is
+   shown at a time -- see the note in rankings.html. */
+const UNIT_KEYS = ["division", "conference", "region", "league",
+                   "state_div", "section_div", "district", "county", "class"];
+
 /*
  * Page state.
  *
@@ -213,10 +219,15 @@ function buildQuery() {
   /* ! SENT ONLY WHEN NON-EMPTY, so an untouched box adds no clause and the
      URL stays short enough to share. _multiValue on the server splits on
      commas, so "DI, DII" is two values and the spaces do not survive. */
-  for (const k of ["division", "conference", "region"]) {
+  for (const k of UNIT_KEYS) {
     const el = $(k + "-input");
     const v = el ? el.value.trim() : "";
-    if (v) query.set(k, v);
+    /* ! ONLY FROM THE VISIBLE GROUP. A college division left in the box
+       while the pool says hs would filter a high school board by an NCAA
+       division and return nothing, with no clue why. */
+    if (v && !el.closest(".unit-row").classList.contains("hidden")) {
+      query.set(k, v);
+    }
   }
 
   /* The multi-value filters. Several chips become ONE comma-separated
@@ -1511,22 +1522,30 @@ $("scope").addEventListener("change", applyNow);
 /* ★ THE FIELD FOLLOWS THE POOL. A Gender control beside a pool that already
    names one is a control that can only be wrong, so it appears exactly when
    the pool stops deciding. */
+function syncUnitRows() {
+  const isCollege = $("pool").value.startsWith("college");
+  $("college-units").classList.toggle("hidden", !isCollege);
+  $("hs-units").classList.toggle("hidden", isCollege);
+}
+
 function syncGenderField() {
   const on = $("pool").value === "all";
   $("gender-field").classList.toggle("hidden", !on);
   if (!on) $("gender").value = "";
 }
 $("pool").addEventListener("change", syncGenderField);
+$("pool").addEventListener("change", syncUnitRows);
 $("gender").addEventListener("change", applyNow);
 
 /* Enter in a unit box applies, like every other filter input. */
-["division", "conference", "region"].forEach((k) => {
+UNIT_KEYS.forEach((k) => {
   const el = $(k + "-input");
   if (el) el.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); applyNow(); }
   });
 });
 syncGenderField();
+syncUnitRows();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
 $("date_from").addEventListener("change", applyNow);
@@ -1641,7 +1660,8 @@ function applyUrlFilters(params) {
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
   setSelectFromUrl("gender", params.get("gender"));
-  for (const k of ["division", "conference", "region"]) {
+  syncUnitRows();
+  for (const k of UNIT_KEYS) {
     const el = $(k + "-input");
     if (el && params.get(k)) el.value = params.get(k);
   }

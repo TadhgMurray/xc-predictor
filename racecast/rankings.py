@@ -157,6 +157,32 @@ _YEAR_LABEL = "(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)"
 #   real question and this is the board that can answer it.
 PR_POOLS = POOLS | {"all"}
 
+# ★ THE UNITS SPLIT BY LEVEL, AND THE TWO SETS DO NOT OVERLAP.
+#
+#   school_units._COLLEGE_CHIPS is (division, region, conference) and
+#   _HS_CHIPS is (league, state_div, section_div, section, district, county,
+#   class). A high school has no conference and a college has no league, so a
+#   filter bar offering all ten at once offers seven that can only ever
+#   return nothing for whoever is looking.
+#
+# ! IMPORTED, NOT RETYPED. school_units owns the split and the athlete page's
+#   chips already read it; a second copy here would drift the first time a
+#   unit is added, and the drift would look like a filter that silently
+#   matches no rows.
+try:
+    from school_units import _COLLEGE_CHIPS as COLLEGE_UNITS
+    from school_units import _HS_CHIPS as HS_UNITS
+except ImportError:                          # school_units is optional
+    COLLEGE_UNITS, HS_UNITS = (), ()
+
+UNIT_FILTERS = tuple(dict.fromkeys(COLLEGE_UNITS + HS_UNITS))
+
+# ! UPPER-CASED ONLY WHERE THE CORPUS SHOUTS. "DI" and "WEST" are stored
+#   upper; a league or county is a proper name and upper-casing it would
+#   match nothing.
+_UPPER_UNITS = {"division", "region", "state_div", "section", "section_div",
+                "class"}
+
 # The distances a PR board will accept, in metres. A whitelist rather than a
 # free number because a board of "best 4,987 m times" is a data-entry artefact
 # with a leaderboard attached.
@@ -446,9 +472,8 @@ def parseFilters(args):
         # ★ THE UNIT FILTERS. school_unit already carries these per school --
         #   the athlete page's NCAA DI / WEST / PAC-12 chips read the same
         #   columns -- they were simply never reachable from a board.
-        "division":   _multiValue(args, "division", upper=True),
-        "region":     _multiValue(args, "region"),
-        "conference": _multiValue(args, "conference"),
+        **{k: _multiValue(args, k, upper=(k in _UPPER_UNITS))
+           for k in UNIT_FILTERS},
         "course": course,
         "school": _multiValue(args, "school"),
         "grade":  _multiValue(args, "grade"),
@@ -552,12 +577,11 @@ def _whereClauses(f, params, with_dates):
     #   several school_unit rows (one per sport, plus shared names across
     #   states), silently duplicating athletes on the board. IN stops at the
     #   first match by construction.
-    for _key, _col in (("division", "division"), ("region", "region"),
-                       ("conference", "conference")):
+    for _key in UNIT_FILTERS:
         if f.get(_key):
             params[_key] = f[_key]
             parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
-                         f' WHERE u."{_col}" = ANY(%({_key})s))')
+                         f' WHERE u."{_key}" = ANY(%({_key})s))')
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A
