@@ -25,7 +25,8 @@ const PAGE_SIZE = 50;
    section/district/county/class. The sets do not overlap, so one group is
    shown at a time -- see the note in rankings.html. */
 const UNIT_KEYS = ["division", "conference", "region", "league",
-                   "state_div", "section_div", "district", "county", "class"];
+                   "state_div", "section", "section_div", "district",
+                   "county", "class"];
 
 /*
  * Page state.
