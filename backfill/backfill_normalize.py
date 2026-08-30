@@ -2839,7 +2839,25 @@ def _printReasonCensus(census, processed):
 #           the columns needed to triage (kinds, n, frac_under, median, min).
 # Arguments: flagged — list from _SuspectDivisions.flagged(); path — output file.
 # Output  : None (writes the file).
+# ⚠ A DIAGNOSTIC ARTIFACT MUST NOT KILL THE RUN. _printFooter is called
+#   AFTER the connection blocks close, so on --apply the rows are already
+#   written and the tables already swapped by the time this runs. An
+#   unwritable path here used to raise out of main() -- the database correct,
+#   the process exit code non-zero, and any pipeline script with `set -e`
+#   aborting every stage after it over a report file. Measured 2026-08-30: a
+#   root-owned suspects_xc.txt left by an earlier run as root took down a
+#   dry run at the last line.
 def _writeSuspectFile(flagged, path):
+    try:
+        _writeSuspectFileOrRaise(flagged, path)
+    except OSError as exc:
+        print(f"    [suspects] could NOT write {path}: {exc}")
+        print(f"    [suspects] {len(flagged):,} flagged divisions were "
+              f"computed and are lost for this run only -- the run itself is "
+              f"unaffected. Fix the path's ownership and re-run to keep them.")
+
+
+def _writeSuspectFileOrRaise(flagged, path):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("kinds\tmeet\tdiv\tpool\tn\tcorrupt\tfrac_under\tmedian\tmin\turl\n")
         for r in flagged:
