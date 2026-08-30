@@ -19,6 +19,25 @@ impossible_distance.py -- divisions whose LEADER beat the world record. READ ONL
   miles, and the open world record pace for that distance is 4:10/mile. The
   time is fine. The DISTANCE is wrong.
 
+⚠⚠ AND THE VERDICT IS ON THE DIVISION, NEVER ON THE ROW. This is the whole
+   reason the existing row-level guards do not fix it. Measured on the
+   reported race (8046 m stored, really 5000 m):
+
+     real 5k    ratio vs WR   what the row-level pace band does
+     15:54.8       0.765      dropped -- too fast
+     18:00.0       0.865      RATED, as a 10:52 5k   <- still impossible
+     20:00.0       0.961      RATED, as a 12:04 5k   <- still impossible
+     22:00.0       1.057      RATED, as a 13:17 5k
+     30:00.0       1.442      RATED, as an 18:07 5k
+
+   A row-level filter on a DIVISION-level fault selects for the least
+   detectable corruption: it removes exactly the rows whose wrongness is
+   obvious and keeps every row whose wrongness is subtle -- including rows
+   still faster than the world record. Those survivors then carry inflated
+   ratings onto the boards AND vote on the venue's difficulty. If the
+   distance is wrong, every row in the division is wrong, so the division is
+   the unit.
+
 ! SO THIS ONE HAS NO FALSE POSITIVES, and that is the entire point. A division
   flagged here is not "suspicious"; it is arithmetically impossible, and the
   reason the existing note says mislabels "can't be auto-detected from the
@@ -65,6 +84,15 @@ _WR = {
 #   not in an automatic action.
 LIMIT_RATIO = 1.0
 
+# How many of the fastest rows must be impossible before the DISTANCE is
+# blamed rather than one bad time.
+# ★ ONE IMPOSSIBLE ROW IS A TYPO; THREE IS A UNIT CONVERSION. A single
+#   mistyped time in an otherwise sound division would flag it on the leader
+#   alone, and dropping that division would discard real races over one bad
+#   row. A wrong distance makes the whole front of the field impossible at
+#   once -- the reported race has its top three at 0.765, 0.771, 0.792.
+MIN_IMPOSSIBLE = 3
+
 
 def _wrCurve(gender):
     (d1, t1), (d2, t2) = _WR.get(gender) or _WR["M"]
@@ -83,6 +111,8 @@ _SQL = """
     WITH lead AS (
         SELECT r.meet_id, r.div_id,
                min(r.time_seconds)  AS best,
+               (array_agg(r.time_seconds ORDER BY r.time_seconds))[1:5]
+                                    AS fastest,
                count(*)             AS n
         FROM   {table} r
         WHERE  r.time_seconds IS NOT NULL
@@ -111,11 +141,19 @@ _SQL = """
 # Other distances raced at the SAME meet -- the only honest source for a guess.
 # Exactly propose_distances' rule: a proposal is corroborated by the corpus or
 # it is not made.
+# ⚠ WITH COUNTS, AND ORDERED BY THEM. The first version took the smallest
+#   plausible sibling, which proposes 3200 m for a meet that runs both 3200 and
+#   5000 -- plausible is not the same as right. propose_distances' rule is
+#   CORROBORATION: the distance several other divisions actually raced. So the
+#   candidate is the commonest plausible sibling, and a lone one-division
+#   candidate is weak evidence that the report shows rather than hides.
 _SIBLINGS = """
-    SELECT DISTINCT m.distance
+    SELECT m.distance, count(*) AS n
     FROM   meets m
     WHERE  m.meet_id = %(meet)s AND m.distance IS NOT NULL
       AND  m.div_id <> %(div)s
+    GROUP  BY m.distance
+    ORDER  BY count(*) DESC, m.distance DESC
 """
 
 
@@ -134,6 +172,9 @@ def main():
     ap.add_argument("--limit", type=int, default=80)
     ap.add_argument("--propose", action="store_true",
                     help="guess the true distance from sibling divisions")
+    ap.add_argument("--emit", metavar="FILE", default=None,
+                    help="write a corrections.py-ready block to FILE "
+                         "(a PROPOSAL -- never appended to corrections.py)")
     args = ap.parse_args()
 
     from database import getConn
@@ -146,8 +187,7 @@ def main():
             cur.itersize = 50_000
             cur.execute(_SQL.format(table=table),
                         {"minrows": args.min_rows})
-            bad = []
-            seen = 0
+            bad, seen = [], 0
             for r in cur:
                 seen += 1
                 d = r["distance"]
@@ -155,38 +195,100 @@ def main():
                     continue
                 g = _genderOf(r["division"])
                 wr = wrTime(float(d), g)
-                ratio = float(r["best"]) / wr
-                if ratio < LIMIT_RATIO:
-                    r["wr"] = wr
-                    r["ratio"] = ratio
-                    r["gender"] = g
-                    bad.append(r)
+                n_imp = sum(1 for t in (r["fastest"] or [])
+                            if t and float(t) / wr < LIMIT_RATIO)
+                if n_imp == 0:
+                    continue
+                r.update(wr=wr, ratio=float(r["best"]) / wr, gender=g,
+                         n_imp=n_imp,
+                         verdict=("DISTANCE" if n_imp >= MIN_IMPOSSIBLE
+                                  else "one-row"))
+                bad.append(r)
 
         bad.sort(key=lambda x: x["ratio"])
-        print(f"\n{len(bad):,} divisions of {seen:,} have a winner FASTER than "
-              f"the open world record for their stored distance")
-        print("  ratio < 1.000 is impossible; lower is more impossible\n")
+        dist = [r for r in bad if r["verdict"] == "DISTANCE"]
+        rows = [r for r in bad if r["verdict"] == "one-row"]
+        print(f"\n{len(bad):,} of {seen:,} divisions have an impossible row.")
+        print(f"  {len(dist):,} have {MIN_IMPOSSIBLE}+ impossible in the top 5 "
+              f"-> the DISTANCE is wrong, the whole division is void")
+        print(f"  {len(rows):,} have 1-2 -> most likely ONE mistyped time; "
+              f"left alone\n")
 
+        overrides, drops = [], []
         with conn.cursor() as sib:
-            for r in bad[:args.limit]:
+            for r in dist[:args.limit]:
                 mm, ss = divmod(float(r["best"]), 60)
                 line = (f"  {r['ratio']:.3f}  {r['meet_id']}/{r['div_id']:<6} "
                         f"{float(r['distance']):>7.0f}m  "
-                        f"{int(mm):>3}:{ss:04.1f}  n={r['n']:<4} "
-                        f"{r['gender']}  {r['meet_name'][:34]}")
-                if args.propose:
+                        f"{int(mm):>3}:{ss:04.1f}  {r['n_imp']}/5 imp  "
+                        f"n={r['n']:<4} {r['gender']}  "
+                        f"{r['meet_name'][:32]}")
+                ok = []
+                if args.propose or args.emit:
                     sib.execute(_SIBLINGS, {"meet": r["meet_id"],
                                             "div": r["div_id"]})
-                    cands = sorted({float(x[0]) for x in sib.fetchall()})
-                    ok = [c for c in cands
-                          if float(r["best"]) / wrTime(c, r["gender"]) >= 1.0]
-                    line += ("   -> " + ", ".join(f"{c:.0f}m" for c in ok)
+                    # Already ordered by how many divisions raced it.
+                    cands = [(float(x[0]), int(x[1])) for x in sib.fetchall()]
+                    # A candidate must make EVERY one of the fastest five
+                    # possible -- not merely the leader. Same reason the
+                    # verdict is on the division.
+                    ok = [(c, k) for c, k in cands
+                          if all(float(t) / wrTime(c, r["gender"]) >= 1.0
+                                 for t in (r["fastest"] or []) if t)]
+                    line += ("   -> " + ", ".join(f"{c:.0f}m x{k}"
+                                                  for c, k in ok)
                              if ok else "   -> no plausible sibling")
                 print(line)
+                if ok:
+                    overrides.append((r["meet_id"], r["div_id"], ok[0][0],
+                                      float(r["distance"]), ok[0][1]))
+                else:
+                    drops.append((r["meet_id"], r["div_id"],
+                                  float(r["distance"]), r["ratio"]))
 
-    print(f"\n! NOTHING WAS WRITTEN. A flagged division needs its distance "
-          f"corrected in\n  corrections.py, not its rows hidden -- the times "
-          f"are real, the metre count is not.")
+    if args.emit:
+        _emit(args.emit, args.sport, overrides, drops)
+
+    print(f"\n! NOTHING WAS WRITTEN TO corrections.py. A flagged division "
+          f"needs its DISTANCE\n  corrected, or the division dropped -- the "
+          f"times are real, the metre count is not.")
+
+
+# _emit
+# Purpose:   a paste-ready proposal file, NOT an append to corrections.py.
+# Detail:
+#   ★ A PROPOSAL, AND DELIBERATELY NOT A --write. The rule this project
+#     learned the hard way is that a write goes AFTER a human has read the
+#     dry run; diag_suspects already emits its drop list the same way. A
+#     distance override is also a claim about what a race really was, and
+#     that claim deserves one look before it moves 62M rows.
+#
+#   ! OVERRIDE BEATS DROP WHEREVER A SIBLING SUPPLIES ONE. Dropping a
+#     division discards real races; correcting its distance keeps them and
+#     makes them right. Drop is only for the ones nothing at the meet can
+#     identify.
+def _emit(path, sport, overrides, drops):
+    sp = sport.upper()
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"# generated by engine/impossible_distance.py -- PROPOSAL\n")
+        f.write(f"# Divisions whose fastest rows beat the open world record\n")
+        f.write(f"# for their stored distance. Review, then paste into\n")
+        f.write(f"# engine/corrections.py. Nothing here is applied.\n\n")
+        f.write(f"# {len(overrides)} with a plausible distance from another "
+                f"division at the same meet:\n")
+        f.write(f"_DISTANCE_OVERRIDES_{sp}.update({{\n")
+        for meet, div, true_d, was, k in sorted(overrides):
+            f.write(f"    ({meet}, {div}): {true_d:.0f}.0,"
+                    f"   # was {was:.0f}m; {k} sibling div(s) race {true_d:.0f}m\n")
+        f.write("})\n\n")
+        f.write(f"# {len(drops)} with nothing at the meet to identify them:\n")
+        f.write(f"_DISTANCE_DROP_{sp}.update({{\n")
+        for meet, div, was, ratio in sorted(drops):
+            f.write(f"    ({meet}, {div}),"
+                    f"   # {was:.0f}m stored, leader at {ratio:.3f} of WR\n")
+        f.write("})\n")
+    print(f"\n[emit] wrote {path}: {len(overrides)} overrides, "
+          f"{len(drops)} drops -- REVIEW BEFORE PASTING")
 
 
 if __name__ == "__main__":
