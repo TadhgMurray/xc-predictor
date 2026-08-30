@@ -950,22 +950,57 @@ def _loadTfrrsBlobDistances(cur):
 # guard (unconditional rewrite) and no resumability (owner choices) — which is
 # what lets the read be one uninterrupted stream.
 #
-def _streamSQL(cfg):
+# ★ #47 IS APPLIED IN THE STREAM, NOT IN PYTHON. age_band_result names the
+#   rows whose banded "grade" is really an AGE range (see
+#   engine/age_band_grades.py). Those rows must reach normalizeResult with NO
+#   grade, so poolFor falls through to the evidence it already trusts -- the
+#   school and the season verdict -- instead of reading "11-12" as eleventh
+#   and twelfth grade and pooling a professional as a high schooler.
+#
+# ! A JOIN RATHER THAN A SET OF result_ids IN MEMORY, for two reasons. The
+#   flagged set is unbounded in principle (it grows with every youth meet
+#   ingested), and a Python-side test would be a SECOND place that decides
+#   what a grade means -- grade_sanity does it in SQL at the allraces build,
+#   and two implementations of one rule drift. Left-joining a small table
+#   into a sequential scan is a hash join with a tiny hash table.
+#
+# ⚠ IT NULLS ONLY grade. The row keeps its time, its meet and its person, and
+#   is still rated -- #47 removes a false claim about level, it does not
+#   discard a race.
+def _streamSQL(cfg, age_band=False):
     # Per-sport literal-NULL for the TF-only columns, so both sports yield the
     # SAME 10 columns in the SAME order.
-    event_id_col    = "event_id"    if cfg.has_event else "NULL AS event_id"
-    event_short_col = "event_short" if cfg.has_event else "NULL AS event_short"
+    # ! THE ALIAS IS BAKED IN HERE, NOT ADDED AT THE CALL SITE. The table now
+    #   carries the alias `r` so the #47 join has something to key against,
+    #   and prefixing at use would produce `r.NULL AS event_id` on the branch
+    #   that substitutes a literal.
+    event_id_col    = "r.event_id"    if cfg.has_event else "NULL AS event_id"
+    event_short_col = ("r.event_short" if cfg.has_event
+                       else "NULL AS event_short")
     # `school` exists on results (XC). If results_tf lacks it, substitute a
     # literal NULL -- the SAME literal-NULL trick used above for event_id, so
     # both sports keep the identical column shape. A NULL school simply means
     # poolFor's school lookup abstains and behaviour is exactly as before.
-    school_col      = "school"      if cfg.has_school else "NULL AS school"
+    school_col      = "r.school"      if cfg.has_school else "NULL AS school"
     # `date` rides the RESULT row so era gets a per-result date with no join.
+    #
+    # The #47 join and the column shape move together: when age_band_result is
+    # absent the query is byte-for-byte what it always was, and `grade` is the
+    # plain column. There is no third state.
+    if age_band:
+        grade_col = ("CASE WHEN ab.result_id IS NULL THEN r.grade END "
+                     "AS grade")
+        band_join = (f"\n        LEFT JOIN age_band_result ab"
+                     f"\n               ON ab.sport = '{cfg.sport}'"
+                     f"\n              AND ab.result_id = r.result_id")
+    else:
+        grade_col, band_join = "r.grade AS grade", ""
     return f"""
-        SELECT result_id, source, meet_id, div_id, {event_id_col},
-               {event_short_col}, time_seconds, grade, athlete_id, date,
-               person_id, canon_meet_id, {school_col}
-        FROM {cfg.table}
+        SELECT r.result_id, r.source, r.meet_id, r.div_id, {event_id_col},
+               {event_short_col}, r.time_seconds, {grade_col},
+               r.athlete_id, r.date,
+               r.person_id, r.canon_meet_id, {school_col}
+        FROM {cfg.table} r{band_join}
     """
 
 
@@ -981,9 +1016,24 @@ def _streamSQL(cfg):
 #            cfg       — the SportConfig (chooses table + column shape).
 # Output   : an open server-side cursor, already executed, ready to iterate.
 def _openStream(read_conn, cfg):
+    # ! PROBED BEFORE THE NAMED CURSOR OPENS, on the same connection. A plain
+    #   SELECT here is safe -- the "no other work on this connection" rule
+    #   applies once the server-side cursor is streaming, not before it. A
+    #   missing optional table must degrade, not crash.
+    with read_conn.cursor() as probe:
+        probe.execute(
+            "SELECT to_regclass('public.age_band_result') IS NOT NULL")
+        age_band = bool(probe.fetchone()[0])
+    if age_band:
+        print(f"[{cfg.sport}] #47 age bands ON -- rows in age-banded divisions "
+              f"reach poolFor with no grade")
+    else:
+        print(f"[{cfg.sport}] age_band_result not found -- banded grades will "
+              f"be read as GRADES. Run engine/age_band_grades.py --write "
+              f"(issue #47)")
     cur = read_conn.cursor(name=f"backfill_stream_{cfg.sport.lower()}")  # named => server-side
     cur.itersize = cfg.batch          # rows shipped per network round trip
-    cur.execute(_streamSQL(cfg))      # begins the single full-table scan
+    cur.execute(_streamSQL(cfg, age_band))   # begins the single full-table scan
     return cur
 
 

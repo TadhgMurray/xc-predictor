@@ -235,6 +235,55 @@ def _dedupFilter(tw: str) -> str:
 _CHAIR_READY = None
 
 
+# _ageBandGrade / _ageBandJoin
+# Purpose:   apply issue #47 to the pack -- a banded grade in a division that
+#            writes AGE ranges reaches poolOf as NO grade.
+# Output:    a SELECT expression and a JOIN fragment, for one sport.
+# Detail:
+#   ★ THE ENGINE POOLS INDEPENDENTLY, WHICH IS WHY THIS SITE EXISTS. The
+#     backfill nulls the same grade in its own stream, but speed_ratings
+#     re-reads `r.grade` straight from results and calls poolOf on it
+#     (speed_ratings.py:917). Wiring only the backfill would leave the engine
+#     still reading "11-12" as eleventh and twelfth grade -- which is the
+#     pooling that put Sean McGorty, a professional, in hs_m at 152.4 beside
+#     the 129.9 of the man who beat him.
+#
+#   ! SAME DEGRADE-DON'T-CRASH CONTRACT AS _chairFilter, and probed once per
+#     process for the same reason: the pack builds many queries and the
+#     answer cannot change mid-run.
+_AGEBAND_READY = None
+
+
+def _ageBandReady() -> bool:
+    global _AGEBAND_READY
+    if _AGEBAND_READY is None:
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.age_band_result')")
+                _AGEBAND_READY = cur.fetchone()[0] is not None
+        except Exception:                               # noqa: BLE001
+            _AGEBAND_READY = False
+        if not _AGEBAND_READY:
+            print("[db] age_band_result not found -- banded grades will be "
+                  "read as GRADES and youth fields will pool as high school. "
+                  "Run engine/age_band_grades.py --write first (issue #47).")
+    return _AGEBAND_READY
+
+
+def _ageBandGrade() -> str:
+    if not _ageBandReady():
+        return "r.grade"
+    return "CASE WHEN ab.result_id IS NULL THEN r.grade END AS grade"
+
+
+def _ageBandJoin(sport: str) -> str:
+    if not _ageBandReady():
+        return ""
+    return (f"\n        LEFT JOIN age_band_result ab"
+            f"\n               ON ab.sport = '{sport}'"
+            f"\n              AND ab.result_id = r.result_id")
+
+
 def _chairFilter() -> str:
     global _CHAIR_READY
     if _CHAIR_READY is None:
@@ -355,7 +404,7 @@ def _placeholderSql() -> str:
 def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
     return f"""
         SELECT r.result_id, r.person_id, r.normalized_time,
-               r.grade, r.source, r.school, r.date,
+               {_ageBandGrade()}, r.source, r.school, r.date,
                'XC' AS sport,
                -- ★ A CORRECTED DIVISION VOTES ON NO COURSE (owner's rule,
                --   2026-08-27: a corrected distance CANNOT change the
@@ -411,7 +460,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                               'NA')
                END AS venue,
                a.gender
-        FROM results r
+        FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
         LEFT JOIN meets_tfrrs mt
@@ -470,7 +519,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
 def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
     return f"""
         SELECT r.result_id, r.person_id, r.normalized_time,
-               r.grade, r.source, r.school, r.date,
+               {_ageBandGrade()}, r.source, r.school, r.date,
                'TF' AS sport,
                CASE WHEN m.location_id IS NULL THEN NULL
                     ELSE 'loc:' || m.location_id::text ||
@@ -478,7 +527,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                               ELSE ':out' END
                END AS venue,
                a.gender
-        FROM results_tf r
+        FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
               AND m.event_id = r.event_id AND m.source = r.source

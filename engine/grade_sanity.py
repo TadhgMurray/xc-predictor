@@ -243,6 +243,75 @@ from season_year import seasonYearSqlInt
 
 _ACAD = seasonYearSqlInt(None, "date")
 
+# ================================================================== #
+#  AGE BANDS -- issue #47, wired.
+# ================================================================== #
+#
+# ★ WHAT THIS DEFENDS AGAINST. engine/age_band_grades.py decides, per
+#   division, whether "11-12" is two GRADES or two AGES, and writes the rows
+#   that mean AGES into age_band_result. Until something READ that table the
+#   tool was a report: Sean McGorty still resolved to hs off a `11-12` in a
+#   professional field and still rated 152.4 beside the 129.9 of the man who
+#   beat him. This is the read.
+#
+# ! IT NULLS THE GRADE AT THE SOURCE, WHICH IS WHY IT GOES IN allraces AND
+#   NOT IN A RULE. Every rule below counts, corroborates or compares grades;
+#   a band left in place would corroborate under rule 2, make the season look
+#   decided so the field rule (4) never runs, and -- being constant -- trip
+#   the stale rule (5) from the third season. Removing it once, before any
+#   rule sees it, is one change instead of five, and it cannot be forgotten
+#   by a rule added later.
+#
+# ! AND IT NULLS raw_grade TOO. Rule 5b reads the unfolded spelling. A band
+#   cannot match its FR-1/SR-4 pattern so nothing changes today, but leaving
+#   a value in a column named "raw" that the folded column has disowned is
+#   the kind of half-state a later rule reads by accident.
+#
+# ⚠ THE JOIN IS ALWAYS PRESENT, EVEN WHEN THE TABLE IS NOT. The stand-in is
+#   an empty relation with the same alias and column, so the CASE in the
+#   build is valid either way and there is ONE query shape to reason about
+#   rather than two. A missing optional table must degrade, not crash --
+#   loadCanonicalNames and speed_ratings_db._chairFilter both do this -- but
+#   an unsubstituted token would leave `ab` undefined and raise, which is the
+#   failure mode we want if the replace below is ever broken.
+_AGE_BAND_TOKENS = ("/*AGEBAND_XC*/", "/*AGEBAND_TF*/")
+
+_AGE_BAND_REAL = ("""LEFT   JOIN age_band_result ab
+                      ON ab.sport = '{sport}' AND ab.result_id = r.result_id""")
+
+_AGE_BAND_NONE = ("""LEFT   JOIN (SELECT NULL::bigint AS result_id
+                          WHERE false) ab ON true""")
+
+
+# _ageBandJoins
+# Purpose:   the two LEFT JOINs that expose age_band_result to the build, or
+#            empty stand-ins for a database where #47 has not been run.
+# Output:    (xc_fragment, tf_fragment)
+def _ageBandJoins(cur):
+    cur.execute("SELECT to_regclass('public.age_band_result') IS NOT NULL AS ok")
+    row = cur.fetchone()
+    ready = bool(row["ok"] if isinstance(row, dict) else row[0])
+    if not ready:
+        print("[grade] age_band_result not found -- banded grades will be read "
+              "as GRADES everywhere. Run engine/age_band_grades.py --write "
+              "first (issue #47).")
+        return _AGE_BAND_NONE, _AGE_BAND_NONE
+    # ! SAID OUT LOUD, AND COUNTED FROM THE TABLE ITSELF. A filter that turns
+    #   out to match nothing looks exactly like one that was never wired, and
+    #   #47 spent a release in that state. Counting allraces instead would
+    #   mix these in with every row whose source grade was already NULL.
+    cur.execute("""SELECT count(*) AS n,
+                          count(*) FILTER (WHERE sport = 'XC') AS xc,
+                          count(*) FILTER (WHERE sport = 'TF') AS tf
+                   FROM age_band_result""")
+    r = cur.fetchone()
+    n, xc, tf = ((r["n"], r["xc"], r["tf"]) if isinstance(r, dict)
+                 else (r[0], r[1], r[2]))
+    print(f"[grade] #47: {n:,} rows ({xc:,} XC, {tf:,} TF) carry a banded "
+          f"grade in a division that writes AGES -- they lose it here")
+    return (_AGE_BAND_REAL.format(sport="XC"),
+            _AGE_BAND_REAL.format(sport="TF"))
+
 _BUILD = f"""
     SET work_mem = '1GB';
     SET temp_buffers = '256MB';
@@ -512,12 +581,15 @@ _BUILD = f"""
         SELECT person_id,
                substring(date, 1, 4)::int                        AS cal,
                {_ACAD}                                            AS acad,
-               n.norm                                             AS grade,
+               -- ★ #47: a banded grade in a division that writes AGES is not
+               --   a grade at all, and loses both spellings here, before any
+               --   rule can count it. See _ageBandJoins.
+               CASE WHEN ab.result_id IS NULL THEN n.norm END     AS grade,
                n.definite                                         AS definite,
                -- ! THE RAW COLUMN RIDES ALONG. Rule 5b needs the FR-1/SR-4
                --   spelling normGrade folds away; carrying it costs one text
                --   column and saves re-reading 225M rows.
-               r.grade                                            AS raw_grade,
+               CASE WHEN ab.result_id IS NULL THEN r.grade END    AS raw_grade,
                meet_id, div_id, source,
                (-1)::bigint                                       AS event_key,
                -- ★ raceIdent COMPUTED ONCE, HERE. It was being evaluated in
@@ -531,21 +603,23 @@ _BUILD = f"""
                time_seconds
         FROM   results r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
+        /*AGEBAND_XC*/
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035
         UNION ALL
         SELECT person_id,
                substring(date, 1, 4)::int,
                {_ACAD},
-               n.norm,
+               CASE WHEN ab.result_id IS NULL THEN n.norm END,
                n.definite,
-               r.grade,
+               CASE WHEN ab.result_id IS NULL THEN r.grade END,
                meet_id, div_id, source, COALESCE(event_id, -1),
                raceIdent(time_seconds, date, meet_id,
                          COALESCE(event_id, -1)),
                date, time_seconds
         FROM   results_tf r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
+        /*AGEBAND_TF*/
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035;
 
@@ -1204,7 +1278,16 @@ def resolve(cur, audit=False):
     forward.
     """
     print("[grade] building the shared race table...")
-    cur.execute(_BUILD)
+    # ! SUBSTITUTED, NOT FORMATTED. _BUILD is already an f-string and its SQL
+    #   carries `$$`-quoted function bodies; a second .format() pass over it
+    #   would have to escape every brace in the file. A plain replace of two
+    #   comment-shaped tokens touches nothing else.
+    xc_join, tf_join = _ageBandJoins(cur)
+    build = (_BUILD.replace(_AGE_BAND_TOKENS[0], xc_join)
+                   .replace(_AGE_BAND_TOKENS[1], tf_join))
+    for _tok in _AGE_BAND_TOKENS:
+        assert _tok not in build, f"age-band token {_tok} was not substituted"
+    cur.execute(build)
 
     # Reports only. reportRejected scans both results tables in full, so it
     # is opt-in; reportUngraded reads the temp table and is cheap.
