@@ -223,6 +223,45 @@ app.template_filter("school_label")(school_identity.schoolLabel)
 import search_index
 
 
+# ★ EVERY STATIC URL CARRIES THE FILE'S OWN MTIME, AND WITHOUT IT A DEPLOY IS
+#   INVISIBLE FOR A WEEK.
+#
+#   nginx serves /static/ with `expires 7d` (server_setup.sh), which is right
+#   -- these files are large and change rarely. But the URL was constant, so
+#   a browser that had ever loaded the site kept its cached copy for seven
+#   days no matter what shipped. Measured the hard way: two fixes to
+#   rankings.js were pulled, the service restarted, and the page kept running
+#   the old file. `systemctl restart` restarts Python; it cannot reach into a
+#   browser cache.
+#
+#   ⚠ AND IT LOOKS LIKE THE FIX DID NOT WORK, which is the expensive part. A
+#     stale asset does not error, it just behaves like the previous release,
+#     so the next hour goes on debugging code that is correct and not running.
+#
+# ! MTIME, NOT A BUILD NUMBER. There is no build step here, and a hand-bumped
+#   constant is a constant somebody forgets. The file's own timestamp changes
+#   exactly when the file does -- including on a `git pull`, which is the
+#   moment that matters.
+#
+# ! AND IT DEGRADES. A missing file returns the plain URL rather than raising:
+#   a 404 on an asset should stay a 404, not become a 500 on the page.
+def staticV(filename):
+    """/static/rankings.js?v=1756... -- cache-busted by the file's mtime."""
+    # ! IMPORTED HERE. url_for needs an application context, and this is
+    #   only ever called from a template render, which has one.
+    from flask import url_for
+    url = url_for("static", filename=filename)
+    try:
+        stamp = int(_os.path.getmtime(
+            _os.path.join(app.static_folder, filename)))
+    except OSError:
+        return url
+    return f"{url}?v={stamp}"
+
+
+app.jinja_env.globals["static_v"] = staticV
+
+
 @app.errorhandler(404)
 def not_found(_err):
     """The branded not-found page; every abort(404) and dead URL lands here

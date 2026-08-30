@@ -133,9 +133,9 @@
        the first and some scrapers take the last. #}
     {% include "_meta.html" %}
     {# Favicon comes from _meta.html now, same as every other page. #}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 {# ================================================================= #}
 {#  ONE pool -> label map. The chips and the per-pool headings both   #}
 {#  read it, so they cannot drift apart -- previously the chips had   #}
@@ -193,7 +193,7 @@
         {# The wordmark is an image, so the site name has to live in alt --
            an empty alt here would leave a link with no accessible text. #}
         <a class="brand brand-logo" href="/">
-            <img src="{{ url_for('static', filename='logo.svg') }}" alt="Racecast">
+            <img src="{{ static_v('logo.svg') }}" alt="Racecast">
         </a>
         <p class="tagline">Every result on one comparable scale.</p>
 
@@ -355,7 +355,7 @@
 
 </section>
 
-<script src="{{ url_for('static', filename='home.js') }}"></script>
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ static_v('home.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 </body>
 </html>

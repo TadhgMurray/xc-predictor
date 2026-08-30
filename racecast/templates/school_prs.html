@@ -22,9 +22,9 @@
     {% set meta_description = "Best mark per athlete in every event " ~ school
        ~ " has contested, by season and course." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -160,8 +160,8 @@
 {% endfor %}
 
 </main>
-<script src="{{ url_for('static', filename='staged.js') }}"></script>
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ static_v('staged.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script>
 // Course-chip expand: one press shows every course, no round trip.
 (function () {

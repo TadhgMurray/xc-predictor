@@ -8,7 +8,7 @@
     {% set meta_description = "Meet and event history at this venue, with "
        "results and speed ratings on one comparable scale." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
 <body>
 {% include "_topbar.html" %}
@@ -82,6 +82,6 @@
     </table>
 
 </main>
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 </body>
 </html>
