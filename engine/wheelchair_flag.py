@@ -97,8 +97,15 @@ _WORDS = r"wheelchair|seated|ambulator|paralymp|para athl|adaptive"
 #   per the owner's list (2026-08-29):
 #       T/F 11-13  visual impairment      T/F 40-41  short stature
 #       T/F 20     intellectual           T/F 42-47  limb impairments
-#       T/F 31-38  coordination           T/F 51-54  wheelchair racing
+#       T/F 31-38  coordination           T   51-54  wheelchair racing
+#                                          F   51-57  seated throws
 #                                          T/F 61-64  lower-limb amputee
+#
+# ! 51-57, NOT 51-54, AND THE OWNER'S LIST SAID 54. That list gives the TRACK
+#   range; the seated THROWS classes run F51 to F57, so F55/F56/F57 would
+#   have slipped through. Widening costs nothing because no T55/T56/T57
+#   exists to be caught by mistake -- the pattern is now a superset of both
+#   letters' real ranges rather than the intersection.
 #
 # ★ BOTH LETTERS, MATCHED THE SAME WAY -- OWNER'S CALL, 2026-08-30. T and F
 #   are not two systems: they are the same classification on a track or a
@@ -113,7 +120,7 @@ _WORDS = r"wheelchair|seated|ambulator|paralymp|para athl|adaptive"
 #   either way, and a masters woman caught by it loses board eligibility she
 #   was not going to be ranked for. If a masters population ever matters,
 #   measure it before re-adding a guard.
-_CODES = r"\m[TF](1[1-3]|20|3[1-8]|4[0-7]|5[1-4]|6[1-4])\M"
+_CODES = r"\m[TF](1[1-3]|20|3[1-8]|4[0-7]|5[1-7]|6[1-4])\M"
 
 # ! \m AND \M ARE POSTGRES WORD BOUNDARIES, not \b. Postgres regex spells
 #   them this way, and \b there means BACKSPACE -- a filter that silently
