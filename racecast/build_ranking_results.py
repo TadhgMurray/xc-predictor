@@ -747,12 +747,39 @@ def raceCeiling(pool):
 
 
 # What the two rails did, per sport, so a build that stops gating says so.
+# ★ ISSUE #37: A HIGH SCHOOL CROSS COUNTRY RACE OVER 5K IS RATED, NEVER
+#   RANKED (owner). 5000m is the high school championship distance; a 6k or
+#   an 8k is an open or collegiate race that a high schooler has entered, and
+#   ranking it puts a time set against college fields on a high school board.
+#
+# ! RATE, NOT REFUSE -- the owner's answer to the open question. The athlete
+#   ran it and their own page should say so; what is withheld is a place on a
+#   national board, exactly like grade_trust='low', the anchor gate and the
+#   pool ceiling. Nothing here touches results.speed_rating.
+#
+# ⚠ THE TOLERANCE IS FOR MEASUREMENT NOISE, NOT FOR ANOTHER DISTANCE. A
+#   nominal 5k arrives as 5000, 5030 or 4998 depending on the feed and the
+#   course survey, so an exact `> 5000` would drop real 5k races. The next
+#   distance actually raced above it is 6000m -- twenty percent up -- so 5%
+#   absorbs every plausible survey error and still cannot reach a 6k.
+#
+# ! AND A ROW WITH NO DISTANCE IS NOT DROPPED. Half the XC corpus reached
+#   ranking_results with distance NULL at one point (see _tfrrsBlobDistances);
+#   dropping on absence would refuse those boards entirely, and "we cannot
+#   tell" is not "it was too long". Same choice the anchor gate makes, and it
+#   is counted as unchecked there for the same reason.
+HS_XC_MAX_DISTANCE = 5000.0
+HS_XC_DISTANCE_TOL = 1.05          # 5250m: past every 5k, short of every 6k
+_HS_POOLS = ("hs_m", "hs_f")
+
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0,
-                "corrected": 0, "wheelchair": 0},
+                "corrected": 0, "wheelchair": 0,
+                "over_hs_distance": 0, "hs_no_distance": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0,
-                "corrected": 0, "wheelchair": 0}}
+                "corrected": 0, "wheelchair": 0,
+                "over_hs_distance": 0, "hs_no_distance": 0}}
 
 # Same trio as the engine loader and the backfill nuke -- one pattern,
 # three spellings, all named "wheelchair" so a grep finds the family.
@@ -899,6 +926,16 @@ def prepareRow(row, sport):
                                          - float(_ev_d)) >= 1:
                 _GATE[sport]["corrected"] += 1
                 return None
+
+    # ★ #37: HS CROSS COUNTRY OVER 5K IS RATED BUT NOT RANKED. See
+    #   HS_XC_MAX_DISTANCE for why the tolerance exists and why a NULL
+    #   distance is counted rather than dropped.
+    if sport == "XC" and pool in _HS_POOLS:
+        if row.distance is None:
+            _GATE[sport]["hs_no_distance"] += 1
+        elif float(row.distance) > HS_XC_MAX_DISTANCE * HS_XC_DISTANCE_TOL:
+            _GATE[sport]["over_hs_distance"] += 1
+            return None
 
     # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
     #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
@@ -1141,6 +1178,11 @@ def buildSport(conn, sport, since, stats):
         print(f"    corrected distance: {g['corrected']:,} races in "
               f"overridden divisions -- displayed, never ranked "
               f"(owner's rule)")
+    if g["over_hs_distance"] or g["hs_no_distance"]:
+        print(f"    hs distance (#37): {g['over_hs_distance']:,} HS races "
+              f"over {HS_XC_MAX_DISTANCE * HS_XC_DISTANCE_TOL:.0f}m rated but "
+              f"not ranked; {g['hs_no_distance']:,} HS races carry no "
+              f"distance and were left on the boards")
     if g["wheelchair"]:
         print(f"    wheelchair: {g['wheelchair']:,} races dropped by event "
               f"title (belt; the backfill nuke removes them at the next "
