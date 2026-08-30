@@ -187,6 +187,37 @@ MIN_RACES = 3                # races before an athlete gets an ability
 MIN_COURSE_ATHLETES = 20     # unique athletes before a course gets a difficulty
 MIN_COURSE_LINKS    = 3      # athletes who ALSO race elsewhere before a course
                              # earns any difficulty; fewer -> unanchored -> flat.
+# ★ ROBUST REWEIGHTING (IRLS), OFF BY DEFAULT. A course's difficulty is a
+#   weighted mean of its field's log deviations, and a mean has no defence
+#   against one bad race. An athlete who jogs a tempo effort in a scoring race
+#   reads as evidence that the COURSE was brutal, and the next ability step
+#   then pays every other finisher back as a hero. The ridge bounds how far a
+#   cell can walk; it does not stop a single row from pulling it.
+#
+#   Huber, in the log space the estimator already works in: a row whose
+#   residual exceeds ROBUST_C robust scales is down-weighted by
+#   scale/|residual|, so it still votes, just not proportionally to how odd
+#   it is. Rows inside the band are untouched, which is most of them.
+#
+# ! ZERO MEANS OFF, AND OFF IS THE DEFAULT ON PURPOSE. This changes every
+#   difficulty in the corpus, so it must be MEASURED against the current
+#   estimator before it becomes the estimator -- engine/holdout_eval.py is
+#   that measurement. Shipping it on would change every rating on the site
+#   with nothing to say whether the change was an improvement.
+#
+# ⚠ AND IT COSTS A SECOND PASS. The fused numba kernel never materialises the
+#   deviation; a residual needs it. So the robust path builds the 61.8M-element
+#   log_dev the fast path avoids, and runs the accumulation twice. Expect
+#   roughly 2-3x on this function while it is on.
+ROBUST_C            = 0.0    # Huber threshold in robust scales. 0 disables.
+                             # 1.345 is the classic 95%-efficiency-at-normal
+                             # value; 2.0 is gentler and a reasonable first try
+                             # on data whose tails are real races, not noise.
+ROBUST_SAMPLE       = 1_000_000   # rows sampled to estimate the robust scale.
+                             # A median over 61.8M sorts 61.8M floats every
+                             # iteration; a strided sample of a million is the
+                             # same number to three decimals and ~60x cheaper.
+
 RIDGE_LAMBDA        = 25.0   # ★ ridge on difficulty. Stops the drift: without it
                              # the range grew [-0.08,+0.27] -> [-0.52,+1.22] over 500
                              # iterations and never converged. See computeCourseDifficulties.
@@ -1525,6 +1556,41 @@ def computeCourseDifficulties(cols, ability, valid, old, n_courses, form,
     log_raw = np.divide(sums, wsum + RIDGE_LAMBDA,
                         out=np.zeros_like(sums),
                         where=(wsum + RIDGE_LAMBDA) > 0)
+
+    # ================================================================
+    # ROBUST REWEIGHTING -- one IRLS step. See ROBUST_C.
+    # ================================================================
+    # ! THE RESIDUAL IS PER ROW, AGAINST ITS OWN CELL'S CURRENT ESTIMATE. That
+    #   is what makes this a robustness step and not a second prior: a row is
+    #   discounted for disagreeing with the field it ran in, never for being
+    #   fast or slow in absolute terms. A whole field having a bad day moves
+    #   log_raw with it and nobody is down-weighted.
+    #
+    # ! MAD, NOT SD, FOR THE SCALE. The standard deviation is itself wrecked by
+    #   the outliers this exists to handle -- one 22-minute jog inflates the
+    #   scale enough to bring itself back inside the band. The median absolute
+    #   deviation has a 50% breakdown point. 1.4826 makes it agree with sd on
+    #   normal data, so ROBUST_C keeps its usual meaning.
+    if ROBUST_C > 0:
+        log_dev = cache["log_norm"] - log_ability[cache["athlete"]] - log_form
+        resid = log_dev - log_raw[c]
+        absr = np.abs(resid)
+        # Strided sample, not a random one: reproducible, no RNG to seed, and
+        # the row order here is compaction order rather than anything that
+        # correlates with the residual.
+        step = max(1, absr.size // ROBUST_SAMPLE)
+        scale = 1.4826 * float(np.median(absr[::step]))
+        if scale > 0:
+            # Huber: unit weight inside the band, scale/|r| outside, so the
+            # influence of a far row is bounded rather than proportional.
+            rw = np.minimum(1.0, (ROBUST_C * scale) / np.maximum(absr, 1e-12))
+            rcw = cw * rw
+            sums = _parallelBincount(c, weights=log_dev * rcw,
+                                     minlength=n_courses)
+            wsum = _parallelBincount(c, weights=rcw, minlength=n_courses)
+            log_raw = np.divide(sums, wsum + RIDGE_LAMBDA,
+                                out=np.zeros_like(sums),
+                                where=(wsum + RIDGE_LAMBDA) > 0)
 
     # Back to the (1+d) convention the whole rest of the system speaks --
     # backfill, ratings, the artefacts. expm1 is exact near zero where plain
