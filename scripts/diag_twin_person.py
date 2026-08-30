@@ -271,9 +271,31 @@ def stripGenerated(path=os.path.join("engine", "corrections.py")):
     while i < len(lines):
         if lines[i].startswith(MARKER):
             blocks += 1
-            # Walk back over the comment header this tool wrote above it.
-            while out and (out[-1].lstrip().startswith("#") or not out[-1].strip()):
+            # Walk back over the blank lines the block was separated by, and
+            # over a comment header ONLY if it is demonstrably this tool's.
+            #
+            # ⚠ IT USED TO POP EVERY PRECEDING COMMENT, AND THAT ATE HAND
+            #   -WRITTEN LINES. appendDrops writes its header BELOW the
+            #   marker, not above it, so an unconditional walk-back over
+            #   comments could only ever remove somebody else's. Measured on
+            #   a corrections.py ending in a hand-written note: --write then
+            #   --unwrite deleted the note and did not round-trip.
+            #
+            # ! THE OLD LAYOUT IS STILL HANDLED. An earlier version of this
+            #   tool did put its header above the marker, which is what the
+            #   walk-back was for; such a run is recognised by its own name
+            #   in the last line of the header, so it is still removed and
+            #   nothing else is.
+            while out and not out[-1].strip():
                 out.pop()
+            run = 0
+            while run < len(out) and out[-(run + 1)].lstrip().startswith("#"):
+                run += 1
+            if run and any("diag_twin_person.py" in out[-(k + 1)]
+                           for k in range(run)):
+                del out[len(out) - run:]
+                while out and not out[-1].strip():
+                    out.pop()
             # Forward to the end of the block: the dict, its closing brace at
             # column zero, and the two merge lines that follow.
             while i < len(lines) and not lines[i].startswith("}"):
