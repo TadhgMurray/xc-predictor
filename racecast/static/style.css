@@ -1108,6 +1108,15 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* Hidden until the first result set arrives; rankings.js toggles this class. */
 .rankings-page .pager.hidden { display: none; }
 
+/* ⚠ THERE IS NO GLOBAL .hidden IN THIS FILE, AND ASSUMING ONE COSTS A BUG.
+   Every rule here is scoped -- .pager.hidden, .combo-panel.hidden -- so a
+   new element given class="hidden" is not hidden by anything, and
+   `.rankings-page .field` goes on displaying it. Measured: the Gender
+   control and both unit groups rendered at once, on a board where each
+   should have shown one or none. */
+.rankings-page .field.hidden,
+.rankings-page .unit-row.hidden { display: none; }
+
 /* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
 /*
  * ★ WHY THESE NEED display:inline EXPLICITLY.

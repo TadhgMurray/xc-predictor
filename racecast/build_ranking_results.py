@@ -563,7 +563,20 @@ _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             "meet_id", "div_id", "canon_meet_id", "time_seconds",
             # ! LAST, so an older ranking_results is a column short rather
             #   than a column SHIFTED. COPY matches by position.
-            "distance", "event_id")
+            "distance", "event_id",
+            # ★ THE SCHOOL'S UNITS, DENORMALISED ONTO EVERY ROW. The rankings
+            #   filters previously reached school_unit with a semi-join per
+            #   request; a column is one comparison on a row already being
+            #   read, and the planner can combine it with the existing
+            #   (pool, year, rating) index instead of hashing a second
+            #   relation. See rankings._whereClauses.
+            #
+            # ! COLLEGE AND HIGH SCHOOL BOTH, in one set of columns. A school
+            #   is one or the other, so the unused ones are simply NULL --
+            #   cheaper and far simpler than two column families, and it is
+            #   what school_unit already stores.
+            "division", "region", "conference", "league",
+            "state_div", "section_div", "district", "county", "class")
 
 
 # ------------------------------------------------------------------ #
@@ -594,6 +607,57 @@ except ImportError:
 #   thousand. The cache is keyed on exactly what the query returns, including
 #   None, which resolves to None once rather than being re-parsed forever.
 _TF_DISTANCE = {}
+
+
+# ★ ONE ROW PER SCHOOL, HELD IN MEMORY, BECAUSE THE ALTERNATIVE IS 61.6M
+#   LOOKUPS. school_unit is ~150k rows; the corpus is 61.6M. Streaming a join
+#   would re-read the same handful of schools millions of times.
+#
+# ! KEYED (school, state) WITH A BARE-school FALLBACK, which is the same
+#   tie-break school_units.unitsFor uses: state narrows a shared name to one
+#   real school, and without it the row with the most votes wins. A board row
+#   carries its state, so the precise key is usually available.
+#
+# ⚠ AND IT DEGRADES TO NOTHING. No school_unit table (an old database,
+#   mid-rebuild) means every unit column is NULL and the filters return
+#   empty -- never an error, exactly as school_identity behaves.
+_UNIT_COLS = ("division", "region", "conference", "league",
+              "state_div", "section_div", "district", "county", "class")
+_UNITS = {"loaded": False, "by_key": {}, "by_school": {}}
+
+
+def _loadUnits(conn):
+    if _UNITS["loaded"]:
+        return
+    _UNITS["loaded"] = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.school_unit')")
+            if cur.fetchone()[0] is None:
+                print("    school_unit not found -- unit columns will be NULL")
+                return
+            cols = ", ".join(f'"{c}"' for c in _UNIT_COLS)
+            # votes DESC so the bare-school fallback keeps the best-attested
+            # row, and the (school, state) key keeps the exact one.
+            cur.execute(f"SELECT school, state, {cols} FROM school_unit "
+                        f"ORDER BY votes ASC")
+            for row in cur:
+                school, state, vals = row[0], row[1], tuple(row[2:])
+                _UNITS["by_school"][school] = vals
+                if state:
+                    _UNITS["by_key"][(school, state)] = vals
+    except Exception as exc:                        # noqa: BLE001
+        print(f"    school_unit unreadable ({exc}) -- unit columns NULL")
+
+
+def _unitsOf(school, state):
+    """The nine unit values for a row, or nine Nones."""
+    if not school:
+        return (None,) * len(_UNIT_COLS)
+    got = _UNITS["by_key"].get((school, state))
+    if got is None:
+        got = _UNITS["by_school"].get(school)
+    return got if got is not None else (None,) * len(_UNIT_COLS)
 
 
 def _tfDistance(event_short):
@@ -951,7 +1015,12 @@ def prepareRow(row, sport):
             row.canon_meet_id,
             row.time_seconds,
             distance,
-            row.event_id)
+            row.event_id,
+            # ! SPREAD LAST, in _UNIT_COLS order, matching the tail of
+            #   _COLUMNS. COPY is positional, so these two orderings are one
+            #   fact written twice -- _UNIT_COLS is the copy that _COLUMNS
+            #   quotes, so a unit added there flows to both.
+            *_unitsOf(school, row.state))
 
 
 # ------------------------------------------------------------------ #
@@ -1005,6 +1074,11 @@ def buildSport(conn, sport, since, stats):
     Read and write cursors are separate -- a named cursor is mid-fetch and
     cannot issue other statements.
     """
+    # ! BEFORE THE NAMED CURSOR OPENS. A named cursor is mid-fetch and cannot
+    #   issue other statements on the same connection, so the unit table has
+    #   to be read first. It is cached, so the second sport is free.
+    _loadUnits(conn)
+
     print(f"\n  {sport}: streaming...")
     buffer = []
     seen = 0
@@ -1130,6 +1204,12 @@ def createShadow(conn, name, like):
             ALTER TABLE IF EXISTS {like}
             ADD COLUMN IF NOT EXISTS event_id bigint
         """)
+        # Same idempotent migration for the unit columns. text, because a
+        # league is a name and a division is "DI" -- neither is a number.
+        for _u in ("division", "region", "conference", "league",
+                   "state_div", "section_div", "district", "county", "class"):
+            cur.execute(f'ALTER TABLE IF EXISTS {like} '
+                        f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         cur.execute(f"DROP TABLE IF EXISTS {name}")
 
         # ! UNLOGGED, AND THIS IS THE BIGGEST SINGLE WIN AVAILABLE HERE. A
