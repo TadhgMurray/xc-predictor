@@ -100,28 +100,25 @@ _WORDS = r"wheelchair|seated|ambulator|paralymp|para athl|adaptive"
 #       T/F 31-38  coordination           T/F 51-54  wheelchair racing
 #                                          T/F 61-64  lower-limb amputee
 #
-# ⚠ THE F CODES COLLIDE WITH MASTERS AGE GROUPS AND THE T CODES DO NOT.
-#   Masters athletics writes "F40" for women aged 40-44, "F45", "F50" -- so a
-#   bare \bF4[0-7]\b would nuke every masters women's division in the corpus
-#   and silently withhold those athletes' whole careers, which is precisely
-#   the cost this file's header warns about. Nothing writes "T40" for an age
-#   group, so the T codes are unambiguous on their own.
+# ★ BOTH LETTERS, MATCHED THE SAME WAY -- OWNER'S CALL, 2026-08-30. T and F
+#   are not two systems: they are the same classification on a track or a
+#   field event, so T35 and F35 are one athlete's class. The instruction is
+#   simply that none of them are rated and none of them reach the best-times
+#   or marks boards.
 #
-#   Hence the asymmetry below: a T code stands alone; an F code counts only
-#   when a para word appears in the same title. That loses a division titled
-#   only "Boys Shot Put F46" with no other marker -- an acceptable miss,
-#   because the alternative is a false positive that costs a real athlete
-#   every rating they have.
-_TCODE = r"\mT(1[1-3]|20|3[1-8]|4[0-7]|5[1-4]|6[1-4])\M"
-_FCODE = r"\mF(1[1-3]|20|3[1-8]|4[0-7]|5[1-4]|6[1-4])\M"
+# ⚠ AN EARLIER VERSION REQUIRED A PARA WORD BESIDE AN F CODE, ON THE THEORY
+#   THAT MASTERS ATHLETICS WRITES "F40" FOR WOMEN AGED 40-44. That theory was
+#   never measured -- it was written into this comment as though it had been,
+#   which was wrong of me. It is now moot: the owner's rule is exclusion
+#   either way, and a masters woman caught by it loses board eligibility she
+#   was not going to be ranked for. If a masters population ever matters,
+#   measure it before re-adding a guard.
+_CODES = r"\m[TF](1[1-3]|20|3[1-8]|4[0-7]|5[1-4]|6[1-4])\M"
 
-# ! \m and \M ARE POSTGRES WORD BOUNDARIES, not \b. Postgres regex spells
+# ! \m AND \M ARE POSTGRES WORD BOUNDARIES, not \b. Postgres regex spells
 #   them this way, and \b there means BACKSPACE -- a filter that silently
-#   matches nothing.
-WHEELCHAIR_RX = rf"({_WORDS})|({_TCODE})"
-
-# The F codes need corroboration; applied as a second, ANDed test.
-WHEELCHAIR_F_RX = rf"({_FCODE})"
+#   matches nothing at all.
+WHEELCHAIR_RX = rf"({_WORDS})|({_CODES})"
 
 
 _RACES = """
@@ -149,14 +146,7 @@ _RACES = """
         WHERE  r.person_id IS NOT NULL
           AND (COALESCE(m.division, '') ~* '{rx}'
             OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
-                        '') ~* '{rx}'
-            -- The F codes, only beside a para word. See WHEELCHAIR_F_RX.
-            OR (COALESCE(m.division, '') ~* '{frx}'
-                AND COALESCE(m.division, '') ~* '{words}')
-            OR (COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
-                         '') ~* '{frx}'
-                AND COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
-                             '') ~* '{words}'))
+                        '') ~* '{rx}')
         UNION ALL
         -- TF keeps the distance and the class in the EVENT name, which is
         -- where "Wheelchair 1500" lives. No division blob to read.
@@ -165,8 +155,7 @@ _RACES = """
         FROM   results_tf r
         WHERE  r.person_id IS NOT NULL
           AND (COALESCE(r.event_short, '') ~* '{rx}'
-            OR (COALESCE(r.event_short, '') ~* '{frx}'
-                AND COALESCE(r.event_short, '') ~* '{words}'));
+);
     CREATE INDEX ON wheelchair_race (person_id);
     ANALYZE wheelchair_race;
 """
@@ -246,8 +235,7 @@ def main():
         #   describe what --write WOULD do, and the only honest way to say
         #   that is to do it and not commit. UNLOGGED + a real table, so a
         #   rollback leaves nothing behind.
-        cur.execute(_RACES.format(rx=WHEELCHAIR_RX, frx=WHEELCHAIR_F_RX,
-                                  words=_WORDS))
+        cur.execute(_RACES.format(rx=WHEELCHAIR_RX))
         cur.execute(_PEOPLE)
 
         cur.execute(_SUMMARY)
