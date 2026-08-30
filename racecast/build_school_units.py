@@ -141,6 +141,22 @@ def main():
         # the pages look a school up by name, and by name+state
         cur.execute("CREATE INDEX idx_school_unit_school "
                     "ON school_unit (school)")
+
+        # ★ AND THE RANKINGS FILTERS READ IT THE OTHER WAY ROUND.
+        #   rankings._whereClauses does
+        #       school IN (SELECT u.school FROM school_unit u
+        #                  WHERE u."division" = ANY(%(division)s))
+        #   which scans by UNIT and returns schools -- the opposite direction
+        #   from idx_school_unit_school, which finds a unit given a school.
+        #   Without these the subquery is a sequential scan of school_unit on
+        #   every filtered board request.
+        #
+        # ! school IS THE SECOND COLUMN, so the index is covering: the planner
+        #   answers the whole subquery from the index without touching the
+        #   heap, which is the difference between fast and merely indexed.
+        for _col in ("division", "region", "conference"):
+            cur.execute(f'CREATE INDEX idx_school_unit_{_col} '
+                        f'ON school_unit ("{_col}", school)')
         conn.commit()
     print(f"  school_unit: {len(rows):,} rows written.")
 
