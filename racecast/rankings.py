@@ -157,6 +157,44 @@ _YEAR_LABEL = "(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)"
 #   real question and this is the board that can answer it.
 PR_POOLS = POOLS | {"all"}
 
+# ★ THE UNITS SPLIT BY LEVEL, AND THE TWO SETS DO NOT OVERLAP.
+#
+#   A high school has no conference and a college has no league, so a filter
+#   bar offering all of them at once offers several that can only ever return
+#   nothing for whoever is looking.
+#
+# ★ AND THE ORDER IS THE HIERARCHY, BIGGEST FIRST (owner, 2026-08-30).
+#   College: division, then region, then conference. High school: the state's
+#   division, then the section, then that section's division, then the
+#   league -- the smallest grouping, and last.
+#
+# ! division AND class ARE ONE FILTER. The corpus writes a state's tier as
+#   either -- "D2" in one state, "Class AA" in another -- and nobody looking
+#   for one means to exclude the other. One box searches both columns.
+#
+# ⚠ county AND district ARE GONE. They parsed out of meet and division names
+#   (see check_school_units' _NOT_A_COUNTY), they are not a unit anyone
+#   competes in, and they were the two boxes on the bar that answered no
+#   question. The COLUMNS stay in school_unit; only the filters go.
+COLLEGE_UNITS = ("division", "region", "conference")
+HS_UNITS = ("state_div", "section", "section_div", "league")
+
+UNIT_FILTERS = COLLEGE_UNITS + HS_UNITS
+
+# One filter key -> the school_unit columns it searches.
+UNIT_COLUMNS = {
+    "division":    ("division",),
+    "region":      ("region",),
+    "conference":  ("conference",),
+    "state_div":   ("state_div", "class"),
+    "section":     ("section",),
+    "section_div": ("section_div",),
+    "league":      ("league",),
+}
+
+_UPPER_UNITS = {"division", "region", "state_div", "section", "section_div",
+                "class"}
+
 # The distances a PR board will accept, in metres. A whitelist rather than a
 # free number because a board of "best 4,987 m times" is a data-entry artefact
 # with a leaderboard attached.
@@ -365,6 +403,30 @@ def parseFilters(args):
     if pool not in allowed:
         return None, f"pool must be one of {sorted(allowed)}"
 
+    # ★ GENDER IS ONLY A SUFFIX ON THE POOL, WHICH IS WHY 'all' MIXES IT.
+    #
+    #   Every pool name carries its gender -- hs_m, college_f -- so filtering
+    #   by pool has always filtered by gender as a side effect, and nothing
+    #   ever needed a gender axis. Then the Best times board added 'all',
+    #   _whereClauses correctly adds no pool clause for it, and the only
+    #   thing constraining gender vanished with it. A board of the fastest
+    #   5000s then ranks men and women together, which is not a board.
+    #
+    # ! SO 'all' MEANS ALL LEVELS, NOT ALL PEOPLE. gender=m|f narrows to the
+    #   pools ending in that suffix; omitted, behaviour is exactly as before,
+    #   so no existing link changes meaning.
+    #
+    # ⚠ AND IT IS REFUSED WHERE IT WOULD LIE. On a gendered pool the suffix
+    #   already decides, and accepting a contradicting gender ("pool=hs_m&
+    #   gender=f") would return an empty board with no explanation. Say so.
+    gender = (args.get("gender") or "").strip().lower() or None
+    if gender is not None:
+        if gender not in ("m", "f"):
+            return None, "gender must be m or f"
+        if pool != "all" and not pool.endswith(f"_{gender}"):
+            return None, (f"pool {pool} is already {pool.rsplit('_', 1)[1]}; "
+                          f"drop the gender filter or change the pool")
+
     distance = None
     if board == "pr":
         # ⚠ THE COLUMN IS NEWER THAN THE TABLE. `distance` is written by
@@ -417,7 +479,13 @@ def parseFilters(args):
         "distance": distance,
         # Lists, not scalars -- see _multiValue. None when absent, so
         # _whereClauses still adds no clause at all for an unset filter.
+        "gender": gender,
         "state":  _multiValue(args, "state", upper=True),
+        # ★ THE UNIT FILTERS. school_unit already carries these per school --
+        #   the athlete page's NCAA DI / WEST / PAC-12 chips read the same
+        #   columns -- they were simply never reachable from a board.
+        **{k: _multiValue(args, k, upper=(k in _UPPER_UNITS))
+           for k in UNIT_FILTERS},
         "course": course,
         "school": _multiValue(args, "school"),
         "grade":  _multiValue(args, "grade"),
@@ -493,6 +561,44 @@ def _whereClauses(f, params, with_dates):
     if f["pool"] != "all":
         params["pool"] = f["pool"]
         parts.append(" AND pool = %(pool)s")
+    elif f.get("gender"):
+        # ! A SUFFIX TEST, NOT AN IN-LIST. The pools are hs_m / college_f and
+        #   so on, so one gender is every pool ending '_m'. LIKE on a trailing
+        #   two characters cannot use the pool index either way, and this
+        #   stays right if a level is ever added.
+        params["gender"] = f"%\_{f['gender']}"
+        parts.append(" AND pool LIKE %(gender)s")
+
+    # ★ A SEMI-JOIN, NOT A SCHOOL IN-LIST. The alternative considered was
+    #   folding a unit into the list of schools it contains and filtering on
+    #   that -- which is how the athlete page's chips work and needs no new
+    #   anything. It also ships a several-thousand-element IN-list into every
+    #   query, and the site is already slow (owner, 2026-08-30).
+    #
+    #   `school IN (SELECT ...)` lets the planner build ONE hash of the
+    #   matching schools and probe it, instead of parsing a literal list per
+    #   request. school_unit is one row per (school, sport, state) -- small
+    #   enough to hash, large enough that an IN-list of its members is not.
+    #
+    # ! UNQUALIFIED `school` ON THE OUTER SIDE ON PURPOSE. Every other clause
+    #   here is unqualified too -- the boards alias their table differently
+    #   (s, p) and _whereClauses is shared -- and the subquery names its own
+    #   side `u.`, so there is nothing for `school` to bind to but the board.
+    #
+    # ⚠ AND IT IS NOT A JOIN. A JOIN would multiply rows when a school has
+    #   several school_unit rows (one per sport, plus shared names across
+    #   states), silently duplicating athletes on the board. IN stops at the
+    #   first match by construction.
+    for _key in UNIT_FILTERS:
+        if f.get(_key):
+            params[_key] = f[_key]
+            # ! ONE SUBQUERY PER FILTER, OR-ING ITS COLUMNS INSIDE. Splitting
+            #   state_div and class into two ANDed clauses would require a
+            #   school to be in both, which no school is.
+            _ors = " OR ".join(f'u."{c}" = ANY(%({_key})s)'
+                               for c in UNIT_COLUMNS[_key])
+            parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
+                         f' WHERE {_ors})')
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A

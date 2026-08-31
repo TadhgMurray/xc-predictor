@@ -2,8 +2,9 @@
 add_page_indexes.py -- create the indexes the school/PR/TF pages filter by.
 
 The school page, School PRs and compare all filter ranking_results and
-results_tf by SCHOOL, and the TF meet scorer fetches results_tf by
-MEET_ID. Without an index each of those is a sequential scan of a
+results_tf by SCHOOL, the TF meet scorer fetches results_tf by MEET_ID,
+and the filtered /meets view filters meets by STATE and counts results
+by MEET_ID. Without an index each of those is a sequential scan of a
 61M-row table per page view. This script lists what exists, then builds
 what is missing with CREATE INDEX CONCURRENTLY -- no table locks, safe
 with the site running (CONCURRENTLY needs autocommit, hence the direct
@@ -44,6 +45,20 @@ WANTED = [
     #   index probes and the full --all build becomes an hour, not a day.
     ("results",         "div_id",  "idx_results_div", None),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
+    # ★ THE FILTERED /meets VIEW (meets_filter.py). Its browse path filters
+    #   meets/meets_tf by STATE -- the meet's state, not the athlete's -- and
+    #   then counts results per surviving meet. Without these three the state
+    #   filter seq-scans the meets tables and the per-meet count seq-scans
+    #   39M result rows PER MEET, which is the difference between a page and
+    #   a timeout.
+    #
+    # ! idx_results_meet EARNS ITS PLACE TWICE. get_meet_divisions
+    #   (app.py) already does `WHERE r.meet_id = %(meet)s` on every meet page
+    #   view with nothing meet_id-leading to serve it; results_tf has had its
+    #   equivalent since the TF scorer needed one. This closes the XC half.
+    ("meets",           "state",   "idx_meets_state", None),
+    ("meets_tf",        "state",   "idx_meets_tf_state", None),
+    ("results",         "meet_id", "idx_results_meet", None),
 ]
 
 

@@ -10,9 +10,9 @@
        ~ ((" at " ~ header.course_name) if header.course_name else "")
        ~ ". Team scores, PRs and course difficulty on one comparable scale." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide">
@@ -182,6 +182,6 @@
     })();</script>
     {% endif %}
 </main>
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 </body>
 </html>

@@ -46,6 +46,7 @@ from datetime import date            # date.fromisoformat parses the text date c
 sys.path.insert(0, "engine")
 sys.path.insert(0, "scripts")
 
+import psycopg2.errors           # LockNotAvailable, for the swap retry
 import psycopg2.extras
 from database import getConn, initPool
 # poolFor + metersFromDistance are the SINGLE SOURCE OF TRUTH for pool + distance
@@ -949,22 +950,57 @@ def _loadTfrrsBlobDistances(cur):
 # guard (unconditional rewrite) and no resumability (owner choices) — which is
 # what lets the read be one uninterrupted stream.
 #
-def _streamSQL(cfg):
+# ★ #47 IS APPLIED IN THE STREAM, NOT IN PYTHON. age_band_result names the
+#   rows whose banded "grade" is really an AGE range (see
+#   engine/age_band_grades.py). Those rows must reach normalizeResult with NO
+#   grade, so poolFor falls through to the evidence it already trusts -- the
+#   school and the season verdict -- instead of reading "11-12" as eleventh
+#   and twelfth grade and pooling a professional as a high schooler.
+#
+# ! A JOIN RATHER THAN A SET OF result_ids IN MEMORY, for two reasons. The
+#   flagged set is unbounded in principle (it grows with every youth meet
+#   ingested), and a Python-side test would be a SECOND place that decides
+#   what a grade means -- grade_sanity does it in SQL at the allraces build,
+#   and two implementations of one rule drift. Left-joining a small table
+#   into a sequential scan is a hash join with a tiny hash table.
+#
+# ⚠ IT NULLS ONLY grade. The row keeps its time, its meet and its person, and
+#   is still rated -- #47 removes a false claim about level, it does not
+#   discard a race.
+def _streamSQL(cfg, age_band=False):
     # Per-sport literal-NULL for the TF-only columns, so both sports yield the
     # SAME 10 columns in the SAME order.
-    event_id_col    = "event_id"    if cfg.has_event else "NULL AS event_id"
-    event_short_col = "event_short" if cfg.has_event else "NULL AS event_short"
+    # ! THE ALIAS IS BAKED IN HERE, NOT ADDED AT THE CALL SITE. The table now
+    #   carries the alias `r` so the #47 join has something to key against,
+    #   and prefixing at use would produce `r.NULL AS event_id` on the branch
+    #   that substitutes a literal.
+    event_id_col    = "r.event_id"    if cfg.has_event else "NULL AS event_id"
+    event_short_col = ("r.event_short" if cfg.has_event
+                       else "NULL AS event_short")
     # `school` exists on results (XC). If results_tf lacks it, substitute a
     # literal NULL -- the SAME literal-NULL trick used above for event_id, so
     # both sports keep the identical column shape. A NULL school simply means
     # poolFor's school lookup abstains and behaviour is exactly as before.
-    school_col      = "school"      if cfg.has_school else "NULL AS school"
+    school_col      = "r.school"      if cfg.has_school else "NULL AS school"
     # `date` rides the RESULT row so era gets a per-result date with no join.
+    #
+    # The #47 join and the column shape move together: when age_band_result is
+    # absent the query is byte-for-byte what it always was, and `grade` is the
+    # plain column. There is no third state.
+    if age_band:
+        grade_col = ("CASE WHEN ab.result_id IS NULL THEN r.grade END "
+                     "AS grade")
+        band_join = (f"\n        LEFT JOIN age_band_result ab"
+                     f"\n               ON ab.sport = '{cfg.sport}'"
+                     f"\n              AND ab.result_id = r.result_id")
+    else:
+        grade_col, band_join = "r.grade AS grade", ""
     return f"""
-        SELECT result_id, source, meet_id, div_id, {event_id_col},
-               {event_short_col}, time_seconds, grade, athlete_id, date,
-               person_id, canon_meet_id, {school_col}
-        FROM {cfg.table}
+        SELECT r.result_id, r.source, r.meet_id, r.div_id, {event_id_col},
+               {event_short_col}, r.time_seconds, {grade_col},
+               r.athlete_id, r.date,
+               r.person_id, r.canon_meet_id, {school_col}
+        FROM {cfg.table} r{band_join}
     """
 
 
@@ -980,9 +1016,24 @@ def _streamSQL(cfg):
 #            cfg       — the SportConfig (chooses table + column shape).
 # Output   : an open server-side cursor, already executed, ready to iterate.
 def _openStream(read_conn, cfg):
+    # ! PROBED BEFORE THE NAMED CURSOR OPENS, on the same connection. A plain
+    #   SELECT here is safe -- the "no other work on this connection" rule
+    #   applies once the server-side cursor is streaming, not before it. A
+    #   missing optional table must degrade, not crash.
+    with read_conn.cursor() as probe:
+        probe.execute(
+            "SELECT to_regclass('public.age_band_result') IS NOT NULL")
+        age_band = bool(probe.fetchone()[0])
+    if age_band:
+        print(f"[{cfg.sport}] #47 age bands ON -- rows in age-banded divisions "
+              f"reach poolFor with no grade")
+    else:
+        print(f"[{cfg.sport}] age_band_result not found -- banded grades will "
+              f"be read as GRADES. Run engine/age_band_grades.py --write "
+              f"(issue #47)")
     cur = read_conn.cursor(name=f"backfill_stream_{cfg.sport.lower()}")  # named => server-side
     cur.itersize = cfg.batch          # rows shipped per network round trip
-    cur.execute(_streamSQL(cfg))      # begins the single full-table scan
+    cur.execute(_streamSQL(cfg, age_band))   # begins the single full-table scan
     return cur
 
 
@@ -2099,9 +2150,34 @@ def _bufferToCopyText(updates):
 #           the payload lands or the whole statement raises. That is stronger
 #           than a rowcount, not weaker.
 def _copyToStaging(write_conn, table, updates):
-    with write_conn.cursor() as cur:
-        cur.copy_expert(f"COPY {table} (result_id, nt) FROM STDIN",
-                        _bufferToCopyText(updates))
+    # ★ A SKIPPED ROW IS OMITTED FROM STAGING, NOT STAGED AS NULL -- AND ON
+    #   THIS PATH THAT IS HOW IT BECOMES NULL.
+    #
+    #   _accumulate queues (None, rid) for every skip so the UPDATE fallback
+    #   erases a fossil normalized_time in place. That is right for UPDATE and
+    #   fatal here: this table is `nt real NOT NULL`, so the first batch
+    #   carrying any skip died with
+    #
+    #       NotNullViolation: null value in column "nt" of relation
+    #       "bf_staging_xc"        COPY line 14: "60176255 \N"
+    #
+    #   and the whole COPY is one statement, so the batch took the good rows
+    #   down with it.
+    #
+    # ! AND OMITTING THEM IS NOT A COMPROMISE -- IT IS THE DESIGN.
+    #   _mergeSelectList emits `s.nt AS normalized_time` with NO COALESCE, so
+    #   a row that staging does not mention comes out of the LEFT JOIN as
+    #   NULL already. Staging the NULL would write the same value the join
+    #   produces for free. _accumulate's own comment says as much.
+    #
+    # ! len(updates) STILL, NOT len(rows). The caller counts these as resolved,
+    #   and a skip IS resolved -- to NULL. Returning the copied count would
+    #   silently restate the census the drain loop already keeps.
+    rows = [u for u in updates if u[0] is not None]
+    if rows:
+        with write_conn.cursor() as cur:
+            cur.copy_expert(f"COPY {table} (result_id, nt) FROM STDIN",
+                            _bufferToCopyText(rows))
     write_conn.commit()                    # bounded memory; the table is unlogged
     return len(updates)
 
@@ -2317,6 +2393,58 @@ def _buildIndexes(cur, table, index_defs):
 #     drop it by hand. That is your undo button, and it is why this is safe.
 #   * Index names are renamed back so nothing downstream that hardcodes an index
 #     name breaks.
+# ★ AND IT WAITS IMPATIENTLY, SO THE SITE CAN STAY UP THROUGH A RUN.
+#
+#   Every statement below needs ACCESS EXCLUSIVE, which conflicts with the
+#   ACCESS SHARE any reader holds. With the site stopped that is free. With
+#   it serving, gunicorn's workers are readers -- and Postgres queues lock
+#   requests IN ORDER, so a rename waiting behind one slow page load makes
+#   every NEW request queue behind the rename. One slow query freezes the
+#   whole site, which is a worse outage than the maintenance window it was
+#   meant to avoid, and it arrives unannounced.
+#
+#   lock_timeout makes the attempt give up instead of queueing. On timeout
+#   the queue drains, readers finish, and the next attempt takes the gap.
+#   This is the standard online-DDL pattern and it is the ONLY thing between
+#   "the pipeline runs weekly with the site up" and a random freeze.
+#
+# ! LOCAL, so it dies with the transaction and never leaks into the session
+#   that runs the rest of the merge.
+#
+# ⚠ AND IT MUST BE ALL-OR-NOTHING. The renames are ONE transaction: half a
+#   swap leaves `results_old` claiming `results_pkey` with no `results` at
+#   all. A timeout mid-sequence rolls the whole thing back, which is why the
+#   retry can simply start over.
+SWAP_LOCK_TIMEOUT = "3s"
+SWAP_ATTEMPTS = 20
+SWAP_BACKOFF = 15          # seconds between attempts; 20 x 15s = 5 minutes
+
+
+def _swapWithRetry(cur, body, what):
+    """Run `body(cur)` inside a transaction that refuses to queue for locks."""
+    for attempt in range(1, SWAP_ATTEMPTS + 1):
+        try:
+            cur.execute("BEGIN")
+            cur.execute(f"SET LOCAL lock_timeout = '{SWAP_LOCK_TIMEOUT}'")
+            body(cur)
+            cur.execute("COMMIT")
+            if attempt > 1:
+                print(f"    {what}: took the lock on attempt {attempt}")
+            return
+        except psycopg2.errors.LockNotAvailable:
+            cur.execute("ROLLBACK")
+            print(f"    {what}: readers hold the table, attempt {attempt}"
+                  f"/{SWAP_ATTEMPTS} -- retrying in {SWAP_BACKOFF}s")
+            time.sleep(SWAP_BACKOFF)
+    # ! A FAILURE HERE COSTS NOTHING BUT THE SWAP. The heap and its indexes
+    #   are built and committed; <table>_new survives, so a rerun resumes
+    #   rather than rebuilding. Raising beats swapping half of it.
+    raise RuntimeError(
+        f"{what}: could not take ACCESS EXCLUSIVE in "
+        f"{SWAP_ATTEMPTS} attempts. Something is holding a long read -- "
+        f"check pg_stat_activity. <table>_new is built and waiting.")
+
+
 def _swapTables(cur, table, index_defs):
     # No SET LOGGED here: _buildNewTable already created the table LOGGED.
     # SET LOGGED would rewrite the heap AND all the indexes we just built.
@@ -2329,18 +2457,21 @@ def _swapTables(cur, table, index_defs):
     #       ERROR: relation "results_pkey" already exists
     #   Reproduced on PG16 before this comment was written.
     # Hence: move the OLD names out of the way FIRST, then claim them.
-    cur.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    def _rename(c):
+        c.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
 
-    # Step out of the way. results_pkey -> results_old_pkey, etc.
-    cur.execute(f"ALTER INDEX {table}_pkey RENAME TO {table}_old_pkey")
-    for name, _ in index_defs:
-        cur.execute(f"ALTER INDEX {name} RENAME TO {name}_old")
+        # Step out of the way. results_pkey -> results_old_pkey, etc.
+        c.execute(f"ALTER INDEX {table}_pkey RENAME TO {table}_old_pkey")
+        for name, _ in index_defs:
+            c.execute(f"ALTER INDEX {name} RENAME TO {name}_old")
 
-    # Now the names are free.
-    cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
-    cur.execute(f"ALTER INDEX {table}_new_pkey RENAME TO {table}_pkey")
-    for name, _ in index_defs:
-        cur.execute(f"ALTER INDEX {name}_new RENAME TO {name}")
+        # Now the names are free.
+        c.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+        c.execute(f"ALTER INDEX {table}_new_pkey RENAME TO {table}_pkey")
+        for name, _ in index_defs:
+            c.execute(f"ALTER INDEX {name}_new RENAME TO {name}")
+
+    _swapWithRetry(cur, _rename, f"{table} swap")
     print(f"    swapped: {table}_new -> {table};  old kept as {table}_old")
 
 
@@ -2708,7 +2839,25 @@ def _printReasonCensus(census, processed):
 #           the columns needed to triage (kinds, n, frac_under, median, min).
 # Arguments: flagged — list from _SuspectDivisions.flagged(); path — output file.
 # Output  : None (writes the file).
+# ⚠ A DIAGNOSTIC ARTIFACT MUST NOT KILL THE RUN. _printFooter is called
+#   AFTER the connection blocks close, so on --apply the rows are already
+#   written and the tables already swapped by the time this runs. An
+#   unwritable path here used to raise out of main() -- the database correct,
+#   the process exit code non-zero, and any pipeline script with `set -e`
+#   aborting every stage after it over a report file. Measured 2026-08-30: a
+#   root-owned suspects_xc.txt left by an earlier run as root took down a
+#   dry run at the last line.
 def _writeSuspectFile(flagged, path):
+    try:
+        _writeSuspectFileOrRaise(flagged, path)
+    except OSError as exc:
+        print(f"    [suspects] could NOT write {path}: {exc}")
+        print(f"    [suspects] {len(flagged):,} flagged divisions were "
+              f"computed and are lost for this run only -- the run itself is "
+              f"unaffected. Fix the path's ownership and re-run to keep them.")
+
+
+def _writeSuspectFileOrRaise(flagged, path):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("kinds\tmeet\tdiv\tpool\tn\tcorrupt\tfrac_under\tmedian\tmin\turl\n")
         for r in flagged:

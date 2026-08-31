@@ -32,6 +32,7 @@ import argparse
 import datetime
 import concurrent.futures as cf
 
+import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
@@ -551,12 +552,31 @@ _SQL = {
     """,
 }
 
+# The swap's patience. See the comment at the rename below.
+_SWAP_LOCK_TIMEOUT = "3s"
+_SWAP_ATTEMPTS = 20
+_SWAP_BACKOFF = 15
+
+
 _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             "race_date", "year", "state", "school", "grade",
             "meet_id", "div_id", "canon_meet_id", "time_seconds",
             # ! LAST, so an older ranking_results is a column short rather
             #   than a column SHIFTED. COPY matches by position.
-            "distance", "event_id")
+            "distance", "event_id",
+            # ★ THE SCHOOL'S UNITS, DENORMALISED ONTO EVERY ROW. The rankings
+            #   filters previously reached school_unit with a semi-join per
+            #   request; a column is one comparison on a row already being
+            #   read, and the planner can combine it with the existing
+            #   (pool, year, rating) index instead of hashing a second
+            #   relation. See rankings._whereClauses.
+            #
+            # ! COLLEGE AND HIGH SCHOOL BOTH, in one set of columns. A school
+            #   is one or the other, so the unused ones are simply NULL --
+            #   cheaper and far simpler than two column families, and it is
+            #   what school_unit already stores.
+            "division", "region", "conference", "league",
+            "state_div", "section_div", "district", "county", "class")
 
 
 # ------------------------------------------------------------------ #
@@ -587,6 +607,57 @@ except ImportError:
 #   thousand. The cache is keyed on exactly what the query returns, including
 #   None, which resolves to None once rather than being re-parsed forever.
 _TF_DISTANCE = {}
+
+
+# ★ ONE ROW PER SCHOOL, HELD IN MEMORY, BECAUSE THE ALTERNATIVE IS 61.6M
+#   LOOKUPS. school_unit is ~150k rows; the corpus is 61.6M. Streaming a join
+#   would re-read the same handful of schools millions of times.
+#
+# ! KEYED (school, state) WITH A BARE-school FALLBACK, which is the same
+#   tie-break school_units.unitsFor uses: state narrows a shared name to one
+#   real school, and without it the row with the most votes wins. A board row
+#   carries its state, so the precise key is usually available.
+#
+# ⚠ AND IT DEGRADES TO NOTHING. No school_unit table (an old database,
+#   mid-rebuild) means every unit column is NULL and the filters return
+#   empty -- never an error, exactly as school_identity behaves.
+_UNIT_COLS = ("division", "region", "conference", "league",
+              "state_div", "section_div", "district", "county", "class")
+_UNITS = {"loaded": False, "by_key": {}, "by_school": {}}
+
+
+def _loadUnits(conn):
+    if _UNITS["loaded"]:
+        return
+    _UNITS["loaded"] = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.school_unit')")
+            if cur.fetchone()[0] is None:
+                print("    school_unit not found -- unit columns will be NULL")
+                return
+            cols = ", ".join(f'"{c}"' for c in _UNIT_COLS)
+            # votes DESC so the bare-school fallback keeps the best-attested
+            # row, and the (school, state) key keeps the exact one.
+            cur.execute(f"SELECT school, state, {cols} FROM school_unit "
+                        f"ORDER BY votes ASC")
+            for row in cur:
+                school, state, vals = row[0], row[1], tuple(row[2:])
+                _UNITS["by_school"][school] = vals
+                if state:
+                    _UNITS["by_key"][(school, state)] = vals
+    except Exception as exc:                        # noqa: BLE001
+        print(f"    school_unit unreadable ({exc}) -- unit columns NULL")
+
+
+def _unitsOf(school, state):
+    """The nine unit values for a row, or nine Nones."""
+    if not school:
+        return (None,) * len(_UNIT_COLS)
+    got = _UNITS["by_key"].get((school, state))
+    if got is None:
+        got = _UNITS["by_school"].get(school)
+    return got if got is not None else (None,) * len(_UNIT_COLS)
 
 
 def _tfDistance(event_short):
@@ -676,12 +747,39 @@ def raceCeiling(pool):
 
 
 # What the two rails did, per sport, so a build that stops gating says so.
+# ★ ISSUE #37: A HIGH SCHOOL CROSS COUNTRY RACE OVER 5K IS RATED, NEVER
+#   RANKED (owner). 5000m is the high school championship distance; a 6k or
+#   an 8k is an open or collegiate race that a high schooler has entered, and
+#   ranking it puts a time set against college fields on a high school board.
+#
+# ! RATE, NOT REFUSE -- the owner's answer to the open question. The athlete
+#   ran it and their own page should say so; what is withheld is a place on a
+#   national board, exactly like grade_trust='low', the anchor gate and the
+#   pool ceiling. Nothing here touches results.speed_rating.
+#
+# ⚠ THE TOLERANCE IS FOR MEASUREMENT NOISE, NOT FOR ANOTHER DISTANCE. A
+#   nominal 5k arrives as 5000, 5030 or 4998 depending on the feed and the
+#   course survey, so an exact `> 5000` would drop real 5k races. The next
+#   distance actually raced above it is 6000m -- twenty percent up -- so 5%
+#   absorbs every plausible survey error and still cannot reach a 6k.
+#
+# ! AND A ROW WITH NO DISTANCE IS NOT DROPPED. Half the XC corpus reached
+#   ranking_results with distance NULL at one point (see _tfrrsBlobDistances);
+#   dropping on absence would refuse those boards entirely, and "we cannot
+#   tell" is not "it was too long". Same choice the anchor gate makes, and it
+#   is counted as unchecked there for the same reason.
+HS_XC_MAX_DISTANCE = 5000.0
+HS_XC_DISTANCE_TOL = 1.05          # 5250m: past every 5k, short of every 6k
+_HS_POOLS = ("hs_m", "hs_f")
+
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0,
-                "corrected": 0, "wheelchair": 0},
+                "corrected": 0, "wheelchair": 0,
+                "over_hs_distance": 0, "hs_no_distance": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0,
-                "corrected": 0, "wheelchair": 0}}
+                "corrected": 0, "wheelchair": 0,
+                "over_hs_distance": 0, "hs_no_distance": 0}}
 
 # Same trio as the engine loader and the backfill nuke -- one pattern,
 # three spellings, all named "wheelchair" so a grep finds the family.
@@ -829,6 +927,16 @@ def prepareRow(row, sport):
                 _GATE[sport]["corrected"] += 1
                 return None
 
+    # ★ #37: HS CROSS COUNTRY OVER 5K IS RATED BUT NOT RANKED. See
+    #   HS_XC_MAX_DISTANCE for why the tolerance exists and why a NULL
+    #   distance is counted rather than dropped.
+    if sport == "XC" and pool in _HS_POOLS:
+        if row.distance is None:
+            _GATE[sport]["hs_no_distance"] += 1
+        elif float(row.distance) > HS_XC_MAX_DISTANCE * HS_XC_DISTANCE_TOL:
+            _GATE[sport]["over_hs_distance"] += 1
+            return None
+
     # ★ THE TWO STAGES MUST HAVE USED THE SAME POOL, OR THE RATING IS ON THE
     #   WRONG SCALE AND THE ROW IS NOT A FACT ABOUT THE ATHLETE.
     #
@@ -944,7 +1052,12 @@ def prepareRow(row, sport):
             row.canon_meet_id,
             row.time_seconds,
             distance,
-            row.event_id)
+            row.event_id,
+            # ! SPREAD LAST, in _UNIT_COLS order, matching the tail of
+            #   _COLUMNS. COPY is positional, so these two orderings are one
+            #   fact written twice -- _UNIT_COLS is the copy that _COLUMNS
+            #   quotes, so a unit added there flows to both.
+            *_unitsOf(school, row.state))
 
 
 # ------------------------------------------------------------------ #
@@ -998,6 +1111,11 @@ def buildSport(conn, sport, since, stats):
     Read and write cursors are separate -- a named cursor is mid-fetch and
     cannot issue other statements.
     """
+    # ! BEFORE THE NAMED CURSOR OPENS. A named cursor is mid-fetch and cannot
+    #   issue other statements on the same connection, so the unit table has
+    #   to be read first. It is cached, so the second sport is free.
+    _loadUnits(conn)
+
     print(f"\n  {sport}: streaming...")
     buffer = []
     seen = 0
@@ -1060,6 +1178,11 @@ def buildSport(conn, sport, since, stats):
         print(f"    corrected distance: {g['corrected']:,} races in "
               f"overridden divisions -- displayed, never ranked "
               f"(owner's rule)")
+    if g["over_hs_distance"] or g["hs_no_distance"]:
+        print(f"    hs distance (#37): {g['over_hs_distance']:,} HS races "
+              f"over {HS_XC_MAX_DISTANCE * HS_XC_DISTANCE_TOL:.0f}m rated but "
+              f"not ranked; {g['hs_no_distance']:,} HS races carry no "
+              f"distance and were left on the boards")
     if g["wheelchair"]:
         print(f"    wheelchair: {g['wheelchair']:,} races dropped by event "
               f"title (belt; the backfill nuke removes them at the next "
@@ -1123,6 +1246,12 @@ def createShadow(conn, name, like):
             ALTER TABLE IF EXISTS {like}
             ADD COLUMN IF NOT EXISTS event_id bigint
         """)
+        # Same idempotent migration for the unit columns. text, because a
+        # league is a name and a division is "DI" -- neither is a number.
+        for _u in ("division", "region", "conference", "league",
+                   "state_div", "section_div", "district", "county", "class"):
+            cur.execute(f'ALTER TABLE IF EXISTS {like} '
+                        f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         cur.execute(f"DROP TABLE IF EXISTS {name}")
 
         # ! UNLOGGED, AND THIS IS THE BIGGEST SINGLE WIN AVAILABLE HERE. A
@@ -1413,12 +1542,43 @@ def swapIn(conn):
         conn.commit()
         print(f"    [{time.time() - t0:7.1f}s] set logged (both tables)")
 
-        cur.execute("BEGIN")
-        cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
-        cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
-        cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
-        cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
-        conn.commit()
+        # ★ IMPATIENT, SO THE SITE CAN STAY UP THROUGH A PIPELINE RUN.
+        #   These renames need ACCESS EXCLUSIVE, which conflicts with the
+        #   ACCESS SHARE every gunicorn worker holds while it reads. Postgres
+        #   queues lock requests IN ORDER, so a rename waiting behind one slow
+        #   page makes every NEW request queue behind the rename -- one slow
+        #   query freezes the whole site. lock_timeout gives up instead of
+        #   queueing, the backlog drains, and the next attempt takes the gap.
+        #   Same pattern and constants as backfill_normalize._swapWithRetry.
+        #
+        # ⚠ ALL FOUR IN ONE TRANSACTION. Half a swap leaves ranking_results
+        #   renamed away with nothing in its place, and every page 500s. A
+        #   timeout rolls the whole thing back, which is what makes the retry
+        #   safe to simply start over.
+        for attempt in range(1, _SWAP_ATTEMPTS + 1):
+            try:
+                cur.execute("BEGIN")
+                cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
+                cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
+                cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
+                cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
+                cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
+                conn.commit()
+                break
+            except psycopg2.errors.LockNotAvailable:
+                conn.rollback()
+                if attempt == _SWAP_ATTEMPTS:
+                    # ! THE SHADOW SURVIVES, so a rerun resumes at the swap
+                    #   rather than reloading 61.6M rows. Raising beats
+                    #   swapping half of it.
+                    raise RuntimeError(
+                        "ranking_results swap: could not take ACCESS "
+                        f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
+                        "pg_stat_activity for a long read; the shadow "
+                        "tables are loaded and waiting.")
+                print(f"    readers hold the tables, attempt {attempt}"
+                      f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s")
+                time.sleep(_SWAP_BACKOFF)
     print("  swapped. dropping the old copies...")
 
     # The old ranking_results is ~23GB. Timed because a drop that size is not

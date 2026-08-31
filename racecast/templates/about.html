@@ -15,7 +15,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
 {% set meta_title = "About" %}
 {% set meta_description =
    "How Racecast ratings work: every cross country and track result put on one
@@ -24,7 +24,7 @@
 {% set meta_crumbs = [("About", none)] %}
 {% include "_meta.html" %}
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 

@@ -21,6 +21,15 @@
 
 const PAGE_SIZE = 50;
 
+/* College is division/region/conference; high school is league/division/
+   section/district/county/class. The sets do not overlap, so one group is
+   shown at a time -- see the note in rankings.html. */
+/* Biggest grouping first, league last. college / high school, and the two
+   sets never mix -- see the note in rankings.py. */
+const COLLEGE_UNITS = ["division", "region", "conference"];
+const HS_UNITS = ["state_div", "section", "section_div", "league"];
+const UNIT_KEYS = COLLEGE_UNITS.concat(HS_UNITS);
+
 /*
  * Page state.
  *
@@ -202,6 +211,21 @@ function buildQuery() {
     limit:  PAGE_SIZE,
     offset: state.offset
   });
+
+  /* ! SENT ONLY WHEN NON-EMPTY, so an untouched box adds no clause and the
+     URL stays short enough to share. _multiValue on the server splits on
+     commas, so "DI, DII" is two values and the spaces do not survive. */
+  for (const k of UNIT_KEYS) {
+    const host = document.querySelector(`.combo[data-field="${k}"]`);
+    /* ! ONLY FROM THE VISIBLE GROUP. A college division left selected while
+       the pool says hs would filter a high school board by an NCAA division
+       and return nothing, with no clue why. */
+    if (!host || host.closest(".unit-row").classList.contains("hidden")) {
+      continue;
+    }
+    const vals = combos[k] ? combos[k].values() : [];
+    if (vals.length) query.set(k, vals.join(","));
+  }
 
   /* The multi-value filters. Several chips become ONE comma-separated
      parameter -- the API splits it and binds the list as a Postgres array, so
@@ -426,6 +450,16 @@ const PANEL = {
      Column-major over a variable-length result list would move every entry
      each time a letter is typed. One column, top to bottom, is already the
      reading order. */
+  /* ★ SEARCHED, LIKE School, BUT AGAINST /api/units. Units have no
+     search_index rows -- that table holds things with a page, and a league
+     has none -- so the combo needs a per-field endpoint rather than the
+     hardcoded /search/api. Issue #55. */
+  ...Object.fromEntries(
+    ["division", "region", "conference",
+     "state_div", "section", "section_div", "league"].map((k) => [k, {
+       cols: 1, width: 320, searched: true, kind: k,
+       endpoint: "/api/units", hint: "Search\u2026",
+     }])),
   school: { cols: 1, width: 340, searched: true, kind: "school",
             hint: "Search schools\u2026" },
   /* The course specifier (Performances + Best times). Same searched shape
@@ -491,9 +525,20 @@ function makeCombo(host) {
   const input = host.querySelector(".combo-input");
   const opts = host.querySelector(".combo-opts");
 
+  /* ★ A SEARCHED FIELD'S LABEL IS NOT ITS VALUE. Schools are indexed as
+     "Tufts (MA)" -- the site-wide display convention -- while
+     ranking_results.school stores "Tufts". So the panel and the trigger show
+     the label, and everything that filters sends the value.
+
+     `seen` remembers labels for values already chosen, because the search
+     box is cleared afterwards: without it, picking Tufts and then typing
+     something else turns the trigger back into a bare "Tufts". */
+  const seen = new Map();
+
   function labelFor(value) {
     const hit = options.find((o) => o[0] === value);
-    return hit ? hit[1] : value;
+    if (hit) return hit[1];
+    return seen.get(value) || value;
   }
 
   /* ★ THE TRIGGER NEVER CHANGES SIZE. Listing the selections on the button is
@@ -520,9 +565,9 @@ function makeCombo(host) {
       /* Chosen first so they can always be unticked, then whatever the last
          search returned. Without the chosen rows, a school you added would
          vanish from the panel the moment you cleared the box. */
-      const picked = [...chosen].map((v) => row(v, v, null));
-      const hits = found.filter((f) => !chosen.has(f))
-                        .map((f) => row(f, f, null));
+      const picked = [...chosen].map((v) => row(v, labelFor(v), null));
+      const hits = found.filter((f) => !chosen.has(f.v))
+                        .map((f) => row(f.v, f.label, null));
       opts.innerHTML = picked.concat(hits).join("") ||
         `<div class="combo-none">Type at least two letters</div>`;
       return;
@@ -554,13 +599,23 @@ function makeCombo(host) {
     const q = input.value.trim();
     if (q.length < 2) { found = []; renderOptions(); return; }
     try {
-      const res = await fetch("/search/api?kind=" + kind + "&q=" + encodeURIComponent(q));
+      const res = await fetch((cfg.endpoint || "/search/api")
+        + "?kind=" + kind + "&q=" + encodeURIComponent(q));
       const rows = await res.json();
-      found = (rows || [])
-        .filter((r) => r.kind === kind)
-        .map((r) => r.label)
-        .filter((v, i, a) => v && a.indexOf(v) === i)
-        .slice(0, 40);
+      /* ! DEDUPED ON THE VALUE, NOT THE LABEL. A school split across two
+         real state clusters is indexed twice -- "Tufts (MA)" and
+         "Tufts (CT)" -- and both filter to the same bare "Tufts", so
+         deduping on the label would offer one option that does nothing
+         different from the other. */
+      const byValue = new Map();
+      for (const r of (rows || [])) {
+        if (r.kind !== kind) continue;
+        const v = r.value || r.label;
+        if (!v || byValue.has(v)) continue;
+        byValue.set(v, r.label || v);
+        seen.set(v, r.label || v);
+      }
+      found = [...byValue.entries()].slice(0, 40).map(([v, label]) => ({ v, label }));
     } catch (err) {
       found = [];
     }
@@ -632,6 +687,11 @@ function makeCombo(host) {
     if (on) chosen.add(value); else chosen.delete(value);
     dirty = true;
     renderButton();
+    /* ! ANNOUNCED, SO ONE FILTER CAN DEPEND ON ANOTHER. State division only
+       means something once a State is chosen -- every state has a D2 -- and
+       the page cannot know a combo changed without being told. */
+    host.dispatchEvent(new CustomEvent("combochange",
+                                       { bubbles: true, detail: { field } }));
   }
 
   opts.addEventListener("change", (e) => {
@@ -872,7 +932,7 @@ function renderAbility(rows) {
     <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       <td>${r.year}</td>
@@ -906,7 +966,7 @@ function renderPerformance(rows) {
     <tr>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
@@ -948,7 +1008,7 @@ function renderPr(rows) {
     <tr>
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.state)}
+      ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(r.grade)}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
@@ -1303,6 +1363,10 @@ async function load() {
       $("pager").classList.remove("hidden");
     }
 
+    /* Both back-controls share one condition: there is nothing behind
+       page one. Disabling them together stops "First" looking live on a
+       board that is already at its top. */
+    $("first").disabled = state.offset === 0;
     $("prev").disabled = state.offset === 0;
     // The API sends no total count, so "is there a next page" is INFERRED: a
     // full page probably has more behind it, a short page is the end. The only
@@ -1467,6 +1531,64 @@ $("results").addEventListener("click", (e) => {
 function applyNow() { state.offset = 0; load(); }
 
 $("scope").addEventListener("change", applyNow);
+
+/* ★ THE FIELD FOLLOWS THE POOL. A Gender control beside a pool that already
+   names one is a control that can only be wrong, so it appears exactly when
+   the pool stops deciding. */
+/* ⚠ THREE STATES, NOT TWO. The first version asked "is this college?" and
+   gave everything else the high-school group -- so a middle school board
+   offered League, Section and Division, none of which a middle school is
+   placed into. Middle school and elementary get NO unit filters until
+   somebody decides what a middle school's units even are (issue #56). */
+/* ★ A DIVISION IS MEANINGLESS WITHOUT ITS PARENT. Every state has a "D2"
+   and every section has one too, so "state_div=D2" alone matches schools in
+   forty states that have nothing to do with each other. The dependent box is
+   therefore disabled, and cleared, until its parent has a value -- rather
+   than accepted and then quietly returning a nonsense board.
+
+   ! CLEARED, NOT JUST DISABLED. A value left behind a disabled control is a
+     filter nobody can see and nobody can remove. */
+const UNIT_PARENT = { state_div: "state", section_div: "section" };
+
+function syncUnitDeps() {
+  for (const [child, parent] of Object.entries(UNIT_PARENT)) {
+    const host = document.querySelector(`.combo[data-field="${child}"]`);
+    if (!host) continue;
+    const field = host.closest(".field");
+    const ready = Boolean(combos[parent] && combos[parent].values().length);
+    const parentLabel = parent === "state" ? "State" : "Section";
+    field.classList.toggle("is-locked", !ready);
+    field.title = ready ? "" :
+      `Choose a ${parentLabel} first — every ${parentLabel.toLowerCase()} `
+      + `has its own divisions, so this filter needs one to mean anything.`;
+    /* ★ SAID ON THE LABEL, NOT ONLY IN A TOOLTIP. A greyed control with no
+       visible reason reads as broken; a tooltip is only found by someone who
+       already suspects there is one. */
+    const hint = field.querySelector(`.dep-hint[data-dep="${child}"]`);
+    if (hint) hint.textContent = ready ? "" : `(select ${parentLabel} first)`;
+    if (!ready && combos[child] && combos[child].values().length) {
+      combos[child].set([]);
+    }
+  }
+}
+
+document.addEventListener("combochange", syncUnitDeps);
+
+function syncUnitRows() {
+  const pool = $("pool").value;
+  const level = pool === "all" ? "" : pool.split("_")[0];
+  $("college-units").classList.toggle("hidden", level !== "college");
+  $("hs-units").classList.toggle("hidden", level !== "hs");
+  /* The whole disclosure goes with them -- an empty "League & division
+     filters" that opens onto nothing is worse than no control. */
+  $("units").classList.toggle("hidden",
+                              level !== "college" && level !== "hs");
+  syncUnitDeps();
+}
+
+$("pool").addEventListener("change", syncUnitRows);
+
+syncUnitRows();
 $("distance").addEventListener("change", applyNow);
 /* Date inputs fire change on a completed pick, not per keystroke. */
 $("date_from").addEventListener("change", applyNow);
@@ -1487,6 +1609,16 @@ $("pool").addEventListener("change", () => {
 /* Kept as an explicit refresh -- it costs nothing and it is where the eye
    goes when someone wants to be sure the board matches the controls. */
 $("apply").addEventListener("click", applyNow);
+
+/* ★ FIRST IS NOT "PREV, REPEATEDLY". Fifty rows a click is not a way back
+   from page twelve, and `next` will happily take you there. Same reset the
+   filter controls use -- offset to zero and reload -- so the two paths back
+   to the top of a board cannot drift apart. */
+$("first").addEventListener("click", () => {
+  if (state.offset === 0) return;
+  state.offset = 0;
+  load();
+});
 
 $("prev").addEventListener("click", () => {
   state.offset = Math.max(0, state.offset - PAGE_SIZE);
@@ -1570,6 +1702,11 @@ function applyUrlFilters(params) {
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
   setSelectFromUrl("scope", params.get("scope"));
+  syncUnitRows();
+  for (const k of UNIT_KEYS) {
+    if (combos[k] && params.get(k)) combos[k].set(params.get(k).split(","));
+  }
+  syncGenderField();
   /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the
        teams board with the course's own distance -- 2900m is real there --
        and setting a <select> to a value it has no option for silently

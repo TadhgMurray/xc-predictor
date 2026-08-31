@@ -23,9 +23,9 @@
     {% set meta_description = "Current roster, all-time best athletes and "
        "performances, and the full meet history for " ~ school ~ "." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
@@ -199,6 +199,16 @@
     <h2>{% if picked %}{{ picked }} races{% else %}Every race{% endif %}</h2>
     <p class="meta">{{ meets|length }} meets, newest first.</p>
 
+    {# ★ THE VIEW-ALL GOES TO /meets, NOT TO A LONGER VERSION OF THIS TABLE.
+       This one is capped at schoolMeets' limit and is scoped to a division
+       per row; /meets?school= is the whole history, one row per meet, and
+       filterable from there by state, name or season. The year rides along
+       when the page is showing one, so the link does not silently widen the
+       season the reader is looking at. #}
+    <p class="view-all">
+        <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all meets →</a>
+    </p>
+
     {# ★ ONE TABLE, WITH THE CONTROL AS ITS LAST ROW. The previous version put
        the remainder in a separate <details> with its own <thead>, so pressing
        it produced a second table with a second set of headers directly under
@@ -238,9 +248,9 @@
 {% endif %}
 
 {# Staged reveal -- shared with the home page's Latest results table. #}
-<script src="{{ url_for('static', filename='staged.js') }}"></script>
+<script src="{{ static_v('staged.js') }}"></script>
 
 </main>
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 </body>
 </html>

@@ -334,7 +334,6 @@ td.no-break { white-space: nowrap; }
     .mtitle { padding: 1.5rem 1rem; }
     .hero-mosaic .brand { font-size: 1.9rem; }
 }
-}
  
 /* ---- rankings controls ---------------------------------------------- */
 .rankings { padding: 1.5rem; }
@@ -381,7 +380,64 @@ td.no-break { white-space: nowrap; }
     letter-spacing: 0.05em;
     color: #6b7280;
 }
- 
+
+/* /meets filter bar. A plain GET form, so these are real <input>/<select>
+   elements rather than the rankings page's combo divs -- the browser gives
+   us focus, keyboard and autofill for nothing, and the resulting URL is
+   shareable. Laid out as a wrapping row so it collapses to one column on a
+   phone with no media query. */
+.meets-page .meet-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+    margin: 1rem 0 0.5rem;
+    padding: 0.85rem 1rem;
+    background: #faf9f6;
+    border: 1px solid #e6e5e0;
+    border-radius: 8px;
+}
+.meets-page .meet-filters .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.meets-page .meet-filters label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+}
+.meets-page .meet-filters input,
+.meets-page .meet-filters select {
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    min-width: 9rem;
+}
+.meets-page .meet-filters input.narrow { min-width: 5.5rem; }
+.meets-page .meet-filters button {
+    padding: 0.45rem 1.1rem;
+    border: 1px solid #1f2937;
+    border-radius: 4px;
+    background: #1f2937;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.meets-page .meet-filters button:hover { background: #111827; }
+.meets-page .meet-filters .clear-filters {
+    display: inline-block;
+    padding: 0.45rem 0.2rem;
+    font-size: 0.9rem;
+    color: #6b7280;
+}
+
 /* pool chips hide a pool everywhere at once */
 body.hide-hs_m      .pool-block[data-pool="hs_m"],
 body.hide-hs_f      .pool-block[data-pool="hs_f"],
@@ -1107,6 +1163,49 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 
 /* Hidden until the first result set arrives; rankings.js toggles this class. */
 .rankings-page .pager.hidden { display: none; }
+
+/* ⚠ THERE IS NO GLOBAL .hidden IN THIS FILE, AND ASSUMING ONE COSTS A BUG.
+   Every rule here is scoped -- .pager.hidden, .combo-panel.hidden -- so a
+   new element given class="hidden" is not hidden by anything, and
+   `.rankings-page .field` goes on displaying it. Measured: the Gender
+   control and both unit groups rendered at once, on a board where each
+   should have shown one or none. */
+.rankings-page .field.hidden,
+.rankings-page .unit-row.hidden,
+.rankings-page details.units.hidden { display: none; }
+
+/* A filter waiting on its parent: visibly inert, still readable, and the
+   title says which parent. Not [disabled] -- the control is a div, not an
+   input, so pointer-events is what actually stops it opening.
+
+   ⚠ DIMMED PER ELEMENT, NOT WITH opacity ON THE FIELD. `opacity` below 1
+     composites the whole subtree and opens a stacking context, so a child
+     CANNOT opt out -- `.dep-hint { opacity: 1 }` inside an `opacity: .45`
+     field still paints at .45. The hint was landing at 45% of #777, about
+     #c4c4c4, which is the thing it exists to be read. Dimming the button
+     and the label by colour leaves the hint free to be full strength. */
+.rankings-page .field.is-locked > label     { color: #8a8a85; }
+.rankings-page .field.is-locked .combo      { pointer-events: none; }
+.rankings-page .field.is-locked .combo-btn  {
+  background: #f5f5f2;
+  border-color: #e3e3de;
+  color: #b4b4ae;
+}
+.rankings-page .field.is-locked .combo-caret { color: #c8c8c2; }
+
+/* ! ABSOLUTE SIZE AND text-transform:none, BOTH DELIBERATE. The hint sits
+     inside `.field label`, which is uppercase at 0.6875rem with letterspacing
+     -- so an `em` size compounds against 11px and the text arrives as ~9px
+     of tracked-out capitals. rem detaches it from the parent, and sentence
+     case is what makes it read as a note rather than a second label. */
+.rankings-page .dep-hint {
+  font-weight: normal;
+  font-size: 0.75rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #6b6b66;
+  white-space: nowrap;
+}
 
 /* ---- unit toggles: (°C, °F) as small inline chips ---------------------- */
 /*

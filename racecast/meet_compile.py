@@ -323,8 +323,23 @@ def splitCollisionTeams(cur, rows):
     """Stamp rows of colliding school names with a home-state identity.
     Mutates rows in place (callers score COPIES). No-op mid-rebuild."""
     def _has(t):
-        cur.execute("SELECT to_regclass(%s)", (t,))
-        return cur.fetchone()[0] is not None
+        # ⚠ ALIASED AND READ BY NAME, BECAUSE THIS CURSOR IS NOT ALWAYS A
+        #   TUPLE CURSOR. app.py's meet route opens a RealDictCursor and
+        #   passes it straight down through compiledResults, and a dict row
+        #   subscripted with 0 raises KeyError -- not IndexError, which is
+        #   why it does not read like an off-by-one:
+        #
+        #       File "racecast/meet_compile.py", line 327, in _has
+        #         return cur.fetchone()[0] is not None
+        #       KeyError: 0
+        #
+        #   Every XC meet page that reached splitCollisionTeams answered 500.
+        #   A named column works on BOTH cursor shapes; positional works on
+        #   only one, and which one arrives is decided forty lines away in a
+        #   different file.
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL AS present", (t,))
+        row = cur.fetchone()
+        return bool(row["present"] if isinstance(row, dict) else row[0])
     schools = sorted({r["school"] for r in rows if r.get("school")})
     if not schools or not _has("school_identity") \
             or not _has("person_home_state"):

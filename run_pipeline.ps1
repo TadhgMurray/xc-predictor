@@ -222,6 +222,20 @@ $t_start = Get-Date
 Step "01_season_year"  { python engine\season_year.py }
 Step "02_drop_old"     { python engine\drop_old.py }
 Step "03_pro_flag"     { python engine\pro_flag.py --skip-dist --write }
+# ★ ISSUE #47: DOES "11-12" MEAN GRADES OR AGES? A USATF youth meet
+#   writes banded AGES in the same shape a school meet writes banded
+#   GRADES, so "11-12" resolved to hs and put eleven-year-olds in the
+#   high-school pool. Measured: two professionals rated ~24 points
+#   above the man who beat them, because rating = 100 * pool_mean /
+#   ability and hs_m's pool mean is far slower than the company they
+#   were actually keeping.
+#
+# ⚠ THIS MUST RUN BEFORE 04. grade_sanity decides what a grade MEANS
+#   and every rule downstream reads that answer. Until 2026-08-31 the
+#   builder was never wired in at all, so age_band_result did not
+#   exist and every reader silently took its "table absent" branch --
+#   the fix shipped but had no effect.
+Step "03b_age_bands"   { python engine\age_band_grades.py --write }
 Step "04_grade_sanity" { python engine\grade_sanity.py --write }
 
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE. It resolves pools from
@@ -258,6 +272,22 @@ Step "07_pack"         { python engine\speed_ratings.py --sport merged --cache -
 #   wrong, drop --split and redo from this step only -- nothing before it
 #   depends on the choice.
 Step "08_golive"       { python engine\linkage_check.py --golive --split }
+
+# ★ THE JOINT SOLVE, SHADOW MODE (2026-08-31). Fits ability,
+#   difficulty, a RACE-DAY effect and asymmetric robust weights in one
+#   objective, and estimates diag(A^-1) by probing rather than 1/A_ii.
+#   It writes engine\data\joint_difficulty.npz and NOTHING else -- not
+#   speed_rating, not course_difficulties -- so it cannot change what
+#   the site serves. It prints its own difficulty next to the shipped
+#   one; that comparison is the whole reason it is here.
+#
+# ! OFF BY DEFAULT. Set $env:XCP_JOINT=1 to run it. It costs one extra
+#   solve plus one CG solve per probe.
+if ($env:XCP_JOINT -eq "1") {
+    Step "08b_joint_shadow" { python engine\run_joint.py }
+} else {
+    Write-Host "  08b_joint_shadow skipped (set XCP_JOINT=1 to run)" -ForegroundColor DarkGray
+}
 
 Step "09_tilt"         { python engine\apply_tilt.py --refresh --write }
 # ! EVERY ROW GETS A RATING (owner's rule). The solve's own writes leave a

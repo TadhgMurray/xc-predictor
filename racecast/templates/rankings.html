@@ -38,7 +38,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
 {% set meta_title = "Rankings" %}
 {% set meta_description =
    "Cross country and track rankings on one comparable scale. Filter by
@@ -46,7 +46,7 @@
 {% set meta_crumbs = [("Rankings", none)] %}
 {% include "_meta.html" %}
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -125,6 +125,7 @@
         <option value="all">Everyone</option>
       </select>
     </div>
+
 
     {# Multi-value comboboxes. Type or pick; Enter adds a token.
 
@@ -317,36 +318,83 @@
     <button class="go" id="apply">Apply</button>
   </div>
 
-  {# ★ NOT BUILT, AND HONEST ABOUT IT. None of these has a column anywhere in
-     ranking_results or athlete_season. They are disabled rather than absent so
-     the plan is visible, and titled so hovering explains why. #}
-  <details class="wip">
-    <summary>Coming soon</summary>
-    <div class="wip-row">
-      <div class="field">
-        <label>Nation</label>
-        <input disabled placeholder="Not built"
-               title="No nation column exists yet. State is the only geography stored.">
-      </div>
-      <div class="field">
-        <label>Division</label>
-        <input disabled placeholder="Not built"
-               title="Division is per meet, not per athlete-season. Needs a new column.">
-      </div>
-      <div class="field">
-        <label>Section</label>
-        <input disabled placeholder="Not built" title="No section data yet.">
-      </div>
-      <div class="field">
-        <label>Conference</label>
-        <input disabled placeholder="Not built" title="No conference data yet.">
-      </div>
-      <div class="field">
-        <label>Region</label>
-        <input disabled placeholder="Not built" title="No region data yet.">
-      </div>
+  {# ★ THESE READ school_unit, THE SAME TABLE THE ATHLETE PAGE'S CHIPS USE.
+     They were "coming soon" because ranking_results carries no unit column --
+     but it does not need one: rankings._whereClauses semi-joins school_unit
+     on the school, which is one small indexed table rather than a column on
+     61.6M rows.
+
+     ⚠ NATION IS GONE, NOT DISABLED. It promised something Scope already
+       delivers: scope=usa filters to the explicit 51-code list, which IS the
+       nation. A second control for the same thing is worse than none.
+
+     ! Section stays disabled: school_unit has the column, but a section is
+       only meaningful inside its state, so a bare section filter would merge
+       every state's "D1". It wants the state to be set first -- a rule the
+       filter bar has no way to express yet. #}
+  {# ! PLAIN INPUTS, NOT COMBOBOXES. The combo panels list a bounded option
+     set (56 states, 12 grades) or search an index (schools). These have
+     neither: the values live in school_unit with no endpoint to search and
+     no list short enough to show. A text box that accepts "DI" or "DI,DII"
+     costs nothing and works today. Comma-separated, which is exactly what
+     _multiValue already parses.
+
+     ★ AND THE SET DEPENDS ON THE LEVEL. school_units splits these: college
+     is division / region / conference, high school is league / division /
+     section / district / county / class. A high school has no conference and
+     a college has no league, so showing all of them at once would offer
+     filters that can only ever return nothing for whoever is looking.
+     rankings.js shows one group at a time, off the pool. #}
+  {# ★ BEHIND A DISCLOSURE. Six high-school unit boxes inline turn the filter
+     bar into a wall, and most sessions use none of them. Open it and the
+     group for the current pool is there; leave it shut and the bar is what
+     it was. #}
+  <details class="units" id="units">
+    <summary>League &amp; division filters</summary>
+  <div class="unit-row college-units" id="college-units">
+    <div class="field not-courses">
+      <label>Division</label>
+      <div class="combo" data-field="division"></div>
     </div>
+    <div class="field not-courses">
+      <label>Region</label>
+      <div class="combo" data-field="region"></div>
+    </div>
+    <div class="field not-courses">
+      <label>Conference</label>
+      <div class="combo" data-field="conference"></div>
+    </div>
+  </div>
+
+  {# ! ONE BOX FOR Division AND Class. A state writes its tier as "D2" or as
+     "Class AA" and nobody looking for one means to exclude the other, so the
+     filter searches both columns -- see rankings.UNIT_COLUMNS. #}
+  <div class="unit-row hs-units hidden" id="hs-units">
+    <div class="field not-courses">
+      {# The hint's TEXT is set by rankings.js, not a class toggle -- an empty
+         span occupies nothing, so there is no second state to keep in step.
+         syncUnitDeps owns it. #}
+      <label>State division / class <span class="dep-hint"
+             data-dep="state_div"></span></label>
+      <div class="combo" data-field="state_div"></div>
+    </div>
+    <div class="field not-courses">
+      <label>Section</label>
+      <div class="combo" data-field="section"></div>
+    </div>
+    <div class="field not-courses">
+      <label>Section division <span class="dep-hint"
+             data-dep="section_div"></span></label>
+      <div class="combo" data-field="section_div"></div>
+    </div>
+    <div class="field not-courses">
+      <label>League</label>
+      <div class="combo" data-field="league"></div>
+    </div>
+  </div>
+
   </details>
+
 
   {# Jump straight to an athlete's page of the board.
 
@@ -388,7 +436,11 @@
   <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
   <div id="results"></div>
 
+  {# ★ FIRST, THEN PREV. Deep in a board, "Prev" is a fifty-row crawl back to
+     the top -- the pager could walk you forward indefinitely and only
+     backward one step at a time. #}
   <div class="pager hidden" id="pager">
+    <button id="first" title="Back to the first page">&laquo; First</button>
     <button id="prev">&larr; Prev</button>
     <span class="page" id="pageLabel"></span>
     <button id="next">Next &rarr;</button>
@@ -396,7 +448,7 @@
 
 </div>
 
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
-<script src="{{ url_for('static', filename='rankings.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('rankings.js') }}"></script>
 </body>
 </html>
