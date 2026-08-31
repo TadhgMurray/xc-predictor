@@ -724,7 +724,21 @@ def buildRankLine(cur, person_id, season):
         collapse=False)} if school else {}
 
     def unitArgs(kind, raw):
-        args = boardArgs(False)
+        # ⚠ A HIGH SCHOOL UNIT IS SCOPED TO ITS STATE; A COLLEGE UNIT IS NOT.
+        #   This used to build every unit chip on boardArgs(False) -- the
+        #   NATIONWIDE board -- so a "state division" chip counted everyone in
+        #   the country whose division carries that name. Division names repeat
+        #   across states (D1, Division 2, ...), so that population is far
+        #   larger than the state itself and the chip came back with a WORSE
+        #   rank than the plain state chip. A division inside a state is a
+        #   SUBSET of it and can never rank worse. Owner, 2026-08-31.
+        #
+        # ! COLLEGE UNITS STAY NATIONWIDE, and that is not an oversight:
+        #   NCAA DI, a region and a conference all span states by
+        #   construction, so pinning them to the athlete's own state would
+        #   make PAC-12 mean "the PAC-12 schools in California".
+        from rankings import HS_UNITS
+        args = boardArgs(kind in HS_UNITS)
         args[kind] = raw
         return args
 
