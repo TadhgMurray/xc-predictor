@@ -525,12 +525,35 @@ def main(pack_path, write=False, do_golive=False, do_validate=False,
     if do_validate:
         print("\n[all] validation (three extra solves)...")
         te = pv.splitByRow(D["y"].size, frac=0.10, seed=1)
-        T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
-                           D["n_cells"], D["n_groups"])
-        a, gc = pv.refitAlpha(D["y"][~te], T["delta"], D["course"][~te],
-                              D["group"][~te], D["n_groups"])
-        pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
-                           D["group"][te], T["degree"] >= 2, "pair")
+        # ⚠ THE VALIDATION MUST FIT THE MODEL THE RUN FITTED. It used to solve
+        #   without the sport offset regardless of --split, so a split run
+        #   reported EXACTLY the shared number (0.047039 on 2026-08-31, equal
+        #   to pair_sportoffset's K=inf row to six decimals) and looked like
+        #   the split had done nothing. It is the same blind spot that got
+        #   --tilt wrongly rejected -- apply_tilt.py: "the validation had read
+        #   an untilted cached solve". A validation that silently scores a
+        #   different model is worse than no validation, because it is
+        #   believed.
+        sc_all = D.get("sc")
+        if sc_all is not None:
+            sc_tr, sc_te = sc_all[~te], sc_all[te]
+            T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
+                               D["n_cells"], D["n_groups"],
+                               sc=sc_tr, ridge=D.get("ridge", 0.0))
+            a, b, gc = pv.refitAlphaBeta(D["y"][~te], T["delta"],
+                                         D["course"][~te], D["group"][~te],
+                                         D["n_groups"], sc_tr,
+                                         D.get("ridge", 0.0))
+            pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
+                               D["group"][te], T["degree"] >= 2,
+                               f"pair/split", beta=b, sc_te=sc_te)
+        else:
+            T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
+                               D["n_cells"], D["n_groups"])
+            a, gc = pv.refitAlpha(D["y"][~te], T["delta"], D["course"][~te],
+                                  D["group"][~te], D["n_groups"])
+            pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
+                               D["group"][te], T["degree"] >= 2, "pair")
         z = np.zeros(D["n_cells"])
         a0, g0 = pv.refitAlpha(D["y"][~te], z, D["course"][~te],
                                D["group"][~te], D["n_groups"])

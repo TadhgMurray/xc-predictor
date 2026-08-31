@@ -383,13 +383,26 @@ def reportReliability(rows, K, diag, solved):
 # would mix two different quantities -- so the coverage figure has to be printed
 # beside it or the error is meaningless.
 def evaluateHoldout(delta, alpha, gcount, y_te, course_te, group_te,
-                    solved, label):
+                    solved, label, beta=None, sc_te=None):
+    """Held-out error. Pass beta and sc_te to score a SPORT-SPLIT fit.
+
+    ⚠ WITHOUT THEM THIS SCORES THE SHARED MODEL, whatever produced `delta`.
+      The prediction is alpha[g] + delta[c]; a split fit predicts
+      alpha[g] + beta[g]*sc + delta[c], and leaving beta out does not merely
+      lose the improvement -- it measures a model nobody fitted. That is how
+      pair_all's --validate reported a split run at exactly the shared
+      number (0.047039, 2026-08-31), and it is the same blind spot that got
+      --tilt wrongly rejected: see apply_tilt.py, "the validation had read an
+      untilted cached solve".
+    """
     cov = solved[course_te] & (gcount[group_te] > 0)
     if not cov.any():
         print(f"    {label:>8}: no predictable held-out rows")
         return 0.0, float("nan")
 
     err = y_te[cov] - alpha[group_te[cov]] - delta[course_te[cov]]
+    if beta is not None and sc_te is not None:
+        err = err - beta[group_te[cov]] * sc_te[cov]
     sd = float(err.std())
     mae = float(np.abs(err).mean())
     print(f"    {label:>8}: error sd {sd:.6f}   MAE {mae:.6f}   "
