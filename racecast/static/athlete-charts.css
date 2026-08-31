@@ -223,6 +223,43 @@
 .chart-panel .chart-slot { --chart-h: 170px; }
 
 
+/* ---------------------------------------------------------------- *
+ *  NARROW SCREENS
+ * ---------------------------------------------------------------- */
+
+/* ★ THE CHARTS WERE BURYING THE TABLES (owner, 2026-08-31). The athlete page
+   stacks THREE .chart-wide slots at 380px each -- about 1,140px of chart
+   before a single result row, plus titles and legends. On a phone with
+   ~550px of usable height that is two to three full screens of scrolling to
+   reach the thing most people opened the page for.
+
+   ★ 380px WAS THE RIGHT ANSWER TO A DIFFERENT QUESTION. The note above
+     explains it: at HALF-screen width, in the desktop two-up layout, the
+     line degenerated into a flat thread and height was the only lever. On a
+     phone the chart already has the whole viewport width, so it needs no
+     extra height -- and 380px tall inside a 360px-wide screen is a portrait
+     box, which is the opposite of what the reasoning asked for.
+   ! NO JS CHANGE NEEDED. athlete-charts.js reads --chart-h off the host with
+     getComputedStyle, and the ResizeObserver at the bottom of that file
+     redraws when the container changes -- so the first paint at this width
+     is already correct, and a rotation re-reads it.
+   ! 700px MATCHES THE ONE BREAKPOINT THE SITE TREATS AS "NARROW" -- the same
+     line style.css uses to let tables scroll internally. Adding a ninth
+     arbitrary breakpoint is how the current eight got here. */
+@media (max-width: 700px) {
+  .chart-slot            { --chart-h: 190px; }
+  .chart-slot.chart-wide { --chart-h: 220px; margin-bottom: 0.6rem; }
+  .chart-panel .chart-slot { --chart-h: 150px; }
+}
+
+/* Small phones: a 380px chart is most of the screen at 360px wide. */
+@media (max-width: 480px) {
+  .chart-slot            { --chart-h: 165px; }
+  .chart-slot.chart-wide { --chart-h: 190px; }
+  .chart-panel .chart-slot { --chart-h: 130px; }
+}
+
+
 
 /* ---------------------------------------------------------------- *
  *  CLICK-THROUGH HIGHLIGHT

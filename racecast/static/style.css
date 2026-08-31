@@ -2460,6 +2460,24 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .squad-list.hidden { display: none; }
 .predict2 .squad-loading { color: #999; font-size: 0.76rem; padding: 3px 0; }
 
+/* ★ ISSUE #81: THE NAME IS A LINK. It carries person_id already; a dense
+   lineup should not shout, so it inherits its colour and only underlines on
+   hover -- and opens in a new tab, because losing a half-built prediction to
+   a navigation would be worse than the lookup is worth. */
+.predict2 a.r-name { color: inherit; text-decoration: none; }
+.predict2 a.r-name:hover,
+.predict2 a.r-name:focus-visible { text-decoration: underline; }
+
+/* ★ ISSUE #84: the squad filter. The SCROLLER moves to .squad-rows so the
+   input stays put instead of scrolling away with the names it filters. */
+.predict2 .squad-list { max-height: none; overflow: visible; }
+.predict2 .squad-rows { max-height: 190px; overflow-y: auto; }
+.predict2 .squad-find {
+    width: 100%; box-sizing: border-box; margin: 4px 0 3px;
+    padding: 3px 6px; font: inherit; font-size: 0.78rem;
+    border: 1px solid #ccc; border-radius: 3px; }
+.predict2 .squad-find:focus { outline: 2px solid #7aa7d8; outline-offset: -1px; }
+
 .predict2 .dropped { margin-top: 5px; }
 .predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
 
