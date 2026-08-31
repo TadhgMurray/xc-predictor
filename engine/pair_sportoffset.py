@@ -10,11 +10,30 @@ THE MODEL
         K -> infinity   beta = 0            one shared ability (today)
         K = 0           beta unpenalised    a full per-sport split
 
-    Measured on the real corpus, a full split predicts 5.56% better held-out
-    than the shared ability -- TF alone by 10.01%. But splitting severs the only
-    edges linking XC venues to TF venues, so the graph falls into two components
-    with independent gauges and the 0.043 offset between the sports stops being
-    measurable.
+    Measured on the real corpus 2026-08-31, over 5,947,709 held-out rows:
+
+        K = inf (shared)  0.047039   XC 0.049975  TF 0.042993      --
+        K = 20            0.046444   XC 0.049435  TF 0.042313   -1.27%
+        K = 5             0.045503   XC 0.048594  TF 0.041215   -3.27%
+        K = 2             0.044810   XC 0.047994  TF 0.040375   -4.74%
+        K = 1             0.044464   XC 0.047710  TF 0.039932   -5.48%
+        K = 0.5           0.044325   XC 0.047611  TF 0.039729   -5.77%  <- best
+        K = 0.2           0.044349   XC 0.047657  TF 0.039721   -5.72%
+        K = 0 (full)      0.045670   XC 0.048557  TF 0.041636   -2.91%
+
+    ★ AN INTERMEDIATE K WINS, WHICH IS THE OUTCOME THIS FILE HOPED FOR AND DID
+      NOT GET ON SYNTHETIC DATA. K = 0.5 beats both ends: 5.77% better than one
+      shared ability, and 3% better than a full split. 23% of athlete-seasons
+      end up with a non-zero beta -- the specialists -- and the rest are shrunk
+      to zero, which is what keeps the graph connected.
+
+    ⚠ AND IT SUPERSEDES THE EARLIER NOTE HERE, which recorded the full split at
+      -5.56% and TF alone at -10.01%. On the current corpus the full split is
+      only -2.91%: at K = 0 every thin athlete-season gets an unpenalised
+      offset it has no evidence for, and that costs more than the specialists
+      gain. Splitting still severs the XC-TF edges and still makes the level
+      unidentifiable -- see pair_recenter -- which is why recentring is
+      required at any K.
 
 ★ THIS SWEEP FINDS WHERE THE TRADE SITS. Partial pooling keeps alpha spanning
   both sports, so the graph stays connected, while letting a genuine specialist

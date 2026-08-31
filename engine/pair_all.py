@@ -431,9 +431,15 @@ def golive(D, collapse="best", anchor="career"):
 # CHUNK 4 -- ENTRY POINT
 # ------------------------------------------------------------------ #
 
+# The per-athlete sport-offset ridge used by --split. See the table in main().
+# Chosen by held-out prediction, which is what pair_sportoffset exists to
+# measure -- not by taste and not by conditioning.
+SPLIT_RIDGE = 0.5
+
+
 def main(pack_path, write=False, do_golive=False, do_validate=False,
          do_result_table=False, collapse="best", anchor="career",
-         pool="hs_m", tilt=False, split=False):
+         pool="hs_m", tilt=False, split=False, split_ridge=SPLIT_RIDGE):
     t_start = time.time()
 
     D = prepare(pack_path)
@@ -459,12 +465,32 @@ def main(pack_path, write=False, do_golive=False, do_validate=False,
         #
         #   The exactly-null direction is then restored by recentring, which is
         #   what recenterSport does and why it is not optional.
-        D["ridge"] = 0.0
+        #
+        # ⚠⚠ AND THE SWEEP SAYS RIDGE 0 IS NOT THE BEST PREDICTOR. Conditioning
+        #    is not the objective; held-out error is. Measured 2026-08-31 by
+        #    pair_sportoffset over 5,947,709 held-out rows:
+        #
+        #        K = inf (shared)   0.047039      --
+        #        K = 5             0.045503   -3.27%
+        #        K = 1             0.044464   -5.48%
+        #        K = 0.5           0.044325   -5.77%   <- best
+        #        K = 0.2           0.044349   -5.72%
+        #        K = 0 (full)      0.045670   -2.91%
+        #
+        #    A full split is WORSE than a mild ridge by 3%, because at K = 0
+        #    every thin athlete-season gets an unpenalised offset it has no
+        #    evidence for. The conditioning argument above is still true --
+        #    K = 0.5 needed 368 CG iterations against 245 for the shared fit --
+        #    but CG still reached 9e-11, so worse conditioning cost time, not
+        #    accuracy. Recentring is unchanged and still required: a ridge
+        #    shrinks beta toward zero without forcing its MEAN there, which is
+        #    the component that trades against the sport level.
+        D["ridge"] = split_ridge
         if D["sc"] is None:
             print("[all] --split asked for but the pack has no sport column")
         else:
-            print("[all] per-athlete sport offsets ON (recentred after the "
-                  "solve)")
+            print(f"[all] per-athlete sport offsets ON, ridge "
+                  f"{split_ridge:g} (recentred after the solve)")
     solve(D)
     if D.get("sc") is not None:
         # alpha and beta must exist before recentring, so ratings() runs first
@@ -557,6 +583,7 @@ if __name__ == "__main__":
          do_result_table="--result-table" in sys.argv,
          tilt="--tilt" in sys.argv,
          split="--split" in sys.argv,
+         split_ridge=float(opt("split-ridge", SPLIT_RIDGE)),
          collapse=opt("collapse", "best"),
          anchor=opt("anchor", "career"),
          pool=opt("pool", "hs_m"))
