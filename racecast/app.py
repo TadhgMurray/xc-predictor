@@ -632,6 +632,34 @@ def _athletePaces(cur, person_id):
 #   with one more filter. A scope the athlete has no unit for prints
 #   NOTHING rather than a greyed word -- "Section soon" on a school we
 #   simply have no section for is a promise, not information.
+# ★ A UNIT NESTED INSIDE ANOTHER MUST CARRY ITS PARENT INTO THE FILTER.
+#   #76 scoped HS unit chips to the athlete's STATE, which fixed state_div.
+#   It does not reach one level deeper: a SECTION division is a subset of
+#   its SECTION, but "D2" scoped only to CA counts every D2 school in
+#   California across EVERY section -- a superset of NCS D2, and bigger than
+#   NCS itself. So the chip came back WORSE than the plain section chip:
+#
+#       Nation #520 - CA #52 - CA D2 #18 - NCS #4 - NCS D2 #11
+#                                          ^^^^^^   ^^^^^^^^^
+#       NCS D2 is inside NCS and can never rank worse than it.
+#
+#   Reported by the owner 2026-08-31. school_units.schoolsInUnits ANDs its
+#   clauses, so adding the parent narrows to exactly the intersection.
+_UNIT_PARENT = {"section_div": "section"}
+
+
+# Purpose:   the extra filter args a nested unit needs to mean what it says.
+# Input:     kind -- the unit kind being ranked; units -- {kind: unit} for
+#            this athlete, as unitsFor returns them.
+# Output:    {} or {parent_kind: parent_raw}.
+# ! PURE, so tests/test_rank_line_units.py can pin the nesting rule without a
+#   database or a Flask app.
+def unitParentArgs(kind, units):
+    parent = _UNIT_PARENT.get(kind)
+    if parent and (units or {}).get(parent):
+        return {parent: units[parent]["raw"]}
+    return {}
+
 _RANK_SCOPES = {
     "ms":      ("nation", "state", "team"),
     # ! ORDER IS THE HIERARCHY, WIDEST FIRST DOWN EACH BRANCH (owner):
@@ -740,6 +768,10 @@ def buildRankLine(cur, person_id, season):
         from rankings import HS_UNITS
         args = boardArgs(kind in HS_UNITS)
         args[kind] = raw
+        # ! THE PARENT GOES IN TOO, and into the HREF as well as the rank --
+        #   these share unitArgs on purpose, so the board the chip opens is
+        #   the population the chip counted.
+        args.update(unitParentArgs(kind, units))
         return args
 
     def unitRank(kind, raw):
