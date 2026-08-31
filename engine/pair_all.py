@@ -205,22 +205,49 @@ def recenterSport(D):
     """
     import pair_recenter as prc
 
+    # ⚠⚠ A MEASURED bbar IS ONLY VALID AT THE RIDGE IT WAS MEASURED AT.
+    #    bbar is the weighted mean of beta, and the ridge decides how far
+    #    beta is shrunk toward zero -- so the SAME corpus yields a different
+    #    bbar at every K. sport_gap_bbar.json holds -0.04503, measured
+    #    2026-08-26 when --split ran at ridge 0 (the full split). At ridge
+    #    0.5 this solve's own estimate is +0.00371 over 2.9M dual-sport
+    #    athlete-seasons -- the OPPOSITE SIGN. Applying the stale constant
+    #    anyway moved the TF-XC gap to -0.109 against the shared solve's
+    #    -0.043, i.e. it credited XC courses as ~6.5% harder than the data
+    #    says, which inflates every XC rating. That is issue #64's symptom,
+    #    manufactured by the recentring step rather than found in the corpus.
+    #
+    # ! SIGN DISAGREEMENT IS THE HARD STOP, not a warning. Drift away from
+    #   the constant is expected and is the telemetry the file was built for;
+    #   a sign flip is not drift, it means the constant describes a different
+    #   parameterisation. Fall back to the solve's own estimate and say so.
+    own_bbar, _n = prc.meanOffset(D["beta"], D["sc"], D["group"],
+                                  D["n_groups"])
+    use_bbar = prc.MEASURED_BBAR
+    if use_bbar is not None and own_bbar * use_bbar < 0:
+        print(f"[all] ⚠ MEASURED_BBAR {use_bbar:+.5f} disagrees in SIGN with "
+              f"this solve's {own_bbar:+.5f} -- it was measured at a "
+              f"different ridge. Falling back to the solve's own estimate; "
+              f"re-run scripts/measure_sport_gap.py at ridge "
+              f"{D.get('ridge', 0.0):g} to refresh "
+              f"engine/data/sport_gap_bbar.json.")
+        use_bbar = None
+
     delta, alpha, beta, bbar, n_ident = prc.recenter(
         D["delta"], D["alpha"], D["beta"], D["sc"], D["group"],
         D["sport"], D["course"], D["n_cells"], D["n_groups"],
-        bbar=prc.MEASURED_BBAR)
+        bbar=use_bbar)
 
     s_cell = prc.cellSport(D["course"], D["sport"], D["n_cells"])
     xc = D["solved"] & (s_cell < 0)
     tf = D["solved"] & (s_cell > 0)
     gap = float(delta[tf].mean() - delta[xc].mean())
-    if prc.MEASURED_BBAR is not None:
+    if use_bbar is not None:
         # The solve's own estimate still prints: its drift AWAY from the
         # measured constant is the telemetry that says when to re-measure.
-        own, _ = prc.meanOffset(D["beta"], D["sc"], D["group"], D["n_groups"])
         print(f"[all] sport recentre: bbar {bbar:+.5f} MEASURED "
-              f"(pair_recenter.MEASURED_BBAR; solve's own estimate {own:+.5f} "
-              f"from {n_ident:,} dual-sport athlete-seasons)")
+              f"(pair_recenter.MEASURED_BBAR; solve's own estimate "
+              f"{own_bbar:+.5f} from {n_ident:,} dual-sport athlete-seasons)")
     else:
         print(f"[all] sport recentre: bbar {bbar:+.5f} from {n_ident:,} "
               f"dual-sport athlete-seasons")
