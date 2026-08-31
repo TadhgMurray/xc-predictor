@@ -572,6 +572,46 @@ def _athleteHistory(cur, person_id):
 
 MAX_PER_TEAM = 7          # a cross country team enters seven
 
+# ★ A SCHOOL THAT BROUGHT FIVE OR FEWER IS NOT A SEVEN-RUNNER TEAM (owner).
+#   "thisyear" replaces each attending school with its CURRENT squad and took
+#   the top seven of it -- so a school that sent two individuals to the meet
+#   came back with a full seven, and the prediction scored a team that is not
+#   going to be there. At or below this many at the original running, the
+#   school gets AT MOST the number it actually brought.
+#
+# ! WHY A THRESHOLD AND NOT min(7, n) FOR EVERYONE. A school that brought six
+#   is a real team one runner short and will very likely field seven; a school
+#   that brought two is almost always unattached individuals sharing a school
+#   name. Six and seven keep the rulebook cap; five and under are held to
+#   what they actually showed up with.
+SMALL_SQUAD_MAX = 5
+
+
+# Purpose:   how many of a school's current squad may enter the prediction.
+# Input:     n_at_meet -- how many that school ran at the original meet.
+# Output:    the cap, never above MAX_PER_TEAM.
+#
+# ! ZERO MEANS "NOT AT THE ORIGINAL MEET" -- a manually named school, where
+#   there is no attendance to cap against -- so it keeps the rulebook seven.
+def squadCap(n_at_meet):
+    if n_at_meet <= 0:
+        return MAX_PER_TEAM
+    if n_at_meet <= SMALL_SQUAD_MAX:
+        return n_at_meet
+    return MAX_PER_TEAM
+
+
+# Purpose:   how many runners each school actually had at the original meet.
+# ! Rows with no school are not counted: they are individuals who share the
+#   absence of a school, not a squad. Same reasoning as meet_compile.isTeam.
+def countsBySchool(originals):
+    counts = {}
+    for r in originals:
+        school = r.get("school")
+        if school:
+            counts[school] = counts.get(school, 0) + 1
+    return counts
+
 
 def meetField(cur, meet_id, div_id, sport, season_year=None,
               when="thisyear"):
@@ -623,12 +663,18 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
     squads = _currentSquads(cur, at_meet, sport, season_year)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
+    # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
+    #   Everyone past the cap goes to `dropped`, not out of the field, so a
+    #   school that really is fielding seven this year can be corrected by
+    #   hand on the page.
+    at_meet_counts = countsBySchool(originals)
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
+        cap = squadCap(at_meet_counts.get(school, 0))
         by_school[school] = {"school": school,
-                             "runners": sq[:MAX_PER_TEAM],
-                             "dropped": list(sq[MAX_PER_TEAM:])}
+                             "runners": sq[:cap],
+                             "dropped": list(sq[cap:])}
     for r in originals:
         # an original participant with no current-season row: graduated
         # or injured, and the data cannot tell -- listed for the human
@@ -730,8 +776,12 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                               if isTeam(r.get("school"))})
             squads = _currentSquads(cur, at_meet, sport,
                                     _currentSeason(cur, sport))
+            # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
+            #   page shows one lineup and the model scores another.
+            at_meet_counts = countsBySchool(originals)
             entries = [e for sch in sorted(squads)
-                       for e in squads[sch][:MAX_PER_TEAM]]
+                       for e in squads[sch][:squadCap(
+                           at_meet_counts.get(sch, 0))]]
     elif schools:
         squads = _currentSquads(cur, schools, sport,
                                 _currentSeason(cur, sport))
