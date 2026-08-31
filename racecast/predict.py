@@ -843,7 +843,14 @@ def _exactField(cur, meet_id, div_id, sport):
 
 # The class that graduates out of a level at season's end: a 12 leaves
 # high school, an SR leaves college. Everyone else carries forward.
-_TERMINAL_GRADES = ("12", "SR", "sr", "Sr")
+#
+# ★ COMPARED NORMALISED (issue #82). This was a hand-listed set of case
+#   variants -- ("12", "SR", "sr", "Sr") -- matched with exact equality, so
+#   "12th", "Senior", "SENIOR" and anything with stray whitespace all slipped
+#   through and graduated seniors carried into this year's lineup. The query
+#   now upper-cases and trims before comparing, so only the SPELLINGS need
+#   listing, not their capitalisations.
+_TERMINAL_GRADES = ["12", "12TH", "SR", "SENIOR"]
 
 
 def _currentSquads(cur, schools, sport, season_year):
@@ -855,7 +862,13 @@ def _currentSquads(cur, schools, sport, season_year):
       A school with no current-season row takes its previous season's
       squad with the 12s/SRs aged out -- they are the one group the
       data KNOWS is gone; everyone else is presumed back until real
-      results say otherwise. Ratings shown are last season's."""
+      results say otherwise. Ratings shown are last season's.
+
+    ★ AND MINUS ANYONE ALREADY RACING ELSEWHERE (issue #83). A transfer is
+      not a terminal grade, so aging-out left them on the old school's
+      squad while they raced for the new one. They are told apart from a
+      graduate by the one thing that differs: a transfer HAS a
+      current-season row, at another school, and a graduate has none."""
     schools = [s for s in schools if s]
     if not schools or season_year is None:
         return {}
@@ -863,7 +876,8 @@ def _currentSquads(cur, schools, sport, season_year):
     missing = [s for s in schools if not squads.get(s)]
     if missing:
         prev = _squadsForYear(cur, missing, sport, season_year - 1,
-                              exclude_terminal=True)
+                              exclude_terminal=True,
+                              active_year=season_year)
         for sch, rows in prev.items():
             for r in rows:
                 r["carried"] = True    # last season's roster, aged forward
@@ -871,11 +885,30 @@ def _currentSquads(cur, schools, sport, season_year):
     return squads
 
 
-def _squadsForYear(cur, schools, sport, year, exclude_terminal=False):
-    grade_clause = ("AND COALESCE(s.grade, '') NOT IN %(term)s"
+def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
+                   active_year=None):
+    """One season's squads per school.
+
+    exclude_terminal -- drop the graduating class (issue #82).
+    active_year      -- drop anyone who already has a row in THIS season at
+                        any school, i.e. a transfer (issue #83).
+    """
+    grade_clause = ("AND UPPER(BTRIM(COALESCE(s.grade, ''))) <> ALL(%(term)s)"
                     if exclude_terminal else "")
+    # ★ A TRANSFER HAS ALREADY RACED SOMEWHERE ELSE; A GRADUATE HAS NOT
+    #   (issue #83). The carry-forward only runs for a school with NO row in
+    #   the current season, so any current-season row this person has is
+    #   necessarily at a DIFFERENT school -- which is exactly the signal that
+    #   separates the two cases. Aging-out alone could never do it: a
+    #   transfer is not a terminal grade, so they were carried onto the old
+    #   school's squad while racing for the new one.
+    move_clause = ("""AND NOT EXISTS (SELECT 1 FROM athlete_season c
+                                      WHERE c.person_id = s.person_id
+                                        AND c.year  = %(active_yr)s
+                                        AND c.sport = %(sport)s)"""
+                   if active_year is not None else "")
     cur.execute(f"""
-        SELECT s.school, s.person_id,
+        SELECT s.school, s.person_id, s.grade,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '') AS name,
                s.mean_rating, s.n_races
@@ -885,17 +918,25 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False):
           AND  s.year   = %(yr)s
           AND  s.sport  = %(sport)s
           {grade_clause}
+          {move_clause}
         ORDER  BY s.school, s.mean_rating DESC NULLS LAST
     """, {"schools": schools, "yr": year, "sport": sport,
-          "term": _TERMINAL_GRADES})
+          "term": _TERMINAL_GRADES, "active_yr": active_year})
     out = {}
     for r in cur.fetchall():
-        out.setdefault(r["school"], []).append({
+        entry = {
             "person_id": r["person_id"], "school": r["school"],
             "name": (r["name"] or "").strip() or "Unknown",
             "rating": (round(float(r["mean_rating"]), 1)
                        if r["mean_rating"] is not None else None),
-            "n_races": r["n_races"]})
+            "n_races": r["n_races"]}
+        # ! AND SAY SO WHEN WE CANNOT TELL. A blank or NULL grade is not a
+        #   senior and not a returner -- it is unknown, and the aging-out
+        #   cannot rule on it either way. Flagged rather than guessed, so the
+        #   page can mark them instead of the code pretending to know.
+        if exclude_terminal and not (r.get("grade") or "").strip():
+            entry["grade_unknown"] = True
+        out.setdefault(r["school"], []).append(entry)
     return out
 
 

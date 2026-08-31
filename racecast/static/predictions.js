@@ -425,7 +425,8 @@ function renderField() {
       <div class="team-body">
         ${t.runners.map((r) => `
           <div class="runner-row" data-pid="${r.person_id}">
-            <span class="r-name">${esc(r.name)}</span>
+            <a class="r-name" href="/athlete/${r.person_id}"
+               target="_blank" rel="noopener">${esc(r.name)}</a>
             <span class="r-rating">${r.rating === null ? "" : r.rating}</span>
             <button class="r-x" data-remove="${r.person_id}"
                     title="Remove">&times;</button>
@@ -438,7 +439,8 @@ function renderField() {
             <summary>${t.dropped.length} not racing this season</summary>
             ${t.dropped.map((r) => `
               <div class="runner-row is-out">
-                <span class="r-name">${esc(r.name)}</span>
+                <a class="r-name" href="/athlete/${r.person_id}"
+                   target="_blank" rel="noopener">${esc(r.name)}</a>
                 <button class="r-add" data-add="${r.person_id}"
                         data-name="${esc(r.name)}"
                         data-rating="${r.rating === null ? "" : r.rating}"
@@ -798,17 +800,42 @@ document.addEventListener("click", (e) => {
       const team = (state.field?.teams || []).find((t) => t.school === school);
       const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
       const rest = squad.runners.filter((r) => !have.has(String(r.person_id)));
-      list.innerHTML = rest.length
-        ? rest.map((r) =>
+      /* ★ ISSUE #84: A SEARCH, NOT A WALL. schoolSquad returns up to forty
+         names and the card is already crowded, so scanning for one runner
+         meant reading all of them. The filter is client-side because the
+         whole squad is already in hand -- a round trip per keystroke would
+         be slower and would fight the "fetched on demand" design above. */
+      const rows = (items) => items.length
+        ? items.map((r) =>
             `<div class="runner-row is-out">
-               <span class="r-name">${esc(r.name)}</span>
+               <a class="r-name" href="/athlete/${r.person_id}"
+                  target="_blank" rel="noopener">${esc(r.name)}</a>
                <span class="r-rating">${r.rating}</span>
                <button class="r-add" data-add="${r.person_id}"
                        data-name="${esc(r.name)}"
                        data-rating="${r.rating === null ? "" : r.rating}"
                        data-school="${esc(school)}">add</button>
              </div>`).join("")
-        : `<div class="squad-loading">Everyone racing is already listed.</div>`;
+        : `<div class="squad-loading">No runner by that name.</div>`;
+
+      if (!rest.length) {
+        list.innerHTML =
+          `<div class="squad-loading">Everyone racing is already listed.</div>`;
+        return;
+      }
+      list.innerHTML =
+        `<input class="squad-find" type="search" autocomplete="off"
+                placeholder="Search ${esc(school)}'s squad\u2026"
+                aria-label="Search this squad">
+         <div class="squad-rows">${rows(rest)}</div>`;
+      const find = list.querySelector(".squad-find");
+      const body = list.querySelector(".squad-rows");
+      find.addEventListener("input", () => {
+        const q = find.value.trim().toLowerCase();
+        body.innerHTML = rows(
+          q ? rest.filter((r) => r.name.toLowerCase().includes(q)) : rest);
+      });
+      find.focus();
     }).catch(() => {
       list.innerHTML = `<div class="squad-loading">Could not load the squad.</div>`;
     });
