@@ -154,7 +154,17 @@ def main():
         # ! school IS THE SECOND COLUMN, so the index is covering: the planner
         #   answers the whole subquery from the index without touching the
         #   heap, which is the difference between fast and merely indexed.
-        for _col in ("division", "region", "conference"):
+        # ⚠ EVERY COLUMN rankings.UNIT_COLUMNS FILTERS ON, NOT JUST THE
+        #   COLLEGE THREE. This loop used to list division/region/conference
+        #   only, so the five HIGH SCHOOL units -- state_div, class, section,
+        #   section_div, league -- had no index at all and every HS unit
+        #   filter sequentially scanned school_unit on every board request.
+        #   The HS units are the ones a high school user actually reaches for.
+        #   Kept in step with UNIT_COLUMNS by hand; a column added there and
+        #   missed here is a silent sequential scan, not an error.
+        for _col in ("division", "region", "conference",
+                     "state_div", "class", "section", "section_div",
+                     "league"):
             cur.execute(f'CREATE INDEX idx_school_unit_{_col} '
                         f'ON school_unit ("{_col}", school)')
         conn.commit()
