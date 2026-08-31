@@ -10,10 +10,10 @@
        "the races they both ran, season ratings, best performances, and "
        "both careers on one chart." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='athlete-charts.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -200,9 +200,9 @@
 
 </main>
 {# scale-view.js FIRST: athlete-charts.js reads window.rcScale. #}
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
-<script src="{{ url_for('static', filename='athlete-charts.js') }}"></script>
-<script src="{{ url_for('static', filename='staged.js') }}"></script>
-<script src="{{ url_for('static', filename='compare.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('athlete-charts.js') }}"></script>
+<script src="{{ static_v('staged.js') }}"></script>
+<script src="{{ static_v('compare.js') }}"></script>
 </body>
 </html>

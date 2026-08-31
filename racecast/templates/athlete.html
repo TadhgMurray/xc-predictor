@@ -13,10 +13,10 @@
        ~ ((" (" ~ athlete.school ~ ")") if athlete.school else "")
        ~ ", on one comparable scale." %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='athlete-charts.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
@@ -527,8 +527,8 @@
     </div>
 <script type="application/json" id="chart-data">{{ chart_data|tojson }}</script>
 {# scale-view.js FIRST: athlete-charts.js reads window.rcScale. #}
-<script src="{{ url_for('static', filename='scale-view.js') }}"></script>
-<script src="{{ url_for('static', filename='athlete-charts.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('athlete-charts.js') }}"></script>
 
 </body>
 </html>

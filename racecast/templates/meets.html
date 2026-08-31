@@ -12,15 +12,24 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = ("Meets at " ~ course) if course else "Recent meets" %}
+    {# The title tracks the mode. A filtered view titled "Recent meets" is
+       wrong in the tab, wrong in a bookmark and wrong in a shared link --
+       and a filtered URL is meant to be shared, which is why the filters are
+       a GET form in the first place. #}
+    {% set meta_title = ("Meets at " ~ course) if course
+       else (("Meets " ~ filter_text) if (filters and filters.active)
+             else "Recent meets") %}
     {% set meta_description = ("Every meet held at " ~ course ~
-       " with results and speed ratings.") if course else
-       ("Every recent cross country and track meet "
-        "with results and speed ratings on one comparable scale.") %}
+       " with results and speed ratings.") if course
+       else (("Every " ~ sport ~ " meet " ~ filter_text ~
+              ", with results and speed ratings.")
+             if (filters and filters.active) else
+             ("Every recent cross country and track meet "
+              "with results and speed ratings on one comparable scale.")) %}
     {% include "_meta.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide meets-page">
@@ -57,21 +66,89 @@
     </table>
     {% endfor %}
 {% else %}
-    <h1>Recent meets</h1>
+    {# ★ ONE HEADING AND ONE TABLE FOR BOTH THE RECENT LIST AND A FILTERED
+       VIEW. They differ in what fills `months` and in the sentence under the
+       title, not in their markup -- and a filtered view that looked like a
+       different page would hide that the filters are just a narrowing of the
+       list you were already reading. #}
+    {% set filtering = filters and filters.active %}
+    <h1>{{ "Meets" if filtering else "Recent meets" }}</h1>
+    {% if filtering %}
+    <p class="meta">
+       {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}
+       {{ filter_text }}, newest first.
+       {% if capped %}
+       <strong>Showing the newest {{ max_meets }}</strong> — narrow by season
+       to see further back.
+       {% endif %}
+    </p>
+    {% else %}
     <p class="meta">Meets from the last year with real fields
        ({{ min_results }}+ results), newest first.</p>
+    {% endif %}
 
     <div class="seg">
         {% for s in ['XC', 'TF'] %}
+          {# The sport keeps whatever filter is applied -- switching sport is
+             not a reason to lose the school you came here to look at. #}
           <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/meets?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/meets?sport={{ s }}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
         {% endfor %}
     </div>
 
+    {# ★ A PLAIN GET FORM, NOT A JS FILTER BAR. Every control here is a real
+       server-side filter, so the URL that results is shareable, bookmarkable
+       and back-button-able for free. The rankings page needs JS because its
+       combos are multi-select against a live index; these are four single
+       values and would gain nothing from it. #}
+    <form class="meet-filters" method="get" action="/meets">
+        <input type="hidden" name="sport" value="{{ sport }}">
+        <div class="field">
+            <label for="mf-school">School</label>
+            <input id="mf-school" name="school" type="search"
+                   placeholder="Any school"
+                   value="{{ filters.school if filters else '' }}">
+        </div>
+        <div class="field">
+            <label for="mf-state">State</label>
+            <select id="mf-state" name="state">
+                <option value="">Any state</option>
+                {% for st in states %}
+                <option value="{{ st }}"{{ ' selected' if filters and filters.state == st }}>{{ st }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field">
+            <label for="mf-q">Meet name</label>
+            <input id="mf-q" name="q" type="search" placeholder="Any name"
+                   value="{{ filters.q if filters else '' }}">
+        </div>
+        <div class="field">
+            <label for="mf-year">Season</label>
+            <input id="mf-year" name="year" type="number" class="narrow"
+                   placeholder="Any" min="1990" max="2036"
+                   value="{{ filters.year_label if filters and filters.year_label is not none else '' }}">
+        </div>
+        <div class="field">
+            <button type="submit">Filter</button>
+        </div>
+        {% if filtering %}
+        <div class="field">
+            <a class="clear-filters" href="/meets?sport={{ sport }}">Clear</a>
+        </div>
+        {% endif %}
+    </form>
+
     {% if not months %}
+      {% if filtering %}
+    <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
+       name has to match how the results spell it — the school page's own
+       title is the exact form.</p>
+      {% else %}
     <p class="meta">Nothing here yet. The list is rebuilt with the
        homepage boards; if those are up to date, no {{ sport }} meet in the
        window cleared the results floor.</p>
+      {% endif %}
     {% endif %}
 
     {% for label, rows in months %}

@@ -75,6 +75,24 @@ def schoolLabel(school):
     return f"{school} ({st})" if st else school
 
 
+def primaryState(school):
+    """'Tufts' -> 'MA'. The school's HOME state, or None.
+
+    ★ THE ROW'S OWN state COLUMN IS NOT THIS. ranking_results.state is where
+      the RESULT happened, so one school renders as many states -- a Tufts
+      board showed "Tufts IA", "Tufts CT" and "Tufts MA" down a single
+      column, which reads as three schools and is one. The identity table
+      already answers the question; nothing was asking it.
+
+    ! SAME MAP schoolLabel USES, so the board and every template that renders
+      through the school_label filter cannot disagree about where a school
+      is. A second lookup would be a second answer.
+    """
+    if not school:
+        return None
+    return _LABELS["map"].get(school)
+
+
 def schoolClusters(cur, school):
     """[{'state', 'n', 'share', 'is_primary'}] biggest first, from the
     identity table, else computed live (mid-rebuild)."""

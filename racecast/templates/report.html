@@ -15,7 +15,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
 {% set meta_title = "Report an issue" %}
 {% set meta_description =
    "Report a wrong rating, a misidentified athlete, bad meet data or a site
@@ -23,7 +23,7 @@
 {% set meta_crumbs = [("Report an issue", none)] %}
 {% include "_meta.html" %}
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 

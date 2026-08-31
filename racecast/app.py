@@ -217,6 +217,50 @@ import school_identity
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
 
+# ! FOR bareSchool ONLY -- the inverse of the "(ST)" label convention, which
+#   /search/api needs so a picker can show one string and filter on another.
+#   No load, no cache: it is a regex beside the code that builds the label.
+import search_index
+
+
+# ★ EVERY STATIC URL CARRIES THE FILE'S OWN MTIME, AND WITHOUT IT A DEPLOY IS
+#   INVISIBLE FOR A WEEK.
+#
+#   nginx serves /static/ with `expires 7d` (server_setup.sh), which is right
+#   -- these files are large and change rarely. But the URL was constant, so
+#   a browser that had ever loaded the site kept its cached copy for seven
+#   days no matter what shipped. Measured the hard way: two fixes to
+#   rankings.js were pulled, the service restarted, and the page kept running
+#   the old file. `systemctl restart` restarts Python; it cannot reach into a
+#   browser cache.
+#
+#   ⚠ AND IT LOOKS LIKE THE FIX DID NOT WORK, which is the expensive part. A
+#     stale asset does not error, it just behaves like the previous release,
+#     so the next hour goes on debugging code that is correct and not running.
+#
+# ! MTIME, NOT A BUILD NUMBER. There is no build step here, and a hand-bumped
+#   constant is a constant somebody forgets. The file's own timestamp changes
+#   exactly when the file does -- including on a `git pull`, which is the
+#   moment that matters.
+#
+# ! AND IT DEGRADES. A missing file returns the plain URL rather than raising:
+#   a 404 on an asset should stay a 404, not become a 500 on the page.
+def staticV(filename):
+    """/static/rankings.js?v=1756... -- cache-busted by the file's mtime."""
+    # ! IMPORTED HERE. url_for needs an application context, and this is
+    #   only ever called from a template render, which has one.
+    from flask import url_for
+    url = url_for("static", filename=filename)
+    try:
+        stamp = int(_os.path.getmtime(
+            _os.path.join(app.static_folder, filename)))
+    except OSError:
+        return url
+    return f"{url}?v={stamp}"
+
+
+app.jinja_env.globals["static_v"] = staticV
+
 
 @app.errorhandler(404)
 def not_found(_err):
@@ -329,8 +373,19 @@ def meets_page():
     ?course=X is a different page wearing the same clothes: every meet ever
     held at one course, grouped by YEAR (a venue spans decades; months are
     for the rolling recent list), from a live query with no results floor.
-    The course page's meets table links here as its view-all."""
+    The course page's meets table links here as its view-all.
+
+    ?state= / ?school= / ?q= / ?year= is the THIRD mode: a live filtered
+    query (meets_filter.py), also grouped by year because it is a history
+    rather than a rolling window. The school page's meet table links here as
+    its view-all, carrying ?school= and ?sport=."""
     from panels import RECENT_MIN_RESULTS
+    # ! ALIASED. `parseFilters` at module scope is rankings' own, and a
+    #   function-local rebinding of that name reads like a bug even where it
+    #   is not one.
+    from meets_filter import (parseFilters as parseMeetFilters, filteredMeets,
+                              groupByYear, describe, MAX_MEETS)
+    from rankings import US_STATES
 
     course = (request.args.get("course") or "").strip()
     if course:
@@ -346,13 +401,33 @@ def meets_page():
                 current = (label, [])
                 years.append(current)
             current[1].append(m)
+        # filters/states ride along so meets.html sees one context shape in
+        # all three modes -- Jinja's default Undefined RAISES on attribute
+        # access, so a missing name here is a 500 on the course view.
         return render_template("meets.html", course=course, months=years,
-                               n_meets=len(rows), sport="XC",
+                               n_meets=len(rows), sport="XC", filters=None,
+                               states=US_STATES,
                                min_results=RECENT_MIN_RESULTS)
 
-    sport = (request.args.get("sport") or "XC").strip().upper()
-    if sport not in ("XC", "TF"):
-        sport = "XC"
+    # ★ THE THIRD MODE: any filter beyond sport, and the page stops being the
+    #   precompute and runs its own query. Filtering homepage_recent would
+    #   answer about thirty meets while appearing to answer about the corpus
+    #   -- see meets_filter.py's opening note.
+    f = parseMeetFilters(request.args)
+    if f["active"]:
+        with getConn() as conn:
+            with conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                rows = filteredMeets(cur, f)
+        return render_template("meets.html", sport=f["sport"], filters=f,
+                               months=groupByYear(rows), n_meets=len(rows),
+                               filter_text=describe(f),
+                               capped=(len(rows) >= MAX_MEETS),
+                               max_meets=MAX_MEETS,
+                               states=US_STATES,
+                               min_results=RECENT_MIN_RESULTS)
+
+    sport = f["sport"]
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -374,6 +449,7 @@ def meets_page():
         current[1].append(m)
 
     return render_template("meets.html", sport=sport, months=months,
+                           filters=f, states=US_STATES,
                            min_results=RECENT_MIN_RESULTS)
 
 
@@ -648,7 +724,21 @@ def buildRankLine(cur, person_id, season):
         collapse=False)} if school else {}
 
     def unitArgs(kind, raw):
-        args = boardArgs(False)
+        # ⚠ A HIGH SCHOOL UNIT IS SCOPED TO ITS STATE; A COLLEGE UNIT IS NOT.
+        #   This used to build every unit chip on boardArgs(False) -- the
+        #   NATIONWIDE board -- so a "state division" chip counted everyone in
+        #   the country whose division carries that name. Division names repeat
+        #   across states (D1, Division 2, ...), so that population is far
+        #   larger than the state itself and the chip came back with a WORSE
+        #   rank than the plain state chip. A division inside a state is a
+        #   SUBSET of it and can never rank worse. Owner, 2026-08-31.
+        #
+        # ! COLLEGE UNITS STAY NATIONWIDE, and that is not an oversight:
+        #   NCAA DI, a region and a conference all span states by
+        #   construction, so pinning them to the athlete's own state would
+        #   make PAC-12 mean "the PAC-12 schools in California".
+        from rankings import HS_UNITS
+        args = boardArgs(kind in HS_UNITS)
         args[kind] = raw
         return args
 
@@ -3762,6 +3852,51 @@ def pad_pool_pairs(panels):
 
 from flask import request, jsonify
 
+@app.route("/api/units")
+def api_units():
+    """Distinct unit values for one filter, for the pickers. Issue #55.
+
+    ★ A SEPARATE ENDPOINT BECAUSE UNITS ARE NOT IN search_index. That table
+      holds athletes, schools, courses, meets and venues -- things with a
+      page. A league has no page; it is a column on school_unit, and there
+      are few enough of them that DISTINCT over an indexed column answers in
+      milliseconds without an index of its own.
+
+    ! IT RETURNS THE SAME SHAPE /search/api DOES -- kind, label, value -- so
+      the combobox that already consumes one can consume the other with no
+      new rendering path. label and value are equal here (a league is its own
+      name), but the field exists because the school picker's are not.
+
+    ⚠ AND IT SEARCHES EVERY COLUMN THE FILTER SEARCHES. state_div covers both
+      state_div and class, so its options must come from both or the picker
+      would offer half of what the filter accepts.
+    """
+    from flask import request, jsonify
+    kind = (request.args.get("kind") or "").strip()
+    cols = UNIT_COLUMNS.get(kind)
+    if not cols:
+        return jsonify([])
+    q = (request.args.get("q") or "").strip()
+
+    # ! ONE UNION, NOT ONE QUERY PER COLUMN. state_div is the only two-column
+    #   filter today, but a loop that grows with the mapping is a loop that
+    #   grows with the mapping.
+    union = " UNION ".join(
+        f'SELECT DISTINCT "{c}" AS v FROM school_unit '
+        f'WHERE "{c}" IS NOT NULL AND "{c}" <> \'\' '
+        f'AND (%(q)s = \'\' OR "{c}" ILIKE %(like)s)'
+        for c in cols)
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT v FROM ({union}) t ORDER BY v LIMIT 40",
+                            {"q": q, "like": f"%{q}%"})
+                rows = [r[0] for r in cur.fetchall()]
+    except Exception:                    # noqa: BLE001 -- a picker, not a page
+        return jsonify([])
+    return jsonify([{"kind": kind, "label": v, "value": v} for v in rows])
+
+
 @app.route("/search/api")
 def search_api():
     """The typeahead endpoint. Used by the topbar and by every picker.
@@ -3860,6 +3995,17 @@ def search_api():
                 LIMIT  %(lim)s
             """, params)
             rows = cur.fetchall()
+
+    # ★ A SCHOOL ROW CARRIES ITS FILTER VALUE AS WELL AS ITS LABEL, because
+    #   they are not the same string. The index stores "Tufts (MA)" -- the
+    #   display convention -- while ranking_results.school stores "Tufts".
+    #   A picker that used the label for both showed the right thing and
+    #   filtered on a value that matches no row.
+    #
+    # ! ADDED FOR EVERY KIND, so a caller never has to know which kinds carry
+    #   a suffix. bareSchool leaves an unsuffixed label alone.
+    for _r in rows:
+        _r["value"] = search_index.bareSchool(_r.get("label"))
 
     return jsonify(rows)
 
@@ -4354,7 +4500,7 @@ def athlete_results():
             return jsonify(cur.fetchall())
 
 
-from rankings import (parseFilters, getPerformanceRankings, getPrRankings,
+from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
                       getAbilityRankings, rankOf, PR_DISTANCES)
 
 
@@ -4399,6 +4545,20 @@ def api_rankings():
     # boards, distance). Display-only -- the ORDER stays the server's, so on
     # a pool=all board the hs column can read unsorted; rankings.js says so.
     hs_movable = stampBoardRows(rows, rating_keys=("rating", "best_rating"))
+
+    # ★ THE SCHOOL'S HOME STATE, BESIDE THE RESULT'S STATE, NOT INSTEAD OF IT.
+    #   ranking_results.state says where the RACE was, which is the right
+    #   answer for a performance and the wrong one for a school column: a
+    #   Tufts board rendered "Tufts IA", "Tufts CT" and "Tufts MA" down one
+    #   column, three labels for one school, because a Tufts athlete raced in
+    #   Iowa. school_identity has known the home state all along.
+    #
+    # ! ADDED, NOT SUBSTITUTED. Boards that want the race's location keep it;
+    #   only the school cell prefers this. And an unknown school gets None,
+    #   so the old behaviour is exactly what happens when the identity table
+    #   has nothing to say.
+    for _r in rows:
+        _r["school_state"] = school_identity.primaryState(_r.get("school"))
 
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not

@@ -31,7 +31,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
 {% set meta_title = "Predictions" %}
 {% set meta_description =
    "Re-run a cross country or track meet: predict what an athlete or a team
@@ -40,7 +40,7 @@
 {% set meta_crumbs = [("Predictions", none)] %}
 {% include "_meta.html" %}
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -162,6 +162,6 @@
 
 </div>
 
-<script src="{{ url_for('static', filename='predictions.js') }}"></script>
+<script src="{{ static_v('predictions.js') }}"></script>
 </body>
 </html>

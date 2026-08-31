@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Conversions — Racecast</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
-<script src="{{ url_for('static', filename='topbar-search.js') }}"></script>
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -243,6 +243,6 @@
     </section>
 </section>
 
-<script src="{{ url_for('static', filename='conversions.js') }}"></script>
+<script src="{{ static_v('conversions.js') }}"></script>
 </body>
 </html>
