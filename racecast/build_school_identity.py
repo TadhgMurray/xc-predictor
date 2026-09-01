@@ -25,9 +25,19 @@ the previous tables until the new ones are whole.
 import sys
 import time
 
+import psycopg2.errors           # LockNotAvailable / DeadlockDetected
+
 sys.path.insert(0, "scripts")
 
 from database import getConn
+
+# ! THE SAME PATIENCE build_ranking_results AND backfill_normalize USE. Three
+#   seconds is long enough for a normal page and short enough that a stuck
+#   one does not hold the swap; twenty attempts at fifteen seconds is five
+#   minutes of trying, which outlasts any single request.
+_SWAP_LOCK_TIMEOUT = "3s"
+_SWAP_ATTEMPTS = 20
+_SWAP_BACKOFF = 15
 
 
 def main():
@@ -95,14 +105,57 @@ def main():
         print(f"  school_identity: {ns:,} schools, {n:,} clusters, "
               f"{multi:,} names split across states", flush=True)
 
-        # the swap: old tables serve until the new ones are complete
-        for t in ("person_home_state", "school_identity"):
-            cur.execute(f"DROP TABLE IF EXISTS {t}")
-            cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
-        cur.execute("ALTER INDEX school_identity_new_school_idx "
-                    "RENAME TO school_identity_school_idx")
-        cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
-                    "person_home_state_new_pkey TO person_home_state_pkey")
+        # ---- the swap: old tables serve until the new ones are whole ----
+        #
+        # ⚠ THIS HAD NO RETRY AT ALL, AND IT DEADLOCKED (2026-09-01). The
+        #   DROPs take ACCESS EXCLUSIVE on two tables the running site reads,
+        #   in a fixed order; a page holding them in the other order is an
+        #   ABBA deadlock, and Postgres kills whichever transaction it picks
+        #   -- here, this one, after the whole build was already done.
+        #
+        # ! SAME SHAPE AS build_ranking_results.swapIn, deliberately: lock
+        #   BOTH tables in one statement so the failure mode is a timeout
+        #   rather than a deadlock, be impatient rather than queueing (a
+        #   waiting ACCESS EXCLUSIVE makes every NEW reader queue behind it,
+        #   so one slow page would freeze the site), and treat timeout and
+        #   deadlock as the same retryable "a reader was in the way".
+        #
+        # ⚠ ALL OF IT IN ONE TRANSACTION. Half a swap leaves school_identity
+        #   dropped with nothing in its place, and every page that renders a
+        #   school label 500s.
+        for attempt in range(1, _SWAP_ATTEMPTS + 1):
+            try:
+                cur.execute("BEGIN")
+                cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
+                cur.execute("LOCK TABLE person_home_state, school_identity "
+                            "IN ACCESS EXCLUSIVE MODE")
+                for t in ("person_home_state", "school_identity"):
+                    cur.execute(f"DROP TABLE IF EXISTS {t}")
+                    cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
+                cur.execute("ALTER INDEX school_identity_new_school_idx "
+                            "RENAME TO school_identity_school_idx")
+                cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
+                            "person_home_state_new_pkey TO "
+                            "person_home_state_pkey")
+                conn.commit()
+                break
+            except (psycopg2.errors.LockNotAvailable,
+                    psycopg2.errors.DeadlockDetected):
+                conn.rollback()
+                if attempt == _SWAP_ATTEMPTS:
+                    # ! THE _new TABLES SURVIVE, so a rerun redoes the build
+                    #   rather than leaving the site without these tables.
+                    raise RuntimeError(
+                        "school_identity swap: could not take ACCESS "
+                        f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
+                        "pg_stat_activity for a long read.")
+                print(f"  readers hold the tables, attempt {attempt}"
+                      f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s",
+                      flush=True)
+                time.sleep(_SWAP_BACKOFF)
+
+        # ANALYZE after the commit, not inside it: it takes no exclusive lock
+        # and holding the swap open for it would defeat the point.
         cur.execute("ANALYZE person_home_state")
         cur.execute("ANALYZE school_identity")
         conn.commit()

@@ -276,8 +276,31 @@ _ACAD = seasonYearSqlInt(None, "date")
 #   failure mode we want if the replace below is ever broken.
 _AGE_BAND_TOKENS = ("/*AGEBAND_XC*/", "/*AGEBAND_TF*/")
 
-_AGE_BAND_REAL = ("""LEFT   JOIN age_band_result ab
-                      ON ab.sport = '{sport}' AND ab.result_id = r.result_id""")
+# ⚠ THE TWO FRAGMENTS MUST EXPOSE THE SAME COLUMNS, AND THEY DID NOT. The
+#   real one joined age_band_result whole -- (sport, result_id, person_id,
+#   grade) -- while the stand-in exposed result_id alone. _BUILD's big SELECT
+#   refers to `person_id` UNQUALIFIED, so the moment #47's table actually
+#   existed the build failed with
+#
+#       column reference "person_id" is ambiguous
+#
+#   and grade_sanity died on the first pipeline run after age_band_grades
+#   --write had ever been run. The stand-in path had been exercised for
+#   months; the real one never had, so the two drifted with nothing to catch
+#   it.
+#
+# ! SO THE REAL FRAGMENT NOW EXPOSES result_id AND NOTHING ELSE, matching the
+#   stand-in exactly. That is also all the build wants from it -- the CASEs
+#   only ask `ab.result_id IS NULL`. Qualifying every bare column in a
+#   500-line SQL blob would have been the other fix, and a far bigger one to
+#   get right. tests/test_grade_sanity_joins.py holds the two to the same
+#   shape.
+#
+# ! THE PRIMARY KEY IS (sport, result_id), so filtering sport inside the
+#   subquery is an index-served range, not a scan.
+_AGE_BAND_REAL = ("""LEFT   JOIN (SELECT result_id FROM age_band_result
+                           WHERE sport = '{sport}') ab
+                      ON ab.result_id = r.result_id""")
 
 _AGE_BAND_NONE = ("""LEFT   JOIN (SELECT NULL::bigint AS result_id
                           WHERE false) ab ON true""")

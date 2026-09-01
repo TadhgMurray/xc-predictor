@@ -2461,7 +2461,12 @@ def _swapWithRetry(cur, body, what):
             if attempt > 1:
                 print(f"    {what}: took the lock on attempt {attempt}")
             return
-        except psycopg2.errors.LockNotAvailable:
+        # ⚠ AND DEADLOCK TOO. A swap that renames two tables a reader
+        #   touches in the other order deadlocks rather than timing out, and
+        #   the deadlock detector fires first. Same meaning, same rollback,
+        #   same fix -- see build_ranking_results.swapIn.
+        except (psycopg2.errors.LockNotAvailable,
+                psycopg2.errors.DeadlockDetected):
             cur.execute("ROLLBACK")
             print(f"    {what}: readers hold the table, attempt {attempt}"
                   f"/{SWAP_ATTEMPTS} -- retrying in {SWAP_BACKOFF}s")

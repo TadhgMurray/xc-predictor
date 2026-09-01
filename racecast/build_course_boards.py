@@ -47,9 +47,28 @@ CREATE TABLE course_boards_new (
 """
 
 
+# ⚠ ensure_ascii=False, AND THIS DATABASE IS WHY. The cluster is SQL_ASCII,
+#   which performs no encoding conversion -- it stores whatever bytes it is
+#   given. json.dumps defaults to ensure_ascii=True and writes a non-ASCII
+#   character as a \uXXXX ESCAPE; Postgres must then translate that escape
+#   into the server encoding to parse the jsonb, and SQL_ASCII has nothing to
+#   translate it to. The build died on one athlete:
+#
+#       unsupported Unicode escape sequence
+#       DETAIL: Unicode escape value could not be translated to the server's
+#               encoding SQL_ASCII
+#       CONTEXT: JSON data ... "name": "Mikaela Marie Brabb\u00e9..."
+#
+#   Emitting the character as raw UTF-8 bytes instead sidesteps the
+#   translation entirely, which is the same path every accented name already
+#   takes through the text columns on this cluster.
+#
+# ! ONE NAME KILLED 1,200 COURSES. The per-course try/except above catches a
+#   failure while BUILDING a course; this one happens at the INSERT, in a
+#   batch of 200, so it escapes that guard and takes the whole step with it.
 def _json(ctx):
     return psycopg2.extras.Json(
-        ctx, dumps=lambda o: json.dumps(o, default=str))
+        ctx, dumps=lambda o: json.dumps(o, default=str, ensure_ascii=False))
 
 
 def main():

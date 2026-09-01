@@ -454,7 +454,12 @@ def _swapSiege(conn, table, cap):
                 _swap(cur, table, cap)
             conn.commit()
             return
-        except psycopg2.errors.LockNotAvailable:
+        # ⚠ AND DEADLOCK TOO. A swap that renames two tables a reader
+        #   touches in the other order deadlocks rather than timing out, and
+        #   the deadlock detector fires first. Same meaning, same rollback,
+        #   same fix -- see build_ranking_results.swapIn.
+        except (psycopg2.errors.LockNotAvailable,
+                psycopg2.errors.DeadlockDetected):
             conn.rollback()
             with conn.cursor() as cur:
                 who = _blockers(cur, table)

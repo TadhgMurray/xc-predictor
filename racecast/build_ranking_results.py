@@ -1666,13 +1666,34 @@ def swapIn(conn):
             try:
                 cur.execute("BEGIN")
                 cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
+                # ⚠ BOTH TABLES UP FRONT, IN ONE STATEMENT, AND THIS IS WHAT
+                #   THE DEADLOCK WAS. The renames took ACCESS EXCLUSIVE on
+                #   ranking_results first and asked for athlete_season second;
+                #   a page reading athlete_season and then ranking_results
+                #   holds those two in the OPPOSITE order. Classic ABBA, and
+                #   lock_timeout does not save you from it -- Postgres's
+                #   deadlock detector fires at deadlock_timeout (1s by
+                #   default), well before a 3s lock_timeout, so the build died
+                #   with DeadlockDetected after six hours of work.
+                #
+                # ! TAKING THEM TOGETHER MAKES THE TIMEOUT THE FAILURE MODE
+                #   AGAIN, which is the one the retry below was written for.
+                cur.execute("LOCK TABLE ranking_results, athlete_season "
+                            "IN ACCESS EXCLUSIVE MODE")
                 cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
                 cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
                 cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
                 cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
                 conn.commit()
                 break
-            except psycopg2.errors.LockNotAvailable:
+            # ⚠ DEADLOCK IS THE SIBLING OF TIMEOUT, NOT A DIFFERENT
+            #   PROBLEM, and catching only one of them is why a six-hour
+            #   build threw its work away. Both mean "a reader was in the
+            #   way", both roll the whole transaction back, and both are
+            #   fixed by waiting and trying again. tests/test_swap_retry.py
+            #   holds every swap site to catching the pair.
+            except (psycopg2.errors.LockNotAvailable,
+                    psycopg2.errors.DeadlockDetected):
                 conn.rollback()
                 if attempt == _SWAP_ATTEMPTS:
                     # ! THE SHADOW SURVIVES, so a rerun resumes at the swap
