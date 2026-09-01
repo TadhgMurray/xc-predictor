@@ -1132,43 +1132,81 @@ function renderAthletes() {
  *   search lie about what exists. Marking it and letting the same click undo
  *   it means one control does both, and the list always reflects the field.
  */
-function teamIsIn(school) {
-  return (state.field?.teams || []).some((t) => t.school === school)
-      || state.added.some((a) => a.school === school);
+/*
+ * Every race on screen that already has this school. Empty means the school
+ * is not in the field at all.
+ *
+ * ⚠ THE PREDECESSOR READ state.field, WHICH IS ONE RACE'S FIELD. state.field
+ *   is an accessor keyed on state.meet.div, and the school box sits OUTSIDE
+ *   the division blocks -- so it answered for whichever block happened to be
+ *   focused last. With divisions raced separately, a school plainly on screen
+ *   in another block came back "not in the field", so the row offered Add and
+ *   there was no way to remove it. This asks every active race.
+ */
+function blocksWith(school) {
+  return activeBlocks().filter((d) => {
+    const e = editsFor(d);
+    return (e.field ? e.field.teams : []).some((t) => t.school === school)
+        || e.added.some((a) => a.school === school);
+  });
 }
 
+/*
+ * ★ ONE ROW PER ACTION, AND THE ROW SAYS WHICH RACE IT ACTS ON. A school that
+ *   is in the field gets a single Remove -- in the field is in the field, and
+ *   removing it takes it out of every race that has it. A school that is in
+ *   none is genuinely ambiguous when several divisions are racing separately
+ *   (which race is it joining?), so that case, and only that case, fans out
+ *   into one Add row per race.
+ */
 function renderSchools(rows) {
-  return rows.slice(0, 8).map((r) => {
-    const inField = teamIsIn(r.label);
-    /* ★ THE ACTION IS NAMED, AND IT IS THE SAME CONTROL BOTH WAYS. A row that
-       is already in the field says "Remove"; one that is not says "Add". The
-       earlier version said "in field · remove", which described a STATE and an
-       action at once and read as neither. */
-    return `<button class="pick-opt${inField ? " is-in" : ""}" ` +
-      `data-label="${esc(r.label)}" data-link="${esc(r.link || "")}">` +
-      `<span class="pick-name">${esc(r.label)}</span>` +
-      `<span class="pick-act">${inField ? "Remove" : "Add"}</span>` +
-      `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`;
+  const blocks = activeBlocks();
+  const separate = blocks.length > 1;
+
+  const opt = (r, div, act, label) =>
+    `<button class="pick-opt${act === "remove" ? " is-in" : ""}" ` +
+    `data-label="${esc(r.label)}" data-link="${esc(r.link || "")}" ` +
+    `data-act="${act}" data-div="${divKey(div)}">` +
+    `<span class="pick-name">${esc(r.label)}</span>` +
+    `<span class="pick-act">${esc(label)}</span>` +
+    `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`;
+
+  // Fewer schools when each fans out, so the list stays about one screen.
+  return rows.slice(0, separate ? 5 : 8).map((r) => {
+    const inB = blocksWith(r.label);
+    if (inB.length) {
+      const where = separate
+        ? ` from ${inB.map(divLabel).join(", ")}`
+        : "";
+      return opt(r, inB[0], "remove", `Remove${where}`);
+    }
+    return blocks.map((d) =>
+      opt(r, d, "add", separate ? `Add to ${divLabel(d)}` : "Add")).join("");
   }).join("");
 }
 
 makePicker("school-input", "school-results", "school", renderSchools, (d) => {
   const school = d.label;
+  const inB = blocksWith(school);
 
-  if (teamIsIn(school)) {
-    // Remove: drop it from the field and from any pending addition, and mark
-    // its runners removed so the request says the same thing either way.
-    const team = (state.field?.teams || []).find((t) => t.school === school);
-    if (team) for (const r of team.runners) state.removed.add(String(r.person_id));
-    if (state.field)
-      state.field.teams = state.field.teams.filter((t) => t.school !== school);
-    state.added = state.added.filter((a) => a.school !== school);
+  if (inB.length) {
+    /* Remove: out of every race that has it, and its runners marked removed
+       so the request says the same thing the screen does. Written through
+       editsFor rather than the state accessors -- the accessors answer for
+       state.meet.div, which is not the block being edited here. */
+    for (const div of inB) {
+      const e = editsFor(div);
+      const team = (e.field ? e.field.teams : []).find((t) => t.school === school);
+      if (team) for (const r of team.runners) e.removed.add(String(r.person_id));
+      if (e.field) e.field.teams = e.field.teams.filter((t) => t.school !== school);
+      e.added = e.added.filter((a) => a.school !== school);
+    }
     renderField();
     setStatus(`Removed ${school}.`, false);
     return;
   }
 
-  addTeam(school);
+  addTeam(school, d.div === "" ? null : d.div);
 });
 
 
@@ -1225,16 +1263,22 @@ $("t-course").addEventListener("input", () => {
  *   squad puts a real card in the grid, with the same seven-and-edit
  *   behaviour as every other team.
  */
-async function addTeam(school) {
-  if (!state.field) return;
+async function addTeam(school, div) {
+  /* ! THE TARGET RACE IS HELD, NOT READ BACK. There is an await in the
+       middle of this, and state.meet.div can move under it (another block
+       clicked, the mode flipped). Taking the edit record once means the
+       squad lands in the race the click asked for, whatever happened
+       meanwhile. */
+  const e = editsFor(div === undefined ? (state.meet.div ?? null) : div);
+  if (!e.field) return;
   setStatus(`Loading ${school}\u2026`, false);
   try {
-    const squad = await loadSquad(school);
+    const squad = await loadSquad(school, e.field.gender);
     if (!squad.runners.length) {
       setStatus(`No one from ${school} has raced this season.`, true);
       return;
     }
-    state.field.teams.push({
+    e.field.teams.push({
       school: school,
       runners: squad.runners.slice(0, 7),
       // The rest of the squad, offered under the card rather than discarded --
@@ -1242,10 +1286,10 @@ async function addTeam(school) {
       dropped: squad.runners.slice(7),
       added: true,
     });
-    state.field.teams.sort((a, b) => a.school.localeCompare(b.school));
-    state.open.add(school);          // open it: it is the thing just added
+    e.field.teams.sort((a, b) => a.school.localeCompare(b.school));
+    e.open.add(school);              // open it: it is the thing just added
     for (const r of squad.runners.slice(0, 7))
-      state.added.push({ person_id: r.person_id, name: r.name, school: school });
+      e.added.push({ person_id: r.person_id, name: r.name, school: school });
     renderField();
     setStatus("", false);
   } catch (err) {
@@ -1258,11 +1302,13 @@ async function addTeam(school) {
    and the squad does not change while the page is open. */
 const squadCache = new Map();
 
-async function loadSquad(school) {
+async function loadSquad(school, gender) {
   /* ! THE GENDER IS PART OF THE CACHE KEY. A school has a boys team and a
        girls team; keying on the name alone would serve one race's squad to
-       the other. */
-  const g = state.field?.gender || "";
+       the other. It is PASSED IN rather than read off state.field, which
+       answers for the focused block and not necessarily the one being
+       added to. */
+  const g = gender || state.field?.gender || "";
   const key = `${school}\u0000${g}`;
   if (squadCache.has(key)) return squadCache.get(key);
   const q = new URLSearchParams({ school: school, sport: state.meet.sport });
