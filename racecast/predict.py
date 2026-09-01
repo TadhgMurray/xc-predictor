@@ -1052,6 +1052,14 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
         #   coalesced team from a team that only ever ran one division, and
         #   therefore no way to tell whether the checkbox did anything.
         #   Carrying the division per entry lets _score say.
+        # ★ AND THE RACE'S GENDER, WHICH COALESCE HAS TO RESPECT. See below.
+        # ! ONLY WHEN COALESCING. It is a query per division, and nothing
+        #   else here reads it -- the un-coalesced path suffixes by division,
+        #   which needs no gender at all.
+        if target.get("coalesce"):
+            g = _fieldGender(cur, [e["person_id"] for e in rows], sport)
+            for e in rows:
+                e["div_gender"] = g
         for e in rows:
             e["div_label"] = labels[d]
         per_div.append((d, rows))
@@ -1068,6 +1076,40 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
                 sch = e.get("school")
                 if sch and len(seen.get(sch, ())) > 1:
                     e["school"] = f"{sch} ({labels[d]})"
+    else:
+        # ★ COALESCE MERGES WITHIN A GENDER, NEVER ACROSS ONE (owner,
+        #   2026-09-01: "when a team is coalesced how does it choose girls vs
+        #   boys?"). It did not choose. _score groups on the school name and
+        #   _capCoalesced then keeps the FASTEST SEVEN of whatever landed
+        #   under it -- so a school entered in a boys race and a girls race
+        #   was merged into one fourteen-runner squad and trimmed to the
+        #   seven fastest, which is the boys. The girls team did not lose;
+        #   it silently stopped existing.
+        #
+        # ⚠ AND MIXED-GENDER RACES ARE ALLOWED, which is exactly why this
+        #   matters. The owner's ruling is that you may race a boys division
+        #   against a girls one -- so the two teams must both be ON the
+        #   start line, as two teams. Coalesce is for a school that brought
+        #   FOURTEEN RUNNERS TO ONE COMPETITION; a boys team and a girls team
+        #   are not that, they are two teams sharing a name.
+        #
+        # ! SO THE KEY IS (school, gender). All one gender and the name stays
+        #   bare, which is the ordinary case and the behaviour that shipped.
+        #   Two genders and each side keeps its own name, exactly as the
+        #   un-coalesced path suffixes by division.
+        genders = {}
+        for _d, rows in per_div:
+            for e in rows:
+                sch = e.get("school")
+                if sch:
+                    genders.setdefault(sch, set()).add(e.get("div_gender"))
+        for _d, rows in per_div:
+            for e in rows:
+                sch = e.get("school")
+                if sch and len(genders.get(sch, ())) > 1:
+                    g = e.get("div_gender")
+                    side = {"M": "Boys", "F": "Girls"}.get(g) or "Mixed"
+                    e["school"] = f"{sch} ({side})"
 
     out, seen_ids = [], set()
     for _d, rows in per_div:

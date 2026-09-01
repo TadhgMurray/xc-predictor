@@ -279,8 +279,14 @@ function renderGroups() {
     const mixed = genders.has("M") && genders.has("F");
     return `<div class="grp-sum" style="--race:${raceColour(i)}">` +
       `<span class="grp-dot"></span>Race ${i + 1}: ${esc(divLabel(g))}` +
+      /* ! AND WHAT COALESCE WILL AND WILL NOT DO WITH IT. Coalescing merges
+           a school's entries WITHIN a gender and never across one -- a boys
+           team and a girls team are two teams sharing a name, not a
+           fourteen-runner squad. Said here because this is where someone
+           builds a mixed race and then wonders what the checkbox means. */
       (mixed ? ` <span class="grp-warn">\u2014 boys and girls scored `
-             + `together</span>` : "") + `</div>`;
+             + `together; coalesce still keeps them apart</span>` : "")
+      + `</div>`;
   }).join("");
 }
 
@@ -849,7 +855,8 @@ function renderChosenMeet(bare) {
        <div class="mc-groups hidden" id="mc-groups"></div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce">
-         Coalesce a school in two divisions into one squad
+         Coalesce a school in two divisions of the same gender into one
+         squad
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
