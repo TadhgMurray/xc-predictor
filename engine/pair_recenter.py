@@ -108,6 +108,51 @@ def meanOffset(beta, sc, group, n_groups):
 #   nights is the loop working. Delete the file to revert to the solve's
 #   own estimate.
 
+# ⚠ PER-POOL bbar IS NOT IMPLEMENTABLE HERE, AND THE REASON IS THE CELL KEY.
+#
+#   measure_sport_gap --by-pool shows the global D near zero while the pools
+#   disagree and cancel:
+#
+#       hs_f   -0.01899        ms_m   +0.01658
+#       elem_f -0.01439        hs_m   +0.00257
+#
+#   The obvious reading is "one bbar is a weighted mean, give each pool its
+#   own". It cannot be done by this function. bbar reaches the ratings through
+#   delta_c += bbar * s_c, and a cell key is
+#
+#       XC:<venue>:d<dist>        (distance_fix.splitKey)
+#
+#   -- namespaced by sport and distance, NOT by pool. hs_m and hs_f racing the
+#   same 5000m at the same venue SHARE ONE delta. There is no per-pool slot to
+#   write a per-pool constant into, and the reparameterisation identity
+#
+#       alpha -= bbar*sbar_g ;  beta -= bbar ;  delta += bbar*s_c
+#
+#   only cancels because the bbar subtracted from the group is the same bbar
+#   added to the cell. Make the first per-pool and the third cannot follow it,
+#   so predictions stop being preserved and the whole argument for recentring
+#   (it is a reparameterisation, not a refit) is gone.
+#
+# ★ AND THE MEASUREMENT SAYS bbar IS THE WRONG KNOB ANYWAY. Splitting D into
+#   its two halves across eight pools (measure_sport_gap --from rating vs
+#   --from norm):
+#
+#       D(cell)   mean +0.0538,  sd 0.0024      <- what bbar controls: FLAT
+#       D(norm)   mean -0.0362,  sd 0.0151      <- all of the pool spread
+#
+#   The cell half is the same in every pool, which is exactly what one global
+#   constant deposited in every cell should look like -- bbar is behaving.
+#   Every bit of the per-pool variation is in the NORMALISATION, where
+#   targetFor already is per pool (hs_m normalises 5000m XC against a 5000m
+#   anchor and 800-3200m TF against the same one; elem_m travels furthest on
+#   the steepest part of the curve). The knob for the pool spread is the
+#   per-pool distance curve -- engine/distance_fix_by_pool.py -- not this file.
+#
+#   ⚠ The distance-curve story is not proven either: --by-pool reports
+#   D/span spread at 415% of its mean, so D does not track the distance span
+#   and a single exponent error is not the explanation. What is established is
+#   only where the spread ISN'T: not in the cells, so not in bbar.
+
 _GAP_JSON = os.path.join(_HERE, "data", "sport_gap_bbar.json")
 
 
@@ -156,6 +201,19 @@ def recenter(delta, alpha, beta, sc, group, sport, course, n_cells, n_groups,
     bbar_solve, n_ident = meanOffset(beta, sc, group, n_groups)
     if bbar is None:
         bbar = bbar_solve
+    # ⚠ SCALAR ONLY. A per-pool or per-group array would broadcast against
+    #   s_cell (length n_cells) instead of failing, and where the lengths
+    #   happened to match it would silently produce difficulties that are not
+    #   a reparameterisation of anything. See the block above _GAP_JSON for
+    #   why per-pool cannot work and which file the pool spread belongs in.
+    if np.ndim(bbar) != 0:
+        raise ValueError(
+            "recenter() takes a scalar bbar. Per-pool bbar is not "
+            "implementable: cells are keyed XC:<venue>:d<dist>, so pools "
+            "share delta and the recentring identity would not cancel. The "
+            "per-pool sport gap lives in normalisation, not in the cells -- "
+            "see distance_fix_by_pool.py.")
+    bbar = float(bbar)
     s_cell = cellSport(course, sport, n_cells)
 
     sbar = (np.bincount(group, weights=sport.astype(np.float64) - 0.5,

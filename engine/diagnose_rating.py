@@ -226,90 +226,127 @@ QUERIES = [
     """),
 
     dict(n=7, title="Sanity: does the stored season rating reproduce?",
-         reading="rating = pool_mean / ability * 100. If stored and "
-                 "recomputed differ, the stored value is stale -- a rebuild "
-                 "ran on one side only, and nothing above is measuring what "
-                 "the site is serving.",
+         reading="rating_seasonal = season_mean / ability * 100, where "
+                 "season_mean is the mean ability within (pool, SEASON) over "
+                 "the athlete-seasons with races >= 3. rating_career uses the "
+                 "whole pool instead. Each stored column is compared against "
+                 "its OWN anchor here.\n"
+                 "    \u26a0 THIS QUERY USED TO RECOMPUTE A CAREER ANCHOR AND "
+                 "COMPARE IT TO rating_seasonal, with no races >= 3 filter -- "
+                 "two different quantities, so it reported a mismatch on every "
+                 "athlete in a perfectly healthy database and 'stale' was the "
+                 "wrong reading. Fixed 2026-09-01.\n"
+                 "    A real staleness finding is stored != recomputed against "
+                 "the MATCHING anchor: a rebuild ran on one side only.",
          sql="""
-        WITH m AS (
-            SELECT pool, avg(ability) AS pool_mean
+        WITH ok AS (
+            SELECT pool, season, ability
             FROM   pair_athlete_season
-            WHERE  ability IS NOT NULL AND ability > 0
-            GROUP  BY pool
+            WHERE  ability IS NOT NULL AND ability > 0 AND races >= 3
+        ),
+        seasonal AS (
+            SELECT pool, season, avg(ability) AS season_mean
+            FROM   ok GROUP BY pool, season
+        ),
+        career AS (
+            SELECT pool, avg(ability) AS pool_mean FROM ok GROUP BY pool
         )
         SELECT a.person_id, a.pool, a.season, a.races,
-               round(a.ability::numeric, 1)   AS ability,
-               round(m.pool_mean::numeric, 1) AS pool_mean,
-               round(a.rating_seasonal::numeric, 2) AS stored,
-               round((m.pool_mean / a.ability * 100)::numeric, 2) AS recomputed
+               round(a.ability::numeric, 1)          AS ability,
+               round(s.season_mean::numeric, 1)      AS season_mean,
+               round(a.rating_seasonal::numeric, 2)  AS stored_seasonal,
+               round((s.season_mean / a.ability * 100)::numeric, 2)
+                   AS recomp_seasonal,
+               round(a.rating_career::numeric, 2)    AS stored_career,
+               round((c.pool_mean / a.ability * 100)::numeric, 2)
+                   AS recomp_career
         FROM   pair_athlete_season a
-        JOIN   m ON m.pool = a.pool
+        LEFT   JOIN seasonal s ON s.pool = a.pool AND s.season = a.season
+        LEFT   JOIN career   c ON c.pool = a.pool
         WHERE  a.person_id = %(person_text)s
+        ORDER  BY a.season
     """),
-    dict(n=8, title="★ ANCHOR MISMATCH: rated against another pool's scale",
-         reading="★ THE CONFIRMED BUG. An athlete's rows are normalised to "
-                 "one pool's anchor (ms 3200m, hs 5000m) but the solve puts "
-                 "the athlete-season in another pool and divides by THAT "
-                 "pool's mean. A 3200m-anchored ability over a "
-                 "5000m-anchored mean is inflated by about 1.64x, for free.\n"
+    dict(n=8, title="\u2605 ANCHOR MISMATCH: rated against another pool's scale",
+         reading="An athlete's rows are normalised to one pool's anchor (ms "
+                 "3200m, hs 5000m) but the solve puts the athlete-season in "
+                 "another pool and divides by THAT pool's mean. A "
+                 "3200m-anchored ability over a 5000m-anchored mean is "
+                 "inflated by about 1.64x, for free.\n"
                  "    Person 29346285: ability 675.2s, hs_m mean 1236.4s, "
-                 "rating 187. Both his races recover an exponent of 1.11 at "
-                 "a 3200m anchor and an impossible 0.70-0.85 at 5000m -- so "
-                 "he was normalised as ms and rated as hs. On one anchor he "
+                 "rating 187. Both his races recover an exponent of 1.11 at a "
+                 "3200m anchor and an impossible 0.70-0.85 at 5000m -- so he "
+                 "was normalised as ms and rated as hs. On one anchor he "
                  "rates about 112.\n"
-                 "    ⚠ The fingerprint is an ability far BELOW what its pool "
-                 "can produce -- too fast to be real, because it is measured "
-                 "over a shorter distance. Read the count: a handful is a "
-                 "pooling edge case, thousands is a systematic seam.",
+                 "    \u26a0 THIS QUERY USED TO COUNT ATHLETE-SEASONS BELOW "
+                 "THE POOL'S OWN 0.1st PERCENTILE, which is 0.1% of the pool "
+                 "BY DEFINITION. It returned thousands of rows on any data, "
+                 "healthy or not, under the heading 'THE CONFIRMED BUG'. It "
+                 "confirmed its own threshold and nothing else. Fixed "
+                 "2026-09-01.\n"
+                 "    \u2605 READ THE SHAPE, NOT A COUNT. ratio = ability / "
+                 "the pool's median ability, so 0.61 is exactly where a "
+                 "3200-over-5000 mis-anchoring lands (1/1.64). A healthy pool "
+                 "THINS as the ratio falls: under_62 should be a small "
+                 "fraction of under_70, and under_70 of under_80. The seam is "
+                 "a POPULATION, so the signal is the tail refusing to thin -- "
+                 "under_62 close to under_70 -- or a fastest_ratio far below "
+                 "anything a human runs. Smoothly thinning columns mean this "
+                 "is the ordinary elite tail and there is no seam here.",
          sql="""
         WITH b AS (
             SELECT pool,
-                   percentile_cont(0.001) WITHIN GROUP (ORDER BY ability)
-                       AS floor_001,
                    percentile_cont(0.50) WITHIN GROUP (ORDER BY ability)
                        AS median
             FROM   pair_athlete_season
-            WHERE  ability IS NOT NULL AND ability > 0
+            WHERE  ability IS NOT NULL AND ability > 0 AND races >= 3
             GROUP  BY pool
+        ),
+        r AS (
+            SELECT a.pool, a.ability / b.median AS ratio, a.rating_seasonal
+            FROM   pair_athlete_season a
+            JOIN   b ON b.pool = a.pool
+            WHERE  a.ability IS NOT NULL AND a.ability > 0
         )
-        SELECT a.pool,
-               count(*)                                   AS impossible,
-               round(min(a.ability)::numeric, 0)          AS fastest,
-               round(max(b.floor_001)::numeric, 0)        AS pool_p001,
-               round(max(b.median)::numeric, 0)           AS pool_median,
-               round(max(a.rating_seasonal)::numeric, 1)  AS worst_rating
-        FROM   pair_athlete_season a
-        JOIN   b ON b.pool = a.pool
-        WHERE  a.ability IS NOT NULL AND a.ability > 0
-          -- ! BELOW THE POOL'S OWN 0.1st PERCENTILE, not below a number
-          --   somebody chose. Each pool sets its own floor, so this needs no
-          --   opinion about how fast a middle schooler can be.
-          AND  a.ability < b.floor_001
-        GROUP  BY a.pool
-        ORDER  BY count(*) DESC
+        SELECT pool,
+               count(*)                                    AS seasons,
+               count(*) FILTER (WHERE ratio < 0.80)        AS under_80,
+               count(*) FILTER (WHERE ratio < 0.70)        AS under_70,
+               count(*) FILTER (WHERE ratio < 0.62)        AS under_62,
+               count(*) FILTER (WHERE ratio < 0.50)        AS under_50,
+               round(min(ratio)::numeric, 3)               AS fastest_ratio,
+               round(max(rating_seasonal)::numeric, 1)     AS worst_rating
+        FROM   r
+        GROUP  BY pool
+        ORDER  BY count(*) FILTER (WHERE ratio < 0.62) DESC
     """),
 
     dict(n=9, title="The worst of them, by name",
-         reading="Each of these is an athlete-season whose ability is faster "
-                 "than the 0.1st percentile of its own pool. Check one on the "
-                 "site: if their races are short TF events and their grade is "
-                 "blank, it is the anchor seam.",
+         reading="Each of these is an athlete-season whose ability is under "
+                 "0.62 of its own pool's median -- the ratio where a "
+                 "3200-over-5000 mis-anchoring lands. Check one on the site: "
+                 "if their races are short TF events and their grade is "
+                 "blank, it is the anchor seam. If they are genuine elite "
+                 "distance runners, Q8's tail is just the top of the pool.\n"
+                 "    \u26a0 The threshold used to be the pool's own 0.1st "
+                 "percentile, which selects 0.1% of ANY pool. Fixed "
+                 "2026-09-01 to match Q8.",
          sql="""
         WITH b AS (
-            SELECT pool, percentile_cont(0.001) WITHIN GROUP
-                   (ORDER BY ability) AS floor_001
+            SELECT pool, percentile_cont(0.50) WITHIN GROUP
+                   (ORDER BY ability) AS median
             FROM   pair_athlete_season
-            WHERE  ability IS NOT NULL AND ability > 0
+            WHERE  ability IS NOT NULL AND ability > 0 AND races >= 3
             GROUP  BY pool
         )
         SELECT a.person_id, a.pool, a.season, a.races,
-               round(a.ability::numeric, 1)         AS ability,
-               round(b.floor_001::numeric, 0)       AS pool_floor,
-               round(a.rating_seasonal::numeric, 1) AS rating
+               round(a.ability::numeric, 1)            AS ability,
+               round(b.median::numeric, 0)             AS pool_median,
+               round((a.ability / b.median)::numeric, 3) AS ratio,
+               round(a.rating_seasonal::numeric, 1)    AS rating
         FROM   pair_athlete_season a
         JOIN   b ON b.pool = a.pool
         WHERE  a.ability IS NOT NULL AND a.ability > 0
-          AND  a.ability < b.floor_001
+          AND  a.ability < 0.62 * b.median
         ORDER  BY a.rating_seasonal DESC NULLS LAST
         LIMIT  25
     """),
