@@ -27,6 +27,9 @@ const state = {
   //   unpicked race has always meant. `meet.div` stays what it always was:
   //   the ONE division whose field is on screen to be edited.
   divs: [],
+  // "separate" scores each picked division on its own (issue #85);
+  // "combined" scores the whole meet as one race.
+  raceMode: "separate",
   // How much of the field is on screen: nothing, the team cards, or every
   // roster open. `open` still tracks individual cards the user toggled.
   view: "teams",
@@ -68,6 +71,21 @@ function toggleDiv(divs, div) {
   if (div === null) return [];                    // "All races"
   return divs.includes(div) ? divs.filter((d) => d !== div)
                             : divs.concat([div]);
+}
+
+/* Say what the current mode will actually do, in the terms of what is
+   picked -- "combined" with nothing picked and with two picked are the same
+   request, and that is worth stating rather than leaving to be discovered. */
+function updateModeHint() {
+  const el = $("mc-mode-hint");
+  if (!el) return;
+  const n = state.divs.length;
+  el.textContent = state.raceMode === "combined"
+    ? (n ? "Scores the whole meet as one race \u2014 the picked divisions are "
+         + "not merged on their own yet (issue #86)."
+         : "Scores the whole meet as one race.")
+    : (n > 1 ? `Scores ${n} divisions as ${n} separate races.`
+             : "Scores each picked division on its own.");
 }
 
 /* The name a division goes by, for a result heading. Falls back to the id so
@@ -144,7 +162,7 @@ function fmtTime(s) {
  *
  * Debounced at 180ms: a request per keystroke fires a dozen for one name.
  */
-function makePicker(inputId, boxId, kind, render, onPick) {
+function makePicker(inputId, boxId, kind, render, onPick, keepValue) {
   const input = $(inputId);
   const box = $(boxId);
   let timer = null;
@@ -173,7 +191,12 @@ function makePicker(inputId, boxId, kind, render, onPick) {
     if (!opt) return;
     e.preventDefault();
     onPick(opt.dataset);
-    input.value = "";
+    /* ★ CLEARING IS RIGHT FOR AN ACTION, WRONG FOR A SELECTION. Picking a
+       meet, a school or an athlete DOES something and the box goes back to
+       being a search box. Picking a course SETS a value that has to stay
+       visible -- otherwise the only sign it worked is a line of hint text
+       underneath, which is what the owner reported. */
+    input.value = keepValue ? (opt.dataset.label || "") : "";
     box.classList.add("hidden");
   });
 
@@ -337,7 +360,14 @@ async function chooseMeet(data) {
        <span id="mc-course"></span>
      </div>
      <button class="mc-change" data-clear="meet">Change</button>
-     <div class="mc-races" id="mc-races"></div>`;
+     <div class="mc-races" id="mc-races"></div>
+     <div class="mc-mode hidden" id="mc-mode">
+       <label><input type="radio" name="racemode" value="separate" checked>
+         Separate races</label>
+       <label><input type="radio" name="racemode" value="combined">
+         One combined race</label>
+       <span class="mc-mode-hint" id="mc-mode-hint"></span>
+     </div>`;
   $("meet-chosen").classList.remove("hidden");
   $("meet-search").classList.add("hidden");
 
@@ -421,6 +451,23 @@ async function loadRaces() {
        the rest, because "everything" and "these two" are different questions.
        ! CLICKING ALSO OPENS that division for editing, so the field below
          always shows one race and it is obvious which. */
+    /* ★ SEPARATE OR COMBINED IS A CHOICE, NOT AN INFERENCE (owner,
+       2026-09-01). Picking two divisions used to mean "two races" purely by
+       implication, and there was no way to say "run them as one". The control
+       says which is happening.
+       ⚠ COMBINED MEANS THE WHOLE MEET, not a chosen subset. Merging two
+         NAMED divisions into one scored race is issue #86 and is not built:
+         it needs a ruling on a school entered in both, which would otherwise
+         field fourteen. So combined drops the division filter entirely. */
+    $("mc-mode").classList.remove("hidden");
+    $("mc-mode").querySelectorAll("input[name=racemode]").forEach((r) => {
+      r.addEventListener("change", () => {
+        state.raceMode = r.value;
+        updateModeHint();
+      });
+    });
+    updateModeHint();
+
     box.querySelectorAll(".race-chip").forEach((b) => {
       b.addEventListener("click", () => {
         const div = b.dataset.div || null;
@@ -435,6 +482,7 @@ async function loadRaces() {
           x.classList.toggle("is-editing",
                              state.divs.length > 1 && d === state.meet.div);
         });
+        updateModeHint();
         loadField();          // a different race is a different field
       });
     });
@@ -700,7 +748,8 @@ async function predict() {
      different feature -- so nothing is merged: each is the existing
      single-division request, run once per selection.
      ! INDIVIDUAL MODE HAS NO DIVISIONS: the athletes were named directly. */
-  const targets = (state.who === "team" && state.divs.length)
+  const targets = (state.who === "team" && state.raceMode === "separate"
+                   && state.divs.length)
     ? state.divs.slice() : [state.who === "team" ? null : state.meet.div];
 
   try {
@@ -916,12 +965,12 @@ makePicker("t-course", "t-course-results", "course",
     `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`).join(""),
   (d) => {
     state.course = d.label;
-    $("t-course").value = d.label;
-    $("t-course-hint").textContent =
-      `Running this field at ${d.label} instead of `
-      + `${state.meet && state.meet.course ? state.meet.course
-                                           : "the meet's own course"}.`;
-  });
+    const own = (state.meet && state.meet.course) || "the meet\u2019s own course";
+    $("t-course-hint").innerHTML =
+      `Instead of ${esc(own)}. <a href="/course/`
+      + `${encodeURIComponent(d.label)}" target="_blank" rel="noopener">`
+      + `View ${esc(d.label)}</a>`;
+  }, true);   /* keepValue: the box shows the chosen course */
 
 /* Emptying the box is the way back to the meet's own course. */
 $("t-course").addEventListener("input", () => {
@@ -1085,15 +1134,22 @@ document.addEventListener("click", (e) => {
           const res = await fetch("/api/predict/athletes?" + qs.toString());
           const hits = ((await res.json()) || {}).athletes || [];
           rows.innerHTML = hits.length
-            ? hits.map((r) => `<div class="runner-row is-out">
-                   <a class="r-name" href="/athlete/${r.person_id}"
-                      target="_blank" rel="noopener">${esc(r.name)}</a>
-                   <span class="r-rating">${r.rating}<span class="r-year"
-                     >\u2009${esc(r.school || "")}</span></span>
+            /* ★ TWO LINES, NOT ONE (owner, 2026-09-01). Name, rating and
+               school on a single flex row left the name about forty pixels
+               wide -- every result read "Tadhg M...". The school is the thing
+               that tells two same-named athletes apart, so it cannot be the
+               part that gets dropped. */
+            ? hits.map((r) => `<div class="anyone-row">
+                   <a class="ar-name" href="/athlete/${r.person_id}"
+                      target="_blank" rel="noopener">${esc(r.name
+                        || "Unknown")}</a>
+                   <span class="ar-rating">${r.rating}</span>
                    <button class="r-add" data-add="${r.person_id}"
-                           data-name="${esc(r.name)}"
+                           data-name="${esc(r.name || "Unknown")}"
                            data-rating="${r.rating}"
                            data-school="${esc(school)}">add</button>
+                   <span class="ar-school">${esc(r.school || "")}${r.year
+                     ? ` \u00b7 ${esc(r.year)}` : ""}</span>
                  </div>`).join("")
             : `<div class="squad-loading">No athlete by that name.</div>`;
         } catch (err) {

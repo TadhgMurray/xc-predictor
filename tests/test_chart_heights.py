@@ -19,14 +19,34 @@ PHONE_USABLE_PX = 550          # ~a phone viewport minus browser chrome
 
 
 def _blocks(css):
-    """{media condition or None: {selector-ish: {prop: value}}} -- crude but
-    enough for custom properties, which is all this file needs."""
-    out = {}
-    for m in re.finditer(r'@media\s*\(max-width:\s*(\d+)px\)\s*\{(.*?)\n\}',
-                         css, re.S):
-        out[int(m.group(1))] = m.group(2)
-    # everything outside a media query
-    out[None] = re.sub(r'@media.*?\n\}', '', css, flags=re.S)
+    """{max-width: concatenated body}, plus None for everything outside one.
+
+    ! BRACE-MATCHED, NOT REGEX-MATCHED. A non-greedy /\n}/ stops at the first
+      line-starting brace, which truncates any media query containing nested
+      rules -- and every interesting one here does.
+    ! CONCATENATED, because a stylesheet can hold several blocks at the same
+      width (style.css has three at 900px) and keying a dict on the width
+      would silently keep only the last.
+    """
+    out, inside = {}, []
+    for m in re.finditer(r'@media\s*\(max-width:\s*(\d+)px\)\s*\{', css):
+        width = int(m.group(1))
+        depth, j = 1, m.end()
+        while j < len(css) and depth:
+            if css[j] == "{":
+                depth += 1
+            elif css[j] == "}":
+                depth -= 1
+            j += 1
+        body = css[m.end():j - 1]
+        out[width] = out.get(width, "") + "\n" + body
+        inside.append((m.start(), j))
+    outside, last = [], 0
+    for a, b in inside:
+        outside.append(css[last:a])
+        last = b
+    outside.append(css[last:])
+    out[None] = "".join(outside)
     return out
 
 
@@ -130,6 +150,44 @@ def test_the_fold_closes_when_narrow_not_the_other_way_round():
     print("  narrow => closed (sense of the test is right) ...... OK")
 
 
+# ------------------------------------------------------------------ #
+# The sidebar must actually stack (owner, 2026-09-01)
+# ------------------------------------------------------------------ #
+
+STYLE = os.path.join(os.path.dirname(CSS), "style.css")
+
+
+def test_the_page_layout_stacks_on_narrow_screens():
+    """★ THE BUG TWO ROUNDS OF CHART WORK MISSED.
+
+    .page-layout is display:flex with the default flex-wrap:nowrap, so a
+    child CANNOT move to its own line however its flex value is set. The old
+    rule was `.sidebar { flex: 1 1 auto; }` with a comment saying "stack below
+    the main column on phones" -- which it could never do. The sidebar stayed
+    in the row at a fixed width and the main column got what was left.
+    """
+    css = open(STYLE, encoding="utf-8").read()
+    b = _blocks(css)
+    assert 900 in b, "no <=900px block for the page layout"
+    body = b[900]
+    assert re.search(r'\.page-layout\s*\{[^}]*flex-direction:\s*column', body), \
+        "the layout still cannot stack: no flex-direction on .page-layout"
+    print("  .page-layout goes to a column at <=900px ........... OK")
+
+
+def test_the_sidebar_gives_up_its_fixed_width():
+    """.sidebar is `flex: 0 0 340px` further up -- don't grow, don't shrink.
+    Overriding width alone leaves the basis, and the strip stays 340px."""
+    css = open(STYLE, encoding="utf-8").read()
+    body = _blocks(css)[900]
+    m = re.search(r'\.sidebar\s*\{([^}]*)\}', body)
+    assert m, ".sidebar is not overridden at <=900px"
+    decl = m.group(1)
+    assert "flex:" in decl, "width alone will not beat `flex: 0 0 340px`"
+    assert re.search(r'flex:\s*1\s+1\s+auto', decl), decl
+    print("  .sidebar drops its fixed basis, not just its width .. OK")
+
+
 if __name__ == "__main__":
     for fn in [test_narrow_breakpoints_exist,
                test_charts_shrink_at_every_step,
@@ -138,6 +196,8 @@ if __name__ == "__main__":
                test_every_wide_chart_is_folded_and_open_by_default,
                test_summary_is_hidden_on_desktop_and_shown_when_narrow,
                test_js_and_css_agree_on_the_breakpoint,
-               test_the_fold_closes_when_narrow_not_the_other_way_round]:
+               test_the_fold_closes_when_narrow_not_the_other_way_round,
+               test_the_page_layout_stacks_on_narrow_screens,
+               test_the_sidebar_gives_up_its_fixed_width]:
         fn()
     print("\nall chart-height tests passed")

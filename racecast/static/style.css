@@ -114,8 +114,31 @@ p  { color: rgb(82, 82, 82); }
     padding: 0.5rem;
 }
 
+/* ★ THE SIDEBAR NEVER ACTUALLY STACKED (owner, 2026-09-01), and this is why
+   every page read as unusable on a phone -- not the charts, which were
+   chased twice.
+
+   .page-layout is `display: flex` with the default `flex-wrap: nowrap`, so a
+   child cannot move to a new line no matter what its own flex value is.
+   `flex: 1 1 auto` only made the sidebar FLEXIBLE; it stayed in the row, kept
+   its 280px width, and the main column got whatever was left -- about 100px
+   on a 400px screen. A results table squeezed into 100px wraps "2024-11-30"
+   over three lines and turns every row into a block, which is what the
+   screenshot showed.
+
+   flex-direction: column is what the comment always meant. width: auto lets
+   the sidebar be full width once it is on its own line, instead of staying a
+   280px strip. */
 @media (max-width: 900px) {
-    .sidebar { flex: 1 1 auto; }   /* stack below the main column on phones */
+    .page-layout { flex-direction: column; }
+    /* ! flex, NOT just width. .sidebar is redefined further up as
+         `flex: 0 0 340px` -- don't grow, don't shrink -- which overrode the
+         280px and made the strip even wider. The shorthand here resets the
+         basis as well as the growth. */
+    .sidebar     { width: auto; flex: 1 1 auto; }
+    /* Same trap one level down, and sticky has nothing to stick to once the
+       column is the whole page. */
+    .chart-col   { flex: 1 1 auto; position: static; }
 }
 
 /* ---- Race tables ------------------------------------------------------ */
@@ -2480,6 +2503,32 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .mc-sub a { color: inherit; text-decoration: none; }
 .predict2 a.t-label:hover, .predict2 a.mc-name:hover,
 .predict2 .mc-sub a:hover { text-decoration: underline; }
+
+/* ★ "Add anyone" rows are TWO LINES. Name, rating and school on one flex
+   row left the name about forty pixels wide and every result read
+   "Tadhg M..." -- and the school is exactly what tells two same-named
+   athletes apart, so it must not be the part that gets dropped. */
+.predict2 .anyone-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    column-gap: 6px; align-items: baseline;
+    padding: 3px 0; border-bottom: 1px solid #f1f1f1; }
+.predict2 .ar-name { grid-column: 1; color: #222; text-decoration: none;
+                     font-size: 0.86rem; }
+.predict2 .ar-name:hover { text-decoration: underline; }
+.predict2 .ar-rating { grid-column: 2; color: #666; font-size: 0.8rem;
+                       font-variant-numeric: tabular-nums; }
+.predict2 .anyone-row .r-add { grid-column: 3; }
+.predict2 .ar-school { grid-column: 1 / -1; color: #999; font-size: 0.72rem; }
+
+/* The separate-vs-combined control. Quiet: it sits under the race chips and
+   is a statement of what will happen, not a call to action. */
+.predict2 .mc-mode { display: flex; flex-wrap: wrap; align-items: center;
+                     gap: 12px; margin-top: 8px; font-size: 0.78rem;
+                     color: #444; }
+.predict2 .mc-mode.hidden { display: none; }
+.predict2 .mc-mode label { display: inline-flex; align-items: center;
+                           gap: 4px; cursor: pointer; }
+.predict2 .mc-mode-hint { color: #888; }
 
 .predict2 .div-result { margin: 0 0 1.6rem; }
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;
