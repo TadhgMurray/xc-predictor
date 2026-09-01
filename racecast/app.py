@@ -4857,6 +4857,12 @@ def _target(args):
         t["meet_id"] = int(raw)
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
+        # ★ THE COURSE IS OVERRIDABLE WITHOUT CHANGING THE MEET (owner,
+        #   2026-09-01). "What would these teams run at the state course"
+        #   used to require `manual`, which throws away the meet -- its
+        #   field, its division, its date. Empty means the meet's own.
+        t["course"] = (args.get("course") or "").strip() or None
+        t["distance"] = (args.get("distance") or "").strip() or None
         if mode == "rerun":
             # The date the re-run is FOR: the page sends its editable
             # date (same month and day this year by default). A bare

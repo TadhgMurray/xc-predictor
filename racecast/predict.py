@@ -465,6 +465,20 @@ def _targetSpec(cur, target):
         row = cur.fetchone()
         if row:
             spec.update(dict(row))
+
+        # ★ A DIFFERENT COURSE, THE SAME MEET (owner, 2026-09-01). Applied
+        #   AFTER the meet's own row, so the meet supplies everything --
+        #   field, division, date, distance -- and only the venue changes.
+        #   An optional distance override comes first, because the difficulty
+        #   lookup is per (course, distance) and a course raced at another
+        #   length is a different cell.
+        if target.get("distance"):
+            try:
+                spec["distance_meters"] = float(target["distance"])
+            except (TypeError, ValueError):
+                pass
+        _applyCourse(cur, spec, target.get("course"), sport)
+
         # rerun_exact keeps the original date: "as it ran" is the
         # honest backtest. rerun takes the page's editable date (same
         # month and day this year by default); a bare year still shifts.
@@ -480,32 +494,54 @@ def _targetSpec(cur, target):
         d = target.get("distance")
         spec["distance_meters"] = (float(d) if d else
                                    5000.0 if sport == "XC" else 1600.0)
-        course = (target.get("course") or "").strip()
-        if course and sport == "XC":
-            cur.execute("""
-                SELECT m.course_name, m.gps_lat, m.gps_long,
-                       m.altitude_meters, cc.canonical_id,
-                       COALESCE(cd.difficulty, 0.0) AS course_difficulty
-                FROM meets m
-                LEFT JOIN course_canonical cc
-                       ON cc.course_name = m.course_name
-                      AND round(cc.gps_lat::numeric, 5)
-                          = round(m.gps_lat::numeric, 5)
-                      AND round(cc.gps_long::numeric, 5)
-                          = round(m.gps_long::numeric, 5)
-                LEFT JOIN course_difficulties cd
-                       ON cd.canonical_id = cc.canonical_id
-                      AND cd.distance_m =
-                          (round(%(dist)s / 100.0) * 100)::int
-                WHERE m.course_name = %(course)s
-                ORDER BY (cc.canonical_id IS NULL), (cd.difficulty IS NULL)
-                LIMIT 1
-            """, {"course": course, "dist": spec["distance_meters"]})
-            row = cur.fetchone()
-            if row:
-                spec.update({k: v for k, v in dict(row).items()
-                             if v is not None})
+        _applyCourse(cur, spec, target.get("course"), sport)
     return spec
+
+
+# Purpose:   swap in a named course, leaving everything else alone.
+# Input:     spec -- a target spec already built; course_name -- what to use
+#            instead of whatever course the spec currently names.
+# Output:    None; spec is updated in place.
+#
+# ★ THE COURSE IS NOT THE MEET (owner, 2026-09-01). "Run this meet's field at
+#   a different venue" is the question the whole tool is for -- what would
+#   these teams do at the state course -- and it was reachable only through
+#   `manual`, which throws away the meet: its field, its division, its date.
+#   The lookup is the one the manual branch already used, lifted out so the
+#   meet modes can call it too.
+#
+# ! ONLY THE COURSE FIELDS MOVE. Nothing here touches the date, the division
+#   or the field; a value that comes back NULL leaves the meet's own in place
+#   rather than blanking it.
+# ⚠ XC ONLY. A track meet's "course" is the track, and difficulty is not
+#   modelled per venue there -- an override would be a number with nothing
+#   behind it.
+def _applyCourse(cur, spec, course_name, sport):
+    course = (course_name or "").strip()
+    if not course or sport != "XC":
+        return
+    cur.execute("""
+        SELECT m.course_name, m.gps_lat, m.gps_long,
+               m.altitude_meters, cc.canonical_id,
+               COALESCE(cd.difficulty, 0.0) AS course_difficulty
+        FROM meets m
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = m.course_name
+              AND round(cc.gps_lat::numeric, 5)
+                  = round(m.gps_lat::numeric, 5)
+              AND round(cc.gps_long::numeric, 5)
+                  = round(m.gps_long::numeric, 5)
+        LEFT JOIN course_difficulties cd
+               ON cd.canonical_id = cc.canonical_id
+              AND cd.distance_m =
+                  (round(%(dist)s / 100.0) * 100)::int
+        WHERE m.course_name = %(course)s
+        ORDER BY (cc.canonical_id IS NULL), (cd.difficulty IS NULL)
+        LIMIT 1
+    """, {"course": course, "dist": spec.get("distance_meters") or 5000.0})
+    row = cur.fetchone()
+    if row:
+        spec.update({k: v for k, v in dict(row).items() if v is not None})
 
 
 # every corpus column the vector builders touch; the athlete's own

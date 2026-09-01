@@ -93,8 +93,21 @@
     <div class="when-pane" data-pane="thisyear">
       <label for="t-date">Date</label>
       <input id="t-date" type="date">
-      <p class="hint">Defaults to the same month and day. Change it if the meet
-        has moved.</p>
+      <p class="hint">Defaults to the weekday this meet was run on, in this
+        year. Change it if the meet has moved.</p>
+
+      {# ★ THE COURSE IS NOT THE MEET (owner, 2026-09-01). "What would these
+         teams run at the state course" was reachable only through a manual
+         target, which throws the meet away -- its field, its division, its
+         date. Here it swaps the venue and changes nothing else. #}
+      <label for="t-course">Course</label>
+      <div class="pick-wrap">
+        <input id="t-course" type="search" autocomplete="off"
+               placeholder="the meet&rsquo;s own course">
+        <div id="t-course-results" class="pick-results hidden"></div>
+      </div>
+      <p class="hint" id="t-course-hint">Defaults to the meet&rsquo;s own
+        course. Pick another to run this same field somewhere else.</p>
     </div>
 
     <div class="when-pane hidden" data-pane="asran">

@@ -33,6 +33,10 @@ const state = {
   // roster open. `open` still tracks individual cards the user toggled.
   view: "teams",
   added: [],          // {person_id, name, school} put back or brought in
+  // ★ null MEANS THE MEET'S OWN COURSE. There is no "unset" to represent --
+  //   clearing the box is how you go back, so absence is the default rather
+  //   than a sentinel the query has to strip out.
+  course: null,
   busy: false,
 };
 
@@ -533,6 +537,11 @@ function buildQuery() {
   });
   if (state.meet.div) q.set("div_id", state.meet.div);
   if (state.when === "thisyear") q.set("date", $("t-date").value);
+  /* ★ THE COURSE OVERRIDE. Empty means the meet's own, which is what the
+     server does with an absent value -- so nothing is sent unless a
+     different venue was actually chosen. "As it ran" never sends one: that
+     mode means the race that happened, on the course it happened on. */
+  if (state.when === "thisyear" && state.course) q.set("course", state.course);
 
   if (state.who === "individual") {
     // One parameter, one or many values -- the endpoint splits it.
@@ -740,6 +749,40 @@ makePicker("school-input", "school-results", "school", renderSchools, (d) => {
   }
 
   addTeam(school);
+});
+
+
+/* ------------------------------------------------------------------ *
+ *  COURSE OVERRIDE
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ RUN THIS FIELD SOMEWHERE ELSE (owner, 2026-09-01). The meet supplies the
+ *   field, the division and the date; only the venue changes. Clearing the
+ *   box goes back to the meet's own course, which is why the empty state is
+ *   a placeholder rather than a value -- there is nothing to "unset".
+ */
+makePicker("t-course", "t-course-results", "course",
+  (rows) => rows.map((r) =>
+    `<button class="pick-row" data-label="${esc(r.label)}">
+       <span class="pick-main">${esc(r.label)}</span>
+       <span class="pick-sub">${esc(r.sublabel || "")}</span>
+     </button>`).join(""),
+  (d) => {
+    state.course = d.label;
+    $("t-course").value = d.label;
+    $("t-course-hint").textContent =
+      `Running this field at ${d.label} instead of the meet's own course.`;
+  });
+
+/* Emptying the box is the way back to the meet's own course. */
+$("t-course").addEventListener("input", () => {
+  if ($("t-course").value.trim() === "" && state.course) {
+    state.course = null;
+    $("t-course-hint").textContent =
+      "Defaults to the meet\u2019s own course. Pick another to run this same "
+      + "field somewhere else.";
+  }
 });
 
 
@@ -1023,6 +1066,7 @@ document.addEventListener("click", (e) => {
     renderAthletes();
   } else if (x.dataset.clear === "meet") {
     state.meet = null;
+    state.course = null;
     state.field = null;
     $("meet-chosen").classList.add("hidden");
     $("meet-search").classList.remove("hidden");
