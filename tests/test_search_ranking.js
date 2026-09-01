@@ -88,9 +88,31 @@ const ok = (c, m) => { if (!c) { console.error("  FAIL " + m); failed++; } };
      "the flag is set before the delayed hide, not inside it");
 }
 
+/* ---- 3. HS-equivalent is the default rating view (#50) ---- */
+{
+  const js = read("racecast", "static", "scale-view.js");
+  ok(/localStorage\.getItem\(SCALE_KEY\) === "pool" \? "pool" : "hs"/.test(js),
+     "the stored value is tested for 'pool', not defaulted to it -- that is "
+     + "what keeps an explicit 'Own pool' choice working after the flip");
+  ok(/catch \(err\) \{\s*\n?\s*return "hs";/.test(js),
+     "and a browser that refuses localStorage still gets the default view");
+  ok(!/=== "hs" \? "hs" : "pool"/.test(js), "the old default is gone");
+
+  const tpl = read("racecast", "templates", "_scale.html");
+  ok(/data-scale="hs" class="is-active"/.test(tpl),
+     "the control renders with HS lit, or it flickers on every page load "
+     + "while scale-view.js syncs it");
+  ok(!/data-scale="pool" class="is-active"/.test(tpl),
+     "and not with both lit");
+  ok(/HS-equivalent view \(the default\)/.test(tpl),
+     "the explanation says which one is the default");
+  ok(!/Own pool \(the default\)/.test(tpl), "and does not still say the old one");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("  both searches rank an exact prefix first .......... OK");
 console.log("  the athlete picker ranks before it cuts ........... OK");
 console.log("  its name match has an index that can serve it ..... OK");
 console.log("  no picker re-opens after the reader leaves ........ OK");
+console.log("  HS-equivalent is the default rating view .......... OK");
 console.log("\nall search-ranking checks passed");

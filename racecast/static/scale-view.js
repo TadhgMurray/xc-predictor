@@ -17,13 +17,26 @@
 (function () {
   var SCALE_KEY = "rc-rating-scale";
 
+  /*
+   * ★ HS-EQUIVALENT IS THE DEFAULT (issue #50, owner 2026-09-01). A rating's
+   *   own pool is the scale it was FITTED on, but it is not the scale anyone
+   *   reads it on: 100 means "average for your pool", so an ms_m 130 and an
+   *   hs_m 130 look alike and are not, and a reader comparing two athletes
+   *   from different pools is comparing nothing. The HS-equivalent view puts
+   *   every rating on one scale, which is what a number on a page is for.
+   *
+   * ⚠ AN EXPLICIT CHOICE STILL WINS, IN BOTH DIRECTIONS. Anyone who has
+   *   pressed "Own pool" has "pool" stored and keeps it; the flip only moves
+   *   readers who never expressed a preference. Testing for "pool" rather
+   *   than defaulting to it is the whole of that.
+   */
   function load() {
     /* localStorage throws in some private-browsing modes; the default view
        must survive that, so every touch is wrapped. */
     try {
-      return localStorage.getItem(SCALE_KEY) === "hs" ? "hs" : "pool";
+      return localStorage.getItem(SCALE_KEY) === "pool" ? "pool" : "hs";
     } catch (err) {
-      return "pool";
+      return "hs";
     }
   }
 
