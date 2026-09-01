@@ -2735,6 +2735,16 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    sign, and it appears only when there is more than one. */
 .predict2 .t-divs { font-size: 0.78em; color: #6b7280; font-style: italic;
                     white-space: nowrap; }
+/* ★ AND ON THE CARD, BEFORE PREDICTING, which is the half that matters. The
+   results note above says what happened; this says what is ABOUT to. A
+   school entered in two divisions of one race is exactly the case coalesce
+   decides, and it was invisible until the prediction came back. */
+.predict2 .t-also { font-size: 0.72rem; color: #6b7280; font-style: italic;
+                    font-weight: 400; margin-left: 0.35rem;
+                    white-space: nowrap; }
+/* Coalesce ON: the two entries become one squad, so it reads as a sum. */
+.predict2 .t-also.is-merged { color: #0072B2; font-style: normal;
+                              font-weight: 600; }
 /* A block scored with another says so beside its own heading. */
 .predict2 .grp-note { font-weight: 400; color: #6b7280; font-style: italic;
                       margin-left: 0.5rem; font-size: 0.9em; }

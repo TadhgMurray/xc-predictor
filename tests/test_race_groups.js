@@ -257,5 +257,68 @@ const D = ["10", "11", "12", "13"];
   else console.log("  quick-select per gender and distance ........... OK");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * Coalesce is explained on the CARD, before predicting -- not only in
+ * the results, where the decision has already been made.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  const fn = eval(`(() => {
+    const _edits = new Map();
+    const _divLabels = new Map([["10","D2"],["11","D3"],["12","D4"]]);
+    const state = { groups: [], meet: { div: null } };
+    ${grab("divKey")}
+    ${grab("divLabel")}
+    ${grab("editsFor")}
+    ${grab("groupIndex")}
+    ${grab("alsoInThisRace")}
+    return { state, editsFor, alsoInThisRace };
+  })()`);
+
+  const seed = (div, ...schools) => {
+    const e = fn.editsFor(div);
+    e.field = { teams: schools.map((s) => ({ school: s, runners: [{}],
+                                             dropped: [] })) };
+  };
+  seed("10", "Alpha", "Beta");
+  seed("11", "Alpha", "Gamma");
+  seed("12", "Alpha");
+
+  /* D2 and D3 are ONE race; D4 is its own. */
+  fn.state.groups = [["10", "11"], ["12"]];
+
+  const a = fn.alsoInThisRace("10");
+  chk(a.get("Alpha") && a.get("Alpha").join() === "D3",
+     "a school entered in both divisions of one race is marked");
+  chk(!a.has("Beta"), "a school in only one of them is not");
+  chk(!a.has("Gamma"), "and a school from the other block is not listed here");
+
+  /* ⚠ THE SAME RACE ONLY. Alpha is also in D4, but D4 is scored separately
+     -- that is simply two teams, and coalesce has nothing to say about it. */
+  chk(fn.alsoInThisRace("12").size === 0,
+     "a division scored on its own marks nothing, however many schools it "
+     + "shares with other races");
+
+  fn.state.groups = [["10"], ["11"], ["12"]];
+  chk(fn.alsoInThisRace("10").size === 0,
+     "and with every division separate there is nothing to coalesce");
+
+  chk(/state\.coalesce \? " is-merged" : ""/.test(SRC),
+     "the card says which way the checkbox is set, not just that there is a "
+     + "duplicate");
+  const co = SRC.slice(SRC.indexOf('$("coalesce").addEventListener'));
+  chk(/renderField\(\);/.test(co.slice(0, 500)),
+     "toggling coalesce redraws the cards -- the one place explaining it "
+     + "must not be stale while someone toggles it to find out");
+
+  if (bad) { failed += bad; }
+  else console.log("  a doubly-entered school is marked on its card .. OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall race-group checks passed");

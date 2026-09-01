@@ -988,6 +988,10 @@ async function loadRaces() {
       state.coalesce = e.target.checked;
       updateModeHint();
       saveState();
+      /* ! THE CARDS SAY WHAT THE CHECKBOX DOES, so they have to be redrawn
+           when it changes -- otherwise the one place that explains coalesce
+           is stale exactly when someone is toggling it to find out. */
+      renderField();
     });
     /* A restored session had its mode in memory before these controls
        existed; put it back on them. */
@@ -1373,9 +1377,50 @@ function renderFieldRollup(blocks) {
 
 
 /* One race's field, rendered into the elements it was handed. */
+/*
+ * ★ WHICH SCHOOLS ARE ENTERED TWICE IN THIS RACE (owner, 2026-09-01: "I
+ *   thought you were putting [the division] on the schools to make coalesce
+ *   more obvious?"). It went on the RESULTS table only, which is the wrong
+ *   half: by then the decision has been made. The place it matters is the
+ *   field editor, BEFORE predicting, on the card itself.
+ *
+ * ! {school -> [other divisions of the SAME RACE it is also in]}. Only the
+ *   same race, because a school in two divisions that are scored separately
+ *   is simply two teams and coalesce has nothing to say about it.
+ */
+function alsoInThisRace(div) {
+  const gi = groupIndex().get(div);
+  const g = gi === undefined ? null : state.groups[gi];
+  const out = new Map();
+  if (!g || g.length < 2) return out;
+
+  /* ⚠ INTERSECTED WITH THIS DIVISION'S OWN TEAMS. Without this it returned
+       every school in the other divisions too -- harmless, since only this
+       block's teams are looked up, but a map that does not mean what its
+       name says is a trap for the next reader. */
+  const here = new Set(
+    (editsFor(div).field ? editsFor(div).field.teams : [])
+      .filter((t) => t.runners.length || t.dropped.length)
+      .map((t) => t.school));
+  if (!here.size) return out;
+
+  for (const other of g) {
+    if (other === div) continue;
+    const e = editsFor(other);
+    for (const t of (e.field ? e.field.teams : [])) {
+      if (!here.has(t.school)) continue;
+      if (!t.runners.length && !t.dropped.length) continue;
+      if (!out.has(t.school)) out.set(t.school, []);
+      out.get(t.school).push(divLabel(other));
+    }
+  }
+  return out;
+}
+
 function renderFieldBlock(sumEl, gridEl) {
   const f = state.field;
   const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
+  const alsoIn = alsoInThisRace(state.meet.div);
   const kept = teams.reduce((n, t) => n + t.runners.length, 0);
 
   /* ★ THE COUNT IS THE HEADLINE; THE GLOSS IS A TOOLTIP (owner: "can we get
@@ -1432,7 +1477,16 @@ function renderFieldBlock(sumEl, gridEl) {
       <summary class="team-name">
         <span class="t-label"><a class="lnk"
            href="/school/${encodeURIComponent(t.school)}"
-           >${esc(schoolWithState(t.school, t.state))}</a></span>
+           >${esc(schoolWithState(t.school, t.state))}</a>${
+          alsoIn.has(t.school)
+            ? `<span class="t-also${state.coalesce ? " is-merged" : ""}"
+                     title="${state.coalesce
+                       ? "Coalesce is on: these entries score as ONE squad, "
+                         + "capped at seven."
+                       : "Coalesce is off: these entries score as SEPARATE "
+                         + "teams."}">${state.coalesce ? "+ " : "also in "}${
+                esc(alsoIn.get(t.school).join(", "))}</span>`
+            : ""}</span>
         <span class="team-n">${t.runners.length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>
