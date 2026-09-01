@@ -320,14 +320,21 @@ async function chooseMeet(data) {
    *   own thing.
    */
   const bare = data.label.replace(/^\s*(19|20)\d{2}\s+/, "").trim();
+  /* ★ THE NAMES ARE LINKS (owner, 2026-09-01). Picking a meet to predict is
+     exactly when you want to look at it -- and at the course, and at a
+     school -- and every one of those pages already exists. New tab, so a
+     half-built prediction survives the trip. */
   $("meet-chosen").innerHTML =
     `<div class="mc-main">
-       <span class="mc-name">${esc(bare)}</span>
+       <a class="mc-name"
+          href="/meet/${state.meet.sport.toLowerCase()}/${esc(state.meet.id)}"
+          target="_blank" rel="noopener">${esc(bare)}</a>
        ${state.meet.year ? `<span class="mc-year">${esc(state.meet.year)}</span>` : ""}
      </div>
      <div class="mc-sub">
        ${state.meet.date ? `ran ${esc(state.meet.date)} \u00b7 ` : ""}
        ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
+       <span id="mc-course"></span>
      </div>
      <button class="mc-change" data-clear="meet">Change</button>
      <div class="mc-races" id="mc-races"></div>`;
@@ -370,6 +377,24 @@ async function loadRaces() {
     if (data.date) {
       state.meet.date = data.date;
       defaultDate();          // re-propose, now that we know when it ran
+    }
+    /* ★ NAME THE COURSE RATHER THAN DESCRIBING IT (owner, 2026-09-01).
+       "the meet's own course" tells you nothing you did not already know;
+       the course it actually ran on tells you what you are changing FROM. */
+    if (data.course) {
+      state.meet.course = data.course;
+      $("t-course").placeholder = data.course;
+      const mc = $("mc-course");
+      if (mc) {
+        mc.innerHTML = ` \u00b7 <a href="/course/`
+          + `${encodeURIComponent(data.course)}" target="_blank"`
+          + ` rel="noopener">${esc(data.course)}</a>`;
+      }
+      if (!state.course) {
+        $("t-course-hint").textContent =
+          `Defaults to ${data.course}. Pick another to run this same field `
+          + `somewhere else.`;
+      }
     }
     const races = (data.races || []);
     if (races.length < 2) {
@@ -570,7 +595,8 @@ function renderField() {
     <details class="team-card" data-team="${esc(t.school)}"
              ${state.open.has(t.school) ? "open" : ""}>
       <summary class="team-name">
-        <span class="t-label">${esc(t.school)}</span>
+        <a class="t-label" href="/school/${encodeURIComponent(t.school)}"
+           target="_blank" rel="noopener">${esc(t.school)}</a>
         <span class="team-n">${t.runners.length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>
@@ -877,26 +903,33 @@ makePicker("school-input", "school-results", "school", renderSchools, (d) => {
  *   box goes back to the meet's own course, which is why the empty state is
  *   a placeholder rather than a value -- there is nothing to "unset".
  */
+/* ⚠ .pick-opt, NOT a class of its own. makePicker listens for mousedown on
+   `.pick-opt` and reads the row's dataset -- so the first version of this,
+   which rendered `.pick-row`, looked like a list and did nothing at all when
+   clicked. Same failure mode parseMeetLink had, and just as silent.
+   The markup matches renderSchools exactly, which is also why it now looks
+   like the rest of the search bars instead of like something else. */
 makePicker("t-course", "t-course-results", "course",
-  (rows) => rows.map((r) =>
-    `<button class="pick-row" data-label="${esc(r.label)}">
-       <span class="pick-main">${esc(r.label)}</span>
-       <span class="pick-sub">${esc(r.sublabel || "")}</span>
-     </button>`).join(""),
+  (rows) => rows.slice(0, 8).map((r) =>
+    `<button class="pick-opt" data-label="${esc(r.label)}">` +
+    `<span class="pick-name">${esc(r.label)}</span>` +
+    `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`).join(""),
   (d) => {
     state.course = d.label;
     $("t-course").value = d.label;
     $("t-course-hint").textContent =
-      `Running this field at ${d.label} instead of the meet's own course.`;
+      `Running this field at ${d.label} instead of `
+      + `${state.meet && state.meet.course ? state.meet.course
+                                           : "the meet's own course"}.`;
   });
 
 /* Emptying the box is the way back to the meet's own course. */
 $("t-course").addEventListener("input", () => {
   if ($("t-course").value.trim() === "" && state.course) {
     state.course = null;
+    const own = (state.meet && state.meet.course) || "the meet\u2019s own course";
     $("t-course-hint").textContent =
-      "Defaults to the meet\u2019s own course. Pick another to run this same "
-      + "field somewhere else.";
+      `Defaults to ${own}. Pick another to run this same field somewhere else.`;
   }
 });
 

@@ -2474,6 +2474,13 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    SEPARATE races, so each result gets its own heading and its own rule --
    a single run-on table would read as one merged race, which is the thing
    this deliberately is not. */
+/* Names on this page are links to the pages that already exist -- quiet,
+   because a card full of blue would read as a list of actions. */
+.predict2 a.t-label, .predict2 a.mc-name,
+.predict2 .mc-sub a { color: inherit; text-decoration: none; }
+.predict2 a.t-label:hover, .predict2 a.mc-name:hover,
+.predict2 .mc-sub a:hover { text-decoration: underline; }
+
 .predict2 .div-result { margin: 0 0 1.6rem; }
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;
                                       padding-top: 1.1rem; }

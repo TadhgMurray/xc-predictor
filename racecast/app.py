@@ -4961,7 +4961,18 @@ def api_predict_races():
             row = cur.fetchone()
             meet_date = (row or {}).get("d") or None
 
-    return jsonify({"races": races, "date": meet_date})
+            # ★ THE COURSE IT ACTUALLY RAN ON, so the override box can NAME
+            #   what it defaults to instead of describing it.
+            meet_course = None
+            if sport == "XC":
+                cur.execute("SELECT m.course_name FROM meets m "
+                            "WHERE m.meet_id = %(meet)s "
+                            "  AND m.course_name IS NOT NULL LIMIT 1",
+                            {"meet": int(meet)})
+                crow = cur.fetchone()
+                meet_course = (crow or {}).get("course_name") or None
+
+    return jsonify({"races": races, "date": meet_date, "course": meet_course})
 
 
 @app.route("/api/predict/squad")
