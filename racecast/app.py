@@ -5010,9 +5010,23 @@ def api_predict_squad():
     if gender not in ("M", "F"):
         gender = None
 
+    # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER. /search/api
+    #   indexes a school as "DeWitt (MI)" while athlete_season.school stores
+    #   the bare "DeWitt", so a picker that sent the label got an empty squad
+    #   and reported a real school as "no one has raced this season". The
+    #   client sends .value now; this is the belt to that pair of braces, and
+    #   it covers a cached page still sending the old string.
+    #
+    # ! EXACT FIRST, BARE ONLY AS A FALLBACK. Stripping unconditionally would
+    #   rename a school genuinely stored with a parenthesised suffix. A name
+    #   that resolves is never second-guessed.
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             out = schoolSquad(cur, school, sport, gender=gender)
+            if not out.get("runners"):
+                bare = search_index.bareSchool(school)
+                if bare and bare != school:
+                    out = schoolSquad(cur, bare, sport, gender=gender)
     return jsonify(out)
 
 

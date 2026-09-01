@@ -2183,15 +2183,24 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 
 /* The field. A grid of team cards, each editable in place -- a roster is a
    thing you scan and adjust, not a list you read top to bottom. */
-.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 1rem;
+/* ⚠ THIS FILE DUPLICATES THE WHOLE .predict2 SECTION -- edit BOTH copies or
+   the later one silently wins. */
+/* Tighter: the gloss under this header moved to a tooltip, so the header no
+   longer has to hold three lines of prose above every race block. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem;
                         align-items: center; justify-content: space-between;
-                        margin-bottom: 0.8rem; font-size: 0.88rem; }
+                        margin-bottom: 0.45rem; font-size: 0.86rem; }
+.predict2 .fs-n { color: #4b5563; }
+.predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
+                           color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }
 .predict2 .field-grid { display: grid; gap: 8px; align-items: start;
                         grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
 /* Breathing room before "Add a team" -- it is a different action from editing
-   the field above it, and butting it against the grid read as part of it. */
+   the field above it, and butting it against the grid read as part of it.
+   .fieldpick is the same box once it moved inside a race block. */
 .predict2 .field-grid + .pick-wrap { margin-top: 1.4rem; }
+.predict2 .fieldpick { margin-top: 0.7rem; max-width: 300px; }
 .predict2 .team-card { border: 1px solid #e2e2dc; border-radius: 6px;
                        background: #fff; }
 
@@ -2459,15 +2468,24 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 
 /* The field. A grid of team cards, each editable in place -- a roster is a
    thing you scan and adjust, not a list you read top to bottom. */
-.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 1rem;
+/* ⚠ THIS FILE DUPLICATES THE WHOLE .predict2 SECTION -- edit BOTH copies or
+   the later one silently wins. */
+/* Tighter: the gloss under this header moved to a tooltip, so the header no
+   longer has to hold three lines of prose above every race block. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem;
                         align-items: center; justify-content: space-between;
-                        margin-bottom: 0.8rem; font-size: 0.88rem; }
+                        margin-bottom: 0.45rem; font-size: 0.86rem; }
+.predict2 .fs-n { color: #4b5563; }
+.predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
+                           color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }
 .predict2 .field-grid { display: grid; gap: 8px; align-items: start;
                         grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
 /* Breathing room before "Add a team" -- it is a different action from editing
-   the field above it, and butting it against the grid read as part of it. */
+   the field above it, and butting it against the grid read as part of it.
+   .fieldpick is the same box once it moved inside a race block. */
 .predict2 .field-grid + .pick-wrap { margin-top: 1.4rem; }
+.predict2 .fieldpick { margin-top: 0.7rem; max-width: 300px; }
 .predict2 .team-card { border: 1px solid #e2e2dc; border-radius: 6px;
                        background: #fff; }
 

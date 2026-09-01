@@ -289,9 +289,19 @@ function fmtTime(s) {
  *
  * Debounced at 180ms: a request per keystroke fires a dozen for one name.
  */
+/* The id-taking form, for the pickers that live in the template. */
 function makePicker(inputId, boxId, kind, render, onPick, keepValue) {
-  const input = $(inputId);
-  const box = $(boxId);
+  bindPicker($(inputId), $(boxId), kind, render, onPick, keepValue);
+}
+
+/*
+ * ★ BOUND TO NODES, NOT IDS (owner: "there is only one search bar for
+ *   multiple divisions"). Each race on screen gets its own Add/Remove box,
+ *   which means the box is markup renderField creates and destroys, so it
+ *   cannot be addressed by a fixed id.
+ */
+function bindPicker(input, box, kind, render, onPick, keepValue) {
+  if (!input || !box) return;
   let timer = null;
 
   async function search() {
@@ -794,11 +804,33 @@ function renderField() {
   const blocks = activeBlocks();
   const was = state.meet.div;
 
+  /* ! A HALF-TYPED SEARCH SURVIVES THE RE-RENDER. The Add/Remove box lives
+       INSIDE the block now, so every edit -- opening a card, removing a
+       runner -- destroys the node you may be typing into. Carried over by
+       division, with the caret, so it is not a trap. */
+  const typed = new Map();
+  let refocus = null;
+  $("field").querySelectorAll(".div-field").forEach((sec) => {
+    const inp = sec.querySelector(".school-input");
+    if (!inp || !inp.value) return;
+    const k = sec.dataset.divBlock;
+    typed.set(k, inp.value);
+    if (document.activeElement === inp) refocus = k;
+  });
+
   $("field-summary").classList.toggle("hidden", separate);
   $("field").innerHTML = blocks.map((d) =>
-    `<section class="div-field" data-div-block="${d === null ? "" : esc(d)}">
+    `<section class="div-field" data-div-block="${divKey(d)}">
        ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
        <div class="fs"></div><div class="fg"></div>
+       ${/* ★ ONE BOX PER RACE. It used to sit below every block, so with
+             several divisions on screen a single bar had to guess which
+             race you meant. Inside the block, the race IS the answer. */""}
+       <div class="pick-wrap fieldpick">
+         <input class="school-input" type="search" autocomplete="off"
+                placeholder="Add or remove a team">
+         <div class="pick-results hidden"></div>
+       </div>
      </section>`).join("");
 
   blocks.forEach((d, i) => {
@@ -807,6 +839,13 @@ function renderField() {
     if (!sec) return;
     const sumEl = separate ? sec.querySelector(".fs") : $("field-summary");
     const gridEl = sec.querySelector(".fg");
+    bindSchoolPicker(sec, d);
+    const keep = typed.get(divKey(d));
+    if (keep) {
+      const inp = sec.querySelector(".school-input");
+      inp.value = keep;
+      if (refocus === divKey(d)) { inp.focus(); inp.select(); }
+    }
     if (!state.field) { sumEl.textContent = "Loading\u2026"; return; }
     renderFieldBlock(sumEl, gridEl);
   });
@@ -820,13 +859,23 @@ function renderFieldBlock(sumEl, gridEl) {
   const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
   const kept = teams.reduce((n, t) => n + t.runners.length, 0);
 
+  /* ★ THE COUNT IS THE HEADLINE; THE GLOSS IS A TOOLTIP (owner: "can we get
+   *   a bit more space from the explaining text at the top of who and the
+   *   teams list"). The long form ran to three lines above EVERY race block,
+   *   so with three divisions on screen it was nine lines of the same
+   *   sentence pushing the teams off the page. It says the same thing on
+   *   hover, once you want it. */
+  const gloss = f.when === "asran"
+    ? "The field that actually raced this meet."
+    : `Each team's current squad, top 7 predicted. The rest, and the `
+      + `original runners without a ${f.season_year} season, are listed `
+      + `under each team to add by hand.`;
   sumEl.innerHTML =
-    `<strong>${teams.length}</strong> teams, <strong>${kept}</strong> runners ` +
-    (f.when === "asran"
-      ? `\u2014 the field that actually raced this meet.`
-      : `\u2014 each team's current squad, top ${7} predicted; the rest and ` +
-        `the original runners without a ${esc(f.season_year)} season are ` +
-        `listed to add by hand.`) +
+    `<span class="fs-n" title="${esc(gloss)}">` +
+    `<strong>${teams.length}</strong> teams, ` +
+    `<strong>${kept}</strong> runners` +
+    (f.when === "asran" ? ` \u2014 as raced` : ` \u2014 current squads`) +
+    `</span>` +
     // ★ ONE CONTROL, THREE STATES, MUTUALLY EXCLUSIVE. "Expand all" and
     //   "Hide teams" were two independent toggles whose combinations did not
     //   all mean anything -- hidden-and-expanded is not a state, and neither
@@ -1132,82 +1181,93 @@ function renderAthletes() {
  *   search lie about what exists. Marking it and letting the same click undo
  *   it means one control does both, and the list always reflects the field.
  */
+/* Whether one race already has this school, counting a pending addition. */
+function teamInDiv(div, school) {
+  const e = editsFor(div);
+  return (e.field ? e.field.teams : []).some((t) => t.school === school)
+      || e.added.some((a) => a.school === school);
+}
+
 /*
- * Every race on screen that already has this school. Empty means the school
- * is not in the field at all.
+ * Every race on screen that already has this school.
  *
  * ⚠ THE PREDECESSOR READ state.field, WHICH IS ONE RACE'S FIELD. state.field
- *   is an accessor keyed on state.meet.div, and the school box sits OUTSIDE
- *   the division blocks -- so it answered for whichever block happened to be
- *   focused last. With divisions raced separately, a school plainly on screen
- *   in another block came back "not in the field", so the row offered Add and
- *   there was no way to remove it. This asks every active race.
+ *   is an accessor keyed on state.meet.div, and the school box used to sit
+ *   OUTSIDE the division blocks -- so it answered for whichever block was
+ *   focused last. Each race owns its box now, but this is still asked across
+ *   all of them, to tell you a school is already racing elsewhere.
  */
 function blocksWith(school) {
-  return activeBlocks().filter((d) => {
-    const e = editsFor(d);
-    return (e.field ? e.field.teams : []).some((t) => t.school === school)
-        || e.added.some((a) => a.school === school);
+  return activeBlocks().filter((d) => teamInDiv(d, school));
+}
+
+/*
+ * ⚠ THE LABEL IS NOT THE NAME. /search/api indexes a school as "DeWitt (MI)"
+ *   -- the site-wide display convention -- while athlete_season.school and
+ *   ranking_results.school store the bare "DeWitt". The API hands back BOTH,
+ *   as .label and .value, precisely so a picker does not have to know the
+ *   rule (search_index.bareSchool owns it).
+ *
+ *   Using .label for identity broke this two ways at once, both reported:
+ *     - adding sent "DeWitt (MI)" to /api/predict/squad, which matches no
+ *       row, so every add died as "No one from DeWitt (MI) has raced this
+ *       season" -- a real school with a real squad, reported as empty;
+ *     - matching compared "DeWitt (MI)" against the field's bare "DeWitt",
+ *       so a school ALREADY IN THE RACE never matched, the row always said
+ *       Add, and there was no way to remove anything ("still no delete").
+ *
+ *   .value is the name. .label is for reading.
+ */
+const schoolValue = (r) => r.value || r.label;
+
+/* One race's Add/Remove list. The box lives inside that race's block, so
+   the action is unambiguous and needs no division suffix. */
+function renderSchoolsFor(div) {
+  return (rows) => rows.slice(0, 8).map((r) => {
+    const school = schoolValue(r);
+    const here = teamInDiv(div, school);
+    // Not in THIS race but in another one on screen: say so, or adding it
+    // here looks like it did nothing to the block you were just looking at.
+    const elsewhere = here ? [] : blocksWith(school);
+    const sub = elsewhere.length
+      ? `already in ${elsewhere.map(divLabel).join(", ")}`
+      : (r.sublabel || "");
+    return `<button class="pick-opt${here ? " is-in" : ""}" ` +
+      `data-label="${esc(r.label)}" data-school="${esc(school)}" ` +
+      `data-link="${esc(r.link || "")}">` +
+      `<span class="pick-name">${esc(r.label)}</span>` +
+      `<span class="pick-act">${here ? "Remove" : "Add"}</span>` +
+      `<span class="pick-sub">${esc(sub)}</span></button>`;
+  }).join("");
+}
+
+/* Wire the box inside one rendered race block. */
+function bindSchoolPicker(sec, div) {
+  bindPicker(sec.querySelector(".school-input"),
+             sec.querySelector(".pick-results"),
+             "school", renderSchoolsFor(div), (d) => {
+    const school = d.school || d.label;
+    if (teamInDiv(div, school)) { removeTeam(div, school); return; }
+    addTeam(school, div);
   });
 }
 
 /*
- * ★ ONE ROW PER ACTION, AND THE ROW SAYS WHICH RACE IT ACTS ON. A school that
- *   is in the field gets a single Remove -- in the field is in the field, and
- *   removing it takes it out of every race that has it. A school that is in
- *   none is genuinely ambiguous when several divisions are racing separately
- *   (which race is it joining?), so that case, and only that case, fans out
- *   into one Add row per race.
+ * Out of one race: the team goes, and its runners are marked removed so the
+ * request says what the screen says.
+ *
+ * ! WRITTEN THROUGH editsFor, NOT THE state ACCESSORS, which answer for
+ *   state.meet.div -- not necessarily the race being edited.
  */
-function renderSchools(rows) {
-  const blocks = activeBlocks();
-  const separate = blocks.length > 1;
-
-  const opt = (r, div, act, label) =>
-    `<button class="pick-opt${act === "remove" ? " is-in" : ""}" ` +
-    `data-label="${esc(r.label)}" data-link="${esc(r.link || "")}" ` +
-    `data-act="${act}" data-div="${divKey(div)}">` +
-    `<span class="pick-name">${esc(r.label)}</span>` +
-    `<span class="pick-act">${esc(label)}</span>` +
-    `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`;
-
-  // Fewer schools when each fans out, so the list stays about one screen.
-  return rows.slice(0, separate ? 5 : 8).map((r) => {
-    const inB = blocksWith(r.label);
-    if (inB.length) {
-      const where = separate
-        ? ` from ${inB.map(divLabel).join(", ")}`
-        : "";
-      return opt(r, inB[0], "remove", `Remove${where}`);
-    }
-    return blocks.map((d) =>
-      opt(r, d, "add", separate ? `Add to ${divLabel(d)}` : "Add")).join("");
-  }).join("");
+function removeTeam(div, school) {
+  const e = editsFor(div);
+  const team = (e.field ? e.field.teams : []).find((t) => t.school === school);
+  if (team) for (const r of team.runners) e.removed.add(String(r.person_id));
+  if (e.field) e.field.teams = e.field.teams.filter((t) => t.school !== school);
+  e.added = e.added.filter((a) => a.school !== school);
+  renderField();
+  setStatus(`Removed ${school}.`, false);
 }
-
-makePicker("school-input", "school-results", "school", renderSchools, (d) => {
-  const school = d.label;
-  const inB = blocksWith(school);
-
-  if (inB.length) {
-    /* Remove: out of every race that has it, and its runners marked removed
-       so the request says the same thing the screen does. Written through
-       editsFor rather than the state accessors -- the accessors answer for
-       state.meet.div, which is not the block being edited here. */
-    for (const div of inB) {
-      const e = editsFor(div);
-      const team = (e.field ? e.field.teams : []).find((t) => t.school === school);
-      if (team) for (const r of team.runners) e.removed.add(String(r.person_id));
-      if (e.field) e.field.teams = e.field.teams.filter((t) => t.school !== school);
-      e.added = e.added.filter((a) => a.school !== school);
-    }
-    renderField();
-    setStatus(`Removed ${school}.`, false);
-    return;
-  }
-
-  addTeam(school, d.div === "" ? null : d.div);
-});
 
 
 /* ------------------------------------------------------------------ *
@@ -1224,7 +1284,7 @@ makePicker("school-input", "school-results", "school", renderSchools, (d) => {
    `.pick-opt` and reads the row's dataset -- so the first version of this,
    which rendered `.pick-row`, looked like a list and did nothing at all when
    clicked. Same failure mode parseMeetLink had, and just as silent.
-   The markup matches renderSchools exactly, which is also why it now looks
+   The markup matches renderSchoolsFor exactly, which is also why it now looks
    like the rest of the search bars instead of like something else. */
 makePicker("t-course", "t-course-results", "course",
   (rows) => rows.slice(0, 8).map((r) =>

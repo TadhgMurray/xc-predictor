@@ -134,9 +134,12 @@
     <div class="who-pane" data-pane="team">
       <div class="field-head">
         <span id="field-summary">Loading the field&hellip;</span>
-        <label class="check">
+        {# ★ THE GLOSS MOVES TO A TOOLTIP, NOT AWAY. "score as if only these
+           teams raced" is the whole meaning of the box, but spelled out it
+           wrapped the header onto a second line above every race block. #}
+        <label class="check" title="Score as if only these teams raced.">
           <input type="checkbox" id="head_to_head">
-          <span>Head to head &mdash; score as if only these teams raced</span>
+          <span>Head to head</span>
         </label>
       </div>
 
@@ -144,13 +147,11 @@
          have not raced this season are listed greyed with an add button rather
          than hidden: an injured athlete looks identical to a graduated one in
          the data, and only a person can tell them apart. #}
+      {# ⚠ THE ADD/REMOVE BOX IS NOT HERE ANY MORE. It is rendered INSIDE each
+         race block by renderField -- with several divisions on screen one
+         shared bar had to guess which race a school was joining, and the
+         answer was whichever block was focused last. #}
       <div id="field" class="field-grid"></div>
-
-      <div class="pick-wrap">
-        <input id="school-input" type="search" autocomplete="off"
-               placeholder="Add/Remove a team">
-        <div id="school-results" class="pick-results hidden"></div>
-      </div>
     </div>
 
     {# --- INDIVIDUAL --- #}
