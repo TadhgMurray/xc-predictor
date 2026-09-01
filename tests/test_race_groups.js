@@ -320,5 +320,62 @@ const D = ["10", "11", "12", "13"];
   else console.log("  a doubly-entered school is marked on its card .. OK");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * The chips follow the grouping, and adding a team leaves the page
+ * where it was.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  /* THE BUG: repaintChips was reachable only from the chip click handler,
+     so switching Separate/Combined -- or moving a division between races --
+     regrouped everything and left the chips wearing the old colours. */
+  chk(/let _repaintChips = null;/.test(SRC),
+     "the repaint is reachable from outside loadRaces");
+  chk(/_repaintChips = repaintChips;/.test(SRC), "and is set when built");
+  const umh = grab("updateModeHint");
+  chk(/if \(_repaintChips\) _repaintChips\(\);/.test(umh),
+     "updateModeHint repaints them -- it is the one function every "
+     + "regrouping path already calls");
+
+  /* Adding a team must not move the viewport off the box being typed in. */
+  const at = grab("addTeam");
+  chk(!/scrollIntoView/.test(at),
+     "adding a team does not scroll the page away from the search bar");
+  chk(/setStatus\(`Added \$\{school\}/.test(at),
+     "it still says what it did -- that is what replaced the scroll");
+
+  /* The mixed-gender consequence belongs on the control that decides it. */
+  chk(/class="co-note"/.test(SRC),
+     "the coalesce checkbox carries the note");
+  chk(/coalesce still keeps them apart/.test(SRC), "with the full sentence");
+  const gs = grab("renderGroups");
+  chk(!/coalesce still keeps them apart/.test(gs),
+     "and the group summary no longer repeats it");
+
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "racecast", "static", "style.css"), "utf8");
+  chk(/\.predict2 \.grp-warn \{ color: inherit; font-style: normal; \}/
+        .test(css),
+     "the mixed-gender line is not in a warning colour -- racing boys "
+     + "against girls is allowed, so amber italics overstated it");
+  chk(!/\.predict2 \.t-label \{[^}]*text-overflow: ellipsis/.test(css),
+     "a team's division note is not ellipsed off the end of its name");
+  chk(!/\.predict2 \.grp-name \{[^}]*text-overflow: ellipsis/.test(css),
+     "nor is the division name in the grouping row");
+  chk(/\.predict-status\.show \{ display: block; flex: 1 0 100%/.test(css),
+     "the status takes its own line instead of sitting beside Predict");
+  chk(/\.predict2 \.mc-mode \{ min-height: 6\.2em; \}/.test(css),
+     "and the mode block's floor moved with the taller coalesce label, or "
+     + "the jolt those three failed attempts fixed comes straight back");
+
+  if (bad) { failed += bad; }
+  else console.log("  chips follow the grouping; add stays put ....... OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall race-group checks passed");

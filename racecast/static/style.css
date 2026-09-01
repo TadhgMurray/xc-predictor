@@ -2276,8 +2276,14 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     transition: transform 0.12s ease;
 }
 .predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
-.predict2 .t-label { flex: 1; min-width: 0; overflow: hidden;
-                     text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠ THE DIVISION NOTE WAS THE FIRST THING THE ELLIPSIS ATE (owner,
+   2026-09-01: "the text for the division just ellipses off"). It sits AFTER
+   the school name in this label, and nowrap + ellipsis on a flex:1 box cuts
+   from the right -- so "Broughton (NC) + D3" lost exactly the part that was
+   added to be read. It wraps now; a team card is two lines at worst, and the
+   note is the point of it. */
+.predict2 .t-label { flex: 1; min-width: 0; white-space: normal;
+                     overflow-wrap: anywhere; }
 .predict2 .team-n { color: #999; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2340,11 +2346,18 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .dropped { margin-top: 5px; }
 .predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
 
+/* ★ THE STATUS SITS UNDER THE BUTTON, NOT BESIDE IT (owner, 2026-09-01:
+   "don't put text next to predict"). A message beside a button reads as a
+   label for it, and a long one -- "Carondelet is a girls-only school..." --
+   shoved the button sideways as it appeared and vanished. Its own line
+   moves nothing. */
 .predict2 .actions { display: flex; align-items: center; gap: 12px;
-                     margin-top: 1.4rem; }
+                     flex-wrap: wrap; margin-top: 1.4rem; }
 .predict2 .actions.hidden { display: none; }
 .predict-status { display: none; font-size: 0.88rem; }
-.predict-status.show { display: inline; }
+/* Full width inside the wrapping row, so it always takes its own line
+   rather than sharing one whenever it happens to be short. */
+.predict-status.show { display: block; flex: 1 0 100%; margin-top: 0.1rem; }
 .predict-status.error { color: #a32d2d; }
 
 /* The answer. Big, with the band under it -- a prediction without a range
@@ -2601,8 +2614,14 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     transition: transform 0.12s ease;
 }
 .predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
-.predict2 .t-label { flex: 1; min-width: 0; overflow: hidden;
-                     text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠ THE DIVISION NOTE WAS THE FIRST THING THE ELLIPSIS ATE (owner,
+   2026-09-01: "the text for the division just ellipses off"). It sits AFTER
+   the school name in this label, and nowrap + ellipsis on a flex:1 box cuts
+   from the right -- so "Broughton (NC) + D3" lost exactly the part that was
+   added to be read. It wraps now; a team card is two lines at worst, and the
+   note is the point of it. */
+.predict2 .t-label { flex: 1; min-width: 0; white-space: normal;
+                     overflow-wrap: anywhere; }
 .predict2 .team-n { color: #999; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2735,14 +2754,20 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .mc-groups.hidden { display: none; }
 .predict2 .grp-row { display: flex; align-items: center; gap: 8px;
                      font-size: 0.78rem; }
-.predict2 .grp-name { flex: 0 1 14rem; overflow: hidden;
-                      text-overflow: ellipsis; white-space: nowrap; }
+/* Was `flex: 0 1 14rem` with an ellipsis, which truncated the very thing
+   the row exists to name. It takes the width it needs; the select beside it
+   is a fixed size and loses nothing. */
+.predict2 .grp-name { flex: 1 1 auto; min-width: 0; white-space: normal;
+                      overflow-wrap: anywhere; }
 .predict2 .grp-sel { font: inherit; font-size: 0.76rem; padding: 1px 4px;
                      border: 1px solid #d1d5db; border-radius: 4px;
                      background: #fff; }
 .predict2 .grp-sum { font-size: 0.75rem; color: #6b7280; margin-top: 2px; }
 /* Mixed genders are ALLOWED (owner's ruling) -- noted, never blocked. */
-.predict2 .grp-warn { color: #92400e; font-style: italic; }
+/* ! NOT A WARNING COLOUR. Racing boys against girls is a thing the owner
+   explicitly allowed, so amber italics overstated it: it is a statement of
+   what will happen, in the same voice as the rest of the line. */
+.predict2 .grp-warn { color: inherit; font-style: normal; }
 /* ★ THE ONLY VISIBLE SIGN COALESCE DID ANYTHING. A coalesced squad appears
    ONCE under its bare name, which is indistinguishable from a team that only
    ran one division -- so there was no way to tell whether the checkbox had
@@ -2811,7 +2836,17 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .mc-mode-hint { color: #888; font-style: italic;
                           white-space: nowrap; overflow: hidden;
                           text-overflow: ellipsis; }
-.predict2 .mc-mode { min-height: 4.6em; }
+/* ⚠ THE FLOOR MOVED BECAUSE THE COALESCE LABEL GAINED A LINE, and it had to
+   move with it. Nothing in this block may change its own height -- three
+   failed attempts at the jolt are why -- so the note on the checkbox is
+   STATIC text that is always rendered, never conditional. The label is
+   hidden with visibility, not display, so the row is the same height in
+   both states and this floor holds. */
+.predict2 .mc-mode { min-height: 6.2em; }
+/* The mixed-gender consequence, on the control that decides it. Regular
+   weight and colour: it states what will happen, it does not warn. */
+.predict2 .co-note { color: #6b7280; }
+.predict2 label.mc-coalesce { align-items: flex-start; }
 
 /* ★ ONE SECTION PER RACE in the field editor (owner, 2026-09-01). Racing
    divisions separately means each has its own field to edit, so each gets a
@@ -2879,11 +2914,18 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .dropped { margin-top: 5px; }
 .predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
 
+/* ★ THE STATUS SITS UNDER THE BUTTON, NOT BESIDE IT (owner, 2026-09-01:
+   "don't put text next to predict"). A message beside a button reads as a
+   label for it, and a long one -- "Carondelet is a girls-only school..." --
+   shoved the button sideways as it appeared and vanished. Its own line
+   moves nothing. */
 .predict2 .actions { display: flex; align-items: center; gap: 12px;
-                     margin-top: 1.4rem; }
+                     flex-wrap: wrap; margin-top: 1.4rem; }
 .predict2 .actions.hidden { display: none; }
 .predict-status { display: none; font-size: 0.88rem; }
-.predict-status.show { display: inline; }
+/* Full width inside the wrapping row, so it always takes its own line
+   rather than sharing one whenever it happens to be short. */
+.predict-status.show { display: block; flex: 1 0 100%; margin-top: 0.1rem; }
 .predict-status.error { color: #a32d2d; }
 
 /* The answer. Big, with the band under it -- a prediction without a range

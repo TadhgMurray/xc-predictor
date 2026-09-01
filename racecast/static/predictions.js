@@ -285,8 +285,7 @@ function renderGroups() {
            fourteen-runner squad. Said here because this is where someone
            builds a mixed race and then wonders what the checkbox means. */
       (mixed ? ` <span class="grp-warn">\u2014 boys and girls scored `
-             + `together; coalesce still keeps them apart</span>` : "")
-      + `</div>`;
+             + `together</span>` : "") + `</div>`;
   }).join("");
 }
 
@@ -299,6 +298,9 @@ function updateModeHint() {
   if (!el) return;
   const n = state.divs.length;
   renderGroups();
+  /* The chips summarise the grouping, so they follow it -- from the mode
+     radios and the per-division dropdown as well as from a chip click. */
+  if (_repaintChips) _repaintChips();
   /* ★ COALESCE IS ABOUT A SCHOOL IN TWO DIVISIONS OF ONE RACE, so it applies
      wherever a GROUP has more than one division -- not only to the combined
      preset. One checkbox for all such groups: per-group checkboxes would
@@ -323,6 +325,12 @@ function updateModeHint() {
 /* The name a division goes by, for a result heading. Falls back to the id so
    a section is never headed by nothing. */
 const _divLabels = new Map();
+
+/* ! THE CHIP REPAINT, REACHABLE FROM OUTSIDE loadRaces. The chips are built
+     inside it and close over `races`, so the function that recolours them
+     cannot be defined anywhere else -- but every control that regroups the
+     races needs to call it. Set on render, called from updateModeHint. */
+let _repaintChips = null;
 function divLabel(div) {
   if (div === null || div === undefined) return "All races";
   /* ★ A GROUP NAMES ITS DIVISIONS, NOT ITS INDEX (issue #89). "Race 2" is
@@ -851,8 +859,9 @@ function renderChosenMeet(bare) {
        <div class="mc-groups hidden" id="mc-groups"></div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce">
-         Coalesce a school in two divisions of the same gender into one
-         squad
+         Coalesce a school in two divisions into one squad
+         <span class="co-note">\u2014 boys and girls scored together;
+         coalesce still keeps them apart</span>
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
@@ -1008,6 +1017,15 @@ async function loadRaces() {
          the same three things about every chip -- lit or not, which race's
          colour it wears, and which one is open for editing -- so working
          that out twice is two chances to disagree. */
+    /* ⚠ HOISTED SO EVERY PATH CAN CALL IT (owner, 2026-09-01: "the list
+         just doesn't update color at all unless you change team in
+         combined"). It was reachable only from the chip click handler, so
+         switching Separate/Combined, or moving a division between races,
+         regrouped everything and left the chips wearing the OLD colours --
+         the one place the grouping is summarised was the one place that did
+         not follow it. updateModeHint runs on all of those, so the hook
+         hangs there. */
+    _repaintChips = repaintChips;
     function repaintChips() {
       const every = races.map((r) => String(r.div_id));
       const at = groupIndex();
@@ -2039,11 +2057,12 @@ async function addTeam(school, div) {
     renderField();
     setStatus(`Added ${school} \u2014 `
               + `${squad.runners.slice(0, 7).length} runners.`, false);
-    /* Scroll it into view: with several divisions on screen the card can be
-       a long way from the box that added it. */
-    const card = $("field")
-      .querySelector(`.team-card[data-team="${cssEscape(school)}"]`);
-    if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    /* ⚠ NO SCROLLING. This used to pull the new card into view, which moves
+         the page away from the search box you are still typing in -- and
+         adding teams is something you do several times in a row (owner,
+         2026-09-01: "when you add a team it should probably not scroll away
+         from the search bar"). The status line says what happened and the
+         card is open; neither needs the viewport moved. */
   } catch (err) {
     setStatus(`Could not load ${school}.`, true);
   }
