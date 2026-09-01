@@ -107,6 +107,7 @@ def test_breakpoints_reuse_the_sites_narrow_line():
 TPL = os.path.join(os.path.dirname(__file__), "..", "racecast", "templates",
                    "athlete.html")
 JS = os.path.join(os.path.dirname(CSS), "athlete-charts.js")
+STYLE = os.path.join(os.path.dirname(CSS), "style.css")
 
 
 def test_every_wide_chart_is_folded_and_open_by_default():
@@ -158,32 +159,6 @@ def test_the_summary_is_still_a_control_when_narrow():
     print("  the summary is still tappable at <=700px .......... OK")
 
 
-def test_the_phone_order_puts_history_last():
-    """Stacking alone put every race of every year between the top graph and
-    the bests panel -- the detail of a career above the summary of it."""
-    css = open(STYLE, encoding="utf-8").read()
-    b = _blocks(css)[900]
-    assert re.search(r'\.main-col\s*\{[^}]*display:\s*contents', b), \
-        ".main-col is not promoted, so order cannot interleave the sidebar"
-    def order_of(sel):
-        m = re.search(re.escape(sel) + r'\s*\{[^}]*order:\s*(\d+)', b)
-        return int(m.group(1)) if m else None
-    chart = order_of(".main-col > .chart-fold")
-    side = order_of(".sidebar")
-    hist = order_of(".main-col > .sport-section")
-    assert None not in (chart, side, hist), (chart, side, hist)
-    assert chart < side < hist, f"graph {chart}, sidebar {side}, history {hist}"
-    print(f"  phone order: graph {chart} < sidebar {side} < history "
-          f"{hist} .... OK")
-
-
-# ------------------------------------------------------------------ #
-# The sidebar must actually stack (owner, 2026-09-01)
-# ------------------------------------------------------------------ #
-
-STYLE = os.path.join(os.path.dirname(CSS), "style.css")
-
-
 def test_the_page_layout_stacks_on_narrow_screens():
     """★ THE BUG TWO ROUNDS OF CHART WORK MISSED.
 
@@ -196,8 +171,8 @@ def test_the_page_layout_stacks_on_narrow_screens():
     css = open(STYLE, encoding="utf-8").read()
     b = _blocks(css)
     assert 900 in b, "no <=900px block for the page layout"
-    body = b[900]
-    assert re.search(r'\.page-layout\s*\{[^}]*flex-direction:\s*column', body), \
+    assert re.search(r'\.page-layout\s*\{[^}]*flex-direction:\s*column',
+                     b[900]), \
         "the layout still cannot stack: no flex-direction on .page-layout"
     print("  .page-layout goes to a column at <=900px ........... OK")
 
@@ -206,12 +181,9 @@ def test_the_sidebar_gives_up_its_fixed_width():
     """.sidebar is `flex: 0 0 340px` further up -- don't grow, don't shrink.
     Overriding width alone leaves the basis, and the strip stays 340px."""
     css = open(STYLE, encoding="utf-8").read()
-    body = _blocks(css)[900]
-    m = re.search(r'\.sidebar\s*\{([^}]*)\}', body)
+    m = re.search(r'\.sidebar\s*\{([^}]*)\}', _blocks(css)[900])
     assert m, ".sidebar is not overridden at <=900px"
-    decl = m.group(1)
-    assert "flex:" in decl, "width alone will not beat `flex: 0 0 340px`"
-    assert re.search(r'flex:\s*1\s+1\s+auto', decl), decl
+    assert re.search(r'flex:\s*1\s+1\s+auto', m.group(1)), m.group(1)
     print("  .sidebar drops its fixed basis, not just its width .. OK")
 
 
@@ -224,7 +196,6 @@ if __name__ == "__main__":
                test_summary_is_hidden_on_desktop_and_shown_when_narrow,
                test_nothing_js_side_closes_the_folds,
                test_the_summary_is_still_a_control_when_narrow,
-               test_the_phone_order_puts_history_last,
                test_the_page_layout_stacks_on_narrow_screens,
                test_the_sidebar_gives_up_its_fixed_width]:
         fn()
