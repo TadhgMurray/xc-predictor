@@ -352,10 +352,25 @@ const D = ["10", "11", "12", "13"];
   /* The mixed-gender consequence belongs on the control that decides it. */
   chk(/class="co-note"/.test(SRC),
      "the coalesce checkbox carries the note");
-  chk(/coalesce still keeps them apart/.test(SRC), "with the full sentence");
+  chk(/never merged/.test(SRC), "saying what coalesce will not do");
   const gs = grab("renderGroups");
-  chk(!/coalesce still keeps them apart/.test(gs),
-     "and the group summary no longer repeats it");
+  chk(!/never merged/.test(gs),
+     "and the group summary does not repeat it");
+
+  /* ⚠ NEITHER NOTE MAY BE A FLEX SIBLING OF THE TEXT IT FOLLOWS. Both
+       parents are inline-flex, so a bare <span> beside the label became a
+       second COLUMN of wrapped text rather than a following line. */
+  chk(/class="co-lab"/.test(SRC),
+     "one span wraps the label text AND its note, so the flex has two "
+     + "children rather than three");
+  chk(!/co-note">\\u2014/.test(SRC) && !/grp-warn">\\u2014/.test(SRC),
+     "and neither note starts with a dangling em-dash");
+
+  /* A list stops being a summary at about three. */
+  chk(/g\.length > 3 \? `\$\{g\.length\} divisions`/.test(SRC),
+     "a group of many divisions says how many, not all of their names");
+  chk(/title="\$\{esc\(full\)\}"/.test(SRC),
+     "with the full list still on the tooltip");
 
   const css = fs.readFileSync(
     path.join(__dirname, "..", "racecast", "static", "style.css"), "utf8");
@@ -363,6 +378,11 @@ const D = ["10", "11", "12", "13"];
         .test(css),
      "the mixed-gender line is not in a warning colour -- racing boys "
      + "against girls is allowed, so amber italics overstated it");
+  chk(/\.predict2 \.grp-sum \{ display: block; \}/.test(css),
+     "the group summary is not a flex row: the dot, the list and the note "
+     + "were three items, so a long list and a note became two columns");
+  chk(/\.predict2 \.co-note \{ display: block;/.test(css),
+     "and the checkbox note is a block inside the label, not beside it");
   chk(!/\.predict2 \.t-label \{[^}]*text-overflow: ellipsis/.test(css),
      "a team's division note is not ellipsed off the end of its name");
   chk(!/\.predict2 \.grp-name \{[^}]*text-overflow: ellipsis/.test(css),

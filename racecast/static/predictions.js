@@ -277,15 +277,23 @@ function renderGroups() {
     const genders = new Set(g.map((d) => (_divLabels.get(String(d)) || ""))
       .map((l) => /Girls/.test(l) ? "F" : (/Boys/.test(l) ? "M" : "?")));
     const mixed = genders.has("M") && genders.has("F");
-    return `<div class="grp-sum" style="--race:${raceColour(i)}">` +
-      `<span class="grp-dot"></span>Race ${i + 1}: ${esc(divLabel(g))}` +
-      /* ! AND WHAT COALESCE WILL AND WILL NOT DO WITH IT. Coalescing merges
-           a school's entries WITHIN a gender and never across one -- a boys
-           team and a girls team are two teams sharing a name, not a
-           fourteen-runner squad. Said here because this is where someone
-           builds a mixed race and then wonders what the checkbox means. */
-      (mixed ? ` <span class="grp-warn">\u2014 boys and girls scored `
-             + `together</span>` : "") + `</div>`;
+    /* ★ A LIST STOPS BEING A SUMMARY AT ABOUT THREE. Ten divisions joined
+     *   with " + " is four wrapped lines of "Division 1 · Boys · 5000m +
+     *   Division 1 · Girls · 5000m + ..." -- which says less than "10
+     *   divisions" does and buries the one line worth reading. The full list
+     *   stays on the tooltip, for when it is actually wanted. */
+    const full = divLabel(g);
+    const short = g.length > 3 ? `${g.length} divisions` : full;
+    /* ! WHAT COALESCE WILL AND WILL NOT DO WITH IT: it merges a school's
+         entries WITHIN a gender and never across one, because a boys team
+         and a girls team are two teams sharing a name. Its own line, and no
+         leading dash -- as a flex sibling with an em-dash it was laid out as
+         a second COLUMN of text beside the list. */
+    return `<div class="grp-sum" style="--race:${raceColour(i)}" ` +
+      `title="${esc(full)}">` +
+      `<span class="grp-dot"></span>Race ${i + 1}: ${esc(short)}` +
+      (mixed ? `<span class="grp-warn">Boys and girls score together in `
+             + `this race.</span>` : "") + `</div>`;
   }).join("");
 }
 
@@ -859,9 +867,9 @@ function renderChosenMeet(bare) {
        <div class="mc-groups hidden" id="mc-groups"></div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce">
-         Coalesce a school in two divisions into one squad
-         <span class="co-note">\u2014 boys and girls scored together;
-         coalesce still keeps them apart</span>
+         <span class="co-lab">Coalesce a school in two divisions into one
+           squad<span class="co-note">Boys and girls are never merged \u2014
+           they always score as two teams.</span></span>
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;

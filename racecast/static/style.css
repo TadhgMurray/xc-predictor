@@ -2820,7 +2820,14 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .grp-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%;
                      background: var(--race, #d1d5db); flex: 0 0 auto;
                      display: inline-block; margin-right: 0.35rem; }
-.predict2 .grp-sum { display: flex; align-items: center; }
+/* ⚠ NOT flex. The dot and the text and the note were three flex ITEMS, so
+   a long list and a trailing note were laid out as two side-by-side columns
+   of wrapped text -- which is what "the - message is ugly af" was. Block,
+   with the dot inline, lets it read as one sentence. */
+.predict2 .grp-sum { display: block; }
+.predict2 .grp-dot { vertical-align: middle; position: relative; top: -1px; }
+/* Its own line, quieter, and no leading dash. */
+.predict2 .grp-warn { display: block; margin-left: 0.95rem; }
 
 /* And the results, so a section can be matched back to the block it came
    from without re-reading the heading. */
@@ -2844,9 +2851,17 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    both states and this floor holds. */
 .predict2 .mc-mode { min-height: 6.2em; }
 /* The mixed-gender consequence, on the control that decides it. Regular
-   weight and colour: it states what will happen, it does not warn. */
-.predict2 .co-note { color: #6b7280; }
+   weight and colour: it states what will happen, it does not warn.
+   ! The display rule for it is beside label.mc-coalesce, with the reason. */
+/* ⚠ SAME TRAP ON THE CHECKBOX. `.mc-mode label` is inline-flex, so the
+   text and the note were two items sitting SIDE BY SIDE, each wrapping in
+   its own narrow column. One <span> holds both now, so the flex has exactly
+   two children -- the box and the words -- and the note is a plain block
+   inside the words. */
 .predict2 label.mc-coalesce { align-items: flex-start; }
+.predict2 .co-lab { display: block; }
+.predict2 .co-note { display: block; color: #6b7280; font-weight: 400;
+                     font-size: 0.95em; margin-top: 1px; }
 
 /* ★ ONE SECTION PER RACE in the field editor (owner, 2026-09-01). Racing
    divisions separately means each has its own field to edit, so each gets a
