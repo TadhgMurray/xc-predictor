@@ -662,7 +662,11 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 
     originals = _exactField(cur, meet_id, div_id, sport)
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
-    squads = _currentSquads(cur, at_meet, sport, season_year)
+    # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
+    #   field really is mixed -- "All races" at a meet with both -- and then
+    #   nothing is filtered, because there is no one right answer to filter to.
+    gender = _fieldGender(cur, [r["person_id"] for r in originals], sport)
+    squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
     # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
     #   Everyone past the cap goes to `dropped`, not out of the field, so a
@@ -705,7 +709,48 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                                 "rating_year": prev.get("year")})
     teams = sorted(by_school.values(),
                    key=lambda t: (-len(t["runners"]), t["school"]))
-    return {"season_year": season_year, "when": when, "teams": teams}
+    # ! THE PAGE NEEDS IT TOO, so "add from squad" and "add anyone" can offer
+    #   the same side of the school this field is made of.
+    return {"season_year": season_year, "when": when, "teams": teams,
+            "gender": gender}
+
+
+# Purpose:   the gender a race is run in, read off the people who ran it.
+# Input:     person_ids -- the original field.
+# Output:    "M", "F", or None when the field is genuinely mixed.
+#
+# ★ POOL CARRIES THE GENDER. Every pool name ends in it -- hs_m, college_f --
+#   which is why filtering by pool has always filtered by gender as a side
+#   effect everywhere else in the codebase. predict.py had no concept of pool
+#   at all, which is how a boys race came to offer girls (owner, 2026-09-01).
+#
+# ! A SUPERMAJORITY, NOT UNANIMITY. Issue #52 says some athlete_season rows
+#   carry the wrong pool, so demanding one pool exactly would hand back None
+#   for a real single-gender race and re-open the leak. 90% calls it; a
+#   genuine all-races field is far closer to an even split than that.
+_GENDER_SUPERMAJORITY = 0.9
+
+
+def _fieldGender(cur, person_ids, sport):
+    ids = sorted({p for p in person_ids if p is not None})
+    if not ids:
+        return None
+    cur.execute("""
+        SELECT upper(right(s.pool, 1)) AS g, count(*) AS n
+        FROM   athlete_season s
+        WHERE  s.person_id = ANY(%(ids)s)
+          AND  s.sport = %(sport)s
+          AND  s.pool IS NOT NULL
+        GROUP  BY 1
+        ORDER  BY n DESC
+    """, {"ids": ids, "sport": sport})
+    rows = [r for r in cur.fetchall() if r["g"] in ("M", "F")]
+    if not rows:
+        return None
+    total = sum(r["n"] for r in rows)
+    if rows[0]["n"] / float(total) >= _GENDER_SUPERMAJORITY:
+        return rows[0]["g"]
+    return None            # genuinely mixed: an all-races field
 
 
 # Purpose:   the most recent rating on record for each person, any season.
@@ -733,7 +778,8 @@ def _lastKnownRatings(cur, person_ids, sport):
             for r in cur.fetchall()}
 
 
-def schoolSquad(cur, school, sport, season_year=None, limit=40):
+def schoolSquad(cur, school, sport, season_year=None, limit=40,
+                gender=None):
     """Everyone racing for a school this season, best first.
 
     ★ TWO JOBS, ONE QUERY. Adding a team that was not at the meet needs its
@@ -748,7 +794,11 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40):
     if season_year is None:
         season_year = _currentSeason(cur, sport)
 
-    cur.execute("""
+    # ★ ONE SIDE OF THE SCHOOL. Unfiltered, "add from squad" on a boys race
+    #   offered the girls team too (owner, 2026-09-01).
+    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s"
+                     if gender in ("M", "F") else "")
+    cur.execute(f"""
         SELECT s.person_id,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
@@ -767,9 +817,11 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40):
           AND  s.year   = %(yr)s
           AND  s.sport  = %(sport)s
           AND  s.mean_rating IS NOT NULL
+          {gender_clause}
         ORDER  BY s.mean_rating DESC
         LIMIT  %(lim)s
-    """, {"school": school, "yr": season_year, "sport": sport, "lim": limit})
+    """, {"school": school, "yr": season_year, "sport": sport, "lim": limit,
+          "gender": gender})
 
     return {"school": school, "season_year": season_year,
             "runners": [{"person_id": r["person_id"],
@@ -816,8 +868,13 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         else:
             at_meet = sorted({r["school"] for r in originals
                               if isTeam(r.get("school"))})
+            # ★ SAME GENDER AS meetField DERIVES, or the page shows one
+            #   lineup and the model scores another.
             squads = _currentSquads(cur, at_meet, sport,
-                                    _currentSeason(cur, sport))
+                                    _currentSeason(cur, sport),
+                                    gender=_fieldGender(
+                                        cur, [r["person_id"]
+                                              for r in originals], sport))
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
@@ -895,7 +952,7 @@ def _exactField(cur, meet_id, div_id, sport):
 _TERMINAL_GRADES = ["12", "12TH", "SR", "SENIOR"]
 
 
-def _currentSquads(cur, schools, sport, season_year):
+def _currentSquads(cur, schools, sport, season_year, gender=None):
     """{school: [runners best-first]} for this season.
 
     ★ A NEW SEASON STARTS EMPTY, SO LAST YEAR'S ROSTER CARRIES FORWARD
@@ -935,12 +992,13 @@ def _currentSquads(cur, schools, sport, season_year):
 
     squads = _squadsForYear(cur, schools, sport, season_year,
                             exclude_terminal=stale,
-                            active_year=now if stale else None)
+                            active_year=now if stale else None,
+                            gender=gender)
     missing = [s for s in schools if not squads.get(s)]
     if missing:
         prev = _squadsForYear(cur, missing, sport, season_year - 1,
                               exclude_terminal=True,
-                              active_year=now)
+                              active_year=now, gender=gender)
         for sch, rows in prev.items():
             for r in rows:
                 r["carried"] = True    # last season's roster, aged forward
@@ -949,12 +1007,14 @@ def _currentSquads(cur, schools, sport, season_year):
 
 
 def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
-                   active_year=None):
+                   active_year=None, gender=None):
     """One season's squads per school.
 
     exclude_terminal -- drop the graduating class (issue #82).
     active_year      -- drop anyone who already has a row in THIS season at
                         any school, i.e. a transfer (issue #83).
+    gender           -- "M"/"F": only that side of the school. A school has a
+                        boys team and a girls team and they are not one squad.
     """
     grade_clause = ("AND UPPER(BTRIM(COALESCE(s.grade, ''))) <> ALL(%(term)s)"
                     if exclude_terminal else "")
@@ -970,6 +1030,10 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
                                         AND c.year  = %(active_yr)s
                                         AND c.sport = %(sport)s)"""
                    if active_year is not None else "")
+    # ★ A SCHOOL IS TWO TEAMS. Without this the boys squad and the girls squad
+    #   come back as one list and the top seven of it is a mixed team.
+    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s"
+                     if gender in ("M", "F") else "")
     cur.execute(f"""
         SELECT s.school, s.person_id, s.grade,
                COALESCE(a.first_name, '') || ' '
@@ -982,9 +1046,11 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
           AND  s.sport  = %(sport)s
           {grade_clause}
           {move_clause}
+          {gender_clause}
         ORDER  BY s.school, s.mean_rating DESC NULLS LAST
     """, {"schools": schools, "yr": year, "sport": sport,
-          "term": _TERMINAL_GRADES, "active_yr": active_year})
+          "term": _TERMINAL_GRADES, "active_yr": active_year,
+          "gender": gender})
     out = {}
     for r in cur.fetchall():
         entry = {

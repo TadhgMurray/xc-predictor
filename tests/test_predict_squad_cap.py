@@ -42,23 +42,26 @@ def _person(pid, school, name=None):
     return {"person_id": pid, "name": name or f"R{pid}", "school": school}
 
 
-def _install(monkey_originals, monkey_squads, last_seen=None):
+def _install(monkey_originals, monkey_squads, last_seen=None, gender=None):
     """Point predict's DB helpers at fixtures. Returns an undo.
 
     last_seen mirrors _lastKnownRatings: {person_id: {rating, n_races, year}}.
     Default is empty, which is the "no rating on record" case.
     """
     saved = (predict._exactField, predict._currentSquads,
-             predict._currentSeason, predict._lastKnownRatings)
+             predict._currentSeason, predict._lastKnownRatings,
+             predict._fieldGender)
     predict._exactField = lambda cur, m, d, s: monkey_originals
-    predict._currentSquads = lambda cur, schools, s, y: {
+    predict._currentSquads = lambda cur, schools, s, y, gender=None: {
         k: v for k, v in monkey_squads.items() if k in schools}
     predict._currentSeason = lambda cur, s: 2026
     predict._lastKnownRatings = lambda cur, ids, sport: last_seen or {}
+    predict._fieldGender = lambda cur, ids, sport: gender
 
     def undo():
         (predict._exactField, predict._currentSquads,
-         predict._currentSeason, predict._lastKnownRatings) = saved
+         predict._currentSeason, predict._lastKnownRatings,
+         predict._fieldGender) = saved
     return undo
 
 
@@ -200,6 +203,81 @@ def test_dropped_runners_carry_their_last_rating():
     print("  dropped carry rating 128.4 from 2025; unknown stays None . OK")
 
 
+# ------------------------------------------------------------------ #
+# Gender: a boys race must not offer girls (owner, 2026-09-01)
+# ------------------------------------------------------------------ #
+
+class GenderCursor:
+    """Answers _fieldGender from a {pool_letter: count} fixture."""
+    def __init__(self, counts):
+        self.counts = counts
+        self.sql = None
+
+    def execute(self, sql, params=None):
+        self.sql = " ".join(sql.split())
+
+    def fetchall(self):
+        return [{"g": g, "n": n} for g, n in
+                sorted(self.counts.items(), key=lambda kv: -kv[1])]
+
+
+def test_a_single_gender_field_is_named():
+    for counts, want in (({"M": 120}, "M"), ({"F": 90}, "F")):
+        assert predict._fieldGender(GenderCursor(counts), [1, 2], "XC") == want
+    print("  a clean single-gender field is named ............... OK")
+
+
+def test_a_few_mispooled_rows_do_not_break_it():
+    """Issue #52 says some athlete_season rows carry the wrong pool. Demanding
+    unanimity would return None for a real boys race and re-open the leak."""
+    got = predict._fieldGender(GenderCursor({"M": 118, "F": 2}), [1], "XC")
+    assert got == "M", got
+    print("  118 M + 2 mispooled F still reads as M ............. OK")
+
+
+def test_a_genuinely_mixed_field_is_not_forced():
+    """All-races at a meet with both: there is no one right answer, and
+    filtering to either would delete half the field."""
+    assert predict._fieldGender(GenderCursor({"M": 60, "F": 55}), [1],
+                                "XC") is None
+    assert predict._fieldGender(GenderCursor({}), [1], "XC") is None
+    assert predict._fieldGender(GenderCursor({"M": 5}), [], "XC") is None
+    print("  an even field, an empty one, and no ids -> None .... OK")
+
+
+def test_squad_queries_filter_on_the_pool_letter():
+    cur = FakeCursorSQL()
+    predict._squadsForYear(cur, ["Alpha"], "XC", 2025, gender="F")
+    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql, cur.sql
+    assert cur.params["gender"] == "F"
+
+    plain = FakeCursorSQL()
+    predict._squadsForYear(plain, ["Alpha"], "XC", 2025)
+    assert "right(s.pool" not in plain.sql, plain.sql
+    print("  _squadsForYear filters on pool only when asked ..... OK")
+
+
+def test_schoolSquad_filters_too():
+    cur = FakeCursorSQL()
+    predict.schoolSquad(cur, "Alpha", "XC", season_year=2026, gender="M")
+    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql, cur.sql
+    assert cur.params["gender"] == "M"
+    print("  schoolSquad filters on pool ........................ OK")
+
+
+class FakeCursorSQL:
+    def __init__(self):
+        self.sql = None
+        self.params = None
+
+    def execute(self, sql, params=None):
+        self.sql = " ".join(sql.split())
+        self.params = params or {}
+
+    def fetchall(self):
+        return []
+
+
 if __name__ == "__main__":
     for fn in [test_cap_table,
                test_counts_ignore_schoolless_rows,
@@ -208,6 +286,11 @@ if __name__ == "__main__":
                test_a_school_that_brought_one_gets_one,
                test_last_known_ratings_shape,
                test_empty_ids_do_not_query,
-               test_dropped_runners_carry_their_last_rating]:
+               test_dropped_runners_carry_their_last_rating,
+               test_a_single_gender_field_is_named,
+               test_a_few_mispooled_rows_do_not_break_it,
+               test_a_genuinely_mixed_field_is_not_forced,
+               test_squad_queries_filter_on_the_pool_letter,
+               test_schoolSquad_filters_too]:
         fn()
     print("\nall squad-cap tests passed")

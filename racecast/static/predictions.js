@@ -785,12 +785,18 @@ async function addTeam(school) {
 const squadCache = new Map();
 
 async function loadSquad(school) {
-  if (squadCache.has(school)) return squadCache.get(school);
+  /* ! THE GENDER IS PART OF THE CACHE KEY. A school has a boys team and a
+       girls team; keying on the name alone would serve one race's squad to
+       the other. */
+  const g = state.field?.gender || "";
+  const key = `${school}\u0000${g}`;
+  if (squadCache.has(key)) return squadCache.get(key);
   const q = new URLSearchParams({ school: school, sport: state.meet.sport });
+  if (g) q.set("gender", g);
   const res = await fetch("/api/predict/squad?" + q.toString());
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || res.statusText);
-  squadCache.set(school, data);
+  squadCache.set(key, data);
   return data;
 }
 
@@ -880,23 +886,24 @@ document.addEventListener("click", (e) => {
         const q = find.value.trim();
         if (q.length < 2) { rows.innerHTML = ""; return; }
         try {
-          const res = await fetch("/search/api?kind=athlete&q="
-                                  + encodeURIComponent(q));
-          const hits = (await res.json() || [])
-            .filter((r) => r.kind === "athlete");
+          /* ★ GENDER-FILTERED, and rated. /search/api serves search_index,
+             which carries neither -- so this box offered the whole corpus to
+             a boys race, and offered people with no rating to predict from. */
+          const qs = new URLSearchParams({ q: q, sport: state.meet.sport });
+          if (state.field?.gender) qs.set("gender", state.field.gender);
+          const res = await fetch("/api/predict/athletes?" + qs.toString());
+          const hits = ((await res.json()) || {}).athletes || [];
           rows.innerHTML = hits.length
-            ? hits.map((r) => {
-                const m = /\/athlete\/(\d+)/.exec(r.link || "");
-                if (!m) return "";
-                return `<div class="runner-row is-out">
-                   <a class="r-name" href="/athlete/${m[1]}"
-                      target="_blank" rel="noopener">${esc(r.label)}</a>
-                   <span class="r-rating">${esc(r.sublabel || "")}</span>
-                   <button class="r-add" data-add="${m[1]}"
-                           data-name="${esc(r.label)}" data-rating=""
+            ? hits.map((r) => `<div class="runner-row is-out">
+                   <a class="r-name" href="/athlete/${r.person_id}"
+                      target="_blank" rel="noopener">${esc(r.name)}</a>
+                   <span class="r-rating">${r.rating}<span class="r-year"
+                     >\u2009${esc(r.school || "")}</span></span>
+                   <button class="r-add" data-add="${r.person_id}"
+                           data-name="${esc(r.name)}"
+                           data-rating="${r.rating}"
                            data-school="${esc(school)}">add</button>
-                 </div>`;
-              }).join("")
+                 </div>`).join("")
             : `<div class="squad-loading">No athlete by that name.</div>`;
         } catch (err) {
           rows.innerHTML =

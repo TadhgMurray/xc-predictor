@@ -4975,10 +4975,74 @@ def api_predict_squad():
     if sport not in ("XC", "TF"):
         return jsonify({"error": "sport must be XC or TF."}), 400
 
+    # ★ ONE SIDE OF THE SCHOOL (owner, 2026-09-01). A school has a boys team
+    #   and a girls team; unfiltered, "add from squad" on a boys race offered
+    #   both. Absent or unrecognised means unfiltered, which is right for a
+    #   genuinely mixed field.
+    gender = (request.args.get("gender") or "").strip().upper() or None
+    if gender not in ("M", "F"):
+        gender = None
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            out = schoolSquad(cur, school, sport)
+            out = schoolSquad(cur, school, sport, gender=gender)
     return jsonify(out)
+
+
+@app.route("/api/predict/athletes")
+def api_predict_athletes():
+    """Name search across athletes, narrowed to one gender.
+
+    ★ WHY NOT /search/api. That serves search_index, which carries no gender
+      and no rating -- so an "add anyone" box built on it offered the whole
+      corpus to a boys race, and offered people with no rating to predict
+      from. This reads athlete_season instead, where pool carries the gender
+      and mean_rating says they can be predicted at all.
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"athletes": []})
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        return jsonify({"error": "sport must be XC or TF."}), 400
+    gender = (request.args.get("gender") or "").strip().upper()
+    if gender not in ("M", "F"):
+        gender = None
+
+    # ! EVERY TOKEN MUST APPEAR, so "smith jane" finds Jane Smith the way the
+    #   topbar's search does. Order-free, because these are stored either way.
+    tokens = [t for t in q.split() if t][:4]
+    where = ["s.sport = %(sport)s", "s.mean_rating IS NOT NULL"]
+    params = {"sport": sport}
+    for i, t in enumerate(tokens):
+        where.append(f"(a.first_name || ' ' || a.last_name) ILIKE %(t{i})s")
+        params[f"t{i}"] = f"%{t}%"
+    if gender:
+        where.append("upper(right(s.pool, 1)) = %(gender)s")
+        params["gender"] = gender
+
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(f"""
+                SELECT DISTINCT ON (s.person_id)
+                       s.person_id, s.school, s.year, s.mean_rating,
+                       COALESCE(a.first_name,'') || ' '
+                           || COALESCE(a.last_name,'') AS name
+                FROM   athlete_season s
+                JOIN   athletes a ON a.athlete_id = s.person_id
+                WHERE  {' AND '.join(where)}
+                ORDER  BY s.person_id, s.year DESC
+                LIMIT  40
+            """, params)
+            rows = cur.fetchall()
+
+    rows.sort(key=lambda r: -(float(r["mean_rating"] or 0)))
+    return jsonify({"athletes": [
+        {"person_id": r["person_id"],
+         "name": (r["name"] or "").strip() or "Unknown",
+         "school": r["school"], "year": r["year"],
+         "rating": round(float(r["mean_rating"]), 1)}
+        for r in rows[:25]]})
 
 
 @app.route("/api/predict/individual")
