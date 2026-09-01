@@ -740,5 +740,43 @@ function initCharts() {
   drawn.forEach(({ host }) => observer.observe(host));
 }
 
+/* ------------------------------------------------------------------ *
+ *  THE CHART FOLD -- narrow screens only
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ CHARTS SIT ABOVE EACH SPORT'S RESULTS, so on a phone the first result
+ *   table was two screens down: chart, plus the header, rank line, sport nav
+ *   and heading above it. Shrinking --chart-h helped and was not enough.
+ *
+ * ★ WHY JS AND NOT CSS. A <details> cannot be forced open by a stylesheet, so
+ *   the desktop default has to live in the markup (`open`) and the narrow
+ *   case has to be applied here. Consequence worth keeping: with the script
+ *   dead the page degrades to exactly its old behaviour -- every fold open --
+ *   rather than to charts nobody can reach.
+ *
+ * ! 700px MATCHES the stylesheet's own narrow breakpoint. If one moves, both
+ *   move, or the summary appears while the fold is still forced open.
+ * ! NOTHING IS DRAWN INTO A CLOSED FOLD, and that is fine: a collapsed
+ *   <details> has no layout box, so the ResizeObserver above fires the moment
+ *   it is expanded and the chart renders then -- the same path that already
+ *   covers a hidden tab.
+ */
+function initChartFold() {
+  const folds = document.querySelectorAll("details.chart-fold");
+  if (!folds.length || !window.matchMedia) return;
+
+  const narrow = window.matchMedia("(max-width: 700px)");
+  const apply = (isNarrow) => folds.forEach((d) => { d.open = !isNarrow; });
+
+  apply(narrow.matches);
+  if (narrow.addEventListener) {
+    narrow.addEventListener("change", (e) => apply(e.matches));
+  } else if (narrow.addListener) {
+    narrow.addListener((e) => apply(e.matches));   /* older Safari */
+  }
+}
+
 document.addEventListener("DOMContentLoaded", initCharts);
 document.addEventListener("DOMContentLoaded", initCompare);
+document.addEventListener("DOMContentLoaded", initChartFold);

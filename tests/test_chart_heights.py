@@ -79,10 +79,65 @@ def test_breakpoints_reuse_the_sites_narrow_line():
     print("  700px still matches style.css's narrow line ....... OK")
 
 
+# ------------------------------------------------------------------ #
+# The fold (owner, 2026-09-01): charts collapse below 700px so the first
+# result table is near the top of a phone screen.
+# ------------------------------------------------------------------ #
+
+TPL = os.path.join(os.path.dirname(__file__), "..", "racecast", "templates",
+                   "athlete.html")
+JS = os.path.join(os.path.dirname(CSS), "athlete-charts.js")
+
+
+def test_every_wide_chart_is_folded_and_open_by_default():
+    tpl = open(TPL, encoding="utf-8").read()
+    folds = re.findall(r'<details class="chart-fold"([^>]*)>', tpl)
+    assert len(folds) == WIDE_SLOTS, f"{len(folds)} folds, expected {WIDE_SLOTS}"
+    # ! `open` IS THE DESKTOP DEFAULT AND MUST LIVE IN THE MARKUP: a <details>
+    #   cannot be forced open by CSS, so without it a JS failure would leave
+    #   every chart shut on desktop too.
+    for attrs in folds:
+        assert "open" in attrs, f"a fold is not open by default: {attrs!r}"
+    # every wide slot sits inside a fold
+    assert tpl.count('chart-slot chart-wide') == WIDE_SLOTS
+    print(f"  {WIDE_SLOTS} folds, all open by default ................. OK")
+
+
+def test_summary_is_hidden_on_desktop_and_shown_when_narrow():
+    css = open(CSS, encoding="utf-8").read()
+    b = _blocks(css)
+    assert re.search(r'\.chart-fold\s*>\s*summary\s*\{[^}]*display:\s*none',
+                     b[None]), "summary is not hidden outside the media query"
+    assert re.search(r'summary[^{]*\{[^}]*display:\s*block', b[700]), \
+        "summary never becomes visible at <=700px"
+    print("  summary hidden on desktop, shown at <=700px ....... OK")
+
+
+def test_js_and_css_agree_on_the_breakpoint():
+    """If one moves and the other does not, the summary appears while the
+    fold is still forced open -- a control that does nothing."""
+    js = open(JS, encoding="utf-8").read()
+    m = re.search(r'matchMedia\("\(max-width:\s*(\d+)px\)"\)', js)
+    assert m, "initChartFold does not use matchMedia on a max-width"
+    assert int(m.group(1)) == 700, f"JS uses {m.group(1)}px, CSS uses 700px"
+    print(f"  JS matchMedia {m.group(1)}px == CSS breakpoint ......... OK")
+
+
+def test_the_fold_closes_when_narrow_not_the_other_way_round():
+    js = open(JS, encoding="utf-8").read()
+    assert "d.open = !isNarrow" in js, \
+        "the fold must CLOSE when narrow -- check the sense of the test"
+    print("  narrow => closed (sense of the test is right) ...... OK")
+
+
 if __name__ == "__main__":
     for fn in [test_narrow_breakpoints_exist,
                test_charts_shrink_at_every_step,
                test_the_stack_fits_a_phone_screen,
-               test_breakpoints_reuse_the_sites_narrow_line]:
+               test_breakpoints_reuse_the_sites_narrow_line,
+               test_every_wide_chart_is_folded_and_open_by_default,
+               test_summary_is_hidden_on_desktop_and_shown_when_narrow,
+               test_js_and_css_agree_on_the_breakpoint,
+               test_the_fold_closes_when_narrow_not_the_other_way_round]:
         fn()
     print("\nall chart-height tests passed")

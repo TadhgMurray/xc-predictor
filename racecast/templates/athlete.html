@@ -349,18 +349,35 @@
               their contents and renders its own "no data" state. Text here
               would flash before the script runs.
             #}
-            <div class="chart-slot chart-wide"
-                 data-chart="all_rating" data-kind="rating" data-bysport="1"
-                 data-title="Speed rating — all races"></div>
+            {# ★ COLLAPSED ON A PHONE (owner, 2026-09-01). The charts sit ABOVE each
+       sport's results, so on a narrow screen the first result table was two
+       screens down. Shrinking them was not enough -- what is above the table
+       is chart PLUS header, rank line, sport nav and heading.
+
+       `open` is the DESKTOP default and stays in the markup, so with no JS
+       the page behaves exactly as it did. athlete-charts.js closes these
+       below 700px and the CSS hides the summary above it, so the desktop
+       page is visually unchanged.
+       ! NO FLASH: a chart slot is EMPTY until the script fills it, so a
+         collapsed fold never had a rendered chart to hide. #}
+            <details class="chart-fold" open>
+              <summary>Speed rating — all races</summary>
+              <div class="chart-slot chart-wide"
+                   data-chart="all_rating" data-kind="rating" data-bysport="1"
+                   data-title="Speed rating — all races"></div>
+            </details>
 
             {% if xc_seasons %}
             <section class="sport-section" id="xc">
                 <h2>Cross Country</h2>
 
-                <div class="chart-slot chart-wide"
-                     data-chart="xc_rating" data-kind="rating"
-                     data-title="XC speed rating">
-                </div>
+                <details class="chart-fold" open>
+                  <summary>XC speed rating</summary>
+                  <div class="chart-slot chart-wide"
+                       data-chart="xc_rating" data-kind="rating"
+                       data-title="XC speed rating">
+                  </div>
+                </details>
 
                 <nav class="season-jump">
                     {% for (year, sport), season in xc_seasons %}
@@ -378,10 +395,13 @@
             <section class="sport-section" id="tf">
                 <h2>Track &amp; Field</h2>
 
-                <div class="chart-slot chart-wide"
-                     data-chart="tf_rating" data-kind="rating"
-                     data-title="TF speed rating">
-                </div>
+                <details class="chart-fold" open>
+                  <summary>TF speed rating</summary>
+                  <div class="chart-slot chart-wide"
+                       data-chart="tf_rating" data-kind="rating"
+                       data-title="TF speed rating">
+                  </div>
+                </details>
 
                 <nav class="season-jump">
                     {% for (year, sport), season in tf_seasons %}
