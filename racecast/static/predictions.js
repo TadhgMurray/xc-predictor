@@ -108,6 +108,39 @@ const _edits = new Map();
  *    server already loops divisions for a combined race.
  * ==================================================================== */
 
+/*
+ * ★ ONE COLOUR PER RACE (owner, 2026-09-01: "easier to find/get in the
+ *   grouped section"). With six divisions on screen, working out which
+ *   blocks belong to the same race meant reading every heading. A shared
+ *   colour answers it before you read anything.
+ *
+ * ! OKABE-ITO, WHICH IS THE POINT OF CHOOSING A PALETTE RATHER THAN PICKING
+ *   HUES. It is the standard categorical set designed to stay distinguishable
+ *   under the common colour-vision deficiencies -- no red/green pair, which
+ *   is exactly the mistake a hand-picked "six obvious colours" makes.
+ *
+ * ⚠ AND COLOUR IS NEVER THE ONLY SIGNAL. Each block still carries its
+ *   division name and, when it shares a race, the "scored with ..." note.
+ *   The colour is a shortcut to information that is also written down, which
+ *   is the only way it is safe to use one.
+ */
+const _RACE_COLOURS = ["#0072B2", "#E69F00", "#009E73", "#CC79A7",
+                       "#56B4E9", "#D55E00", "#8C6D31", "#5D3A9B"];
+
+function raceColour(i) {
+  return _RACE_COLOURS[((i % _RACE_COLOURS.length) + _RACE_COLOURS.length)
+                       % _RACE_COLOURS.length];
+}
+
+/* {division -> its group's index}, for colouring and for the "scored with"
+   note. One pass, so callers do not each walk the groups. */
+function groupIndex() {
+  const at = new Map();
+  state.groups.forEach((g, i) => g.forEach((d) => at.set(d, i)));
+  return at;
+}
+
+
 /* The grouping the two presets describe. */
 function groupsForMode(divs, mode) {
   if (!divs.length) return [];
@@ -185,8 +218,7 @@ function renderGroups() {
                        state.raceMode !== "custom" || state.divs.length < 2);
   if (box.classList.contains("hidden")) { box.innerHTML = ""; return; }
 
-  const at = new Map();
-  state.groups.forEach((g, i) => g.forEach((d) => at.set(d, i)));
+  const at = groupIndex();
 
   box.innerHTML = state.divs.map((d) => {
     const mine = at.get(d);
@@ -194,7 +226,9 @@ function renderGroups() {
       `<option value="${i}"${i === mine ? " selected" : ""}>Race ${i + 1}` +
       `</option>`).join("")
       + `<option value="-1">New race</option>`;
-    return `<div class="grp-row">
+    return `<div class="grp-row" style="--race:${
+          raceColour(mine === undefined ? 0 : mine)}">
+        <span class="grp-dot"></span>
         <span class="grp-name">${esc(divLabel(d))}</span>
         <select class="grp-sel" data-div="${esc(d)}">${opts}</select>
       </div>`;
@@ -203,7 +237,8 @@ function renderGroups() {
     const genders = new Set(g.map((d) => (_divLabels.get(String(d)) || ""))
       .map((l) => /Girls/.test(l) ? "F" : (/Boys/.test(l) ? "M" : "?")));
     const mixed = genders.has("M") && genders.has("F");
-    return `<div class="grp-sum">Race ${i + 1}: ${esc(divLabel(g))}` +
+    return `<div class="grp-sum" style="--race:${raceColour(i)}">` +
+      `<span class="grp-dot"></span>Race ${i + 1}: ${esc(divLabel(g))}` +
       (mixed ? ` <span class="grp-warn">\u2014 boys and girls scored `
              + `together</span>` : "") + `</div>`;
   }).join("");
@@ -832,9 +867,11 @@ async function loadRaces() {
       if (races.length === 1) state.meet.div = String(races[0].div_id);
       return;
     }
-    const chip = (label, div, on) =>
-      `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}">` +
-      `${esc(label)}</button>`;
+    /* A picked chip wears its race's colour, so the chips and the blocks
+       below them agree at a glance about which races exist. */
+    const chip = (label, div, on, col) =>
+      `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}"` +
+      `${col ? ` style="--race:${col}"` : ""}>${esc(label)}</button>`;
     box.innerHTML =
       `<span class="mc-races-label">Races:</span>` +
       chip("All races", "",
@@ -844,8 +881,11 @@ async function loadRaces() {
         if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
         if (r.distance) bits.push(`${Math.round(r.distance)}m`);
         _divLabels.set(String(r.div_id), bits.join(" \u00b7 "));
-        return chip(`${bits.join(" \u00b7 ")} (${r.n_results})`,
-                    String(r.div_id), state.divs.includes(String(r.div_id)));
+        const id = String(r.div_id);
+        const gi = groupIndex().get(id);
+        return chip(`${bits.join(" \u00b7 ")} (${r.n_results})`, id,
+                    state.divs.includes(id),
+                    gi === undefined ? null : raceColour(gi));
       }).join("");
     /* ★ MULTI-SELECT (issue #85). Each chosen division is its own race, with
        its own field, its own edits and its own scoring -- picking two does
@@ -925,8 +965,14 @@ async function loadRaces() {
         state.meet.div = state.divs.length
           ? (state.divs.includes(div) ? div : state.divs[0])
           : null;
+        const at = groupIndex();
         box.querySelectorAll(".race-chip").forEach((x) => {
           const d = x.dataset.div || null;
+          // Regrouping moves colours around, so they are re-set, not just
+          // set once at render.
+          const gi = d === null ? undefined : at.get(d);
+          if (gi === undefined) x.style.removeProperty("--race");
+          else x.style.setProperty("--race", raceColour(gi));
           /* "All races" is lit when everything is picked -- it is a
              selection now, not the absence of one. */
           x.classList.toggle("is-on",
@@ -1123,15 +1169,17 @@ function renderField() {
   /* Which group each division is scored in, and whether that group has more
      than one member -- a block scored WITH another has to say so, or the two
      look independent and the prediction surprises you. */
-  const groupOf = new Map();
-  state.groups.forEach((g, i) => g.forEach((d) => groupOf.set(d, i)));
+  const groupOf = groupIndex();
 
   $("field").innerHTML = blocks.map((d) => {
     const gi = groupOf.get(d);
     const g = gi === undefined ? null : state.groups[gi];
     const shared = g && g.length > 1;
+    /* The block wears its race's colour. Two blocks the same colour are one
+       race -- which is the question this answers without being read. */
+    const col = gi === undefined ? "" : ` style="--race:${raceColour(gi)}"`;
     return `<section class="div-field${shared ? " in-group" : ""}" `
-      + `data-div-block="${divKey(d)}">
+      + `${col} data-div-block="${divKey(d)}">
        ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}${
           shared ? `<span class="grp-note">scored with ${
             esc(g.filter((x) => x !== d).map(divLabel).join(", "))}</span>`
@@ -1444,7 +1492,8 @@ async function predict() {
       const body = state.who === "individual"
         ? renderIndividual(data) : renderTeam(data);
       parts.push(targets.length > 1
-        ? `<section class="div-result">
+        ? `<section class="div-result"
+                    style="--race:${raceColour(targets.indexOf(div))}">
              <h3 class="div-result-h">${esc(divLabel(div))}</h3>${body}
            </section>`
         : body);

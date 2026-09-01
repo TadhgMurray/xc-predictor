@@ -134,5 +134,64 @@ const D = ["10", "11", "12", "13"];
      "an old session's mode is exactly the grouping it meant");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * One colour per race, and the colour is never the only signal.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  const pal = eval(`(() => {
+    const _RACE_COLOURS = ${/_RACE_COLOURS = (\[[^\]]*\])/.exec(SRC)[1]};
+    ${grab("raceColour")}
+    return { _RACE_COLOURS, raceColour };
+  })()`);
+
+  chk(pal._RACE_COLOURS.length >= 6, "enough colours for a real meet");
+  chk(new Set(pal._RACE_COLOURS).size === pal._RACE_COLOURS.length,
+     "no colour is repeated");
+  /* Okabe-Ito: the standard categorical set that survives the common colour
+     vision deficiencies. Its defining property here is that it contains no
+     red/green pair, which is the mistake a hand-picked set makes. */
+  for (const c of ["#0072B2", "#E69F00", "#009E73", "#CC79A7"])
+    chk(pal._RACE_COLOURS.includes(c), `${c} is part of Okabe-Ito`);
+  chk(!pal._RACE_COLOURS.some((c) => /^#(FF0000|00FF00)$/i.test(c)),
+     "no raw red or green");
+
+  chk(pal.raceColour(0) === pal._RACE_COLOURS[0], "index 0 is the first");
+  chk(pal.raceColour(pal._RACE_COLOURS.length) === pal._RACE_COLOURS[0],
+     "it wraps rather than running off the end");
+  chk(pal.raceColour(-1) === pal._RACE_COLOURS[pal._RACE_COLOURS.length - 1],
+     "and a negative index does not produce undefined");
+
+  /* Applied everywhere a race appears, so the four surfaces agree. */
+  for (const [what, re] of [
+      ["the field blocks", /style="--race:\$\{raceColour\(gi\)\}"/],
+      ["the race chips", /raceColour\(gi\)\)/],
+      ["the grouping rows", /--race:\$\{\s*\n?\s*raceColour\(mine/],
+      ["the result sections", /--race:\$\{raceColour\(targets\.indexOf\(div\)\)\}/]])
+    chk(re.test(SRC), `the colour reaches ${what}`);
+
+  /* ⚠ AND IT IS NEVER THE ONLY SIGNAL. Every coloured thing also carries the
+     division's name in text, and a shared block says who it is scored with. */
+  const rf = grab("renderField");
+  chk(/divLabel\(d\)/.test(rf), "a block still names its division");
+  chk(/scored with/.test(rf), "and says when it shares a race");
+
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "racecast", "static", "style.css"), "utf8");
+  chk(/color: var\(--race, #374151\)/.test(css),
+     "the heading colour is set in the LAST rule that sets color -- an "
+     + "earlier one loses on order and never applies");
+  chk((css.match(/var\(--race/g) || []).length >= 6,
+     "blocks, chips, control and results all read it");
+
+  if (bad) { failed += bad; }
+  else console.log("  one colour per race, and never the only cue .... OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall race-group checks passed");

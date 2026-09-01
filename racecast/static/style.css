@@ -2738,8 +2738,38 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* A block scored with another says so beside its own heading. */
 .predict2 .grp-note { font-weight: 400; color: #6b7280; font-style: italic;
                       margin-left: 0.5rem; font-size: 0.9em; }
-.predict2 .div-field.in-group { border-left: 2px solid #cbd5e1;
-                                padding-left: 0.6rem; }
+/* ★ ONE COLOUR PER RACE (owner, 2026-09-01: "easier to find/get in the
+   grouped section"). Each block, chip, control row and result section
+   carries `--race`, set inline by predictions.js from the Okabe-Ito
+   categorical palette -- the standard set that stays distinguishable under
+   the common colour-vision deficiencies.
+
+   ⚠ COLOUR IS NEVER THE ONLY SIGNAL. Every one of these also carries the
+     division's name, and a shared block carries "scored with ...". The
+     colour is a shortcut to something already written down, which is the
+     only way it is safe to use one. */
+.predict2 .div-field { border-left: 3px solid var(--race, transparent);
+                       padding-left: 0.6rem; }
+/* A block sharing its race with another leans on it harder -- that is the
+   case the colour exists to answer. */
+.predict2 .div-field.in-group { border-left-width: 5px; }
+
+/* The chips: a picked one fills with its race's colour instead of the
+   generic dark, so the picker and the blocks below it agree. */
+.predict2 .race-chip.is-on { background: var(--race, #111827);
+                             border-color: var(--race, #111827); }
+
+/* The grouping control: a dot rather than a wash, so the row stays legible
+   and the colour is still the first thing scanned. */
+.predict2 .grp-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%;
+                     background: var(--race, #d1d5db); flex: 0 0 auto;
+                     display: inline-block; margin-right: 0.35rem; }
+.predict2 .grp-sum { display: flex; align-items: center; }
+
+/* And the results, so a section can be matched back to the block it came
+   from without re-reading the heading. */
+.predict2 .div-result { border-left: 3px solid var(--race, transparent);
+                        padding-left: 0.7rem; }
 /* ⚠ NOTHING IN THIS BLOCK MAY CHANGE ITS HEIGHT (owner, 2026-09-01, after
    three failed attempts at the jolt). Rather than reserve space for each
    thing that moved in turn, the variables are gone: every hint is one short
@@ -2756,11 +2786,15 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    divisions separately means each has its own field to edit, so each gets a
    headed block. Combined is one race and renders one unheaded block, which is
    what the page always looked like. */
+/* ⚠ DOES NOT SET border-left -- the race colour above depends on that. */
 .predict2 .div-field { margin: 0 0 1.2rem; }
 .predict2 .div-field + .div-field { border-top: 1px solid #eee;
                                     padding-top: 0.9rem; }
+/* ! THE RACE COLOUR GOES HERE, NOT IN THE BLOCK ABOVE. This rule is further
+     down the file and sets `color` too, so an earlier `color: var(--race)`
+     lost to it on order and the heading never changed colour at all. */
 .predict2 .div-field-h { margin: 0 0 0.4rem; font-size: 0.82rem;
-                         font-weight: 700; color: #374151; }
+                         font-weight: 700; color: var(--race, #374151); }
 /* ⚠ THE GRID MOVES DOWN A LEVEL. #field carries .field-grid, but the team
    cards now sit inside a per-race block, so the grid columns have to be on
    .fg -- left on #field they would lay out the SECTIONS, one race per column.
@@ -2778,7 +2812,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;
                                       padding-top: 1.1rem; }
 .predict2 .div-result-h { margin: 0 0 0.5rem; font-size: 0.95rem;
-                          font-weight: 700; color: #374151; }
+                          font-weight: 700; color: var(--race, #374151); }
 
 /* The division whose field is open for editing, when more than one is
    picked -- otherwise it is not obvious which race the cards below belong
