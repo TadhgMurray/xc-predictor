@@ -87,9 +87,9 @@ def _spyOn(empty_for):
     saved = predict._squadsForYear
 
     def spy(cur, schools, sport, year, exclude_terminal=False,
-            active_year=None):
+            active_year=None, gender=None):
         calls.append({"year": year, "terminal": exclude_terminal,
-                      "active": active_year})
+                      "active": active_year, "gender": gender})
         return ({} if year in empty_for
                 else {"Alpha": [{"person_id": 1}]})
 
@@ -114,8 +114,10 @@ def test_currentSquads_asks_for_both_on_the_carry_path():
 
     assert len(calls) == 2, calls
     # the season IS the current one, so the first read needs no aging
-    assert calls[0] == {"year": now, "terminal": False, "active": None}
-    assert calls[1] == {"year": now - 1, "terminal": True, "active": now}, calls
+    assert calls[0] == {"year": now, "terminal": False, "active": None,
+                    "gender": None}
+    assert calls[1] == {"year": now - 1, "terminal": True, "active": now,
+                        "gender": None}, calls
     assert out["Alpha"][0]["carried"] is True
     print(f"  carry path: {now} plain, then {now - 1} aged+active={now} . OK")
 
@@ -137,7 +139,8 @@ def test_a_finished_season_is_aged_out_on_the_MAIN_path():
         restore()
 
     assert len(calls) == 1, "no carry-forward should run -- rows exist"
-    assert calls[0] == {"year": stale, "terminal": True, "active": now}, \
+    assert calls[0] == {"year": stale, "terminal": True, "active": now,
+                        "gender": None}, \
         f"a finished season must be aged out on the main path: {calls[0]}"
     print(f"  finished season {stale}: aged out + active={now} on the "
           f"main path . OK")
@@ -151,7 +154,8 @@ def test_the_current_season_is_not_aged_out():
         predict._currentSquads(None, ["Alpha"], "XC", now)
     finally:
         restore()
-    assert calls[0] == {"year": now, "terminal": False, "active": None}, calls
+    assert calls[0] == {"year": now, "terminal": False, "active": None,
+                        "gender": None}, calls
     print(f"  the live season {now} is left alone ................ OK")
 
 
