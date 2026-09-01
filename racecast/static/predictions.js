@@ -70,8 +70,27 @@ const _edits = new Map();
  * ! REMOVING THE LAST ONE FALLS BACK TO ALL RACES rather than to an empty
  *   selection that predicts nothing.
  */
-function toggleDiv(divs, div) {
-  if (div === null) return [];                    // "All races"
+/*
+ * ★ "ALL RACES" MEANS EVERY DIVISION, NOT "NO DIVISION" (owner, 2026-09-01:
+ *   "pressing all races should still separate each div unless combined").
+ *   It used to CLEAR the selection, which made it a third thing the rest of
+ *   the page had to special-case: one unheaded block covering the whole meet,
+ *   no per-division fields to edit, and -- because coalesce only appears with
+ *   more than one division picked -- no coalesce option on the one selection
+ *   where a school is most likely to be entered twice.
+ *
+ *   Selecting them all instead makes it an ordinary selection. Separate mode
+ *   gives a race per division; combined scores them as one; coalesce appears
+ *   because the count is right. Nothing downstream needs to know it was a
+ *   shortcut.
+ *
+ * ! PRESSING IT AGAIN CLEARS, so it is still a toggle rather than a trap.
+ */
+function toggleDiv(divs, div, all) {
+  if (div === null) {
+    const every = (all || []).slice();
+    return divs.length === every.length && every.length ? [] : every;
+  }
   return divs.includes(div) ? divs.filter((d) => d !== div)
                             : divs.concat([div]);
 }
@@ -596,7 +615,8 @@ async function loadRaces() {
       `${esc(label)}</button>`;
     box.innerHTML =
       `<span class="mc-races-label">Races:</span>` +
-      chip("All races", "", !state.divs.length) +
+      chip("All races", "",
+           races.length > 0 && state.divs.length === races.length) +
       races.map((r) => {
         const bits = [r.label];
         if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
@@ -646,14 +666,20 @@ async function loadRaces() {
     box.querySelectorAll(".race-chip").forEach((b) => {
       b.addEventListener("click", () => {
         const div = b.dataset.div || null;
-        state.divs = toggleDiv(state.divs, div);
+        const every = races.map((r) => String(r.div_id));
+        state.divs = toggleDiv(state.divs, div, every);
         state.meet.div = state.divs.length
           ? (state.divs.includes(div) ? div : state.divs[0])
           : null;
         box.querySelectorAll(".race-chip").forEach((x) => {
           const d = x.dataset.div || null;
-          x.classList.toggle("is-on", d === null ? !state.divs.length
-                                                 : state.divs.includes(d));
+          /* "All races" is lit when everything is picked -- it is a
+             selection now, not the absence of one. */
+          x.classList.toggle("is-on",
+                             d === null
+                               ? (every.length > 0
+                                  && state.divs.length === every.length)
+                               : state.divs.includes(d));
           x.classList.toggle("is-editing",
                              state.divs.length > 1 && d === state.meet.div);
         });
@@ -792,8 +818,19 @@ async function fetchField(div) {
 /* The races currently on screen. One entry per block, and [null] -- the whole
    meet -- when the divisions are not being raced separately. */
 function activeBlocks() {
-  return (state.raceMode === "separate" && state.divs.length > 0)
-    ? state.divs.slice() : [state.meet.div ?? null];
+  /* ★ THE MODE DECIDES SCORING, NOT LAYOUT (owner, 2026-09-01: "I wonder if
+   *   in combined we should separate each div still in appearance"). Yes --
+   *   and it is the same answer as #85's, applied consistently. A combined
+   *   race is still built division by division on the server
+   *   (_combinedRoster loops them and unions the result), so showing one
+   *   merged block hid the structure the request actually has: which teams
+   *   came from which division, and which school is in two of them.
+   *
+   *   Every picked division gets its own block either way. Separate scores
+   *   them apart, combined scores them together, and the edits are per
+   *   division in both -- which is what mergedEdits was already written to
+   *   read. */
+  return state.divs.length ? state.divs.slice() : [state.meet.div ?? null];
 }
 
 
@@ -809,8 +846,10 @@ function activeBlocks() {
  */
 function renderField() {
   saveState();            // every edit path lands here
-  const separate = state.raceMode === "separate" && state.divs.length > 0;
   const blocks = activeBlocks();
+  /* Headed whenever there is more than one race on screen -- a single block
+     is the page as it always looked and needs no label to tell it apart. */
+  const separate = blocks.length > 1;
   const was = state.meet.div;
 
   /* ! A HALF-TYPED SEARCH SURVIVES THE RE-RENDER. The Add/Remove box lives

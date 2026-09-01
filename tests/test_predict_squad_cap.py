@@ -8,6 +8,10 @@ model scores) are exercised against fake DB helpers, so this needs no database.
 import os
 import sys
 
+# ! engine TOO, since schoolSquad started delegating to _currentSquads --
+#   which reads season_year.academicYear to decide whether the current season
+#   is over. Same two paths test_predict_carry_forward.py sets up.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engine"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "racecast"))
 import predict                                                  # noqa: E402
 
@@ -258,10 +262,21 @@ def test_squad_queries_filter_on_the_pool_letter():
 
 
 def test_schoolSquad_filters_too():
+    """The gender filter survives the delegation to _currentSquads.
+
+    ⚠ schoolSquad NO LONGER HAS A QUERY OF ITS OWN (2026-09-01). It was a
+      second implementation of "who runs for this school now", with a hard
+      `year = current` and none of the carry-forward the field uses -- so all
+      preseason the meet's own teams came back full and adding any team
+      reported it empty. What this test still has to prove is that routing
+      through _currentSquads did not drop the gender on the way.
+    """
     cur = FakeCursorSQL()
     predict.schoolSquad(cur, "Alpha", "XC", season_year=2026, gender="M")
     assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql, cur.sql
     assert cur.params["gender"] == "M"
+    # and it really is the shared path, not a copy that happens to match
+    assert cur.params.get("schools") == ["Alpha"], cur.params
     print("  schoolSquad filters on pool ........................ OK")
 
 

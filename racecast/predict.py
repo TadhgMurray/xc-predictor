@@ -833,55 +833,40 @@ def _lastKnownRatings(cur, person_ids, sport):
 
 def schoolSquad(cur, school, sport, season_year=None, limit=40,
                 gender=None):
-    """Everyone racing for a school this season, best first.
+    """Everyone racing for a school now, best first.
 
-    ★ TWO JOBS, ONE QUERY. Adding a team that was not at the meet needs its
+    ★ TWO JOBS, ONE ANSWER. Adding a team that was not at the meet needs its
       seven; adding one more runner to a team already there needs the rest of
-      the squad. Both are "who runs for this school now", so both read this and
-      the page slices it differently.
+      the squad. Both are "who runs for this school now", so both read this
+      and the page slices it differently.
 
-    ⚠ SEASON-SCOPED, NOT ALL-TIME. A school's roster is only meaningful for a
-      season -- an all-time list would put a 2009 state champion above the
-      current seventh runner, and neither is racing on Saturday.
+    ⚠ AND IT IS THE SAME ANSWER meetField GIVES, WHICH IT WAS NOT (owner,
+      2026-09-01: "No one from Woodbridge College has raced this season").
+      This used to be its own query with a hard `year = current`, while the
+      field itself goes through _currentSquads -- which carries last season's
+      roster forward when the new one is empty, ages out the 12s/SRs, and
+      drops transfers who are already racing elsewhere (#82, #83).
+
+      So in August and September the two disagreed completely: the meet's own
+      teams came back full, and adding ANY team reported it as empty. The
+      school had not stopped existing; the current season simply had not
+      started. Reported against a real school with a real squad, and it was
+      never about that school -- it was every add, all preseason.
+
+    ! SO IT DELEGATES NOW. One rule for who is on a squad, in one place. A
+      second implementation of "who runs here now" is a second answer, and
+      this is what the second answer cost.
     """
     if season_year is None:
         season_year = _currentSeason(cur, sport)
 
-    # ★ ONE SIDE OF THE SCHOOL. Unfiltered, "add from squad" on a boys race
-    #   offered the girls team too (owner, 2026-09-01).
-    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s"
-                     if gender in ("M", "F") else "")
-    cur.execute(f"""
-        SELECT s.person_id,
-               COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '')  AS name,
-               s.mean_rating,
-               s.n_races
-        FROM   athlete_season s
-        LEFT JOIN LATERAL (
-            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
-                   NULLIF(TRIM(x.last_name),  '') AS last_name
-            FROM   athletes x
-            WHERE  x.athlete_id = s.person_id
-            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
-            LIMIT  1
-        ) a ON TRUE
-        WHERE  s.school = %(school)s
-          AND  s.year   = %(yr)s
-          AND  s.sport  = %(sport)s
-          AND  s.mean_rating IS NOT NULL
-          {gender_clause}
-        ORDER  BY s.mean_rating DESC
-        LIMIT  %(lim)s
-    """, {"school": school, "yr": season_year, "sport": sport, "lim": limit,
-          "gender": gender})
-
+    squads = _currentSquads(cur, [school], sport, season_year, gender=gender)
+    runners = squads.get(school, [])[:limit]
     return {"school": school, "season_year": season_year,
-            "runners": [{"person_id": r["person_id"],
-                         "name": (r["name"] or "").strip() or "Unknown",
-                         "rating": round(float(r["mean_rating"]), 1),
-                         "n_races": r["n_races"]}
-                        for r in cur.fetchall()]}
+            # `school` rides on each entry from _currentSquads; the page keys
+            # off the top-level one, so it is dropped rather than sent twice.
+            "runners": [{k: v for k, v in r.items() if k != "school"}
+                        for r in runners]}
 
 
 def _currentSeason(cur, sport):
