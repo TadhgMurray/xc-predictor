@@ -2470,6 +2470,22 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    and a 2025 one mean very different things about who would be on the line. */
 .predict2 .r-year { color: #aaa; font-size: 0.68rem; }
 
+/* ★ ONE SECTION PER DIVISION (issue #85). Several divisions are several
+   SEPARATE races, so each result gets its own heading and its own rule --
+   a single run-on table would read as one merged race, which is the thing
+   this deliberately is not. */
+.predict2 .div-result { margin: 0 0 1.6rem; }
+.predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;
+                                      padding-top: 1.1rem; }
+.predict2 .div-result-h { margin: 0 0 0.5rem; font-size: 0.95rem;
+                          font-weight: 700; color: #374151; }
+
+/* The division whose field is open for editing, when more than one is
+   picked -- otherwise it is not obvious which race the cards below belong
+   to. */
+.predict2 .race-chip.is-editing { outline: 2px solid #7aa7d8;
+                                  outline-offset: 1px; }
+
 .predict2 a.r-name { color: inherit; text-decoration: none; }
 .predict2 a.r-name:hover,
 .predict2 a.r-name:focus-visible { text-decoration: underline; }

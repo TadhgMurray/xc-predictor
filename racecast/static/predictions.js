@@ -22,23 +22,92 @@ const state = {
   when: "thisyear",   // thisyear | asran
   who: "team",        // team | individual
   athletes: [],       // [{id, name}] -- several can be compared at once
-  field: null,        // {season_year, teams:[...]}
-  removed: new Set(),  // person_ids taken out of the field by hand
-  open: new Set(),     // schools whose roster is expanded
-  // ★ REMOVED TEAMS ARE KEPT, NOT DISCARDED. A destructive action with no way
-  //   back makes people hesitate over every click; holding the team means undo
-  //   is free and the button can stay a single tap.
-  droppedTeams: [],
+  // ★ SEVERAL DIVISIONS, EACH ITS OWN RACE (issue #85). The divisions picked
+  //   to be predicted. Empty means the whole meet, which is what a single
+  //   unpicked race has always meant. `meet.div` stays what it always was:
+  //   the ONE division whose field is on screen to be edited.
+  divs: [],
   // How much of the field is on screen: nothing, the team cards, or every
   // roster open. `open` still tracks individual cards the user toggled.
   view: "teams",
-  added: [],          // {person_id, name, school} put back or brought in
   // ★ null MEANS THE MEET'S OWN COURSE. There is no "unset" to represent --
   //   clearing the box is how you go back, so absence is the default rather
   //   than a sentinel the query has to strip out.
   course: null,
   busy: false,
 };
+
+
+/* ------------------------------------------------------------------ *
+ *  PER-DIVISION EDITS
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ EVERY DIVISION KEEPS ITS OWN FIELD AND ITS OWN EDITS (issue #85). D1 and
+ *   D2 are separate races: removing a team from one must not remove it from
+ *   the other, and each is scored on its own.
+ *
+ * ! THE ACCESSORS BELOW ARE WHY THIS IS A SMALL CHANGE. state.field,
+ *   state.removed, state.added, state.open and state.droppedTeams used to be
+ *   plain properties, read in thirty places. They are now getters onto the
+ *   record for the division being edited, so every one of those call sites
+ *   keeps working unchanged and quietly became per-division.
+ */
+const _edits = new Map();
+
+/*
+ * Add or remove one division from the selection.
+ *
+ * ! "ALL RACES" IS EXCLUSIVE. Picking it clears the rest, and picking any
+ *   division clears it -- "everything at this meet" and "these two races"
+ *   are different questions and holding both would answer neither.
+ * ! REMOVING THE LAST ONE FALLS BACK TO ALL RACES rather than to an empty
+ *   selection that predicts nothing.
+ */
+function toggleDiv(divs, div) {
+  if (div === null) return [];                    // "All races"
+  return divs.includes(div) ? divs.filter((d) => d !== div)
+                            : divs.concat([div]);
+}
+
+/* The name a division goes by, for a result heading. Falls back to the id so
+   a section is never headed by nothing. */
+const _divLabels = new Map();
+function divLabel(div) {
+  if (div === null || div === undefined) return "All races";
+  return _divLabels.get(String(div)) || `Division ${div}`;
+}
+
+/* "" is the whole meet -- a real key, not a missing one. */
+function divKey(div) {
+  return div === null || div === undefined ? "" : String(div);
+}
+
+function editsFor(div) {
+  const k = divKey(div);
+  if (!_edits.has(k)) {
+    _edits.set(k, { field: null, removed: new Set(), open: new Set(),
+                    // ★ REMOVED TEAMS ARE KEPT, NOT DISCARDED. A destructive
+                    //   action with no way back makes people hesitate over
+                    //   every click; holding the team means undo is free.
+                    droppedTeams: [], added: [] });
+  }
+  return _edits.get(k);
+}
+
+/* Forget every division's edits -- a different meet is a different world. */
+function resetEdits() { _edits.clear(); }
+
+Object.defineProperties(state, {
+  field:        { get: () => editsFor(state.meet && state.meet.div).field,
+                  set: (v) => { editsFor(state.meet && state.meet.div).field = v; } },
+  removed:      { get: () => editsFor(state.meet && state.meet.div).removed },
+  open:         { get: () => editsFor(state.meet && state.meet.div).open },
+  droppedTeams: { get: () => editsFor(state.meet && state.meet.div).droppedTeams,
+                  set: (v) => { editsFor(state.meet && state.meet.div).droppedTeams = v; } },
+  added:        { get: () => editsFor(state.meet && state.meet.div).added,
+                  set: (v) => { editsFor(state.meet && state.meet.div).added = v; } },
+});
 
 
 /*
@@ -233,6 +302,11 @@ async function chooseMeet(data) {
   // The sublabel carries the date where there is one; the label carries the
   // year. Either is enough to default the re-run date.
   const iso = /\b((19|20)\d{2})-(\d{2})-(\d{2})\b/.exec(data.sub || "");
+  /* A different meet is a different world: its divisions, its fields and
+     every edit made to them belong to the old one. */
+  state.divs = [];
+  resetEdits();
+  _divLabels.clear();
   state.meet = { ...parsed, label: data.label, year: data.year,
                  date: iso ? iso[0] : null };
 
@@ -306,20 +380,36 @@ async function loadRaces() {
       `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}">` +
       `${esc(label)}</button>`;
     box.innerHTML =
-      `<span class="mc-races-label">Race:</span>` +
-      chip("All races", "", !state.meet.div) +
+      `<span class="mc-races-label">Races:</span>` +
+      chip("All races", "", !state.divs.length) +
       races.map((r) => {
         const bits = [r.label];
         if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
         if (r.distance) bits.push(`${Math.round(r.distance)}m`);
+        _divLabels.set(String(r.div_id), bits.join(" \u00b7 "));
         return chip(`${bits.join(" \u00b7 ")} (${r.n_results})`,
-                    String(r.div_id), state.meet.div === String(r.div_id));
+                    String(r.div_id), state.divs.includes(String(r.div_id)));
       }).join("");
+    /* ★ MULTI-SELECT (issue #85). Each chosen division is its own race, with
+       its own field, its own edits and its own scoring -- picking two does
+       NOT merge them. "All races" is the whole meet and is exclusive with
+       the rest, because "everything" and "these two" are different questions.
+       ! CLICKING ALSO OPENS that division for editing, so the field below
+         always shows one race and it is obvious which. */
     box.querySelectorAll(".race-chip").forEach((b) => {
       b.addEventListener("click", () => {
-        state.meet.div = b.dataset.div || null;
-        box.querySelectorAll(".race-chip").forEach((x) =>
-          x.classList.toggle("is-on", x === b));
+        const div = b.dataset.div || null;
+        state.divs = toggleDiv(state.divs, div);
+        state.meet.div = state.divs.length
+          ? (state.divs.includes(div) ? div : state.divs[0])
+          : null;
+        box.querySelectorAll(".race-chip").forEach((x) => {
+          const d = x.dataset.div || null;
+          x.classList.toggle("is-on", d === null ? !state.divs.length
+                                                 : state.divs.includes(d));
+          x.classList.toggle("is-editing",
+                             state.divs.length > 1 && d === state.meet.div);
+        });
         loadField();          // a different race is a different field
       });
     });
@@ -397,6 +487,11 @@ function defaultDate() {
  * ------------------------------------------------------------------ */
 
 async function loadField() {
+  /* ★ A DIVISION KEEPS ITS EDITS WHEN YOU COME BACK TO IT (issue #85).
+     Switching between D1 and D2 to set both lineups is the whole point; a
+     refetch on every switch would throw away the one you just finished. */
+  if (editsFor(state.meet.div).field) { renderField(); return; }
+
   $("field-summary").textContent = "Loading the field\u2026";
   $("field").innerHTML = "";
   state.removed.clear();
@@ -529,13 +624,16 @@ function whatIsMissing() {
   return null;
 }
 
-function buildQuery() {
+/* The request for ONE division. Each selected division is scored on its own,
+   so each gets its own query built from its own edits (issue #85). */
+function buildQuery(div) {
+  const e = editsFor(div);
   const q = new URLSearchParams({
     mode: state.when === "asran" ? "rerun_exact" : "rerun",
     meet_id: state.meet.id,
     sport: state.meet.sport,
   });
-  if (state.meet.div) q.set("div_id", state.meet.div);
+  if (div) q.set("div_id", div);
   if (state.when === "thisyear") q.set("date", $("t-date").value);
   /* ★ THE COURSE OVERRIDE. Empty means the meet's own, which is what the
      server does with an absent value -- so nothing is sent unless a
@@ -551,9 +649,9 @@ function buildQuery() {
     // Only the edits are sent. The server already knows the meet's own field,
     // so shipping the whole roster back would be a large request that says
     // the same thing.
-    if (state.removed.size) q.set("remove", [...state.removed].join(","));
-    if (state.added.length)
-      q.set("add", state.added.map((a) => a.person_id).join(","));
+    if (e.removed.size) q.set("remove", [...e.removed].join(","));
+    if (e.added.length)
+      q.set("add", e.added.map((a) => a.person_id).join(","));
   }
   return q;
 }
@@ -571,20 +669,37 @@ async function predict() {
   const path = state.who === "individual"
     ? "/api/predict/individual" : "/api/predict/team";
 
-  try {
-    const res = await fetch(path + "?" + buildQuery().toString());
-    const data = await res.json();
-    if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
+  /* ★ ONE REQUEST PER DIVISION, and one section per result (issue #85). The
+     divisions are SEPARATE RACES -- scoring them together would be a
+     different feature -- so nothing is merged: each is the existing
+     single-division request, run once per selection.
+     ! INDIVIDUAL MODE HAS NO DIVISIONS: the athletes were named directly. */
+  const targets = (state.who === "team" && state.divs.length)
+    ? state.divs.slice() : [state.who === "team" ? null : state.meet.div];
 
-    // available:false is the expected answer until the model is trained, and
-    // it carries its own reason. Not an error.
-    if (data.available === false) {
-      setStatus(data.reason || "Not available yet.", false);
-      return;
+  try {
+    const parts = [];
+    for (const div of targets) {
+      const res = await fetch(path + "?" + buildQuery(div).toString());
+      const data = await res.json();
+      if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
+
+      // available:false is the expected answer until the model is trained,
+      // and it carries its own reason. Not an error.
+      if (data.available === false) {
+        setStatus(data.reason || "Not available yet.", false);
+        return;
+      }
+      const body = state.who === "individual"
+        ? renderIndividual(data) : renderTeam(data);
+      parts.push(targets.length > 1
+        ? `<section class="div-result">
+             <h3 class="div-result-h">${esc(divLabel(div))}</h3>${body}
+           </section>`
+        : body);
     }
     setStatus("", false);
-    $("output").innerHTML = state.who === "individual"
-      ? renderIndividual(data) : renderTeam(data);
+    $("output").innerHTML = parts.join("");
   } catch (err) {
     setStatus("Could not reach the server: " + err.message, true);
   } finally {
@@ -1067,6 +1182,8 @@ document.addEventListener("click", (e) => {
   } else if (x.dataset.clear === "meet") {
     state.meet = null;
     state.course = null;
+    state.divs = [];
+    resetEdits();
     state.field = null;
     $("meet-chosen").classList.add("hidden");
     $("meet-search").classList.remove("hidden");
