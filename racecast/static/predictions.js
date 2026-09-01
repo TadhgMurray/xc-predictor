@@ -731,8 +731,7 @@ function defaultDate() {
  *   showing "Loading", once with the answers.
  */
 async function loadField() {
-  const separate = state.raceMode === "separate" && state.divs.length > 0;
-  const blocks = separate ? state.divs.slice() : [state.meet.div ?? null];
+  const blocks = activeBlocks();
 
   renderField();                         // the blocks appear, saying Loading
 
@@ -768,6 +767,50 @@ async function fetchField(div) {
     setStatus("Could not load the field.", true);
     return null;
   }
+}
+
+
+/* The races currently on screen. One entry per block, and [null] -- the whole
+   meet -- when the divisions are not being raced separately. */
+function activeBlocks() {
+  return (state.raceMode === "separate" && state.divs.length > 0)
+    ? state.divs.slice() : [state.meet.div ?? null];
+}
+
+
+/*
+ * ★ ONE SECTION PER RACE (owner, 2026-09-01). Racing divisions separately
+ *   means each has its own field to edit, so each gets its own WHO block.
+ *   Combined is ONE race and gets ONE block.
+ *
+ * ! THE ACCESSORS ARE KEYED ON state.meet.div, so each block is rendered with
+ *   that set to its own division, and restored afterwards. The click handlers
+ *   do the same on the way in (focusBlock), so every existing handler keeps
+ *   working unchanged and edits land on the right race.
+ */
+function renderField() {
+  saveState();            // every edit path lands here
+  const separate = state.raceMode === "separate" && state.divs.length > 0;
+  const blocks = activeBlocks();
+  const was = state.meet.div;
+
+  $("field-summary").classList.toggle("hidden", separate);
+  $("field").innerHTML = blocks.map((d) =>
+    `<section class="div-field" data-div-block="${d === null ? "" : esc(d)}">
+       ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
+       <div class="fs"></div><div class="fg"></div>
+     </section>`).join("");
+
+  blocks.forEach((d, i) => {
+    state.meet.div = d;
+    const sec = $("field").querySelectorAll(".div-field")[i];
+    if (!sec) return;
+    const sumEl = separate ? sec.querySelector(".fs") : $("field-summary");
+    const gridEl = sec.querySelector(".fg");
+    if (!state.field) { sumEl.textContent = "Loading\u2026"; return; }
+    renderFieldBlock(sumEl, gridEl);
+  });
+  state.meet.div = was;
 }
 
 
