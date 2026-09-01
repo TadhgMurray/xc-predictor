@@ -801,10 +801,9 @@ async function chooseMeet(data) {
   // The sublabel carries the date where there is one; the label carries the
   // year. Either is enough to default the re-run date.
   const iso = /\b((19|20)\d{2})-(\d{2})-(\d{2})\b/.exec(data.sub || "");
-  /* A different meet is a different world: its divisions, its fields and
-     every edit made to them belong to the old one. */
-  state.divs = [];
-  state.groups = [];
+  /* A different meet is a different world: its divisions, its fields, its
+     course override and every edit made to them belong to the old one. */
+  resetMeetScoped();
   resetEdits();
   _divLabels.clear();
   state.meet = { ...parsed, label: data.label, year: data.year,
@@ -2004,6 +2003,48 @@ makePicker("t-course", "t-course-results", "course",
     saveState();
   }, true);   /* keepValue: the box shows the chosen course */
 
+/*
+ * ★ EVERYTHING THAT DESCRIBES ONE MEET, CLEARED TOGETHER (owner,
+ *   2026-09-01: "the page seems to remember too much... it shouldn't
+ *   remember the course entered").
+ *
+ * ⚠ AND THE COURSE WAS STILL BEING APPLIED, not merely displayed. Picking a
+ *   new meet cleared its divisions, its groups and its edits but not
+ *   state.course -- so meet B was predicted on meet A's course, with meet
+ *   A's name sitting in a box nobody had touched. A stale box is untidy; a
+ *   stale OVERRIDE is a wrong answer.
+ *
+ * ! THE BOX AND THE STATE GO TOGETHER. The "Change" path cleared the state
+ *   and left the input's text; chooseMeet cleared neither. One function so
+ *   there is no third way to get it half right.
+ *
+ * ! raceMode AND coalesce GO TOO. Both are statements about a particular
+ *   meet's divisions -- "score these two as one race", "merge a school
+ *   entered in both" -- and neither means anything about the next meet.
+ */
+function resetMeetScoped() {
+  state.course = null;
+  state.raceMode = "separate";
+  state.coalesce = false;
+  state.divs = [];
+  state.groups = [];
+  const box = $("t-course");
+  if (box) {
+    box.value = "";
+    /* ! BACK TO THE TEMPLATE'S WORDING, not empty. loadRaces replaces this
+         with the new meet's actual course name once it knows it; until then
+         an empty placeholder reads as a box with nothing to say. */
+    box.placeholder = "the meet\u2019s own course";
+  }
+  const hint = $("t-course-hint");
+  if (hint) {
+    hint.textContent = "Defaults to the course this meet was run on. "
+                     + "Pick another to run this same field somewhere else.";
+  }
+  const co = $("coalesce");
+  if (co) co.checked = false;
+}
+
 /* Emptying the box is the way back to the meet's own course. */
 $("t-course").addEventListener("input", () => {
   if ($("t-course").value.trim() === "" && state.course) {
@@ -2366,9 +2407,7 @@ document.addEventListener("click", (e) => {
     saveState();
   } else if (x.dataset.clear === "meet") {
     state.meet = null;
-    state.course = null;
-    state.divs = [];
-    state.groups = [];
+    resetMeetScoped();
     resetEdits();
     state.field = null;
     $("meet-chosen").classList.add("hidden");

@@ -211,5 +211,45 @@ const ALL = ["10", "11", "12"];
   else console.log("  Show per race + overall; athletes as a table ..... OK");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * A new meet is a new world: nothing that describes the old one may
+ * survive the switch.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  const rms = grab("resetMeetScoped");
+  /* ⚠ THE COURSE WAS STILL BEING APPLIED, not merely displayed: chooseMeet
+       cleared divisions, groups and edits but not state.course, so meet B
+       was predicted on meet A's course. */
+  chk(/state\.course = null/.test(rms), "the course override is cleared");
+  chk(/box\.value = ""/.test(rms), "and so is the box showing it");
+  chk(/state\.raceMode = "separate"/.test(rms) &&
+      /state\.coalesce = false/.test(rms),
+     "the grouping decisions go too -- they describe one meet's divisions "
+     + "and mean nothing about the next");
+  chk(/state\.divs = \[\]/.test(rms) && /state\.groups = \[\]/.test(rms),
+     "with the divisions and their grouping");
+  chk(/co\.checked = false/.test(rms),
+     "and the checkbox itself, not just the flag behind it");
+
+  /* Both paths go through it, so there is no third way to get it half
+     right -- the Change button cleared the state and left the box, and
+     chooseMeet cleared neither. */
+  chk((SRC.match(/resetMeetScoped\(\);/g) || []).length === 2,
+     "both the picker and the Change button call it");
+  const cm = SRC.slice(SRC.indexOf("async function chooseMeet"));
+  chk(cm.indexOf("resetMeetScoped();") < cm.indexOf("state.meet = {"),
+     "and chooseMeet resets BEFORE adopting the new meet, so loadRaces can "
+     + "then fill in that meet's own course");
+
+  if (bad) { failed += bad; }
+  else console.log("  a new meet keeps nothing from the old one ....... OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall all-races checks passed");
