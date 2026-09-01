@@ -598,8 +598,38 @@ def _weatherEnabled(sport):
 # ================================================================== #
 
 # athlete_id -> gender, one dict lookup per row (faster than a join).
+#
+# ⚠ THIS WAS `{aid: g for aid, g in cur}` OVER AN UNORDERED SELECT, AND THAT
+#   IS LITERALLY "IT TAKES THE LAST GENDER" (owner, 2026-09-01). An athlete
+#   with rows of both genders -- two people merged under one id, or a
+#   mis-sexed feed row -- resolved to whichever row the heap handed back
+#   LAST. Not a rule: physical table order, which moves under VACUUM and any
+#   UPDATE, so the same athlete could pool differently between two runs of
+#   this script with no data change at all.
+#
+# ⚠ AND THIS IS THE WORST PLACE OF THE THREE TO GET IT WRONG. The gender
+#   picks the pool, the pool sets the SCALE that normalized_time is written
+#   on, and normalized_time is frozen into the row -- the same failure the
+#   pipeline's backfill-ordering comment warns about at a measured 64%
+#   rating error. The engine and the boards can be re-run; this cannot,
+#   without a re-backfill.
+#
+# ! THE SAME RULE AS THE OTHER TWO: majority of `athletes` rows, ties to 'M'
+#   (gender DESC puts 'M' above 'F'). Sorted in SQL rather than in Python so
+#   it reads as the same statement as the engine's lateral and
+#   build_ranking_results._GENDER_TEMP_SQL. tests/test_gender_pick.py pins
+#   all three together.
 def _loadGenders(cur):
-    cur.execute("SELECT athlete_id, gender FROM athletes")
+    cur.execute("""
+        SELECT DISTINCT ON (athlete_id) athlete_id, gender
+        FROM (
+            SELECT athlete_id, gender, count(*) AS n
+            FROM   athletes
+            WHERE  gender IN ('M', 'F')
+            GROUP  BY athlete_id, gender
+        ) s
+        ORDER BY athlete_id, n DESC, gender DESC
+    """)
     return {aid: g for aid, g in cur}
 
 
