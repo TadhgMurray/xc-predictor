@@ -1,11 +1,22 @@
 /*
- * staged.js -- the two-stage table reveal.
+ * staged.js -- the staged table reveal.
  *
  * A table.staged renders every row, hides the ones past the fold with
- * .row-hidden, and ends with a .more-row button. First press reveals
- * data-step more rows (a sample); second press reveals everything -- after
- * one press the reader has said they want the list. Lived inline in
- * school.html until the home page needed it too.
+ * .row-hidden, and ends with a .more-row footer. First press reveals
+ * data-step more (a sample); the second reveals everything -- after one press
+ * the reader has said they want the list.
+ *
+ * ★ AND IT GOES BACK NOW (issue #57, point 3). Every "more" on the site was
+ *   one-way: a reader who expanded a 300-row table to see one name had no way
+ *   to fold it again and had to reload the page. The rankings pager could go
+ *   backwards and nothing else could. Expanding and collapsing are the same
+ *   control, so they are the same button.
+ *
+ * ! THE FOLD IS REMEMBERED, NOT RECOMPUTED. Collapse re-hides exactly the
+ *   rows this script revealed, in the order it revealed them, rather than
+ *   re-deriving "past row 15" -- the template owns where the fold is (it
+ *   writes .row-hidden), and a second opinion here would drift from it the
+ *   first time one template chose a different fold.
  */
 
 "use strict";
@@ -13,19 +24,55 @@
 document.querySelectorAll("table.staged").forEach(function (table) {
     var btn = table.querySelector(".more-btn");
     if (!btn) return;
+
     var step = parseInt(table.dataset.step, 10) || 20;
     var pressed = 0;
+    var revealed = [];                 // what we un-hid, newest batch last
+
+    // The label is rebuilt from scratch every time rather than patched in
+    // place. The original version wrote through btn.childNodes[0].nodeValue,
+    // which is the bare text node beside the <span> -- it works only while
+    // the button's markup is exactly "text + span", and says nothing about
+    // that requirement.
+    function setLabel(text, left) {
+        btn.textContent = text;
+        if (left > 0) {
+            var span = document.createElement("span");
+            span.className = "more-left";
+            span.textContent = "(" + left + " left)";
+            btn.appendChild(document.createTextNode(" "));
+            btn.appendChild(span);
+        }
+    }
+
+    function collapse() {
+        revealed.forEach(function (tr) { tr.classList.add("row-hidden"); });
+        revealed = [];
+        pressed = 0;
+        setLabel("Show " + step + " more",
+                 table.querySelectorAll("tr.row-hidden").length);
+    }
+
     btn.addEventListener("click", function () {
+        if (btn.dataset.act === "collapse") { collapse(); return; }
+
         pressed += 1;
         var hidden = table.querySelectorAll("tr.row-hidden");
         var take = pressed === 1 ? Math.min(step, hidden.length) : hidden.length;
-        for (var i = 0; i < take; i++) hidden[i].classList.remove("row-hidden");
+        for (var i = 0; i < take; i++) {
+            hidden[i].classList.remove("row-hidden");
+            revealed.push(hidden[i]);
+        }
+
         var left = table.querySelectorAll("tr.row-hidden").length;
         if (!left) {
-            table.querySelector(".more-row").remove();
+            /* ⚠ THE FOOTER USED TO BE REMOVED HERE, which is what made this
+               one-way: with the row gone there was nothing left to press.
+               It becomes the collapse control instead. */
+            btn.dataset.act = "collapse";
+            setLabel("Show less", 0);
         } else {
-            btn.querySelector(".more-left").textContent = "(" + left + " left)";
-            btn.childNodes[0].nodeValue = "Show the remaining " + left + " ";
+            setLabel("Show the remaining " + left, left);
         }
     });
 });

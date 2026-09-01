@@ -43,6 +43,7 @@ import sys
 sys.path.insert(0, "engine")
 from season_year import seasonYearSqlInt
 from school_identity import stateFilterSql
+from capped import fetchCapped
 
 
 def seasonLabel(sport, year):
@@ -210,8 +211,9 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
         ORDER  BY date DESC
         LIMIT  %(lim)s
     """, {"school": school, "year": year, "tsport": tfrrs_sport,
-          "lim": limit, **sfp})
-    return cur.fetchall()
+          # +1: the extra row is how the cap reports that it bit. See capped.py.
+          "lim": limit + 1, **sfp})
+    return fetchCapped(cur, limit)
 
 
 def currentSeason(cur, school, sport):
@@ -269,8 +271,8 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
           {sf}
         ORDER  BY rr.speed_rating DESC
         LIMIT  %(lim)s
-    """, {"school": school, "sport": sport, "lim": limit, **sfp})
-    return cur.fetchall()
+    """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
+    return fetchCapped(cur, limit)
 
 
 def schoolTopAthletes(cur, school, sport, limit=12,
@@ -314,5 +316,5 @@ def schoolTopAthletes(cur, school, sport, limit=12,
         ) x
         ORDER  BY best DESC
         LIMIT  %(lim)s
-    """, {"school": school, "sport": sport, "lim": limit, **sfp})
-    return cur.fetchall()
+    """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
+    return fetchCapped(cur, limit)

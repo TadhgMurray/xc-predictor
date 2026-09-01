@@ -1,3 +1,4 @@
+{% from "_capped.html" import capped_note %}
 {# =====================================================================
   school.html: one school's whole history.
 
@@ -55,7 +56,7 @@
 {# The two-gender view-all: a rankings board is pool-scoped, so a mixed
    table links each side separately. #}
 {% macro view_all(board) -%}
-    <p class="view-all">View all in rankings:
+    <p class="view-all">View all:
         <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.M }}&amp;school={{ school|urlencode }}">Boys →</a>
         <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.F }}&amp;school={{ school|urlencode }}">Girls →</a>
     </p>
@@ -109,7 +110,7 @@
         </thead>
         <tbody>
             {% for r in roster %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
                 <td>{{ r.grade if r.grade else "" }}</td>
@@ -119,10 +120,10 @@
                 <td>{{ r.last_race if r.last_race else "" }}</td>
             </tr>
             {% endfor %}
-            {% if roster|length > 10 %}
+            {% if roster|length > 15 %}
             <tr class="more-row"><td colspan="7">
                 <button type="button" class="more-btn">
-                    Show 20 more <span class="more-left">({{ roster|length - 10 }} left)</span>
+                    Show 20 more <span class="more-left">({{ roster|length - 15 }} left)</span>
                 </button>
             </td></tr>
             {% endif %}
@@ -141,7 +142,7 @@
         </thead>
         <tbody>
             {% for a in top %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ a.person_id }}">{{ a.name.strip() if a.name and a.name.strip() else "Unknown" }}</a></td>
                 <td>{{ rv(a.best, a.hs_best) }}</td>
@@ -149,15 +150,16 @@
                 <td>{{ a.first_year }}{% if a.last_year != a.first_year %} to {{ a.last_year }}{% endif %}</td>
             </tr>
             {% endfor %}
-            {% if top|length > 10 %}
+            {% if top|length > 15 %}
             <tr class="more-row"><td colspan="5">
                 <button type="button" class="more-btn">
-                    Show 20 more <span class="more-left">({{ top|length - 10 }} left)</span>
+                    Show 20 more <span class="more-left">({{ top|length - 15 }} left)</span>
                 </button>
             </td></tr>
             {% endif %}
         </tbody>
     </table>
+    {{ capped_note(top, "athletes") }}
     {{ view_all("ability") }}
 {% endif %}
 
@@ -172,7 +174,7 @@
         </thead>
         <tbody>
             {% for b in best %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
                 <td>{{ b.grade if b.grade else "" }}</td>
@@ -183,15 +185,16 @@
                     {% else %}{{ b.race_date }}{% endif %}</td>
             </tr>
             {% endfor %}
-            {% if best|length > 10 %}
+            {% if best|length > 15 %}
             <tr class="more-row"><td colspan="6">
                 <button type="button" class="more-btn">
-                    Show 20 more <span class="more-left">({{ best|length - 10 }} left)</span>
+                    Show 20 more <span class="more-left">({{ best|length - 15 }} left)</span>
                 </button>
             </td></tr>
             {% endif %}
         </tbody>
     </table>
+    {{ capped_note(best, "performances") }}
     {{ view_all("performance") }}
 {% endif %}
 
@@ -205,8 +208,10 @@
        filterable from there by state, name or season. The year rides along
        when the page is showing one, so the link does not silently widen the
        season the reader is looking at. #}
+    {{ capped_note(meets, "meets",
+                   "/meets?sport=" ~ sport ~ "&school=" ~ school|urlencode) }}
     <p class="view-all">
-        <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all meets →</a>
+        <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all →</a>
     </p>
 
     {# ★ ONE TABLE, WITH THE CONTROL AS ITS LAST ROW. The previous version put
@@ -225,7 +230,7 @@
         </thead>
         <tbody>
             {% for m in meets %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 20 }}>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ m.date }}</td>
                 <td>{% if sport == 'XC' %}<a href="/race/xc/{{ m.meet_id }}/{{ m.div_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a>
                     {% else %}{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}{% endif %}</td>
@@ -234,11 +239,11 @@
                 <td>{{ m.best_rating if m.best_rating is not none else "" }}</td>
             </tr>
             {% endfor %}
-            {% if meets|length > 20 %}
+            {% if meets|length > 15 %}
             <tr class="more-row">
                 <td colspan="5">
                     <button type="button" class="more-btn">
-                        Show 20 more <span class="more-left">({{ meets|length - 20 }} left)</span>
+                        Show 20 more <span class="more-left">({{ meets|length - 15 }} left)</span>
                     </button>
                 </td>
             </tr>

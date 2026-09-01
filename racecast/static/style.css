@@ -3349,6 +3349,12 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .meets-table th:nth-child(4) { width: 16%; }
 /* the jump to the full board, right-aligned under a table */
 .view-all { margin: 0.4rem 0 0; font-size: 0.85rem; text-align: right; }
+/* ★ A CAP THAT BIT SAYS SO (issue #57, point 2). Quiet -- it is a caveat on
+   the table above, not a warning -- but it sits ABOVE the view-all link so
+   the sentence and the way onward read as one thing. */
+.capped-note { margin: 0.5rem 0 0; font-size: 0.82rem; color: #6b7280;
+               font-style: italic; text-align: right; }
+.capped-note a { font-style: normal; }
 
 /* ---- head to head (/compare) ------------------------------------------ *
  * Two fixed athlete colors used consistently in every section: A is the

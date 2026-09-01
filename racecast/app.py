@@ -214,6 +214,7 @@ app.logger.addHandler(_err_handler)
 #   process; restart after a pipeline to pick up fresh labels. Missing
 #   table (old database, mid-rebuild) = plain names, never an error.
 import school_identity
+from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
 
@@ -3258,8 +3259,9 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
             OR bool_or(round(m.distance)::int = %(dist)s)
         ORDER BY max(r.date) DESC
         LIMIT %(limit)s
-    """, {"course": course_name, "dist": dist, "limit": limit})
-    return cur.fetchall()
+    # +1: the extra row is how the cap reports that it bit. See capped.py.
+    """, {"course": course_name, "dist": dist, "limit": limit + 1})
+    return fetchCapped(cur, limit)
 
 
 def get_course_distances(cur, course_name):

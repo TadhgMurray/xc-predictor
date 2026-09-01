@@ -1,3 +1,4 @@
+{% from "_capped.html" import capped_note %}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
@@ -119,7 +120,7 @@
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
-            <p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>
+            <p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all →</a></p>
             {% else %}<p class="meta">No rated results.</p>{% endif %}
         </div>
         {% endfor %}
@@ -151,7 +152,7 @@
                     {{ more_row(rows, 6) }}
                 </tbody>
             </table>
-            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>
+            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all →</a></p>
             {% else %}<p class="meta">No team put five rated finishers here.</p>{% endif %}
         </div>
         {% endfor %}
@@ -189,7 +190,7 @@
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
-            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=pr&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all times on the rankings board →</a></p>{% endif %}
+            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=pr&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all →</a></p>{% endif %}
             {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
         </div>
         {% endfor %}
@@ -224,7 +225,7 @@
             {# The teams board ranks by top-5 average RATING; this table is
                top-5 total time. Closest board there is, and it is scoped to
                the same races. #}
-            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}&distance={{ sel_dist }}">View all on the rankings board →</a></p>
+            <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}&distance={{ sel_dist }}">View all →</a></p>
             {% else %}<p class="meta">No team put five finishers here.</p>{% endif %}
         </div>
         {% endfor %}
@@ -256,7 +257,7 @@
                     {{ more_row(rows, 7) }}
                 </tbody>
             </table>
-            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all on the rankings board →</a></p>{% endif %}
+            {% if pr_ok %}<p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all →</a></p>{% endif %}
             {% else %}<p class="meta">No rated field at this distance.</p>{% endif %}
         </div>
         {% endfor %}
@@ -280,7 +281,9 @@
             {{ more_row(meets, 4) }}
         </tbody>
     </table>
-    <p class="view-all"><a href="/meets?course={{ course_name|urlencode }}">All meets at this course →</a></p>
+    {{ capped_note(meets, "meets",
+                   "/meets?course=" ~ course_name|urlencode) }}
+    <p class="view-all"><a href="/meets?course={{ course_name|urlencode }}">View all →</a></p>
     {% else %}<p class="meta">No meets on record.</p>{% endif %}
 
 </main>

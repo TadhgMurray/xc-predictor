@@ -49,7 +49,7 @@
         </tr></thead>
         <tbody>
             {% for r in rows %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 10 }}>
+            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.name if r.name else "Unknown" }}</a>
                     {% else %}{{ r.name if r.name else "Unknown" }}{% endif %}</td>
@@ -70,17 +70,17 @@
                 </td>
             </tr>
             {% endfor %}
-            {% if rows|length > 10 %}
+            {% if rows|length > 15 %}
             <tr class="more-row"><td colspan="{{ 5 + (1 if sec.kind == 'running' else 0) + (1 if with_course else 0) }}">
                 <button type="button" class="more-btn">
-                    Show 20 more <span class="more-left">({{ rows|length - 10 + sec.left[g] }} left)</span>
+                    Show 20 more <span class="more-left">({{ rows|length - 15 + sec.left[g] }} left)</span>
                 </button>
             </td></tr>
             {% endif %}
         </tbody>
     </table>
     {% if sec.on_board %}
-    <p class="view-all"><a href="/rankings?board=pr&amp;sport={{ sport }}&amp;pool={{ data.pools[g] }}&amp;distance={{ sec.distance }}&amp;school={{ school|urlencode }}{% if data.year %}&amp;year={{ data.year }}{% endif %}{% if data.course %}&amp;course={{ data.course|urlencode }}{% endif %}">View all in rankings →</a></p>
+    <p class="view-all"><a href="/rankings?board=pr&amp;sport={{ sport }}&amp;pool={{ data.pools[g] }}&amp;distance={{ sec.distance }}&amp;school={{ school|urlencode }}{% if data.year %}&amp;year={{ data.year }}{% endif %}{% if data.course %}&amp;course={{ data.course|urlencode }}{% endif %}">View all →</a></p>
     {% endif %}
     {% endif %}
 {%- endmacro %}

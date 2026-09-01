@@ -1,0 +1,29 @@
+{# ================================================================= #}
+{#  The notice a capped table owes its reader.  Issue #57, point 2.  #}
+{#                                                                   #}
+{#  ★ A PARTIAL ANSWER MUST NOT LOOK LIKE A COMPLETE ONE. schoolMeets #}
+{#    and get_course_meets stop at 2000 rows, schoolBest and          #}
+{#    schoolTopAthletes at 100, and none of them used to say so. The  #}
+{#    staged reveal then ran out AT THE CAP and turned into "Show     #}
+{#    less" -- so a school with 2400 meets read as a school with      #}
+{#    exactly 2000.                                                   #}
+{#                                                                   #}
+{#  ! IT ONLY RENDERS WHEN THE CAP ACTUALLY BIT. capped.fetchCapped   #}
+{#    asks for one row more than it shows; `truncated` is whether     #}
+{#    that row came back. A list that fitted says nothing, which is   #}
+{#    the point -- a notice on every table is a notice nobody reads.  #}
+{#                                                                   #}
+{#  ! AND IT NAMES A WAY ONWARD when the caller has one. `more_url`   #}
+{#    is the board or list that is not capped; without it the notice  #}
+{#    still states the limit, because "there is more" is worth        #}
+{#    knowing even when this page cannot show it.                     #}
+{# ================================================================= #}
+{% macro capped_note(rows, what, more_url=None, more_text="See them all") -%}
+{%- if rows is defined and rows and rows.truncated %}
+    <p class="capped-note">
+        Showing the first {{ "{:,}".format(rows.shown) }} {{ what }}.
+        There are more than this page lists.{% if more_url %}
+        <a href="{{ more_url }}">{{ more_text }} &rarr;</a>{% endif %}
+    </p>
+{%- endif %}
+{%- endmacro %}
