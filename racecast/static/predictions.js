@@ -314,17 +314,51 @@ async function loadRaces() {
 
 
 /*
- * ★ SAME MONTH AND DAY, THIS YEAR. That is what "run it again" means -- a
- *   meet keeps its weekend far more reliably than its date. Editable, because
- *   they do move, and because the model reads day-of-year as a feature so the
+ * ★ SAME WEEKDAY, NOT SAME DATE (owner, 2026-09-01). The note this replaces
+ *   already had the right reason -- "a meet keeps its weekend far more
+ *   reliably than its date" -- and then defaulted to the same month and day
+ *   anyway, which is the one thing that does NOT hold. A year is 52 weeks
+ *   plus a day, so keeping the date moves the meet one weekday every year
+ *   (two across a leap day): a Saturday invitational came back proposed on a
+ *   Sunday, and cross country is not run on Sundays.
+ *
+ * ! MINIMAL SHIFT, EITHER DIRECTION. The nearest matching weekday is at most
+ *   three days away, so the answer is the residue of the weekday difference
+ *   taken into [-3, +3] rather than always rolling forward -- rolling one way
+ *   only would move a Saturday meet six days and into the next weekend.
+ * ! UTC THROUGHOUT. Parsing "2025-09-13" as local time and formatting back
+ *   can land a day out either side of the date line; Date.UTC and
+ *   toISOString never disagree with each other.
+ * ⚠ A 29 FEBRUARY ORIGINAL rolls to 1 March in a common year, before the
+ *   weekday shift is applied. No cross country meet is run on 29 February,
+ *   and pretending otherwise would cost more than it buys.
+ */
+function sameWeekdayNextYear(iso, targetYear) {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const orig = new Date(Date.UTC(y, m - 1, d));
+  const cand = new Date(Date.UTC(targetYear, m - 1, d));
+  if (isNaN(orig) || isNaN(cand)) return null;
+
+  let delta = orig.getUTCDay() - cand.getUTCDay();      /* -6 .. 6 */
+  if (delta > 3) delta -= 7;
+  if (delta < -3) delta += 7;
+  cand.setUTCDate(cand.getUTCDate() + delta);
+  return cand.toISOString().slice(0, 10);
+}
+
+/*
+ * ★ THE PROPOSED DATE is the meet's own running, moved to this year and then
+ *   pulled onto the weekday it was actually run on. Editable, because meets
+ *   do move, and because the model reads day-of-year as a feature so the
  *   difference is not cosmetic.
  */
 function defaultDate() {
   const now = new Date();
-  const md = state.meet.date ? state.meet.date.slice(5) : null;
-  const year = now.getFullYear();
-  $("t-date").value = md ? `${year}-${md}`
-                         : now.toISOString().slice(0, 10);
+  const aligned = state.meet.date
+    ? sameWeekdayNextYear(state.meet.date, now.getFullYear())
+    : null;
+  $("t-date").value = aligned || now.toISOString().slice(0, 10);
 
   $("asran-hint").textContent = state.meet.date
     ? `Predicts the ${state.meet.date} running of this meet, with the field `
