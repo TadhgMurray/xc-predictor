@@ -383,8 +383,29 @@ const D = ["10", "11", "12", "13"];
      + "were three items, so a long list and a note became two columns");
   chk(/\.predict2 \.co-note \{ display: block;/.test(css),
      "and the checkbox note is a block inside the label, not beside it");
+  /* ⚠ EVERY CARD OF A GROUPED RACE IS THE SAME HEIGHT. A note only SOME
+       cards carry gives every card a different size, which is the ragged
+       grid this fixed. The name clips on its own line; the note is a block
+       under it and is rendered even when there is nothing to add. */
   chk(!/\.predict2 \.t-label \{[^}]*text-overflow: ellipsis/.test(css),
-     "a team's division note is not ellipsed off the end of its name");
+     "the ellipsis is off the label -- there it cut the note that follows "
+     + "the name");
+  chk(/\.predict2 \.t-name \{ display: block; overflow: hidden;\s*\n?\s*text-overflow: ellipsis/
+        .test(css),
+     "and on the NAME, which owns the top line");
+  chk(/\.predict2 \.t-also \{ display: block;/.test(css),
+     "the note is a block, so it always takes the second line");
+  chk(/\.predict2 \.t-also\.is-solo/.test(css),
+     "and a school entered once has its own quieter style");
+  const rfb = grab("renderFieldBlock");
+  chk(/const grouped = _gi !== undefined/.test(rfb),
+     "the second line is decided by whether the RACE has several divisions");
+  chk(/\$\{esc\(divLabel\(state\.meet\.div\)\)\} only/.test(rfb),
+     "a school in only this division says so, rather than leaving a gap "
+     + "the eye has to interpret");
+  chk(/grouped \? `<span class="t-also/.test(rfb),
+     "and a single-division race carries no second line at all -- there is "
+     + "nothing it could say");
   chk(!/\.predict2 \.grp-name \{[^}]*text-overflow: ellipsis/.test(css),
      "nor is the division name in the grouping row");
   chk(/\.predict-status\.show \{ display: block; flex: 1 0 100%/.test(css),

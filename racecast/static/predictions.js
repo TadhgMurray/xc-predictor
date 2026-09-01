@@ -1450,6 +1450,10 @@ function renderFieldBlock(sumEl, gridEl) {
   const f = state.field;
   const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
   const alsoIn = alsoInThisRace(state.meet.div);
+  /* Whether this race has more than one division at all -- which decides
+     whether the cards carry a second line, not whether THIS school does. */
+  const _gi = groupIndex().get(state.meet.div);
+  const grouped = _gi !== undefined && (state.groups[_gi] || []).length > 1;
   const kept = teams.reduce((n, t) => n + t.runners.length, 0);
 
   /* ★ THE COUNT IS THE HEADLINE; THE GLOSS IS A TOOLTIP (owner: "can we get
@@ -1504,18 +1508,34 @@ function renderFieldBlock(sumEl, gridEl) {
     <details class="team-card" data-team="${esc(t.school)}"
              ${state.open.has(t.school) ? "open" : ""}>
       <summary class="team-name">
-        <span class="t-label"><a class="lnk"
-           href="/school/${encodeURIComponent(t.school)}"
-           >${esc(schoolWithState(t.school, t.state))}</a>${
-          alsoIn.has(t.school)
-            ? `<span class="t-also${state.coalesce ? " is-merged" : ""}"
-                     title="${state.coalesce
-                       ? "Coalesce is on: these entries score as ONE squad, "
-                         + "capped at seven."
-                       : "Coalesce is off: these entries score as SEPARATE "
-                         + "teams."}">${state.coalesce ? "+ " : "also in "}${
-                esc(alsoIn.get(t.school).join(", "))}</span>`
-            : ""}</span>
+        <span class="t-label">
+          ${/* ★ THE NAME OWNS THE TOP LINE AND IS CLIPPED THERE (owner,
+                2026-09-01: "the name on its top line, with ellipses if it
+                is done as so"). Letting it wrap pushed the note down and
+                made the card taller than its neighbours. */""}
+          <span class="t-name"><a class="lnk"
+             href="/school/${encodeURIComponent(t.school)}"
+             >${esc(schoolWithState(t.school, t.state))}</a></span>
+          ${/* ★ AND THE SECOND LINE IS ALWAYS THERE IN A GROUPED RACE, even
+                for a school entered only once ("if they don't have one just
+                say so"). A note that only SOME cards carry gives every card
+                a different height, which is the ragged grid the owner is
+                looking at -- and its absence is information too: this school
+                is in one division of the race, not two. */""}
+          ${grouped ? `<span class="t-also${
+              alsoIn.has(t.school) ? (state.coalesce ? " is-merged" : "")
+                                   : " is-solo"}" title="${
+              !alsoIn.has(t.school)
+                ? "Entered in this division only."
+                : state.coalesce
+                  ? "Coalesce is on: these entries score as ONE squad, "
+                    + "capped at seven."
+                  : "Coalesce is off: these entries score as SEPARATE teams."
+            }">${alsoIn.has(t.school)
+                  ? `${state.coalesce ? "+ " : "also in "}${
+                      esc(alsoIn.get(t.school).join(", "))}`
+                  : `${esc(divLabel(state.meet.div))} only`}</span>` : ""}
+        </span>
         <span class="team-n">${t.runners.length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>

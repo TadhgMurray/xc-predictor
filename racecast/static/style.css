@@ -2276,14 +2276,18 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     transition: transform 0.12s ease;
 }
 .predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
-/* ⚠ THE DIVISION NOTE WAS THE FIRST THING THE ELLIPSIS ATE (owner,
-   2026-09-01: "the text for the division just ellipses off"). It sits AFTER
-   the school name in this label, and nowrap + ellipsis on a flex:1 box cuts
-   from the right -- so "Broughton (NC) + D3" lost exactly the part that was
-   added to be read. It wraps now; a team card is two lines at worst, and the
-   note is the point of it. */
-.predict2 .t-label { flex: 1; min-width: 0; white-space: normal;
-                     overflow-wrap: anywhere; }
+/* ★ TWO LINES, ALWAYS THE SAME TWO (owner, 2026-09-01: "I really don't like
+   how now certain teams have way different sizes").
+     line 1  the school name, clipped -- it never pushes the note down
+     line 2  the division note, present on every card of a grouped race
+   ⚠ THE ELLIPSIS BELONGS ON THE NAME, NOT THE LABEL. It was on the label,
+     which cut from the right and ate the note that follows the name -- so
+     the first fix made the label WRAP, and a wrapped name then made some
+     cards taller than others. Splitting the two gives each line its own
+     rule: the name clips, the note does not. */
+.predict2 .t-label { flex: 1; min-width: 0; }
+.predict2 .t-name { display: block; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
 .predict2 .team-n { color: #999; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2614,14 +2618,18 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     transition: transform 0.12s ease;
 }
 .predict2 .team-card[open] > .team-name::before { transform: rotate(90deg); }
-/* ⚠ THE DIVISION NOTE WAS THE FIRST THING THE ELLIPSIS ATE (owner,
-   2026-09-01: "the text for the division just ellipses off"). It sits AFTER
-   the school name in this label, and nowrap + ellipsis on a flex:1 box cuts
-   from the right -- so "Broughton (NC) + D3" lost exactly the part that was
-   added to be read. It wraps now; a team card is two lines at worst, and the
-   note is the point of it. */
-.predict2 .t-label { flex: 1; min-width: 0; white-space: normal;
-                     overflow-wrap: anywhere; }
+/* ★ TWO LINES, ALWAYS THE SAME TWO (owner, 2026-09-01: "I really don't like
+   how now certain teams have way different sizes").
+     line 1  the school name, clipped -- it never pushes the note down
+     line 2  the division note, present on every card of a grouped race
+   ⚠ THE ELLIPSIS BELONGS ON THE NAME, NOT THE LABEL. It was on the label,
+     which cut from the right and ate the note that follows the name -- so
+     the first fix made the label WRAP, and a wrapped name then made some
+     cards taller than others. Splitting the two gives each line its own
+     rule: the name clips, the note does not. */
+.predict2 .t-label { flex: 1; min-width: 0; }
+.predict2 .t-name { display: block; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
 .predict2 .team-n { color: #999; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2779,9 +2787,14 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    results note above says what happened; this says what is ABOUT to. A
    school entered in two divisions of one race is exactly the case coalesce
    decides, and it was invisible until the prediction came back. */
-.predict2 .t-also { font-size: 0.72rem; color: #6b7280; font-style: italic;
-                    font-weight: 400; margin-left: 0.35rem;
+.predict2 .t-also { display: block; font-size: 0.72rem; color: #6b7280;
+                    font-style: italic; font-weight: 400;
+                    overflow: hidden; text-overflow: ellipsis;
                     white-space: nowrap; }
+/* A school entered once in a multi-division race. Quieter still: it is the
+   ordinary case, and it is here for the row height and for the fact that
+   its absence would otherwise have to be inferred. */
+.predict2 .t-also.is-solo { color: #9ca3af; }
 /* Coalesce ON: the two entries become one squad, so it reads as a sum. */
 .predict2 .t-also.is-merged { color: #0072B2; font-style: normal;
                               font-weight: 600; }
