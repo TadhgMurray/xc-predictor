@@ -157,21 +157,34 @@ _INDEX_JOBS = 3
 #   prepareGenderTemp() below collapses it to ONE pass with DISTINCT ON, into
 #   an indexed temp table. The per-row lateral becomes a hash join.
 #
-#   ⚠ THE TIE-BREAK MUST NOT CHANGE. `ORDER BY a.school LIMIT 1` is what makes
-#     the pick deterministic when an athlete has several rows, and the engine
-#     uses the same ordering. DISTINCT ON with the same ORDER BY reproduces it
-#     exactly -- a different tie-break would silently repool athletes.
+#   ⚠ THE RULE MUST MATCH THE ENGINE'S, WHATEVER IT IS. DISTINCT ON with the
+#     same ORDER BY reproduces the lateral exactly; a different tie-break here
+#     would silently repool athletes relative to the ratings they carry.
+#     tests/test_gender_pick.py pins the two together.
+#
+#   ⚠ IT WAS `ORDER BY a.school`, AND THAT WAS THE BUG (owner, 2026-09-01).
+#     Deterministic, but arbitrary: when one person_id carries rows of both
+#     genders -- two real people merged under one id, or a mis-sexed feed row
+#     -- the winner was whichever SCHOOL NAME sorted first. Reported for Cam
+#     Kuss, who is two people: "Broughton (NC)" sorts before "Unattached
+#     (TX)", so the boy was pooled and rated as a girl for his whole career.
+#
+#   ! THE MAJORITY OF `athletes` ROWS DECIDES, ties to 'M' (gender DESC puts
+#     'M' above 'F'). Both keys are needed -- count alone is not
+#     deterministic. This does NOT fix a merged person; it makes the merge
+#     land on the more-evidenced side instead of on an alphabetical accident.
+#     Separating them is #93.
 _GENDER_TEMP_SQL = """
     DROP TABLE IF EXISTS tmp_person_gender;
     CREATE TEMP TABLE tmp_person_gender AS
     SELECT DISTINCT ON (person_id) person_id, gender
     FROM (
-        SELECT COALESCE(a.athlete_id, a.athlete_id) AS person_id,
-               a.gender, a.school
+        SELECT a.athlete_id AS person_id, a.gender, count(*) AS n
         FROM   athletes a
         WHERE  a.gender IN ('M', 'F')
+        GROUP  BY a.athlete_id, a.gender
     ) s
-    ORDER BY person_id, school;
+    ORDER BY person_id, n DESC, gender DESC;
     CREATE UNIQUE INDEX ON tmp_person_gender (person_id);
     ANALYZE tmp_person_gender;
 """
@@ -185,8 +198,8 @@ _GENDER_JOIN = """
 def prepareGenderTemp(conn):
     """One pass over `athletes`, so the per-row lateral becomes a hash join.
 
-    Same tie-break as the lateral it replaces (ORDER BY school, first row
-    wins), so every athlete resolves to the gender they resolved to before.
+    Same rule as the lateral it replaces -- majority of `athletes` rows, ties
+    to 'M' -- so every athlete resolves to the gender the engine gave them.
     """
     with conn.cursor() as cur:
         cur.execute(_GENDER_TEMP_SQL)

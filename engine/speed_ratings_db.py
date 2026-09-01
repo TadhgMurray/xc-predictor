@@ -294,8 +294,24 @@ def _chairFilter() -> str:
         except Exception:                               # noqa: BLE001
             _CHAIR_READY = False
         if not _CHAIR_READY:
-            print("[db] wheelchair_person not found -- chair athletes will be "
-                  "RATED. Run engine/wheelchair_flag.py --write first.")
+            # ⚠ LOUD, BECAUSE THIS ALREADY HAPPENED ONCE (owner, 2026-09-01:
+            #   "somehow wheelchair athletes snuck back into the engine").
+            #   wheelchair_flag.py was never wired into run_pipeline.sh, so
+            #   the table was never built and every run degraded to rating
+            #   chair athletes -- past a single grey line in a four-hour log
+            #   that nobody was going to catch. It is a banner now, and it
+            #   names the fix.
+            print("\n" + "!" * 70)
+            print("!! wheelchair_person NOT FOUND -- CHAIR ATHLETES WILL BE "
+                  "RATED.")
+            print("!! A racing chair's normalized time is not a running time; "
+                  "one such")
+            print("!! race sets an ability the pair solve then spreads to "
+                  "everyone they")
+            print("!! raced.  Fix:  python engine/wheelchair_flag.py --write")
+            print("!! (pipeline step 04b_wheelchair, which must run before "
+                  "07_pack)")
+            print("!" * 70 + "\n")
     if not _CHAIR_READY:
         return ""
     return ("\n          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc"
@@ -478,10 +494,29 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
         LEFT JOIN LATERAL (
+               -- ⚠ MAJORITY, NOT ALPHABETICAL-BY-SCHOOL. This was
+               --   `ORDER BY a.school LIMIT 1`, which is deterministic but
+               --   arbitrary: when one person_id carries rows of both
+               --   genders -- two real people merged, or a mis-sexed feed
+               --   row -- the winner was whichever SCHOOL NAME sorted first.
+               --   Reported for Cam Kuss (owner, 2026-09-01), where
+               --   "Broughton (NC)" beat "Unattached (TX)" and a boy was
+               --   rated in a girls' pool for his whole career.
+               -- ! COUNT FIRST, THEN 'M'. The count is the evidence; the
+               --   letter is only the tie-break, and DESC puts 'M' above
+               --   'F' so an exact 50/50 lands male, which is what the
+               --   owner asked for. Both keys are needed: count alone is
+               --   not deterministic.
+               -- ⚠ THIS ORDERING IS DUPLICATED in
+               --   racecast/build_ranking_results._GENDER_TEMP_SQL and the
+               --   two MUST match -- a different tie-break there would
+               --   silently repool athletes relative to the engine.
+               --   tests/test_gender_pick.py pins them together.
                SELECT a.gender FROM athletes a
                WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
                  AND a.gender IN ('M', 'F')
-               ORDER BY a.school
+               GROUP BY a.gender
+               ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
         ) a ON TRUE{_dedupJoin(tw)}
         WHERE r.normalized_time IS NOT NULL
@@ -532,10 +567,29 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
               AND m.event_id = r.event_id AND m.source = r.source
         LEFT JOIN LATERAL (
+               -- ⚠ MAJORITY, NOT ALPHABETICAL-BY-SCHOOL. This was
+               --   `ORDER BY a.school LIMIT 1`, which is deterministic but
+               --   arbitrary: when one person_id carries rows of both
+               --   genders -- two real people merged, or a mis-sexed feed
+               --   row -- the winner was whichever SCHOOL NAME sorted first.
+               --   Reported for Cam Kuss (owner, 2026-09-01), where
+               --   "Broughton (NC)" beat "Unattached (TX)" and a boy was
+               --   rated in a girls' pool for his whole career.
+               -- ! COUNT FIRST, THEN 'M'. The count is the evidence; the
+               --   letter is only the tie-break, and DESC puts 'M' above
+               --   'F' so an exact 50/50 lands male, which is what the
+               --   owner asked for. Both keys are needed: count alone is
+               --   not deterministic.
+               -- ⚠ THIS ORDERING IS DUPLICATED in
+               --   racecast/build_ranking_results._GENDER_TEMP_SQL and the
+               --   two MUST match -- a different tie-break there would
+               --   silently repool athletes relative to the engine.
+               --   tests/test_gender_pick.py pins them together.
                SELECT a.gender FROM athletes a
                WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
                  AND a.gender IN ('M', 'F')
-               ORDER BY a.school
+               GROUP BY a.gender
+               ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
         ) a ON TRUE{_dedupJoin(tw)}
         WHERE r.normalized_time IS NOT NULL

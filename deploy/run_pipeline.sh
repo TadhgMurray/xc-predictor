@@ -105,6 +105,16 @@ step 03_pro_flag      "$PY" -u engine/pro_flag.py --skip-dist --write
 step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
+# ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
+#   2026-09-01: "somehow wheelchair athletes snuck back into the engine").
+#   speed_ratings_db._chairFilter() DEGRADES rather than crashes when
+#   wheelchair_person is absent -- it prints one line and rates them -- which
+#   is right for an old database and lethal for a pipeline that never builds
+#   the table. Nothing else creates it, so every run since it was written has
+#   rated chair athletes. It belongs BEFORE the pack: it is a fact about
+#   people that the pack reads.
+step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
+
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
 #   (measured at a 64% rating error, frozen into the row).
