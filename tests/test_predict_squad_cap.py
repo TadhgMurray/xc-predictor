@@ -321,6 +321,95 @@ class FakeCursorSQL:
         return []
 
 
+# ------------------------------------------------------------------ #
+# A rating is POOL-RELATIVE, so the top seven cannot be picked by comparing
+# raw ratings across pools (owner, 2026-09-01).
+# ------------------------------------------------------------------ #
+
+def _row(pid, pool, rating):
+    return {"person_id": pid, "school": "K12", "pool": pool,
+            "name": f"R{pid}", "rating": rating, "n_races": 5}
+
+
+def test_one_pool_is_left_exactly_as_it_came():
+    """The common case must not change at all -- no factor fetched, no
+    reordering, nothing to go wrong."""
+    rows = [_row(1, "hs_m", 130), _row(2, "hs_m", 120), _row(3, "hs_m", 110)]
+    out = predict._bestFirst(rows, "XC")
+    assert out is rows, "the very list, not a copy -- nothing was done to it"
+    print("  a single-pool squad is untouched .................. OK")
+
+
+def _stubPoolView(factor_of):
+    """Put a fake `pool_view` in sys.modules and return an undo.
+
+    ⚠ IMPORTING THE REAL ONE PULLS IN THE DATABASE, and every test in this
+      file is deliberately DB-free. _bestFirst imports repFactor lazily and
+      only when a school actually spans pools, so a stub module is enough --
+      and it keeps the test honest about which factor was asked for.
+    """
+    import sys
+    import types
+    saved = sys.modules.get("pool_view")
+    mod = types.ModuleType("pool_view")
+    mod.repFactor = lambda pool, sport: factor_of(pool)
+    sys.modules["pool_view"] = mod
+
+    def undo():
+        if saved is None:
+            sys.modules.pop("pool_view", None)
+        else:
+            sys.modules["pool_view"] = saved
+    return undo
+
+
+def test_a_cross_pool_squad_is_compared_on_one_scale():
+    """An ms_m 130 is not an hs_m 130. Sorting on the raw number puts the
+    school's best eighth-graders above its varsity, and squadCap then takes
+    seven of them."""
+    # An ms rating is worth much less on the HS scale; hs IS the scale.
+    undo = _stubPoolView(lambda p: {"ms_m": 0.62, "hs_m": 1.0}[p])
+    try:
+        rows = [_row(1, "ms_m", 130), _row(2, "hs_m", 110),
+                _row(3, "ms_m", 125), _row(4, "hs_m", 95)]
+        out = predict._bestFirst(rows, "XC")
+    finally:
+        undo()
+
+    # 130*0.62 = 80.6, 125*0.62 = 77.5 -- both below the HS runners.
+    assert [r["person_id"] for r in out] == [2, 4, 1, 3], \
+        [(r["person_id"], r["pool"], r["rating"]) for r in out]
+    # ⚠ THE DISPLAYED NUMBER IS UNCHANGED. Only the order moved; a runner's
+    #   rating is still their own pool's, as everywhere else on the site.
+    assert out[2]["rating"] == 130, out[2]
+    print("  a cross-pool squad is ordered on one scale ........ OK")
+
+
+def test_a_missing_factor_leaves_the_order_alone():
+    """hsFactor returns None when it cannot compute one, and its docstring
+    says callers must never read that as 1.0. Converting part of a list and
+    not the rest is worse than converting none of it."""
+    undo = _stubPoolView(lambda p: None if p == "ms_m" else 1.0)
+    try:
+        rows = [_row(1, "ms_m", 130), _row(2, "hs_m", 110)]
+        out = predict._bestFirst(rows, "XC")
+    finally:
+        undo()
+    assert out is rows, "no factor, no reordering"
+    print("  an unavailable factor changes nothing ............. OK")
+
+
+def test_a_missing_pool_is_not_treated_as_comparable():
+    undo = _stubPoolView(lambda p: 1.0)
+    try:
+        rows = [_row(1, None, 130), _row(2, "hs_m", 110)]
+        out = predict._bestFirst(rows, "XC")
+    finally:
+        undo()
+    assert out is rows, "a row with no pool cannot be converted"
+    print("  a row with no pool stops the conversion ........... OK")
+
+
 if __name__ == "__main__":
     for fn in [test_cap_table,
                test_counts_ignore_schoolless_rows,
@@ -334,6 +423,10 @@ if __name__ == "__main__":
                test_a_few_mispooled_rows_do_not_break_it,
                test_a_genuinely_mixed_field_is_not_forced,
                test_squad_queries_filter_on_the_pool_letter,
-               test_schoolSquad_filters_too]:
+               test_schoolSquad_filters_too,
+               test_one_pool_is_left_exactly_as_it_came,
+               test_a_cross_pool_squad_is_compared_on_one_scale,
+               test_a_missing_factor_leaves_the_order_alone,
+               test_a_missing_pool_is_not_treated_as_comparable]:
         fn()
     print("\nall squad-cap tests passed")

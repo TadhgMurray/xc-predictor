@@ -1304,7 +1304,7 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
     gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s"
                      if gender in ("M", "F") else "")
     cur.execute(f"""
-        SELECT s.school, s.person_id, s.grade,
+        SELECT s.school, s.person_id, s.grade, s.pool,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '') AS name,
                s.mean_rating, s.n_races
@@ -1324,6 +1324,8 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
     for r in cur.fetchall():
         entry = {
             "person_id": r["person_id"], "school": r["school"],
+            # Carried for the cross-pool sort below, not for display.
+            "pool": r.get("pool"),
             "name": (r["name"] or "").strip() or "Unknown",
             "rating": (round(float(r["mean_rating"]), 1)
                        if r["mean_rating"] is not None else None),
@@ -1335,7 +1337,49 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
         if exclude_terminal and not (r.get("grade") or "").strip():
             entry["grade_unknown"] = True
         out.setdefault(r["school"], []).append(entry)
-    return out
+    return {sch: _bestFirst(rows, sport) for sch, rows in out.items()}
+
+
+# Purpose:   order one school's squad so the top seven are the top seven.
+# Detail:
+#   ★ A RATING IS POOL-RELATIVE, SO SORTING ON IT ACROSS POOLS IS WRONG
+#     (owner, 2026-09-01: "don't have issues with like a ms-hs choosing all
+#     msers"). 100 is the MEAN OF YOUR OWN POOL -- an ms_m 120 and an hs_m
+#     120 are nothing like the same runner. A K-12 school whose middle and
+#     high school athletes share one name would put its best eighth-graders
+#     above its varsity, and squadCap would then take seven of them.
+#
+#   ! CONVERTED TO ONE SCALE BEFORE COMPARING, using pool_view.repFactor --
+#     the same conversion the HS-equivalent view on the athlete page uses, so
+#     the page and this cannot disagree about what a rating is worth.
+#
+#   ⚠ ONLY WHEN A SCHOOL ACTUALLY SPANS POOLS, which is rare. One pool and
+#     the order is already right and is left exactly as the database returned
+#     it -- no factor fetched, no behaviour changed, nothing to go wrong in
+#     the overwhelmingly common case.
+#
+#   ⚠ AND A MISSING FACTOR MEANS LEAVE IT ALONE. hsFactor returns None when
+#     it cannot compute one, and its own docstring says callers must never
+#     read that as 1.0. Converting some of a list and not the rest would be
+#     worse than converting none of it.
+#
+#   ! THE DISPLAYED RATING IS UNTOUCHED. This changes the ORDER only; the
+#     number beside a runner is still their own pool's, which is what the
+#     rest of the site shows. Displaying HS-equivalents by default is #50.
+def _bestFirst(rows, sport):
+    pools = {r.get("pool") for r in rows}
+    if len(pools) < 2:
+        return rows
+    from pool_view import repFactor
+    factors = {}
+    for pl in pools:
+        f = repFactor(pl, sport) if pl else None
+        if not f:
+            return rows                 # cannot compare honestly -- do not
+        factors[pl] = float(f)
+    return sorted(
+        rows,
+        key=lambda r: -((r["rating"] or 0) * factors[r["pool"]]))
 
 
 def _athleteEntries(cur, person_ids, sport, season_year):
