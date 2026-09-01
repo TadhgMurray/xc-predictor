@@ -2464,6 +2464,12 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    lineup should not shout, so it inherits its colour and only underlines on
    hover -- and opens in a new tab, because losing a half-built prediction to
    a navigation would be worse than the lookup is worth. */
+/* ★ THE DROPPED CARRY THEIR LAST KNOWN RATING, and the season it is from
+   (owner, 2026-09-01). These are the people you are deciding whether to add
+   back, so "how good were they" is the whole question -- and a 2019 number
+   and a 2025 one mean very different things about who would be on the line. */
+.predict2 .r-year { color: #aaa; font-size: 0.68rem; }
+
 .predict2 a.r-name { color: inherit; text-decoration: none; }
 .predict2 a.r-name:hover,
 .predict2 a.r-name:focus-visible { text-decoration: underline; }

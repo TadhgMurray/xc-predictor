@@ -4941,7 +4941,21 @@ def api_predict_races():
                           "label": r.get("division") or f"Division {r['div_id']}",
                           "distance": None, "gender": None,
                           "n_results": r["n_results"]} for r in cur.fetchall()]
-    return jsonify({"races": races})
+            # ★ THE MEET'S OWN DATE (owner, 2026-09-01). The page used to
+            #   scrape this out of the SEARCH SUBLABEL with a regex, so a meet
+            #   whose sublabel carried no ISO date silently had no date at
+            #   all -- and the re-run date then fell back to today, which is
+            #   what "August 31st proposes September 2nd" was.
+            # ! min(date) BECAUSE A MEET CAN SPAN DAYS. The first day is the
+            #   one a re-run should be pinned to; the alternative is a
+            #   two-day meet proposing its own second day.
+            table = "results" if sport == "XC" else "results_tf"
+            cur.execute(f"SELECT min(date) AS d FROM {table} "
+                        f"WHERE meet_id = %(meet)s", {"meet": int(meet)})
+            row = cur.fetchone()
+            meet_date = (row or {}).get("d") or None
+
+    return jsonify({"races": races, "date": meet_date})
 
 
 @app.route("/api/predict/squad")

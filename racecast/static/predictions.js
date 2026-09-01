@@ -283,6 +283,16 @@ async function loadRaces() {
                                     sport: state.meet.sport });
     const res = await fetch("/api/predict/races?" + q.toString());
     const data = await res.json();
+    /* ★ THE MEET'S REAL DATE (owner, 2026-09-01). state.meet.date was scraped
+       out of the search SUBLABEL with a regex, so a meet whose sublabel
+       carried no ISO date had no date at all and the re-run date fell back to
+       today -- which is why an August meet proposed a September date.
+       ! BEFORE THE EARLY RETURN BELOW: a meet with one race or none still has
+         a date, and that is the common case for a championship. */
+    if (data.date) {
+      state.meet.date = data.date;
+      defaultDate();          // re-propose, now that we know when it ran
+    }
     const races = (data.races || []);
     if (races.length < 2) {
       if (races.length === 1) state.meet.div = String(races[0].div_id);
@@ -333,6 +343,13 @@ async function loadRaces() {
  *   weekday shift is applied. No cross country meet is run on 29 February,
  *   and pretending otherwise would cost more than it buys.
  */
+/* A calendar day in the VIEWER's timezone. toISOString() is UTC and will
+   name a different day for most of the world for part of every day. */
+function localISO(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function sameWeekdayNextYear(iso, targetYear) {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d) return null;
@@ -358,7 +375,10 @@ function defaultDate() {
   const aligned = state.meet.date
     ? sameWeekdayNextYear(state.meet.date, now.getFullYear())
     : null;
-  $("t-date").value = aligned || now.toISOString().slice(0, 10);
+  /* ⚠ LOCAL, NOT toISOString(). That formats in UTC, so west of Greenwich an
+     evening visit proposed TOMORROW -- the other half of the August-31st
+     report. <input type="date"> speaks calendar days, not instants. */
+  $("t-date").value = aligned || localISO(now);
 
   $("asran-hint").textContent = state.meet.date
     ? `Predicts the ${state.meet.date} running of this meet, with the field `
@@ -478,6 +498,10 @@ function renderField() {
               <div class="runner-row is-out">
                 <a class="r-name" href="/athlete/${r.person_id}"
                    target="_blank" rel="noopener">${esc(r.name)}</a>
+                <span class="r-rating">${r.rating === null
+                    || r.rating === undefined ? "" : r.rating}${r.rating_year
+                    ? `<span class="r-year">\u2009'${
+                        String(r.rating_year).slice(2)}</span>` : ""}</span>
                 <button class="r-add" data-add="${r.person_id}"
                         data-name="${esc(r.name)}"
                         data-rating="${r.rating === null ? "" : r.rating}"

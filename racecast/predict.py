@@ -676,6 +676,15 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         by_school[school] = {"school": school,
                              "runners": sq[:cap],
                              "dropped": list(sq[cap:])}
+    # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
+    #   people a human is deciding whether to add back, and that decision is
+    #   "how good were they" -- which was rendered as a blank, because they
+    #   have no CURRENT-season row to carry a rating. Their last known one
+    #   does exist; it is just in an earlier season.
+    absent = [r["person_id"] for r in originals
+              if r["person_id"] not in current_ids and r.get("school")]
+    last_seen = _lastKnownRatings(cur, absent, sport)
+
     for r in originals:
         # an original participant with no current-season row: graduated
         # or injured, and the data cannot tell -- listed for the human
@@ -684,12 +693,44 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         team = by_school.setdefault(r["school"], {"school": r["school"],
                                                   "runners": [],
                                                   "dropped": []})
+        prev = last_seen.get(r["person_id"], {})
         team["dropped"].append({"person_id": r["person_id"],
-                                "name": r["name"], "rating": None,
-                                "n_races": None})
+                                "name": r["name"],
+                                "rating": prev.get("rating"),
+                                "n_races": prev.get("n_races"),
+                                # ! THE SEASON IS PART OF THE NUMBER. A 2019
+                                #   rating and a 2025 one mean very different
+                                #   things about who is standing on the line,
+                                #   so the page can say which it is showing.
+                                "rating_year": prev.get("year")})
     teams = sorted(by_school.values(),
                    key=lambda t: (-len(t["runners"]), t["school"]))
     return {"season_year": season_year, "when": when, "teams": teams}
+
+
+# Purpose:   the most recent rating on record for each person, any season.
+# Input:     person_ids -- ids with no row in the season being predicted.
+# Output:    {person_id: {"rating", "n_races", "year"}}
+#
+# ! DISTINCT ON, NEWEST FIRST. One row per person -- the latest season they
+#   have a rating for -- rather than every season they ever raced.
+def _lastKnownRatings(cur, person_ids, sport):
+    ids = sorted({p for p in person_ids if p is not None})
+    if not ids:
+        return {}
+    cur.execute("""
+        SELECT DISTINCT ON (s.person_id)
+               s.person_id, s.mean_rating, s.n_races, s.year
+        FROM   athlete_season s
+        WHERE  s.person_id = ANY(%(ids)s)
+          AND  s.sport = %(sport)s
+          AND  s.mean_rating IS NOT NULL
+        ORDER  BY s.person_id, s.year DESC
+    """, {"ids": ids, "sport": sport})
+    return {r["person_id"]: {
+                "rating": round(float(r["mean_rating"]), 1),
+                "n_races": r["n_races"], "year": r["year"]}
+            for r in cur.fetchall()}
 
 
 def schoolSquad(cur, school, sport, season_year=None, limit=40):

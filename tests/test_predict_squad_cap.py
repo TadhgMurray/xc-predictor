@@ -42,17 +42,23 @@ def _person(pid, school, name=None):
     return {"person_id": pid, "name": name or f"R{pid}", "school": school}
 
 
-def _install(monkey_originals, monkey_squads):
-    """Point predict's three DB helpers at fixtures. Returns an undo."""
+def _install(monkey_originals, monkey_squads, last_seen=None):
+    """Point predict's DB helpers at fixtures. Returns an undo.
+
+    last_seen mirrors _lastKnownRatings: {person_id: {rating, n_races, year}}.
+    Default is empty, which is the "no rating on record" case.
+    """
     saved = (predict._exactField, predict._currentSquads,
-             predict._currentSeason)
+             predict._currentSeason, predict._lastKnownRatings)
     predict._exactField = lambda cur, m, d, s: monkey_originals
     predict._currentSquads = lambda cur, schools, s, y: {
         k: v for k, v in monkey_squads.items() if k in schools}
     predict._currentSeason = lambda cur, s: 2026
+    predict._lastKnownRatings = lambda cur, ids, sport: last_seen or {}
+
     def undo():
         (predict._exactField, predict._currentSquads,
-         predict._currentSeason) = saved
+         predict._currentSeason, predict._lastKnownRatings) = saved
     return undo
 
 
@@ -135,11 +141,73 @@ def test_a_school_that_brought_one_gets_one():
     print("  one individual stays one, not seven ............... OK")
 
 
+# ------------------------------------------------------------------ #
+# The dropped list carries a last-known rating (owner, 2026-09-01)
+# ------------------------------------------------------------------ #
+
+class RatingCursor:
+    """Answers _lastKnownRatings; records the ids it was asked for."""
+    def __init__(self, ratings):
+        self.ratings = ratings
+        self.asked = None
+
+    def execute(self, sql, params=None):
+        self.asked = sorted((params or {}).get("ids") or [])
+
+    def fetchall(self):
+        return [{"person_id": p, "mean_rating": r[0], "n_races": r[1],
+                 "year": r[2]}
+                for p, r in sorted(self.ratings.items())]
+
+
+def test_last_known_ratings_shape():
+    cur = RatingCursor({101: (128.4, 9, 2025), 102: (117.44, 6, 2024)})
+    out = predict._lastKnownRatings(cur, [102, 101, None, 101], "XC")
+    assert cur.asked == [101, 102], cur.asked      # deduped, sorted, no None
+    assert out[101] == {"rating": 128.4, "n_races": 9, "year": 2025}
+    # ! ONE DECIMAL, the same round() _squadsForYear already applies, so a
+    #   dropped runner and an active one are formatted alike.
+    assert out[102]["rating"] == 117.4, out[102]
+    print(f"  _lastKnownRatings: {out[101]} ....... OK")
+
+
+def test_empty_ids_do_not_query():
+    cur = RatingCursor({})
+    assert predict._lastKnownRatings(cur, [], "XC") == {}
+    assert predict._lastKnownRatings(cur, [None], "XC") == {}
+    assert cur.asked is None, "queried the database for nothing"
+    print("  no ids -> no query ................................ OK")
+
+
+def test_dropped_runners_carry_their_last_rating():
+    """The graduated/injured group had rating hardcoded to None."""
+    undo = _install(ORIGINALS, SQUADS, last_seen={
+        101: {"rating": 128.4, "n_races": 9, "year": 2025}})
+    try:
+        out = predict.meetField(None, meet_id=1, div_id=None, sport="XC",
+                                when="thisyear")
+    finally:
+        undo()
+
+    dropped = {d["person_id"]: d
+               for t in out["teams"] for d in t["dropped"]}
+    assert dropped[101]["rating"] == 128.4, dropped[101]
+    assert dropped[101]["rating_year"] == 2025, dropped[101]
+    # ! AND ABSENCE STAYS ABSENCE -- someone with no rating anywhere must
+    #   render blank, not zero.
+    assert dropped[102]["rating"] is None, dropped[102]
+    assert dropped[102]["rating_year"] is None, dropped[102]
+    print("  dropped carry rating 128.4 from 2025; unknown stays None . OK")
+
+
 if __name__ == "__main__":
     for fn in [test_cap_table,
                test_counts_ignore_schoolless_rows,
                test_meetField_caps_the_small_school,
                test_teamRosters_agrees_with_meetField,
-               test_a_school_that_brought_one_gets_one]:
+               test_a_school_that_brought_one_gets_one,
+               test_last_known_ratings_shape,
+               test_empty_ids_do_not_query,
+               test_dropped_runners_carry_their_last_rating]:
         fn()
     print("\nall squad-cap tests passed")

@@ -85,5 +85,22 @@ function ok(cond, msg) {
   console.log("  malformed input returns null ....................... OK");
 }
 
+/* 6. localISO names the VIEWER's calendar day, not UTC's. toISOString() was
+      proposing tomorrow for anyone west of Greenwich in the evening. */
+{
+  const mi = /function localISO\([\s\S]*?\n\}/.exec(SRC);
+  ok(!!mi, "localISO not found in predictions.js");
+  if (mi) {
+    const localISO = eval("(" + mi[0] + ")");
+    /* 23:30 on 1 Sep local time is already 2 Sep in UTC for UTC-7 hosts;
+       localISO must still say the 1st. */
+    const late = new Date(2026, 8, 1, 23, 30, 0);      // local constructor
+    ok(localISO(late) === "2026-09-01",
+       `late-evening 1 Sep gave ${localISO(late)}`);
+    ok(localISO(new Date(2026, 0, 5)) === "2026-01-05", "zero padding");
+    console.log(`  localISO keeps the local day (${localISO(late)}) ........ OK`);
+  }
+}
+
 if (failed) { console.error(`\n${failed} assertion(s) failed`); process.exit(1); }
 console.log("\nall predict-date tests passed");
