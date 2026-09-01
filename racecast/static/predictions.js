@@ -162,13 +162,23 @@ function mergedEdits(divs) {
  */
 const SESSION_KEY = "rc-predict-v1";
 
+/* ! THROTTLED, AND THE FIELDS ARE NOT IN IT. renderField calls this, and
+     renderField runs several times a load -- serialising every cached field
+     each time was most of the cost of picking a second division. The fields
+     are refetchable, so only the EDITS are stored and a restored session
+     loads them again. What is kept is small and constant-size. */
+let _saveTimer = null;
 function saveState() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(writeState, 250);
+}
+
+function writeState() {
   try {
     const edits = {};
     for (const [k, e] of _edits) {
-      edits[k] = { field: e.field, removed: [...e.removed],
-                   open: [...e.open], droppedTeams: e.droppedTeams,
-                   added: e.added };
+      edits[k] = { removed: [...e.removed], open: [...e.open],
+                   droppedTeams: e.droppedTeams, added: e.added };
     }
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       meet: state.meet, when: state.when, who: state.who,
@@ -201,7 +211,6 @@ function restoreState() {
   resetEdits();
   for (const [k, e] of Object.entries(saved.edits || {})) {
     const rec = editsFor(k === "" ? null : k);
-    rec.field = e.field || null;
     rec.removed = new Set(e.removed || []);
     rec.open = new Set(e.open || []);
     rec.droppedTeams = e.droppedTeams || [];
@@ -226,7 +235,9 @@ function restoreState() {
   if ($("t-course")) $("t-course").value = state.course || "";
 
   loadRaces();            // rebuilds the chips, and re-applies the mode
-  if (state.field) renderField();
+  /* The fields are not stored -- they are refetched, which is also what keeps
+     a restored session from showing a roster that has since changed. */
+  loadField();
 }
 
 /* Forget every division's edits -- a different meet is a different world. */
@@ -704,99 +715,58 @@ function defaultDate() {
  *  THE FIELD
  * ------------------------------------------------------------------ */
 
+/*
+ * ★ EVERY PICKED DIVISION IS LOADED, and the cost of that is why this is
+ *   shaped the way it is (owner, 2026-09-01: "insanely slowly if you press
+ *   more than one").
+ *
+ *   The first version awaited each division in turn and re-rendered after
+ *   every one, and renderField calls saveState, which serialises every cached
+ *   field to JSON. N divisions meant N sequential round trips and O(N)
+ *   full-state serialisations on top.
+ *
+ * ! FETCHED IN PARALLEL, RENDERED ONCE. The requests do not depend on each
+ *   other, so they go together and the page is rendered twice in total: once
+ *   showing "Loading", once with the answers.
+ */
 async function loadField() {
-  /* ★ EVERY PICKED DIVISION IS LOADED, not just the one being edited (owner,
-     2026-09-01). In separate mode each division is its own race with its own
-     block on screen, so all of them need a field -- picking a second division
-     and seeing no new teams was this. */
   const separate = state.raceMode === "separate" && state.divs.length > 0;
-  if (separate) {
-    const was = state.meet.div;
-    renderField();                       // blocks appear, saying Loading
-    for (const d of state.divs) {
-      state.meet.div = d;
-      if (!editsFor(d).field) await loadOneField();
-    }
-    state.meet.div = was;
-    renderField();
-    return;
+  const blocks = separate ? state.divs.slice() : [state.meet.div ?? null];
+
+  renderField();                         // the blocks appear, saying Loading
+
+  const missing = blocks.filter((d) => !editsFor(d).field);
+  if (missing.length) {
+    const got = await Promise.all(missing.map((d) => fetchField(d)));
+    missing.forEach((d, i) => {
+      if (got[i]) editsFor(d).field = got[i];
+    });
   }
-  return loadOneField();
+  renderField();
 }
 
 
-/* The field for state.meet.div alone. */
-async function loadOneField() {
-  /* ★ A DIVISION KEEPS ITS EDITS WHEN YOU COME BACK TO IT (issue #85).
-     Switching between D1 and D2 to set both lineups is the whole point; a
-     refetch on every switch would throw away the one you just finished. */
-  if (editsFor(state.meet.div).field) { renderField(); return; }
-
-  $("field-summary").textContent = "Loading the field\u2026";
-  $("field").innerHTML = "";
-  state.removed.clear();
-  state.added = [];
-
+/* One division's field. Returns the data, or null; renders nothing and
+   mutates no state, so the caller decides when the page changes. */
+async function fetchField(div) {
   const q = new URLSearchParams({ meet_id: state.meet.id,
                                   sport: state.meet.sport,
                                   when: state.when });
   // Omitted, not sent empty: URLSearchParams turns null into the STRING
   // "null", which the server would try to parse as a division id.
-  if (state.meet.div) q.set("div_id", state.meet.div);
+  if (div) q.set("div_id", div);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await res.json();
     if (!res.ok) {
-      $("field-summary").textContent = data.error || res.statusText;
-      return;
+      setStatus(data.error || res.statusText, true);
+      return null;
     }
-    state.field = data;
-    renderField();
+    return data;
   } catch (err) {
-    $("field-summary").textContent = "Could not load the field.";
+    setStatus("Could not load the field.", true);
+    return null;
   }
-}
-
-
-/*
- * ★ NON-RETURNERS ARE SHOWN, NOT HIDDEN. "Returner" here means "has raced this
- *   season", which drops a graduated senior automatically -- but it drops an
- *   injured athlete identically, and the data cannot tell them apart. Listing
- *   them greyed with an add button puts that judgement where it belongs.
- */
-/*
- * ★ ONE SECTION PER RACE (owner, 2026-09-01). Racing divisions separately
- *   means each has its own field to edit, so each gets its own WHO block --
- *   picking a second division used to switch the single block rather than
- *   add one, which read as "pressing more divs isn't adding teams".
- *   Combined is ONE race and gets ONE block.
- *
- * ! THE ACCESSORS ARE KEYED ON state.meet.div, so each block is rendered
- *   with that set to its own division. The click handlers do the same on the
- *   way in -- see the [data-div-block] lookup -- so every existing handler
- *   keeps working unchanged and edits land on the right division.
- */
-function renderField() {
-  saveState();            // every edit path lands here
-  const separate = state.raceMode === "separate" && state.divs.length > 0;
-  const blocks = separate ? state.divs.slice() : [null];
-  const was = state.meet.div;
-
-  $("field-summary").classList.toggle("hidden", separate);
-  $("field").innerHTML = blocks.map((d) =>
-    `<section class="div-field" data-div-block="${d === null ? "" : esc(d)}">     ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
-       <div class="fs"></div><div class="fg"></div>
-     </section>`).join("");
-
-  blocks.forEach((d, i) => {
-    state.meet.div = d;
-    const sec = $("field").querySelectorAll(".div-field")[i];
-    const sumEl = separate ? sec.querySelector(".fs") : $("field-summary");
-    const gridEl = sec.querySelector(".fg");
-    if (!state.field) { sumEl.textContent = "Loading\u2026"; return; }
-    renderFieldBlock(sumEl, gridEl);
-  });
-  state.meet.div = was;
 }
 
 

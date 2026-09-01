@@ -2567,7 +2567,14 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    gets unhidden it messes up the ui again". The row is always there; only
    its contents come and go. */
 .predict2 label.mc-coalesce.hidden { visibility: hidden; }
-.predict2 .mc-mode-hint { color: #888; font-style: italic; }
+/* ⚠ A FIXED TWO LINES. The hint text changes length with the mode -- "Scores
+   each picked division on its own." against "Scores 3 divisions as ONE race.
+   A school in two of them races as two teams, labelled by division." -- so it
+   wrapped to a different number of lines and the block jumped. Reserving the
+   taller of the two is what actually stops the jolt; the coalesce row was
+   only half of it. */
+.predict2 .mc-mode-hint { color: #888; font-style: italic;
+                          min-height: 2.4em; }
 
 /* ★ ONE SECTION PER RACE in the field editor (owner, 2026-09-01). Racing
    divisions separately means each has its own field to edit, so each gets a
