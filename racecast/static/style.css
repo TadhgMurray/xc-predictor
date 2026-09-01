@@ -131,11 +131,26 @@ p  { color: rgb(82, 82, 82); }
    280px strip. */
 @media (max-width: 900px) {
     .page-layout { flex-direction: column; }
+
+    /* ★ ORDER ON A PHONE: overall graph, then the panels, then the history
+       (owner, 2026-09-01). Stacking alone put the whole season history --
+       every race of every year -- between the top graph and the bests panel,
+       so the summary of a career sat below the detail of it.
+
+       display: contents promotes .main-col's own children (the overall chart
+       fold, and one .sport-section per sport) to be flex items of
+       .page-layout, so the sidebar can be ordered BETWEEN them. They are in
+       different parents otherwise and `order` could never interleave them.
+       ! .main-col carries no box of its own -- flex: 1 and min-width: 0 are
+         layout, not appearance -- so losing it costs nothing here. */
+    .main-col                  { display: contents; }
+    .main-col > .chart-fold    { order: 1; }
+    .main-col > .sport-section { order: 3; }
     /* ! flex, NOT just width. .sidebar is redefined further up as
          `flex: 0 0 340px` -- don't grow, don't shrink -- which overrode the
          280px and made the strip even wider. The shorthand here resets the
          basis as well as the growth. */
-    .sidebar     { width: auto; flex: 1 1 auto; }
+    .sidebar     { order: 2; width: auto; flex: 1 1 auto; }
     /* Same trap one level down, and sticky has nothing to stick to once the
        column is the whole page. */
     .chart-col   { flex: 1 1 auto; position: static; }

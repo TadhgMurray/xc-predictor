@@ -133,21 +133,48 @@ def test_summary_is_hidden_on_desktop_and_shown_when_narrow():
     print("  summary hidden on desktop, shown at <=700px ....... OK")
 
 
-def test_js_and_css_agree_on_the_breakpoint():
-    """If one moves and the other does not, the summary appears while the
-    fold is still forced open -- a control that does nothing."""
+def test_nothing_js_side_closes_the_folds():
+    """★ THE FOLDS OPEN ON EVERY WIDTH (owner, 2026-09-01).
+
+    They were auto-closed below 700px to get a result table near the top of a
+    phone -- which was solving the wrong problem. The page was unusable
+    because .page-layout never stacked; once it does, and once the sidebar is
+    ordered between the top graph and the season history, the graphs are
+    wanted open. `open` is in the markup, so there is nothing to set on load.
+    """
     js = open(JS, encoding="utf-8").read()
-    m = re.search(r'matchMedia\("\(max-width:\s*(\d+)px\)"\)', js)
-    assert m, "initChartFold does not use matchMedia on a max-width"
-    assert int(m.group(1)) == 700, f"JS uses {m.group(1)}px, CSS uses 700px"
-    print(f"  JS matchMedia {m.group(1)}px == CSS breakpoint ......... OK")
+    assert "initChartFold" not in js, \
+        "initChartFold is back -- the folds should not be closed on load"
+    assert "d.open" not in js, "something is still setting a fold's open state"
+    print("  no JS closes a fold on load ....................... OK")
 
 
-def test_the_fold_closes_when_narrow_not_the_other_way_round():
-    js = open(JS, encoding="utf-8").read()
-    assert "d.open = !isNarrow" in js, \
-        "the fold must CLOSE when narrow -- check the sense of the test"
-    print("  narrow => closed (sense of the test is right) ...... OK")
+def test_the_summary_is_still_a_control_when_narrow():
+    """Open by default, but collapsible by hand on a phone."""
+    css = open(CSS, encoding="utf-8").read()
+    b = _blocks(css)
+    assert re.search(r'summary[^{]*\{[^}]*display:\s*block', b[700]), \
+        "the summary is no longer a control at <=700px"
+    print("  the summary is still tappable at <=700px .......... OK")
+
+
+def test_the_phone_order_puts_history_last():
+    """Stacking alone put every race of every year between the top graph and
+    the bests panel -- the detail of a career above the summary of it."""
+    css = open(STYLE, encoding="utf-8").read()
+    b = _blocks(css)[900]
+    assert re.search(r'\.main-col\s*\{[^}]*display:\s*contents', b), \
+        ".main-col is not promoted, so order cannot interleave the sidebar"
+    def order_of(sel):
+        m = re.search(re.escape(sel) + r'\s*\{[^}]*order:\s*(\d+)', b)
+        return int(m.group(1)) if m else None
+    chart = order_of(".main-col > .chart-fold")
+    side = order_of(".sidebar")
+    hist = order_of(".main-col > .sport-section")
+    assert None not in (chart, side, hist), (chart, side, hist)
+    assert chart < side < hist, f"graph {chart}, sidebar {side}, history {hist}"
+    print(f"  phone order: graph {chart} < sidebar {side} < history "
+          f"{hist} .... OK")
 
 
 # ------------------------------------------------------------------ #
@@ -195,8 +222,9 @@ if __name__ == "__main__":
                test_breakpoints_reuse_the_sites_narrow_line,
                test_every_wide_chart_is_folded_and_open_by_default,
                test_summary_is_hidden_on_desktop_and_shown_when_narrow,
-               test_js_and_css_agree_on_the_breakpoint,
-               test_the_fold_closes_when_narrow_not_the_other_way_round,
+               test_nothing_js_side_closes_the_folds,
+               test_the_summary_is_still_a_control_when_narrow,
+               test_the_phone_order_puts_history_last,
                test_the_page_layout_stacks_on_narrow_screens,
                test_the_sidebar_gives_up_its_fixed_width]:
         fn()

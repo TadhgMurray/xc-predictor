@@ -741,42 +741,21 @@ function initCharts() {
 }
 
 /* ------------------------------------------------------------------ *
- *  THE CHART FOLD -- narrow screens only
+ *  THE CHART FOLD -- a control, not a default
  * ------------------------------------------------------------------ */
 
 /*
- * ★ CHARTS SIT ABOVE EACH SPORT'S RESULTS, so on a phone the first result
- *   table was two screens down: chart, plus the header, rank line, sport nav
- *   and heading above it. Shrinking --chart-h helped and was not enough.
+ * ★ THE FOLDS OPEN, ON EVERY WIDTH (owner, 2026-09-01). They used to be
+ *   closed below 700px, to get a result table near the top of a phone. That
+ *   was solving the wrong problem: the page was unusable because .page-layout
+ *   never stacked, and once it did -- and once the sidebar is ordered between
+ *   the top graph and the season history -- the graphs are wanted open.
  *
- * ★ WHY JS AND NOT CSS. A <details> cannot be forced open by a stylesheet, so
- *   the desktop default has to live in the markup (`open`) and the narrow
- *   case has to be applied here. Consequence worth keeping: with the script
- *   dead the page degrades to exactly its old behaviour -- every fold open --
- *   rather than to charts nobody can reach.
- *
- * ! 700px MATCHES the stylesheet's own narrow breakpoint. If one moves, both
- *   move, or the summary appears while the fold is still forced open.
- * ! NOTHING IS DRAWN INTO A CLOSED FOLD, and that is fine: a collapsed
- *   <details> has no layout box, so the ResizeObserver above fires the moment
- *   it is expanded and the chart renders then -- the same path that already
- *   covers a hidden tab.
+ * ! THE SUMMARY STAYS a control below 700px, so a chart can still be
+ *   collapsed by hand. `open` lives in the markup, so with no JS at all every
+ *   fold is open, which is now also the intended state rather than a
+ *   fallback -- there is nothing left for this file to set on load.
  */
-function initChartFold() {
-  const folds = document.querySelectorAll("details.chart-fold");
-  if (!folds.length || !window.matchMedia) return;
-
-  const narrow = window.matchMedia("(max-width: 700px)");
-  const apply = (isNarrow) => folds.forEach((d) => { d.open = !isNarrow; });
-
-  apply(narrow.matches);
-  if (narrow.addEventListener) {
-    narrow.addEventListener("change", (e) => apply(e.matches));
-  } else if (narrow.addListener) {
-    narrow.addListener((e) => apply(e.matches));   /* older Safari */
-  }
-}
 
 document.addEventListener("DOMContentLoaded", initCharts);
 document.addEventListener("DOMContentLoaded", initCompare);
-document.addEventListener("DOMContentLoaded", initChartFold);
