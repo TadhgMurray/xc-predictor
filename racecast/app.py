@@ -3984,6 +3984,7 @@ def search_api():
         params["kind"] = kind
 
     order_tail = _searchOrder()
+    order_head = _searchOrderHead()
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -4024,24 +4025,7 @@ def search_api():
                 --
                 --   sort_count carries races for an athlete and athletes for a
                 --   school, so one column serves both.
-                -- ★ THE WHOLE TYPED PHRASE, AT THE START, BEATS EVERYTHING
-                --   (issue #97). Without this the top key was word_score,
-                --   which every row matching the same tokens TIES on -- so
-                --   the real tiebreak was sort_count, and a popular namesake
-                --   outranked the exact row. Typing MORE of a name could then
-                --   push it past the LIMIT and out of the list, which is the
-                --   reported "typing the full name removes a person, typing
-                --   it minus a letter does not".
-                --
-                -- ⚠ MEETS ARE UNAFFECTED, deliberately. They are stored with
-                --   the year in front ("2026 arcadia invitational"), so this
-                --   is 0 for every one of them and they fall through to
-                --   exactly the ranking they had.
-                -- ! t_phrase, NOT {p}_phrase: this is the QUERY f-string,
-                --   not _ORDER_TAIL's .format(). Both callers take
-                --   _searchTerms' default prefix.
-                ORDER  BY (CASE WHEN search_text LIKE %(t_phrase)s
-                                THEN 1 ELSE 0 END) DESC,
+                ORDER  BY {order_head}
                           ({word_score}) DESC,
                           {order_tail}
                 LIMIT  %(lim)s
@@ -4174,10 +4158,30 @@ def _searchTerms(raw, prefix="t"):
 #   arcadia invitational"), so a phrase-prefix boost would resurrect the
 #   "a 2009 meet named without a year outranks every recent edition"
 #   bug this ranking already fixed once.
-_ORDER_TAIL = """
+# ★ THE WHOLE TYPED PHRASE, AT THE START, ABOVE word_score (issue #97).
+#
+#   ⚠ THIS KEY ALREADY EXISTED -- it was the first line of _ORDER_TAIL, which
+#     is BELOW word_score. That is the whole bug: every row matching the same
+#     tokens TIES on word_score, so the phrase key never got to decide, and
+#     the real tiebreak was sort_count. A popular namesake outranked the exact
+#     row, and typing MORE of a name could push it past the LIMIT.
+#
+#   ⚠ AND MY FIRST FIX ADDED A SECOND COPY OF IT rather than moving this one,
+#     so every row paid for the same LIKE twice and the searches got slower.
+#     Moved, not duplicated: the expression count is exactly what it was
+#     before #97 was touched at all.
+#
+#   ! MEETS ARE EXEMPT, as they always were here. They are stored with the
+#     year in front ("2026 arcadia invitational"), so an anchored match is 0
+#     for every one of them; leaving them in would rank on a key none of them
+#     can win.
+_ORDER_HEAD = """
           (CASE WHEN kind <> 'meet'
                 AND search_text LIKE %({p}_phrase)s THEN 1 ELSE 0 END)
               DESC,
+"""
+
+_ORDER_TAIL = """
           (CASE WHEN kind = 'meet' THEN sort_year  ELSE sort_count END)
               DESC NULLS LAST,
           (CASE WHEN kind = 'meet' THEN sort_count ELSE sort_year  END)
@@ -4190,6 +4194,12 @@ _ORDER_TAIL = """
 def _searchOrder(prefix="t"):
     """The ranking below word_score. Both surfaces use this, unmodified."""
     return _ORDER_TAIL.format(p=prefix)
+
+
+def _searchOrderHead(prefix="t"):
+    """The ranking ABOVE word_score: an exact prefix on the whole phrase.
+    Both surfaces use this too -- they have drifted apart before."""
+    return _ORDER_HEAD.format(p=prefix)
 
 
 def _parse_year(q):
@@ -4240,6 +4250,7 @@ def _run_search(q, kind, year_filter, offset):
         return [], {}, []
     where, params, word_score = terms
     order_tail = _searchOrder()
+    order_head = _searchOrderHead()
     # ! CAPTURED BEFORE kind AND year ARE APPENDED. The tab counts must ignore
     #   the kind filter (that is what makes the tabs switchable) and the year
     #   list must ignore the year filter (or picking a year collapses the
@@ -4275,24 +4286,7 @@ def _run_search(q, kind, year_filter, offset):
                 --   is not. It also fixes the page's own key, which sorted
                 --   EVERYTHING by year -- right for meets, wrong for athletes
                 --   and schools, where the question is how much they raced.
-                -- ★ THE WHOLE TYPED PHRASE, AT THE START, BEATS EVERYTHING
-                --   (issue #97). Without this the top key was word_score,
-                --   which every row matching the same tokens TIES on -- so
-                --   the real tiebreak was sort_count, and a popular namesake
-                --   outranked the exact row. Typing MORE of a name could then
-                --   push it past the LIMIT and out of the list, which is the
-                --   reported "typing the full name removes a person, typing
-                --   it minus a letter does not".
-                --
-                -- ⚠ MEETS ARE UNAFFECTED, deliberately. They are stored with
-                --   the year in front ("2026 arcadia invitational"), so this
-                --   is 0 for every one of them and they fall through to
-                --   exactly the ranking they had.
-                -- ! t_phrase, NOT {p}_phrase: this is the QUERY f-string,
-                --   not _ORDER_TAIL's .format(). Both callers take
-                --   _searchTerms' default prefix.
-                ORDER  BY (CASE WHEN search_text LIKE %(t_phrase)s
-                                THEN 1 ELSE 0 END) DESC,
+                ORDER  BY {order_head}
                           ({word_score}) DESC,
                           {order_tail}
                 LIMIT  %(lim)s OFFSET %(off)s
@@ -5116,19 +5110,22 @@ def api_predict_athletes():
                     -- DISTINCT ON must order by its key first; this only
                     -- picks the athlete's most recent season.
                     ORDER  BY s.person_id, s.year DESC
+                    -- ⚠ THE LIMIT STAYS INSIDE, AND MOVING IT OUT WAS A BAD
+                    --   TRADE. Outside, the DISTINCT ON had to materialise
+                    --   EVERY athlete-season matching the name before
+                    --   anything could be cut -- and the name match is an
+                    --   unindexed ILIKE '%tok%' until idx_athletes_name_trgm
+                    --   exists, so a common name scanned the join twice
+                    --   over. Inside, the scan stops. Ranking a bounded set
+                    --   is worth having; paying an unbounded scan for it is
+                    --   not.
+                    LIMIT  200
                 ) x
-                -- ⚠ THE LIMIT USED TO SIT INSIDE, so it kept the 40 LOWEST
-                --   person_ids that matched -- an arbitrary set with nothing
-                --   to do with the query. Adding a letter changed which
-                --   arbitrary 40 came back and could drop the very person
-                --   being typed: the reported "typing the full name removes
-                --   them, one letter short does not".
-                --
-                -- ! RANKED FIRST, THEN CUT. A name that STARTS with what was
-                --   typed wins outright; ties go to the better athlete, who
-                --   is who a bare name most often means. Narrowing the query
-                --   can now only remove non-matches, never reorder someone
-                --   out.
+                -- ! RANKED WITHIN WHAT CAME BACK. A name that STARTS with
+                --   what was typed wins outright; ties go to the better
+                --   athlete, who is who a bare name most often means. 200 to
+                --   rank rather than 40, so a common surname has room for
+                --   the right person to be in the set at all.
                 ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s
                                 THEN 0 ELSE 1 END),
                           mean_rating DESC NULLS LAST,

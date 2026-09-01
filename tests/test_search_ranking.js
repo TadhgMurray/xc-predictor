@@ -23,10 +23,19 @@ const ok = (c, m) => { if (!c) { console.error("  FAIL " + m); failed++; } };
 {
   const py = read("racecast", "app.py");
   const hits = py.match(
-    /ORDER {2}BY \(CASE WHEN search_text LIKE %\(t_phrase\)s\n\s+THEN 1 ELSE 0 END\) DESC,\n\s+\(\{word_score\}\) DESC/g) || [];
+    /ORDER {2}BY \{order_head\}\n\s+\(\{word_score\}\) DESC/g) || [];
   ok(hits.length === 2,
      `both search surfaces rank an exact prefix first (found ${hits.length}` +
      ` of 2) -- the dropdown and the results page drifted apart once before`);
+  /* ⚠ AND EXACTLY ONE COPY OF THE KEY. The first version of this fix ADDED a
+       phrase LIKE above word_score while an identical one still sat at the
+       top of _ORDER_TAIL, so every row paid for the same comparison twice
+       and every search got slower. It is MOVED now, not duplicated. */
+  ok((py.match(/_phrase\)s/g) || []).length === 1,
+     "the phrase comparison appears once, in _ORDER_HEAD -- a second copy "
+     + "is pure cost on every row of every search");
+  ok(/_ORDER_HEAD = /.test(py) && /def _searchOrderHead/.test(py),
+     "and both surfaces read it from one place");
   ok(/params\[f"\{prefix\}_phrase"\] = " "\.join\(tokens\) \+ "%"/.test(py),
      "and the phrase parameter is still the whole typed query, anchored");
 }
@@ -43,14 +52,18 @@ const ok = (c, m) => { if (!c) { console.error("  FAIL " + m); failed++; } };
      "a name that starts with what was typed wins outright");
   ok(/mean_rating DESC NULLS LAST/.test(body),
      "ties go to the better athlete");
+  /* ⚠ AND THE INNER SCAN IS STILL BOUNDED. Ranking a set is worth having;
+       paying an UNBOUNDED scan for it is not. With no LIMIT inside, the
+       DISTINCT ON had to materialise every athlete-season matching the name
+       before anything could be cut -- over an unindexed ILIKE '%tok%'. */
+  ok(/ORDER {2}BY s\.person_id, s\.year DESC\n\s+--[\s\S]*?LIMIT {2}200/
+       .test(body),
+     "the inner query keeps a LIMIT, so the scan can stop");
   const order = body.lastIndexOf("ORDER  BY (CASE WHEN lower(name)");
   const limit = body.lastIndexOf("LIMIT  40");
-  ok(order > 0 && limit > order,
-     "the ranking comes BEFORE the limit -- with the limit inside the "
-     + "subquery it kept the 40 lowest person_ids, an arbitrary set");
+  ok(order > 0 && limit > order, "and the outer ranking cuts to 40 after it");
   ok(!/rows\.sort\(key=lambda/.test(body),
-     "and the Python re-sort is gone: sorting after a cut cannot recover "
-     + "rows the cut removed");
+     "the Python re-sort is gone: the ranking is in the query");
   ok(/params\["prefix"\] = q\.lower\(\) \+ "%"/.test(body),
      "the prefix parameter is the typed query");
 }

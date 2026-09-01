@@ -592,15 +592,11 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
       return;
     }
     try {
-      /* ⚠ THE DEFAULT LIMIT IS 10, AND THAT IS A SHORT LIST FOR A NAME MANY
-           SCHOOLS SHARE. search_index splits a school into one row per state,
-           so "De La Salle" is a dozen rows before any other school matches --
-           and the ordering is by athlete count, not by how well the name fits.
-           A row that was visible on a shorter query can be pushed off the end
-           by a longer one, which is what "it shows up until I type the e"
-           looks like. Asking for more costs one indexed scan and the box only
-           ever renders eight. */
-      const res = await fetch(`/search/api?kind=${kind}&limit=30&q=`
+      /* ! BACK TO THE DEFAULT LIMIT. This asked for 30 while "a row falls
+           past the LIMIT" was thought to be the cause of #97; the cause was
+           the RANKING, which is fixed at the source, so a longer list buys
+           nothing and costs three times the rows on every keystroke. */
+      const res = await fetch(`/search/api?kind=${kind}&q=`
                               + encodeURIComponent(q));
       const rows = (await res.json() || []).filter((r) => r.kind === kind);
       if (!live()) return;
