@@ -295,6 +295,57 @@ def prepareXcTfrrsDistTemp(conn):
           f"(built once; these are absent from `meets` entirely)")
 
 
+# Purpose:   the TF events the engine deliberately declines to rate, so their
+#            rows can still reach the TIME-ranked boards. Issue #46 (and #42).
+# Output:    tmp_sprint_events(event_short), one row per sprint event name.
+# Detail:
+#   ★ THE SPRINT BOARDS WERE EMPTY BY CONSTRUCTION, not by a bug in the board.
+#     rankings.PR_DISTANCES has offered 55 through 600 all along, but the
+#     candidate rows come from ranking_results, which this script filled only
+#     from RATED rows -- and speed_ratings_db._tfQuery rates nothing under
+#     800m. The page was working perfectly on an empty input.
+#
+#   ⚠ AND THE OBVIOUS FIX IS WRONG. Lowering the engine's 800m gate would
+#     apply the distance law outside its fitted domain: (D/5000)^b turns an
+#     11-second 100m into a ~693-second "5K", which lands inside the sanity
+#     band and is complete garbage.
+#
+#   ★ SO THE PR BOARD RANKS THE CLOCK, AND NEVER NEEDED A RATING. These rows
+#     reach ranking_results with speed_rating NULL: present for the
+#     time-ranked boards, absent from every rating board, which now excludes
+#     NULL explicitly (rankings.getPerformances) rather than by luck.
+#
+#   ! RESOLVED IN PYTHON, ONCE, BECAUSE THE MAPPING IS PYTHON. What a distance
+#     an event name means is event_parse.distanceFromEventShort's answer and
+#     nobody else's; reimplementing it as a SQL LIKE would be a second answer
+#     that drifts. results_tf has few DISTINCT event_short values relative to
+#     its rows, so one pass over them is cheap and the join is then a hash.
+_SPRINT_MAX_DISTANCE = 800.0       # the engine's floor; see _tfQuery
+
+
+def prepareSprintEvents(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT event_short FROM results_tf "
+                    "WHERE event_short IS NOT NULL")
+        names = [r[0] for r in cur.fetchall()]
+        sprints = []
+        for ev in names:
+            d = _tfDistance(ev)
+            if d is not None and 0 < float(d) < _SPRINT_MAX_DISTANCE:
+                sprints.append(ev)
+        cur.execute("DROP TABLE IF EXISTS tmp_sprint_events")
+        cur.execute("CREATE TEMP TABLE tmp_sprint_events (event_short text)")
+        if sprints:
+            psycopg2.extras.execute_values(
+                cur, "INSERT INTO tmp_sprint_events (event_short) VALUES %s",
+                [(e,) for e in sprints], page_size=1000)
+        cur.execute("CREATE UNIQUE INDEX ON tmp_sprint_events (event_short)")
+        cur.execute("ANALYZE tmp_sprint_events")
+    conn.commit()
+    print(f"  sprint events (<{_SPRINT_MAX_DISTANCE:.0f}m, rated by nobody): "
+          f"{len(sprints):,} of {len(names):,} event names")
+
+
 def prepareTfStateTemp(conn):
     """One pass over meets_tf, so the TF query stops paying for its EVENT axis.
 
@@ -556,7 +607,15 @@ _SQL = {
               AND m.div_id  = r.div_id
               AND m.source  = r.source
         {_GENDER_JOIN}{_seasonLevelJoin("TF")}{_gateJoins("TF")}
-        WHERE r.speed_rating IS NOT NULL
+        LEFT JOIN tmp_sprint_events se ON se.event_short = r.event_short
+        -- ★ RATED, OR A SPRINT (issue #46). The engine rates nothing under
+        --   800m on purpose, so a sprint has no speed_rating and never
+        --   reached the boards -- which is why every sprint PR board was
+        --   empty. It comes through unrated instead: the PR boards rank a
+        --   CLOCK and never needed a rating, and every rating board excludes
+        --   NULL. Nothing else unrated is admitted; se.event_short is the
+        --   whitelist.
+        WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL)
           AND r.person_id IS NOT NULL
           AND COALESCE(r.is_relay, 0) = 0
           AND COALESCE(r.is_field, 0) = 0
@@ -786,11 +845,11 @@ HS_XC_DISTANCE_TOL = 1.05          # 5250m: past every 5k, short of every 6k
 _HS_POOLS = ("hs_m", "hs_f")
 
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0, "outside_band": 0,
+                "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
-                "outside_pool": 0, "outside_band": 0,
+                "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0}}
 
@@ -1008,6 +1067,27 @@ def prepareRow(row, sport):
     else:
         _GATE[sport]["checked"] += 1
 
+    # ★ #46: A TIME-ONLY ROW. The engine rates nothing under 800m, so a sprint
+    #   arrives unrated and every rail below is about a rating it does not
+    #   have. It is published for the TIME-ranked boards and excluded from
+    #   every rating board by their own NULL filter.
+    #
+    # ⚠ NARROW ON PURPOSE. The SQL whitelist (tmp_sprint_events) is what lets
+    #   an unrated row through at all; this re-derives the distance and checks
+    #   it independently, so a widened join can never quietly admit the rest
+    #   of the unrated corpus -- rows with no pool, bad data, a failed solve.
+    #   Two locks, because the failure here is silent and site-wide.
+    if row.speed_rating is None:
+        if sport != "TF" or distance is None \
+                or not (0 < float(distance) < _SPRINT_MAX_DISTANCE):
+            return None
+        _GATE[sport]["time_only"] += 1
+        return (sport, row.result_id, row.person_id, pool, None,
+                row.date, season, row.state, school, row.grade,
+                row.meet_id, row.div_id, row.canon_meet_id,
+                row.time_seconds, distance, row.event_id,
+                *_unitsOf(school, row.state))
+
     rating = float(row.speed_rating)
     if not (_RATING_MIN <= rating <= _RATING_MAX):
         return None
@@ -1196,6 +1276,10 @@ def buildSport(conn, sport, since, stats):
               f"over {HS_XC_MAX_DISTANCE * HS_XC_DISTANCE_TOL:.0f}m rated but "
               f"not ranked; {g['hs_no_distance']:,} HS races carry no "
               f"distance and were left on the boards")
+    if g["time_only"]:
+        print(f"    time-only (#46): {g['time_only']:,} sprint races "
+              f"published with no rating -- they rank on the clock, and "
+              f"every rating board excludes them")
     if g["wheelchair"]:
         print(f"    wheelchair: {g['wheelchair']:,} races dropped by event "
               f"title (belt; the backfill nuke removes them at the next "
@@ -1258,6 +1342,16 @@ def createShadow(conn, name, like):
         cur.execute(f"""
             ALTER TABLE IF EXISTS {like}
             ADD COLUMN IF NOT EXISTS event_id bigint
+        """)
+        # ★ #46: A TIME-ONLY ROW HAS NO RATING. Idempotent, and separate from
+        #   the ADD COLUMNs above because it is a constraint change on a
+        #   column that has always existed -- an older live table was built
+        #   when every row was rated, and CREATE TABLE ... LIKE INCLUDING
+        #   CONSTRAINTS would copy the NOT NULL onto the shadow and fail the
+        #   COPY on the first sprint.
+        cur.execute(f"""
+            ALTER TABLE IF EXISTS {like}
+            ALTER COLUMN speed_rating DROP NOT NULL
         """)
         # Same idempotent migration for the unit columns. text, because a
         # league is a name and a division is "DI" -- neither is a number.
@@ -1703,6 +1797,12 @@ SELECT person_id, pool, sport, year,
        mode() WITHIN GROUP (ORDER BY school),
        mode() WITHIN GROUP (ORDER BY grade)
 FROM {{load_table}} base
+-- ⚠ RATED ROWS ONLY, SINCE #46. ranking_results now also carries time-only
+--   sprint rows. Without this line count(*) would inflate n_races with races
+--   that have no rating, and -- worse -- decayed_rating's denominator
+--   sum(power(...)) counts every row while its numerator skips the NULLs, so
+--   every sprinter's decayed rating would be silently diluted toward zero.
+WHERE speed_rating IS NOT NULL
 GROUP BY person_id, pool, sport, year;
 """
 
@@ -1821,10 +1921,11 @@ def main():
         #   workers; the streaming cursors cannot use workers at all, which is
         #   a property of cursors rather than of this query. See dbfast.
         tuneSession(conn)
-        with phase("temp indexes (gender, tfrrs distance, TF state)"):
+        with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
             prepareGenderTemp(conn)
             prepareXcTfrrsDistTemp(conn)
             prepareTfStateTemp(conn)
+            prepareSprintEvents(conn)
 
         with phase("create shadow"):
             createShadow(conn, _LOAD_TABLE, "ranking_results")

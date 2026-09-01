@@ -730,7 +730,10 @@ def getPerformanceRankings(cur, f):
         "offset": f["offset"],
     }
     where = _whereClauses(f, params, with_dates=True)
-    order = _orderBy(f, _SORTS_PERFORMANCE, "p.speed_rating DESC", "p.result_id")
+    # NULLS LAST for the same reason as the candidate filter below: a
+    # user-chosen sort must not be able to float unrated rows to the top.
+    order = _orderBy(f, _SORTS_PERFORMANCE,
+                     "p.speed_rating DESC NULLS LAST", "p.result_id")
 
     cur.execute(f"""
         WITH candidates AS (
@@ -739,7 +742,17 @@ def getPerformanceRankings(cur, f):
                    meet_id, div_id, canon_meet_id, time_seconds, event_id,
                    distance
             FROM   ranking_results
-            WHERE  TRUE {where}
+            -- ⚠ NULLS SORT FIRST UNDER `DESC`, so this is not optional and
+            --   it is not belt-and-braces. Since #46, ranking_results also
+            --   carries TIME-ONLY rows -- sprints, which the engine
+            --   deliberately does not rate -- with speed_rating NULL. Without
+            --   this line every one of them would sort ABOVE the best rated
+            --   race in the corpus and the top of every rating board would be
+            --   blank rows.
+            -- ! EXCLUDED IN THE CANDIDATE SET, not filtered afterwards, for
+            --   the same reason the PR board excludes its DNF sentinel here:
+            --   a later filter still lets them consume the LIMIT.
+            WHERE  speed_rating IS NOT NULL {where}
             ORDER  BY speed_rating DESC
             LIMIT  %(cand)s
         ),
