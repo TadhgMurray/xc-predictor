@@ -2199,6 +2199,20 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* The Show: control now lives in the header rather than in each race block,
    so it needs to sit on the header's baseline and keep its own spacing. */
 .predict2 .field-head .viewsel { margin-left: auto; white-space: nowrap; }
+/* ★ THE CHOSEN ATHLETES ARE A TABLE, not chips: a chip carries a name and
+   nothing else, so two runners with one name were indistinguishable and
+   there was no way to check the pick before predicting. Same columns the
+   team rosters show -- who, where, how fast. */
+.predict2 .chosen-tbl { width: 100%; max-width: 34rem; border-collapse: collapse;
+                        font-size: 0.86rem; margin-top: 0.6rem; }
+.predict2 .chosen-tbl th { text-align: left; font-weight: 600; color: #6b7280;
+                           font-size: 0.76rem; text-transform: uppercase;
+                           letter-spacing: 0.03em; padding: 0 0.5rem 0.3rem 0;
+                           border-bottom: 1px solid #e5e7eb; }
+.predict2 .chosen-tbl td { padding: 0.3rem 0.5rem 0.3rem 0;
+                           border-bottom: 1px solid #f1f1ee; }
+.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num { text-align: right; }
+.predict2 .chosen-tbl td:last-child { width: 1.6rem; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }
@@ -2492,6 +2506,20 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 /* The Show: control now lives in the header rather than in each race block,
    so it needs to sit on the header's baseline and keep its own spacing. */
 .predict2 .field-head .viewsel { margin-left: auto; white-space: nowrap; }
+/* ★ THE CHOSEN ATHLETES ARE A TABLE, not chips: a chip carries a name and
+   nothing else, so two runners with one name were indistinguishable and
+   there was no way to check the pick before predicting. Same columns the
+   team rosters show -- who, where, how fast. */
+.predict2 .chosen-tbl { width: 100%; max-width: 34rem; border-collapse: collapse;
+                        font-size: 0.86rem; margin-top: 0.6rem; }
+.predict2 .chosen-tbl th { text-align: left; font-weight: 600; color: #6b7280;
+                           font-size: 0.76rem; text-transform: uppercase;
+                           letter-spacing: 0.03em; padding: 0 0.5rem 0.3rem 0;
+                           border-bottom: 1px solid #e5e7eb; }
+.predict2 .chosen-tbl td { padding: 0.3rem 0.5rem 0.3rem 0;
+                           border-bottom: 1px solid #f1f1ee; }
+.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num { text-align: right; }
+.predict2 .chosen-tbl td:last-child { width: 1.6rem; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }

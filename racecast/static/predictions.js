@@ -33,9 +33,10 @@ const state = {
   // ★ OFF BY DEFAULT. Two entries is what actually happened on the day;
   //   merging them is the what-if, and a what-if should be asked for.
   coalesce: false,
-  // How much of the field is on screen: nothing, the team cards, or every
-  // roster open. `open` still tracks individual cards the user toggled.
-  view: "teams",
+  // ⚠ `view` IS NOT HERE. How much of a field is on screen is PER RACE now,
+  //   so it lives in each division's edit record and reaches this object
+  //   through an accessor, like field/open/added. A plain key here would
+  //   shadow that accessor and silently make it global again.
   // ★ null MEANS THE MEET'S OWN COURSE. There is no "unset" to represent --
   //   clearing the box is how you go back, so absence is the default rather
   //   than a sentinel the query has to strip out.
@@ -137,7 +138,10 @@ function editsFor(div) {
                     // ★ REMOVED TEAMS ARE KEPT, NOT DISCARDED. A destructive
                     //   action with no way back makes people hesitate over
                     //   every click; holding the team means undo is free.
-                    droppedTeams: [], added: [] });
+                    droppedTeams: [], added: [],
+                    // How much of THIS race is on screen: nothing, the team
+                    // cards, or every roster open.
+                    view: "teams" });
   }
   return _edits.get(k);
 }
@@ -197,13 +201,14 @@ function writeState() {
     const edits = {};
     for (const [k, e] of _edits) {
       edits[k] = { removed: [...e.removed], open: [...e.open],
-                   droppedTeams: e.droppedTeams, added: e.added };
+                   droppedTeams: e.droppedTeams, added: e.added,
+                   view: e.view };
     }
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       meet: state.meet, when: state.when, who: state.who,
       divs: state.divs, raceMode: state.raceMode,
       coalesce: state.coalesce, course: state.course,
-      athletes: state.athletes, view: state.view,
+      athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
       labels: [..._divLabels], edits,
     }));
@@ -225,7 +230,6 @@ function restoreState() {
   state.coalesce = !!saved.coalesce;
   state.course = saved.course || null;
   state.athletes = saved.athletes || [];
-  state.view = saved.view || "teams";
 
   resetEdits();
   for (const [k, e] of Object.entries(saved.edits || {})) {
@@ -234,6 +238,7 @@ function restoreState() {
     rec.open = new Set(e.open || []);
     rec.droppedTeams = e.droppedTeams || [];
     rec.added = e.added || [];
+    rec.view = e.view || "teams";
   }
   _divLabels.clear();
   for (const [k, v] of (saved.labels || [])) _divLabels.set(k, v);
@@ -271,6 +276,15 @@ Object.defineProperties(state, {
                   set: (v) => { editsFor(state.meet && state.meet.div).droppedTeams = v; } },
   added:        { get: () => editsFor(state.meet && state.meet.div).added,
                   set: (v) => { editsFor(state.meet && state.meet.div).added = v; } },
+  /* ★ PER RACE, WITH AN OVERALL CONTROL ON TOP (owner, 2026-09-01: "there
+   *   should be one for each division and also overall"). It was a single
+   *   global value, so "Rosters" on one division opened all of them and
+   *   there was no way to read one race's teams with another shut. Each
+   *   block owns its view; the header's control writes to every block.
+   * ⚠ AND THERE MUST BE NO PLAIN `view` KEY on state -- it would shadow this
+   *   accessor and silently make the setting global again. */
+  view:         { get: () => editsFor(state.meet && state.meet.div).view,
+                  set: (v) => { editsFor(state.meet && state.meet.div).view = v; } },
 });
 
 
@@ -319,13 +333,27 @@ function makePicker(inputId, boxId, kind, render, onPick, keepValue) {
  *   which means the box is markup renderField creates and destroys, so it
  *   cannot be addressed by a fixed id.
  */
-function bindPicker(input, box, kind, render, onPick, keepValue) {
+function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
   if (!input || !box) return;
+  opts = opts || {};
   let timer = null;
 
   async function search() {
     const q = input.value.trim();
     if (q.length < 2) { box.classList.add("hidden"); return; }
+    /* ! AN ALTERNATIVE SOURCE, for a picker whose rows come from somewhere
+         richer than the search index. /search/api carries a label, a
+         sublabel and a link and nothing else -- no rating, no school as a
+         field, no gender -- so a picker that needs those reads its own
+         endpoint and hands back rows in the same shape. */
+    if (opts.rows) {
+      try {
+        const rows = await opts.rows(q);
+        box.innerHTML = render(rows);
+        box.classList.toggle("hidden", rows.length === 0);
+      } catch (err) { box.classList.add("hidden"); }
+      return;
+    }
     try {
       /* ⚠ THE DEFAULT LIMIT IS 10, AND THAT IS A SHORT LIST FOR A NAME MANY
            SCHOOLS SHARE. search_index splits a school into one row per state,
@@ -455,15 +483,38 @@ function renderSimple(rows) {
  *   Naming the action -- and letting the same click undo it -- means one
  *   control does both and the list always reflects what is selected.
  */
+/*
+ * ★ THE PICKER SHOWS WHAT THE TABLE SHOWS (owner, 2026-09-01: "there should
+ *   be info about each athlete beyond just their name"). /search/api carries
+ *   a label, a sublabel and a link -- no rating, no gender, no season -- so
+ *   this reads /api/predict/athletes instead, which is the same source the
+ *   team side's "add anyone" already uses. Two people with one name are told
+ *   apart by their school and their rating, which is exactly the case a bare
+ *   name cannot answer.
+ */
+async function athleteRows(q) {
+  const p = new URLSearchParams({ q: q, sport: state.meet.sport });
+  const g = state.field && state.field.gender;
+  if (g) p.set("gender", g);
+  const res = await fetch("/api/predict/athletes?" + p.toString());
+  const data = await res.json();
+  return data.athletes || [];
+}
+
 function renderAthleteRows(rows) {
-  return rows.slice(0, 8).map((r) => {
-    const id = (/^\/athlete\/(\d+)/.exec(r.link || "") || [])[1];
-    const chosen = id && state.athletes.some((a) => a.id === id);
+  return rows.slice(0, 10).map((r) => {
+    const id = String(r.person_id);
+    const chosen = state.athletes.some((a) => a.id === id);
+    const sub = [r.school, r.year, r.rating == null ? null : `${r.rating}`]
+      .filter(Boolean).join(" \u00b7 ");
     return `<button class="pick-opt${chosen ? " is-in" : ""}" ` +
-      `data-link="${esc(r.link || "")}" data-label="${esc(r.label)}">` +
-      `<span class="pick-name">${esc(r.label)}</span>` +
+      `data-pid="${esc(id)}" data-label="${esc(r.name)}" ` +
+      `data-school="${esc(r.school || "")}" ` +
+      `data-year="${esc(r.year == null ? "" : r.year)}" ` +
+      `data-rating="${esc(r.rating == null ? "" : r.rating)}">` +
+      `<span class="pick-name">${esc(r.name)}</span>` +
       `<span class="pick-act">${chosen ? "Remove" : "Add"}</span>` +
-      `<span class="pick-sub">${esc(r.sublabel || "")}</span></button>`;
+      `<span class="pick-sub">${esc(sub)}</span></button>`;
   }).join("");
 }
 
@@ -922,14 +973,25 @@ function renderField() {
  *   place to look for it rather than a control that moves when a division is
  *   picked.
  */
+const _VIEW_NAMES = {none: "Nothing", teams: "Teams", all: "Rosters"};
+
+/* The three buttons. `on` is the value to light, or null when the races
+   disagree -- the overall control must not claim a state that is not true of
+   all of them. */
+function viewButtons(on) {
+  return ` <span class="viewsel">Show:` + ["none", "teams", "all"].map((v) =>
+    `<button class="vbtn${on === v ? " is-on" : ""}" data-view="${v}">` +
+    `${_VIEW_NAMES[v]}</button>`).join("") + `</span>`;
+}
+
 function renderViewSel() {
   const el = $("view-sel");
   if (!el) return;
-  el.innerHTML = `Show:` + ["none", "teams", "all"].map((v) =>
-    `<button class="vbtn${state.view === v ? " is-on" : ""}" ` +
-    `data-view="${v}">` +
-    `${ {none: "Nothing", teams: "Teams", all: "Rosters"}[v] }</button>`
-  ).join("");
+  const views = activeBlocks().map((d) => editsFor(d).view);
+  // Every race agreeing is a state the overall control can show; a mix is
+  // not, so nothing is lit rather than one button lying about the others.
+  const all = views.every((v) => v === views[0]) ? views[0] : null;
+  el.innerHTML = viewButtons(all);
 }
 
 
@@ -988,6 +1050,10 @@ function renderFieldBlock(sumEl, gridEl) {
          the way"). state.view was ALWAYS global; only the control was not.
        ! UNDO STAYS PER BLOCK, because droppedTeams is per division: "undo
          removing X" has to name a race to be true. */
+    /* ★ THIS RACE'S OWN Show:, beside its counts. The header carries an
+     *   overall one that writes to every block; this sets one race, which is
+     *   what lets you read D2's teams with D3 still shut. */
+    viewButtons(state.view) +
     (state.droppedTeams.length
       ? ` <button class="linkish undo" id="undo-team">` +
         `Undo removing ${esc(state.droppedTeams.at(-1).school)}</button>`
@@ -1253,27 +1319,65 @@ function renderTeam(d) {
 
 makePicker("meet-input", "meet-results", "meet", renderMeets, chooseMeet);
 
-makePicker("athlete-input", "athlete-results", "athlete", renderAthleteRows, (d) => {
-  const m = /^\/athlete\/(\d+)/.exec(d.link || "");
-  if (!m) {
-    setStatus(`Could not read that athlete's link (${d.link || "none"}).`, true);
-    return;
-  }
+bindPicker($("athlete-input"), $("athlete-results"), "athlete",
+           renderAthleteRows, (d) => {
+  /* ! THE ID COMES FROM THE ROW, NOT FROM A LINK. It used to be scraped out
+       of "/athlete/123" with a regex, which is one URL-shape change away
+       from silently matching nothing. /api/predict/athletes returns the
+       person_id as a field. */
+  const id = d.pid;
+  if (!id) { setStatus("That row carried no athlete id.", true); return; }
   // Same control both ways: clicking a chosen athlete takes them out again.
-  if (state.athletes.some((a) => a.id === m[1])) {
-    state.athletes = state.athletes.filter((a) => a.id !== m[1]);
+  if (state.athletes.some((a) => a.id === id)) {
+    state.athletes = state.athletes.filter((a) => a.id !== id);
   } else {
-    state.athletes.push({ id: m[1], name: d.label });
+    state.athletes.push({
+      id: id, name: d.label,
+      school: d.school || null,
+      year: d.year || null,
+      rating: d.rating === "" ? null : Number(d.rating),
+    });
   }
   renderAthletes();
-});
+  saveState();
+}, false, { rows: athleteRows });
 
+/*
+ * ★ A TABLE, NOT CHIPS (owner, 2026-09-01: "update the specific athletes UI
+ *   to be like the other tab's ui... maybe it should be like a table with
+ *   entries"). A chip carries a name and nothing else, so two runners called
+ *   J. Smith were indistinguishable, and there was no way to check you had
+ *   picked the right one before predicting. Same columns the team side's
+ *   rosters show: who, where, and how fast.
+ *
+ * ! A RESTORED SESSION MAY HAVE NAME-ONLY ENTRIES, from before the picker
+ *   carried the rest. They render with blank cells rather than being dropped
+ *   -- the athlete is still a valid pick, the page just knows less about
+ *   them until they are re-picked.
+ */
 function renderAthletes() {
-  $("athlete-chosen").innerHTML = state.athletes.map((a) =>
-    `<span class="chip">${esc(a.name)}` +
-    `<button class="chip-x" data-drop-athlete="${esc(a.id)}">&times;</button></span>`
-  ).join("");
-  $("athlete-chosen").classList.toggle("hidden", state.athletes.length === 0);
+  const el = $("athlete-chosen");
+  el.classList.toggle("hidden", state.athletes.length === 0);
+  if (!state.athletes.length) { el.innerHTML = ""; return; }
+  el.innerHTML =
+    `<table class="chosen-tbl">
+       <thead><tr>
+         <th>Athlete</th><th>School</th><th class="num">Season</th>
+         <th class="num">Rating</th><th></th>
+       </tr></thead>
+       <tbody>` +
+    state.athletes.map((a) => `
+       <tr>
+         <td><a class="lnk" href="/athlete/${encodeURIComponent(a.id)}"
+                >${esc(a.name)}</a></td>
+         <td>${esc(a.school || "")}</td>
+         <td class="num">${esc(a.year == null ? "" : a.year)}</td>
+         <td class="num">${a.rating == null || isNaN(a.rating)
+                           ? "" : esc(a.rating)}</td>
+         <td class="num"><button class="r-x"
+             data-drop-athlete="${esc(a.id)}" title="Remove">&times;</button></td>
+       </tr>`).join("") +
+    `</tbody></table>`;
 }
 
 /*
@@ -1468,7 +1572,14 @@ async function addTeam(school, div) {
   try {
     const squad = await loadSquad(school, e.field.gender);
     if (!squad.runners.length) {
-      setStatus(`No one from ${school} has raced this season.`, true);
+      /* ⚠ "HAS NOT RACED THIS SEASON" WAS A FALSE EXPLANATION OF A TRUE
+           RESULT. A boys race filters the squad to boys, so an all-girls
+           school correctly returns nobody -- and the message blamed the
+           data. Carondelet was racing; it was just not racing here. */
+      setStatus(squad.other_gender
+        ? `${school} has ${squad.other_gender} runners, but not in this `
+          + `race\u2019s ${squad.gender === "M" ? "boys" : "girls"} field.`
+        : `No one from ${school} has raced this season.`, true);
       return;
     }
     e.field.teams.push({
@@ -1766,11 +1877,17 @@ document.addEventListener("click", (e) => {
     renderField();
     return;
   }
-  const x = e.target.closest(".chip-x, .mc-change");
+  /* ⚠ MATCHED ON THE data- ATTRIBUTE, NOT ON THE CLASS. This read
+       `.chip-x, .mc-change`, so the moment the chosen athletes became table
+       rows -- whose remove button is a .r-x like every other one on the page
+       -- the handler stopped matching and Remove did nothing. The attribute
+       is what the handler actually acts on; the class is styling. */
+  const x = e.target.closest("[data-drop-athlete], .mc-change, .chip-x");
   if (!x) return;
   if (x.dataset.dropAthlete) {
     state.athletes = state.athletes.filter((a) => a.id !== x.dataset.dropAthlete);
     renderAthletes();
+    saveState();
   } else if (x.dataset.clear === "meet") {
     state.meet = null;
     state.course = null;
@@ -1800,17 +1917,22 @@ function onSummaryClick(e) {
   focusBlock(e);
   const vb = e.target.closest("[data-view]");
   if (vb) {
-    state.view = vb.dataset.view;
-    /* Picking a view sets every card, which is what makes the three states
-       exclusive -- otherwise "Rosters" would leave cards the user had shut.
-       ⚠ ACROSS EVERY RACE, NOT JUST THE FOCUSED ONE. The control is global
-         and lives in the header, where focusBlock finds no block to focus --
-         so writing through state.open (which answers for state.meet.div)
-         would have opened one division's cards and left the rest shut. */
-    for (const d of activeBlocks()) {
+    /* ★ WHICH RACES THIS APPLIES TO IS DECIDED BY WHERE IT WAS CLICKED. The
+     *   header's control is the overall one and writes to every race; the
+     *   one inside a block writes to that block. focusBlock has already set
+     *   state.meet.div from the block, and finds nothing to set for the
+     *   header -- so the two cannot be told apart that way, and the DOM
+     *   answers instead. */
+    const overall = !!vb.closest("#view-sel");
+    const targets = overall ? activeBlocks()
+                            : [state.meet.div ?? null];
+    for (const d of targets) {
       const e = editsFor(d);
+      e.view = vb.dataset.view;
+      // Picking a view sets every card, which is what makes the three states
+      // exclusive -- otherwise "Rosters" would leave cards the user had shut.
       e.open.clear();
-      if (state.view === "all")
+      if (e.view === "all")
         for (const t of (e.field ? e.field.teams : [])) e.open.add(t.school);
     }
     renderField();
@@ -1826,7 +1948,14 @@ function onSummaryClick(e) {
   }
 }
 
-$("field-summary").addEventListener("click", onSummaryClick);
+/* ⚠ THE HEADER, NOT JUST #field-summary, AND THAT WAS THE BUG. The overall
+     Show: control was added to .field-head as a SIBLING of #field-summary,
+     so its clicks reached neither this listener nor the one on #field, and
+     the buttons did nothing at all ("now the show button is ineffective").
+     Binding the container covers both, and any future control put beside
+     them. */
+document.querySelector(".field-head")
+        .addEventListener("click", onSummaryClick);
 /* ! AND ON #field, because in separate mode each division's summary is
      rendered INSIDE it rather than in the single #field-summary. */
 $("field").addEventListener("click", onSummaryClick);

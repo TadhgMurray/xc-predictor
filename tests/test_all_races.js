@@ -125,10 +125,11 @@ const ALL = ["10", "11", "12"];
   /* Clicking it must open or shut every race, not just the focused one --
      the control is in the header, where focusBlock finds no block. */
   const osc = grab("onSummaryClick");
-  chk(/for \(const d of activeBlocks\(\)\)/.test(osc),
-     "the view is applied across every active block");
+  chk(/const targets = overall \? activeBlocks\(\)/.test(osc),
+     "the overall control applies to every active block");
   chk(!/state\.open\.clear\(\)/.test(osc),
-     "not through state.open, which answers for the focused division only");
+     "and never through state.open, which answers for the focused division "
+     + "only -- the header has no block to focus");
 
   /* An add reports what it did. A successful add used to end in
      setStatus("") -- identical to doing nothing at all. */
@@ -146,6 +147,64 @@ const ALL = ["10", "11", "12"];
 
   if (bad) { failed += bad; }
   else console.log("  one Show control, and an add that speaks .......... OK");
+}
+
+
+
+
+/* ---------------------------------------------------------------- *
+ * Show is per race AND overall; the chosen athletes are a table.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  /* THE REGRESSION: #view-sel is a sibling of #field-summary inside
+     .field-head, so a listener on #field-summary or #field never saw it. */
+  chk(/querySelector\("\.field-head"\)\s*\n?\s*\.addEventListener\("click", onSummaryClick\)/
+        .test(SRC),
+     "the header CONTAINER is bound, or the overall Show buttons are dead");
+
+  /* Per race and overall both exist, from one renderer. */
+  chk(/function viewButtons\(on\)/.test(SRC), "one renderer for the buttons");
+  chk(/viewButtons\(state\.view\)/.test(grab("renderFieldBlock")),
+     "each race block carries its own Show control");
+  chk(/viewButtons\(all\)/.test(grab("renderViewSel")),
+     "and the header carries the overall one");
+  chk(/views\.every\(\(v\) => v === views\[0\]\) \? views\[0\] : null/.test(SRC),
+     "the overall control lights nothing when the races disagree, rather "
+     + "than claiming a state that is not true of all of them");
+
+  /* view is per race now, so it must NOT also be a plain key on state --
+     that would shadow the accessor and silently make it global again. */
+  chk(/view:\s*\{ get: \(\) => editsFor/.test(SRC),
+     "view reaches state through the per-division accessor");
+  chk(!/^\s{2}view: "teams",$/m.test(SRC),
+     "and there is no bare state.view key shadowing it");
+  chk(/view: e\.view/.test(SRC) && /rec\.view = e\.view/.test(SRC),
+     "it is saved and restored per division");
+
+  const osc = grab("onSummaryClick");
+  chk(/vb\.closest\("#view-sel"\)/.test(osc),
+     "where the click landed decides whether it applies to one race or all");
+
+  /* The athlete tab is a table fed by the richer endpoint. */
+  chk(/api\/predict\/athletes/.test(grab("athleteRows")),
+     "the athlete picker reads the endpoint that carries school and rating, "
+     + "not /search/api which carries neither");
+  const ra = grab("renderAthletes");
+  chk(/chosen-tbl/.test(ra), "the chosen athletes render as a table");
+  for (const col of ["School", "Season", "Rating"])
+    chk(ra.includes(col), `the table has a ${col} column`);
+  chk(/a\.rating == null \|\| isNaN\(a\.rating\)/.test(ra),
+     "a restored name-only entry renders blank cells rather than NaN");
+
+  chk(/closest\("\[data-drop-athlete\]/.test(SRC),
+     "remove matches the data attribute, not .chip-x -- the button is a "
+     + ".r-x in a table row now");
+
+  if (bad) { failed += bad; }
+  else console.log("  Show per race + overall; athletes as a table ..... OK");
 }
 
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }

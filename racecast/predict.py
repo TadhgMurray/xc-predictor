@@ -861,12 +861,31 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
         season_year = _currentSeason(cur, sport)
 
     squads = _currentSquads(cur, [school], sport, season_year, gender=gender)
-    runners = squads.get(school, [])[:limit]
+    runners = squads.get(school, [])
+
+    # ★ SAY WHICH EMPTY THIS IS (owner, 2026-09-01: "No one from Carondelet
+    #   has raced this season"). Carondelet is an all-girls school and the
+    #   race was a boys race, so the gendered lookup is CORRECT to find
+    #   nobody -- and "has not raced this season" is a false explanation of a
+    #   true result. The school is racing; it is just not racing here.
+    #
+    # ! ONE EXTRA QUERY, ONLY ON THE EMPTY PATH, so the common case pays
+    #   nothing. If the school has a squad on the other side, the page can
+    #   say so instead of implying the data is missing.
+    other = 0
+    if not runners and gender:
+        other = len(_currentSquads(cur, [school], sport,
+                                   season_year).get(school, []))
+
     return {"school": school, "season_year": season_year,
+            "gender": gender,
+            # How many the school HAS, on the side this race is not. 0 means
+            # the school really has nobody racing, either side.
+            "other_gender": other,
             # `school` rides on each entry from _currentSquads; the page keys
             # off the top-level one, so it is dropped rather than sent twice.
             "runners": [{k: v for k, v in r.items() if k != "school"}
-                        for r in runners]}
+                        for r in runners[:limit]]}
 
 
 def _currentSeason(cur, sport):

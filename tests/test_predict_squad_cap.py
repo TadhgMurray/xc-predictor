@@ -273,21 +273,49 @@ def test_schoolSquad_filters_too():
     """
     cur = FakeCursorSQL()
     predict.schoolSquad(cur, "Alpha", "XC", season_year=2026, gender="M")
-    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql, cur.sql
-    assert cur.params["gender"] == "M"
+
+    first_sql, first_params = cur.queries[0]
+    assert "upper(right(s.pool, 1)) = %(gender)s" in first_sql, first_sql
+    assert first_params["gender"] == "M"
     # and it really is the shared path, not a copy that happens to match
-    assert cur.params.get("schools") == ["Alpha"], cur.params
+    assert first_params.get("schools") == ["Alpha"], first_params
+
+    # ★ AND THE EMPTY ANSWER IS EXPLAINED. This fake returns no rows, so the
+    #   other-gender count fires -- which is the whole point of it: a boys
+    #   race correctly finds nobody at an all-girls school, and "has not
+    #   raced this season" was a false explanation of a true result.
+    # FOUR, not two: _currentSquads reads the current season and then falls
+    # back to the previous one when a school has no rows (#82), and the
+    # other-gender count repeats that pair without the filter.
+    gendered = ["upper(right(s.pool, 1))" in q for q, _ in cur.queries]
+    assert gendered == [True, True, False, False], (gendered,
+                                                    len(cur.queries))
     print("  schoolSquad filters on pool ........................ OK")
+    print("  and counts the other side when it finds nobody ..... OK")
 
 
 class FakeCursorSQL:
+    """Records EVERY statement, not just the last.
+
+    ⚠ IT USED TO KEEP ONLY THE LAST, and that silently changed what the
+      schoolSquad test asserted the moment schoolSquad grew a second query
+      (the other-gender count). The assertion moved from the gendered lookup
+      to the ungendered fallback without anyone touching it.
+    """
     def __init__(self):
-        self.sql = None
-        self.params = None
+        self.queries = []
 
     def execute(self, sql, params=None):
-        self.sql = " ".join(sql.split())
-        self.params = params or {}
+        self.queries.append((" ".join(sql.split()), params or {}))
+
+    # The last statement, for the callers that only ever make one.
+    @property
+    def sql(self):
+        return self.queries[-1][0] if self.queries else None
+
+    @property
+    def params(self):
+        return self.queries[-1][1] if self.queries else {}
 
     def fetchall(self):
         return []
