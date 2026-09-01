@@ -2136,6 +2136,29 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 }
 .predict2 .mc-change:hover { border-color: #888; }
 
+/* ★ FULL-WIDTH ROWS OF THEIR OWN (owner, 2026-09-01: "with the new options
+   with a meet UI is really bad", with a screenshot).
+
+   .meet-chosen is a `1fr auto` grid and only .mc-main, .mc-sub and .mc-change
+   were ever PLACED in it. .mc-races had no rule at all and my .mc-mode
+   inherited the same omission, so both auto-flowed into whatever cell was
+   free: the chips into the narrow 1fr column -- where "Division 1 - Boys -
+   5000m (202)" wrapped to five lines and every chip became a tall oval -- and
+   the mode controls into column 2 beside them.
+
+   Both belong on their own full-width row under the name. This is also the
+   likeliest source of the jolt that three attempts at the mode block did not
+   fix: a grid with unplaced items reflows unpredictably whenever any cell's
+   contents change, which is exactly what toggling the mode does. */
+.predict2 .mc-change { grid-column: 2; grid-row: 1; }
+.predict2 .mc-races  { grid-column: 1 / -1; }
+.predict2 .mc-mode   { grid-column: 1 / -1; }
+/* The chips are a wrapping row, not a column: they were only stacking
+   because the column they landed in was too narrow to hold one. */
+.predict2 .mc-races { display: flex; flex-wrap: wrap; align-items: center;
+                      gap: 6px; margin-top: 6px; }
+.predict2 .race-chip { white-space: nowrap; }
+
 /* A team already in the field: shown, with the action it offers named. */
 .predict2 .pick-opt.is-in .pick-name { color: #888; }
 .predict2 .pick-name { }
@@ -2389,6 +2412,29 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 }
 .predict2 .mc-change:hover { border-color: #888; }
 
+/* ★ FULL-WIDTH ROWS OF THEIR OWN (owner, 2026-09-01: "with the new options
+   with a meet UI is really bad", with a screenshot).
+
+   .meet-chosen is a `1fr auto` grid and only .mc-main, .mc-sub and .mc-change
+   were ever PLACED in it. .mc-races had no rule at all and my .mc-mode
+   inherited the same omission, so both auto-flowed into whatever cell was
+   free: the chips into the narrow 1fr column -- where "Division 1 - Boys -
+   5000m (202)" wrapped to five lines and every chip became a tall oval -- and
+   the mode controls into column 2 beside them.
+
+   Both belong on their own full-width row under the name. This is also the
+   likeliest source of the jolt that three attempts at the mode block did not
+   fix: a grid with unplaced items reflows unpredictably whenever any cell's
+   contents change, which is exactly what toggling the mode does. */
+.predict2 .mc-change { grid-column: 2; grid-row: 1; }
+.predict2 .mc-races  { grid-column: 1 / -1; }
+.predict2 .mc-mode   { grid-column: 1 / -1; }
+/* The chips are a wrapping row, not a column: they were only stacking
+   because the column they landed in was too narrow to hold one. */
+.predict2 .mc-races { display: flex; flex-wrap: wrap; align-items: center;
+                      gap: 6px; margin-top: 6px; }
+.predict2 .race-chip { white-space: nowrap; }
+
 /* A team already in the field: shown, with the action it offers named. */
 .predict2 .pick-opt.is-in .pick-name { color: #888; }
 .predict2 .pick-name { }
@@ -2567,14 +2613,17 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    gets unhidden it messes up the ui again". The row is always there; only
    its contents come and go. */
 .predict2 label.mc-coalesce.hidden { visibility: hidden; }
-/* ⚠ A FIXED TWO LINES. The hint text changes length with the mode -- "Scores
-   each picked division on its own." against "Scores 3 divisions as ONE race.
-   A school in two of them races as two teams, labelled by division." -- so it
-   wrapped to a different number of lines and the block jumped. Reserving the
-   taller of the two is what actually stops the jolt; the coalesce row was
-   only half of it. */
+/* ⚠ NOTHING IN THIS BLOCK MAY CHANGE ITS HEIGHT (owner, 2026-09-01, after
+   three failed attempts at the jolt). Rather than reserve space for each
+   thing that moved in turn, the variables are gone: every hint is one short
+   line, the coalesce row is always present (visibility, not display), and
+   what coalescing DOES is written on the checkbox where it cannot vary.
+   The min-height is a floor under all of it, so a narrow viewport that wraps
+   one of them still cannot shrink the block back. */
 .predict2 .mc-mode-hint { color: #888; font-style: italic;
-                          min-height: 2.4em; }
+                          white-space: nowrap; overflow: hidden;
+                          text-overflow: ellipsis; }
+.predict2 .mc-mode { min-height: 4.6em; }
 
 /* ★ ONE SECTION PER RACE in the field editor (owner, 2026-09-01). Racing
    divisions separately means each has its own field to edit, so each gets a

@@ -86,16 +86,16 @@ function updateModeHint() {
   const co = $("mc-coalesce");
   if (co) co.classList.toggle("hidden",
                               !(state.raceMode === "combined" && n > 1));
+  /* ★ EVERY MESSAGE IS ONE SHORT LINE (owner, 2026-09-01: the jolt, third
+     attempt). Reserving height for a hint that swung between one line and
+     three was treating the symptom -- the real fix is that it does not swing.
+     What a coalesced school does is now written on the CHECKBOX, where it is
+     static, instead of being appended here where it was not. */
   el.textContent = state.raceMode === "combined"
-    ? (n > 1
-        ? `Scores ${n} divisions as ONE race. `
-          + (state.coalesce
-              ? "A school in two of them races as one squad, its best seven."
-              : "A school in two of them races as two teams, labelled by "
-                + "division.")
-        : "Scores the whole meet as one race.")
-    : (n > 1 ? `Scores ${n} divisions as ${n} separate races.`
-             : "Scores each picked division on its own.");
+    ? (n > 1 ? `Scoring ${n} divisions as one race.`
+             : "Scoring the whole meet as one race.")
+    : (n > 1 ? `Scoring ${n} divisions separately.`
+             : "Scoring each picked division on its own.");
 }
 
 /* The name a division goes by, for a result heading. Falls back to the id so
@@ -513,7 +513,8 @@ function renderChosenMeet(bare) {
            One combined race</label>
        </div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
-         <input type="checkbox" id="coalesce"> Coalesce a school entered twice
+         <input type="checkbox" id="coalesce">
+         Coalesce a school in two divisions into one squad
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
