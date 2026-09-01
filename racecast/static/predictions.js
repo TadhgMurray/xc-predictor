@@ -109,6 +109,46 @@ const _edits = new Map();
  * ==================================================================== */
 
 /*
+ * ★ QUICK-SELECT (owner, 2026-09-01: "a button to click all girls/all boys
+ *   for each distance a race runs... a quick way to get compiled"). A
+ *   championship is a dozen races, and building "every boys 5000m" out of
+ *   them one chip at a time is the work this page exists to save.
+ *
+ * ! THE SETS COME FROM THE MEET, NOT FROM A FIXED LIST. Whatever
+ *   (gender, distance) pairs the races actually carry are the buttons that
+ *   appear -- so a meet with one distance offers "All boys" and "All girls",
+ *   and one with a 5k and a 3200 offers four, and a meet whose races carry
+ *   no gender offers none rather than an empty promise.
+ *
+ * ! A SET OF ONE IS NOT A SHORTCUT. It would duplicate the division's own
+ *   chip sitting next to it, so it is skipped.
+ */
+function quickSets(races) {
+  const by = new Map();
+  for (const r of races) {
+    if (!r.gender) continue;
+    const dist = r.distance ? `${Math.round(r.distance)}m` : "";
+    const key = `${r.gender}\u0000${dist}`;
+    if (!by.has(key)) {
+      by.set(key, { gender: r.gender, dist: dist, ids: [] });
+    }
+    by.get(key).ids.push(String(r.div_id));
+  }
+  // Only one distance in the whole meet? Then naming it is noise.
+  const dists = new Set([...by.values()].map((v) => v.dist));
+  const one = dists.size <= 1;
+  return [...by.values()]
+    .filter((v) => v.ids.length > 1)
+    .map((v) => ({
+      label: `All ${v.gender === "M" ? "boys" : "girls"}`
+             + (one || !v.dist ? "" : ` \u00b7 ${v.dist}`),
+      ids: v.ids,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+
+/*
  * ★ ONE COLOUR PER RACE (owner, 2026-09-01: "easier to find/get in the
  *   grouped section"). With six divisions on screen, working out which
  *   blocks belong to the same race meant reading every heading. A shared
@@ -872,10 +912,17 @@ async function loadRaces() {
     const chip = (label, div, on, col) =>
       `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}"` +
       `${col ? ` style="--race:${col}"` : ""}>${esc(label)}</button>`;
+    const quick = quickSets(races);
+    /* A quick-select is LIT when everything it names is already picked, the
+       same rule "All races" uses -- so it reads as a state, not a verb. */
+    const setOn = (ids) => ids.every((i) => state.divs.includes(i));
     box.innerHTML =
       `<span class="mc-races-label">Races:</span>` +
       chip("All races", "",
            races.length > 0 && state.divs.length === races.length) +
+      quick.map((qs, i) =>
+        `<button class="race-chip quick${setOn(qs.ids) ? " is-on" : ""}" ` +
+        `data-set="${i}">${esc(qs.label)}</button>`).join("") +
       races.map((r) => {
         const bits = [r.label];
         if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
@@ -950,10 +997,68 @@ async function loadRaces() {
     $("coalesce").checked = state.coalesce;
     updateModeHint();
 
+    /* ! ONE REPAINT, TWO CALLERS. A division chip and a quick-select change
+         the same three things about every chip -- lit or not, which race's
+         colour it wears, and which one is open for editing -- so working
+         that out twice is two chances to disagree. */
+    function repaintChips() {
+      const every = races.map((r) => String(r.div_id));
+      const at = groupIndex();
+      box.querySelectorAll(".race-chip").forEach((x) => {
+        if (x.dataset.set !== undefined) {
+          const ids = quick[Number(x.dataset.set)].ids;
+          x.classList.toggle("is-on",
+                             ids.every((i) => state.divs.includes(i)));
+          return;
+        }
+        const d = x.dataset.div || null;
+        // Regrouping moves colours around, so they are re-set here rather
+        // than only at render.
+        const gi = d === null ? undefined : at.get(d);
+        if (gi === undefined) x.style.removeProperty("--race");
+        else x.style.setProperty("--race", raceColour(gi));
+        /* "All races" is lit when everything is picked -- it is a selection
+           now, not the absence of one. */
+        x.classList.toggle("is-on",
+                           d === null
+                             ? (every.length > 0
+                                && state.divs.length === every.length)
+                             : state.divs.includes(d));
+        x.classList.toggle("is-editing",
+                           state.divs.length > 1 && d === state.meet.div);
+      });
+    }
+
     box.querySelectorAll(".race-chip").forEach((b) => {
       b.addEventListener("click", () => {
-        const div = b.dataset.div || null;
         const every = races.map((r) => String(r.div_id));
+
+        /* ★ A QUICK-SELECT IS A TOGGLE OVER A SET, and additive on the way
+             in. Picking "All boys" and then "All girls" gives you both,
+             which is the point -- a replacing selection would make the
+             second click undo the first. Everything already picked?
+             Unpick it, so the same button gets you back. */
+        if (b.dataset.set !== undefined) {
+          const ids = quick[Number(b.dataset.set)].ids;
+          const on = ids.every((i) => state.divs.includes(i));
+          state.divs = on ? state.divs.filter((d) => !ids.includes(d))
+                          : state.divs.concat(
+                              ids.filter((i) => !state.divs.includes(i)));
+          state.groups = state.raceMode === "custom"
+            ? normalizeGroups(state.divs, state.groups)
+            : groupsForMode(state.divs, state.raceMode);
+          state.meet.div = state.divs.length
+            ? (state.divs.includes(state.meet.div) ? state.meet.div
+                                                   : state.divs[0])
+            : null;
+          repaintChips();
+          updateModeHint();
+          saveState();
+          loadField();
+          return;
+        }
+
+        const div = b.dataset.div || null;
         state.divs = toggleDiv(state.divs, div, every);
         /* ! REGROUPED, NOT REBUILT. A division added or removed must not
              disturb a grouping the user set by hand -- normalizeGroups keeps
@@ -965,24 +1070,7 @@ async function loadRaces() {
         state.meet.div = state.divs.length
           ? (state.divs.includes(div) ? div : state.divs[0])
           : null;
-        const at = groupIndex();
-        box.querySelectorAll(".race-chip").forEach((x) => {
-          const d = x.dataset.div || null;
-          // Regrouping moves colours around, so they are re-set, not just
-          // set once at render.
-          const gi = d === null ? undefined : at.get(d);
-          if (gi === undefined) x.style.removeProperty("--race");
-          else x.style.setProperty("--race", raceColour(gi));
-          /* "All races" is lit when everything is picked -- it is a
-             selection now, not the absence of one. */
-          x.classList.toggle("is-on",
-                             d === null
-                               ? (every.length > 0
-                                  && state.divs.length === every.length)
-                               : state.divs.includes(d));
-          x.classList.toggle("is-editing",
-                             state.divs.length > 1 && d === state.meet.div);
-        });
+        repaintChips();
         updateModeHint();
         saveState();
         loadField();          // a different race is a different field

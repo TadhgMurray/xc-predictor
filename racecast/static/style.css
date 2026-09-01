@@ -2758,6 +2758,12 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    generic dark, so the picker and the blocks below it agree. */
 .predict2 .race-chip.is-on { background: var(--race, #111827);
                              border-color: var(--race, #111827); }
+/* ★ A QUICK-SELECT IS A SHORTCUT, NOT A RACE, so it does not wear a race
+   colour -- it stands for several of them. Dashed, to read as a set rather
+   than as one more division sitting in the same row. */
+.predict2 .race-chip.quick { border-style: dashed; font-weight: 600; }
+.predict2 .race-chip.quick.is-on { background: #374151; border-color: #374151;
+                                   border-style: solid; color: #fff; }
 
 /* The grouping control: a dot rather than a wash, so the row stays legible
    and the colour is still the first thing scanned. */

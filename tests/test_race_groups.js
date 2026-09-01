@@ -193,5 +193,69 @@ const D = ["10", "11", "12", "13"];
   else console.log("  one colour per race, and never the only cue .... OK");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * Quick-select: all boys / all girls, per distance the meet runs.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+  const qs = eval(`(() => { ${grab("quickSets")} return quickSets; })()`);
+
+  const race = (id, g, d) => ({ div_id: id, gender: g, distance: d });
+
+  /* One distance: the distance is noise, so it is left out. */
+  {
+    const out = qs([race(1, "M", 5000), race(2, "M", 5000),
+                    race(3, "F", 5000), race(4, "F", 5000)]);
+    eq(out.map((x) => x.label), ["All boys", "All girls"],
+       "one distance needs no distance in the label");
+    eq(out.find((x) => x.label === "All boys").ids, ["1", "2"],
+       "and the set is the divisions that match");
+  }
+
+  /* Two distances: now it has to say which. */
+  {
+    const out = qs([race(1, "M", 5000), race(2, "M", 5000),
+                    race(3, "M", 3200), race(4, "M", 3200),
+                    race(5, "F", 5000), race(6, "F", 5000)]);
+    eq(out.map((x) => x.label),
+       ["All boys · 3200m", "All boys · 5000m", "All girls · 5000m"],
+       "each gender/distance pair the meet actually runs");
+  }
+
+  /* A set of one duplicates the division's own chip beside it. */
+  eq(qs([race(1, "M", 5000), race(2, "F", 5000)]), [],
+     "a shortcut to a single race is not a shortcut");
+
+  /* Races with no gender cannot be offered -- an empty promise is worse
+     than no button. */
+  eq(qs([race(1, null, 5000), race(2, null, 5000)]), [],
+     "no gender, no quick-select");
+  eq(qs([]), [], "no races, no buttons");
+
+  /* Distance-less races still group by gender. */
+  {
+    const out = qs([race(1, "M", null), race(2, "M", null)]);
+    eq(out.map((x) => x.label), ["All boys"], "a meet with no distances");
+  }
+
+  /* The click is additive, and the same button gets you back. */
+  chk(/ids\.every\(\(i\) => state\.divs\.includes\(i\)\)/.test(SRC),
+     "a quick-select is lit when everything it names is picked");
+  chk(/state\.divs\.concat\(\s*\n?\s*ids\.filter/.test(SRC),
+     "clicking it ADDS -- picking boys then girls gives you both, where a "
+     + "replacing selection would make the second click undo the first");
+  chk(/on \? state\.divs\.filter\(\(d\) => !ids\.includes\(d\)\)/.test(SRC),
+     "and clicking it again takes exactly that set back out");
+  chk(/function repaintChips\(\)/.test(SRC),
+     "both click paths repaint the chips through one function");
+
+  if (bad) { failed += bad; }
+  else console.log("  quick-select per gender and distance ........... OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall race-group checks passed");
