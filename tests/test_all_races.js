@@ -96,5 +96,57 @@ const ALL = ["10", "11", "12"];
   console.log("  coalesce and headings follow the count ........... OK");
 }
 
+
+
+
+/* ---------------------------------------------------------------- *
+ * The Show: control is ONE control for the whole field, and an add
+ * can never be silent.
+ * ---------------------------------------------------------------- */
+{
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  const tpl = fs.readFileSync(
+    path.join(__dirname, "..", "racecast", "templates", "predictions.html"),
+    "utf8");
+  chk(/id="view-sel"/.test(tpl), "the header carries the Show control");
+
+  const blk = grab("renderFieldBlock");
+  chk(!/data-view=/.test(blk),
+     "the per-block summary no longer renders its own copy -- state.view is "
+     + "global, so N copies were N controls for one setting");
+  chk(/undo-team/.test(blk),
+     "but Undo stays per block: droppedTeams is per division, so 'undo "
+     + "removing X' has to name a race to be true");
+  chk(/function renderViewSel/.test(SRC), "there is one renderer for it");
+  chk(/renderViewSel\(\);/.test(SRC), "and renderField calls it");
+
+  /* Clicking it must open or shut every race, not just the focused one --
+     the control is in the header, where focusBlock finds no block. */
+  const osc = grab("onSummaryClick");
+  chk(/for \(const d of activeBlocks\(\)\)/.test(osc),
+     "the view is applied across every active block");
+  chk(!/state\.open\.clear\(\)/.test(osc),
+     "not through state.open, which answers for the focused division only");
+
+  /* An add reports what it did. A successful add used to end in
+     setStatus("") -- identical to doing nothing at all. */
+  const at = grab("addTeam");
+  chk(/setStatus\(`Added \$\{school\}/.test(at),
+     "a successful add says so");
+  chk(!/setStatus\(""/.test(at),
+     "and no longer clears the status, which made success and silence "
+     + "look the same");
+  chk(/if \(state\.view === "none"\) state\.view = "teams"/.test(at),
+     "adding while the rosters are hidden un-hides them, or the card lands "
+     + "in a grid with display:none");
+  chk(/has not finished loading/.test(at),
+     "and the early return says why instead of returning silently");
+
+  if (bad) { failed += bad; }
+  else console.log("  one Show control, and an add that speaks .......... OK");
+}
+
 if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall all-races checks passed");

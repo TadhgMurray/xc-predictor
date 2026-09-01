@@ -2196,6 +2196,9 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
                         align-items: baseline; justify-content: flex-start;
                         margin-bottom: 0.45rem; font-size: 0.86rem; }
 .predict2 .fs-n { color: #4b5563; }
+/* The Show: control now lives in the header rather than in each race block,
+   so it needs to sit on the header's baseline and keep its own spacing. */
+.predict2 .field-head .viewsel { margin-left: auto; white-space: nowrap; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }
@@ -2486,6 +2489,9 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
                         align-items: baseline; justify-content: flex-start;
                         margin-bottom: 0.45rem; font-size: 0.86rem; }
 .predict2 .fs-n { color: #4b5563; }
+/* The Show: control now lives in the header rather than in each race block,
+   so it needs to sit on the header's baseline and keep its own spacing. */
+.predict2 .field-head .viewsel { margin-left: auto; white-space: nowrap; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }

@@ -908,12 +908,34 @@ function renderField() {
    *   still the answer to "how big is this", just one level up.
    */
   if (separate) renderFieldRollup(blocks);
+  renderViewSel();
+}
+
+
+/*
+ * ★ ONE Show: CONTROL FOR THE WHOLE FIELD, in the header. state.view is a
+ *   single global value and always was; rendering the control inside each
+ *   race block meant N copies of one setting, all of them below the fold on
+ *   a meet with several divisions.
+ *
+ * ! IT SITS BESIDE THE COUNTS in every mode, including a single race -- one
+ *   place to look for it rather than a control that moves when a division is
+ *   picked.
+ */
+function renderViewSel() {
+  const el = $("view-sel");
+  if (!el) return;
+  el.innerHTML = `Show:` + ["none", "teams", "all"].map((v) =>
+    `<button class="vbtn${state.view === v ? " is-on" : ""}" ` +
+    `data-view="${v}">` +
+    `${ {none: "Nothing", teams: "Teams", all: "Rosters"}[v] }</button>`
+  ).join("");
 }
 
 
 /* The whole-meet totals, for the header above the per-race blocks. Plain
-   text: the Show / Undo controls belong to a race, and there is no one race
-   here to apply them to. */
+   text: Undo belongs to a race, and there is no one race here to apply it
+   to. */
 function renderFieldRollup(blocks) {
   const loaded = blocks.filter((d) => editsFor(d).field);
   const n = (v) => `<strong>${v}</strong>`;
@@ -958,17 +980,14 @@ function renderFieldBlock(sumEl, gridEl) {
     `<strong>${kept}</strong> runners` +
     (f.when === "asran" ? ` \u2014 as raced` : ` \u2014 current squads`) +
     `</span>` +
-    // ★ ONE CONTROL, THREE STATES, MUTUALLY EXCLUSIVE. "Expand all" and
-    //   "Hide teams" were two independent toggles whose combinations did not
-    //   all mean anything -- hidden-and-expanded is not a state, and neither
-    //   button told you what the other had done. A single Show: control has
-    //   exactly the three views that exist, and the selected one is visible
-    //   without pressing anything.
-    ` <span class="viewsel">Show:` +
-    ["none", "teams", "all"].map((v) =>
-      `<button class="vbtn${state.view === v ? " is-on" : ""}" data-view="${v}">` +
-      `${ {none: "Nothing", teams: "Teams", all: "Rosters"}[v] }</button>`
-    ).join("") + `</span>` +
+    /* ⚠ THE Show: CONTROL IS NOT HERE ANY MORE -- see renderViewSel. It was
+         rendered per block, so with several divisions on screen there were
+         several copies of one global setting and you had to scroll to reach
+         the nearest (owner, 2026-09-01: "maybe we should have like an
+         overall show/team/rosters rule just so you don't have to scroll all
+         the way"). state.view was ALWAYS global; only the control was not.
+       ! UNDO STAYS PER BLOCK, because droppedTeams is per division: "undo
+         removing X" has to name a race to be true. */
     (state.droppedTeams.length
       ? ` <button class="linkish undo" id="undo-team">` +
         `Undo removing ${esc(state.droppedTeams.at(-1).school)}</button>`
@@ -1302,6 +1321,14 @@ function blocksWith(school) {
  */
 const schoolValue = (r) => r.value || r.label;
 
+/* A school name goes into an attribute SELECTOR here, not into markup, so
+   esc() is the wrong tool -- CSS.escape is the right one. Guarded because it
+   is missing in older browsers, where a quote-free name still works. */
+function cssEscape(v) {
+  return (window.CSS && CSS.escape) ? CSS.escape(v)
+                                    : String(v).replace(/["\\]/g, "\\$&");
+}
+
 /*
  * ★ THE STATE IS DISPLAY ONLY (issue #95). Every other surface writes
  *   "Broughton (NC)" and this page wrote the bare "Broughton". The bare name
@@ -1428,8 +1455,15 @@ async function addTeam(school, div) {
        clicked, the mode flipped). Taking the edit record once means the
        squad lands in the race the click asked for, whatever happened
        meanwhile. */
-  const e = editsFor(div === undefined ? (state.meet.div ?? null) : div);
-  if (!e.field) return;
+  const target = div === undefined ? (state.meet.div ?? null) : div;
+  const e = editsFor(target);
+  /* ⚠ THIS USED TO `return` WITH NOTHING SAID, which is the worst way for an
+       action to fail: the row is clicked, and the page is identical. */
+  if (!e.field) {
+    setStatus(`${divLabel(target)} has not finished loading \u2014 try again `
+              + `in a moment.`, true);
+    return;
+  }
   setStatus(`Loading ${school}\u2026`, false);
   try {
     const squad = await loadSquad(school, e.field.gender);
@@ -1449,8 +1483,27 @@ async function addTeam(school, div) {
     e.open.add(school);              // open it: it is the thing just added
     for (const r of squad.runners.slice(0, 7))
       e.added.push({ person_id: r.person_id, name: r.name, school: school });
+
+    /* ★ A SUCCESSFUL ADD MUST LOOK DIFFERENT FROM A FAILED ONE, and it did
+     *   not: this cleared the status, so "added" and "silently did nothing"
+     *   were the same empty message. Reported as "adding doesn't work, it
+     *   just doesn't do anything" -- for an add that was very likely
+     *   working, landing alphabetically somewhere down a long grid with
+     *   nothing pointing at it.
+     *
+     * ! AND IF THE ROSTERS ARE HIDDEN, SHOW THEM. Adding a team while the
+     *   view is "Nothing" put a card into a grid that is display:none. The
+     *   add succeeded and the screen could not have looked more like a
+     *   no-op. */
+    if (state.view === "none") state.view = "teams";
     renderField();
-    setStatus("", false);
+    setStatus(`Added ${school} \u2014 `
+              + `${squad.runners.slice(0, 7).length} runners.`, false);
+    /* Scroll it into view: with several divisions on screen the card can be
+       a long way from the box that added it. */
+    const card = $("field")
+      .querySelector(`.team-card[data-team="${cssEscape(school)}"]`);
+    if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   } catch (err) {
     setStatus(`Could not load ${school}.`, true);
   }
@@ -1748,11 +1801,18 @@ function onSummaryClick(e) {
   const vb = e.target.closest("[data-view]");
   if (vb) {
     state.view = vb.dataset.view;
-    // Picking a view sets every card, which is what makes the three states
-    // exclusive -- otherwise "Rosters" would leave cards the user had shut.
-    state.open.clear();
-    if (state.view === "all")
-      for (const t of state.field?.teams || []) state.open.add(t.school);
+    /* Picking a view sets every card, which is what makes the three states
+       exclusive -- otherwise "Rosters" would leave cards the user had shut.
+       ⚠ ACROSS EVERY RACE, NOT JUST THE FOCUSED ONE. The control is global
+         and lives in the header, where focusBlock finds no block to focus --
+         so writing through state.open (which answers for state.meet.div)
+         would have opened one division's cards and left the rest shut. */
+    for (const d of activeBlocks()) {
+      const e = editsFor(d);
+      e.open.clear();
+      if (state.view === "all")
+        for (const t of (e.field ? e.field.teams : [])) e.open.add(t.school);
+    }
     renderField();
     return;
   }

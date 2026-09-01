@@ -134,6 +134,10 @@
     <div class="who-pane" data-pane="team">
       <div class="field-head">
         <span id="field-summary">Loading the field&hellip;</span>
+        {# ★ ONE Show: CONTROL FOR THE WHOLE FIELD. It used to be rendered
+           inside every race block -- N copies of one global setting, each
+           below the fold on a meet with several divisions. #}
+        <span class="viewsel" id="view-sel"></span>
         {# ★ THE GLOSS MOVES TO A TOOLTIP, NOT AWAY. "score as if only these
            teams raced" is the whole meaning of the box, but spelled out it
            wrapped the header onto a second line above every race block. #}
