@@ -45,6 +45,17 @@ WANTED = [
     #   index probes and the full --all build becomes an hour, not a day.
     ("results",         "div_id",  "idx_results_div", None),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
+    # ★ THE PREDICTIONS FIELD ENDPOINT (2026-09-01). meetField gained two
+    #   lookups that filter athlete_season by PERSON -- _fieldGender, which
+    #   reads a race's gender off the people who ran it, and
+    #   _lastKnownRatings, which finds the last rating of everyone who is no
+    #   longer racing. athlete_season was indexed on SCHOOL only, so both
+    #   sequentially scanned the whole table, _fieldGender runs a second time
+    #   inside _teamRosters, and picking several divisions fires all of them
+    #   at once. That is the "insanely slowly if you press more than one"
+    #   report: not the round trips, which are already parallel, but a full
+    #   scan behind each of them.
+    ("athlete_season",  "person_id", "idx_athlete_season_person", None),
     # ★ THE FILTERED /meets VIEW (meets_filter.py). Its browse path filters
     #   meets/meets_tf by STATE -- the meet's state, not the athlete's -- and
     #   then counts results per surviving meet. Without these three the state
