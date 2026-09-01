@@ -30,6 +30,9 @@ const state = {
   // "separate" scores each picked division on its own (issue #85);
   // "combined" scores the whole meet as one race.
   raceMode: "separate",
+  // ★ OFF BY DEFAULT. Two entries is what actually happened on the day;
+  //   merging them is the what-if, and a what-if should be asked for.
+  coalesce: false,
   // How much of the field is on screen: nothing, the team cards, or every
   // roster open. `open` still tracks individual cards the user toggled.
   view: "teams",
@@ -80,10 +83,17 @@ function updateModeHint() {
   const el = $("mc-mode-hint");
   if (!el) return;
   const n = state.divs.length;
+  const co = $("mc-coalesce");
+  if (co) co.classList.toggle("hidden",
+                              !(state.raceMode === "combined" && n > 1));
   el.textContent = state.raceMode === "combined"
-    ? (n ? "Scores the whole meet as one race \u2014 the picked divisions are "
-         + "not merged on their own yet (issue #86)."
-         : "Scores the whole meet as one race.")
+    ? (n > 1
+        ? `Scores ${n} divisions as ONE race. `
+          + (state.coalesce
+              ? "A school in two of them races as one squad, its best seven."
+              : "A school in two of them races as two teams, labelled by "
+                + "division.")
+        : "Scores the whole meet as one race.")
     : (n > 1 ? `Scores ${n} divisions as ${n} separate races.`
              : "Scores each picked division on its own.");
 }
@@ -366,6 +376,9 @@ async function chooseMeet(data) {
          Separate races</label>
        <label><input type="radio" name="racemode" value="combined">
          One combined race</label>
+       <label class="mc-coalesce hidden" id="mc-coalesce">
+         <input type="checkbox" id="coalesce"> Coalesce a school entered twice
+       </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
   $("meet-chosen").classList.remove("hidden");
@@ -465,6 +478,10 @@ async function loadRaces() {
         state.raceMode = r.value;
         updateModeHint();
       });
+    });
+    $("coalesce").addEventListener("change", (e) => {
+      state.coalesce = e.target.checked;
+      updateModeHint();
     });
     updateModeHint();
 
@@ -708,6 +725,12 @@ function buildQuery(div) {
     sport: state.meet.sport,
   });
   if (div) q.set("div_id", div);
+  /* ★ COMBINED WITH DIVISIONS PICKED IS ONE RACE OUT OF SEVERAL (issue #86).
+     Separate mode never sends div_ids -- it sends one div_id per request. */
+  if (state.raceMode === "combined" && state.divs.length > 1) {
+    q.set("div_ids", state.divs.join(","));
+    if (state.coalesce) q.set("coalesce", "1");
+  }
   if (state.when === "thisyear") q.set("date", $("t-date").value);
   /* ★ THE COURSE OVERRIDE. Empty means the meet's own, which is what the
      server does with an absent value -- so nothing is sent unless a

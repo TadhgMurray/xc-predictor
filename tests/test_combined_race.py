@@ -1,0 +1,123 @@
+"""
+Issue #86: several divisions scored as ONE race.
+
+Owner's ruling: a school entered in two divisions is TWO teams, distinctly
+labelled, by default -- with an option to coalesce them into one squad.
+Coalescing is capped at seven, or a school entered twice would field fourteen.
+"""
+import os
+import sys
+
+_ROOT = os.path.join(os.path.dirname(__file__), "..")
+for _p in ("engine", "scripts", "racecast"):
+    sys.path.insert(0, os.path.join(_ROOT, _p))
+import predict                                                  # noqa: E402
+
+
+def _e(pid, school):
+    return {"person_id": pid, "school": school, "name": f"R{pid}"}
+
+
+def _install(per_div, labels):
+    saved = (predict._teamRosters, predict._divisionLabel)
+    predict._teamRosters = lambda cur, schools, one, *a, **k: [
+        dict(e) for e in per_div[one["div_id"]]]
+    predict._divisionLabel = lambda cur, m, d, s: labels.get(d)
+
+    def undo():
+        predict._teamRosters, predict._divisionLabel = saved
+    return undo
+
+
+PER_DIV = {
+    "1": [_e(1, "Cabell Midland"), _e(2, "Cabell Midland"), _e(3, "Alpha")],
+    "2": [_e(4, "Cabell Midland"), _e(5, "Cabell Midland"), _e(6, "Beta")],
+}
+LABELS = {"1": "Varsity", "2": "JV"}
+
+
+def test_a_school_in_two_divisions_becomes_two_labelled_teams():
+    undo = _install(PER_DIV, LABELS)
+    try:
+        out = predict._combinedRoster(
+            None, {"meet_id": 9, "coalesce": False}, ["1", "2"], "XC", "rerun")
+    finally:
+        undo()
+    schools = sorted({e["school"] for e in out})
+    assert "Cabell Midland (Varsity)" in schools, schools
+    assert "Cabell Midland (JV)" in schools, schools
+    assert "Cabell Midland" not in schools, schools
+    # ! A SCHOOL IN ONLY ONE DIVISION IS NOT SUFFIXED -- that would be noise.
+    assert "Alpha" in schools and "Beta" in schools, schools
+    print(f"  two divisions -> {schools} ... OK")
+
+
+def test_coalesce_keeps_the_bare_name():
+    undo = _install(PER_DIV, LABELS)
+    try:
+        out = predict._combinedRoster(
+            None, {"meet_id": 9, "coalesce": True}, ["1", "2"], "XC", "rerun")
+    finally:
+        undo()
+    schools = {e["school"] for e in out}
+    assert schools == {"Cabell Midland", "Alpha", "Beta"}, schools
+    print("  coalesced -> one 'Cabell Midland' squad ............ OK")
+
+
+def test_one_row_per_person():
+    """An athlete entered in two divisions must not run twice in one race."""
+    dup = {"1": [_e(1, "Alpha")], "2": [_e(1, "Alpha"), _e(2, "Alpha")]}
+    undo = _install(dup, LABELS)
+    try:
+        out = predict._combinedRoster(
+            None, {"meet_id": 9}, ["1", "2"], "XC", "rerun")
+    finally:
+        undo()
+    assert sorted(e["person_id"] for e in out) == [1, 2], out
+    print("  an athlete in both divisions appears once .......... OK")
+
+
+def test_coalesced_squad_is_capped_at_seven():
+    """Fourteen runners under one name would take fourteen places and push
+    every other team down -- an advantage no real team could have."""
+    field = [_e(i, "Big") for i in range(14)] + [_e(100, "Small")]
+    preds = ([{"seconds": 900 + i} for i in range(14)]
+             + [{"seconds": 905}])
+    f2, p2 = predict._capCoalesced(field, preds)
+
+    big = [f for f in f2 if f["school"] == "Big"]
+    assert len(big) == predict.MAX_PER_TEAM, len(big)
+    # the SEVEN FASTEST, not the first seven encountered
+    assert sorted(f["person_id"] for f in big) == list(range(7)), big
+    assert any(f["school"] == "Small" for f in f2), "other teams were trimmed"
+    assert len(f2) == len(p2), "field and preds fell out of step"
+    print(f"  14 -> {len(big)} kept, fastest seven ................ OK")
+
+
+def test_the_cap_leaves_unpredictable_runners_alone():
+    """They are not in the scoring order at all; _score already drops them."""
+    field = [_e(1, "Big"), _e(2, "Big")]
+    preds = [{"seconds": None}, {"seconds": 900}]
+    f2, p2 = predict._capCoalesced(field, preds)
+    assert len(f2) == 2 and len(p2) == 2, (f2, p2)
+    print("  an unpredictable runner is not trimmed ............. OK")
+
+
+def test_unattached_is_never_capped():
+    """Unattached is not a team -- capping it to seven would invent one."""
+    field = [_e(i, "Unattached") for i in range(10)]
+    preds = [{"seconds": 900 + i} for i in range(10)]
+    f2, _ = predict._capCoalesced(field, preds)
+    assert len(f2) == 10, len(f2)
+    print("  unattached runners are all kept .................... OK")
+
+
+if __name__ == "__main__":
+    for fn in [test_a_school_in_two_divisions_becomes_two_labelled_teams,
+               test_coalesce_keeps_the_bare_name,
+               test_one_row_per_person,
+               test_coalesced_squad_is_capped_at_seven,
+               test_the_cap_leaves_unpredictable_runners_alone,
+               test_unattached_is_never_capped]:
+        fn()
+    print("\nall combined-race tests passed")

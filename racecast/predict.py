@@ -210,6 +210,13 @@ def predictTeam(cur, schools, target, head_to_head=False,
     field = roster if head_to_head else _fullField(cur, roster, target)
     preds = _predictTimes(cur, [r["person_id"] for r in field], target)
 
+    # ★ A COALESCED SQUAD ENTERS SEVEN (issue #86). Two divisions merged under
+    #   one name bring fourteen, and all fourteen would take places -- pushing
+    #   every other team down and giving the merged squad an advantage no real
+    #   team could have.
+    if target.get("coalesce") and len(target.get("div_ids") or []) > 1:
+        field, preds = _capCoalesced(field, preds)
+
     return {"available": True,
             "mode": "head_to_head" if head_to_head else "meet",
             "teams": _score(field, preds)}
@@ -897,7 +904,14 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     div = int(div) if div and str(div).isdigit() else None
 
     entries = []
-    if target.get("meet_id"):
+    # ★ SEVERAL DIVISIONS AS ONE RACE (issue #86). Each division's roster is
+    #   built exactly as a single division's is, then they are put in one
+    #   field. Nothing about the per-division build changes -- this is a
+    #   union, not a different way of choosing runners.
+    div_ids = [d for d in (target.get("div_ids") or []) if d]
+    if target.get("meet_id") and len(div_ids) > 1:
+        entries = _combinedRoster(cur, target, div_ids, sport, mode)
+    elif target.get("meet_id"):
         originals = _exactField(cur, int(target["meet_id"]), div, sport)
         if mode == "rerun_exact":
             entries = originals
@@ -931,6 +945,103 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         entries.extend(_athleteEntries(cur, add_ids, sport,
                                        _currentSeason(cur, sport)))
     return entries
+
+
+# Purpose:   one field out of several divisions, for a combined race.
+# Input:     div_ids -- the divisions to merge; target carries `coalesce`.
+# Output:    entries, with `school` rewritten when a school is in more than one.
+#
+# ★ A SCHOOL IN TWO DIVISIONS IS TWO TEAMS BY DEFAULT (owner, 2026-09-01).
+#   _score groups on `school`, so "Cabell Midland (Varsity)" and "Cabell
+#   Midland (JV)" score as two squads with no runner pooled between them --
+#   which is what actually happened on the day.
+#
+# ★ AND COALESCE IS AN OPTION, because the owner's rule is to offer the choice.
+#   Coalescing keeps the bare name, so the two entries become one squad.
+# ⚠ WHICH IS NOT FREE, AND THE CAP IS WHY. A school entered twice brings
+#   fourteen runners; scored as one team all fourteen take places, pushing
+#   every other team's runners down and handing the merged squad an advantage
+#   no real team could have. predictTeam trims a coalesced squad to seven --
+#   see _capCoalesced -- so it enters what a team is allowed to enter.
+# ! ONLY SCHOOLS ACTUALLY IN TWO DIVISIONS ARE SUFFIXED. Labelling every team
+#   would put "(Varsity)" on schools that only ran once, which is noise.
+def _combinedRoster(cur, target, div_ids, sport, mode):
+    base = dict(target)
+    per_div, labels = [], {}
+    for d in div_ids:
+        one = dict(base)
+        one["div_id"] = d
+        one.pop("div_ids", None)
+        rows = _teamRosters(cur, None, one)
+        labels[d] = _divisionLabel(cur, target.get("meet_id"), d, sport) or str(d)
+        per_div.append((d, rows))
+
+    if not target.get("coalesce"):
+        seen = {}
+        for d, rows in per_div:
+            for e in rows:
+                sch = e.get("school")
+                if sch:
+                    seen.setdefault(sch, set()).add(d)
+        for d, rows in per_div:
+            for e in rows:
+                sch = e.get("school")
+                if sch and len(seen.get(sch, ())) > 1:
+                    e["school"] = f"{sch} ({labels[d]})"
+
+    out, seen_ids = [], set()
+    for _d, rows in per_div:
+        for e in rows:
+            # ! ONE ROW PER PERSON. An athlete entered in two divisions of the
+            #   same meet would otherwise run twice in one race.
+            if e["person_id"] in seen_ids:
+                continue
+            seen_ids.add(e["person_id"])
+            out.append(e)
+    return out
+
+
+# The division's own name, for the "(Varsity)" suffix. Falls back to the id.
+def _divisionLabel(cur, meet_id, div_id, sport):
+    if not meet_id or not div_id:
+        return None
+    table, col = ("meets", "division") if sport == "XC" else ("meets_tf",
+                                                              "division")
+    cur.execute(f"SELECT {col} AS d FROM {table} "
+                f"WHERE meet_id = %(m)s AND div_id = %(v)s LIMIT 1",
+                {"m": int(meet_id), "v": int(div_id)})
+    row = cur.fetchone()
+    return ((row or {}).get("d") or "").strip() or None
+
+
+# Purpose:   a coalesced squad enters what a team is allowed to enter.
+# Input:     field/preds as predictTeam holds them.
+# Output:    the field, trimmed to MAX_PER_TEAM per school by predicted time.
+#
+# ⚠ BY PREDICTED TIME, NOT BY RATING. The rating is what we had before the
+#   model ran; the prediction is the model's own answer for THIS race, and
+#   scoring should use the seven it thinks are fastest here.
+# ! AN UNPREDICTABLE RUNNER IS NOT TRIMMED, because they are not in the
+#   scoring order at all -- _score already drops them.
+def _capCoalesced(field, preds):
+    paired = list(zip(field, preds))
+    timed = [(f, p) for f, p in paired if p.get("seconds") is not None]
+    timed.sort(key=lambda t: t[1]["seconds"])
+    kept, per_school = set(), {}
+    for f, _p in timed:
+        sch = f.get("school")
+        if not isTeam(sch):
+            kept.add(id(f))
+            continue
+        per_school[sch] = per_school.get(sch, 0) + 1
+        if per_school[sch] <= MAX_PER_TEAM:
+            kept.add(id(f))
+    out_f, out_p = [], []
+    for f, p in paired:
+        if p.get("seconds") is None or id(f) in kept:
+            out_f.append(f)
+            out_p.append(p)
+    return out_f, out_p
 
 
 def _fullField(cur, roster, target):

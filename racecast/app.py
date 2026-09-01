@@ -4863,6 +4863,16 @@ def _target(args):
         #   field, its division, its date. Empty means the meet's own.
         t["course"] = (args.get("course") or "").strip() or None
         t["distance"] = (args.get("distance") or "").strip() or None
+        # ★ SEVERAL DIVISIONS AS ONE RACE (issue #86). div_ids is the combined
+        #   case; div_id stays the single-division one and is untouched.
+        t["div_ids"] = [d.strip() for d
+                        in (args.get("div_ids") or "").split(",") if d.strip()]
+        if len(t["div_ids"]) > 12:
+            return None, "Twelve divisions at most."
+        # ! COALESCE ONLY MEANS ANYTHING WITH SEVERAL DIVISIONS. A school in
+        #   two of them is two teams by default; this merges them into one
+        #   squad, capped at seven by predicted time.
+        t["coalesce"] = (args.get("coalesce") or "").strip() in ("1", "true")
         if mode == "rerun":
             # The date the re-run is FOR: the page sends its editable
             # date (same month and day this year by default). A bare
