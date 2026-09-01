@@ -508,7 +508,10 @@ function makeCombo(host) {
     `</button>` +
     `<div class="combo-panel hidden" style="width:${cfg.width}px">` +
       `<div class="combo-search">` +
-        `<input id="${field}-input" class="combo-input" type="text" ` +
+        /* ! type="search", NOT "text". A bare text input with no name is
+             the shape Chrome's autofill heuristics guess at, and a wrong
+             guess offers Google Pay over the box. */
+        `<input id="${field}-input" class="combo-input" type="search" ` +
         `autocomplete="off" placeholder="${searched ? (cfg.hint || "Search\u2026") : "Filter\u2026"}">` +
       `</div>` +
       `<div class="combo-opts${cfg.flow === "column" ? " flow-col" : ""}" ` +

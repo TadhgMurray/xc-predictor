@@ -660,6 +660,21 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     margin: 0.75rem 0 0.25rem;
     max-width: 640px;
 }
+/* ★ type="search" IS A SIGNAL, NOT A LOOK (owner, 2026-09-01: Chrome
+   offering Google Pay over a search box). Several boxes that ARE searches
+   were declared type="text", which is the ambiguous shape autofill
+   heuristics guess at. Declaring them properly must not change how they
+   look, so WebKit's built-in clear button and inner spin are removed --
+   otherwise the fix ships a visible restyle nobody asked for. */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+}
+input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
+
 .search-page-form input[type="search"] {
     flex: 1 1 auto;
     padding: 0.5rem 0.8rem;

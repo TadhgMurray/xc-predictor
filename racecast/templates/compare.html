@@ -36,7 +36,12 @@
         <div class="field">
             <label for="h2h-a">Athlete A</label>
             <div class="h2h-search">
-                <input id="h2h-a" autocomplete="off"
+                {# ! type="search" AND autocomplete="off": a bare text input with no
+                     name is exactly the shape Chrome's autofill heuristics guess at,
+                     and a wrong guess offers Google Pay over the box (owner,
+                     2026-09-01). Declaring it a search field is the strongest signal
+                     a page can give; the browser still decides. #}
+                <input id="h2h-a" type="search" autocomplete="off"
                        data-pid="{{ card_a.person_id if card_a else '' }}"
                        value="{{ card_a.name if card_a else '' }}">
                 <div class="h2h-sug hidden" id="h2h-a-sug"></div>
@@ -45,7 +50,7 @@
         <div class="field">
             <label for="h2h-b">Athlete B</label>
             <div class="h2h-search">
-                <input id="h2h-b" autocomplete="off"
+                <input id="h2h-b" type="search" autocomplete="off"
                        data-pid="{{ card_b.person_id if card_b else '' }}"
                        value="{{ card_b.name if card_b else '' }}">
                 <div class="h2h-sug hidden" id="h2h-b-sug"></div>
