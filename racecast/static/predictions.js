@@ -33,6 +33,9 @@ const state = {
   // ★ OFF BY DEFAULT. Two entries is what actually happened on the day;
   //   merging them is the what-if, and a what-if should be asked for.
   coalesce: false,
+  // Which picked divisions are scored as ONE race. A partition of divs; see
+  // normalizeGroups. The two presets are groupings, not a separate mode.
+  groups: [],
   // ⚠ `view` IS NOT HERE. How much of a field is on screen is PER RACE now,
   //   so it lives in each division's edit record and reaches this object
   //   through an accessor, like field/open/added. A plain key here would
@@ -87,6 +90,70 @@ const _edits = new Map();
  *
  * ! PRESSING IT AGAIN CLEARS, so it is still a toggle rather than a trap.
  */
+/* ==================================================================== *
+ *  RACE GROUPS (issue #89)
+ *
+ *  ★ A GROUP IS A SCORING CONCEPT, NOT A LAYOUT ONE. Each picked division
+ *    keeps its own block, its own field and its own edits -- that is what
+ *    the owner asked for and what the server already does, since
+ *    _combinedRoster builds a combined race division by division. A GROUP
+ *    just says which of those blocks are scored as one race.
+ *
+ *    So the two old modes are presets over the same structure:
+ *      separate  -> every division in a group of its own
+ *      combined  -> every division in one group
+ *      custom    -> anything else
+ *    and nothing downstream had to learn a new idea: buildQuery already took
+ *    div_ids, mergedEdits already unioned several divisions' edits, and the
+ *    server already loops divisions for a combined race.
+ * ==================================================================== */
+
+/* The grouping the two presets describe. */
+function groupsForMode(divs, mode) {
+  if (!divs.length) return [];
+  return mode === "combined" ? [divs.slice()] : divs.map((d) => [d]);
+}
+
+/*
+ * Keep groups a partition of divs: nothing grouped that is not picked,
+ * nothing picked that is not grouped, no empty groups.
+ *
+ * ! CALLED AFTER EVERY CHANGE TO EITHER, because the two are separate state
+ *   and a division picked or unpicked must not leave a group referring to it
+ *   -- a stale id there would be sent to the server as part of a race.
+ */
+function normalizeGroups(divs, groups) {
+  const want = new Set(divs);
+  const out = [];
+  const seen = new Set();
+  for (const g of groups || []) {
+    const kept = g.filter((d) => want.has(d) && !seen.has(d));
+    kept.forEach((d) => seen.add(d));
+    if (kept.length) out.push(kept);
+  }
+  // Anything newly picked joins as a race of its own -- the safe default,
+  // since merging two fields is the thing that needs to be asked for.
+  for (const d of divs) if (!seen.has(d)) out.push([d]);
+  return out;
+}
+
+/* Move one division into a group by index; -1 means a new race of its own. */
+function moveDiv(groups, div, to) {
+  const out = groups.map((g) => g.filter((d) => d !== div))
+                    .filter((g) => g.length);
+  if (to >= 0 && to < out.length) out[to].push(div);
+  else out.push([div]);
+  return out;
+}
+
+/* The mode a grouping actually describes, so the radios cannot lie about
+   what is on screen after a division is unpicked. */
+function modeOfGroups(divs, groups) {
+  if (groups.length <= 1 && divs.length > 1) return "combined";
+  if (groups.every((g) => g.length === 1)) return "separate";
+  return "custom";
+}
+
 function toggleDiv(divs, div, all) {
   if (div === null) {
     const every = (all || []).slice();
@@ -96,6 +163,53 @@ function toggleDiv(divs, div, all) {
                             : divs.concat([div]);
 }
 
+/*
+ * ★ THE GROUPING CONTROL (issue #89). One row per picked division, each with
+ *   the race it belongs to. A dropdown rather than drag-and-drop: drag needs
+ *   a drop-target design, is poor on a phone -- which is already its own
+ *   open issue -- and is far more code for a control that has to say exactly
+ *   one thing, which race this division is in.
+ *
+ * ! "New race" IS ALWAYS AVAILABLE, so a grouping can be built up from
+ *   scratch without first having to make room for it.
+ *
+ * ⚠ MIXED GENDERS ARE ALLOWED (owner's ruling on #86, reaffirmed for #89),
+ *   because racing a boys division against a girls one is a question people
+ *   genuinely ask. It is NOTED on the group rather than blocked, since a
+ *   score across it means something different from a score within one.
+ */
+function renderGroups() {
+  const box = $("mc-groups");
+  if (!box) return;
+  box.classList.toggle("hidden",
+                       state.raceMode !== "custom" || state.divs.length < 2);
+  if (box.classList.contains("hidden")) { box.innerHTML = ""; return; }
+
+  const at = new Map();
+  state.groups.forEach((g, i) => g.forEach((d) => at.set(d, i)));
+
+  box.innerHTML = state.divs.map((d) => {
+    const mine = at.get(d);
+    const opts = state.groups.map((g, i) =>
+      `<option value="${i}"${i === mine ? " selected" : ""}>Race ${i + 1}` +
+      `</option>`).join("")
+      + `<option value="-1">New race</option>`;
+    return `<div class="grp-row">
+        <span class="grp-name">${esc(divLabel(d))}</span>
+        <select class="grp-sel" data-div="${esc(d)}">${opts}</select>
+      </div>`;
+  }).join("") + state.groups.map((g, i) => {
+    if (g.length < 2) return "";
+    const genders = new Set(g.map((d) => (_divLabels.get(String(d)) || ""))
+      .map((l) => /Girls/.test(l) ? "F" : (/Boys/.test(l) ? "M" : "?")));
+    const mixed = genders.has("M") && genders.has("F");
+    return `<div class="grp-sum">Race ${i + 1}: ${esc(divLabel(g))}` +
+      (mixed ? ` <span class="grp-warn">\u2014 boys and girls scored `
+             + `together</span>` : "") + `</div>`;
+  }).join("");
+}
+
+
 /* Say what the current mode will actually do, in the terms of what is
    picked -- "combined" with nothing picked and with two picked are the same
    request, and that is worth stating rather than leaving to be discovered. */
@@ -103,19 +217,26 @@ function updateModeHint() {
   const el = $("mc-mode-hint");
   if (!el) return;
   const n = state.divs.length;
+  renderGroups();
+  /* ★ COALESCE IS ABOUT A SCHOOL IN TWO DIVISIONS OF ONE RACE, so it applies
+     wherever a GROUP has more than one division -- not only to the combined
+     preset. One checkbox for all such groups: per-group checkboxes would
+     triple the size of this control for a case most meets never hit, and the
+     rule it sets is the same one either way. */
+  const merged = state.groups.some((g) => g.length > 1);
   const co = $("mc-coalesce");
-  if (co) co.classList.toggle("hidden",
-                              !(state.raceMode === "combined" && n > 1));
+  if (co) co.classList.toggle("hidden", !merged);
   /* ★ EVERY MESSAGE IS ONE SHORT LINE (owner, 2026-09-01: the jolt, third
      attempt). Reserving height for a hint that swung between one line and
      three was treating the symptom -- the real fix is that it does not swing.
      What a coalesced school does is now written on the CHECKBOX, where it is
      static, instead of being appended here where it was not. */
-  el.textContent = state.raceMode === "combined"
-    ? (n > 1 ? `Scoring ${n} divisions as one race.`
-             : "Scoring the whole meet as one race.")
-    : (n > 1 ? `Scoring ${n} divisions separately.`
-             : "Scoring each picked division on its own.");
+  const races = state.groups.length;
+  el.textContent =
+    !n ? "Scoring the whole meet as one race."
+    : races === 1 ? `Scoring ${n} divisions as one race.`
+    : races === n ? `Scoring ${n} divisions separately.`
+    : `Scoring ${n} divisions as ${races} races.`;
 }
 
 /* The name a division goes by, for a result heading. Falls back to the id so
@@ -123,6 +244,13 @@ function updateModeHint() {
 const _divLabels = new Map();
 function divLabel(div) {
   if (div === null || div === undefined) return "All races";
+  /* ★ A GROUP NAMES ITS DIVISIONS, NOT ITS INDEX (issue #89). "Race 2" is
+     fine inside the control where you are assigning, and useless above a
+     result: what you want to read is which races these are. */
+  if (Array.isArray(div)) {
+    if (!div.length) return "All races";
+    return div.map(divLabel).join(" + ");
+  }
   return _divLabels.get(String(div)) || `Division ${div}`;
 }
 
@@ -207,6 +335,7 @@ function writeState() {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       meet: state.meet, when: state.when, who: state.who,
       divs: state.divs, raceMode: state.raceMode,
+      groups: state.groups,
       coalesce: state.coalesce, course: state.course,
       athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
@@ -227,6 +356,11 @@ function restoreState() {
   state.who = saved.who || "team";
   state.divs = saved.divs || [];
   state.raceMode = saved.raceMode || "separate";
+  /* A session saved before groups existed carries none; derive them from the
+     mode it did save, which is exactly what that mode meant. */
+  state.groups = normalizeGroups(
+    state.divs,
+    saved.groups || groupsForMode(state.divs, state.raceMode));
   state.coalesce = !!saved.coalesce;
   state.course = saved.course || null;
   state.athletes = saved.athletes || [];
@@ -544,6 +678,7 @@ async function chooseMeet(data) {
   /* A different meet is a different world: its divisions, its fields and
      every edit made to them belong to the old one. */
   state.divs = [];
+  state.groups = [];
   resetEdits();
   _divLabels.clear();
   state.meet = { ...parsed, label: data.label, year: data.year,
@@ -600,7 +735,10 @@ function renderChosenMeet(bare) {
            Separate races</label>
          <label><input type="radio" name="racemode" value="combined">
            One combined race</label>
+         <label><input type="radio" name="racemode" value="custom">
+           Custom groups</label>
        </div>
+       <div class="mc-groups hidden" id="mc-groups"></div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce">
          Coalesce a school in two divisions into one squad
@@ -697,9 +835,34 @@ async function loadRaces() {
     $("mc-mode").querySelectorAll("input[name=racemode]").forEach((r) => {
       r.addEventListener("change", () => {
         state.raceMode = r.value;
+        // A preset REWRITES the grouping; custom keeps whatever is there.
+        state.groups = r.value === "custom"
+          ? normalizeGroups(state.divs, state.groups)
+          : groupsForMode(state.divs, r.value);
         updateModeHint();
         saveState();
+        renderField();          // the group labels above the blocks move
       });
+    });
+    /* Delegated: the rows are re-rendered on every change, so a listener
+       per <select> would be rebound each time and leak the old ones. */
+    $("mc-groups").addEventListener("change", (e) => {
+      const sel = e.target.closest(".grp-sel");
+      if (!sel) return;
+      state.groups = normalizeGroups(
+        state.divs,
+        moveDiv(state.groups, sel.dataset.div, parseInt(sel.value, 10)));
+      /* ! THE MODE FOLLOWS THE GROUPING, not the other way round. Dropping
+           back to one-per-division by hand IS separate mode, and the radios
+           should say so rather than claiming "custom" for a grouping that is
+           not custom at all. */
+      state.raceMode = modeOfGroups(state.divs, state.groups);
+      const back = $("mc-mode")
+        .querySelector(`input[name=racemode][value="${state.raceMode}"]`);
+      if (back) back.checked = true;
+      updateModeHint();
+      saveState();
+      renderField();
     });
     $("coalesce").addEventListener("change", (e) => {
       state.coalesce = e.target.checked;
@@ -719,6 +882,13 @@ async function loadRaces() {
         const div = b.dataset.div || null;
         const every = races.map((r) => String(r.div_id));
         state.divs = toggleDiv(state.divs, div, every);
+        /* ! REGROUPED, NOT REBUILT. A division added or removed must not
+             disturb a grouping the user set by hand -- normalizeGroups keeps
+             the surviving groups and gives anything new a race of its own.
+             Under a preset the mode decides, so it is rebuilt there. */
+        state.groups = state.raceMode === "custom"
+          ? normalizeGroups(state.divs, state.groups)
+          : groupsForMode(state.divs, state.raceMode);
         state.meet.div = state.divs.length
           ? (state.divs.includes(div) ? div : state.divs[0])
           : null;
@@ -917,9 +1087,22 @@ function renderField() {
     if (document.activeElement === inp) refocus = k;
   });
 
-  $("field").innerHTML = blocks.map((d) =>
-    `<section class="div-field" data-div-block="${divKey(d)}">
-       ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
+  /* Which group each division is scored in, and whether that group has more
+     than one member -- a block scored WITH another has to say so, or the two
+     look independent and the prediction surprises you. */
+  const groupOf = new Map();
+  state.groups.forEach((g, i) => g.forEach((d) => groupOf.set(d, i)));
+
+  $("field").innerHTML = blocks.map((d) => {
+    const gi = groupOf.get(d);
+    const g = gi === undefined ? null : state.groups[gi];
+    const shared = g && g.length > 1;
+    return `<section class="div-field${shared ? " in-group" : ""}" `
+      + `data-div-block="${divKey(d)}">
+       ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}${
+          shared ? `<span class="grp-note">scored with ${
+            esc(g.filter((x) => x !== d).map(divLabel).join(", "))}</span>`
+                 : ""}</h4>` : ""}
        <div class="fs"></div><div class="fg"></div>
        ${/* ★ ONE BOX PER RACE. It used to sit below every block, so with
              several divisions on screen a single bar had to guess which
@@ -929,7 +1112,8 @@ function renderField() {
                 placeholder="Add or remove a team">
          <div class="pick-results hidden"></div>
        </div>
-     </section>`).join("");
+     </section>`;
+  }).join("");
 
   blocks.forEach((d, i) => {
     state.meet.div = d;
@@ -1140,18 +1324,27 @@ function buildQuery(div) {
      one of their edits. `div` is null there, and editsFor(null) is the
      ALL-RACES record -- so a team removed while D1 was open was silently
      dropped from the request and raced anyway. */
-  const combining = state.raceMode === "combined" && state.divs.length > 1;
-  const e = combining ? mergedEdits(state.divs) : editsFor(div);
+  /* ★ `div` IS A GROUP NOW -- an array of divisions scored as one race, or a
+     single division, or null for the whole meet. A group of several carries
+     EVERY one of their edits, because editsFor(null) is the all-races record
+     and a team removed while D1 was open would otherwise be dropped from the
+     request and race anyway. */
+  const group = Array.isArray(div) ? div : (div == null ? [] : [div]);
+  const combining = group.length > 1;
+  const e = combining ? mergedEdits(group)
+                      : editsFor(group.length ? group[0] : null);
   const q = new URLSearchParams({
     mode: state.when === "asran" ? "rerun_exact" : "rerun",
     meet_id: state.meet.id,
     sport: state.meet.sport,
   });
-  if (div) q.set("div_id", div);
-  /* ★ COMBINED WITH DIVISIONS PICKED IS ONE RACE OUT OF SEVERAL (issue #86).
-     Separate mode never sends div_ids -- it sends one div_id per request. */
-  if (state.raceMode === "combined" && state.divs.length > 1) {
-    q.set("div_ids", state.divs.join(","));
+  if (group.length === 1) q.set("div_id", group[0]);
+  /* ★ SEVERAL DIVISIONS AS ONE RACE (issues #86, #89). A group of one sends
+     div_id and is the ordinary single-division request; a group of several
+     sends div_ids and the server unions them. Coalesce only means anything
+     for the second kind. */
+  if (combining) {
+    q.set("div_ids", group.join(","));
     if (state.coalesce) q.set("coalesce", "1");
   }
   if (state.when === "thisyear") q.set("date", $("t-date").value);
@@ -1194,9 +1387,13 @@ async function predict() {
      different feature -- so nothing is merged: each is the existing
      single-division request, run once per selection.
      ! INDIVIDUAL MODE HAS NO DIVISIONS: the athletes were named directly. */
-  const targets = (state.who === "team" && state.raceMode === "separate"
-                   && state.divs.length)
-    ? state.divs.slice() : [state.who === "team" ? null : state.meet.div];
+  /* ★ ONE REQUEST PER GROUP, and one section per result (issues #85, #89).
+     A group is a race: one division or several, scored together. With
+     nothing picked there is one race -- the whole meet.
+     ! INDIVIDUAL MODE HAS NO DIVISIONS: the athletes were named directly. */
+  const targets = state.who !== "team" ? [state.meet.div]
+                : (state.groups.length ? state.groups.map((g) => g.slice())
+                                       : [null]);
 
   try {
     const parts = [];
@@ -1577,8 +1774,9 @@ async function addTeam(school, div) {
            school correctly returns nobody -- and the message blamed the
            data. Carondelet was racing; it was just not racing here. */
       setStatus(squad.other_gender
-        ? `${school} has ${squad.other_gender} runners, but not in this `
-          + `race\u2019s ${squad.gender === "M" ? "boys" : "girls"} field.`
+        ? `${school} is a ${squad.gender === "M" ? "girls" : "boys"}-only `
+          + `school \u2014 it cannot run in this `
+          + `${squad.gender === "M" ? "boys" : "girls"} race.`
         : `No one from ${school} has raced this season.`, true);
       return;
     }
@@ -1892,6 +2090,7 @@ document.addEventListener("click", (e) => {
     state.meet = null;
     state.course = null;
     state.divs = [];
+    state.groups = [];
     resetEdits();
     state.field = null;
     $("meet-chosen").classList.add("hidden");

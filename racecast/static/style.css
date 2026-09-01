@@ -2675,6 +2675,28 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    gets unhidden it messes up the ui again". The row is always there; only
    its contents come and go. */
 .predict2 label.mc-coalesce.hidden { visibility: hidden; }
+
+/* ★ THE GROUPING CONTROL (issue #89). One row per picked division and the
+   race it is in. Kept inside .mc-mode's fixed grid, and the block has a
+   min-height under it, so revealing this cannot jolt the box -- the failure
+   this control's neighbours have had three times. */
+.predict2 .mc-groups { display: grid; row-gap: 3px; margin: 4px 0 0 1.4rem; }
+.predict2 .mc-groups.hidden { display: none; }
+.predict2 .grp-row { display: flex; align-items: center; gap: 8px;
+                     font-size: 0.78rem; }
+.predict2 .grp-name { flex: 0 1 14rem; overflow: hidden;
+                      text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .grp-sel { font: inherit; font-size: 0.76rem; padding: 1px 4px;
+                     border: 1px solid #d1d5db; border-radius: 4px;
+                     background: #fff; }
+.predict2 .grp-sum { font-size: 0.75rem; color: #6b7280; margin-top: 2px; }
+/* Mixed genders are ALLOWED (owner's ruling) -- noted, never blocked. */
+.predict2 .grp-warn { color: #92400e; font-style: italic; }
+/* A block scored with another says so beside its own heading. */
+.predict2 .grp-note { font-weight: 400; color: #6b7280; font-style: italic;
+                      margin-left: 0.5rem; font-size: 0.9em; }
+.predict2 .div-field.in-group { border-left: 2px solid #cbd5e1;
+                                padding-left: 0.6rem; }
 /* ⚠ NOTHING IN THIS BLOCK MAY CHANGE ITS HEIGHT (owner, 2026-09-01, after
    three failed attempts at the jolt). Rather than reserve space for each
    thing that moved in turn, the variables are gone: every hint is one short

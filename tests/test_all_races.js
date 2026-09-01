@@ -79,11 +79,15 @@ const ALL = ["10", "11", "12"];
       option and the mode hint key off the division COUNT, which is what
       "All races" used to zero out. */
 {
-  ok(/state\.raceMode === "combined" && n > 1/.test(SRC),
-     "coalesce appears for a combined race of more than one division");
+  /* ⚠ THE RULE MOVED WITH #89. Coalesce is about a school entered in two
+       divisions of ONE race, so it follows the GROUPING -- any group that
+       merges divisions -- rather than the combined preset. "All races" still
+       has to be a real selection for a group to have more than one member,
+       which is what this originally guarded. */
+  ok(/state\.groups\.some\(\(g\) => g\.length > 1\)/.test(SRC),
+     "coalesce appears whenever any group merges divisions");
   ok(/const n = state\.divs\.length/.test(SRC),
-     "the count is the number of divisions picked, which is why All races "
-     + "had to become a real selection before coalesce could appear");
+     "the hint still counts the divisions picked");
 
   const rf = grab("renderField");
   ok(/const separate = blocks\.length > 1/.test(rf),
