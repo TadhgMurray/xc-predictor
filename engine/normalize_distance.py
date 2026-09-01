@@ -964,13 +964,35 @@ def _distancePotentialEntry(pool, sport):
 # Arguments: pool -- bare or sport-suffixed ('ms_f' or 'ms_f|XC').
 # Output:    metres as float; the artifact's global target when unknown.
 def targetFor(pool, sport=None):
-    """The anchor for a pool, sport-specific when the artifact has one.
+    """The anchor for a pool -- the distance its normalized_time is expressed at.
 
-    ! THE FULL KEY IS TRIED FIRST. `pool` may already arrive suffixed
-      ('ms_f|XC') from the engine, or bare with the sport passed separately
-      from the backfill. Both spellings must reach the same answer or the two
-      stages write and read on different scales -- the exact failure that put
-      Luke Surface's 552-second normalized times under a 600-second floor.
+    ! THE FULL KEY IS TRIED FIRST -- NO LONGER, AND THE SPORT IS NOW IGNORED
+      WHEN THE BARE POOL HAS AN ANCHOR. It used to prefer 'hs_m|TF' over
+      'hs_m', which is not what the normaliser does:
+
+          _normalizeWithPotential:
+              target = pool_targets[base] or entry['target'] or global
+
+      -- it strips the suffix deliberately (see the comment there) and reads
+      the BARE key. So the artifact's 'hs_m|TF' = 1600 was never applied to a
+      single row, while every caller reasoning about SCALE was told it had
+      been. hs_m TF normalized_times are 5000m-equivalents; targetFor said
+      1600.
+
+    ⚠ WHAT THAT COST, and it is the reason this docstring's own warning
+      existed. poolBandFor multiplies the anchor by PACE_FLOOR/PACE_CEIL, so
+      the boards and the solve gated high-school TF rows at (192, 1152) --
+      the band for a 1600m-equivalent -- against numbers written on a 5000m
+      scale. A 5:29 1600, an 11:53 3200 and a 2:27 800 all normalise past
+      1152 and were refused a place on every board; below 192 nothing exists,
+      so the floor that should have been 600 caught nothing and impossibly
+      fast rows passed. That is the same failure the old docstring named --
+      "the two stages write and read on different scales" -- with the
+      spellings swapped.
+
+      The bare key is therefore authoritative, exactly as in the normaliser.
+      A sport-suffixed anchor is still honoured when the bare pool has none,
+      so an older artifact that only carried suffixed keys still resolves.
     """
     # ! NO ARTIFACT IS NOT AN EXCEPTION. _SPLINES is None until the pickle
     #   loads, and every other reader in this module already degrades to a
@@ -979,10 +1001,12 @@ def targetFor(pool, sport=None):
     #   built the splines yet. The documented fallback is the global target.
     targets = (_SPLINES or {}).get("pool_targets", {})
     base = (pool or "").split("|")[0]
+    if base in targets:
+        return float(targets[base])
     sp = sport or ((pool or "").split("|")[1] if "|" in (pool or "") else None)
     if sp and f"{base}|{sp}" in targets:
         return float(targets[f"{base}|{sp}"])
-    return float(targets.get(base) or (_SPLINES or {}).get("target", 5000.0))
+    return float((_SPLINES or {}).get("target", 5000.0))
 
 
 # ★ THE ENGINE'S SANITY BAND, DEFINED ONCE. speed_ratings.packResults keeps a

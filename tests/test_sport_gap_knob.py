@@ -111,6 +111,57 @@ ok("PER-POOL" in rec.upper() and "distance_fix_by_pool" in rec,
    "pair_recenter should record why per-pool bbar is not the knob and which "
    "file the pool spread belongs in")
 
+
+# ---------------------------------------------------------------- #
+# 5. the anchor a caller is TOLD is the anchor the normaliser USED
+# ---------------------------------------------------------------- #
+#
+# ★ THE INVARIANT, AND IT IS THE ONLY ONE THAT MATTERS HERE. targetFor exists
+#   so a caller can reason about the SCALE of a normalized_time. That claim is
+#   true exactly when a race run AT the returned distance normalises to its own
+#   time -- normalizeTime is the identity at the anchor. Anything else means
+#   the two stages write and read on different scales.
+#
+#   It was false for every TF pool: the artifact carries 'hs_m|TF' = 1600,
+#   targetFor preferred the suffixed key, and _normalizeWithPotential strips
+#   the suffix and reads 'hs_m' = 5000. poolBandFor then gated high-school
+#   track at (192, 1152) -- a 1600m band over 5000m numbers -- so a 5:29 1600
+#   was refused a place on every board and nothing at all could fail the floor.
+import normalize_distance as nd                              # noqa: E402
+
+if nd._SPLINES is None:
+    print("  (no distance_spline.pkl -- anchor checks skipped)")
+else:
+    for pool in ("hs_m", "hs_f", "ms_m", "ms_f", "elem_m", "elem_f",
+                 "college_m", "college_f"):
+        for sport in ("XC", "TF"):
+            a = nd.targetFor(pool, sport)
+            got = nd.normalizeTime(600.0, a, pool, sport=sport)
+            ok(abs(got - 600.0) < 0.5,
+               f"targetFor({pool!r}, {sport!r}) = {a:.0f}m but normalizeTime "
+               f"is not the identity there ({got:.1f}s for 600s) -- the band "
+               f"and the stored normalized_time are on different scales")
+
+        # and both sports must land on ONE anchor, or a merged athlete-season
+        # holds an ability that is two different distances at once.
+        ok(nd.targetFor(pool, "XC") == nd.targetFor(pool, "TF"),
+           f"{pool}: XC anchors at {nd.targetFor(pool, 'XC'):.0f}m and TF at "
+           f"{nd.targetFor(pool, 'TF'):.0f}m, but alpha is one ability per "
+           f"athlete-season spanning both sports")
+
+    # the band follows the anchor, so it must too
+    for pool in ("hs_m", "hs_f"):
+        lo, hi = nd.poolBandFor(pool, "TF")
+        ok((lo, hi) == nd.poolBandFor(pool, "XC"),
+           f"{pool}: the TF and XC sanity bands differ, so one sport's rows "
+           f"are gated on the other's scale")
+        # a 6:00 1600 is an ordinary high school time and belongs in the solve
+        n = nd.normalizeTime(360.0, 1600, pool, sport="TF")
+        ok(lo <= n <= hi,
+           f"{pool}: a 6:00 1600 normalises to {n:.0f}s and falls outside the "
+           f"band ({lo:.0f}, {hi:.0f}) -- dropped from the solve and every "
+           f"board")
+
 # ---------------------------------------------------------------- #
 if failed:
     print("FAIL")
