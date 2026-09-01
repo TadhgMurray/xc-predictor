@@ -2203,16 +2203,34 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    nothing else, so two runners with one name were indistinguishable and
    there was no way to check the pick before predicting. Same columns the
    team rosters show -- who, where, how fast. */
+/* ⚠ EVERY PROPERTY THE GLOBAL TABLE RULES SET, RESET HERE. `th, td` near the
+   top of this file gives every cell in the site a 1px box and top-aligns it,
+   and `thead th` paints it grey -- written for the athlete page's result
+   grid. Setting only the properties this table wanted left it half boxed
+   grid and half clean list, which is the "text looks off position-wise" the
+   owner reported. Anything not overridden here is inherited from those
+   rules, so the list is explicit rather than partial. */
 .predict2 .chosen-tbl { width: 100%; max-width: 34rem; border-collapse: collapse;
                         font-size: 0.86rem; margin-top: 0.6rem; }
-.predict2 .chosen-tbl th { text-align: left; font-weight: 600; color: #6b7280;
-                           font-size: 0.76rem; text-transform: uppercase;
-                           letter-spacing: 0.03em; padding: 0 0.5rem 0.3rem 0;
-                           border-bottom: 1px solid #e5e7eb; }
-.predict2 .chosen-tbl td { padding: 0.3rem 0.5rem 0.3rem 0;
-                           border-bottom: 1px solid #f1f1ee; }
-.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num { text-align: right; }
-.predict2 .chosen-tbl td:last-child { width: 1.6rem; }
+.predict2 .chosen-tbl th,
+.predict2 .chosen-tbl td { border: 0; border-bottom: 1px solid #f1f1ee;
+                           vertical-align: middle; text-align: left;
+                           padding: 0.32rem 0.6rem 0.32rem 0;
+                           background: none; white-space: nowrap; }
+.predict2 .chosen-tbl thead th { background: none; color: #6b7280;
+                                 font-weight: 600; font-size: 0.74rem;
+                                 text-transform: uppercase;
+                                 letter-spacing: 0.03em;
+                                 padding-bottom: 0.25rem;
+                                 border-bottom: 1px solid #e5e7eb; }
+.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num {
+    text-align: right; font-variant-numeric: tabular-nums; }
+/* The name column takes the slack; the rest are as wide as their contents. */
+.predict2 .chosen-tbl td:first-child,
+.predict2 .chosen-tbl th:first-child { width: 40%; white-space: normal; }
+.predict2 .chosen-tbl td:last-child,
+.predict2 .chosen-tbl th:last-child { width: 1.6rem; padding-right: 0; }
+.predict2 .chosen-tbl tr:last-child td { border-bottom: 0; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }
@@ -2510,16 +2528,34 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    nothing else, so two runners with one name were indistinguishable and
    there was no way to check the pick before predicting. Same columns the
    team rosters show -- who, where, how fast. */
+/* ⚠ EVERY PROPERTY THE GLOBAL TABLE RULES SET, RESET HERE. `th, td` near the
+   top of this file gives every cell in the site a 1px box and top-aligns it,
+   and `thead th` paints it grey -- written for the athlete page's result
+   grid. Setting only the properties this table wanted left it half boxed
+   grid and half clean list, which is the "text looks off position-wise" the
+   owner reported. Anything not overridden here is inherited from those
+   rules, so the list is explicit rather than partial. */
 .predict2 .chosen-tbl { width: 100%; max-width: 34rem; border-collapse: collapse;
                         font-size: 0.86rem; margin-top: 0.6rem; }
-.predict2 .chosen-tbl th { text-align: left; font-weight: 600; color: #6b7280;
-                           font-size: 0.76rem; text-transform: uppercase;
-                           letter-spacing: 0.03em; padding: 0 0.5rem 0.3rem 0;
-                           border-bottom: 1px solid #e5e7eb; }
-.predict2 .chosen-tbl td { padding: 0.3rem 0.5rem 0.3rem 0;
-                           border-bottom: 1px solid #f1f1ee; }
-.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num { text-align: right; }
-.predict2 .chosen-tbl td:last-child { width: 1.6rem; }
+.predict2 .chosen-tbl th,
+.predict2 .chosen-tbl td { border: 0; border-bottom: 1px solid #f1f1ee;
+                           vertical-align: middle; text-align: left;
+                           padding: 0.32rem 0.6rem 0.32rem 0;
+                           background: none; white-space: nowrap; }
+.predict2 .chosen-tbl thead th { background: none; color: #6b7280;
+                                 font-weight: 600; font-size: 0.74rem;
+                                 text-transform: uppercase;
+                                 letter-spacing: 0.03em;
+                                 padding-bottom: 0.25rem;
+                                 border-bottom: 1px solid #e5e7eb; }
+.predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num {
+    text-align: right; font-variant-numeric: tabular-nums; }
+/* The name column takes the slack; the rest are as wide as their contents. */
+.predict2 .chosen-tbl td:first-child,
+.predict2 .chosen-tbl th:first-child { width: 40%; white-space: normal; }
+.predict2 .chosen-tbl td:last-child,
+.predict2 .chosen-tbl th:last-child { width: 1.6rem; padding-right: 0; }
+.predict2 .chosen-tbl tr:last-child td { border-bottom: 0; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
                            color: #4b5563; }
 .predict2 .field-grid.hidden { display: none; }

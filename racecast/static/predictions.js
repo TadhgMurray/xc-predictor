@@ -472,9 +472,30 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
   opts = opts || {};
   let timer = null;
 
+  /*
+   * ⚠ A RESPONSE MUST NOT RE-OPEN A BOX THE READER HAS LEFT (owner,
+   *   2026-09-01: "type something, then exit the search bar, the popup will
+   *   show a few seconds later and be hard to click off").
+   *
+   *   The race: blur hid the box after 150ms, the debounce fired at 180ms,
+   *   the fetch returned later still, and the last line of search() showed
+   *   the box again -- over whatever the reader had moved on to, with no
+   *   focus left to blur a second time.
+   *
+   *   `seq` drops a response a newer keystroke has superseded. `closed`
+   *   drops one that nothing is waiting for any more. Two different
+   *   staleness questions; the second is the reported bug.
+   */
+  let seq = 0;
+  let closed = false;
+
   async function search() {
     const q = input.value.trim();
     if (q.length < 2) { box.classList.add("hidden"); return; }
+    /* Every path below that paints goes through this: a response may only
+       land if it is still the latest AND the box is still open. */
+    const mine = ++seq;
+    const live = () => mine === seq && !closed;
     /* ! AN ALTERNATIVE SOURCE, for a picker whose rows come from somewhere
          richer than the search index. /search/api carries a label, a
          sublabel and a link and nothing else -- no rating, no school as a
@@ -483,9 +504,10 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
     if (opts.rows) {
       try {
         const rows = await opts.rows(q);
+        if (!live()) return;
         box.innerHTML = render(rows);
         box.classList.toggle("hidden", rows.length === 0);
-      } catch (err) { box.classList.add("hidden"); }
+      } catch (err) { if (live()) box.classList.add("hidden"); }
       return;
     }
     try {
@@ -500,17 +522,20 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
       const res = await fetch(`/search/api?kind=${kind}&limit=30&q=`
                               + encodeURIComponent(q));
       const rows = (await res.json() || []).filter((r) => r.kind === kind);
+      if (!live()) return;
       box.innerHTML = render(rows);
       box.classList.toggle("hidden", rows.length === 0);
     } catch (err) {
-      box.classList.add("hidden");
+      if (live()) box.classList.add("hidden");
     }
   }
 
   input.addEventListener("input", () => {
+    closed = false;                 // typing re-opens what leaving shut
     clearTimeout(timer);
     timer = setTimeout(search, 180);
   });
+  input.addEventListener("focus", () => { closed = false; });
 
   // mousedown, not click: blur fires first and would hide the list.
   box.addEventListener("mousedown", (e) => {
@@ -524,10 +549,18 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
        visible -- otherwise the only sign it worked is a line of hint text
        underneath, which is what the owner reported. */
     input.value = keepValue ? (opt.dataset.label || "") : "";
+    closed = true;                  // and no late response may re-open it
+    clearTimeout(timer);
     box.classList.add("hidden");
   });
 
+  /* ! CLOSED AT ONCE, HIDDEN A MOMENT LATER. The flag has to be set
+       immediately so an in-flight response is dropped; the visual hide keeps
+       its delay because a pick is a mousedown and the click that follows it
+       still has to land. */
   input.addEventListener("blur", () => {
+    closed = true;
+    clearTimeout(timer);
     setTimeout(() => box.classList.add("hidden"), 150);
   });
 }

@@ -4024,7 +4024,25 @@ def search_api():
                 --
                 --   sort_count carries races for an athlete and athletes for a
                 --   school, so one column serves both.
-                ORDER  BY ({word_score}) DESC,
+                -- ★ THE WHOLE TYPED PHRASE, AT THE START, BEATS EVERYTHING
+                --   (issue #97). Without this the top key was word_score,
+                --   which every row matching the same tokens TIES on -- so
+                --   the real tiebreak was sort_count, and a popular namesake
+                --   outranked the exact row. Typing MORE of a name could then
+                --   push it past the LIMIT and out of the list, which is the
+                --   reported "typing the full name removes a person, typing
+                --   it minus a letter does not".
+                --
+                -- ⚠ MEETS ARE UNAFFECTED, deliberately. They are stored with
+                --   the year in front ("2026 arcadia invitational"), so this
+                --   is 0 for every one of them and they fall through to
+                --   exactly the ranking they had.
+                -- ! t_phrase, NOT {p}_phrase: this is the QUERY f-string,
+                --   not _ORDER_TAIL's .format(). Both callers take
+                --   _searchTerms' default prefix.
+                ORDER  BY (CASE WHEN search_text LIKE %(t_phrase)s
+                                THEN 1 ELSE 0 END) DESC,
+                          ({word_score}) DESC,
                           {order_tail}
                 LIMIT  %(lim)s
             """, params)
@@ -4257,7 +4275,25 @@ def _run_search(q, kind, year_filter, offset):
                 --   is not. It also fixes the page's own key, which sorted
                 --   EVERYTHING by year -- right for meets, wrong for athletes
                 --   and schools, where the question is how much they raced.
-                ORDER  BY ({word_score}) DESC,
+                -- ★ THE WHOLE TYPED PHRASE, AT THE START, BEATS EVERYTHING
+                --   (issue #97). Without this the top key was word_score,
+                --   which every row matching the same tokens TIES on -- so
+                --   the real tiebreak was sort_count, and a popular namesake
+                --   outranked the exact row. Typing MORE of a name could then
+                --   push it past the LIMIT and out of the list, which is the
+                --   reported "typing the full name removes a person, typing
+                --   it minus a letter does not".
+                --
+                -- ⚠ MEETS ARE UNAFFECTED, deliberately. They are stored with
+                --   the year in front ("2026 arcadia invitational"), so this
+                --   is 0 for every one of them and they fall through to
+                --   exactly the ranking they had.
+                -- ! t_phrase, NOT {p}_phrase: this is the QUERY f-string,
+                --   not _ORDER_TAIL's .format(). Both callers take
+                --   _searchTerms' default prefix.
+                ORDER  BY (CASE WHEN search_text LIKE %(t_phrase)s
+                                THEN 1 ELSE 0 END) DESC,
+                          ({word_score}) DESC,
                           {order_tail}
                 LIMIT  %(lim)s OFFSET %(off)s
             """, {**params, "lim": PAGE_SIZE, "off": offset})
@@ -5063,23 +5099,43 @@ def api_predict_athletes():
     if gender:
         where.append("upper(right(s.pool, 1)) = %(gender)s")
         params["gender"] = gender
+    # For the ranking below: does the name START with what was typed.
+    params["prefix"] = q.lower() + "%"
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(f"""
-                SELECT DISTINCT ON (s.person_id)
-                       s.person_id, s.school, s.year, s.mean_rating,
-                       COALESCE(a.first_name,'') || ' '
-                           || COALESCE(a.last_name,'') AS name
-                FROM   athlete_season s
-                JOIN   athletes a ON a.athlete_id = s.person_id
-                WHERE  {' AND '.join(where)}
-                ORDER  BY s.person_id, s.year DESC
+                SELECT * FROM (
+                    SELECT DISTINCT ON (s.person_id)
+                           s.person_id, s.school, s.year, s.mean_rating,
+                           COALESCE(a.first_name,'') || ' '
+                               || COALESCE(a.last_name,'') AS name
+                    FROM   athlete_season s
+                    JOIN   athletes a ON a.athlete_id = s.person_id
+                    WHERE  {' AND '.join(where)}
+                    -- DISTINCT ON must order by its key first; this only
+                    -- picks the athlete's most recent season.
+                    ORDER  BY s.person_id, s.year DESC
+                ) x
+                -- ⚠ THE LIMIT USED TO SIT INSIDE, so it kept the 40 LOWEST
+                --   person_ids that matched -- an arbitrary set with nothing
+                --   to do with the query. Adding a letter changed which
+                --   arbitrary 40 came back and could drop the very person
+                --   being typed: the reported "typing the full name removes
+                --   them, one letter short does not".
+                --
+                -- ! RANKED FIRST, THEN CUT. A name that STARTS with what was
+                --   typed wins outright; ties go to the better athlete, who
+                --   is who a bare name most often means. Narrowing the query
+                --   can now only remove non-matches, never reorder someone
+                --   out.
+                ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s
+                                THEN 0 ELSE 1 END),
+                          mean_rating DESC NULLS LAST,
+                          person_id
                 LIMIT  40
             """, params)
             rows = cur.fetchall()
-
-    rows.sort(key=lambda r: -(float(r["mean_rating"] or 0)))
     return jsonify({"athletes": [
         {"person_id": r["person_id"],
          "name": (r["name"] or "").strip() or "Unknown",

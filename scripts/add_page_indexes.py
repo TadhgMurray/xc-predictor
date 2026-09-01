@@ -56,6 +56,24 @@ WANTED = [
     #   report: not the round trips, which are already parallel, but a full
     #   scan behind each of them.
     ("athlete_season",  "person_id", "idx_athlete_season_person", None),
+    # ★ THE ATHLETE PICKER'S NAME MATCH (2026-09-01). /api/predict/athletes
+    #   filters on `(first_name || ' ' || last_name) ILIKE '%tok%'`, and a
+    #   LEADING wildcard cannot use a btree at all -- so every keystroke was
+    #   a sequential scan of `athletes` joined to athlete_season. That is the
+    #   owner's "search takes a while".
+    #
+    # ! A GIN TRIGRAM INDEX ON THE EXPRESSION, because the expression is what
+    #   is searched -- one on first_name and last_name separately would not
+    #   serve a match across the space between them. pg_trgm is already
+    #   installed here; search_index's own search_text index is the same
+    #   shape, which is why the topbar has never had this problem.
+    #
+    # ⚠ THE EXPRESSION MUST MATCH THE QUERY'S CHARACTER FOR CHARACTER, or the
+    #   planner will not use it. If that concatenation changes in app.py,
+    #   this changes with it.
+    ("athletes", "first_name", "idx_athletes_name_trgm",
+     "USING gin ((COALESCE(first_name,'') || ' ' || COALESCE(last_name,''))"
+     " gin_trgm_ops)"),
     # ★ THE FILTERED /meets VIEW (meets_filter.py). Its browse path filters
     #   meets/meets_tf by STATE -- the meet's state, not the athlete's -- and
     #   then counts results per surviving meet. Without these three the state
@@ -114,7 +132,26 @@ def main():
                 return s[i:].replace(" ", "").lower() if i >= 0 else s
 
             def fits(idxdef):
-                return norm(idxdef) == norm(spec) if spec else True
+                if not spec:
+                    return True
+                # ⚠ AN EXPRESSION INDEX CANNOT BE COMPARED AS TEXT. Postgres
+                #   rewrites what you gave it -- adds ::text casts,
+                #   re-parenthesises, schema-qualifies -- so
+                #   norm(indexdef) == norm(spec) is False for a GIN trigram
+                #   index that is in fact exactly the one asked for. Left as
+                #   a text compare it reports MISS on every run and rebuilds
+                #   nothing (CREATE ... IF NOT EXISTS no-ops by name), which
+                #   is a report that lies rather than a broken build.
+                #
+                # ! FOR THOSE, THE TEST IS THE ACCESS METHOD AND THE OPERATOR
+                #   CLASS, both of which survive the rewrite intact.
+                if spec.strip().upper().startswith("USING"):
+                    want = spec.lower()
+                    have = idxdef.lower()
+                    return (("using gin" in want) == ("using gin" in have)
+                            and ("gin_trgm_ops" in want)
+                            == ("gin_trgm_ops" in have))
+                return norm(idxdef) == norm(spec)
 
             usable = [r for r in rows
                       if r[1] and " where " not in r[2].lower()

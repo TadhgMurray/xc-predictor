@@ -545,8 +545,21 @@
         var timer = null;
         var seq = 0;                    // sequence guard for late responses
 
+        /* ⚠ AND A `closed` FLAG BESIDE THE SEQUENCE GUARD. seq drops a
+             response a newer keystroke superseded; it says nothing about a
+             reader who has LEFT the box, and this picker had no blur handler
+             at all -- so a slow response painted a menu over the page
+             seconds after they moved on. */
+        var closed = false;
+        input.addEventListener('focus', function () { closed = false; });
+        input.addEventListener('blur', function () {
+            closed = true;
+            clearTimeout(timer);
+            setTimeout(function () { drop.innerHTML = ''; }, 150);
+        });
         input.addEventListener('input', function () {
             var q = input.value.trim();
+            closed = false;
             clearTimeout(timer);
             if (q.length < 2) { drop.innerHTML = ''; return; }
             var mySeq = ++seq;          // this request's id
@@ -554,7 +567,8 @@
                 fetch(url + encodeURIComponent(q))
                     .then(function (r) { return r.json(); })
                     .then(function (rows) {
-                        if (mySeq !== seq) return;      // a newer input happened -> drop
+                        // newer input, or the reader has left -> drop
+                        if (mySeq !== seq || closed) return;
                         drop.innerHTML = rows.map(renderItem).join('');
                     });
             }, 150);
@@ -564,6 +578,7 @@
             var item = e.target.closest('.drop-item');
             if (!item) return;
             seq++;                       // invalidate any in-flight fetch
+            closed = true;
             clearTimeout(timer);
             onPick(item);
             drop.innerHTML = '';

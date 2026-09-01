@@ -5,7 +5,7 @@
         var box   = document.getElementById('search-results');
         if (!input || !box) return;
 
-        var timer = null, seq = 0;
+        var timer = null, seq = 0, closed = false;
         /* Index of the keyboard-highlighted row, -1 for none. Reset whenever
            the list re-renders: the old index would point at a row that may
            no longer exist, or worse, a different one. */
@@ -38,12 +38,13 @@
             var q = input.value.trim();
             clearTimeout(timer);
             if (q.length < 2) { box.innerHTML = ''; active = -1; return; }
+            closed = false;             // typing re-opens what a click shut
             var mySeq = ++seq;
             timer = setTimeout(function () {
                 fetch('/search/api?q=' + encodeURIComponent(q))
                     .then(function (r) { return r.json(); })
                     .then(function (rows) {
-                        if (mySeq !== seq) return;
+                        if (mySeq !== seq || closed) return;
                         render(rows, q);
                     });
             }, 150);
@@ -83,13 +84,22 @@
                     if (q) window.location = '/search?q=' + encodeURIComponent(q);
                 }
             } else if (e.key === 'Escape') {
+                closed = true;              // and stay shut
                 box.innerHTML = '';
                 active = -1;
             }
         });
 
+        /* ⚠ CLOSING IS NOT ENOUGH ON ITS OWN. Clicking away emptied the box,
+             and then a response still in flight painted it again seconds
+             later -- over the page, with nothing left to click away from.
+             seq answered "is this superseded"; nothing answered "does anyone
+             still want this". */
         document.addEventListener('click', function (e) {
-            if (!input.contains(e.target) && !box.contains(e.target)) box.innerHTML = '';
+            if (!input.contains(e.target) && !box.contains(e.target)) {
+                closed = true;
+                box.innerHTML = '';
+            }
         });
 
         function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
