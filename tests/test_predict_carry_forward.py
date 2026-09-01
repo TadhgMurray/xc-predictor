@@ -16,7 +16,11 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "racecast"))
+_ROOT = os.path.join(os.path.dirname(__file__), "..")
+# engine/ too: _currentSquads reads season_year.academicYear to decide
+# whether the season it was handed is already over.
+sys.path.insert(0, os.path.join(_ROOT, "engine"))
+sys.path.insert(0, os.path.join(_ROOT, "racecast"))
 import predict                                                  # noqa: E402
 
 
@@ -77,8 +81,8 @@ def test_transfers_are_excluded_only_when_asked():
     print("  transfers excluded only with active_year ........... OK")
 
 
-def test_currentSquads_asks_for_both_on_the_carry_path():
-    """The carry-forward must request BOTH guards, not just the old one."""
+def _spyOn(empty_for):
+    """Swap _squadsForYear for a recorder. Returns (calls, restore)."""
     calls = []
     saved = predict._squadsForYear
 
@@ -86,19 +90,69 @@ def test_currentSquads_asks_for_both_on_the_carry_path():
             active_year=None):
         calls.append({"year": year, "terminal": exclude_terminal,
                       "active": active_year})
-        return {} if year == 2026 else {"Alpha": [{"person_id": 1}]}
+        return ({} if year in empty_for
+                else {"Alpha": [{"person_id": 1}]})
 
     predict._squadsForYear = spy
+    return calls, lambda: setattr(predict, "_squadsForYear", saved)
+
+
+def _now():
+    import datetime
+    from season_year import academicYear
+    return academicYear(datetime.date.today())
+
+
+def test_currentSquads_asks_for_both_on_the_carry_path():
+    """The carry-forward must request BOTH guards, not just the old one."""
+    now = _now()
+    calls, restore = _spyOn(empty_for={now})
     try:
-        out = predict._currentSquads(None, ["Alpha"], "XC", 2026)
+        out = predict._currentSquads(None, ["Alpha"], "XC", now)
     finally:
-        predict._squadsForYear = saved
+        restore()
 
     assert len(calls) == 2, calls
-    assert calls[0] == {"year": 2026, "terminal": False, "active": None}
-    assert calls[1] == {"year": 2025, "terminal": True, "active": 2026}, calls
+    # the season IS the current one, so the first read needs no aging
+    assert calls[0] == {"year": now, "terminal": False, "active": None}
+    assert calls[1] == {"year": now - 1, "terminal": True, "active": now}, calls
     assert out["Alpha"][0]["carried"] is True
-    print(f"  carry path asks year=2025 terminal=True active=2026 . OK")
+    print(f"  carry path: {now} plain, then {now - 1} aged+active={now} . OK")
+
+
+def test_a_finished_season_is_aged_out_on_the_MAIN_path():
+    """★ THE BUG THE FIRST FIX MISSED (owner, 2026-08-31).
+
+    _currentSeason returns the season the BOARDS show, which in August is
+    still last season. Every school has a row for it, so `missing` is empty,
+    the carry-forward never runs, and the aging-out that lived only on that
+    path never executed. The squad came back as last year's roster.
+    """
+    now = _now()
+    stale = now - 1
+    calls, restore = _spyOn(empty_for=set())      # every school HAS a row
+    try:
+        predict._currentSquads(None, ["Alpha"], "XC", stale)
+    finally:
+        restore()
+
+    assert len(calls) == 1, "no carry-forward should run -- rows exist"
+    assert calls[0] == {"year": stale, "terminal": True, "active": now}, \
+        f"a finished season must be aged out on the main path: {calls[0]}"
+    print(f"  finished season {stale}: aged out + active={now} on the "
+          f"main path . OK")
+
+
+def test_the_current_season_is_not_aged_out():
+    """The live season must NOT be aged: those athletes are racing now."""
+    now = _now()
+    calls, restore = _spyOn(empty_for=set())
+    try:
+        predict._currentSquads(None, ["Alpha"], "XC", now)
+    finally:
+        restore()
+    assert calls[0] == {"year": now, "terminal": False, "active": None}, calls
+    print(f"  the live season {now} is left alone ................ OK")
 
 
 if __name__ == "__main__":
@@ -106,6 +160,8 @@ if __name__ == "__main__":
                test_aging_out_compares_normalised,
                test_no_grade_clause_when_not_aging_out,
                test_transfers_are_excluded_only_when_asked,
-               test_currentSquads_asks_for_both_on_the_carry_path]:
+               test_currentSquads_asks_for_both_on_the_carry_path,
+               test_a_finished_season_is_aged_out_on_the_MAIN_path,
+               test_the_current_season_is_not_aged_out]:
         fn()
     print("\nall carry-forward tests passed")

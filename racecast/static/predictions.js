@@ -434,6 +434,9 @@ function renderField() {
         <button class="squad-btn" data-squad="${esc(t.school)}">
           + Add from squad</button>
         <div class="squad-list hidden" data-squad-for="${esc(t.school)}"></div>
+        <button class="squad-btn" data-anyone="${esc(t.school)}">
+          + Add anyone</button>
+        <div class="squad-list hidden" data-anyone-for="${esc(t.school)}"></div>
         ${t.dropped.length ? `
           <details class="dropped">
             <summary>${t.dropped.length} not racing this season</summary>
@@ -779,6 +782,71 @@ document.addEventListener("click", (e) => {
       state.droppedTeams.push(team);
       renderField();
     }
+    return;
+  }
+
+  /* ★ "ADD ANYONE": THE TRANSFER CASE (owner, 2026-09-01). "Add from squad"
+     can only offer people the DATA already places at this school, so a
+     transfer -- the exact person a human is most likely to be correcting for
+     -- was unreachable. This searches every athlete instead.
+
+     ! THE SERVER ALREADY ACCEPTED THIS. _teamRosters takes an `add` set and
+       _athleteEntries resolves arbitrary person_ids, falling back to the
+       athletes table for anyone without a season row. Only the UI was
+       missing, so nothing server-side changes.
+     ! person_id COMES OUT OF THE LINK, the way compare.js does it --
+       /search/api returns {kind,label,sublabel,link} and the link is
+       /athlete/<id>. */
+  const anyone = e.target.closest("[data-anyone]");
+  if (anyone) {
+    const school = anyone.dataset.anyone;
+    const box = document.querySelector(
+      `[data-anyone-for="${CSS.escape(school)}"]`);
+    if (!box) return;
+    if (!box.classList.contains("hidden")) {
+      box.classList.add("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+    box.innerHTML =
+      `<input class="squad-find" type="search" autocomplete="off"
+              placeholder="Search every athlete\u2026"
+              aria-label="Search every athlete">
+       <div class="squad-rows"></div>`;
+    const find = box.querySelector(".squad-find");
+    const rows = box.querySelector(".squad-rows");
+    let timer = null;
+    find.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = find.value.trim();
+        if (q.length < 2) { rows.innerHTML = ""; return; }
+        try {
+          const res = await fetch("/search/api?kind=athlete&q="
+                                  + encodeURIComponent(q));
+          const hits = (await res.json() || [])
+            .filter((r) => r.kind === "athlete");
+          rows.innerHTML = hits.length
+            ? hits.map((r) => {
+                const m = /\/athlete\/(\d+)/.exec(r.link || "");
+                if (!m) return "";
+                return `<div class="runner-row is-out">
+                   <a class="r-name" href="/athlete/${m[1]}"
+                      target="_blank" rel="noopener">${esc(r.label)}</a>
+                   <span class="r-rating">${esc(r.sublabel || "")}</span>
+                   <button class="r-add" data-add="${m[1]}"
+                           data-name="${esc(r.label)}" data-rating=""
+                           data-school="${esc(school)}">add</button>
+                 </div>`;
+              }).join("")
+            : `<div class="squad-loading">No athlete by that name.</div>`;
+        } catch (err) {
+          rows.innerHTML =
+            `<div class="squad-loading">Could not search.</div>`;
+        }
+      }, 180);
+    });
+    find.focus();
     return;
   }
 

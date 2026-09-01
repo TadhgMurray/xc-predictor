@@ -32,6 +32,7 @@ TEAM SCORING IS NOT A SEPARATE MODEL
     place is a position among everyone present.
 """
 
+import datetime
 import os
 
 from meet_compile import isTeam
@@ -872,12 +873,33 @@ def _currentSquads(cur, schools, sport, season_year):
     schools = [s for s in schools if s]
     if not schools or season_year is None:
         return {}
-    squads = _squadsForYear(cur, schools, sport, season_year)
+    # ★ THE "CURRENT" SEASON IS ROUTINELY A FINISHED ONE, and that is why the
+    #   first version of this fix did nothing (owner, 2026-08-31).
+    #   _currentSeason returns the season the BOARDS are showing, so that the
+    #   field agrees with them -- and in August that is still LAST season,
+    #   because the new one has almost no results yet. Every school therefore
+    #   HAS a row for it, `missing` comes back empty, the carry-forward never
+    #   runs, and the aging-out that lives on that path never executes. The
+    #   squad handed back is last year's roster: its seniors, at its schools.
+    #
+    #   So the test is not "did we fall back", it is "is the season we are
+    #   reading from OVER". academicYear knows: the season is the academic
+    #   year, August to July, named for the year it opens in.
+    # ! ONE YEAR OF AGING ONLY. A squad two or more seasons stale would need
+    #   its 11s aged out as well, and that is a data problem worth seeing
+    #   rather than silently papering over.
+    from season_year import academicYear
+    now = academicYear(datetime.date.today())
+    stale = season_year < now
+
+    squads = _squadsForYear(cur, schools, sport, season_year,
+                            exclude_terminal=stale,
+                            active_year=now if stale else None)
     missing = [s for s in schools if not squads.get(s)]
     if missing:
         prev = _squadsForYear(cur, missing, sport, season_year - 1,
                               exclude_terminal=True,
-                              active_year=season_year)
+                              active_year=now)
         for sch, rows in prev.items():
             for r in rows:
                 r["carried"] = True    # last season's roster, aged forward
