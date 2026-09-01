@@ -2562,8 +2562,34 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    .hidden in this stylesheet -- every one is scoped per element. So
    `class="mc-coalesce hidden"` had nothing hiding it and the checkbox showed
    whatever the mode was. Scoped, and specific enough to win. */
-.predict2 label.mc-coalesce.hidden { display: none; }
+/* ⚠ visibility, NOT display. Hiding it with display:none removed a grid row,
+   so the whole block jumped every time the mode changed -- "when coalesce
+   gets unhidden it messes up the ui again". The row is always there; only
+   its contents come and go. */
+.predict2 label.mc-coalesce.hidden { visibility: hidden; }
 .predict2 .mc-mode-hint { color: #888; font-style: italic; }
+
+/* ★ ONE SECTION PER RACE in the field editor (owner, 2026-09-01). Racing
+   divisions separately means each has its own field to edit, so each gets a
+   headed block. Combined is one race and renders one unheaded block, which is
+   what the page always looked like. */
+.predict2 .div-field { margin: 0 0 1.2rem; }
+.predict2 .div-field + .div-field { border-top: 1px solid #eee;
+                                    padding-top: 0.9rem; }
+.predict2 .div-field-h { margin: 0 0 0.4rem; font-size: 0.82rem;
+                         font-weight: 700; color: #374151; }
+/* ⚠ THE GRID MOVES DOWN A LEVEL. #field carries .field-grid, but the team
+   cards now sit inside a per-race block, so the grid columns have to be on
+   .fg -- left on #field they would lay out the SECTIONS, one race per column.
+   #field becomes a plain stack of races. */
+.predict2 #field.field-grid { display: block; }
+.predict2 .div-field .fg { display: grid; gap: 8px; align-items: start;
+                           grid-template-columns:
+                               repeat(auto-fill, minmax(215px, 1fr)); }
+/* ⚠ NO GENERIC .hidden EXISTS in this stylesheet -- every one is scoped, and
+   #field-summary is a bare span with no class of its own. */
+.predict2 .div-field .fg.hidden { display: none; }
+.predict2 #field-summary.hidden { display: none; }
 
 .predict2 .div-result { margin: 0 0 1.6rem; }
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;

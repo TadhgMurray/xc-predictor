@@ -705,6 +705,28 @@ function defaultDate() {
  * ------------------------------------------------------------------ */
 
 async function loadField() {
+  /* ★ EVERY PICKED DIVISION IS LOADED, not just the one being edited (owner,
+     2026-09-01). In separate mode each division is its own race with its own
+     block on screen, so all of them need a field -- picking a second division
+     and seeing no new teams was this. */
+  const separate = state.raceMode === "separate" && state.divs.length > 0;
+  if (separate) {
+    const was = state.meet.div;
+    renderField();                       // blocks appear, saying Loading
+    for (const d of state.divs) {
+      state.meet.div = d;
+      if (!editsFor(d).field) await loadOneField();
+    }
+    state.meet.div = was;
+    renderField();
+    return;
+  }
+  return loadOneField();
+}
+
+
+/* The field for state.meet.div alone. */
+async function loadOneField() {
   /* ★ A DIVISION KEEPS ITS EDITS WHEN YOU COME BACK TO IT (issue #85).
      Switching between D1 and D2 to set both lineups is the whole point; a
      refetch on every switch would throw away the one you just finished. */
@@ -742,13 +764,49 @@ async function loadField() {
  *   injured athlete identically, and the data cannot tell them apart. Listing
  *   them greyed with an add button puts that judgement where it belongs.
  */
+/*
+ * ★ ONE SECTION PER RACE (owner, 2026-09-01). Racing divisions separately
+ *   means each has its own field to edit, so each gets its own WHO block --
+ *   picking a second division used to switch the single block rather than
+ *   add one, which read as "pressing more divs isn't adding teams".
+ *   Combined is ONE race and gets ONE block.
+ *
+ * ! THE ACCESSORS ARE KEYED ON state.meet.div, so each block is rendered
+ *   with that set to its own division. The click handlers do the same on the
+ *   way in -- see the [data-div-block] lookup -- so every existing handler
+ *   keeps working unchanged and edits land on the right division.
+ */
 function renderField() {
   saveState();            // every edit path lands here
+  const separate = state.raceMode === "separate" && state.divs.length > 0;
+  const blocks = separate ? state.divs.slice() : [null];
+  const was = state.meet.div;
+
+  $("field-summary").classList.toggle("hidden", separate);
+  $("field").innerHTML = blocks.map((d) =>
+    `<section class="div-field" data-div-block="${d === null ? "" : esc(d)}">     ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
+       <div class="fs"></div><div class="fg"></div>
+     </section>`).join("");
+
+  blocks.forEach((d, i) => {
+    state.meet.div = d;
+    const sec = $("field").querySelectorAll(".div-field")[i];
+    const sumEl = separate ? sec.querySelector(".fs") : $("field-summary");
+    const gridEl = sec.querySelector(".fg");
+    if (!state.field) { sumEl.textContent = "Loading\u2026"; return; }
+    renderFieldBlock(sumEl, gridEl);
+  });
+  state.meet.div = was;
+}
+
+
+/* One race's field, rendered into the elements it was handed. */
+function renderFieldBlock(sumEl, gridEl) {
   const f = state.field;
   const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
   const kept = teams.reduce((n, t) => n + t.runners.length, 0);
 
-  $("field-summary").innerHTML =
+  sumEl.innerHTML =
     `<strong>${teams.length}</strong> teams, <strong>${kept}</strong> runners ` +
     (f.when === "asran"
       ? `\u2014 the field that actually raced this meet.`
@@ -782,10 +840,10 @@ function renderField() {
    */
   // "Nothing" keeps the summary line and its controls, so the field can be
   // brought back without losing the edits underneath.
-  $("field").classList.toggle("hidden", state.view === "none");
-  if (state.view === "none") { $("field").innerHTML = ""; return; }
+  gridEl.classList.toggle("hidden", state.view === "none");
+  if (state.view === "none") { gridEl.innerHTML = ""; return; }
 
-  $("field").innerHTML = teams.map((t, i) => `
+  gridEl.innerHTML = teams.map((t, i) => `
     <details class="team-card" data-team="${esc(t.school)}"
              ${state.open.has(t.school) ? "open" : ""}>
       <summary class="team-name">
@@ -1229,7 +1287,19 @@ document.querySelectorAll(".card[data-who]").forEach((btn) => {
   });
 });
 
+/* ★ WHICH RACE WAS CLICKED. Every accessor -- state.field, state.removed,
+   state.added -- is keyed on state.meet.div, so a click inside a division's
+   block must set it before anything else reads it. Done once here, and every
+   handler downstream keeps working unchanged. */
+function focusBlock(e) {
+  const blk = e.target.closest && e.target.closest("[data-div-block]");
+  if (!blk) return;
+  const d = blk.dataset.divBlock;
+  state.meet.div = d === "" ? null : d;
+}
+
 document.addEventListener("click", (e) => {
+  focusBlock(e);
   /* ★ A WHOLE TEAM AT ONCE. Removing seven runners one at a time to drop a
      team that is not coming is the single most tedious thing on this page.
      Every one of its person_ids goes into `removed`, so the request says the
@@ -1454,7 +1524,8 @@ document.addEventListener("click", (e) => {
    Capture phase: `toggle` does not bubble. */
 /* Collapse-all / expand-all, and undo. Delegated from the summary line, which
    is re-rendered on every field change. */
-$("field-summary").addEventListener("click", (e) => {
+function onSummaryClick(e) {
+  focusBlock(e);
   const vb = e.target.closest("[data-view]");
   if (vb) {
     state.view = vb.dataset.view;
@@ -1474,7 +1545,12 @@ $("field-summary").addEventListener("click", (e) => {
     state.field.teams.sort((a, b) => a.school.localeCompare(b.school));
     renderField();
   }
-});
+}
+
+$("field-summary").addEventListener("click", onSummaryClick);
+/* ! AND ON #field, because in separate mode each division's summary is
+     rendered INSIDE it rather than in the single #field-summary. */
+$("field").addEventListener("click", onSummaryClick);
 
 $("field").addEventListener("toggle", (e) => {
   const card = e.target.closest(".team-card");
