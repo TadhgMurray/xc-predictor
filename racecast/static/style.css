@@ -2577,6 +2577,17 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .race-chip.is-editing { outline: 2px solid #7aa7d8;
                                   outline-offset: 1px; }
 
+/* ★ THE LINK IS THE TEXT, NOT THE ROW (owner, 2026-09-01). .t-label and
+   .r-name are `flex: 1`, and turning THEM into anchors made the anchor grow
+   to fill the row -- so the whole width was a click target and the links
+   read as enormous. The flex slot stays a span; the anchor sits inside it
+   and is only as wide as the name. */
+.predict2 .t-label > a.lnk, .predict2 .r-name > a.lnk {
+    color: inherit; text-decoration: none; }
+.predict2 .t-label > a.lnk:hover, .predict2 .r-name > a.lnk:hover,
+.predict2 .t-label > a.lnk:focus-visible,
+.predict2 .r-name > a.lnk:focus-visible { text-decoration: underline; }
+
 .predict2 a.r-name { color: inherit; text-decoration: none; }
 .predict2 a.r-name:hover,
 .predict2 a.r-name:focus-visible { text-decoration: underline; }

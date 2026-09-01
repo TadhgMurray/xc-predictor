@@ -123,6 +123,112 @@ function editsFor(div) {
   return _edits.get(k);
 }
 
+/* The union of several divisions' edits, for a combined race. Read-only:
+   nothing writes through it, so the per-division records stay the truth. */
+function mergedEdits(divs) {
+  const removed = new Set();
+  const added = [];
+  const seen = new Set();
+  for (const d of divs) {
+    const e = editsFor(d);
+    e.removed.forEach((x) => removed.add(x));
+    for (const a of e.added) {
+      // ! ONE ROW PER PERSON: a runner added to two divisions is still one
+      //   person in a single combined race.
+      if (seen.has(String(a.person_id))) continue;
+      seen.add(String(a.person_id));
+      added.push(a);
+    }
+  }
+  return { removed, added };
+}
+
+/* ------------------------------------------------------------------ *
+ *  SESSION PERSISTENCE
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ WHY THIS EXISTS. Every name on this page is a link, and they open in the
+ *   SAME tab -- so a click used to destroy a half-built prediction: the
+ *   field, the removals, the added runners, the picked divisions, all of it
+ *   lived only in memory. They were opened in a new tab to dodge that, which
+ *   is a workaround for missing state, not a design.
+ *
+ * ! sessionStorage, NOT localStorage. This belongs to one tab's visit; two
+ *   tabs predicting different meets must not overwrite each other, and none
+ *   of it should still be here tomorrow.
+ * ! EVERY ACCESS IS WRAPPED. Private mode and quota both throw, and a page
+ *   that cannot remember is worth far more than one that will not load.
+ */
+const SESSION_KEY = "rc-predict-v1";
+
+function saveState() {
+  try {
+    const edits = {};
+    for (const [k, e] of _edits) {
+      edits[k] = { field: e.field, removed: [...e.removed],
+                   open: [...e.open], droppedTeams: e.droppedTeams,
+                   added: e.added };
+    }
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      meet: state.meet, when: state.when, who: state.who,
+      divs: state.divs, raceMode: state.raceMode,
+      coalesce: state.coalesce, course: state.course,
+      athletes: state.athletes, view: state.view,
+      date: $("t-date") ? $("t-date").value : null,
+      labels: [..._divLabels], edits,
+    }));
+  } catch (err) { /* nothing here is worth breaking the page for */ }
+}
+
+function restoreState() {
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
+  } catch (err) { return; }
+  if (!saved || !saved.meet) return;
+
+  state.meet = saved.meet;
+  state.when = saved.when || "thisyear";
+  state.who = saved.who || "team";
+  state.divs = saved.divs || [];
+  state.raceMode = saved.raceMode || "separate";
+  state.coalesce = !!saved.coalesce;
+  state.course = saved.course || null;
+  state.athletes = saved.athletes || [];
+  state.view = saved.view || "teams";
+
+  resetEdits();
+  for (const [k, e] of Object.entries(saved.edits || {})) {
+    const rec = editsFor(k === "" ? null : k);
+    rec.field = e.field || null;
+    rec.removed = new Set(e.removed || []);
+    rec.open = new Set(e.open || []);
+    rec.droppedTeams = e.droppedTeams || [];
+    rec.added = e.added || [];
+  }
+  _divLabels.clear();
+  for (const [k, v] of (saved.labels || [])) _divLabels.set(k, v);
+
+  const bare = (state.meet.label || "")
+    .replace(/^\s*(19|20)\d{2}\s+/, "").trim();
+  renderChosenMeet(bare);
+  $("meet-chosen").classList.remove("hidden");
+  $("meet-search").classList.add("hidden");
+  showStep("when", true);
+  showStep("who", true);
+  $("actions").classList.remove("hidden");
+
+  if (saved.date && $("t-date")) $("t-date").value = saved.date;
+  /* ! THE BOX SHOWS ONLY A COURSE THAT WAS ACTUALLY PICKED. Leaving typed
+       text in it after a reload was the "still in the search bar but not
+       picked" report -- it looked chosen and was not. */
+  if ($("t-course")) $("t-course").value = state.course || "";
+
+  loadRaces();            // rebuilds the chips, and re-applies the mode
+  if (state.field) renderField();
+}
+
 /* Forget every division's edits -- a different meet is a different world. */
 function resetEdits() { _edits.clear(); }
 
@@ -353,15 +459,32 @@ async function chooseMeet(data) {
    *   own thing.
    */
   const bare = data.label.replace(/^\s*(19|20)\d{2}\s+/, "").trim();
-  /* ★ THE NAMES ARE LINKS (owner, 2026-09-01). Picking a meet to predict is
-     exactly when you want to look at it -- and at the course, and at a
-     school -- and every one of those pages already exists. New tab, so a
-     half-built prediction survives the trip. */
+  renderChosenMeet(bare);
+  $("meet-chosen").classList.remove("hidden");
+  $("meet-search").classList.add("hidden");
+
+  defaultDate();
+  showStep("when", true);
+  showStep("who", true);
+  $("actions").classList.remove("hidden");
+
+  loadRaces();
+  await loadField();
+  saveState();
+}
+
+
+/* ★ THE CHOSEN-MEET BLOCK, RENDERED FROM state.meet ALONE -- so a restored
+   session can rebuild it without the search row it was first chosen from.
+   ! THE NAMES ARE LINKS and they open in the SAME tab now. saveState is what
+     makes that safe: the field, the edits and the picked divisions survive
+     the trip and come back on the way in. */
+function renderChosenMeet(bare) {
   $("meet-chosen").innerHTML =
     `<div class="mc-main">
        <a class="mc-name"
           href="/meet/${state.meet.sport.toLowerCase()}/${esc(state.meet.id)}"
-          target="_blank" rel="noopener">${esc(bare)}</a>
+          >${esc(bare)}</a>
        ${state.meet.year ? `<span class="mc-year">${esc(state.meet.year)}</span>` : ""}
      </div>
      <div class="mc-sub">
@@ -383,16 +506,6 @@ async function chooseMeet(data) {
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
-  $("meet-chosen").classList.remove("hidden");
-  $("meet-search").classList.add("hidden");
-
-  defaultDate();
-  showStep("when", true);
-  showStep("who", true);
-  $("actions").classList.remove("hidden");
-
-  loadRaces();
-  await loadField();
 }
 
 
@@ -432,13 +545,13 @@ async function loadRaces() {
       const mc = $("mc-course");
       if (mc) {
         mc.innerHTML = ` \u00b7 <a href="/course/`
-          + `${encodeURIComponent(data.course)}" target="_blank"`
-          + ` rel="noopener">${esc(data.course)}</a>`;
+          + `${encodeURIComponent(data.course)}"`
+          + `>${esc(data.course)}</a>`;
       }
       if (!state.course) {
         $("t-course-hint").innerHTML =
           `Defaults to <a href="/course/${encodeURIComponent(data.course)}"`
-          + ` target="_blank" rel="noopener">${esc(data.course)}</a>.`
+          + `>${esc(data.course)}</a>.`
           + ` Pick another to run this same field somewhere else.`;
       }
     }
@@ -483,12 +596,20 @@ async function loadRaces() {
       r.addEventListener("change", () => {
         state.raceMode = r.value;
         updateModeHint();
+        saveState();
       });
     });
     $("coalesce").addEventListener("change", (e) => {
       state.coalesce = e.target.checked;
       updateModeHint();
+      saveState();
     });
+    /* A restored session had its mode in memory before these controls
+       existed; put it back on them. */
+    const chosen = $("mc-mode")
+      .querySelector(`input[name=racemode][value="${state.raceMode}"]`);
+    if (chosen) chosen.checked = true;
+    $("coalesce").checked = state.coalesce;
     updateModeHint();
 
     box.querySelectorAll(".race-chip").forEach((b) => {
@@ -506,6 +627,7 @@ async function loadRaces() {
                              state.divs.length > 1 && d === state.meet.div);
         });
         updateModeHint();
+        saveState();
         loadField();          // a different race is a different field
       });
     });
@@ -621,6 +743,7 @@ async function loadField() {
  *   them greyed with an add button puts that judgement where it belongs.
  */
 function renderField() {
+  saveState();            // every edit path lands here
   const f = state.field;
   const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
   const kept = teams.reduce((n, t) => n + t.runners.length, 0);
@@ -666,8 +789,9 @@ function renderField() {
     <details class="team-card" data-team="${esc(t.school)}"
              ${state.open.has(t.school) ? "open" : ""}>
       <summary class="team-name">
-        <a class="t-label" href="/school/${encodeURIComponent(t.school)}"
-           target="_blank" rel="noopener">${esc(t.school)}</a>
+        <span class="t-label"><a class="lnk"
+           href="/school/${encodeURIComponent(t.school)}"
+           >${esc(t.school)}</a></span>
         <span class="team-n">${t.runners.length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>
@@ -675,8 +799,8 @@ function renderField() {
       <div class="team-body">
         ${t.runners.map((r) => `
           <div class="runner-row" data-pid="${r.person_id}">
-            <a class="r-name" href="/athlete/${r.person_id}"
-               target="_blank" rel="noopener">${esc(r.name)}</a>
+            <span class="r-name"><a class="lnk"
+               href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
             <span class="r-rating">${r.rating === null ? "" : r.rating}</span>
             <button class="r-x" data-remove="${r.person_id}"
                     title="Remove">&times;</button>
@@ -692,8 +816,8 @@ function renderField() {
             <summary>${t.dropped.length} not racing this season</summary>
             ${t.dropped.map((r) => `
               <div class="runner-row is-out">
-                <a class="r-name" href="/athlete/${r.person_id}"
-                   target="_blank" rel="noopener">${esc(r.name)}</a>
+                <span class="r-name"><a class="lnk"
+                   href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
                 <span class="r-rating">${r.rating === null
                     || r.rating === undefined ? "" : r.rating}${r.rating_year
                     ? `<span class="r-year">\u2009'${
@@ -724,7 +848,12 @@ function whatIsMissing() {
 /* The request for ONE division. Each selected division is scored on its own,
    so each gets its own query built from its own edits (issue #85). */
 function buildQuery(div) {
-  const e = editsFor(div);
+  /* ★ COMBINED IS ONE REQUEST FOR SEVERAL DIVISIONS, so it must carry every
+     one of their edits. `div` is null there, and editsFor(null) is the
+     ALL-RACES record -- so a team removed while D1 was open was silently
+     dropped from the request and raced anyway. */
+  const combining = state.raceMode === "combined" && state.divs.length > 1;
+  const e = combining ? mergedEdits(state.divs) : editsFor(div);
   const q = new URLSearchParams({
     mode: state.when === "asran" ? "rerun_exact" : "rerun",
     meet_id: state.meet.id,
@@ -997,8 +1126,8 @@ makePicker("t-course", "t-course-results", "course",
     const own = (state.meet && state.meet.course) || "the meet\u2019s own course";
     $("t-course-hint").innerHTML =
       `Instead of ${esc(own)}. <a href="/course/`
-      + `${encodeURIComponent(d.label)}" target="_blank" rel="noopener">`
-      + `View ${esc(d.label)}</a>`;
+      + `${encodeURIComponent(d.label)}">View ${esc(d.label)}</a>`;
+    saveState();
   }, true);   /* keepValue: the box shows the chosen course */
 
 /* Emptying the box is the way back to the meet's own course. */
@@ -1008,9 +1137,10 @@ $("t-course").addEventListener("input", () => {
     const own = state.meet && state.meet.course;
     $("t-course-hint").innerHTML = own
       ? `Defaults to <a href="/course/${encodeURIComponent(own)}"`
-        + ` target="_blank" rel="noopener">${esc(own)}</a>.`
+        + `>${esc(own)}</a>.`
         + ` Pick another to run this same field somewhere else.`
       : "Defaults to the course this meet was run on.";
+    saveState();
   }
 });
 
@@ -1173,8 +1303,7 @@ document.addEventListener("click", (e) => {
                part that gets dropped. */
             ? hits.map((r) => `<div class="anyone-row">
                    <a class="ar-name" href="/athlete/${r.person_id}"
-                      target="_blank" rel="noopener">${esc(r.name
-                        || "Unknown")}</a>
+                      >${esc(r.name || "Unknown")}</a>
                    <span class="ar-rating">${r.rating}</span>
                    <button class="r-add" data-add="${r.person_id}"
                            data-name="${esc(r.name || "Unknown")}"
@@ -1220,8 +1349,8 @@ document.addEventListener("click", (e) => {
       const rows = (items) => items.length
         ? items.map((r) =>
             `<div class="runner-row is-out">
-               <a class="r-name" href="/athlete/${r.person_id}"
-                  target="_blank" rel="noopener">${esc(r.name)}</a>
+               <span class="r-name"><a class="lnk"
+                  href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
                <span class="r-rating">${r.rating}</span>
                <button class="r-add" data-add="${r.person_id}"
                        data-name="${esc(r.name)}"
@@ -1355,3 +1484,6 @@ $("field").addEventListener("toggle", (e) => {
 }, true);
 
 $("predict").addEventListener("click", predict);
+
+/* ★ LAST, so every control it writes back into already exists. */
+document.addEventListener("DOMContentLoaded", restoreState);
