@@ -2187,8 +2187,13 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    the later one silently wins. */
 /* Tighter: the gloss under this header moved to a tooltip, so the header no
    longer has to hold three lines of prose above every race block. */
-.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem;
-                        align-items: center; justify-content: space-between;
+/* ⚠ NOT space-between. It was, and it only looked right while the checkbox
+   carried a full sentence to fill the row. Once "score as if only these
+   teams raced" moved into a tooltip, space-between threw a two-word checkbox
+   at the far edge of a wide column with a void between it and the counts.
+   They belong together: the counts, then the option that acts on them. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem;
+                        align-items: baseline; justify-content: flex-start;
                         margin-bottom: 0.45rem; font-size: 0.86rem; }
 .predict2 .fs-n { color: #4b5563; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;
@@ -2472,8 +2477,13 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    the later one silently wins. */
 /* Tighter: the gloss under this header moved to a tooltip, so the header no
    longer has to hold three lines of prose above every race block. */
-.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem;
-                        align-items: center; justify-content: space-between;
+/* ⚠ NOT space-between. It was, and it only looked right while the checkbox
+   carried a full sentence to fill the row. Once "score as if only these
+   teams raced" moved into a tooltip, space-between threw a two-word checkbox
+   at the far edge of a wide column with a void between it and the counts.
+   They belong together: the counts, then the option that acts on them. */
+.predict2 .field-head { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem;
+                        align-items: baseline; justify-content: flex-start;
                         margin-bottom: 0.45rem; font-size: 0.86rem; }
 .predict2 .fs-n { color: #4b5563; }
 .predict2 .div-field .fs { margin-bottom: 0.4rem; font-size: 0.86rem;

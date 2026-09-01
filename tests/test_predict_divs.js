@@ -105,5 +105,44 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b),
   console.log("  a fresh division starts empty ..................... OK");
 }
 
-if (failed) { console.error(`\n${failed} assertion(s) failed`); process.exit(1); }
+/* ---------------------------------------------------------------- *
+ * The header roll-up. Racing separately puts each race's counts in its
+ * own block, which used to leave the shared header empty -- a lone
+ * "Head to head" checkbox above a race it did not belong to.
+ * ---------------------------------------------------------------- */
+{
+  const fs2 = require("fs");
+  const src = fs2.readFileSync(
+    require("path").join(__dirname, "..", "racecast", "static",
+                         "predictions.js"), "utf8");
+
+  let bad = 0;
+  const chk = (c, m) => { if (!c) { console.error("  FAIL " + m); bad++; } };
+
+  chk(!/\$\("field-summary"\)\.classList\.toggle\("hidden", separate\)/.test(src),
+      "the header is no longer hidden in separate mode");
+  chk(/if \(separate\) renderFieldRollup\(blocks\)/.test(src),
+      "separate mode fills it with the roll-up instead");
+
+  const i = src.indexOf("function renderFieldRollup(");
+  chk(i > 0, "renderFieldRollup exists");
+  const body = src.slice(i, src.indexOf("\n}", i));
+  chk(/races/.test(body) && /teams/.test(body) && /runners/.test(body),
+      "the roll-up counts races, teams and runners");
+  chk(!/viewsel|vbtn|undo-team/.test(body),
+      "and carries no per-race controls -- there is no one race up there");
+  chk(/loaded\.length < blocks\.length/.test(body),
+      "a partly-loaded set says so rather than under-reporting");
+
+  const css = fs2.readFileSync(
+    require("path").join(__dirname, "..", "racecast", "static",
+                         "style.css"), "utf8");
+  chk(!/\.predict2 \.field-head \{[^}]*space-between/.test(css),
+      "the header row does not fling its two items apart");
+
+  if (bad) { failed += bad; }
+  else console.log("  the field header says something in both modes ... OK");
+}
+
+if (failed) { console.error(`\n${failed} check(s) failed`); process.exit(1); }
 console.log("\nall predict-divs tests passed");

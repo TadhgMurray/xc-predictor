@@ -818,7 +818,6 @@ function renderField() {
     if (document.activeElement === inp) refocus = k;
   });
 
-  $("field-summary").classList.toggle("hidden", separate);
   $("field").innerHTML = blocks.map((d) =>
     `<section class="div-field" data-div-block="${divKey(d)}">
        ${separate ? `<h4 class="div-field-h">${esc(divLabel(d))}</h4>` : ""}
@@ -850,6 +849,41 @@ function renderField() {
     renderFieldBlock(sumEl, gridEl);
   });
   state.meet.div = was;
+
+  /*
+   * ★ THE HEADER ALWAYS SAYS SOMETHING (owner: "now score separately and
+   *   stuff is bad again"). Racing divisions separately moves each race's
+   *   count into its own block, which used to HIDE this line -- so the
+   *   header collapsed to a lone "Head to head" checkbox floating at the far
+   *   right of an otherwise empty row, above a race it did not belong to.
+   *   In separate mode it carries the roll-up across every race instead:
+   *   still the answer to "how big is this", just one level up.
+   */
+  if (separate) renderFieldRollup(blocks);
+}
+
+
+/* The whole-meet totals, for the header above the per-race blocks. Plain
+   text: the Show / Undo controls belong to a race, and there is no one race
+   here to apply them to. */
+function renderFieldRollup(blocks) {
+  const loaded = blocks.filter((d) => editsFor(d).field);
+  const n = (v) => `<strong>${v}</strong>`;
+  if (!loaded.length) {
+    $("field-summary").innerHTML = `${n(blocks.length)} races \u2014 loading\u2026`;
+    return;
+  }
+  let teams = 0, runners = 0;
+  for (const d of loaded) {
+    const ts = editsFor(d).field.teams
+      .filter((t) => t.runners.length || t.dropped.length);
+    teams += ts.length;
+    runners += ts.reduce((k, t) => k + t.runners.length, 0);
+  }
+  $("field-summary").innerHTML =
+    `${n(blocks.length)} races \u00b7 ${n(teams)} teams, ` +
+    `${n(runners)} runners` +
+    (loaded.length < blocks.length ? ` \u2014 loading the rest\u2026` : "");
 }
 
 
