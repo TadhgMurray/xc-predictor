@@ -159,7 +159,7 @@ def test_the_summary_is_still_a_control_when_narrow():
     print("  the summary is still tappable at <=700px .......... OK")
 
 
-def test_the_page_layout_stacks_on_narrow_screens():
+def test_the_layout_scrolls_instead_of_crushing():
     """★ THE BUG TWO ROUNDS OF CHART WORK MISSED.
 
     .page-layout is display:flex with the default flex-wrap:nowrap, so a
@@ -171,20 +171,26 @@ def test_the_page_layout_stacks_on_narrow_screens():
     css = open(STYLE, encoding="utf-8").read()
     b = _blocks(css)
     assert 900 in b, "no <=900px block for the page layout"
-    assert re.search(r'\.page-layout\s*\{[^}]*flex-direction:\s*column',
-                     b[900]), \
-        "the layout still cannot stack: no flex-direction on .page-layout"
-    print("  .page-layout goes to a column at <=900px ........... OK")
+    assert re.search(r'\.page-layout\s*\{[^}]*overflow-x:\s*auto', b[900]), \
+        "the layout neither stacks nor scrolls: the main column is crushed"
+    # ! A REAL MINIMUM, not min-width:0. That zero is the standard flex fix
+    #   for letting a child shrink, and it is exactly what let the main column
+    #   be squeezed to nothing.
+    m = re.search(r'\.main-col\s*\{([^}]*)\}', b[900])
+    assert m and re.search(r'min-width:\s*(?!0)', m.group(1)), \
+        "the main column has no real minimum width"
+    print("  .page-layout scrolls, main column keeps a minimum ... OK")
 
 
-def test_the_sidebar_gives_up_its_fixed_width():
+def test_the_sidebar_basis_is_overridden():
     """.sidebar is `flex: 0 0 340px` further up -- don't grow, don't shrink.
     Overriding width alone leaves the basis, and the strip stays 340px."""
     css = open(STYLE, encoding="utf-8").read()
     m = re.search(r'\.sidebar\s*\{([^}]*)\}', _blocks(css)[900])
     assert m, ".sidebar is not overridden at <=900px"
-    assert re.search(r'flex:\s*1\s+1\s+auto', m.group(1)), m.group(1)
-    print("  .sidebar drops its fixed basis, not just its width .. OK")
+    assert "flex:" in m.group(1), \
+        "width alone will not beat `flex: 0 0 340px` further up"
+    print("  .sidebar is re-based, not just re-widthed ........... OK")
 
 
 if __name__ == "__main__":
@@ -196,7 +202,7 @@ if __name__ == "__main__":
                test_summary_is_hidden_on_desktop_and_shown_when_narrow,
                test_nothing_js_side_closes_the_folds,
                test_the_summary_is_still_a_control_when_narrow,
-               test_the_page_layout_stacks_on_narrow_screens,
-               test_the_sidebar_gives_up_its_fixed_width]:
+               test_the_layout_scrolls_instead_of_crushing,
+               test_the_sidebar_basis_is_overridden]:
         fn()
     print("\nall chart-height tests passed")

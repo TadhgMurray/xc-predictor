@@ -130,7 +130,21 @@ p  { color: rgb(82, 82, 82); }
    the sidebar be full width once it is on its own line, instead of staying a
    280px strip. */
 @media (max-width: 900px) {
-    .page-layout { flex-direction: column; }
+    /* ★ THE COLUMNS STAY SIDE BY SIDE AND THE LAYOUT SCROLLS (owner,
+       2026-09-01). Stacking worked but the owner wants the sidebar beside the
+       content; the crush is cured by giving each column a real minimum width
+       and letting .page-layout scroll horizontally when they do not fit,
+       rather than by letting the main column be squeezed to nothing.
+
+       ⚠ .main-col's own `min-width: 0` is what ALLOWED the crush -- it is the
+         standard flex fix for letting a child shrink, and here that is
+         exactly the wrong behaviour. It has to be overridden by a real
+         minimum, not just by the sidebar giving up width.
+       ! THE SCROLL IS ON THE LAYOUT, NOT THE PAGE, which is the same choice
+         the table rule at 700px already makes: "the page never scrolls
+         horizontally, the table does". */
+    .page-layout { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .main-col    { min-width: 20rem; }
 
     /* ! THE INTERLEAVED ORDER WAS TRIED AND REVERTED (owner, 2026-09-01):
        promoting .main-col with display:contents and ordering the sidebar
@@ -141,7 +155,7 @@ p  { color: rgb(82, 82, 82); }
          `flex: 0 0 340px` -- don't grow, don't shrink -- which overrode the
          280px and made the strip even wider. The shorthand here resets the
          basis as well as the growth. */
-    .sidebar     { width: auto; flex: 1 1 auto; }
+    .sidebar     { width: 19rem; flex: 0 0 19rem; }
     /* Same trap one level down, and sticky has nothing to stick to once the
        column is the whole page. */
     .chart-col   { flex: 1 1 auto; position: static; }
@@ -2526,15 +2540,30 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .anyone-row .r-add { grid-column: 3; }
 .predict2 .ar-school { grid-column: 1 / -1; color: #999; font-size: 0.72rem; }
 
-/* The separate-vs-combined control. Quiet: it sits under the race chips and
-   is a statement of what will happen, not a call to action. */
-.predict2 .mc-mode { display: flex; flex-wrap: wrap; align-items: center;
-                     gap: 12px; margin-top: 8px; font-size: 0.78rem;
-                     color: #444; }
+/* ★ THE MODE CONTROL IS ITS OWN ROW (owner, 2026-09-01: "with the new
+   options with a meet UI is really bad"). Two radios, a checkbox and a
+   sentence all inline with the race chips made one dense paragraph of
+   unrelated controls. It is a separated block now: the two choices on one
+   line, the coalesce option INDENTED under them because it only qualifies
+   the second, and the sentence on its own line because it describes rather
+   than asks. */
+.predict2 .mc-mode {
+    display: grid; grid-template-columns: 1fr; row-gap: 5px;
+    margin-top: 10px; padding-top: 9px; border-top: 1px solid #eee;
+    font-size: 0.78rem; color: #444; }
 .predict2 .mc-mode.hidden { display: none; }
+.predict2 .mc-modes { display: flex; flex-wrap: wrap; gap: 14px; }
 .predict2 .mc-mode label { display: inline-flex; align-items: center;
-                           gap: 4px; cursor: pointer; }
-.predict2 .mc-mode-hint { color: #888; }
+                           gap: 5px; cursor: pointer; }
+/* Indented, because it qualifies "One combined race" rather than standing
+   beside it as a third choice. */
+.predict2 label.mc-coalesce { margin-left: 1.4rem; color: #555; }
+/* ⚠ THE LABEL RULE ABOVE SETS display:inline-flex, and there is no generic
+   .hidden in this stylesheet -- every one is scoped per element. So
+   `class="mc-coalesce hidden"` had nothing hiding it and the checkbox showed
+   whatever the mode was. Scoped, and specific enough to win. */
+.predict2 label.mc-coalesce.hidden { display: none; }
+.predict2 .mc-mode-hint { color: #888; font-style: italic; }
 
 .predict2 .div-result { margin: 0 0 1.6rem; }
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;

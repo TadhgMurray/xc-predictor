@@ -372,10 +372,12 @@ async function chooseMeet(data) {
      <button class="mc-change" data-clear="meet">Change</button>
      <div class="mc-races" id="mc-races"></div>
      <div class="mc-mode hidden" id="mc-mode">
-       <label><input type="radio" name="racemode" value="separate" checked>
-         Separate races</label>
-       <label><input type="radio" name="racemode" value="combined">
-         One combined race</label>
+       <div class="mc-modes">
+         <label><input type="radio" name="racemode" value="separate" checked>
+           Separate races</label>
+         <label><input type="radio" name="racemode" value="combined">
+           One combined race</label>
+       </div>
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce"> Coalesce a school entered twice
        </label>
@@ -434,9 +436,10 @@ async function loadRaces() {
           + ` rel="noopener">${esc(data.course)}</a>`;
       }
       if (!state.course) {
-        $("t-course-hint").textContent =
-          `Defaults to ${data.course}. Pick another to run this same field `
-          + `somewhere else.`;
+        $("t-course-hint").innerHTML =
+          `Defaults to <a href="/course/${encodeURIComponent(data.course)}"`
+          + ` target="_blank" rel="noopener">${esc(data.course)}</a>.`
+          + ` Pick another to run this same field somewhere else.`;
       }
     }
     const races = (data.races || []);
@@ -472,7 +475,10 @@ async function loadRaces() {
          NAMED divisions into one scored race is issue #86 and is not built:
          it needs a ruling on a school entered in both, which would otherwise
          field fourteen. So combined drops the division filter entirely. */
-    $("mc-mode").classList.remove("hidden");
+    /* ! ONLY WHEN THERE IS A CHOICE. One race at a meet cannot be separate
+         OR combined -- it is just the race -- and showing the control there
+         is two radio buttons and a sentence that mean nothing. */
+    $("mc-mode").classList.toggle("hidden", races.length < 2);
     $("mc-mode").querySelectorAll("input[name=racemode]").forEach((r) => {
       r.addEventListener("change", () => {
         state.raceMode = r.value;
@@ -999,9 +1005,12 @@ makePicker("t-course", "t-course-results", "course",
 $("t-course").addEventListener("input", () => {
   if ($("t-course").value.trim() === "" && state.course) {
     state.course = null;
-    const own = (state.meet && state.meet.course) || "the meet\u2019s own course";
-    $("t-course-hint").textContent =
-      `Defaults to ${own}. Pick another to run this same field somewhere else.`;
+    const own = state.meet && state.meet.course;
+    $("t-course-hint").innerHTML = own
+      ? `Defaults to <a href="/course/${encodeURIComponent(own)}"`
+        + ` target="_blank" rel="noopener">${esc(own)}</a>.`
+        + ` Pick another to run this same field somewhere else.`
+      : "Defaults to the course this meet was run on.";
   }
 });
 
