@@ -265,6 +265,7 @@ def _score(field, preds):
     #   finishing places, so every predicted score was inflated by whoever
     #   happened to be running unattached that day.
     by_team, place, score_place = {}, 0, 0
+    state = {}
     for runner, pred in order:
         place += 1
         team = runner.get("school")
@@ -272,6 +273,10 @@ def _score(field, preds):
             continue
         entry = {"person_id": runner["person_id"], "name": runner.get("name"),
                  "place": place, "seconds": pred["seconds"]}
+        # The team's state, taken off its runners -- `team` may already carry
+        # a division suffix (#86), so it is not a name the identity table
+        # knows any more.
+        state.setdefault(team, runner.get("school_state"))
         # An incomplete team's runners keep a finishing place but never take
         # a scoring one -- they are lifted out exactly like the unattached.
         if team in full:
@@ -285,11 +290,13 @@ def _score(field, preds):
         if len(scorers) < TEAM_SCORERS:
             # An incomplete team cannot score. Shown, not silently dropped --
             # "you are two runners short" is useful information.
-            out.append({"team": team, "score": None, "runners": runners,
+            out.append({"team": team, "state": state.get(team),
+                        "score": None, "runners": runners,
                         "note": f"only {len(runners)} runners"})
             continue
         out.append({
             "team": team,
+            "state": state.get(team),
             "score": sum(r["score_place"] for r in scorers),
             "runners": runners[:TEAM_SCORERS + TEAM_DISPLACERS],
         })
@@ -693,6 +700,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         for r in _exactField(cur, meet_id, div_id, sport):
             school = r["school"] or "Unattached"
             team = by_school.setdefault(school, {"school": school,
+                                                 "state": _stateOf(school),
                                                  "runners": [], "dropped": []})
             team["runners"].append({"person_id": r["person_id"],
                                     "name": r["name"], "rating": None,
@@ -721,6 +729,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         sq = squads.get(school, [])
         cap = squadCap(at_meet_counts.get(school, 0))
         by_school[school] = {"school": school,
+                             "state": _stateOf(school),
                              "runners": sq[:cap],
                              "dropped": list(sq[cap:])}
     # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
@@ -738,6 +747,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         if r["person_id"] in current_ids or not r.get("school"):
             continue
         team = by_school.setdefault(r["school"], {"school": r["school"],
+                                                  "state": _stateOf(r["school"]),
                                                   "runners": [],
                                                   "dropped": []})
         prev = last_seen.get(r["person_id"], {})
@@ -887,6 +897,38 @@ def _currentSeason(cur, sport):
     return cur.fetchone()["y"]
 
 
+# Purpose:   a school's HOME state, for display beside its name.
+# Output:    'NC', or None for a school the identity table does not place.
+# Detail:
+#   ★ THE STATE IS A LABEL, NEVER A KEY (issue #95). Every data path -- the
+#     squad endpoint, teamIsIn, _score's grouping, ranking_results.school --
+#     matches on the BARE name, so the state can only be attached on the way
+#     out. This is the same split that broke add/remove when the search
+#     index's "DeWitt (MI)" was used as an identity (#87), and it is written
+#     as a SEPARATE FIELD here rather than folded into `school` for exactly
+#     that reason.
+#
+#   ! SAME MAP THE REST OF THE SITE RENDERS THROUGH. school_identity.loadLabels
+#     runs at app import and primaryState is a dict lookup, so this costs
+#     nothing per row and cannot disagree with the school_label filter. A
+#     second source of "where is this school" would be a second answer.
+#
+#   ⚠ A SCHOOL SPLIT ACROSS STATES HAS NO SINGLE ANSWER, which is why
+#     search_index emits one ROW PER STATE for those. primaryState returns the
+#     largest cluster; a genuinely split name shows its main state, and that
+#     is better than showing none.
+def _stateOf(school):
+    if not school:
+        return None
+    try:
+        from school_identity import primaryState
+        return primaryState(school)
+    except Exception:                                   # noqa: BLE001
+        # Labels not loaded (a script importing predict without the app).
+        # A missing state renders as a bare name, which is the old behaviour.
+        return None
+
+
 def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     """The field for the target, after the page's edits.
 
@@ -944,6 +986,12 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     if add_ids:
         entries.extend(_athleteEntries(cur, add_ids, sport,
                                        _currentSeason(cur, sport)))
+    # ! STAMPED HERE BECAUSE HERE IS BEFORE THE SUFFIX. _combinedRoster calls
+    #   this function once per division and THEN rewrites `school` to
+    #   "Broughton (Varsity)" for a school in two of them. Reading the state
+    #   after that would be reading it off a name that no longer exists.
+    for e in entries:
+        e["school_state"] = _stateOf(e.get("school"))
     return entries
 
 

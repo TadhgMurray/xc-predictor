@@ -955,7 +955,7 @@ function renderFieldBlock(sumEl, gridEl) {
       <summary class="team-name">
         <span class="t-label"><a class="lnk"
            href="/school/${encodeURIComponent(t.school)}"
-           >${esc(t.school)}</a></span>
+           >${esc(schoolWithState(t.school, t.state))}</a></span>
         <span class="team-n">${t.runners.length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>
@@ -1168,7 +1168,7 @@ function renderTeam(d) {
   const rows = (d.teams || []).map((t, i) => `
     <tr>
       <td class="rank">${t.score === null ? "\u2014" : i + 1}</td>
-      <td>${esc(t.team)}</td>
+      <td>${esc(schoolWithState(t.team, t.state))}</td>
       <td>${t.score === null ? esc(t.note || "incomplete") : t.score}</td>
       ${scored ? `<td class="actual">${t.actual_score ?? "\u2014"}</td>` : ""}
       <td class="runners">${(t.runners || []).map((r) =>
@@ -1262,6 +1262,23 @@ function blocksWith(school) {
  *   .value is the name. .label is for reading.
  */
 const schoolValue = (r) => r.value || r.label;
+
+/*
+ * ★ THE STATE IS DISPLAY ONLY (issue #95). Every other surface writes
+ *   "Broughton (NC)" and this page wrote the bare "Broughton". The bare name
+ *   is the KEY, though -- teamIsIn, the squad endpoint, _score's grouping and
+ *   ranking_results.school all match on it -- so it is composed here, at the
+ *   moment of rendering, and the composed string never goes back into a
+ *   lookup or an href.
+ *
+ * ⚠ THE SERVER MAY ALREADY HAVE SUFFIXED THE NAME. A school entered in two
+ *   divisions of a combined race comes back as "Broughton (Varsity)" (#86),
+ *   which is a scoring key rather than a school -- the server sends no state
+ *   for those, so this leaves them exactly as they are.
+ */
+function schoolWithState(school, st) {
+  return st ? `${school} (${st})` : school;
+}
 
 /* One race's Add/Remove list. The box lives inside that race's block, so
    the action is unambiguous and needs no division suffix. */
