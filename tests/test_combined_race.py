@@ -112,12 +112,60 @@ def test_unattached_is_never_capped():
     print("  unattached runners are all kept .................... OK")
 
 
+# ------------------------------------------------------------------ #
+# Coalesce has to be VISIBLE, or it cannot be checked (owner, 2026-09-01:
+# "need to check coalesce actually works... which div does it end up
+# showing in?").
+# ------------------------------------------------------------------ #
+
+def test_coalesced_team_names_the_divisions_it_came_from():
+    """A coalesced squad appears ONCE, under its bare name -- which is
+    indistinguishable from a team that only ever ran one division. The
+    divisions it was drawn from are the only sign the checkbox did anything.
+    """
+    field = [
+        {"person_id": 1, "name": "A", "school": "Alpha", "div_label": "D2"},
+        {"person_id": 2, "name": "B", "school": "Alpha", "div_label": "D2"},
+        {"person_id": 3, "name": "C", "school": "Alpha", "div_label": "D3"},
+        {"person_id": 4, "name": "D", "school": "Alpha", "div_label": "D3"},
+        {"person_id": 5, "name": "E", "school": "Alpha", "div_label": "D3"},
+        {"person_id": 6, "name": "F", "school": "Beta",  "div_label": "D2"},
+        {"person_id": 7, "name": "G", "school": "Beta",  "div_label": "D2"},
+        {"person_id": 8, "name": "H", "school": "Beta",  "div_label": "D2"},
+        {"person_id": 9, "name": "I", "school": "Beta",  "div_label": "D2"},
+        {"person_id": 10, "name": "J", "school": "Beta", "div_label": "D2"},
+    ]
+    preds = [{"seconds": 900 + i} for i in range(len(field))]
+    out = predict._score(field, preds)
+    by = {t["team"]: t for t in out}
+
+    # Alpha ran both divisions and was coalesced into one squad.
+    assert by["Alpha"]["divs"] == ["D2", "D3"], by["Alpha"]
+    # Beta only ever ran one, so there is nothing to say -- a note there
+    # would just restate the division the section already sits under.
+    assert by["Beta"]["divs"] is None, by["Beta"]
+    print("  a coalesced squad names the divisions it came from . OK")
+
+
+def test_divs_is_absent_without_labels():
+    """An ordinary single-division race carries no div_label at all, and must
+    not grow an empty note."""
+    field = [{"person_id": i, "name": str(i), "school": "Alpha"}
+             for i in range(1, 8)]
+    preds = [{"seconds": 900 + i} for i in range(7)]
+    out = predict._score(field, preds)
+    assert out[0]["divs"] is None, out[0]
+    print("  a single-division race says nothing extra ......... OK")
+
+
 if __name__ == "__main__":
     for fn in [test_a_school_in_two_divisions_becomes_two_labelled_teams,
                test_coalesce_keeps_the_bare_name,
                test_one_row_per_person,
                test_coalesced_squad_is_capped_at_seven,
                test_the_cap_leaves_unpredictable_runners_alone,
-               test_unattached_is_never_capped]:
+               test_unattached_is_never_capped,
+               test_coalesced_team_names_the_divisions_it_came_from,
+               test_divs_is_absent_without_labels]:
         fn()
     print("\nall combined-race tests passed")

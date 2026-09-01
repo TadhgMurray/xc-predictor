@@ -2728,6 +2728,13 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .predict2 .grp-sum { font-size: 0.75rem; color: #6b7280; margin-top: 2px; }
 /* Mixed genders are ALLOWED (owner's ruling) -- noted, never blocked. */
 .predict2 .grp-warn { color: #92400e; font-style: italic; }
+/* ★ THE ONLY VISIBLE SIGN COALESCE DID ANYTHING. A coalesced squad appears
+   ONCE under its bare name, which is indistinguishable from a team that only
+   ran one division -- so there was no way to tell whether the checkbox had
+   worked (owner, 2026-09-01). Naming the divisions it was drawn from is that
+   sign, and it appears only when there is more than one. */
+.predict2 .t-divs { font-size: 0.78em; color: #6b7280; font-style: italic;
+                    white-space: nowrap; }
 /* A block scored with another says so beside its own heading. */
 .predict2 .grp-note { font-weight: 400; color: #6b7280; font-style: italic;
                       margin-left: 0.5rem; font-size: 0.9em; }

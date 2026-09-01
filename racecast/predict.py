@@ -222,6 +222,16 @@ def predictTeam(cur, schools, target, head_to_head=False,
             "teams": _score(field, preds)}
 
 
+def _fromDivs(from_div, team):
+    """The divisions a team's runners came from, when there is more than one.
+
+    None for the ordinary case, so the page shows nothing rather than
+    restating the division it is already sitting under.
+    """
+    got = sorted(from_div.get(team) or ())
+    return got if len(got) > 1 else None
+
+
 def _score(field, preds):
     """Places -> team scores. Standard cross country rules.
 
@@ -266,6 +276,7 @@ def _score(field, preds):
     #   happened to be running unattached that day.
     by_team, place, score_place = {}, 0, 0
     state = {}
+    from_div = {}
     for runner, pred in order:
         place += 1
         team = runner.get("school")
@@ -277,6 +288,10 @@ def _score(field, preds):
         # a division suffix (#86), so it is not a name the identity table
         # knows any more.
         state.setdefault(team, runner.get("school_state"))
+        # Which races this team's runners came out of. More than one means it
+        # was coalesced -- the only visible sign the checkbox did anything.
+        if runner.get("div_label"):
+            from_div.setdefault(team, set()).add(runner["div_label"])
         # An incomplete team's runners keep a finishing place but never take
         # a scoring one -- they are lifted out exactly like the unattached.
         if team in full:
@@ -291,12 +306,16 @@ def _score(field, preds):
             # An incomplete team cannot score. Shown, not silently dropped --
             # "you are two runners short" is useful information.
             out.append({"team": team, "state": state.get(team),
+                        "divs": _fromDivs(from_div, team),
                         "score": None, "runners": runners,
                         "note": f"only {len(runners)} runners"})
             continue
         out.append({
             "team": team,
             "state": state.get(team),
+            # Set only when the squad was drawn from more than one division,
+            # i.e. when coalesce merged it.
+            "divs": _fromDivs(from_div, team),
             "score": sum(r["score_place"] for r in scorers),
             "runners": runners[:TEAM_SCORERS + TEAM_DISPLACERS],
         })
@@ -1026,6 +1045,15 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
         one.pop("div_ids", None)
         rows = _teamRosters(cur, None, one)
         labels[d] = _divisionLabel(cur, target.get("meet_id"), d, sport) or str(d)
+        # ★ WHERE EACH RUNNER CAME FROM, ALWAYS (owner, 2026-09-01: "need to
+        #   check coalesce actually works... which div does it end up showing
+        #   in?"). Coalescing is invisible in the result -- the squad simply
+        #   appears once under its bare name -- so there is no way to tell a
+        #   coalesced team from a team that only ever ran one division, and
+        #   therefore no way to tell whether the checkbox did anything.
+        #   Carrying the division per entry lets _score say.
+        for e in rows:
+            e["div_label"] = labels[d]
         per_div.append((d, rows))
 
     if not target.get("coalesce"):

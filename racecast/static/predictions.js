@@ -1522,7 +1522,11 @@ function renderTeam(d) {
   const rows = (d.teams || []).map((t, i) => `
     <tr>
       <td class="rank">${t.score === null ? "\u2014" : i + 1}</td>
-      <td>${esc(schoolWithState(t.team, t.state))}</td>
+      <td>${esc(schoolWithState(t.team, t.state))}${t.divs
+          ? ` <span class="t-divs" title="Coalesced: one squad, drawn from `
+            + `these divisions and capped at seven.">${
+              esc(t.divs.join(" + "))}</span>`
+          : ""}</td>
       <td>${t.score === null ? esc(t.note || "incomplete") : t.score}</td>
       ${scored ? `<td class="actual">${t.actual_score ?? "\u2014"}</td>` : ""}
       <td class="runners">${(t.runners || []).map((r) =>
