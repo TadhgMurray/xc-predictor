@@ -7,8 +7,10 @@
 #          weights plus the numbers needed to turn a prediction back into
 #          real seconds at inference time.
 
+import contextlib
 import os
 import pickle
+import time
 
 import torch
 import torch.nn as nn
@@ -28,7 +30,18 @@ DATA_DIR  = "model/data"
 MODEL_OUT = "model/data/model.pt"
 
 # How many training examples go through one forward/backward pass.
-# Bigger = smoother gradient estimates but more memory. 64 is safe.
+# Bigger = smoother gradient estimates but more memory.
+#
+# ⚠ 64 IS SAFE AND SMALL. This model is four layers at d_model=256 -- a few
+#   million parameters -- so at batch 64 a modern GPU finishes the maths
+#   long before the next batch arrives and spends the run waiting on disk.
+#   512-1024 fits comfortably in 24GB and cuts the STEP COUNT by the same
+#   factor, which is what the wall clock is actually made of.
+#
+# ! CHANGING IT CHANGES THE EFFECTIVE LEARNING RATE. A larger batch is a
+#   less noisy gradient, so it can take a bigger step; the usual rule is to
+#   scale the LR with the batch. --batch 512 --lr 1e-3 is a reasonable
+#   pairing to start from, not a law.
 BATCH_SIZE = 64
 
 # Step size for the optimizer — how far each weight moves per update.
@@ -53,9 +66,50 @@ BATCH_SIZE = 64
 # is why 3e-4 "just works" for a transformer this size.
 LEARNING_RATE = 3e-4
 
-# One epoch = one full pass over the training set. 20 is a starting
-# guess; in practice you stop once validation loss stops improving.
+# One epoch = one full pass over the training set. A CEILING, not a plan:
+# PATIENCE below stops the run once validation loss stops improving, which
+# is the thing 20 was a guess at.
 EPOCHS = 20
+
+# ★ STOP WHEN IT STOPS LEARNING, rather than at a number picked in advance.
+#   Training is billed by the hour on rented hardware, and epochs past
+#   convergence cost exactly as much as the ones that helped.
+#
+#   PATIENCE   epochs of no NEW BEST val loss before giving up. 3 is the
+#              usual choice: one bad epoch is noise, three in a row is a
+#              trend.
+#   MIN_DELTA  how much better counts as better. Without it, an improvement
+#              of 1e-7 resets the patience counter forever and early
+#              stopping never fires.
+#
+# ! MEASURED AGAINST THE BEST, NOT THE PREVIOUS EPOCH. Val loss wobbles;
+#   comparing to the last epoch stops on the first wobble, comparing to the
+#   best stops only when nothing has beaten the best for PATIENCE tries.
+PATIENCE = 3
+MIN_DELTA = 1e-4
+
+# ★ DATALOADER WORKERS. The dataset reads chunk_NNNN.pt from disk inside
+#   __getitem__, so with 0 workers the training process stops and waits for
+#   a file read before every batch -- the GPU idles through it. Workers do
+#   that reading in parallel, in other processes.
+#
+# ⚠ EACH WORKER GETS ITS OWN COPY OF THE ONE-CHUNK CACHE, so memory is
+#   NUM_WORKERS x chunk. Chunks are 10k examples; that is fine at 4-8 and
+#   worth watching above that.
+#
+# ! 0 IS THE DEFAULT because it is the only value guaranteed to work
+#   everywhere (Windows spawn, notebooks, containers with small /dev/shm).
+#   Pass --workers 8 on a real machine.
+NUM_WORKERS = 0
+
+# Mixed precision: run the forward/backward in bf16 where it is safe and
+# keep the weights in fp32. Roughly free on any recent GPU, does nothing on
+# CPU. Off by default; --amp turns it on.
+USE_AMP = False
+
+# Where to write the resumable checkpoint. None = do not checkpoint, which
+# is right for a smoke run and wrong for anything you are paying for.
+CHECKPOINT = None
 
 # Fraction of examples held OUT of training, used only to check the
 # model is generalising rather than memorising.
@@ -94,6 +148,20 @@ STATS_OUT = "model/data/target_stats.pkl"
 # (the ROCm wheel, not the CUDA one). Once ROCm sees the card,
 # is_available() returns True; if it ever doesn't, we fall back to CPU.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# _autocast
+# Purpose:  the mixed-precision context, or a no-op.
+# Detail:
+#   ! ONE PLACE THAT KNOWS WHETHER AMP IS ON, so the training loop reads the
+#     same whether it is or not. A bare `with torch.autocast(...)` in the
+#     loop would need the enabled flag and the device type threaded through
+#     it, and would silently do nothing on CPU while looking like it did
+#     something.
+def _autocast():
+    if not USE_AMP or DEVICE.type != "cuda":
+        return contextlib.nullcontext()
+    return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 
 # ------------------------------------------------------------------ #
 # CHUNK 2 — DATASET: feed chunk_NNNN.pt files to the model
@@ -413,6 +481,22 @@ def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
         # ★ batch_sampler REPLACES batch_size + shuffle. Passing all three
         #   is an error in torch, so they are gone from this call.
         batch_sampler=ChunkAwareBatchSampler(dataset, BATCH_SIZE, shuffle),
+        # ★ THE READING HAPPENS IN OTHER PROCESSES. __getitem__ torch.loads a
+        #   chunk from disk, so with 0 workers the training process stops
+        #   dead before every batch and the GPU idles through the read. This
+        #   is the single biggest lever on wall clock for this job -- the
+        #   model is small enough that the input pipeline, not the maths, is
+        #   what the run is made of.
+        num_workers=NUM_WORKERS,
+        # Page-locked host memory, so the host->device copy can overlap
+        # compute instead of blocking on it. Pointless without a GPU.
+        pin_memory=(NUM_WORKERS > 0 and DEVICE.type == "cuda"),
+        # ! WORKERS ARE KEPT ALIVE BETWEEN EPOCHS. Otherwise every epoch pays
+        #   to fork them again and refill their one-chunk caches from cold.
+        persistent_workers=(NUM_WORKERS > 0),
+        # Each worker reads this many batches ahead of what is being asked
+        # for, which is what actually hides the disk latency.
+        prefetch_factor=(4 if NUM_WORKERS > 0 else None),
         # ! REQUIRED, NOT OPTIONAL. The dataset now yields ragged
         #   sequences; default_collate would try to stack rows of
         #   different lengths and raise. collateRagged pads to the
@@ -693,12 +777,25 @@ def _trainOneEpoch(model, loader, optimizer, criterion, mean, std) -> float:
     total_loss = 0.0 # A running tally of each batch's loss. Calculated by MSE.
     n_batches = 0
 
+    # ★ THROUGHPUT, MEASURED RATHER THAN GUESSED. The question this run has
+    #   to answer before any hardware is rented is "how many examples a
+    #   second", and nothing was printing it. `waiting` is the share of wall
+    #   clock spent BLOCKED ON THE LOADER rather than computing: if it is
+    #   high, a faster GPU buys nothing and the fix is workers or batch size.
+    t_start = time.time()
+    t_wait = 0.0
+    n_examples = 0
+    _t_batch = time.time()
+
     # Goes over each batch, which is a 4-tuple of tensors. e.g.
     # sequences  [64, S, 17]   the 64 athletes' race histories
     # masks      [64, S]       which rows are real races vs padding
     # context    [64, 17]      the 64 target-race context vectors
     # targets    [64]          the 64 true normalized_times to predict
     for sequences, masks, context, targets, venues in loader:
+        # Everything between the previous iteration ending and this one
+        # starting was spent waiting for the loader to produce a batch.
+        t_wait += time.time() - _t_batch
 
         # Moves this batch onto the save device as the model.
         sequences = sequences.to(DEVICE)
@@ -713,16 +810,32 @@ def _trainOneEpoch(model, loader, optimizer, criterion, mean, std) -> float:
 
         # --- the four-line core of learning ---
         optimizer.zero_grad()                      # 1. clear old gradients
-        preds = model(sequences, masks, context, venues)   # 2. forward: guess
-        loss  = criterion(preds, targets)          # 3. measure how wrong
+        # ! bf16, NOT fp16, AND THAT IS WHY THERE IS NO GradScaler. fp16 has
+        #   too little exponent range for raw gradients, so it needs loss
+        #   scaling to avoid underflow; bf16 keeps fp32's range and drops
+        #   mantissa bits instead, which this model does not miss. One less
+        #   moving part, and supported on every GPU worth renting.
+        with _autocast():
+            preds = model(sequences, masks, context, venues)  # 2. forward
+            loss  = criterion(preds, targets)      # 3. measure how wrong
         loss.backward()                            # 4a. compute gradients
         optimizer.step()                           # 4b. apply the update
         # --------------------------------------
 
         total_loss += loss.item()   # .item() = pull the float out
         n_batches  += 1
+        n_examples += targets.size(0)
+        _t_batch = time.time()
 
-    return total_loss / n_batches   # average loss across the epoch
+    # ⚠ RETURNS A PAIR NOW. The caller prints the rate beside the losses,
+    #   because a loss curve with no throughput beside it cannot answer
+    #   "will this finish, and on what".
+    elapsed = max(time.time() - t_start, 1e-9)
+    stats = {"examples_per_s": n_examples / elapsed,
+             "steps_per_s": n_batches / elapsed,
+             "waiting": t_wait / elapsed,
+             "elapsed": elapsed}
+    return total_loss / n_batches, stats
 
 # _validateOneEpoch
 # Purpose: Run one full pass over the validation data, measuring loss
@@ -756,7 +869,10 @@ def _validateOneEpoch(model, loader, criterion, mean, std) -> float:
 
             targets = zScore(targets, mean, std)
 
-            preds = model(sequences, masks, context, venues)
+            # Same precision as training, so val loss is comparable to
+            # train loss rather than measured on a different arithmetic.
+            with _autocast():
+                preds = model(sequences, masks, context, venues)
             loss  = criterion(preds, targets)
 
             total_loss += loss.item()
@@ -793,6 +909,61 @@ def _saveModel(model, path: str) -> None:
     # pour these numbers back in with load_state_dict(). Saving weights
     # not the object is the standard, portable way to persist a model.
     torch.save(model.state_dict(), path)
+
+
+# _saveCheckpoint / _loadCheckpoint
+# Purpose:  let a killed run continue instead of starting over.
+# Detail:
+#   ★ MODEL_OUT IS NOT A CHECKPOINT, and treating it as one loses the run.
+#     It holds the WEIGHTS of the best epoch and nothing else: no optimizer
+#     state, no epoch number, no best-so-far. Adam's moments -- the running
+#     gradient mean and variance that make it Adam rather than SGD -- are
+#     rebuilt from zero if you reload weights alone, so "resuming" from
+#     MODEL_OUT silently restarts the optimizer and undoes part of the
+#     training you paid for.
+#
+#   ⚠ THIS IS WHAT MAKES SPOT INSTANCES USABLE, which is the whole point.
+#     Interruptible capacity is the cheap capacity, and it is worth nothing
+#     to a run that cannot survive being interrupted. Written EVERY epoch,
+#     not only on an improvement -- an epoch that got worse is still an
+#     epoch you do not want to pay for twice.
+#
+#   ! WRITTEN TO A TEMP FILE AND RENAMED. A checkpoint half-written when the
+#     instance was reclaimed is worse than none: it loads, and it is wrong.
+#     os.replace is atomic on the same filesystem.
+def _saveCheckpoint(path, model, optimizer, epoch, best_val_loss, bad_epochs):
+    tmp = path + ".tmp"
+    torch.save({
+        "epoch": epoch,                       # epochs COMPLETED
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "best_val_loss": best_val_loss,
+        "bad_epochs": bad_epochs,
+        "batch_size": BATCH_SIZE,
+        "lr": LEARNING_RATE,
+    }, tmp)
+    os.replace(tmp, path)
+
+
+def _loadCheckpoint(path, model, optimizer):
+    """(next_epoch, best_val_loss, bad_epochs). (0, inf, 0) if there is none."""
+    if not path or not os.path.exists(path):
+        return 0, float("inf"), 0
+    ck = torch.load(path, map_location=DEVICE)
+    model.load_state_dict(ck["model"])
+    optimizer.load_state_dict(ck["optimizer"])
+    # ⚠ SAID OUT LOUD RATHER THAN SILENTLY HONOURED. Resuming with a
+    #   different batch size or learning rate than the checkpoint was
+    #   written under is legitimate -- it is how you recover from a bad
+    #   guess -- but it means the loss curve either side of the join is not
+    #   one curve, and that is worth knowing when you read it later.
+    if ck.get("batch_size") != BATCH_SIZE or ck.get("lr") != LEARNING_RATE:
+        print(f"  ! resuming with batch={BATCH_SIZE} lr={LEARNING_RATE}, "
+              f"checkpoint had batch={ck.get('batch_size')} "
+              f"lr={ck.get('lr')}")
+    print(f"  resumed from {path}: {ck['epoch']} epochs done, "
+          f"best val {ck['best_val_loss']:.4f}")
+    return ck["epoch"], ck["best_val_loss"], ck.get("bad_epochs", 0)
 
 # main
 # Purpose: The full training run, start to finish: dataset -> split ->
@@ -853,25 +1024,55 @@ def main():
     # --- the epoch loop (calls chunk 5's helpers) ---
     # Track the best val loss so far. Start at infinity so the very first
     # epoch always counts as an improvement and saves once.
-    best_val_loss = float("inf")
+    # Where the run stands: from a checkpoint if one exists, otherwise the
+    # start. best_val_loss begins at infinity so the first epoch always
+    # counts as an improvement and saves once.
+    start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
+        CHECKPOINT, model, optimizer)
 
-    for epoch in range(EPOCHS):
-        train_loss = _trainOneEpoch(model, train_loader, optimizer,
-                                    criterion, mean, std)
+    for epoch in range(start_epoch, EPOCHS):
+        train_loss, st = _trainOneEpoch(model, train_loader, optimizer,
+                                        criterion, mean, std)
         val_loss   = _validateOneEpoch(model, val_loader,
                                        criterion, mean, std)
 
         # +1 because range starts at 0; humans count epochs from 1.
         # :.4f = 4 decimal places, enough to see the losses move.
+        # ! THE RATE IS PRINTED BESIDE THE LOSSES, because "will this
+        #   finish, and on what" is answered by the first number and not the
+        #   other two. `waiting` is the share of the epoch spent blocked on
+        #   the loader: high means a faster GPU buys nothing.
         print(f"epoch {epoch + 1:2d}/{EPOCHS}  "
-              f"train {train_loss:.4f}  val {val_loss:.4f}")
+              f"train {train_loss:.4f}  val {val_loss:.4f}  "
+              f"{st['examples_per_s']:,.0f} ex/s  "
+              f"{st['steps_per_s']:.1f} steps/s  "
+              f"waiting {st['waiting'] * 100:.0f}%  "
+              f"({st['elapsed'] / 60:.1f} min)")
 
         # Save ONLY when val loss hits a new low (see header). Later,
         # worse epochs leave the saved file untouched.
-        if val_loss < best_val_loss:
+        # ⚠ MIN_DELTA, NOT `<`. An improvement of 1e-9 is not an improvement;
+        #   without a threshold it resets the patience counter forever and
+        #   early stopping never fires.
+        if val_loss < best_val_loss - MIN_DELTA:
             best_val_loss = val_loss
+            bad_epochs = 0
             _saveModel(model, MODEL_OUT)
             print(f"  ↳ new best, saved to {MODEL_OUT}")
+        else:
+            bad_epochs += 1
+            print(f"  ↳ no improvement ({bad_epochs}/{PATIENCE})")
+
+        # ! EVERY EPOCH, IMPROVED OR NOT. An epoch that got worse is still an
+        #   epoch you do not want to pay for twice.
+        if CHECKPOINT:
+            _saveCheckpoint(CHECKPOINT, model, optimizer, epoch + 1,
+                            best_val_loss, bad_epochs)
+
+        if bad_epochs >= PATIENCE:
+            print(f"\nstopping: {PATIENCE} epochs with no improvement. "
+                  f"Best val {best_val_loss:.4f}, saved to {MODEL_OUT}.")
+            break
 
 
 # Standard Python entry point. This block runs ONLY when you launch the
@@ -883,9 +1084,56 @@ if __name__ == "__main__":
     # overnight used to rewrite MAX_CHUNKS in place and restore it after,
     # which left the file dirty whenever the night died mid-train.
     import argparse
-    _ap = argparse.ArgumentParser()
-    _ap.add_argument("--max-chunks", type=int, default=None)
+    _ap = argparse.ArgumentParser(
+        description="Train the predictor. Every dial below has a default "
+                    "that changes nothing; pass one to change it.")
+    _ap.add_argument("--max-chunks", type=int, default=None,
+                     help="train on the first N chunks only (10k examples "
+                          "each). Chunks are corpus-wide shuffles, so a "
+                          "prefix is a fair sample -- this is the smoke run "
+                          "and the cheap-subset run both.")
+    _ap.add_argument("--batch", type=int, default=None,
+                     help=f"batch size (default {BATCH_SIZE}). 512-1024 "
+                          f"suits a 24GB GPU; scale --lr with it.")
+    _ap.add_argument("--lr", type=float, default=None,
+                     help=f"learning rate (default {LEARNING_RATE})")
+    _ap.add_argument("--epochs", type=int, default=None,
+                     help=f"ceiling on epochs (default {EPOCHS}); early "
+                          f"stopping usually gets there first")
+    _ap.add_argument("--patience", type=int, default=None,
+                     help=f"epochs without a new best before stopping "
+                          f"(default {PATIENCE})")
+    _ap.add_argument("--workers", type=int, default=None,
+                     help=f"DataLoader worker processes (default "
+                          f"{NUM_WORKERS}). The biggest lever on wall clock "
+                          f"here: with 0 the GPU waits on every disk read.")
+    _ap.add_argument("--amp", action="store_true",
+                     help="bf16 mixed precision on CUDA. No-op on CPU.")
+    _ap.add_argument("--checkpoint", default=None,
+                     help="path to save/resume optimizer+weights+epoch "
+                          "every epoch. REQUIRED for spot instances: "
+                          "model.pt alone cannot resume, it has no "
+                          "optimizer state.")
     _args = _ap.parse_args()
+
     if _args.max_chunks:
         MAX_CHUNKS = _args.max_chunks
+    if _args.batch:
+        BATCH_SIZE = _args.batch
+    if _args.lr:
+        LEARNING_RATE = _args.lr
+    if _args.epochs:
+        EPOCHS = _args.epochs
+    if _args.patience is not None:
+        PATIENCE = _args.patience
+    if _args.workers is not None:
+        NUM_WORKERS = _args.workers
+    USE_AMP = _args.amp
+    CHECKPOINT = _args.checkpoint
+
+    print(f"device {DEVICE}  batch {BATCH_SIZE}  lr {LEARNING_RATE}  "
+          f"workers {NUM_WORKERS}  amp {USE_AMP}  "
+          f"epochs<={EPOCHS} patience {PATIENCE}"
+          + (f"  checkpoint {CHECKPOINT}" if CHECKPOINT else
+             "  NO CHECKPOINT -- an interrupted run starts over"))
     main()
