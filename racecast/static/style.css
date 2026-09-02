@@ -4130,18 +4130,43 @@ tr.row-hi > td { background: #fdf3cd; }
   cursor: help;
 }
 
-/* The "what this number means" bars (_explain.html). Quiet, theme-neutral:
-   a tinted band with a left rule, inheriting the page's text colour. */
-.info-bar {
+/* The "what this number means" disclosures (_explain.html): a small "i"
+   badge with a short label; the explanation opens beneath on click. Native
+   <details>, so it works without script and from the keyboard. */
+.info-i {
+    display: block;
     font-size: .85rem;
     line-height: 1.4;
+    margin: .1rem 0 .6rem;
+    max-width: 62rem;
+}
+.info-i summary {
+    display: inline-block;
+    list-style: none;
+    cursor: pointer;
     color: inherit;
+    opacity: .75;
+    user-select: none;
+}
+.info-i summary::-webkit-details-marker { display: none; }
+.info-i summary:hover, .info-i[open] summary { opacity: 1; }
+.i-badge {
+    display: inline-block;
+    width: 1.15em;
+    height: 1.15em;
+    margin-right: .4em;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    font: italic 600 .8em Georgia, "Times New Roman", serif;
+    line-height: 1.15em;
+    text-align: center;
+    vertical-align: -.1em;
+}
+.info-i .info-body {
+    margin-top: .35rem;
+    padding: .45rem .7rem;
     background: rgba(46, 83, 230, .07);
     border-left: 3px solid rgba(46, 83, 230, .6);
     border-radius: 4px;
-    padding: .45rem .7rem;
-    margin: .5rem 0 .9rem;
-    max-width: 62rem;
 }
-.info-bar b { font-weight: 600; }
 .dv { font-variant-numeric: tabular-nums; }
