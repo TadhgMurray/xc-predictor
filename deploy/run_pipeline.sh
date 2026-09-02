@@ -114,6 +114,9 @@ step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 #   rated chair athletes. It belongs BEFORE the pack: it is a fact about
 #   people that the pack reads.
 step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
+# issue 94: one physical race stored twice is flagged once, by result_id,
+# and every reader (engine, pricer, boards, page) anti-joins result_twin
+step 04c_twins        "$PY" -u engine/twin_flag.py --write
 
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE

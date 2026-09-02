@@ -239,6 +239,7 @@ def main():
             conn.commit()
         # The board query's temp tables, prepared exactly as the board build
         # prepares them -- the reused SQL joins them per sport.
+        B.ensureResultTwin(conn)       # the boards' WHERE anti-joins it
         B.prepareGenderTemp(conn)
         if "XC" in sports:
             B.prepareXcTfrrsDistTemp(conn)

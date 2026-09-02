@@ -195,18 +195,45 @@ def _dropTwinKeys(sport: str) -> None:
 #            tfrrs row matches only when it has an anet twin, and the IS NULL
 #            filter then drops it. A tfrrs row with no twin does not match, so it
 #            survives. Exactly the backfill's rule, as a join.
-def _dedupJoin(tw: str) -> str:
-    if not tw:
-        return ""
-    return f"""
+# ★ AND THE WRITTEN-DOWN VERDICT (issue 94): result_twin, built by
+#   engine/twin_flag.py (step 04c), lists the tfrrs copies the person-keyed
+#   rule cannot see -- a twin attached to another person_id, matched on
+#   place and time at the canon meet -- and exact duplicates inside one
+#   feed. Every reader anti-joins it; this one probes for it once per run.
+_RESULT_TWIN = {"present": None}
+
+
+def _probeResultTwin() -> bool:
+    if _RESULT_TWIN["present"] is None:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('result_twin')")
+                _RESULT_TWIN["present"] = cur.fetchone()[0] is not None
+        print(f"[db] result_twin "
+              f"{'present: flagged rows excluded' if _RESULT_TWIN['present'] else 'absent (run twin_flag.py --write)'}")
+    return _RESULT_TWIN["present"]
+
+
+def _dedupJoin(tw: str, sport: str = None) -> str:
+    out = ""
+    if tw:
+        out += f"""
         LEFT JOIN {tw} tw
                ON r.source = 'tfrrs'
               AND tw.person_id     = r.person_id
               AND tw.canon_meet_id = r.canon_meet_id"""
+    if sport and _RESULT_TWIN["present"]:
+        out += f"""
+        LEFT JOIN result_twin rtw
+               ON rtw.sport = '{sport}' AND rtw.result_id = r.result_id"""
+    return out
 
 
-def _dedupFilter(tw: str) -> str:
-    return "          AND tw.person_id IS NULL" if tw else ""
+def _dedupFilter(tw: str, sport: str = None) -> str:
+    out = "          AND tw.person_id IS NULL" if tw else ""
+    if sport and _RESULT_TWIN["present"]:
+        out += "\n          AND rtw.result_id IS NULL"
+    return out
 
 
 # _chairFilter
@@ -518,7 +545,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                GROUP BY a.gender
                ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
-        ) a ON TRUE{_dedupJoin(tw)}
+        ) a ON TRUE{_dedupJoin(tw, 'XC')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
@@ -539,7 +566,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
           --   division test is KEPT: it costs nothing and still holds when
           --   wheelchair_person has not been built.{_chairFilter()}
-{_dedupFilter(tw)}
+{_dedupFilter(tw, 'XC')}
     """
 
 
@@ -591,7 +618,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                GROUP BY a.gender
                ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
-        ) a ON TRUE{_dedupJoin(tw)}
+        ) a ON TRUE{_dedupJoin(tw, 'TF')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
@@ -614,7 +641,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
           --   division test is KEPT: it costs nothing and still holds when
           --   wheelchair_person has not been built.{_chairFilter()}
-{_dedupFilter(tw)}
+{_dedupFilter(tw, 'TF')}
     """
 
 
@@ -657,6 +684,7 @@ def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
     table = {"XC": "results", "TF": "results_tf"}[sport]
     tw, _n_tw = _buildTwinKeys(table, sport)
     tw = tw or ""
+    _probeResultTwin()
 
     sql = {"XC": _xcQuery, "TF": _tfQuery}[sport](min_time, max_time, tw)
     total = 0

@@ -62,15 +62,26 @@ def _buildTemps(cur, cfg, maxPer):
 
     # Unique anet names -> the one person who holds each.
     cur.execute("DROP TABLE IF EXISTS uname_tmp")
+    # ★ WITH THE PERSON'S GENDER (issue 68): a unique name is not a unique
+    #   person when the tfrrs row says "Women's 5000" and every anet row of
+    #   that name is a boy. The majority gender of the name's athlete rows
+    #   rides along; the match below refuses a contradiction.
     cur.execute(f"""
         CREATE TEMP TABLE uname_tmp AS
-        SELECT {anorm} AS nm,
-               MIN(person_id) AS person_id
-        FROM athletes
-        WHERE first_name <> '' AND person_id IS NOT NULL
-        GROUP BY {anorm}
+        SELECT nm, MIN(person_id) AS person_id,
+               (SELECT g.gender FROM athletes g
+                WHERE {anorm.replace('first_name', 'g.first_name').replace('last_name', 'g.last_name')} = x.nm
+                  AND g.gender IN ('M', 'F')
+                GROUP BY g.gender ORDER BY count(*) DESC, g.gender DESC
+                LIMIT 1) AS gender
+        FROM (
+            SELECT {anorm} AS nm, person_id
+            FROM athletes
+            WHERE first_name <> '' AND person_id IS NOT NULL
+        ) x
+        GROUP BY nm
         HAVING COUNT(DISTINCT person_id) = 1
-           AND position(' ' in {anorm}) > 0     -- 2+ tokens
+           AND position(' ' in nm) > 0     -- 2+ tokens
     """)
     cur.execute("CREATE INDEX ON uname_tmp (nm)")
 
@@ -78,7 +89,12 @@ def _buildTemps(cur, cfg, maxPer):
     cur.execute("DROP TABLE IF EXISTS rem_tmp")
     cur.execute(f"""
         CREATE TEMP TABLE rem_tmp AS
-        SELECT t.result_id, {tnorm} AS nm
+        SELECT t.result_id, {tnorm} AS nm,
+               -- the row's own gender, read off the event or division
+               -- title where one names it; NULL where neither does
+               CASE WHEN COALESCE(t.event_short, '') ~* '(women|girls|\\yw\\y|female)' THEN 'F'
+                    WHEN COALESCE(t.event_short, '') ~* '(\\ymen|boys|\\ym\\y|\\ymale)' THEN 'M'
+                    ELSE NULL END AS gender
         FROM {r} t
         WHERE t.source = 'tfrrs'
           AND t.person_id IS NULL
@@ -102,6 +118,9 @@ def _buildTemps(cur, cfg, maxPer):
             SELECT r.result_id, u.person_id, u.nm
             FROM rem_tmp r
             JOIN uname_tmp u ON u.nm = r.nm
+            -- a contradiction in gender is close to a proof of a bad link
+            -- (issue 68); an unknown on either side still matches
+            WHERE r.gender IS NULL OR u.gender IS NULL OR r.gender = u.gender
         ),
         bad AS (
             SELECT nm FROM cand GROUP BY nm HAVING count(*) > {maxPer}

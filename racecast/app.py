@@ -1160,6 +1160,24 @@ def athlete(person_id):
                            chart_data=chart_data)
 
 
+_RESULT_TWIN = {"checked": False, "present": False}
+
+
+def _hasResultTwin(cur):
+    """Does result_twin exist (issue 94)? Absent, nothing is hidden."""
+    if not _RESULT_TWIN["checked"]:
+        try:
+            cur.execute("SELECT to_regclass('result_twin')")
+            row = cur.fetchone()
+            v = row[0] if isinstance(row, (tuple, list)) else list(row.values())[0]
+            _RESULT_TWIN["present"] = v is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _RESULT_TWIN["present"] = False
+        _RESULT_TWIN["checked"] = True
+    return _RESULT_TWIN["present"]
+
+
 _RESULTS_STATUS = {"checked": False, "present": False}
 
 
@@ -1188,6 +1206,14 @@ def get_races(cur, person_id):
     """
     # results.status exists only once the scraper has run after deploy
     status_sql = "r.status" if _hasResultsStatus(cur) else "NULL::text"
+    # ★ A FLAGGED TWIN IS NOT ON THE PAGE (issue 94): the same run stored
+    #   twice shows once. result_twin is the verdict the engine and the
+    #   boards already use; the page reads the same one.
+    twin_xc = twin_tf = ""
+    if _hasResultTwin(cur):
+        twin_xc = ("AND NOT EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = 'XC' "
+                   "AND x.result_id = r.result_id)")
+        twin_tf = twin_xc.replace("'XC'", "'TF'")
     cur.execute(f"""
         -- ================= XC half: results + meets =================
         SELECT r.date,
@@ -1277,6 +1303,7 @@ def get_races(cur, person_id):
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
         WHERE r.person_id = %(pid)s
           AND r.time_seconds IS NOT NULL
+          {twin_xc}
 
         UNION ALL
 
@@ -1351,6 +1378,7 @@ def get_races(cur, person_id):
                   CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
         WHERE r.person_id = %(pid)s
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
+          {twin_tf}
 
         ORDER BY date DESC
     """, {"pid": person_id})

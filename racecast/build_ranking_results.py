@@ -329,6 +329,15 @@ def prepareXcTfrrsDistTemp(conn):
 _SPRINT_MAX_DISTANCE = 800.0
 
 
+def ensureResultTwin(conn):
+    """result_twin exists, possibly empty, before any query anti-joins it.
+    Built for real by engine/twin_flag.py --write (step 04c)."""
+    from twin_flag import ensureTable
+    with conn.cursor() as cur:
+        ensureTable(cur)
+    conn.commit()
+
+
 def prepareSprintEvents(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT event_short FROM results_tf "
@@ -557,6 +566,11 @@ _SQL = {
         {_GENDER_JOIN}{_seasonLevelJoin("XC")}{_gateJoins("XC")}
         WHERE r.speed_rating IS NOT NULL
           AND r.person_id IS NOT NULL
+          -- ! A FLAGGED TWIN NEVER RANKS (issue 94): result_twin is the one
+          --   verdict every reader shares; ensureResultTwin makes the table
+          --   exist (possibly empty) before this runs.
+          AND NOT EXISTS (SELECT 1 FROM result_twin x
+                          WHERE x.sport = 'XC' AND x.result_id = r.result_id)
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
     """,
@@ -644,6 +658,8 @@ _SQL = {
           --   `mark`. They belong on the athlete page, never on a board.
           AND NOT (COALESCE(r.is_field, 0) = 0 AND r.time_seconds IS NULL)
           AND r.person_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM result_twin x
+                          WHERE x.sport = 'TF' AND x.result_id = r.result_id)
           AND COALESCE(r.is_relay, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
@@ -2096,6 +2112,7 @@ def main():
         with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
             prepareGenderTemp(conn)
             prepareXcTfrrsDistTemp(conn)
+            ensureResultTwin(conn)
             prepareTfStateTemp(conn)
             prepareSprintEvents(conn)
 
