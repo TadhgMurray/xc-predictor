@@ -4140,7 +4140,14 @@ tr.row-hi > td { background: #fdf3cd; }
    leaks into the tooltip text. */
 .info-i {
     --tip: #374151;
-    display: inline-block;
+    /* ! CENTRED BY FLEX, NOT BY line-height. Georgia's italic i sits low
+       on its line box and leans right, so line-height centring put it low
+       and off to the right of the ring (owner, 2026-09-02). Flex centres
+       the glyph box; the padding-right nudges the slanted glyph's visual
+       centre back onto the ring's. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     box-sizing: border-box;
     background: none;
     color: #6b7280;
@@ -4148,16 +4155,17 @@ tr.row-hi > td { background: #fdf3cd; }
     border-radius: 50%;
     width: 1rem;
     height: 1rem;
-    line-height: calc(1rem - 2px);
+    line-height: 1;
     text-align: center;
-    padding: 0;
+    padding: 0 0.1em 0 0;
     margin-left: 0.35rem;
     font: italic 600 10px Georgia, "Times New Roman", serif;
     letter-spacing: 0;
-    vertical-align: 0.1em;
+    vertical-align: -0.15em;
     cursor: help;
     opacity: 0.8;
 }
+
 .info-i:hover, .info-i:focus { color: #111; border-color: #111; opacity: 1; }
 th .info-i { font-weight: 600; }
 
