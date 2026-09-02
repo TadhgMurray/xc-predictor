@@ -43,12 +43,13 @@ import school_unit_overrides as OV                      # noqa: E402
 
 # HS kinds then college kinds. section_div/state_div stay apart on
 # purpose -- see the owner's rule above.
-_HS_KINDS = ("league", "section", "section_div", "district", "county",
+_HS_KINDS = ("league", "area", "section", "section_div", "district", "county",
              "region", "state", "state_div", "class")
 _COLLEGE_KINDS = ("conference", "region", "division")
 _COLS = ("league", "section", "section_div", "district", "county",
          "region", "state_unit", "state_div", "class",
-         "conference", "division")
+         "conference", "division", "area")
+
 
 _DDL = """
 DROP TABLE IF EXISTS school_unit;
@@ -67,7 +68,9 @@ CREATE TABLE school_unit (
     class       text,
     conference  text,
     division    text,
+    area        text,
     is_college  boolean NOT NULL DEFAULT false,
+
     conflict    boolean NOT NULL DEFAULT false,
     votes       integer NOT NULL DEFAULT 0,
     asof        text,
@@ -111,9 +114,36 @@ def _rowFor(school, st, kinds):
             + [college, conflict, votes, asof])
 
 
+# crossFillAreas
+# Purpose:   an AREA IS A FACT ABOUT THE SCHOOL, NOT THE SPORT (owner,
+#            2026-09-02: "I'd like Tri-Valley to be a thing for both XC and
+#            TF"). Only track names the area in its meets, so only the TF
+#            row can vote one; this copies it onto the same school's other
+#            row so the XC page shows the same hierarchy. Never overwrites
+#            an area a row voted for itself.
+# Arguments: rows -- the writer's row lists, [school, st, sport, *cells,
+#            college, conflict, votes, asof]. Mutated in place.
+# Output:    the number of rows filled.
+def crossFillAreas(rows):
+    i_area = 3 + _COLS.index("area")
+    by_key = {}
+    for row in rows:
+        if row[i_area]:
+            by_key.setdefault((row[0], row[1]), row[i_area])
+    filled = 0
+    for row in rows:
+        if not row[i_area]:
+            got = by_key.get((row[0], row[1]))
+            if got:
+                row[i_area] = got
+                filled += 1
+    return filled
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+
     ap.add_argument("--sport", choices=("XC", "TF"))
     args = ap.parse_args()
     sports = (args.sport,) if args.sport else ("XC", "TF")
@@ -134,9 +164,13 @@ def main():
             print(f"  {sport}: {n_ok:,} schools with a unit "
                   f"({n_clash:,} carry a latest-season conflict) "
                   f"from {st_['hits']:,} parsed rows")
+        n_area = crossFillAreas(rows)
+        if n_area:
+            print(f"  areas copied across sports: {n_area:,} rows")
         if args.dry_run:
             print("  DRY RUN -- nothing written.")
             return
+
         if not rows:
             print("  NOTHING PARSED -- school_unit left as it was. "
                   "(Run 10_rankings first: the level call reads "
@@ -176,7 +210,8 @@ def main():
         #   missed here is a silent sequential scan, not an error.
         for _col in ("division", "region", "conference",
                      "state_div", "class", "section", "section_div",
-                     "league"):
+                     "league", "area"):
+
             cur.execute(f'CREATE INDEX idx_school_unit_{_col} '
                         f'ON school_unit ("{_col}", school)')
         conn.commit()

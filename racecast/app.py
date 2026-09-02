@@ -652,7 +652,10 @@ def _athletePaces(cur, person_id):
 #
 #   Reported by the owner 2026-08-31. school_units.schoolsInUnits ANDs its
 #   clauses, so adding the parent narrows to exactly the intersection.
-_UNIT_PARENT = {"section_div": "section"}
+# ! AN AREA IS INSIDE ITS SECTION, like a section division: ranking "Tri-
+#   Valley" alone would count every Tri-Valley in the country.
+_UNIT_PARENT = {"section_div": "section", "area": "section"}
+
 
 
 # Purpose:   the extra filter args a nested unit needs to mean what it says.
@@ -675,7 +678,8 @@ _RANK_SCOPES = {
     #   athlete against every Division 1 school in the country, which is
     #   not a thing anybody is in.
     "hs":      ("nation", "state", "unit:state_div", "unit:section",
-                "unit:section_div", "unit:league", "team"),
+                "unit:section_div", "unit:area", "unit:league", "team"),
+
     # ! COLLEGE IS THE OTHER WAY AROUND, and deliberately so (owner):
     #   a division IS its own unit here and it LEADS -- national,
     #   division, region, conference. The high-school rule above (never

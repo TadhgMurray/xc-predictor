@@ -372,8 +372,25 @@ _UNIT_RULES = [
     ("county",   re.compile(r"\b([\w .'-]+?)\s+county\b", re.I), 1),
     # ! ...but not TRI/BI/MULTI County, which are league names wearing
     #   the word county -- filtered in parseUnits by _NOT_A_COUNTY.
+    # ★ THE AREA: the level BETWEEN league and section that California
+    #   track has and cross country does not (owner, 2026-09-02: NCS ->
+    #   Tri-Valley -> EBAL). Named two ways: "<Section> <Area>
+    #   Championships" ("NCS Tri-Valley Championships", "NCS Redwood Empire
+    #   Championships", "CCS Semifinals" is NOT one) and "<Area> Area
+    #   Championships". The section rule still votes the section off the
+    #   same name; the writer copies the area onto the school's other-sport
+    #   row, because membership in an area is a fact about the school.
+    ("area",     re.compile(
+        r"\b(?:NCS|CCS|CIF-?SS|SJS|SDS)\s+"
+        r"([A-Z][\w'&.-]*(?:[ -][A-Z][\w'&.-]*){0,2})\s+"
+        r"(?:(?i:cross[- ]?country|xc|track(?:\s*(?:&|and)\s*field)?|"
+        r"t&f|outdoor|indoor|area)\s+)*"
+        r"(?i:champ|meet\b|finals?)"), 1),
+    ("area",     re.compile(r"\b([\w'&.-]+(?:[ -][\w'&.-]+){0,2})\s+area\s+"
+                            r"(?i:champ|meet\b|finals?)", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+league\b", re.I), 1),
     ("league",   re.compile(r"\b([\w .&'-]+?)\s+conference\b", re.I), 1),
+
     ("league",   re.compile(r"\b(PSAL|CHSAA|CHSFL|CPS|BCPS)\b"), 1),
     # bare all-caps acronym before Champ/Finals = a league (EBAL, WCAL,
     # and with the sport-word filler allowed: "MAC Cross Country
@@ -388,6 +405,10 @@ _UNIT_RULES = [
 ]
 
 _NOT_A_COUNTY = {"TRI", "BI", "MULTI", "DUAL", "ALL", "INTER"}
+_NOT_AN_AREA = {"MOC", "TRACK", "CROSS", "XC", "OPEN", "VARSITY", "JV",
+                "FROSH", "STATE", "CIF", "NCS", "CCS", "SJS", "SDS", "AREA",
+                "TOP", "ALL", "QUALIFYING", "QUALIFIER", "MASTERS", "MASTER"}
+
 
 _YEAR_RX = re.compile(r"\b(?:19|20)\d\d\b")
 _ORDINAL_RX = re.compile(r"\b\d+(?:st|nd|rd|th)\s+annual\b", re.I)
@@ -486,6 +507,29 @@ def parseUnits(meet_name, div_title, college=False, state=None):
             continue
         if kind == "county" and unit in _NOT_A_COUNTY:
             continue
+        # an area is a NAME: strip the section's own acronym off the front
+        # and the word AREA off the end ("NCS Bay Shore Area" -> BAY SHORE),
+        # then refuse a division token, a class, the section's own
+        # meet-of-champions, a sub-section round or a sport word
+        if kind == "area":
+            unit = re.sub(r"^(?:CIF\s+)?(?:NCS|CCS|CIF-?SS|SJS|SDS)\s+", "",
+                          unit)
+            unit = re.sub(r"\s+AREA$", "", unit).strip()
+            if (not unit or unit in _NOT_AN_AREA
+                    or re.fullmatch(r"D(?:IVISION)?\s*[1-6]|[1-6]A", unit)
+                    or re.search(r"\b(?:MEET|CHAMP|DIVISION|CLASS|SECTION|"
+                                 r"SEMI|PRELIM|FINAL|TRIAL|QUALIF)", unit)):
+                continue
+        # ! THE CIF RULE CAPTURES EVERYTHING UP TO THE SPORT WORD, so "CIF
+        #   NCS Tri-Valley Championships" voted a section named NCS
+        #   TRI-VALLEY against NCS itself. A section that starts with a
+        #   known acronym IS that acronym; the rest is the area's business.
+        if kind == "section":
+            m2 = re.match(r"^(NCS|CCS|CIF-?SS|SJS|SDS)\b", unit)
+            if m2:
+                unit = m2.group(1)
+
+
         # "CIF State ..." is the state meet, not a section named STATE
         if kind == "section" and unit in ("STATE", "CIF"):
             continue

@@ -4183,3 +4183,14 @@ th .info-i { font-weight: 600; }
 }
 
 .dv { font-variant-numeric: tabular-nums; }
+
+/* The scale toggle on a page whose ratings are all on the HS scale already:
+   the control stays (it must not come and go between athletes), the note
+   says the two views agree, and the buttons read quieter. */
+.scale-toggle.is-same button { opacity: 0.55; }
+.scale-toggle .scale-same {
+    margin-left: 0.5rem;
+    font-size: 0.78em;
+    color: #6b7280;
+    cursor: help;
+}

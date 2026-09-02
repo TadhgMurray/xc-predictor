@@ -31,8 +31,11 @@ _SHORT_TO_LONG = {
 #   NOT a separate chip: "NCS" and "NCS D1" side by side says NCS twice.
 #   The RANK LINE still ranks both, because placing 12th in the section
 #   and 4th in your division are different facts.
-_HS_CHIPS = ("league", "state_div", "section_div", "section",
+# ★ THE AREA SITS BETWEEN LEAGUE AND SECTION (owner, 2026-09-02): EBAL,
+#   Tri-Valley, NCS D1 -- spoken smallest first, like the rest.
+_HS_CHIPS = ("league", "area", "state_div", "section_div", "section",
              "district", "county", "class")
+
 # ! AND COLLEGE IS THE OPPOSITE CASE. A division IS its own unit here,
 #   and it is the TOP of the hierarchy: division, region, conference.
 #   Nothing above applies -- no parent qualifies it, and it is never
@@ -120,7 +123,8 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
         return []
     cols = ("league", "section", "section_div", "district", "county",
             "region", "state_unit", "state_div", "class", "conference",
-            "division", "is_college", "conflict", "asof", "state")
+            "division", "area", "is_college", "conflict", "asof", "state")
+
     args = [school, sport]
     sql = ("SELECT " + ", ".join('"%s"' % c for c in cols) +
            " FROM school_unit WHERE school = %s AND sport = %s")
@@ -180,8 +184,9 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
 #   ranking_results, the ability board from an aliased athlete_season. An
 #   unqualified `school` inside the subquery binds to school_unit's OWN
 #   column, which is silently always-true rather than an error.
-_FILTERABLE = ("league", "section", "section_div", "district", "county",
-               "class", "conference", "region", "division")
+_FILTERABLE = ("league", "area", "section", "section_div", "district",
+               "county", "class", "conference", "region", "division")
+
 
 
 def hasUnitArgs(args):

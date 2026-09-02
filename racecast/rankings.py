@@ -182,7 +182,8 @@ PR_POOLS = POOLS | {"all"}
 #   competes in, and they were the two boxes on the bar that answered no
 #   question. The COLUMNS stay in school_unit; only the filters go.
 COLLEGE_UNITS = ("division", "region", "conference")
-HS_UNITS = ("state_div", "section", "section_div", "league")
+HS_UNITS = ("state_div", "section", "section_div", "area", "league")
+
 
 UNIT_FILTERS = COLLEGE_UNITS + HS_UNITS
 
@@ -194,8 +195,10 @@ UNIT_COLUMNS = {
     "state_div":   ("state_div", "class"),
     "section":     ("section",),
     "section_div": ("section_div",),
+    "area":        ("area",),
     "league":      ("league",),
 }
+
 
 _UPPER_UNITS = {"division", "region", "state_div", "section", "section_div",
                 "class"}

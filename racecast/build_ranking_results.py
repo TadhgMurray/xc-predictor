@@ -668,7 +668,9 @@ _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             #   what school_unit already stores.
             "division", "region", "conference", "league",
             "state_div", "section_div", "district", "county", "class",
+            "area",
             # ★ THE EVENT AXIS OF THE TIMES/MARKS BOARD (owner, 2026-09-02).
+
             #   event_kind: NULL for a flat race; 'hurdles' / 'steeple' for
             #   a timed non-flat race, whose metres ride in `distance`; or a
             #   field key (marks.normalizeFieldEvent) for a field event,
@@ -721,7 +723,9 @@ _TF_DISTANCE = {}
 #   mid-rebuild) means every unit column is NULL and the filters return
 #   empty -- never an error, exactly as school_identity behaves.
 _UNIT_COLS = ("division", "region", "conference", "league",
-              "state_div", "section_div", "district", "county", "class")
+              "state_div", "section_div", "district", "county", "class",
+              "area")
+
 _UNITS = {"loaded": False, "by_key": {}, "by_school": {}}
 
 
@@ -1487,7 +1491,9 @@ def createShadow(conn, name, like):
             # Same idempotent migration for the unit columns. text, because a
             # league is a name and a division is "DI" -- neither is a number.
             for _u in ("division", "region", "conference", "league",
-                       "state_div", "section_div", "district", "county", "class"):
+                       "state_div", "section_div", "district", "county",
+                       "class", "area"):
+
                 cur.execute(f'ALTER TABLE IF EXISTS {like} '
                             f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         cur.execute(f"DROP TABLE IF EXISTS {name}")

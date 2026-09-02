@@ -27,7 +27,8 @@ const PAGE_SIZE = 50;
 /* Biggest grouping first, league last. college / high school, and the two
    sets never mix -- see the note in rankings.py. */
 const COLLEGE_UNITS = ["division", "region", "conference"];
-const HS_UNITS = ["state_div", "section", "section_div", "league"];
+const HS_UNITS = ["state_div", "section", "section_div", "area", "league"];
+
 const UNIT_KEYS = COLLEGE_UNITS.concat(HS_UNITS);
 
 /*
@@ -497,7 +498,8 @@ const PANEL = {
      hardcoded /search/api. Issue #55. */
   ...Object.fromEntries(
     ["division", "region", "conference",
-     "state_div", "section", "section_div", "league"].map((k) => [k, {
+     "state_div", "section", "section_div", "area", "league"].map((k) => [k, {
+
        cols: 1, width: 320, searched: true, kind: k,
        endpoint: "/api/units", hint: "Search\u2026",
      }])),
@@ -1621,7 +1623,9 @@ $("scope").addEventListener("change", applyNow);
 
    ! CLEARED, NOT JUST DISABLED. A value left behind a disabled control is a
      filter nobody can see and nobody can remove. */
-const UNIT_PARENT = { state_div: "state", section_div: "section" };
+const UNIT_PARENT = { state_div: "state", section_div: "section",
+                      area: "section" };
+
 
 function syncUnitDeps() {
   for (const [child, parent] of Object.entries(UNIT_PARENT)) {

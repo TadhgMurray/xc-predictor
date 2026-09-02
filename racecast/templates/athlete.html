@@ -325,9 +325,10 @@
     {#  right (owner's pick, option C) -- same height, same segmented     #}
     {#  shape, so the two boxes read as siblings on one line.             #}
     {# ================================================================= #}
-    {#  POOL-VIEW TOGGLE. Rendered only when this career crosses a pool  #}
-    {#  boundary (has_hs_view) -- for a pure-HS athlete both views are   #}
-    {#  the same numbers and a switch that does nothing reads as broken. #}
+    {#  POOL-VIEW TOGGLE. Always rendered (owner, 2026-09-02: it came   #}
+    {#  and went between athletes and read as a fault). For a pure-HS    #}
+    {#  career both views are the same numbers, and the control says so  #}
+    {#  ("same on both") instead of disappearing.                        #}
     {#  athlete-charts.js owns the behaviour: it swaps every .rv span    #}
     {#  and redraws the rating charts, and remembers the choice.         #}
     {# ================================================================= #}
@@ -336,8 +337,9 @@
             <a href="#xc">Cross Country</a>
             <a href="#tf">Track &amp; Field</a>
         </nav>
-        {% if has_hs_view %}{{ scale_toggle() }}{% endif %}
+        {{ scale_toggle(same=not has_hs_view) }}
     </div>
+
 
     <div class="page-layout">
 

@@ -60,7 +60,9 @@ def test_missing_parent_is_not_invented():
 def test_the_nesting_map_is_what_we_think():
     # If a future unit kind nests (say district inside section), it belongs
     # here rather than in a second ad-hoc branch.
-    assert app._UNIT_PARENT == {"section_div": "section"}, app._UNIT_PARENT
+    # area joined 2026-09-02: NCS -> Tri-Valley -> EBAL, ranked inside NCS
+    assert app._UNIT_PARENT == {"section_div": "section",
+                                "area": "section"}, app._UNIT_PARENT
     print(f"  nesting map {app._UNIT_PARENT} ....... OK")
 
 
@@ -71,3 +73,14 @@ if __name__ == "__main__":
                test_the_nesting_map_is_what_we_think]:
         fn()
     print("\nall rank-line unit tests passed")
+
+
+def test_area_carries_its_section():
+    units = dict(UNITS)
+    units["area"] = {"kind": "area", "raw": "TRI-VALLEY", "label": "Tri-Valley"}
+    assert app.unitParentArgs("area", units) == {"section": "NCS"}
+    print("  area carries section=NCS ......................... OK")
+
+
+if __name__ == "__main__":
+    test_area_carries_its_section()
