@@ -66,8 +66,13 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 _MARK = {
     "XC": ("WHERE r.speed_rating IS NOT NULL",
            "WHERE r.speed_rating IS NULL"),
-    "TF": ("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL)",
-           "WHERE r.speed_rating IS NULL AND se.event_short IS NULL"),
+    # ! AND NOT A FIELD EVENT, since the marks board (owner, 2026-09-02): a
+    #   field row is admitted for its mark and has no time to price.
+    "TF": ("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL\n"
+           "               OR COALESCE(r.is_field, 0) = 1)",
+           "WHERE r.speed_rating IS NULL AND se.event_short IS NULL\n"
+           "               AND COALESCE(r.is_field, 0) = 0"),
+
 }
 
 

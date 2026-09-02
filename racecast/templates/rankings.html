@@ -69,7 +69,8 @@
        distance-normalised, which is what makes them fair and also what makes
        them unrecognisable to somebody who just wants the fastest 5k times.
        This ranks the clock. #}
-    <button class="tab" role="tab" data-board="pr" aria-selected="false">Best times</button>
+    <button class="tab" role="tab" data-board="pr" aria-selected="false">Best times/marks</button>
+
     {# ★ A FOURTH BOARD, AND THE ONLY ONE THAT RANKS A GROUP. The other three
        rank a number each row already has. This one ranks the finish order of
        a meet that never happened: every team's top seven entered, sorted by
@@ -266,7 +267,39 @@
         <option value="8000">8000 m</option>
         <option value="10000">10,000 m</option>
         </optgroup>
+        {# ★ BEST TIMES/MARKS ONLY (owner, 2026-09-02). A value with a bar
+           is "<metres>|<kind>", a field event is "field:<key>";
+           rankings.js splits them into distance= and event= for the API.
+           Hidden off the pr board the same way pool=all is: these kinds
+           carry no rating, so no rating board can rank them. #}
+        <optgroup label="Hurdles" class="pr-only-grp">
+          <option value="55|hurdles" class="pr-only-opt">55 m hurdles</option>
+          <option value="60|hurdles" class="pr-only-opt">60 m hurdles</option>
+          <option value="65|hurdles" class="pr-only-opt">65 m hurdles</option>
+          <option value="100|hurdles" class="pr-only-opt">100 m hurdles</option>
+          <option value="110|hurdles" class="pr-only-opt">110 m hurdles</option>
+          <option value="300|hurdles" class="pr-only-opt">300 m hurdles</option>
+          <option value="400|hurdles" class="pr-only-opt">400 m hurdles</option>
+        </optgroup>
+        <optgroup label="Steeplechase" class="pr-only-grp">
+          <option value="2000|steeple" class="pr-only-opt">2000 m steeplechase</option>
+          <option value="3000|steeple" class="pr-only-opt">3000 m steeplechase</option>
+        </optgroup>
+        <optgroup label="Jumps" class="pr-only-grp">
+          <option value="field:high_jump" class="pr-only-opt">High jump</option>
+          <option value="field:pole_vault" class="pr-only-opt">Pole vault</option>
+          <option value="field:long_jump" class="pr-only-opt">Long jump</option>
+          <option value="field:triple_jump" class="pr-only-opt">Triple jump</option>
+        </optgroup>
+        <optgroup label="Throws" class="pr-only-grp">
+          <option value="field:shot_put" class="pr-only-opt">Shot put</option>
+          <option value="field:discus" class="pr-only-opt">Discus</option>
+          <option value="field:javelin" class="pr-only-opt">Javelin</option>
+          <option value="field:hammer" class="pr-only-opt">Hammer</option>
+          <option value="field:weight_throw" class="pr-only-opt">Weight throw</option>
+        </optgroup>
       </select>
+
     </div>
 
     <div class="field perf-only">

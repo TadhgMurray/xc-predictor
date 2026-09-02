@@ -74,6 +74,11 @@ _SORTS_PERFORMANCE = {
 #   "who is best" is answered; this is where "what are the fast times" is.
 _SORTS_PR = {
     "time":    ("p.time_seconds",  "ASC"),
+    # ★ FIELD EVENTS RANK THE MARK, longest or highest first. parseFilters
+    #   maps the frontend's "time" onto this when the event is a field event,
+    #   so the header the user clicks stays "Time / Mark" on both.
+    "mark":    ("p.mark",          "DESC"),
+
     "date":    ("p.race_date",     "DESC"),
     "rating":  ("p.speed_rating",  "DESC"),
     "year":    ("(CASE WHEN p.sport = 'TF' THEN p.year + 1 ELSE p.year END)", "DESC"),
@@ -202,7 +207,20 @@ _UPPER_UNITS = {"division", "region", "state_div", "section", "section_div",
 # ⚠ EXACT MATCH, NOT A TOLERANCE. 1600 and 1609 are different races to the
 #   people who run them, and merging them would put a mile PR on a 1600 board.
 #   ranking_results stores what the meet recorded, corrected by dist_override.
+# ★ THE EVENT AXIS OF THE TIMES BOARD (owner, 2026-09-02: "Best times should
+#   be Best times/marks, and include steeple, hurdles and field events").
+#   ranking_results.event_kind is NULL for a flat race, 'hurdles' or
+#   'steeple' for a timed non-flat race (distance carries the metres), or a
+#   field key from racecast/marks.normalizeFieldEvent for a field event,
+#   where `mark` carries the parsed metres and time_seconds is NULL.
+PR_HURDLE_DISTANCES = (55, 60, 65, 100, 110, 300, 400)
+PR_STEEPLE_DISTANCES = (2000, 3000)
+PR_FIELD_EVENTS = ("high_jump", "pole_vault", "long_jump", "triple_jump",
+                   "shot_put", "discus", "javelin", "hammer", "weight_throw")
+PR_EVENTS = ("hurdles", "steeple") + PR_FIELD_EVENTS
+
 PR_DISTANCES = (
+
     # Sprints and middle distance, all track.
     55, 60, 70, 100, 110, 200, 300, 400, 500, 600,
     800, 1000, 1500, 1600, 1609, 2000, 3000, 3200, 3218,
@@ -428,6 +446,7 @@ def parseFilters(args):
                           f"drop the gender filter or change the pool")
 
     distance = None
+    event = None
     if board == "pr":
         # ⚠ THE COLUMN IS NEWER THAN THE TABLE. `distance` is written by
         #   build_ranking_results, so between deploying this and the next
@@ -435,16 +454,31 @@ def parseFilters(args):
         #   an unhandled exception with an HTML debug page, which the frontend
         #   reports as "Unexpected token '<'". Saying so plainly is better
         #   than a stack trace rendered as a parse error.
+        # ★ event= SELECTS THE KIND: absent is a flat race at `distance`;
+        #   hurdles / steeple need a distance from their own lists; a field
+        #   event takes no distance and ranks the mark.
+        event = (args.get("event") or "").strip().lower() or None
+        if event is not None and event not in PR_EVENTS:
+            return None, f"event must be one of {list(PR_EVENTS)}"
         raw = args.get("distance")
-        if raw is None:
-            return None, ("the pr board needs a distance; one of "
-                          f"{list(PR_DISTANCES)}")
-        try:
-            distance = int(raw)
-        except ValueError:
-            return None, "distance must be a whole number of metres"
-        if distance not in PR_DISTANCES:
-            return None, f"distance must be one of {list(PR_DISTANCES)}"
+        if event in PR_FIELD_EVENTS:
+            if raw:
+                return None, f"{event} is a field event and takes no distance"
+        else:
+            if raw is None:
+                return None, ("the pr board needs a distance; one of "
+                              f"{list(PR_DISTANCES)}")
+            try:
+                distance = int(raw)
+            except ValueError:
+                return None, "distance must be a whole number of metres"
+            allowed_d = (PR_HURDLE_DISTANCES if event == "hurdles" else
+                         PR_STEEPLE_DISTANCES if event == "steeple" else
+                         PR_DISTANCES)
+            if distance not in allowed_d:
+                return None, (f"distance must be one of {list(allowed_d)}"
+                              + (f" for {event}" if event else ""))
+
     elif board == "performance":
         # ★ OPTIONAL here, unlike pr: the performance board is already
         #   distance-normalised, so the filter narrows scope (a course at
@@ -526,9 +560,15 @@ def parseFilters(args):
     #   a PR board that opened sorted by rating would be the performance board
     #   with extra steps.
     sort = args.get("sort") or ("time" if board == "pr" else "rating")
+    # ! A FIELD-EVENT BOARD RANKS THE MARK. The frontend's header key stays
+    #   "time" (one column, "Time / Mark"), so the mapping lives here.
+    if board == "pr" and event in PR_FIELD_EVENTS and sort == "time":
+        sort = "mark"
     if sort not in table:
         return None, f"sort must be one of {sorted(table)}"
     f["sort"] = sort
+    f["event"] = event
+
 
     direction = (args.get("dir") or "").upper()
     if direction not in ("ASC", "DESC", ""):
@@ -613,6 +653,21 @@ def _whereClauses(f, params, with_dates):
         params["dist_lo"] = d * (1 - PR_DISTANCE_TOL)
         params["dist_hi"] = d * (1 + PR_DISTANCE_TOL)
         parts.append(" AND distance BETWEEN %(dist_lo)s AND %(dist_hi)s")
+
+    # ★ THE EVENT KIND. A named kind is an equality; a flat request on the
+    #   pr board pins event_kind IS NULL so the 100 m board never lists the
+    #   100 m hurdles (same distance, different race). Only the pr board
+    #   pins it -- the performance board is rating-ranked and rates nothing
+    #   but flat races anyway -- and only once the column exists, so a board
+    #   served between this deploy and the next step-10 rebuild keeps
+    #   working instead of raising UndefinedColumn on every request.
+    ev = f.get("event")
+    if ev is not None:
+        params["event_kind"] = ev
+        parts.append(" AND event_kind = %(event_kind)s")
+    elif f.get("board") == "pr" and _hasEventKind():
+        parts.append(" AND event_kind IS NULL")
+
 
     # ★ THE COURSE SPECIFIER. parseFilters only lets it through for the
     #   performance and pr boards, whose every consumer of this clause --
@@ -739,7 +794,30 @@ def _scaleExpr(f, expr):
     return expr if case is None else f"({expr} * {case})"
 
 
+_EVENT_KIND_PRESENT = None
+
+
+def _hasEventKind(cur=None):
+    """Does ranking_results carry event_kind yet? Probed once per process.
+
+    Returns False on any failure, which only costs the flat-only pin until
+    the next request after a rebuild; a wrong True would 400 every board."""
+    global _EVENT_KIND_PRESENT
+    if _EVENT_KIND_PRESENT is None:
+        try:
+            from database import getConn
+            with getConn() as conn, conn.cursor() as c:
+                c.execute("""SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'ranking_results'
+                               AND column_name = 'event_kind'""")
+                _EVENT_KIND_PRESENT = c.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            return False
+    return _EVENT_KIND_PRESENT
+
+
 def _orderBy(f, table, tiebreak, unique_key):
+
     """The ORDER BY clause: a whitelist lookup plus a stable tiebreak.
 
     ⚠ THE TIEBREAK IS NOT DECORATION. Paging is OFFSET/LIMIT, and a sort with
@@ -888,40 +966,61 @@ def getPrRankings(cur, f):
         "offset": f["offset"],
     }
     where = _whereClauses(f, params, with_dates=True)
-    order = _orderBy(f, _SORTS_PR, "p.time_seconds ASC", "p.result_id")
+    # ★ A FIELD EVENT RANKS THE MARK, DESCENDING, and has no time. Same
+    #   shape of query with the ranked column swapped: the candidate set is
+    #   bounded by the ranked quantity, the dedup key rounds it, the best
+    #   per person orders by it.
+    is_field = f.get("event") in PR_FIELD_EVENTS
+    if is_field:
+        ranked, cand_where, cand_order, dedup_key = (
+            "mark", "mark IS NOT NULL", "mark DESC",
+            "round(mark::numeric, 2)")
+        order = _orderBy(f, _SORTS_PR, "p.mark DESC", "p.result_id")
+        mark_col = "p.mark"
+    else:
+        ranked, cand_where, cand_order, dedup_key = (
+            "time_seconds",
+            f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}",
+            "time_seconds ASC", "round(time_seconds::numeric, 1)")
+        order = _orderBy(f, _SORTS_PR, "p.time_seconds ASC", "p.result_id")
+        # ! NULL, NOT p.mark: an older ranking_results has no mark column,
+        #   and a flat board must keep serving until step 10 rebuilds it.
+        mark_col = "NULL::real"
 
     cur.execute(f"""
         WITH candidates AS (
             SELECT sport, result_id, person_id, pool, speed_rating,
                    race_date, year, state, school, grade,
-                   meet_id, div_id, canon_meet_id, time_seconds, distance, event_id
+                   meet_id, div_id, canon_meet_id, time_seconds, distance,
+                   event_id{", mark" if is_field else ""}
             FROM   ranking_results
             -- ! THE SENTINEL IS EXCLUDED HERE, not filtered out later. A
             --   later filter would still let 999999 into the candidate set
             --   and waste the LIMIT on rows that cannot rank.
-            WHERE  time_seconds IS NOT NULL
-              AND  time_seconds < {DNF_SENTINEL} {where}
-            ORDER  BY time_seconds ASC
+            WHERE  {cand_where} {where}
+            ORDER  BY {cand_order}
             LIMIT  %(cand)s
         ),
         deduped AS (
             SELECT *, row_number() OVER (
                        PARTITION BY sport,
                                     COALESCE(canon_meet_id, -result_id),
-                                    round(time_seconds::numeric, 1)
+                                    {dedup_key}
                        ORDER BY speed_rating DESC NULLS LAST) AS dup_rn
             FROM candidates
         ),
         best AS (
             SELECT *, row_number() OVER (
                        PARTITION BY person_id
-                       ORDER BY time_seconds ASC) AS person_rn
+                       ORDER BY {cand_order}) AS person_rn
             FROM deduped
             WHERE dup_rn = 1
         )
         SELECT p.sport, p.result_id, p.person_id, p.pool,
                p.time_seconds,
+               {mark_col}                           AS mark,
                p.distance,
+
                p.speed_rating                       AS rating,
                to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
                (CASE WHEN p.sport = 'TF' THEN p.year + 1
@@ -1009,13 +1108,17 @@ def _rankInResults(cur, f, person_id):
       sort is another chance to get that subtly wrong. The caller refuses
       anything else rather than returning a plausible number.
     """
-    # performance ranks by rating (higher first); pr by time (lower first).
+    # performance ranks by rating (higher first); pr by time (lower first),
+    # or by MARK (higher first) when the pr board is a field event.
     is_pr = f["board"] == "pr"
-    col = "time_seconds" if is_pr else "speed_rating"
+    is_field = is_pr and f.get("event") in PR_FIELD_EVENTS
+    col = ("mark" if is_field else "time_seconds" if is_pr
+           else "speed_rating")
     # The comparison column as the board ORDERS it: scaled when the reader
     # is on the HS-equivalent view of a pool=all board, else the column.
     cmp = _scaleExpr(f, col)
-    beats = "<" if is_pr else ">"
+    ascending = is_pr and not is_field
+    beats = "<" if ascending else ">"
 
     params = {"person_id": person_id}
     where = _whereClauses(f, params, with_dates=True)
@@ -1023,15 +1126,16 @@ def _rankInResults(cur, f, person_id):
     # ! THE ATHLETE'S OWN BEST ROW UNDER THESE FILTERS, which is the row that
     #   would appear on the board. Their other races are irrelevant to where
     #   they sit.
-    dnf = ("" if not is_pr
+    dnf = ("" if not ascending
            else f" AND time_seconds < {DNF_SENTINEL}")
     cur.execute(f"""
         SELECT {cmp}, result_id
         FROM   ranking_results
         WHERE  person_id = %(person_id)s AND {col} IS NOT NULL {dnf} {where}
-        ORDER  BY {cmp} {"ASC" if is_pr else "DESC"}, result_id
+        ORDER  BY {cmp} {"ASC" if ascending else "DESC"}, result_id
         LIMIT  1
     """, params)
+
     row = cur.fetchone()
     if not row:
         return None

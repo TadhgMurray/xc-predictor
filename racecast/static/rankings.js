@@ -85,6 +85,35 @@ function isNoTime(sec) {
   return sec === null || sec === undefined || Number(sec) >= DNF_SENTINEL;
 }
 
+/* "5000" -> {distance: "5000"}; "110|hurdles" -> {distance: "110",
+   event: "hurdles"}; "field:shot_put" -> {event: "shot_put"}. */
+function parseEventValue(v) {
+  if (!v) return {};
+  if (v.startsWith("field:")) return { event: v.slice(6) };
+  const bar = v.indexOf("|");
+  if (bar >= 0) return { distance: v.slice(0, bar), event: v.slice(bar + 1) };
+  return { distance: v };
+}
+
+function isFieldSelection() {
+  const d = $("distance");
+  return !!(d && d.value && d.value.startsWith("field:"));
+}
+
+/* Metres -> "17.05 m (55-11.25)". Marks are stored in metres by the build
+   (marks.parseMark); the feet-inches beside it is what most readers of a
+   US board expect to see, and the conversion is exact. */
+function fmtMark(m) {
+  if (m === null || m === undefined) return "—";
+  const metres = Number(m);
+  if (!isFinite(metres)) return "—";
+  const totalInches = metres / 0.0254;
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches - feet * 12;
+  return `${metres.toFixed(2)} m (${feet}-${inches.toFixed(2).padStart(5, "0")})`;
+}
+
+
 /* A school cell that links through, or a plain one when the name is missing.
    /school/<path:school_name> takes the raw string, so no id lookup. */
 /* ★ THE TWO RACE ROUTES ARE DIFFERENT SHAPES. XC is
@@ -307,10 +336,17 @@ function buildQuery() {
   }
 
   if (state.board === "pr") {
-    q.set("distance", $("distance").value);
+    /* ★ THE SELECT'S VALUE ENCODES THE KIND (rankings.html): "5000" is a
+       flat race, "110|hurdles" a timed non-flat race at that distance,
+       "field:shot_put" a field event that ranks the mark and takes no
+       distance. The API wants distance= and event= apart. */
+    const sel = parseEventValue($("distance").value);
+    if (sel.distance) q.set("distance", sel.distance);
+    if (sel.event)    q.set("event", sel.event);
     if ($("date_from").value) q.set("date_from", $("date_from").value);
     if ($("date_to").value)   q.set("date_to",   $("date_to").value);
   } else if (state.board === "ability") {
+
     q.set("min_races", $("min_races").value || defaultMinRaces());
   } else {
     /* Performances: distance is OPTIONAL scope here (the board is already
@@ -843,10 +879,13 @@ const COLUMNS = {
     { key: "grade",  label: "Grade" },
     { key: null,     label: "Pool" },
     { key: "date",   label: "Date" },
-    { key: "time",   label: "Time" },
+    /* One column for both: a time on a running board, a mark on a field
+       board. The sort key stays "time"; the API maps it onto the mark. */
+    { key: "time",   label: "Time / Mark" },
     { key: "rating", label: "Rating" }
   ]
 };
+
 
 /* Seconds -> m:ss.d, or h:mm:ss for anything past an hour. A leaderboard of
    "1183.4" is a leaderboard nobody can read. */
@@ -1020,8 +1059,10 @@ function renderPr(rows) {
       <td>${esc(r.grade)}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
-      ${maybeLink(href, fmtTime(r.time_seconds),
-                  "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
+      ${r.mark !== null && r.mark !== undefined
+          ? maybeLink(href, fmtMark(r.mark), "time mark")
+          : maybeLink(href, fmtTime(r.time_seconds),
+                      "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
       ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
     </tr>`;
   }).join("");
@@ -1030,6 +1071,7 @@ function renderPr(rows) {
     <tbody>${body}</tbody>
   </table>`;
 }
+
 
 
 /* 1 -> "1st". Used in the tooltip that keeps a team's own season visible
@@ -1467,8 +1509,24 @@ function syncBoard(board) {
   if (distSel) {
     const anyOpt = distSel.querySelector(".perf-any-opt");
     if (anyOpt) anyOpt.hidden = board === "pr";
+    /* ★ HURDLES, STEEPLE AND FIELD EVENTS EXIST ONLY ON THE TIMES/MARKS
+       BOARD: they carry no rating, so no other board can rank them. Same
+       hidden-option pattern as pool=all, and the same reset -- a hidden
+       option that stays selected would send event= to a board that
+       rejects it. */
+    distSel.querySelectorAll(".pr-only-opt").forEach((opt) => {
+      opt.hidden = board !== "pr";
+    });
+    distSel.querySelectorAll(".pr-only-grp").forEach((grp) => {
+      grp.hidden = board !== "pr";
+    });
+    if (board !== "pr" && (distSel.value.includes("|")
+                           || distSel.value.startsWith("field:"))) {
+      distSel.value = "";
+    }
     if (board === "pr" && !distSel.value) distSel.value = "5000";
   }
+
 
   /* ! 'all' ONLY EXISTS ON THE PR BOARD, so leaving it selected while
        switching away would send a pool the API rejects with a 400. */
@@ -1495,7 +1553,7 @@ function syncBoard(board) {
     board === "ability"
       ? "Season ability \u2014 averaged across a season, so one lucky race cannot carry an athlete."
       : board === "pr"
-      ? "Best times \u2014 each athlete's fastest at one distance. Raw clock, no course correction."
+      ? "Best times and marks \u2014 each athlete's fastest time at one distance, or their longest or highest mark in a field event. Raw clock and tape, no course correction."
       : board === "teams"
       ? "Teams \u2014 every squad's top seven raced against each other, scored the ordinary way."
       : board === "courses"

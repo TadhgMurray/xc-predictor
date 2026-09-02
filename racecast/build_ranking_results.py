@@ -55,6 +55,8 @@ try:
     #   distance in the event name and event_parse is where that is read; a
     #   second copy of that logic here would be a third way to get it wrong.
     from event_parse import distanceFromEventShort
+    # the field-event mark parser, beside this file (racecast/marks.py)
+    from marks import parseMark, normalizeFieldEvent, saneMark
     from dbfast import tuneSession
     from pool_ceiling import ceilingFor
     from pool_resolve import resolvePool, inScope
@@ -329,10 +331,17 @@ def prepareSprintEvents(conn):
                     "WHERE event_short IS NOT NULL")
         names = [r[0] for r in cur.fetchall()]
         sprints = []
+        n_nonflat = 0
         for ev in names:
             d = _tfDistance(ev)
             if d is not None and 0 < float(d) < _SPRINT_MAX_DISTANCE:
                 sprints.append(ev)
+            elif timedEventKind(ev)[0] is not None:
+                # ★ HURDLES AND THE STEEPLE ENTER THE SAME WAY (owner,
+                #   2026-09-02): timed, unrated, for the times board only.
+                sprints.append(ev)
+                n_nonflat += 1
+
         cur.execute("DROP TABLE IF EXISTS tmp_sprint_events")
         cur.execute("CREATE TEMP TABLE tmp_sprint_events (event_short text)")
         if sprints:
@@ -343,7 +352,9 @@ def prepareSprintEvents(conn):
         cur.execute("ANALYZE tmp_sprint_events")
     conn.commit()
     print(f"  sprint events (<{_SPRINT_MAX_DISTANCE:.0f}m, rated by nobody): "
-          f"{len(sprints):,} of {len(names):,} event names")
+          f"{len(sprints) - n_nonflat:,} of {len(names):,} event names, "
+          f"plus {n_nonflat:,} hurdle/steeple names (timed, unrated)")
+
 
 
 def prepareTfStateTemp(conn):
@@ -571,6 +582,10 @@ _SQL = {
                --   memoised on the event string.
                dov.distance AS distance,
                r.event_short,
+               -- the field-event mark text and flag, for the marks board
+               r.mark,
+               COALESCE(r.is_field, 0) AS is_field,
+
                -- ★ THE EVENT, FOR THE RACE LINK. A TF race page is
                --   /race/tf/<meet>/<event>/<div> -- three parts -- and
                --   without this column the frontend can only build two, which
@@ -615,14 +630,18 @@ _SQL = {
         --   CLOCK and never needed a rating, and every rating board excludes
         --   NULL. Nothing else unrated is admitted; se.event_short is the
         --   whitelist.
-        WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL)
+        -- ★ OR A FIELD EVENT (owner, 2026-09-02): admitted for its MARK,
+        --   never rated, published to the times/marks board only. prepareRow
+        --   parses the mark and refuses what it cannot read (marks.py).
+        WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL
+               OR COALESCE(r.is_field, 0) = 1)
           AND r.person_id IS NOT NULL
           AND COALESCE(r.is_relay, 0) = 0
-          AND COALESCE(r.is_field, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
     """,
 }
+
 
 # The swap's patience. See the comment at the rename below.
 _SWAP_LOCK_TIMEOUT = "3s"
@@ -648,7 +667,15 @@ _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             #   cheaper and far simpler than two column families, and it is
             #   what school_unit already stores.
             "division", "region", "conference", "league",
-            "state_div", "section_div", "district", "county", "class")
+            "state_div", "section_div", "district", "county", "class",
+            # ★ THE EVENT AXIS OF THE TIMES/MARKS BOARD (owner, 2026-09-02).
+            #   event_kind: NULL for a flat race; 'hurdles' / 'steeple' for
+            #   a timed non-flat race, whose metres ride in `distance`; or a
+            #   field key (marks.normalizeFieldEvent) for a field event,
+            #   whose parsed metres ride in `mark` and whose time_seconds is
+            #   NULL. Last, for the same positional reason as `distance`.
+            "event_kind", "mark")
+
 
 
 # ------------------------------------------------------------------ #
@@ -847,11 +874,58 @@ _HS_POOLS = ("hs_m", "hs_f")
 _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
-                "over_hs_distance": 0, "hs_no_distance": 0},
+                "over_hs_distance": 0, "hs_no_distance": 0,
+                "field_mark": 0, "field_refused": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
-                "over_hs_distance": 0, "hs_no_distance": 0}}
+                "over_hs_distance": 0, "hs_no_distance": 0,
+                "field_mark": 0, "field_refused": 0}}
+
+# ★ TIMED NON-FLAT EVENTS. event_parse rejects hurdles and the steeple on
+#   purpose (the distance law is not fitted for them), so _tfDistance is
+#   None for both and the sprint whitelist could not see them. This reads
+#   the metres off the name for exactly those two kinds and nothing else:
+#   "110H", "110m Hurdles", "300 Hurdles", "400mh"; "3000m Steeplechase",
+#   "3k steeple", "2000 SC". Relays, walks and medleys stay rejected.
+_HURDLE_RX = re.compile(
+    r"(?<![\d.])(\d{2,3})\s*(?:m|meter|metre)?s?\s*(?:h\b|hh\b|hurdles?\b)",
+    re.IGNORECASE)
+_STEEPLE_RX = re.compile(r"steeple|\bsc\b", re.IGNORECASE)
+_STEEPLE_NUM_RX = re.compile(r"(\d+(?:\.\d+)?)\s*(k\b|km\b|m\b|meter|metre)?",
+                             re.IGNORECASE)
+_RELAYISH_RX = re.compile(r"relay|medley|\d\s*[x×]\s*\d|shuttle|walk",
+                          re.IGNORECASE)
+_TIMED_KIND = {}
+
+
+def timedEventKind(event_short):
+    """('hurdles', metres) | ('steeple', metres) | (None, None), memoised."""
+    if event_short in _TIMED_KIND:
+        return _TIMED_KIND[event_short]
+    out = (None, None)
+    s = (event_short or "").strip()
+    if s and not _RELAYISH_RX.search(s):
+        m = _HURDLE_RX.search(s)
+        if m:
+            d = float(m.group(1))
+            if 50.0 <= d <= 400.0:
+                out = ("hurdles", d)
+        elif _STEEPLE_RX.search(s):
+            d = None
+            for num, unit in _STEEPLE_NUM_RX.findall(s):
+                v = float(num)
+                if unit and unit.lower().startswith("k"):
+                    v *= 1000.0
+                if v < 10:                    # "3k" with no unit, "2.0"
+                    v *= 1000.0
+                if 1500.0 <= v <= 3200.0:
+                    d = v
+                    break
+            out = ("steeple", d if d is not None else 3000.0)
+    _TIMED_KIND[event_short] = out
+    return out
+
 
 # Same trio as the engine loader and the backfill nuke -- one pattern,
 # three spellings, all named "wheelchair" so a grep finds the family.
@@ -1078,7 +1152,38 @@ def prepareRow(row, sport):
     #   of the unrated corpus -- rows with no pool, bad data, a failed solve.
     #   Two locks, because the failure here is silent and site-wide.
     if row.speed_rating is None:
-        if sport != "TF" or distance is None \
+        if sport != "TF":
+            return None
+        # ★ A FIELD EVENT: no time, a MARK (owner, 2026-09-02). The mark is
+        #   parsed here with the same refusals the athlete page's bests
+        #   use -- unreadable, sentinel, or outside the event's physical
+        #   range, and the row is not published. Counted either way.
+        if getattr(row, "is_field", 0):
+            key = normalizeFieldEvent(getattr(row, "event_short", None))
+            metres, _kind = parseMark(getattr(row, "mark", None))
+            if key is None or metres is None or not saneMark(key, metres):
+                _GATE[sport]["field_refused"] += 1
+                return None
+            _GATE[sport]["field_mark"] += 1
+            return (sport, row.result_id, row.person_id, pool, None,
+                    row.date, season, row.state, school, row.grade,
+                    row.meet_id, row.div_id, row.canon_meet_id,
+                    None, None, row.event_id,
+                    *_unitsOf(school, row.state),
+                    key, float(metres))
+        # ★ A TIMED NON-FLAT EVENT: hurdles or the steeple, metres from the
+        #   name, kind stamped so the 100 m board never lists the 100 m
+        #   hurdles.
+        kind, kind_d = timedEventKind(getattr(row, "event_short", None))
+        if kind is not None:
+            _GATE[sport]["time_only"] += 1
+            return (sport, row.result_id, row.person_id, pool, None,
+                    row.date, season, row.state, school, row.grade,
+                    row.meet_id, row.div_id, row.canon_meet_id,
+                    row.time_seconds, kind_d, row.event_id,
+                    *_unitsOf(school, row.state),
+                    kind, None)
+        if distance is None \
                 or not (0 < float(distance) < _SPRINT_MAX_DISTANCE):
             return None
         _GATE[sport]["time_only"] += 1
@@ -1086,7 +1191,9 @@ def prepareRow(row, sport):
                 row.date, season, row.state, school, row.grade,
                 row.meet_id, row.div_id, row.canon_meet_id,
                 row.time_seconds, distance, row.event_id,
-                *_unitsOf(school, row.state))
+                *_unitsOf(school, row.state),
+                None, None)
+
 
     rating = float(row.speed_rating)
     if not (_RATING_MIN <= rating <= _RATING_MAX):
@@ -1146,11 +1253,14 @@ def prepareRow(row, sport):
             row.time_seconds,
             distance,
             row.event_id,
-            # ! SPREAD LAST, in _UNIT_COLS order, matching the tail of
-            #   _COLUMNS. COPY is positional, so these two orderings are one
-            #   fact written twice -- _UNIT_COLS is the copy that _COLUMNS
-            #   quotes, so a unit added there flows to both.
-            *_unitsOf(school, row.state))
+            # ! SPREAD in _UNIT_COLS order, matching _COLUMNS. COPY is
+            #   positional, so these two orderings are one fact written
+            #   twice -- _UNIT_COLS is the copy that _COLUMNS quotes, so a
+            #   unit added there flows to both.
+            *_unitsOf(school, row.state),
+            # a rated row is a flat race with no mark
+            None, None)
+
 
 
 # ------------------------------------------------------------------ #
@@ -1280,6 +1390,10 @@ def buildSport(conn, sport, since, stats):
         print(f"    time-only (#46): {g['time_only']:,} sprint races "
               f"published with no rating -- they rank on the clock, and "
               f"every rating board excludes them")
+    if g["field_mark"] or g["field_refused"]:
+        print(f"    field marks: {g['field_mark']:,} published by parsed mark, "
+              f"{g['field_refused']:,} refused (unreadable, sentinel or "
+              f"outside the event's range -- marks.py)")
     if g["wheelchair"]:
         print(f"    wheelchair: {g['wheelchair']:,} races dropped by event "
               f"title (belt; the backfill nuke removes them at the next "
@@ -1361,6 +1475,15 @@ def createShadow(conn, name, like):
                 ALTER TABLE IF EXISTS {like}
                 ALTER COLUMN speed_rating DROP NOT NULL
             """)
+            # ★ THE TIMES/MARKS BOARD (owner, 2026-09-02): a field row has
+            #   a mark and no time, a hurdle or steeple row a kind.
+            cur.execute(f"ALTER TABLE IF EXISTS {like} "
+                        f"ADD COLUMN IF NOT EXISTS event_kind text")
+            cur.execute(f"ALTER TABLE IF EXISTS {like} "
+                        f"ADD COLUMN IF NOT EXISTS mark real")
+            cur.execute(f"ALTER TABLE IF EXISTS {like} "
+                        f"ALTER COLUMN time_seconds DROP NOT NULL")
+
             # Same idempotent migration for the unit columns. text, because a
             # league is a name and a division is "DI" -- neither is a number.
             for _u in ("division", "region", "conference", "league",
@@ -1433,6 +1556,12 @@ _CANONICAL_INDEXES = {
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
         ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # rankings marks boards: WHERE event_kind = 'shot_put' ...
+        #   ORDER BY mark DESC. Partial: flat rows carry NULL and are the
+        #   whole table; the kinds are a sliver.
+        ("rr_board_mark_idx",
+         "(event_kind, mark DESC) WHERE event_kind IS NOT NULL"),
+
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
         ("rr_school_idx", "(school, sport, speed_rating DESC)"),
     ],

@@ -37,8 +37,10 @@ def ok(cond, msg):
 # ---- 1. only sprints get in unrated ------------------------------------- #
 ok("LEFT JOIN tmp_sprint_events se ON se.event_short = r.event_short" in BR,
    "the TF query joins the sprint whitelist")
-ok("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL)" in BR,
-   "and admits a row that is rated OR a known sprint -- nothing else")
+ok("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL\n"
+   "               OR COALESCE(r.is_field, 0) = 1)" in BR,
+   "and admits a row that is rated, a known timed event, or a field "
+   "event (for its mark) -- nothing else")
 ok("WHERE r.speed_rating IS NOT NULL" in BR,
    "the XC query is unchanged: cross country has no unrated distance")
 
@@ -70,8 +72,10 @@ ok(rated is not None, "the rated return is still there to compare against")
 timed = re.search(r"return \(sport, row\.result_id, row\.person_id, pool, None,",
                   BR)
 ok(timed is not None, "the time-only return starts with the same five columns")
-ok(pr.count("*_unitsOf(school, row.state)") == 1,
-   "and ends with the same unit spread")
+# three unrated returns now -- field mark, hurdle/steeple, sprint -- and
+# every one carries the same unit spread in the same place
+ok(pr.count("*_unitsOf(school, row.state)") == 3,
+   "and every published tuple carries the same unit spread")
 
 # ---- 3. the column must accept NULL ------------------------------------- #
 ok("ALTER COLUMN speed_rating DROP NOT NULL" in BR,
