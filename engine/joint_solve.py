@@ -131,7 +131,16 @@ CG_MAX_ITER = 600
 #   those by nothing a reader could see. A posterior probe is a Hutchinson
 #   sample whose own error is 1/sqrt(n_probe) -- 25% at 16 -- so solving it
 #   to 1e-8 was precision nobody used.
-CG_TOL_OUTER = 1e-6
+# ⚠ CG_TOL_OUTER WENT BACK TO CG_TOL (2026-09-02, the first live run).
+#   At 1e-6 the five early outers left the LEVEL direction -- the
+#   XC-to-track offset, which trades off against the sport offset and is
+#   the slowest direction to converge -- unfinished, and the tight final
+#   solve moved it from 0.047 to 0.079 in one step. The weights and
+#   variances had been estimated under the old level. Warm starts make the
+#   later outers cheap at full tolerance anyway; the saving was not worth a
+#   level that swings on the last iteration. The probes keep 1e-4: they
+#   size uncertainties, they do not move the point estimate.
+CG_TOL_OUTER = CG_TOL
 CG_TOL_PROBE = 1e-4
 # bincount and fancy indexing release the GIL; the operator's independent
 # block reductions run on a small pool. Sized to the box, capped at four:

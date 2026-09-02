@@ -73,4 +73,5 @@ def test_live_step_has_no_holdout():
     shadow = [ln for ln in sh.splitlines() if "08b_joint_shadow" in ln
               and "run_joint.py" in ln]
     assert shadow and all("--holdout" in ln for ln in shadow)
-    assert js.CG_TOL_OUTER > js.CG_TOL and js.CG_TOL_PROBE > js.CG_TOL_OUTER
+    assert js.CG_TOL_OUTER == js.CG_TOL, "every outer solves tight (the level swung otherwise)"
+    assert js.CG_TOL_PROBE > js.CG_TOL
