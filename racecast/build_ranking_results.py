@@ -2175,21 +2175,21 @@ def main():
             refreshAthleteSeason(conn)
         with phase("swap in + drop old"):
             swapIn(conn)
-    # ! VACUUM AFTER THE SWAP, OUTSIDE A TRANSACTION. A freshly built table
-    #   has an empty visibility map, so every index-only count and every
-    #   board scan visits the heap until the first vacuum; autovacuum may
-    #   take hours to get to a table this size. Minutes here buy the fast
-    #   counts Last relies on for every filtered board.
-    try:
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            t0 = time.time()
-            cur.execute("VACUUM (ANALYZE) ranking_results")
-            cur.execute("VACUUM (ANALYZE) athlete_season")
-            print(f"    [{time.time() - t0:7.1f}s] VACUUM ANALYZE both tables")
-    finally:
-        conn.autocommit = False
-    buildBoardSizes(conn)
+        # ! VACUUM AFTER THE SWAP, OUTSIDE A TRANSACTION. A freshly built table
+        #   has an empty visibility map, so every index-only count and every
+        #   board scan visits the heap until the first vacuum; autovacuum may
+        #   take hours to get to a table this size. Minutes here buy the fast
+        #   counts Last relies on for every filtered board.
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                t0 = time.time()
+                cur.execute("VACUUM (ANALYZE) ranking_results")
+                cur.execute("VACUUM (ANALYZE) athlete_season")
+                print(f"    [{time.time() - t0:7.1f}s] VACUUM ANALYZE both tables")
+        finally:
+            conn.autocommit = False
+        buildBoardSizes(conn)
 
     elapsed = (datetime.datetime.now() - started).total_seconds()
     total = sum(v for k, v in stats.items() if k.endswith("_written"))
