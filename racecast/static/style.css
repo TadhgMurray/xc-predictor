@@ -3405,7 +3405,9 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
     font-size: 0.68rem;
     letter-spacing: 0.05em;
     color: #4b5563;
+    white-space: nowrap;      /* "RATING i" stays on one line */
 }
+.board-grid .head .info-i { margin-left: 0.3rem; vertical-align: -0.05em; }
 .board-grid .cell {
     padding: 0.3rem 0.7rem;          /* denser: ten rows should read as a list */
     border-bottom: 1px solid var(--line);
@@ -3436,7 +3438,9 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
      written FIRST -- the fixed-width half always survives -- and why the
      cell carries the full string in a title attribute. */
 :root {
-    --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 4.25rem minmax(0, 1.17fr);
+    /* rating 4.25rem -> 5.5rem: the head now carries the "i" explainer,
+       and at 4.25 the glyph wrapped under the word (owner, 2026-09-02). */
+    --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 5.5rem minmax(0, 1.17fr);
 }
 
 /* ---- athlete ----------------------------------------------------------- */
@@ -3848,6 +3852,10 @@ td.margin-b { color: #b45309; font-weight: 600; }
   /* Five board tabs are ~550px in a row; on a phone they wrap rather than
      push the page sideways (issue 130). */
   .rankings-page .tabs { flex-wrap: wrap; }
+  /* The home board's rating head drops its "i" on a phone and takes back
+     the width: at 5.5rem the name and school columns were three letters. */
+  :root { --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 4.25rem minmax(0, 1.17fr); }
+  .board-grid .head .info-i { display: none; }
   /* Tighter cells: the padding was sized for desktop whitespace, and on a
      phone it is the difference between four visible columns and six. */
   th, td { padding: 0.35rem 0.55rem; }
