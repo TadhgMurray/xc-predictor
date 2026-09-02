@@ -151,7 +151,10 @@ step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --
 #   XCP_JOINT=1       the sequential solve stays live; the joint solve runs
 #                     beside it as a shadow and writes joint_difficulty.npz only.
 if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
-  step 08_golive        "$PY" -u engine/run_joint.py --golive --holdout --probes 16
+  # ! NO --holdout ON THE LIVE STEP: it is a second full solve (three hours
+  #   on 59M rows) that scores a split and publishes nothing. The shadow
+  #   step keeps it; that is what the shadow is for.
+  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 16
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else

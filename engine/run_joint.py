@@ -108,6 +108,33 @@ def openers(athlete_raw, year, sport, days):
     return is_first
 
 
+def sortRowsByAthlete(cols):
+    """The pack's rows, reordered so one athlete-season's rows sit together.
+
+    ★ THE SOLVE IS MEMORY-BOUND, NOT ARITHMETIC-BOUND (2026-09-02). Every
+      CG iteration scatters 59M weighted rows into 13M athlete slots and
+      gathers 13M abilities back out; in the pack's arrival order those
+      are cache misses, one per row. Sorted by athlete they are sequential
+      and each of the two costs about half. The cells and races are small
+      enough to live in cache either way.
+
+    ! EVERY PER-ROW ARRAY MOVES TOGETHER, including result_id and norm, so
+      nothing downstream -- the design, the held-out split, the go-live
+      writer -- can tell the rows were reordered. Per-key arrays (course
+      and athlete keys) are not per-row and stay put."""
+    n = cols["norm"].shape[0]
+    order = np.lexsort((np.asarray(cols["year"]), np.asarray(cols["athlete"])))
+    out = {}
+    for k, v in cols.items():
+        arr = v if isinstance(v, np.ndarray) else None
+        if arr is not None and arr.ndim >= 1 and arr.shape[0] == n \
+                and k not in ("course_keys", "athlete_keys"):
+            out[k] = arr[order]
+        else:
+            out[k] = v
+    return out
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
@@ -252,6 +279,7 @@ def main():
 
     print(f"[joint] loading {args.pack}")
     cols = pe.loadPack(args.pack)
+    cols = sortRowsByAthlete(cols)
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
     y = np.log(cols["norm"][keep])
 

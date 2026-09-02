@@ -76,6 +76,8 @@ the optional blocks empty when not asked for, so the legacy three-block
 callers keep working.
 """
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 
@@ -123,6 +125,18 @@ POOL_MEAN_MIN_RACES = 3
 
 CG_TOL = 1e-8
 CG_MAX_ITER = 600
+# ★ WHERE THE PRECISION IS SPENT (2026-09-02). The final outer iteration
+#   solves to CG_TOL from a warm start. The outers before it only feed the
+#   weight and variance updates, and a relative residual of 1e-6 moves
+#   those by nothing a reader could see. A posterior probe is a Hutchinson
+#   sample whose own error is 1/sqrt(n_probe) -- 25% at 16 -- so solving it
+#   to 1e-8 was precision nobody used.
+CG_TOL_OUTER = 1e-6
+CG_TOL_PROBE = 1e-4
+# bincount and fancy indexing release the GIL; the operator's independent
+# block reductions run on a small pool. Sized to the box, capped at four:
+# past that the scatter is memory-bound and more threads just contend.
+_N_THREADS = max(1, min(4, os.cpu_count() or 1))
 
 
 # ------------------------------------------------------------------ #
@@ -300,28 +314,37 @@ class _Operator:
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
+        self.pool = (ThreadPoolExecutor(_N_THREADS) if _N_THREADS > 1
+                     else None)
+
+    def _reduce(self, jobs):
+        """Run independent block reductions, in parallel where there is
+        a pool. Each job is a zero-argument callable returning one block;
+        order is preserved."""
+        if self.pool is None:
+            return [j() for j in jobs]
+        return list(self.pool.map(lambda j: j(), jobs))
 
     def adjoint(self, wr):
         """Z' applied to a per-row vector, packed as theta."""
         D, h, amp = self.D, self.h, self.amp
-        parts = [np.bincount(D.athlete, weights=wr, minlength=D.n_ath),
-                 np.bincount(D.cell, weights=wr * h, minlength=D.n_cell),
-                 np.bincount(D.race, weights=wr, minlength=D.n_race),
-                 np.bincount(D.mu_idx, weights=wr * h * D.mu_w,
-                             minlength=max(D.n_mu, 1))[:D.n_mu]]
+        jobs = [lambda: np.bincount(D.athlete, weights=wr, minlength=D.n_ath),
+                lambda: np.bincount(D.cell, weights=wr * h, minlength=D.n_cell),
+                lambda: np.bincount(D.race, weights=wr, minlength=D.n_race),
+                lambda: np.bincount(D.mu_idx, weights=wr * h * D.mu_w,
+                                    minlength=max(D.n_mu, 1))[:D.n_mu]]
         if D.n_beta:
-            parts.append(np.bincount(D.athlete, weights=wr * D.sc,
-                                     minlength=D.n_ath))
+            jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.sc,
+                                            minlength=D.n_ath))
         if D.n_c:
-            parts.append(np.bincount(D.c0, weights=wr * amp * D.w0,
-                                     minlength=D.n_c)
-                         + np.bincount(D.c1, weights=wr * amp * D.w1,
-                                       minlength=D.n_c))
-
+            jobs.append(lambda: np.bincount(D.c0, weights=wr * amp * D.w0,
+                                            minlength=D.n_c)
+                        + np.bincount(D.c1, weights=wr * amp * D.w1,
+                                      minlength=D.n_c))
         if D.n_r:
-            parts.append(np.bincount(D.pool_row, weights=wr * D.first,
-                                     minlength=D.n_pool))
-        return np.concatenate(parts)
+            jobs.append(lambda: np.bincount(D.pool_row, weights=wr * D.first,
+                                            minlength=D.n_pool))
+        return np.concatenate(self._reduce(jobs))
 
     def matvec(self, theta):
         D = self.D
@@ -342,27 +365,27 @@ class _Operator:
 
     def diag(self):
         D, w, h, amp = self.D, self.w, self.h, self.amp
-        parts = [np.bincount(D.athlete, weights=w, minlength=D.n_ath),
-                 np.bincount(D.cell, weights=w * h * h, minlength=D.n_cell)
-                 + self.pen_cell,
-                 np.bincount(D.race, weights=w, minlength=D.n_race)
-                 + self.pen_race,
-                 np.bincount(D.mu_idx, weights=w * h * h * D.mu_w,
-                             minlength=max(D.n_mu, 1))[:D.n_mu]]
+        jobs = [lambda: np.bincount(D.athlete, weights=w, minlength=D.n_ath),
+                lambda: np.bincount(D.cell, weights=w * h * h,
+                                    minlength=D.n_cell) + self.pen_cell,
+                lambda: np.bincount(D.race, weights=w, minlength=D.n_race)
+                + self.pen_race,
+                lambda: np.bincount(D.mu_idx, weights=w * h * h * D.mu_w,
+                                    minlength=max(D.n_mu, 1))[:D.n_mu]]
         if D.n_beta:
-            parts.append(np.bincount(D.athlete, weights=w * D.sc * D.sc,
-                                     minlength=D.n_ath) + self.ridge)
+            jobs.append(lambda: np.bincount(D.athlete, weights=w * D.sc * D.sc,
+                                            minlength=D.n_ath) + self.ridge)
         if D.n_c:
-            parts.append(np.bincount(D.c0, weights=w * amp * amp * D.w0 * D.w0,
-                                     minlength=D.n_c)
-                         + np.bincount(D.c1, weights=w * amp * amp * D.w1 * D.w1,
-                                       minlength=D.n_c)
-                         + _curvePenaltyDiag(D, self.lam))
-
+            jobs.append(lambda: np.bincount(D.c0,
+                                            weights=w * amp * amp * D.w0 * D.w0,
+                                            minlength=D.n_c)
+                        + np.bincount(D.c1, weights=w * amp * amp * D.w1 * D.w1,
+                                      minlength=D.n_c)
+                        + _curvePenaltyDiag(D, self.lam))
         if D.n_r:
-            parts.append(np.bincount(D.pool_row, weights=w * D.first,
-                                     minlength=D.n_pool))
-        return np.concatenate(parts)
+            jobs.append(lambda: np.bincount(D.pool_row, weights=w * D.first,
+                                            minlength=D.n_pool))
+        return np.concatenate(self._reduce(jobs))
 
 
 # ---- the legacy three-block operator, kept for its callers ---------------- #
@@ -597,12 +620,12 @@ def _pack(b, D):
 #   64 is a usable default for shrinkage weights; use several hundred before
 #   PUBLISHING a per-cell standard error.
 def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
-                     n_probe=64, seed=0):
+                     n_probe=64, seed=0, tol=CG_TOL_PROBE):
     rng = np.random.default_rng(seed)
     acc = np.zeros(n_cell)
     for _ in range(n_probe):
         z = rng.integers(0, 2, size=n_total).astype(np.float64) * 2.0 - 1.0
-        x, _ = conjugateGradient(z, matvec, diag)
+        x, _ = conjugateGradient(z, matvec, diag, tol=tol)
         acc += z[n_ath:n_ath + n_cell] * x[n_ath:n_ath + n_cell]
     return sigma2 * np.maximum(acc / n_probe, 1e-12)
 
@@ -659,8 +682,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         pen_race = sigma2 / max(sigma_u2, 1e-12)
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam)
         diag = op.diag()
-        theta, iters = conjugateGradient(op.rhs(y), op.matvec, diag,
-                                         max_iter=cg_max_iter, x0=theta)
+        # the last outer carries the published numbers; see CG_TOL_OUTER
+        theta, iters = conjugateGradient(
+            op.rhs(y), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
+            tol=CG_TOL if outer == n_outer - 1 else CG_TOL_OUTER)
         b = D.unpack(theta)
         bbar = 0.0
         if D.n_beta:
