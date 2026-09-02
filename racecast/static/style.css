@@ -4133,32 +4133,34 @@ tr.row-hi > td { background: #fdf3cd; }
 /* The circled "i" beside a rating or a difficulty (_explain.html). Same
    tooltip machinery as .flag and the same quiet circle as .scale-note, so
    it reads as a hint and not a badge. Hover or focus opens it. */
-/* ★ THE OWNER'S SPEC (2026-09-02, fourth version): a thick black ring with
-   a bold serif "i" -- the standard information glyph, not a faint hint --
-   and a tooltip whose title is uppercase and whose text is upright. The
-   glyph is italic Georgia because that is what the glyph looks like; the
-   ::after below resets the style so none of that leaks into the text. */
+/* ★ THE OWNER'S SPEC (2026-09-02, fifth pass): the information glyph -- a
+   ring with a serif "i" -- kept QUIET: thin, grey, small, and darker only
+   under the pointer. The glyph is italic Georgia because that is what the
+   glyph looks like; the ::after below resets the style so none of that
+   leaks into the tooltip text. */
 .info-i {
-    --tip: #111;
+    --tip: #374151;
     display: inline-block;
     box-sizing: border-box;
-    background: #fff;
-    color: #111;
-    border: 2px solid #111;
+    background: none;
+    color: #6b7280;
+    border: 1px solid #9ca3af;
     border-radius: 50%;
-    width: 1.15rem;
-    height: 1.15rem;
-    line-height: calc(1.15rem - 4px);
+    width: 1rem;
+    height: 1rem;
+    line-height: calc(1rem - 2px);
     text-align: center;
     padding: 0;
-    margin-left: 0.4rem;
-    font: italic 700 12px Georgia, "Times New Roman", serif;
+    margin-left: 0.35rem;
+    font: italic 600 10px Georgia, "Times New Roman", serif;
     letter-spacing: 0;
-    vertical-align: 0.05em;
+    vertical-align: 0.1em;
     cursor: help;
+    opacity: 0.8;
 }
-.info-i:hover, .info-i:focus { color: #111; background: #f3f4f6; }
-th .info-i { font-weight: 700; }
+.info-i:hover, .info-i:focus { color: #111; border-color: #111; opacity: 1; }
+th .info-i { font-weight: 600; }
+
 /* The tooltip inherits the glyph's italic serif unless told otherwise. */
 .info-i::after {
     font-style: normal;

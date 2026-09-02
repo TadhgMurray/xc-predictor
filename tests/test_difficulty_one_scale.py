@@ -43,16 +43,20 @@ ok("GROUP  BY 1" not in src and "LIKE 'XC:%%'" not in src,
    "the zero query no longer splits by sport")
 
 html = read("racecast", "templates", "_explain.html")
-ok('data-title="WHAT A RATING MEANS"' in html
-   and 'data-title="WHAT COURSE DIFFICULTY MEANS"' in html,
-   "the explainer titles are uppercase")
-ok("One scale for cross country and track" in html,
-   "the difficulty explainer says the scale is shared")
+ok('data-title="What a Rating Means"' in html
+   and 'data-title="What Course Difficulty Means"' in html,
+   "the explainer titles are in Title Case")
+ok(all("&" not in m.group(1)
+       for m in __import__("re").finditer(r'data-blurb="([^"]*)"', html)),
+   "no entity inside a blurb's Jinja string: autoescape printed it verbatim")
+import re as _re
+for m in _re.finditer(r'data-blurb="([^"]*)"', html):
+    ok(len(m.group(1)) <= 170, f"a blurb is short: {len(m.group(1))} chars")
 css = read("racecast", "static", "style.css")
 i = css.index(".info-i {")
 block = css[i:css.index("}", i)]
-ok("border: 2px solid #111" in block and "700" in block,
-   "the glyph is a thick black ring with a bold i")
+ok("border: 1px solid #9ca3af" in block and "opacity: 0.8" in block,
+   "the glyph is quiet: thin grey ring, faded until hovered")
 ok(".info-i::after" in css and "font-style: normal" in css[css.index(".info-i::after"):][:300],
    "the tooltip text is upright")
 

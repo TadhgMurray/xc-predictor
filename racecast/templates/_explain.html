@@ -9,22 +9,26 @@
 
    The hint rides the .flag tooltip machinery (data-title / data-blurb in a
    ::after, shown on :hover and :focus, tabindex so keyboards and touch reach
-   it). A thick black ring with a bold serif i (owner's spec, 2026-09-02);
-   the title is uppercase and the text upright.
+   it). Owner's spec (2026-09-02, fifth pass): title in Title Case, text
+   upright and SHORT, the glyph quiet.
+
+   ⚠ NO HTML ENTITIES INSIDE A JINJA STRING LITERAL. The pool fallback used
+     to be 'runner in the athlete&#39;s pool': autoescape turned the & into
+     &amp; and the tooltip printed the entity verbatim. Plain words only.
 
    Import with:  {% from "_explain.html" import rating_i, difficulty_i, dv %}
    ===================================================================== #}
 
 {% macro rating_i(pool_label=None) -%}
-<span class="flag info-i" tabindex="0" data-title="WHAT A RATING MEANS"
-      data-blurb="100 is the average {{ pool_label if pool_label else 'runner in the athlete&#39;s pool' }}; a rating of 133 means 33% faster than that average runner. Ratings are distance-normalised and course-adjusted, so a hard course and a fast track land on one number. Each pool (high school boys, college women, middle school...) has its own average; the HS-equivalent view puts every pool on the high-school scale."
-      aria-label="What a rating means. 100 is the average runner in the pool; 133 means 33% faster than that average runner.">i</span>
+<span class="flag info-i" tabindex="0" data-title="What a Rating Means"
+      data-blurb="100 is the average {{ pool_label if pool_label else 'runner in the pool' }}. 133 means 33% faster than that. Course and distance are already accounted for."
+      aria-label="What a rating means. 100 is the average runner in the pool; 133 means 33% faster than that.">i</span>
 {%- endmacro %}
 
 {% macro difficulty_i(sport="XC") -%}
-<span class="flag info-i" tabindex="0" data-title="WHAT COURSE DIFFICULTY MEANS"
-      data-blurb="How much slower times run here than on a typical course: +4% is about 40 seconds on a 16-minute 5K, 0% is typical, and a negative number is a fast course or track. One scale for cross country and track, so a course and a track can be compared directly. Ratings already account for it, so a 133 run here and a 133 run anywhere else are the same performance."
-      aria-label="What course difficulty means. How much slower times run here than on a typical course; ratings already account for it.">i</span>
+<span class="flag info-i" tabindex="0" data-title="What Course Difficulty Means"
+      data-blurb="How much slower times run here than on an average course: +4% is about 40 seconds on a 16-minute 5K. Ratings already account for it."
+      aria-label="What course difficulty means. How much slower times run here than on an average course; ratings already account for it.">i</span>
 {%- endmacro %}
 
 {% macro dv(d, sport="XC") -%}
