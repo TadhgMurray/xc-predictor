@@ -157,9 +157,9 @@ function fmtRating(value) {
 /* HS-equivalent rating view (scale-view.js owns the toggle + stored mode).
  * The API stamps hs_<key> beside each rating-ish column; in HS mode a row
  * that has the alternate value shows it, everything else keeps its own
- * number. Display-only: the ORDER stays the server's, so on a pool=all
- * board the converted column can read unsorted -- the honest trade for not
- * re-ranking client-side what the server paginated. */
+ * number. The ORDER is the server's, and the server is told which scale is
+ * showing (buildQuery sends `scale`), so a pool=all board is paginated on
+ * the numbers the reader sees. A scale flip on such a board refetches. */
 function hsMode() {
   return Boolean(window.rcScale && window.rcScale.mode === "hs");
 }
@@ -208,6 +208,11 @@ function buildQuery() {
        "usa" too, but a URL that omits it is a URL whose meaning changes if
        that default ever moves -- and these URLs get shared. */
     scope:  $("scope").value,
+    /* ★ THE SCALE THE READER IS ON, so the server orders by what it shows.
+       Without it a pool=all board in HS-equivalent view reads unsorted
+       wherever two pools' factors differ, which is every board that crosses
+       gender. */
+    scale:  hsMode() ? "hs" : "pool",
     limit:  PAGE_SIZE,
     offset: state.offset
   });
@@ -1266,9 +1271,16 @@ function renderBoard(rows, data) {
 }
 
 document.addEventListener("rc-scale-change", () => {
-  if (_lastBoard) {
-    $("results").innerHTML = renderBoard(_lastBoard.rows, _lastBoard.data);
+  if (!_lastBoard) return;
+  /* A board where the scale moves some rows is ORDERED on the scale, so a
+     flip changes the order and must refetch. A board where nothing moves is
+     the same rows either way, and a redraw is enough. */
+  if (_lastBoard.data && _lastBoard.data.hs_movable) {
+    state.offset = 0;
+    load();
+    return;
   }
+  $("results").innerHTML = renderBoard(_lastBoard.rows, _lastBoard.data);
 });
 
 async function load() {

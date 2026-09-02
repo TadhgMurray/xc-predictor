@@ -511,6 +511,12 @@ def parseFilters(args):
                                  20 if sport == "TF" else 8, 1, 200),
         "limit":     _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset":    _boundedInt(args, "offset", 0, 0, 100000),
+        # ★ THE SCALE THE READER IS LOOKING AT. "hs" means the rows are shown
+        #   as HS-equivalents, so the ORDER must be on those numbers or a
+        #   pool=all board reads unsorted (owner, 2026-09-02). Anything else
+        #   is the own-pool scale, which is also what an old URL means.
+        "scale": ("hs" if (args.get("scale") or "").strip().lower() == "hs"
+                  else "pool"),
     }
 
     table = {"ability": _SORTS_ABILITY,
@@ -672,6 +678,67 @@ def _whereClauses(f, params, with_dates):
     return "".join(parts)
 
 
+# ------------------------------------------------------------------ #
+#  SORT ON WHAT THE READER SEES
+# ------------------------------------------------------------------ #
+#
+# ★ THE HS-EQUIVALENT VIEW USED TO BE DISPLAY-ONLY, AND A pool=all BOARD READ
+#   UNSORTED. The SQL ordered by the own-pool rating; the API then stamped
+#   hs_<key> = rating x repFactor(pool, sport) per row; the client showed the
+#   stamped number. Two pools with different factors -- college_m onto hs_m
+#   against college_f onto hs_f -- therefore interleave out of order, and it
+#   shows whenever a board crosses gender (owner, 2026-09-02).
+#
+#   The fix is to order by the same product the row displays. The factors are
+#   a handful of constants per (pool, sport), so they fold into the ORDER BY
+#   as a CASE, and the rank lookups reuse the identical expression so "where
+#   am I" cannot disagree with the page.
+#
+# ! ONLY WHEN IT CAN MATTER: scale=hs AND pool=all. A single-pool board
+#   multiplies every row by one constant, which changes no order, and the
+#   own-pool view is the stored number. hs_m and hs_f are 1.0 by definition.
+#
+# ⚠ THE PERFORMANCE BOARD'S CANDIDATE WINDOW IS STILL CUT ON THE RAW RATING
+#   (an index range), then paged on the scaled one. Factors sit within a few
+#   percent of 1, and the window is CANDIDATE_FACTOR pages deep, so a row can
+#   only fall outside it on a deep page at a factor boundary. The trade for
+#   keeping the 61M-row scan an index range.
+_SCALED_COLS = ("mean_rating", "best_rating", "speed_rating")
+_SCALE_POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "college_m", "college_f")
+
+
+def _scaleActive(f):
+    return f.get("scale") == "hs" and f.get("pool") == "all"
+
+
+def _hsScaleCase(prefix):
+    """CASE over (pool, sport) -> representative HS factor, or None when no
+    pool moves. `prefix` is the table alias with its dot, or ''."""
+    from pool_view import repFactor
+    arms = []
+    for pool in _SCALE_POOLS:
+        for sport in ("XC", "TF"):
+            fac = repFactor(pool, sport)
+            if fac is not None and abs(fac - 1.0) > 1e-9:
+                arms.append(f"WHEN {prefix}pool = '{pool}' AND "
+                            f"{prefix}sport = '{sport}' THEN {fac:.6f}")
+    if not arms:
+        return None
+    return "(CASE " + " ".join(arms) + " ELSE 1.0 END)"
+
+
+def _scaleExpr(f, expr):
+    """`expr` as the board displays it: multiplied by the HS factor when the
+    scale is active and `expr` is a rating column; otherwise unchanged."""
+    if not _scaleActive(f):
+        return expr
+    alias, dot, col = expr.rpartition(".")
+    if col not in _SCALED_COLS:
+        return expr
+    case = _hsScaleCase(f"{alias}." if dot else "")
+    return expr if case is None else f"({expr} * {case})"
+
+
 def _orderBy(f, table, tiebreak, unique_key):
     """The ORDER BY clause: a whitelist lookup plus a stable tiebreak.
 
@@ -682,9 +749,12 @@ def _orderBy(f, table, tiebreak, unique_key):
       Rating is the tiebreak because it is near-continuous.
     """
     expr, _ = table[f["sort"]]
+    expr = _scaleExpr(f, expr)
+    tb_col, _sp, tb_rest = tiebreak.partition(" ")
+    tb_col = _scaleExpr(f, tb_col)
     parts = [f"{expr} {f['dir']} NULLS LAST"]
-    if expr != tiebreak.split()[0]:
-        parts.append(tiebreak)
+    if expr != tb_col:
+        parts.append(f"{tb_col} {tb_rest}".strip())
     # ★ A FINAL UNIQUE KEY, ALWAYS. Rating is near-continuous but not unique,
     #   and with OFFSET/LIMIT paging a tie has no defined order -- so the same
     #   athlete can appear on two pages while another appears on none. It also
@@ -942,6 +1012,9 @@ def _rankInResults(cur, f, person_id):
     # performance ranks by rating (higher first); pr by time (lower first).
     is_pr = f["board"] == "pr"
     col = "time_seconds" if is_pr else "speed_rating"
+    # The comparison column as the board ORDERS it: scaled when the reader
+    # is on the HS-equivalent view of a pool=all board, else the column.
+    cmp = _scaleExpr(f, col)
     beats = "<" if is_pr else ">"
 
     params = {"person_id": person_id}
@@ -953,10 +1026,10 @@ def _rankInResults(cur, f, person_id):
     dnf = ("" if not is_pr
            else f" AND time_seconds < {DNF_SENTINEL}")
     cur.execute(f"""
-        SELECT {col}, result_id
+        SELECT {cmp}, result_id
         FROM   ranking_results
         WHERE  person_id = %(person_id)s AND {col} IS NOT NULL {dnf} {where}
-        ORDER  BY {col} {"ASC" if is_pr else "DESC"}, result_id
+        ORDER  BY {cmp} {"ASC" if is_pr else "DESC"}, result_id
         LIMIT  1
     """, params)
     row = cur.fetchone()
@@ -979,8 +1052,8 @@ def _rankInResults(cur, f, person_id):
             SELECT DISTINCT {key}
             FROM   ranking_results
             WHERE  {col} IS NOT NULL {dnf} {where}
-              AND  ({col} {beats} %(target)s
-                    OR ({col} = %(target)s AND result_id < %(target_id)s))
+              AND  ({cmp} {beats} %(target)s
+                    OR ({cmp} = %(target)s AND result_id < %(target_id)s))
         ) q
     """, params)
     return int(cur.fetchone()[0]) + 1
@@ -1067,7 +1140,10 @@ def rankOf(cur, f, person_id):
 
     # The default sort has a count-based shortcut that avoids sorting the
     # whole filtered set. Everything else needs the general version below.
-    if f["sort"] == "rating" and f["dir"] == "DESC":
+    # ! NOT WHEN THE SCALE IS ACTIVE: _rankByCount compares s.mean_rating
+    #   itself, and the board is then ordered on the scaled product. The
+    #   general path below reuses _orderBy, so it cannot disagree.
+    if f["sort"] == "rating" and f["dir"] == "DESC" and not _scaleActive(f):
         return _rankByCount(cur, f, person_id)
 
     params = {
