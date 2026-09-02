@@ -176,44 +176,79 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
       inner join returns nothing for a tfrrs meet, which is the same trap that
       made compiled results come back empty.
     """
-    table = "results" if sport == "XC" else "results_tf"
-    tfrrs_sport = "XC" if sport == "XC" else "TF"
-    # ⚠ THE SEASON, NOT substring(date, 1, 4). A track season crosses New
-    #   Year, so the calendar year put December's meets in the season before
-    #   their own -- the one thing this filter exists to prevent. seasonYearSql
-    #   is the same expression build_ranking_results groups by, so the meet
-    #   list and the roster now answer about the same season.
-    #   `year` is the STORED season year; the page converts before calling.
-    # Omitted entirely when no year is given: the school page is a history.
-    year_clause = (f"AND {seasonYearSqlInt(sport, 'r.date')} = %(year)s"
-                   if year else "")
-    sf, sfp = stateFilterSql("r", state, primary)
+    # ★ ONE ROW PER MEET, WITH THE DISTANCES RUN (owner, 2026-09-02). It
+    #   was one row per DIVISION, so a big invitational the school entered
+    #   four races at showed as four identical names with no distance to
+    #   tell them apart. Read from ranking_results: it carries the
+    #   distance, the stored season year and the school's state on every
+    #   row, so the season filter is an equality on an indexed column
+    #   instead of a date expression, and the two sports are one query.
+    #   Every row the boards accepted counts -- rated or timed (a
+    #   sprinter's meets are meets too).
+    # ! THE NAME COMES FROM A LATERAL, once per meet after the GROUP BY,
+    #   not from a join that would multiply the rows before it: meets_tf
+    #   has ~21 rows per meet and meets one per division.
+    year_clause = "AND rr.year = %(year)s" if year else ""
+    sf, sfp = stateFilterSql("rr", state, primary)
+    if sport == "XC":
+        name_sql = """
+            SELECT COALESCE(
+                     (SELECT min(m.meet_name) FROM meets m
+                       WHERE m.meet_id = g.meet_id),
+                     (SELECT min(mt.meet_name) FROM meets_tfrrs mt
+                       WHERE mt.meet_id = g.meet_id AND mt.sport = 'XC'))
+                   AS meet_name"""
+    else:
+        name_sql = """
+            SELECT min(m.meet_name) AS meet_name
+            FROM   meets_tf m WHERE m.meet_id = g.meet_id"""
 
     cur.execute(f"""
-        SELECT r.meet_id,
-               r.div_id,
-               min(r.date)                                   AS date,
-               COALESCE(m.meet_name, mt.meet_name)           AS meet_name,
-               count(*)                                      AS runners,
-               round(avg(r.speed_rating)::numeric, 1)        AS avg_rating,
-               round(max(r.speed_rating)::numeric, 1)        AS best_rating
-        FROM   {table} r
-        LEFT JOIN meets m ON m.meet_id = r.meet_id
-                         AND m.div_id  = r.div_id
-                         AND m.source  = r.source
-        LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
-                                AND mt.sport   = %(tsport)s
-        WHERE  r.school = %(school)s
-          AND  r.speed_rating IS NOT NULL
-          {year_clause}
-          {sf}
-        GROUP  BY r.meet_id, r.div_id, m.meet_name, mt.meet_name
-        ORDER  BY date DESC
+        WITH g AS (
+            SELECT rr.meet_id,
+                   min(rr.race_date)                            AS date,
+                   count(*)                                     AS runners,
+                   count(DISTINCT rr.div_id)                    AS divisions,
+                   round(avg(rr.speed_rating)::numeric, 1)      AS avg_rating,
+                   round(max(rr.speed_rating)::numeric, 1)      AS best_rating,
+                   array_agg(DISTINCT round(rr.distance)::int)
+                       FILTER (WHERE rr.distance > 0)           AS distances
+            FROM   ranking_results rr
+            WHERE  rr.school = %(school)s
+              AND  rr.sport  = %(sport)s
+              {year_clause}
+              {sf}
+            GROUP  BY rr.meet_id
+        )
+        SELECT g.meet_id, g.date, g.runners, g.divisions, g.avg_rating,
+               g.best_rating, g.distances, n.meet_name
+        FROM   g
+        LEFT JOIN LATERAL ({name_sql}) n ON TRUE
+        ORDER  BY g.date DESC
         LIMIT  %(lim)s
-    """, {"school": school, "year": year, "tsport": tfrrs_sport,
+    """, {"school": school, "sport": sport, "year": year,
           # +1: the extra row is how the cap reports that it bit. See capped.py.
           "lim": limit + 1, **sfp})
-    return fetchCapped(cur, limit)
+    rows = fetchCapped(cur, limit)
+    for r in rows:
+        r["distance_labels"] = [distLabel(d) for d in sorted(r.get("distances") or [])]
+    return rows
+
+
+# The imperial distances, said the way the people who ran them say them
+# (the same table school_prs uses for its section headings).
+_MILE_LABELS = {1609: "1 Mile", 2414: "1.5 Mile", 3218: "2 Mile",
+                4023: "2.5 Mile", 4828: "3 Mile", 6437: "4 Mile",
+                8047: "5 Mile"}
+
+
+def distLabel(metres):
+    try:
+        d = int(round(float(metres)))
+    except (TypeError, ValueError):
+        return ""
+    return _MILE_LABELS.get(d, f"{d}m")
+
 
 
 def currentSeason(cur, school, sport):

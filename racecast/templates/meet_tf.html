@@ -55,9 +55,11 @@
             {% for e in events %}
             <tr id="ev-{{ e.div_id }}-{{ e.event_id }}">
                 <td>
-                    <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}">
+                    <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
                         {{ e.display_name }}{% if e.dup_ix %} <span class="dist-note">· {{ e.dup_ix }}</span>{% endif %}
                     </a>
+                    {% if school and (e.div_id, e.event_id) in school_events %}<span class="school-ran" title="{{ school }} entered this event">· {{ school|school_label }}</span>{% endif %}
+
                 </td>
                 <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else "—" }}</td>
                 <td>{{ e.division if e.division else "—" }}</td>

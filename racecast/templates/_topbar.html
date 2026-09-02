@@ -23,6 +23,8 @@
     {% set here = request.path %}
     <nav class="topnav">
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
+        <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
+
         <a href="/conversions" class="{{ 'is-here' if here.startswith('/conversions') }}">Conversions</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
         <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>

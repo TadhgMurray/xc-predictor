@@ -1946,6 +1946,8 @@ def race_xc(meet_id, div_id):
     from meet_compile import (scoreRows, publishedScores, annotateScoring,
                               splitCollisionTeams, unsplitTeams)
 
+    # ?school= highlights this school's rows (from the meet page)
+    hl_school = (request.args.get("school") or "").strip() or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             header  = get_race_header(cur, meet_id, div_id)
@@ -2061,7 +2063,7 @@ def race_xc(meet_id, div_id):
                  and abs(header["corrected_distance"]
                          - header["listed_distance"]) >= 1)
 
-    return render_template("race.html",
+    return render_template("race.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            header=header,
                            results=results,
@@ -2252,7 +2254,20 @@ def meet_xc(meet_id):
                 sources, request.args.get("alt"))
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
+            # ★ ?school= (from the school page's meets table): the
+            #   divisions this school raced are marked, and the race links
+            #   carry the school on so the race pages highlight its rows.
+            school = (request.args.get("school") or "").strip() or None
+            school_divs = set()
+            if school:
+                cur.execute("""
+                    SELECT DISTINCT div_id FROM results
+                    WHERE  meet_id = %(meet)s AND school = %(school)s
+                      AND  (%(src)s::text IS NULL OR source = %(src)s)
+                """, {"meet": meet_id, "school": school, "src": src})
+                school_divs = {r["div_id"] for r in cur.fetchall()}
             # ★ THE MEET PAGE ONLY LISTS THE COMPILED RACES; each one has
+
             #   its own page. It used to run the full compile -- names,
             #   places, team splits, scoring -- for five numbers a group
             #   (issue 121: "meet page loads really slowly"). One aggregate
@@ -2265,6 +2280,8 @@ def meet_xc(meet_id):
         abort(404)
 
     return render_template("meet.html", header=header, divisions=divisions,
+                           school=school, school_divs=school_divs,
+
                            compiled=compiled_index, meet_date=meet_date,
                            alt_idx=alt_idx, other_sources=other_sources)
 
@@ -2587,6 +2604,8 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
 def race_tf(meet_id, event_id, div_id):
     from tf_points import prettyEventName
 
+    # ?school= highlights this school's rows (from the meet page)
+    hl_school = (request.args.get("school") or "").strip() or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
@@ -2660,7 +2679,7 @@ def race_tf(meet_id, event_id, div_id):
     sections = _tf_heat_sections(results,
                                  any(r.get("is_field") for r in results))
 
-    return render_template("race_tf.html",
+    return render_template("race_tf.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            header=header,
                            results=results,
@@ -3030,6 +3049,17 @@ def meet_tf(meet_id):
             meet_date = get_meet_date(cur, "results_tf", meet_id, source=src)
             scoring_rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
             stamp_tf_meet_extras(cur, meet_id, scoring_rows)
+            # ★ ?school= (from the school page's meets table): the events
+            #   this school entered are marked and the race links carry it.
+            school = (request.args.get("school") or "").strip() or None
+            school_events = set()
+            if school:
+                cur.execute("""
+                    SELECT DISTINCT div_id, event_id FROM results_tf
+                    WHERE  meet_id = %(meet)s AND school = %(school)s
+                """, {"meet": meet_id, "school": school})
+                school_events = {(r["div_id"], r["event_id"])
+                                 for r in cur.fetchall()}
             stamp_home_states(cur, scoring_rows)
 
     if header is None:
@@ -3088,6 +3118,7 @@ def meet_tf(meet_id):
             e["dup_ix"] = seen[k]
 
     return render_template("meet_tf.html", header=header, events=events,
+                           school=school, school_events=school_events,
                            loose=loose, anchor=anchor,
                            meet_date=meet_date, scored=scored,
                            alt_idx=alt_idx, other_sources=other_sources)

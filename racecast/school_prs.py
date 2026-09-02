@@ -61,15 +61,27 @@ def _genderOfPool(pool):
     return None
 
 
-def runningSql(sport):
+def runningSql(sport, event_kind=False):
     """The running-rows SQL, exposed so scripts/explain_pages.py can
     EXPLAIN the exact text the page runs. The meets join stays XC-only:
     `meets` is keyed in the XC div-id space and a TF div id colliding
-    with it would hand a track race a cross country course."""
+    with it would hand a track race a cross country course.
+
+    ★ SPRINTS ARRIVE HERE ON THEIR OWN. Since #46 ranking_results carries
+      sprint rows timed and unrated, and this reads times, so the 100 m
+      and 400 m sections appear once step 10 has rebuilt the table
+      (owner, 2026-09-02: "doesn't include any non-hurdle sprint events").
+
+    ! event_kind=True (the column exists): hurdle and steeple rows are in
+      ranking_results too since issue 120, stamped with their kind, and
+      the hurdle sections below already carry them from results_tf --
+      without this they would also appear as 110 m and 300 m running
+      sections."""
     course_sql = (
         "LEFT JOIN meets m ON m.div_id = rr.div_id "
         "AND m.meet_id = rr.meet_id" if sport == "XC" else "")
     course_col = "m.course_name" if sport == "XC" else "NULL"
+    flat_only = "AND  rr.event_kind IS NULL" if event_kind else ""
     return f"""
         SELECT rr.result_id, rr.person_id, rr.pool, rr.speed_rating,
                rr.time_seconds, rr.distance, rr.race_date, rr.year,
@@ -82,7 +94,9 @@ def runningSql(sport):
           AND  rr.time_seconds > 0
           AND  rr.time_seconds < 86400
           AND  rr.distance IS NOT NULL
+          {flat_only}
     """
+
 
 
 def fieldSql():
@@ -152,8 +166,11 @@ def _runningRows(cur, school, sport):
       whole cost -- track worst, since it makes several results per
       athlete per meet. Gender comes from the pool; names are looked up
       in ONE bulk query afterwards, for only the rows that display."""
-    cur.execute(runningSql(sport), {"school": school, "sport": sport})
+    from rankings import _hasEventKind
+    cur.execute(runningSql(sport, event_kind=_hasEventKind()),
+                {"school": school, "sport": sport})
     return cur.fetchall()
+
 
 
 def _fieldRows(cur, school):

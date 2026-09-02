@@ -87,6 +87,15 @@ WANTED = [
     #   equivalent since the TF scorer needed one. This closes the XC half.
     ("meets",           "state",   "idx_meets_state", None),
     ("meets_tf",        "state",   "idx_meets_tf_state", None),
+    # ★ THE MEET-NAME LOOKUPS (owner, 2026-09-02: "compare loads insanely
+    #   slow", "meet pages load slowly"). compare.py, school.py and the TF
+    #   meet page all read meets_tf BY meet_id -- compare once per plotted
+    #   race, as a correlated subquery -- and meets_tf is 14M rows with no
+    #   meet_id-leading index, so every one of those was a sequential scan.
+    #   Same for the anet `meets` table, which every XC meet lookup probes.
+    ("meets_tf",        "meet_id", "idx_meets_tf_meet", None),
+    ("meets",           "meet_id", "idx_meets_meet", None),
+
     ("results",         "meet_id", "idx_results_meet", None),
 ]
 

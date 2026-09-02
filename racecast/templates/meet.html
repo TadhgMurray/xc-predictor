@@ -61,10 +61,12 @@
             <tr>
                 <td>{{ "Boys" if d.gender == 'M' else "Girls" if d.gender == 'F' else "—" }}</td>
                 <td>
-                    <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}">
+                    <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
                         {{ d.division if d.division else "Division " ~ d.div_id }}
                     </a>
+                    {% if school and d.div_id in school_divs %}<span class="school-ran" title="{{ school }} raced this division">· {{ school|school_label }}</span>{% endif %}
                 </td>
+
                 <td>{{ d.distance|int if d.distance else "—" }}m</td>
                 <td>{{ d.n_results }}</td>
             </tr>
@@ -94,7 +96,8 @@
             <tr>
                 <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "—" }}</td>
                 <td>
-                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}{{ ('?alt=' ~ alt_idx) if other_sources else '' }}">
+                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}">
+
                         {{ g.distance }}m
                     </a>
                 </td>

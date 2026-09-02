@@ -149,7 +149,8 @@
         </thead>
         <tbody>
             {% for row in results %}
-            <tr id="r{{ row.result_id }}">
+            <tr id="r{{ row.result_id }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
+
                 <td>{{ loop.index }}</td>
                 <td>
                     {% if row.person_id %}

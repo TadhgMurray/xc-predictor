@@ -163,7 +163,13 @@ def prettyEventName(event_short):
             else "Distance Medley"
         suffix = m.group(2)
         return f"{kind} {suffix}" if suffix and suffix.isdigit() else kind
+    # ! A LOWERCASE NAME IS STILL A NAME (owner, 2026-09-02: "javelin"
+    #   printed in lowercase). Title-case a wordy event with no digits in
+    #   it; a distance ("1600m") keeps its unit letter lower.
+    if s and s.islower() and not any(ch.isdigit() for ch in s):
+        return s.title()
     return s or event_short
+
 
 
 def eventDistance(event_short, stored=None):

@@ -62,7 +62,7 @@
             <tr class="heat-row"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>
             {% endif %}
             {% for row in sec.rows %}
-            <tr id="r{{ row.result_id }}">
+            <tr id="r{{ row.result_id }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
                 <td>{{ row.sec_place }}</td>
                 <td>
                     {% if row.person_id %}
