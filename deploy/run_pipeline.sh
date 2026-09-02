@@ -144,7 +144,10 @@ step 08_golive        "$PY" -u engine/linkage_check.py --golive --split
 
 # ★ SHADOW ONLY. Writes engine/data/joint_difficulty.npz and nothing else.
 if [ "${XCP_JOINT:-0}" = "1" ]; then
-  step 08b_joint_shadow "$PY" -u engine/run_joint.py
+  # --holdout scores 10% of rows first (a second solve); --probes 16 keeps
+  # the posterior-variance pass to minutes rather than hours on a first run.
+  step 08b_joint_shadow "$PY" -u engine/run_joint.py --holdout --probes 16
+
 else
   echo "  08b_joint_shadow skipped (set XCP_JOINT=1 to run)"
 fi
