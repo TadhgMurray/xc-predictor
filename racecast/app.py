@@ -292,6 +292,23 @@ def robots_txt():
     return app.response_class(body, mimetype="text/plain")
 
 
+# ★ GOOGLE SITE VERIFICATION, THE HTML-FILE METHOD. Search Console hands
+#   the owner a file named google<token>.html and expects it at the root.
+#   Only the tokens listed here are served: answering ANY token would let
+#   a stranger verify ownership of the site in their own Search Console.
+#   The token itself is public (it is the whole point), so it lives in
+#   code; add a new one here if a property is re-verified.
+GOOGLE_VERIFY_TOKENS = {"google3e7b9f167371bc58"}
+
+
+@app.route("/google<token>.html")
+def google_verify(token):
+    if f"google{token}" not in GOOGLE_VERIFY_TOKENS:
+        abort(404)
+    return app.response_class(f"google-site-verification: google{token}.html\n",
+                              mimetype="text/html")
+
+
 @app.route("/sitemap.xml")
 def sitemap_index():
     """The index written by racecast/build_sitemap.py (step 13d); the files
