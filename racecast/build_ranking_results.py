@@ -1335,30 +1335,38 @@ def createShadow(conn, name, like):
     #   line later; adding the column to the shadow alone would be undone by
     #   the next swap.
     with conn.cursor() as cur:
-        cur.execute(f"""
-            ALTER TABLE IF EXISTS {like}
-            ADD COLUMN IF NOT EXISTS distance real
-        """)
-        cur.execute(f"""
-            ALTER TABLE IF EXISTS {like}
-            ADD COLUMN IF NOT EXISTS event_id bigint
-        """)
-        # ★ #46: A TIME-ONLY ROW HAS NO RATING. Idempotent, and separate from
-        #   the ADD COLUMNs above because it is a constraint change on a
-        #   column that has always existed -- an older live table was built
-        #   when every row was rated, and CREATE TABLE ... LIKE INCLUDING
-        #   CONSTRAINTS would copy the NOT NULL onto the shadow and fail the
-        #   COPY on the first sprint.
-        cur.execute(f"""
-            ALTER TABLE IF EXISTS {like}
-            ALTER COLUMN speed_rating DROP NOT NULL
-        """)
-        # Same idempotent migration for the unit columns. text, because a
-        # league is a name and a division is "DI" -- neither is a number.
-        for _u in ("division", "region", "conference", "league",
-                   "state_div", "section_div", "district", "county", "class"):
-            cur.execute(f'ALTER TABLE IF EXISTS {like} '
-                        f'ADD COLUMN IF NOT EXISTS "{_u}" text')
+        # ⚠ THESE MIGRATIONS BELONG TO ranking_results ONLY. createShadow is
+        #   also called for athlete_season, which has no speed_rating column:
+        #   the #46 DROP NOT NULL below raised UndefinedColumn there and
+        #   killed step 10 on 2026-09-01, after the 61.6M-row load and the
+        #   index build -- and the ADD COLUMNs would have grown athlete_season
+        #   four board columns it never reads. Keyed on the table, not on
+        #   column probing, so the intent is legible.
+        if like == "ranking_results":
+            cur.execute(f"""
+                ALTER TABLE IF EXISTS {like}
+                ADD COLUMN IF NOT EXISTS distance real
+            """)
+            cur.execute(f"""
+                ALTER TABLE IF EXISTS {like}
+                ADD COLUMN IF NOT EXISTS event_id bigint
+            """)
+            # ★ #46: A TIME-ONLY ROW HAS NO RATING. Idempotent, and separate from
+            #   the ADD COLUMNs above because it is a constraint change on a
+            #   column that has always existed -- an older live table was built
+            #   when every row was rated, and CREATE TABLE ... LIKE INCLUDING
+            #   CONSTRAINTS would copy the NOT NULL onto the shadow and fail the
+            #   COPY on the first sprint.
+            cur.execute(f"""
+                ALTER TABLE IF EXISTS {like}
+                ALTER COLUMN speed_rating DROP NOT NULL
+            """)
+            # Same idempotent migration for the unit columns. text, because a
+            # league is a name and a division is "DI" -- neither is a number.
+            for _u in ("division", "region", "conference", "league",
+                       "state_div", "section_div", "district", "county", "class"):
+                cur.execute(f'ALTER TABLE IF EXISTS {like} '
+                            f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         cur.execute(f"DROP TABLE IF EXISTS {name}")
 
         # ! UNLOGGED, AND THIS IS THE BIGGEST SINGLE WIN AVAILABLE HERE. A
