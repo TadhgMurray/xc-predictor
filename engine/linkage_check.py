@@ -225,29 +225,53 @@ def recenterSport(D):
     #   step 08 runs THIS file, which never did. Ported 2026-08-27 so a
     #   pinned value cannot silently fail to reach the site. None (the
     #   default) keeps the solve's own estimate, exactly as before.
+    # ⚠⚠ A MEASURED bbar IS ONLY VALID AT THE RIDGE IT WAS MEASURED AT.
+    #    bbar is the weighted mean of beta, and the ridge decides how far
+    #    beta is shrunk toward zero -- so the SAME corpus yields a different
+    #    bbar at every K. sport_gap_bbar.json was measured when --split ran
+    #    at ridge 0; at ridge 0.5 the solve's own estimate came out the
+    #    OPPOSITE SIGN (+0.0037 against -0.045, issue #73), and applying the
+    #    stale constant anyway credited XC courses ~6.5% harder than the data
+    #    says. Ported from pair_all.recenterSport (2026-08-31), which the
+    #    pipeline never ran.
+    #
+    # ! SIGN DISAGREEMENT IS THE HARD STOP, not a warning. Drift away from
+    #   the constant is expected telemetry; a sign flip means the constant
+    #   describes a different parameterisation. Fall back and say so.
+    own_bbar, _n = prc.meanOffset(D["beta"], D["sc"], D["group"],
+                                  D["n_groups"])
+    use_bbar = prc.MEASURED_BBAR
+    if use_bbar is not None and own_bbar * use_bbar < 0:
+        print(f"[all] ⚠ MEASURED_BBAR {use_bbar:+.5f} disagrees in SIGN with "
+              f"this solve's {own_bbar:+.5f} -- it was measured at a "
+              f"different ridge. Falling back to the solve's own estimate; "
+              f"the 10c gap step re-measures at ridge "
+              f"{D.get('ridge', 0.0):g} and refreshes "
+              f"engine/data/sport_gap_bbar.json.")
+        use_bbar = None
+
     delta, alpha, beta, bbar, n_ident = prc.recenter(
         D["delta"], D["alpha"], D["beta"], D["sc"], D["group"],
         D["sport"], D["course"], D["n_cells"], D["n_groups"],
-        bbar=prc.MEASURED_BBAR)
+        bbar=use_bbar)
 
     s_cell = prc.cellSport(D["course"], D["sport"], D["n_cells"])
     xc = D["solved"] & (s_cell < 0)
     tf = D["solved"] & (s_cell > 0)
     gap = float(delta[tf].mean() - delta[xc].mean())
-    if prc.MEASURED_BBAR is not None:
+    if use_bbar is not None:
         # The solve's own estimate still prints: its drift AWAY from the
         # measured constant is the telemetry that says when to re-measure.
-        own, _ = prc.meanOffset(D["beta"], D["sc"], D["group"], D["n_groups"])
         print(f"[all] sport recentre: bbar {bbar:+.5f} MEASURED "
-              f"(data/sport_gap_bbar.json; solve's own estimate {own:+.5f} "
-              f"from {n_ident:,} dual-sport athlete-seasons)")
+              f"(data/sport_gap_bbar.json; solve's own estimate "
+              f"{own_bbar:+.5f} from {n_ident:,} dual-sport athlete-seasons)")
     else:
         print(f"[all] sport recentre: bbar {bbar:+.5f} from {n_ident:,} "
               f"dual-sport athlete-seasons")
     # ★ CLOSE THE LOOP: record what was actually applied, so the gap step
     #   (measure_sport_gap --emit, after rankings) can write
     #   measured_bbar = applied + D for the NEXT solve to pick up.
-    prc.recordApplied(bbar)
+    prc.recordApplied(bbar, ridge=D.get("ridge", 0.0))
     print(f"[all] sport recentre: applied bbar recorded to "
           f"data/sport_gap_bbar.json for the --emit gap step")
     print(f"[all] TF - XC difficulty gap now {gap:+.5f} "
@@ -922,9 +946,23 @@ def golive(D, collapse="best", anchor="career"):
 # CHUNK 4 -- ENTRY POINT
 # ------------------------------------------------------------------ #
 
+# ★ THE SPLIT RIDGE, MEASURED (issue #70, pair_sportoffset over 5.9M held-out
+#   rows): K=0.5 gives held-out 0.044325 against 0.045670 for the full split
+#   (ridge 0) and 0.047039 shared. The pipeline ran this file at ridge 0 while
+#   pair_all.py carried 0.5, and the measured effect of ridge 0 is not only
+#   held-out error: with every athlete's XC-vs-track offset unpenalised, a
+#   region's XC level against its own track level is pinned by NOTHING inside
+#   the region -- only by the few athletes who race one sport in two regions.
+#   diag_xc_bridges (2026-09-02) measured California at 2.5% bridged, and
+#   diag_trajectory found California XC cells 3-4% too hard against California
+#   track while Illinois reads level. The ridge is what ties the two sports
+#   together inside a region, through every dual-sport athlete there.
+SPLIT_RIDGE = 0.5
+
+
 def main(pack_path, write=False, do_golive=False, do_validate=False,
          do_result_table=False, collapse="best", anchor="career",
-         pool="hs_m", tilt=False, split=False):
+         pool="hs_m", tilt=False, split=False, split_ridge=SPLIT_RIDGE):
     t_start = time.time()
 
     D = prepare(pack_path)
@@ -950,12 +988,16 @@ def main(pack_path, write=False, do_golive=False, do_validate=False,
         #
         #   The exactly-null direction is then restored by recentring, which is
         #   what recenterSport does and why it is not optional.
-        D["ridge"] = 0.0
+        # ⚠⚠ RIDGE 0 IS NOT THE BEST PREDICTOR, AND IT LEAVES REGIONAL
+        #    XC-vs-TRACK LEVELS FREE. See SPLIT_RIDGE above. The conditioning
+        #    argument for 0 is still true: K=0.5 needed 368 CG iterations
+        #    against 245, and still reached 9e-11. Time, not accuracy.
+        D["ridge"] = split_ridge
         if D["sc"] is None:
             print("[all] --split asked for but the pack has no sport column")
         else:
-            print("[all] per-athlete sport offsets ON (recentred after the "
-                  "solve)")
+            print(f"[all] per-athlete sport offsets ON, ridge "
+                  f"{split_ridge:g} (recentred after the solve)")
     solve(D)
     if D.get("sc") is not None:
         # alpha and beta must exist before recentring, so ratings() runs first
@@ -990,12 +1032,29 @@ def main(pack_path, write=False, do_golive=False, do_validate=False,
     if do_validate:
         print("\n[all] validation (three extra solves)...")
         te = pv.splitByRow(D["y"].size, frac=0.10, seed=1)
-        T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
-                           D["n_cells"], D["n_groups"])
-        a, gc = pv.refitAlpha(D["y"][~te], T["delta"], D["course"][~te],
-                              D["group"][~te], D["n_groups"])
-        pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
-                           D["group"][te], T["degree"] >= 2, "pair")
+        # ⚠ THE VALIDATION MUST FIT THE MODEL THE RUN FITTED (issue #72). It
+        #   used to solve without the sport offset regardless of --split and
+        #   reported the shared number to six decimals.
+        sc_all = D.get("sc")
+        if sc_all is not None:
+            sc_tr, sc_te = sc_all[~te], sc_all[te]
+            T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
+                               D["n_cells"], D["n_groups"],
+                               sc=sc_tr, ridge=D.get("ridge", 0.0))
+            a, b, gc = pv.refitAlphaBeta(D["y"][~te], T["delta"],
+                                         D["course"][~te], D["group"][~te],
+                                         D["n_groups"], sc_tr,
+                                         D.get("ridge", 0.0))
+            pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
+                               D["group"][te], T["degree"] >= 2,
+                               "pair/split", beta=b, sc_te=sc_te)
+        else:
+            T = pv.solveSubset(D["course"][~te], D["group"][~te], D["y"][~te],
+                               D["n_cells"], D["n_groups"])
+            a, gc = pv.refitAlpha(D["y"][~te], T["delta"], D["course"][~te],
+                                  D["group"][~te], D["n_groups"])
+            pv.evaluateHoldout(T["delta"], a, gc, D["y"][te], D["course"][te],
+                               D["group"][te], T["degree"] >= 2, "pair")
         z = np.zeros(D["n_cells"])
         a0, g0 = pv.refitAlpha(D["y"][~te], z, D["course"][~te],
                                D["group"][~te], D["n_groups"])
@@ -1050,4 +1109,5 @@ if __name__ == "__main__":
          split="--split" in sys.argv,
          collapse=opt("collapse", "best"),
          anchor=opt("anchor", "career"),
+         split_ridge=float(opt("split-ridge", SPLIT_RIDGE)),
          pool=opt("pool", "hs_m"))

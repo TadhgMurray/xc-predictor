@@ -172,7 +172,7 @@ def _loadMeasured():
 # recordApplied : the golive calls this with the bbar it ACTUALLY applied,
 #   so the measure step can compute measured = applied + D without reading
 #   logs. Merges into the json; never drops measured_bbar.
-def recordApplied(bbar):
+def recordApplied(bbar, ridge=None):
     import datetime
     import json
     doc = {}
@@ -183,6 +183,11 @@ def recordApplied(bbar):
         pass
     doc["applied_bbar"] = float(bbar)
     doc["applied_date"] = datetime.date.today().isoformat()
+    # ! THE RIDGE, because a bbar is meaningless without the K it was
+    #   measured at (issue #74) and the sign guard in recenterSport is the
+    #   only thing that catches a mismatch otherwise.
+    if ridge is not None:
+        doc["applied_ridge"] = float(ridge)
     os.makedirs(os.path.dirname(_GAP_JSON), exist_ok=True)
     with open(_GAP_JSON, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)

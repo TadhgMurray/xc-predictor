@@ -59,15 +59,25 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 #   the boards did NOT see. Reused rather than copied so the five facts the
 #   pool decision needs can never drift from the build's -- the anchored
 #   assert makes a drift a loud failure instead of a silently wrong pool.
-_MARK = "WHERE r.speed_rating IS NOT NULL"
+# ⚠ ONE MARK PER SPORT SINCE #46. The TF board query admits sprint rows
+#   unrated -- WHERE (rated OR sprint) -- so its inverse is "unrated AND NOT
+#   a sprint": a sprint has no rating on purpose and must never be priced
+#   here. The 2026-09-01 run failed this step on the old single mark.
+_MARK = {
+    "XC": ("WHERE r.speed_rating IS NOT NULL",
+           "WHERE r.speed_rating IS NULL"),
+    "TF": ("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL)",
+           "WHERE r.speed_rating IS NULL AND se.event_short IS NULL"),
+}
 
 
 def _sqlFor(sport):
     sql = B._SQL[sport]
-    assert _MARK in sql, (
-        "build_ranking_results._SQL no longer carries the rated-rows WHERE "
+    mark, inverse = _MARK[sport]
+    assert mark in sql, (
+        f"build_ranking_results._SQL[{sport!r}] no longer carries the WHERE "
         "this file inverts -- update fill_ratings._MARK together with it")
-    return sql.replace(_MARK, "WHERE r.speed_rating IS NULL")
+    return sql.replace(mark, inverse)
 
 
 # Per-pool constant, recovered from the board rows. Sampled on result_id
@@ -229,6 +239,9 @@ def main():
             B.prepareXcTfrrsDistTemp(conn)
         if "TF" in sports:
             B.prepareTfStateTemp(conn)
+            # The sprint whitelist the TF query joins (#46); without it the
+            # query fails on a missing temp table.
+            B.prepareSprintEvents(conn)
         for sport in sports:
             fillSport(conn, sport, dry_run=args.dry_run)
     print("fill_ratings done.")
