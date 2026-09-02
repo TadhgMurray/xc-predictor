@@ -53,8 +53,14 @@ def main():
 
     with open(T.STATS_OUT, "rb") as f:
         stats = pickle.load(f)
-    mean, std = stats["mean"], stats["std"]
-    print(f"target stats: mean {mean:.1f}s, std {std:.1f}s")
+    mean = stats.get("mean", stats.get("target_mean"))
+    std = stats.get("std", stats.get("target_std"))
+    kind = stats.get("kind", "seconds")
+    if kind == "log_ratio":
+        print(f"target stats: ln(t/last race) mean {mean:+.4f} std {std:.4f}"
+              f"  (last-race error alone ~{100 * std:.1f}%)")
+    else:
+        print(f"target stats: mean {mean:.1f}s, std {std:.1f}s")
 
     state = torch.load(T.MODEL_OUT, map_location="cpu")
     n_venues = state["venue_embedding.weight"].shape[0]
@@ -70,7 +76,7 @@ def main():
     n = min(args.n, len(dataset))
 
     print(f"running {n} examples...")
-    preds, actuals = [], []
+    preds, actuals, bases = [], [], []
     with torch.no_grad():
         batch = []
         for i in range(n):
@@ -78,8 +84,13 @@ def main():
             if len(batch) == 256 or i == n - 1:
                 sequences, masks, context, targets, venues = \
                     T.collateRagged(batch)
-                out = model(sequences, masks, context, venues)
-                preds.append(out * std + mean)     # z-score -> seconds
+                if kind == "log_ratio" and hasattr(model, "predictSeconds"):
+                    preds.append(model.predictSeconds(sequences, masks,
+                                                      context, venues))
+                    bases.append(model.baselineSeconds(sequences, masks))
+                else:
+                    out = model(sequences, masks, context, venues)
+                    preds.append(out * std + mean)     # z-score -> seconds
                 actuals.append(targets)
                 batch = []
     preds = torch.cat(preds)
@@ -97,6 +108,12 @@ def main():
     print(f"  p90     {err.quantile(0.9):6.1f}s")
     print(f"  mean prediction {preds.mean():6.1f}s vs "
           f"mean actual {actuals.mean():6.1f}s")
+    if bases:
+        # ★ THE NUMBER THAT JUDGES THE MODEL: against "you will run what you
+        #   ran last time". Same examples, same units.
+        b_err = (torch.cat(bases) - actuals).abs()
+        print(f"  last-race baseline MAE {b_err.mean():6.1f}s  "
+              f"(the model must beat this to be worth having)")
     print("\nthe model runs and outputs. Judge the NUMBERS by what "
           "trained this model.pt (a smoke run is a smoke run).")
 

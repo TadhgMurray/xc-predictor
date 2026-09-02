@@ -127,7 +127,12 @@ def _loadModel():
         with open(vocab_path, "rb") as f:
             vocab = pickle.load(f)["vocab"]
 
-        _artifacts = {"mean": float(stats["mean"]), "std": float(stats["std"]),
+        # ! EITHER KEY SPELLING. train.py wrote target_mean/target_std for a
+        #   while and this read mean/std; now it writes both. `kind` picks the
+        #   inversion below.
+        _artifacts = {"mean": float(stats.get("mean", stats.get("target_mean"))),
+                      "std": float(stats.get("std", stats.get("target_std"))),
+                      "kind": stats.get("kind", "seconds"),
                       "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
@@ -385,11 +390,20 @@ def _predictTimes(cur, person_ids, target):
             ctxs[i] = torch.tensor(c, dtype=torch.float32)
             vens[i] = v
         with torch.no_grad():
-            z = model(seqs, masks, ctxs, vens)
-        for (slot, s, _c, _v), zi in zip(batch, z):
+            # ★ THE MODEL INVERTS ITS OWN TARGET. A log-ratio model carries
+            #   its baseline rule and its stats in its buffers, so the only
+            #   correct way back to seconds is its own predictSeconds. The
+            #   legacy z * std + mean is kept for a checkpoint written before
+            #   that existed.
+            if art.get("kind") == "log_ratio" and hasattr(model,
+                                                          "predictSeconds"):
+                secs = model.predictSeconds(seqs, masks, ctxs, vens)
+            else:
+                secs = model(seqs, masks, ctxs, vens) * art["std"] + art["mean"]
+        for (slot, s, _c, _v), si in zip(batch, secs):
             entry = entries[slot] or {}
             entry.update({
-                "seconds": round(float(zi) * art["std"] + art["mean"], 1),
+                "seconds": round(float(si), 1),
                 "n_races": len(s)})
             entries[slot] = entry
     return entries

@@ -18,7 +18,8 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 
 # The model we built in transformer.py. Assumes train.py sits next to it
 # in model/ (same folder), matching how feature_extraction.py imports.
-from transformer import XCPredictor
+from transformer import (XCPredictor, SEQUENCE_FEATURES,
+                         SEQ_NORM_TIME)
 
 # ------------------------------------------------------------------ #
 # CONSTANTS — the training dials, named once so they don't drift
@@ -134,6 +135,30 @@ SEED = 42
 # prediction back into real seconds. Losing this file makes a trained
 # model useless for inference.
 STATS_OUT = "model/data/target_stats.pkl"
+
+# ★ THE TARGET IS A LOG RATIO TO THE ATHLETE'S LAST RACE, and the loss is
+#   Huber on its z-score. See transformer.py's header for why. HUBER_DELTA is
+#   in z units: inside one standard deviation the loss is squared error,
+#   beyond it linear, so a single blown-up race (a fall, a DNF-ish jog) does
+#   not own the gradient of its batch.
+HUBER_DELTA = 1.0
+
+# ★ FEATURE AND TARGET STATS COME FROM A CHUNK PREFIX, not the whole corpus.
+#   Chunks are corpus-wide shuffles, so the first STATS_CHUNKS (2M examples)
+#   are a fair sample, and reading every chunk twice per run is an epoch of
+#   disk time spent on two numbers per feature.
+STATS_CHUNKS = 200
+
+# ★ OPTIMISER HYGIENE. AdamW decouples weight decay from the gradient
+#   (plain Adam's L2 is scaled away by the per-weight step). A linear warmup
+#   keeps the first steps small while Adam's moments are still noise, then
+#   cosine decay to LR_FLOOR_FRAC of the peak. Gradient clipping bounds one
+#   bad batch. None of these change what the model CAN learn; they change
+#   whether a multi-hour run gets there.
+WEIGHT_DECAY = 0.01
+WARMUP_STEPS = 500
+LR_FLOOR_FRAC = 0.1
+GRAD_CLIP = 1.0
 
 # Where the maths runs. This box is an AMD RX 7900 XTX (RDNA3, gfx1100)
 # on ROCm -- verified 2026-08-26 by torch.cuda.get_device_name; an older
@@ -526,82 +551,156 @@ def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
 # secretly know something about the held-out data and stop being an
 # honest "unseen data" score.
 #
-# Two numbers, mean and std, are computed once and SAVED to disk. They
-# are the only way to undo the scaling later: at inference Flask reverses
-# it with  target = z * std + mean  to get back to real normalized_time
-# (then the §4 formula turns that into a race time). Lose this file and a
-# trained model can't be read back into seconds.
+# ★ THE TARGET IS ln(target / the athlete's last race), z-scored. The
+#   stats that define it -- and the per-feature input stats -- are computed
+#   once from the TRAIN side of a chunk prefix, saved to target_stats.pkl,
+#   and stamped into the model's buffers so model.pt carries them. Inference
+#   inverts with model.predictSeconds, never by hand. See transformer.py.
 #
-# The four helpers, one idea each:
-#   _loadAllTargets    — gather every target into one flat tensor
-#   computeTargetStats — mean/std from the TRAIN rows only (leakage-free)
-#   zScore             — apply (x - mean) / std   (runs every batch)
-#   saveTargetStats    — persist mean + std       (runs once)
+# The helpers, one idea each:
+#   _trainSideMask     — which global indices are on the TRAIN side
+#   _chunkBaselines    — the last-race baseline, the model's own rule
+#   computeStats       — input mean/std and log-ratio mean/std, one pass
+#   saveTargetStats    — persist them (both key spellings, plus `kind`)
 
 
-# _loadAllTargets
-# Purpose: Pull just the targets out of every chunk file and stack them
-#          into one flat tensor, indexed by global example index.
-# Arguments:
-#           dataset: a ChunkedRaceDataset (gives us num_chunks + the
-#                    chunk-loading helper)
-# Output:  a 1-D tensor [total_examples] — every target, in global order
-def _loadAllTargets(dataset: ChunkedRaceDataset) -> torch.Tensor:
+def _trainSideMask(dataset, train_subset) -> torch.Tensor:
+    """bool [len(dataset)]: True where the example is on the TRAIN side."""
+    m = torch.zeros(len(dataset), dtype=torch.bool)
+    idx = getattr(train_subset, "indices", None)
+    if idx is None:
+        m[:] = True
+    else:
+        m[torch.as_tensor(list(idx), dtype=torch.long)] = True
+    return m
 
-    per_chunk_targets = []
 
-    # For each chunk file we pull the target normalized times 
-    # out and collect them.
-    for chunk_idx in range(dataset.num_chunks):
-        chunk = dataset._loadChunk(chunk_idx)
-        per_chunk_targets.append(chunk["targets"])
+def _chunkBaselines(chunk):
+    """(baseline seconds [N], real sequence rows [R, F]) for one chunk.
 
-    # torch.cat glues the list of [N_chunk] tensors end-to-end into one
-    # [total_examples] tensor. dim=0 = join along the single (row) axis.
-    return torch.cat(per_chunk_targets, dim=0)
-        
-# computeTargetStats
-# Purpose: Mean and std of the TRAINING targets only (leakage-free), to
-#          z-score every target with the same two numbers.
-# Arguments:
-#           all_targets:   [total_examples] tensor from _loadAllTargets
-#           train_indices: the global indices in the TRAIN split
-#                          (Subset.indices, produced in chunk 4)
-# Output:  (mean, std) as plain Python floats
-def computeTargetStats(all_targets: torch.Tensor, train_indices) -> tuple:
+    ★ THE SAME RULE AS XCPredictor.baselineSeconds: the LAST real row's
+      normalized_time. Rows are chronological with the most recent last, in
+      both the ragged (offsets) layout and the legacy padded one.
+    """
+    seqs = chunk["sequences"].to(torch.float32)
+    if "offsets" in chunk:
+        off = chunk["offsets"].to(torch.long)
+        lengths = off[1:] - off[:-1]
+        has = lengths > 0
+        base = torch.zeros(lengths.shape[0])
+        base[has] = seqs[off[1:][has] - 1, SEQ_NORM_TIME]
+        return base, seqs, lengths
+    masks = chunk["masks"].to(torch.bool)
+    lengths = masks.sum(dim=1)
+    n = seqs.shape[0]
+    last = (lengths - 1).clamp(min=0)
+    base = seqs[torch.arange(n), last, SEQ_NORM_TIME]
+    base[lengths == 0] = 0.0
+    return base, seqs[masks], lengths
 
-    # Out of all the target times (normalized times), pulls out
-    # the training amount.
-    train_targets = all_targets[train_indices]      # [n_train]
 
-    # Calculates the mean and  std, .item() pulls the lone number
-    # out of a 1-element tensor.
-    mean = train_targets.mean().item()
-    std  = train_targets.std().item()
-    
-    return mean, std
+def computeStats(dataset, is_train: torch.Tensor,
+                 max_chunks: int = STATS_CHUNKS) -> dict:
+    """Per-feature mean/std of the inputs, and mean/std of the log-ratio
+    target, over TRAIN-side examples in the first max_chunks chunks.
 
-# zScore
-# Purpose: Apply (value - mean) / std. Called in the training loop on
-#          each batch of targets, right before the loss.
-# Arguments:
-#           values: tensor of raw targets (any shape)
-#           mean/std: the training stats from computeTargetStats
-# Output:  tensor, same shape as values, z-scored
+    Output: {"seq_mean","seq_std","ctx_mean","ctx_std": tensors;
+             "mean","std": floats for ln(target/baseline);
+             "fallback_seconds": float, mean raw target;
+             "n_examples","n_rows","n_chunks": ints}
+    """
+    n_chunks = min(dataset.num_chunks, max_chunks)
+    f_seq = SEQUENCE_FEATURES
+    seq_sum = torch.zeros(f_seq, dtype=torch.float64)
+    seq_sq = torch.zeros(f_seq, dtype=torch.float64)
+    seq_n = 0
+    ctx_sum = ctx_sq = None
+    ctx_n = 0
+    lr_sum = lr_sq = 0.0
+    lr_n = 0
+    raw_sum = 0.0
+    raw_n = 0
+
+    for c in range(n_chunks):
+        chunk = dataset._loadChunk(c)
+        targets = chunk["targets"].to(torch.float32)
+        n = targets.shape[0]
+        g0 = c * dataset.chunk_size
+        keep = is_train[g0:g0 + n]
+        if keep.shape[0] < n:                      # a short mask (MAX_CHUNKS)
+            keep = torch.cat([keep, torch.zeros(n - keep.shape[0],
+                                                dtype=torch.bool)])
+        base, rows, lengths = _chunkBaselines(chunk)
+
+        # sequence rows belonging to kept examples
+        row_keep = torch.repeat_interleave(keep, lengths)
+        kept_rows = rows[row_keep].to(torch.float64)
+        seq_sum += kept_rows.sum(dim=0)
+        seq_sq += (kept_rows * kept_rows).sum(dim=0)
+        seq_n += kept_rows.shape[0]
+
+        ctx = chunk["context"].to(torch.float64)[keep]
+        if ctx_sum is None:
+            ctx_sum = torch.zeros(ctx.shape[1], dtype=torch.float64)
+            ctx_sq = torch.zeros(ctx.shape[1], dtype=torch.float64)
+        ctx_sum += ctx.sum(dim=0)
+        ctx_sq += (ctx * ctx).sum(dim=0)
+        ctx_n += ctx.shape[0]
+
+        t = targets[keep]
+        b = base[keep]
+        raw_sum += float(t.sum())
+        raw_n += int(t.shape[0])
+        ok = (b > 0) & (t > 0)
+        lr = torch.log(t[ok] / b[ok]).to(torch.float64)
+        lr_sum += float(lr.sum())
+        lr_sq += float((lr * lr).sum())
+        lr_n += int(lr.shape[0])
+
+    def _ms(s, sq, n):
+        n = max(n, 1)
+        mean = s / n
+        var = torch.clamp(sq / n - mean * mean, min=0.0)
+        return mean.to(torch.float32), torch.sqrt(var).to(torch.float32)
+
+    seq_mean, seq_std = _ms(seq_sum, seq_sq, seq_n)
+    ctx_mean, ctx_std = _ms(ctx_sum, ctx_sq, ctx_n)
+    lr_mean = lr_sum / max(lr_n, 1)
+    lr_std = max((lr_sq / max(lr_n, 1) - lr_mean * lr_mean), 0.0) ** 0.5
+    return {"seq_mean": seq_mean, "seq_std": seq_std,
+            "ctx_mean": ctx_mean, "ctx_std": ctx_std,
+            "mean": float(lr_mean), "std": float(max(lr_std, 1e-6)),
+            "fallback_seconds": raw_sum / max(raw_n, 1),
+            "n_examples": lr_n, "n_rows": seq_n, "n_chunks": n_chunks}
+
+
 def zScore(values: torch.Tensor, mean: float, std: float) -> torch.Tensor:
+    """(value - mean) / std. Kept for callers that z-score by hand."""
     return (values - mean) / std
 
-# saveTargetStats
-# Purpose: Persist mean + std. These are the ONLY way to turn a
-#          prediction back into seconds, so a trained model is useless
-#          without them.
-# Arguments:
-#           mean/std: the training stats
-#           path:     where to write the pickle
-# Output:  none (writes a file)
-def saveTargetStats(mean: float, std: float, path: str) -> None:
-    with open(path, "wb") as f: # "wb" = write, binary
-        pickle.dump({"target_mean": mean, "target_std": std}, f)
+
+def saveTargetStats(stats: dict, path: str) -> None:
+    """Persist the target stats beside model.pt.
+
+    ★ BOTH KEY SPELLINGS. This used to write target_mean/target_std while
+      racecast/predict.py and predict_check.py read mean/std -- a KeyError
+      waiting for the first trained model. `kind` says what the numbers
+      describe, so an inference path can refuse a model it does not
+      understand instead of inverting it wrongly.
+    """
+    doc = {"kind": "log_ratio",
+           "mean": float(stats["mean"]), "std": float(stats["std"]),
+           "target_mean": float(stats["mean"]),
+           "target_std": float(stats["std"]),
+           "fallback_seconds": float(stats["fallback_seconds"]),
+           "seq_mean": stats["seq_mean"].tolist(),
+           "seq_std": stats["seq_std"].tolist(),
+           "ctx_mean": stats["ctx_mean"].tolist(),
+           "ctx_std": stats["ctx_std"].tolist(),
+           "n_examples": int(stats["n_examples"]),
+           "n_chunks": int(stats["n_chunks"])}
+    with open(path, "wb") as f:
+        pickle.dump(doc, f)
 
 
 # ------------------------------------------------------------------ #
@@ -766,76 +865,60 @@ def splitTrainVal(dataset):
 # Arguments:
 #           model:     the XCPredictor (weights live on DEVICE)
 #           loader:    train_loader, yielding batches of real examples
-#           optimizer: Adam, applies the weight updates
-#           criterion: MSELoss, turns (pred, target) into one number
-#           mean/std:  target stats, to z-score each batch's targets
-# Output:  float — average training loss over the epoch
-def _trainOneEpoch(model, loader, optimizer, criterion, mean, std) -> float:
+#           optimizer: AdamW, applies the weight updates
+#           criterion: HuberLoss on the z-scored log ratio
+#           scheduler: the warmup/cosine LR schedule, stepped per batch
+# Output:  (average training loss, throughput dict)
+def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
 
     # Flips model into training mode, dropout on.
     model.train()
-    total_loss = 0.0 # A running tally of each batch's loss. Calculated by MSE.
+    total_loss = 0.0 # A running tally of each batch's loss (Huber, z units).
     n_batches = 0
 
-    # ★ THROUGHPUT, MEASURED RATHER THAN GUESSED. The question this run has
-    #   to answer before any hardware is rented is "how many examples a
-    #   second", and nothing was printing it. `waiting` is the share of wall
-    #   clock spent BLOCKED ON THE LOADER rather than computing: if it is
-    #   high, a faster GPU buys nothing and the fix is workers or batch size.
+    # ★ THROUGHPUT, MEASURED RATHER THAN GUESSED. `waiting` is the share of
+    #   wall clock spent BLOCKED ON THE LOADER rather than computing: if it
+    #   is high, a faster GPU buys nothing and the fix is workers or batch.
     t_start = time.time()
     t_wait = 0.0
     n_examples = 0
     _t_batch = time.time()
 
-    # Goes over each batch, which is a 4-tuple of tensors. e.g.
-    # sequences  [64, S, 17]   the 64 athletes' race histories
-    # masks      [64, S]       which rows are real races vs padding
-    # context    [64, 17]      the 64 target-race context vectors
-    # targets    [64]          the 64 true normalized_times to predict
     for sequences, masks, context, targets, venues in loader:
-        # Everything between the previous iteration ending and this one
-        # starting was spent waiting for the loader to produce a batch.
         t_wait += time.time() - _t_batch
 
-        # Moves this batch onto the save device as the model.
         sequences = sequences.to(DEVICE)
         masks     = masks.to(DEVICE)
         context   = context.to(DEVICE)
         targets   = targets.to(DEVICE)
         venues    = venues.to(DEVICE)
 
-        # z-score the targets so they match the scale the model predicts
-        # in (chunk 3). Same mean/std for every batch.
-        targets = zScore(targets, mean, std)
+        # ★ THE TARGET THE MODEL DEFINES. z-scored ln(target / last race),
+        #   computed by the model from the same tensors it predicts from, so
+        #   training and inference cannot disagree about the baseline.
+        z_true = model.targetZ(sequences, masks, targets)
 
-        # --- the four-line core of learning ---
         optimizer.zero_grad()                      # 1. clear old gradients
-        # ! bf16, NOT fp16, AND THAT IS WHY THERE IS NO GradScaler. fp16 has
-        #   too little exponent range for raw gradients, so it needs loss
-        #   scaling to avoid underflow; bf16 keeps fp32's range and drops
-        #   mantissa bits instead, which this model does not miss. One less
-        #   moving part, and supported on every GPU worth renting.
         with _autocast():
             preds = model(sequences, masks, context, venues)  # 2. forward
-            loss  = criterion(preds, targets)      # 3. measure how wrong
+            loss  = criterion(preds, z_true)       # 3. measure how wrong
         loss.backward()                            # 4a. compute gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()                           # 4b. apply the update
-        # --------------------------------------
+        if scheduler is not None:
+            scheduler.step()                       # 4c. move the LR along
 
         total_loss += loss.item()   # .item() = pull the float out
         n_batches  += 1
         n_examples += targets.size(0)
         _t_batch = time.time()
 
-    # ⚠ RETURNS A PAIR NOW. The caller prints the rate beside the losses,
-    #   because a loss curve with no throughput beside it cannot answer
-    #   "will this finish, and on what".
     elapsed = max(time.time() - t_start, 1e-9)
     stats = {"examples_per_s": n_examples / elapsed,
              "steps_per_s": n_batches / elapsed,
              "waiting": t_wait / elapsed,
              "elapsed": elapsed}
-    return total_loss / n_batches, stats
+    return total_loss / max(n_batches, 1), stats
 
 # _validateOneEpoch
 # Purpose: Run one full pass over the validation data, measuring loss
@@ -844,19 +927,25 @@ def _trainOneEpoch(model, loader, optimizer, criterion, mean, std) -> float:
 # Arguments:
 #           model:     the XCPredictor
 #           loader:    val_loader
-#           criterion: MSELoss
-#           mean/std:  the SAME train-derived stats (chunk 3)
-# Output:  float — average validation loss over the epoch
-def _validateOneEpoch(model, loader, criterion, mean, std) -> float:
+#           criterion: the same HuberLoss as training
+# Output:  (val loss, model error %, last-race error %)
+def _validateOneEpoch(model, loader, criterion):
+    """(val loss, model error %, last-race error %).
 
-    # Flips model into eval mode, dropout off.
+    ★ THE TWO PERCENTAGES ARE THE HEADLINE, NOT THE LOSS. A loss in z units
+      says nothing on its own. The model's mean absolute error in log units
+      (about a percent of the time) is printed beside the error of the
+      dumbest possible forecast -- "you will run what you ran last time",
+      which in log-ratio space is predicting zero. If the model is not
+      clearly under that number, the transformer has not earned its cost.
+    """
     model.eval()
     total_loss = 0.0
     n_batches  = 0
+    err_model = 0.0
+    err_base = 0.0
+    n_ex = 0
 
-    # no_grad: don't record operations for backward (faster, less memory)
-    # since we never call backward here, gradient tracking switched
-    # off.
     with torch.no_grad():
 
         for sequences, masks, context, targets, venues in loader:
@@ -867,18 +956,28 @@ def _validateOneEpoch(model, loader, criterion, mean, std) -> float:
             targets   = targets.to(DEVICE)
             venues    = venues.to(DEVICE)
 
-            targets = zScore(targets, mean, std)
+            z_true = model.targetZ(sequences, masks, targets)
 
             # Same precision as training, so val loss is comparable to
             # train loss rather than measured on a different arithmetic.
             with _autocast():
                 preds = model(sequences, masks, context, venues)
-            loss  = criterion(preds, targets)
+            loss  = criterion(preds.to(torch.float32), z_true)
+
+            std = float(model.target_std)
+            mean = float(model.target_mean)
+            lr_true = z_true * std + mean                 # ln(t / last race)
+            lr_pred = preds.to(torch.float32) * std + mean
+            err_model += float((lr_pred - lr_true).abs().sum())
+            err_base += float(lr_true.abs().sum())
+            n_ex += int(targets.shape[0])
 
             total_loss += loss.item()
             n_batches  += 1
 
-    return total_loss / n_batches
+    n_ex = max(n_ex, 1)
+    return (total_loss / max(n_batches, 1),
+            100.0 * err_model / n_ex, 100.0 * err_base / n_ex)
 
 
 # ------------------------------------------------------------------ #
@@ -931,12 +1030,15 @@ def _saveModel(model, path: str) -> None:
 #   ! WRITTEN TO A TEMP FILE AND RENAMED. A checkpoint half-written when the
 #     instance was reclaimed is worse than none: it loads, and it is wrong.
 #     os.replace is atomic on the same filesystem.
-def _saveCheckpoint(path, model, optimizer, epoch, best_val_loss, bad_epochs):
+def _saveCheckpoint(path, model, optimizer, epoch, best_val_loss, bad_epochs,
+                    scheduler=None):
     tmp = path + ".tmp"
     torch.save({
         "epoch": epoch,                       # epochs COMPLETED
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
+        "scheduler": (scheduler.state_dict() if scheduler is not None
+                      else None),
         "best_val_loss": best_val_loss,
         "bad_epochs": bad_epochs,
         "batch_size": BATCH_SIZE,
@@ -945,18 +1047,23 @@ def _saveCheckpoint(path, model, optimizer, epoch, best_val_loss, bad_epochs):
     os.replace(tmp, path)
 
 
-def _loadCheckpoint(path, model, optimizer):
+def _loadCheckpoint(path, model, optimizer, scheduler=None):
     """(next_epoch, best_val_loss, bad_epochs). (0, inf, 0) if there is none."""
     if not path or not os.path.exists(path):
         return 0, float("inf"), 0
     ck = torch.load(path, map_location=DEVICE)
+    # ! THE CALIBRATION BUFFERS RIDE IN THE MODEL STATE, so a resume also
+    #   restores the feature and target stats the run started with -- the
+    #   ones freshly computed above are overwritten, which is correct: a
+    #   resumed run must keep scoring the same target.
     model.load_state_dict(ck["model"])
     optimizer.load_state_dict(ck["optimizer"])
+    if scheduler is not None and ck.get("scheduler") is not None:
+        scheduler.load_state_dict(ck["scheduler"])
     # ⚠ SAID OUT LOUD RATHER THAN SILENTLY HONOURED. Resuming with a
     #   different batch size or learning rate than the checkpoint was
-    #   written under is legitimate -- it is how you recover from a bad
-    #   guess -- but it means the loss curve either side of the join is not
-    #   one curve, and that is worth knowing when you read it later.
+    #   written under is legitimate, but the loss curve either side of the
+    #   join is not one curve, and that is worth knowing when you read it.
     if ck.get("batch_size") != BATCH_SIZE or ck.get("lr") != LEARNING_RATE:
         print(f"  ! resuming with batch={BATCH_SIZE} lr={LEARNING_RATE}, "
               f"checkpoint had batch={ck.get('batch_size')} "
@@ -964,6 +1071,23 @@ def _loadCheckpoint(path, model, optimizer):
     print(f"  resumed from {path}: {ck['epoch']} epochs done, "
           f"best val {ck['best_val_loss']:.4f}")
     return ck["epoch"], ck["best_val_loss"], ck.get("bad_epochs", 0)
+
+
+def _buildScheduler(optimizer, steps_per_epoch: int):
+    """Linear warmup over WARMUP_STEPS, then cosine to LR_FLOOR_FRAC of the
+    peak over the remaining EPOCHS * steps_per_epoch steps. Stepped once per
+    optimizer step."""
+    import math as _m
+    total = max(EPOCHS * max(steps_per_epoch, 1), WARMUP_STEPS + 1)
+
+    def factor(step):
+        if step < WARMUP_STEPS:
+            return (step + 1) / WARMUP_STEPS
+        frac = min((step - WARMUP_STEPS) / max(total - WARMUP_STEPS, 1), 1.0)
+        return LR_FLOOR_FRAC + (1.0 - LR_FLOOR_FRAC) * 0.5 * (
+            1.0 + _m.cos(_m.pi * frac))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
 
 # main
 # Purpose: The full training run, start to finish: dataset -> split ->
@@ -978,25 +1102,21 @@ def main():
     # 2. Split FIRST, so the stats can use train indices only.
     train_subset, val_subset = splitTrainVal(dataset)
 
-    # 3. Target stats from the TRAIN split only, then saved to disk
-    #    (chunk 3 helpers). mean/std are needed again in the loop to
-    #    z-score each batch, and at inference to undo it.
-    all_targets = _loadAllTargets(dataset)
-    mean, std   = computeTargetStats(all_targets, train_subset.indices)
-    saveTargetStats(mean, std, STATS_OUT)
+    # 3. Input and target stats from the TRAIN side of a chunk prefix, saved
+    #    beside the model and stamped into the model's buffers.
+    is_train = _trainSideMask(dataset, train_subset)
+    stats = computeStats(dataset, is_train)
+    saveTargetStats(stats, STATS_OUT)
+    print(f"  stats from {stats['n_chunks']} chunks, "
+          f"{stats['n_examples']:,} train examples: ln(t/last) mean "
+          f"{stats['mean']:+.4f} std {stats['std']:.4f}; last-race error "
+          f"alone is about {100.0 * stats['std']:.1f}% of a time")
 
-    # 4. One loader per split. Train shuffles (new order each epoch so the
-    #    model can't memorise sequence); val doesn't (order is irrelevant
-    #    when you're only measuring, not learning).
+    # 4. One loader per split.
     train_loader = buildDataLoader(train_subset, shuffle=True)
     val_loader   = buildDataLoader(val_subset,   shuffle=False)
 
-    # 5. The model, moved onto the GPU (or CPU fallback). .to(DEVICE)
-    #    sends every weight to that device so model and data live together.
-    # ★ SIZED FROM venue_vocab.pkl, WRITTEN BESIDE THE CHUNKS. Counting
-    #   distinct venues in the loaded data instead would give a different size
-    #   on any subset, and every embedding row would belong to a different
-    #   course than the one it was trained for.
+    # 5. The model. ★ SIZED FROM venue_vocab.pkl, WRITTEN BESIDE THE CHUNKS.
     vocab_path = os.path.join(DATA_DIR, "venue_vocab.pkl")
     if os.path.exists(vocab_path):
         with open(vocab_path, "rb") as f:
@@ -1004,53 +1124,46 @@ def main():
         print(f"  venue embedding: {n_venues:,} rows "
               f"(index 0 is the shared unknown bucket)")
     else:
-        # No vocabulary means chunks from before this feature. One row, always
-        # index 0, so the embedding contributes a constant zero and the model
-        # behaves exactly as it did.
         n_venues = 1
         print("  venue_vocab.pkl not found -- venue embedding disabled")
 
-    model = XCPredictor(n_venues=n_venues).to(DEVICE)
+    model = XCPredictor(n_venues=n_venues)
+    model.setFeatureStats(stats["seq_mean"], stats["seq_std"],
+                          stats["ctx_mean"], stats["ctx_std"])
+    model.setTargetStats(stats["mean"], stats["std"],
+                         stats["fallback_seconds"])
+    model = model.to(DEVICE)
 
-    # 6. Adam — applies the weight updates using the gradients
-    #    loss.backward() computes. model.parameters() hands it every
-    #    learnable weight; lr is the baseline step size.
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    # 6. AdamW + warmup/cosine schedule. See the constants.
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE,
+                                  weight_decay=WEIGHT_DECAY)
+    scheduler = _buildScheduler(optimizer, len(train_loader))
 
-    # 7. MSELoss — mean of (pred - target)². The number the whole loop
-    #    drives downward. Matches predicting a single continuous value.
-    criterion = nn.MSELoss()
-    
-    # --- the epoch loop (calls chunk 5's helpers) ---
-    # Track the best val loss so far. Start at infinity so the very first
-    # epoch always counts as an improvement and saves once.
-    # Where the run stands: from a checkpoint if one exists, otherwise the
-    # start. best_val_loss begins at infinity so the first epoch always
-    # counts as an improvement and saves once.
+    # 7. Huber on the z-scored log ratio: squared inside HUBER_DELTA, linear
+    #    beyond, so one wrecked race cannot own its batch's gradient.
+    criterion = nn.HuberLoss(delta=HUBER_DELTA)
+
     start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
-        CHECKPOINT, model, optimizer)
+        CHECKPOINT, model, optimizer, scheduler)
 
     for epoch in range(start_epoch, EPOCHS):
         train_loss, st = _trainOneEpoch(model, train_loader, optimizer,
-                                        criterion, mean, std)
-        val_loss   = _validateOneEpoch(model, val_loader,
-                                       criterion, mean, std)
+                                        criterion, scheduler)
+        val_loss, pct_model, pct_base = _validateOneEpoch(
+            model, val_loader, criterion)
 
-        # +1 because range starts at 0; humans count epochs from 1.
-        # :.4f = 4 decimal places, enough to see the losses move.
-        # ! THE RATE IS PRINTED BESIDE THE LOSSES, because "will this
-        #   finish, and on what" is answered by the first number and not the
-        #   other two. `waiting` is the share of the epoch spent blocked on
-        #   the loader: high means a faster GPU buys nothing.
+        # ! THE TWO PERCENTAGES ARE THE NUMBERS TO READ. `model` is the
+        #   model's mean error as a share of the time; `last-race` is the
+        #   error of predicting the athlete's previous race unchanged. The
+        #   model has to sit clearly under the second to be worth having.
         print(f"epoch {epoch + 1:2d}/{EPOCHS}  "
               f"train {train_loss:.4f}  val {val_loss:.4f}  "
+              f"model {pct_model:.2f}%  last-race {pct_base:.2f}%  "
               f"{st['examples_per_s']:,.0f} ex/s  "
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "
               f"({st['elapsed'] / 60:.1f} min)")
 
-        # Save ONLY when val loss hits a new low (see header). Later,
-        # worse epochs leave the saved file untouched.
         # ⚠ MIN_DELTA, NOT `<`. An improvement of 1e-9 is not an improvement;
         #   without a threshold it resets the patience counter forever and
         #   early stopping never fires.
@@ -1067,7 +1180,7 @@ def main():
         #   epoch you do not want to pay for twice.
         if CHECKPOINT:
             _saveCheckpoint(CHECKPOINT, model, optimizer, epoch + 1,
-                            best_val_loss, bad_epochs)
+                            best_val_loss, bad_epochs, scheduler)
 
         if bad_epochs >= PATIENCE:
             print(f"\nstopping: {PATIENCE} epochs with no improvement. "
