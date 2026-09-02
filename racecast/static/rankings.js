@@ -146,8 +146,12 @@ function schoolCell(school, state) {
        + `${esc(school)}</a>${st}</td>`;
 }
 
+/* ★ THREE, ON EVERY BOARD THAT HAS A FLOOR (owner, 2026-09-02). The old
+   20 TF / 8 XC floors kept thin seasons off the public board but hid
+   whole rosters from anyone looking for themselves; three is the least a
+   season average can rest on, and the box is still editable. */
 function defaultMinRaces() {
-  return $("sport").value === "TF" ? 20 : 8;
+  return 3;
 }
 
 /* Follow the sport unless the user has typed their own. Once they have, the
@@ -987,7 +991,7 @@ function renderAbility(rows) {
       <td>${r.year}</td>
       <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
       <td>${fmtRating(rval(r, "best_rating"))}</td>
-      <td>${r.n_races}</td>
+      <td>${r.n_races === null || r.n_races === undefined ? "" : r.n_races}</td>
     </tr>`).join("");
 
   return `<table class="rk">${renderHead("ability")}

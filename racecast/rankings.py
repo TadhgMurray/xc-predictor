@@ -544,8 +544,10 @@ def parseFilters(args):
         #
         #   Eight is an XC campaign. The filter is still editable; this only
         #   moves what an unconfigured board shows.
-        "min_races": _boundedInt(args, "min_races",
-                                 20 if sport == "TF" else 8, 1, 200),
+        # ★ THREE (owner, 2026-09-02), on every board with a floor. The old
+        #   20 TF / 8 XC pair matches rankings.js's defaultMinRaces, which
+        #   is what an unconfigured board actually sends.
+        "min_races": _boundedInt(args, "min_races", 3, 1, 200),
         "limit":     _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset":    _boundedInt(args, "offset", 0, 0, 100000),
         # ★ THE SCALE THE READER IS LOOKING AT. "hs" means the rows are shown
