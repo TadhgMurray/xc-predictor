@@ -209,12 +209,6 @@
        filterable from there by state, name or season. The year rides along
        when the page is showing one, so the link does not silently widen the
        season the reader is looking at. #}
-    {{ capped_note(meets, "meets",
-                   "/meets?sport=" ~ sport ~ "&school=" ~ school|urlencode) }}
-    <p class="view-all">
-        <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all →</a>
-    </p>
-
     {# ★ ONE TABLE, WITH THE CONTROL AS ITS LAST ROW. The previous version put
        the remainder in a separate <details> with its own <thead>, so pressing
        it produced a second table with a second set of headers directly under
@@ -256,6 +250,13 @@
             {% endif %}
         </tbody>
     </table>
+    {# Below the table, like every other section's (owner, 2026-09-02):
+       a "view all" above a list reads as a heading for it. #}
+    {{ capped_note(meets, "meets",
+                   "/meets?sport=" ~ sport ~ "&school=" ~ school|urlencode) }}
+    <p class="view-all">
+        <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all →</a>
+    </p>
 {% endif %}
 
 {# Staged reveal -- shared with the home page's Latest results table. #}

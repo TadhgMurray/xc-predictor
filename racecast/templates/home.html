@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_i %}
 <html lang="en">
 {# ===================================================================== #}
 {#  MACRO: build a /rankings query string for one board cell             #}
@@ -76,7 +77,7 @@
                     <div class="head head-center">#</div>
                     <div class="head">Name</div>
                     <div class="head">School</div>
-                    <div class="head head-center">Rating</div>
+                    <div class="head head-center">Rating{{ rating_i() }}</div>
                     {# ! THE HEADING NAMES WHAT THE COLUMN HOLDS. "Detail" described
                        two different things: a race count on the athlete board and
                        the performance itself on the other. #}

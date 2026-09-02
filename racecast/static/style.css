@@ -4176,6 +4176,8 @@ tr.row-hi > td { background: #fdf3cd; }
 
 .info-i:hover, .info-i:focus { color: #111; border-color: #111; opacity: 1; }
 th .info-i { font-weight: 600; }
+/* Uppercased headers (the home board's) must not turn the glyph into an I. */
+.info-i { text-transform: none; letter-spacing: 0; }
 
 /* The tooltip inherits the glyph's italic serif unless told otherwise. */
 .info-i::after {
@@ -4195,7 +4197,7 @@ tr.hl-school td { background: #fef9c3; }
 .school-ran { margin-left: 0.4rem; font-size: 0.85em; color: #6b7280; }
 
 /* ---- athlete header phrases and the badge legend (survey, 2026-09-02) -- */
-.stat-strip .s-equiv { display: block; margin-left: 0; color: #374151; }
+.bests-panel .s-equiv { margin: 0.35rem 0 0; font-size: 0.78rem; color: var(--muted); }
 .rank-line .rl-floor { color: var(--muted); font-size: 0.85em; margin-left: 0.3rem; }
 .flag-legend { font-size: 0.78rem; color: var(--muted); margin: 0.3rem 0 0.8rem; }
 .flag-legend b { color: #374151; font-weight: 600; }

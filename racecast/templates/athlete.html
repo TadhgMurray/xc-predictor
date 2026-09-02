@@ -263,16 +263,6 @@
             <span class="s-lab">Athlete rating{{ rating_i() }}</span>
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
             {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
-            {# The rating in words: the 5K it stands for, and where it sits
-               in the pool. Either half may be missing; the line drops what
-               it cannot say rather than printing a blank. #}
-            {% if athlete.equiv_time or athlete.percentile %}
-            <span class="s-sub s-equiv">
-                {%- if athlete.equiv_time %}&asymp; {{ athlete.equiv_time }} 5K{% endif -%}
-                {%- if athlete.equiv_time and athlete.percentile %} &middot; {% endif -%}
-                {%- if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif -%}
-            </span>
-            {% endif %}
         </div>
         {% if alltime.rating %}
         <div>
@@ -480,6 +470,18 @@
                     </div>
                     {% endif %}
                 </div>
+                {# The rating in words -- the 5K it stands for and where it
+                   sits in the pool. Here, under both stats, not in the
+                   header strip (owner, 2026-09-02); inside the rating stat
+                   it pushed Best race out of the panel. Either half may be
+                   missing; the line drops what it cannot say. #}
+                {% if athlete.equiv_time or athlete.percentile %}
+                <p class="s-equiv">
+                    {%- if athlete.equiv_time %}&asymp; {{ athlete.equiv_time }} 5K{% endif -%}
+                    {%- if athlete.equiv_time and athlete.percentile %} &middot; {% endif -%}
+                    {%- if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif -%}
+                </p>
+                {% endif %}
 
                 {#
                   One block per sport. Rendered only when that sport has
