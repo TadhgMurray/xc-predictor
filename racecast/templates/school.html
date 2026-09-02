@@ -101,7 +101,7 @@
        it is that season's, and the year is the useful label. #}
     <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
         <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
-    <table class="staged" data-step="20">
+    <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
             <tr>
                 <th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
@@ -136,7 +136,7 @@
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
         <h2>Best athletes</h2>
     <p class="meta">Best career rating, one row per athlete.</p>
-    <table class="staged" data-step="20">
+    <table class="staged" data-step="20" data-scale-sort="3">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Best</th><th>Seasons</th><th>Years</th></tr>
         </thead>
@@ -167,7 +167,7 @@
     <h2>Best performances</h2>
     {# Every race, not one per athlete. If the same runner owns the top four,
        that is the school's history. The table above is the per athlete one. #}
-    <table class="staged" data-step="20">
+    <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
                 <th>Season</th><th>Date</th></tr>

@@ -56,9 +56,63 @@
         ? el.dataset.hs
         : el.dataset.own;
     }
+    /* The numbers changed, so the order of any opted-in table may have. */
+    if (typeof resortTables === "function") resortTables();
   }
+  /* ★ RE-RANK SERVER-RENDERED TABLES ON THE SCALE BEING SHOWN. A school
+     page mixes pools whose HS factors differ, so the order of its rows is
+     a property of the scale: the server sorts for the default view and this
+     re-sorts on every flip. A table opts in with data-scale-sort="N", the
+     1-based column holding the rating's .rv span. The first cell is
+     renumbered when it is a rank, and the staged reveal is preserved by
+     position: however many rows were visible stay visible, at the top. */
+  function shownValue(tr, col) {
+    var td = tr.children[col - 1];
+    var span = td ? td.querySelector(".rv") : null;
+    var v = parseFloat(span ? span.textContent : "");
+    return isNaN(v) ? null : v;
+  }
+
+  function resortTables() {
+    var tables = document.querySelectorAll("table[data-scale-sort]");
+    for (var t = 0; t < tables.length; t++) {
+      var table = tables[t];
+      var col = parseInt(table.dataset.scaleSort, 10);
+      var body = table.tBodies[0];
+      if (!body || !col) continue;
+      var rows = Array.prototype.slice.call(body.querySelectorAll("tr"))
+        .filter(function (tr) { return !tr.classList.contains("more-row"); });
+      if (rows.length < 2) continue;
+      var visible = rows.filter(function (tr) {
+        return !tr.classList.contains("row-hidden");
+      }).length;
+      var keyed = rows.map(function (tr, i) {
+        return { tr: tr, v: shownValue(tr, col), i: i };
+      });
+      /* Descending by the shown number; rows with none keep their relative
+         order at the bottom. A stable tiebreak on the original index. */
+      keyed.sort(function (a, b) {
+        if (a.v === null && b.v === null) return a.i - b.i;
+        if (a.v === null) return 1;
+        if (b.v === null) return -1;
+        return (b.v - a.v) || (a.i - b.i);
+      });
+      var footer = body.querySelector("tr.more-row");
+      for (var k = 0; k < keyed.length; k++) {
+        var tr = keyed[k].tr;
+        tr.classList.toggle("row-hidden", k >= visible);
+        var first = tr.children[0];
+        if (first && /^\d+$/.test(first.textContent.trim())) {
+          first.textContent = String(k + 1);
+        }
+        body.insertBefore(tr, footer || null);
+      }
+    }
+  }
+
   /* Exposed for scripts that inject .rv spans after load (JS boards). */
   window.rcScale.applySpans = applySpans;
+  window.rcScale.resortTables = resortTables;
 
   function syncButtons(box) {
     if (!box) return;

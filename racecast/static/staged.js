@@ -12,11 +12,13 @@
  *   backwards and nothing else could. Expanding and collapsing are the same
  *   control, so they are the same button.
  *
- * ! THE FOLD IS REMEMBERED, NOT RECOMPUTED. Collapse re-hides exactly the
- *   rows this script revealed, in the order it revealed them, rather than
- *   re-deriving "past row 15" -- the template owns where the fold is (it
- *   writes .row-hidden), and a second opinion here would drift from it the
- *   first time one template chose a different fold.
+ * ! THE FOLD IS REMEMBERED AS A COUNT, NOT AS ROWS. The template owns where
+ *   the fold is (it writes .row-hidden); this reads how many rows it left
+ *   visible and collapses back to that many BY POSITION. It used to re-hide
+ *   the exact row elements it had revealed -- but scale-view.js re-orders a
+ *   table's rows when the rating scale flips, so a row revealed at #20 can
+ *   be #3 by the time "Show less" is pressed, and hiding it would punch a
+ *   hole in the top of the table.
  */
 
 "use strict";
@@ -27,7 +29,14 @@ document.querySelectorAll("table.staged").forEach(function (table) {
 
     var step = parseInt(table.dataset.step, 10) || 20;
     var pressed = 0;
-    var revealed = [];                 // what we un-hid, newest batch last
+    // The fold, as the template drew it: how many rows start visible.
+    var fold = table.querySelectorAll("tbody tr:not(.row-hidden):not(.more-row)").length;
+
+    function bodyRows() {
+        return Array.prototype.filter.call(
+            table.querySelectorAll("tbody tr"),
+            function (tr) { return !tr.classList.contains("more-row"); });
+    }
 
     // The label is rebuilt from scratch every time rather than patched in
     // place. The original version wrote through btn.childNodes[0].nodeValue,
@@ -46,8 +55,9 @@ document.querySelectorAll("table.staged").forEach(function (table) {
     }
 
     function collapse() {
-        revealed.forEach(function (tr) { tr.classList.add("row-hidden"); });
-        revealed = [];
+        bodyRows().forEach(function (tr, i) {
+            tr.classList.toggle("row-hidden", i >= fold);
+        });
         pressed = 0;
         setLabel("Show " + step + " more",
                  table.querySelectorAll("tr.row-hidden").length);
@@ -61,7 +71,6 @@ document.querySelectorAll("table.staged").forEach(function (table) {
         var take = pressed === 1 ? Math.min(step, hidden.length) : hidden.length;
         for (var i = 0; i < take; i++) {
             hidden[i].classList.remove("row-hidden");
-            revealed.push(hidden[i]);
         }
 
         var left = table.querySelectorAll("tr.row-hidden").length;
