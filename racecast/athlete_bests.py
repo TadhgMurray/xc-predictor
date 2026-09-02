@@ -39,6 +39,52 @@ try:
 except Exception:
     distanceFromEventShort = None
 
+# The field-event mark parser and event normaliser (racecast/marks.py). A
+# field best is the LONGEST/HIGHEST mark, in metres, and only a mark the
+# parser reads with confidence can be one; a refused mark is not a best.
+try:
+    from marks import parseMark, normalizeFieldEvent, saneMark
+except Exception:                                    # standalone use
+    parseMark = normalizeFieldEvent = saneMark = None
+
+# Display labels for the field keys marks.normalizeFieldEvent returns, in
+# the order a meet programme lists them: jumps, then throws.
+_FIELD_LABELS = {
+    "high_jump": "High Jump", "pole_vault": "Pole Vault",
+    "long_jump": "Long Jump", "triple_jump": "Triple Jump",
+    "shot_put": "Shot Put", "discus": "Discus", "javelin": "Javelin",
+    "hammer": "Hammer", "weight_throw": "Weight Throw",
+}
+_FIELD_ORDER = {k: i for i, k in enumerate(_FIELD_LABELS)}
+
+
+def fieldMark(race):
+    """(metres, label) for a field-event row, or (None, None).
+
+    The row's `result` is the mark text (app.py selects r.mark for field
+    rows). Bests need a number: a mark the parser refuses, a sentinel (NH,
+    FOUL), or a value outside the event's physical range never becomes a
+    best -- the same refusal contract the marks board will use."""
+    if parseMark is None or not race.get("is_field"):
+        return None, None
+    key = normalizeFieldEvent(race.get("event"))
+    if key is None:
+        return None, None
+    metres, kind = parseMark(race.get("result"))
+    if metres is None or not saneMark(key, metres):
+        return None, None
+    return float(metres), _FIELD_LABELS.get(key, key)
+
+
+def _is_better_mark(race, current):
+    """Longer or higher wins. Compares the metres stamped by fieldMark."""
+    if race.get("_mark_m") is None:
+        return False
+    if current is None:
+        return True
+    return race["_mark_m"] > current["_mark_m"]
+
+
 
 def _event_sort_key(event):
     """
@@ -128,7 +174,29 @@ def _tfEvent(event):
     return None, _canonEvent(raw)
 
 
+def _orderEvents(bucket):
+    """The bests dict in display order: parser-priced running events by
+    their real metres (a Mile between the 1600 and the 3000, the steeple
+    beside its flat race), then the leading-digits heuristic for the rest,
+    then the field events in programme order (jumps, then throws).
+    Consumes the bucket's _ev_m and _field scratch keys."""
+    events = bucket["events"]
+    ev_m = bucket.pop("_ev_m", {})
+    field = bucket.pop("_field", set())
+    inv_label = {v: k for k, v in _FIELD_LABELS.items()}
+
+    def key(k):
+        if k in field:
+            return (1, _FIELD_ORDER.get(inv_label.get(k), 99), k)
+        if k in ev_m:
+            return (0, ev_m[k], k)
+        return (0,) + _event_sort_key(k)
+
+    return {k: events[k] for k in sorted(events, key=key)}
+
+
 def _is_better_time(race, current):
+
     """Faster wins. A race with no numeric time can never be a best."""
     if race.get("time_raw") is None:
         return False
@@ -198,6 +266,16 @@ def all_time_bests(races):
             bucket["_hs_n"] += 1
 
         if race.get("is_field"):
+            # ★ FIELD EVENTS ARE BESTS TOO (owner, 2026-09-02): the longest
+            #   or highest mark per event, listed after the running events.
+            #   Only a parsed, plausible mark can be one -- see fieldMark.
+            metres, label = fieldMark(race)
+            if metres is None:
+                continue
+            race["_mark_m"] = metres
+            bucket.setdefault("_field", set()).add(label)
+            if _is_better_mark(race, bucket["events"].get(label)):
+                bucket["events"][label] = race
             continue
 
         event = race.get("event")
@@ -214,16 +292,8 @@ def all_time_bests(races):
 
     for sport in ("XC", "TF"):
         bucket = out[sport]
-        events = bucket["events"]
-        # Parser-priced events sort by their real metres (a Mile between the
-        # 1600 and the 3000, the steeple beside its flat race); everything
-        # else keeps the leading-digits heuristic.
-        ev_m = bucket.pop("_ev_m", {})
-        bucket["events"] = {
-            k: events[k] for k in sorted(
-                events,
-                key=lambda k: (0, ev_m[k]) if k in ev_m else _event_sort_key(k))
-        }
+        bucket["events"] = _orderEvents(bucket)
+
 
         # A flat mean over every rated race in the sport. Deliberately NOT the
         # engine's ability: that one is decay-weighted and outlier-trimmed
@@ -281,6 +351,13 @@ def season_bests_flat(races, seasons):
             bucket["rating"] = race
 
         if race.get("is_field"):
+            metres, label = fieldMark(race)
+            if metres is None:
+                continue
+            race["_mark_m"] = metres
+            bucket.setdefault("_field", set()).add(label)
+            if _is_better_mark(race, bucket["events"].get(label)):
+                bucket["events"][label] = race
             continue
 
         event = race.get("event")
@@ -296,16 +373,8 @@ def season_bests_flat(races, seasons):
             bucket["events"][event] = race
 
     for key, bucket in buckets.items():
-        events = bucket["events"]
-        # Parser-priced events sort by their real metres (a Mile between the
-        # 1600 and the 3000, the steeple beside its flat race); everything
-        # else keeps the leading-digits heuristic.
-        ev_m = bucket.pop("_ev_m", {})
-        bucket["events"] = {
-            k: events[k] for k in sorted(
-                events,
-                key=lambda k: (0, ev_m[k]) if k in ev_m else _event_sort_key(k))
-        }
+        bucket["events"] = _orderEvents(bucket)
+
 
         # seasons is keyed the same way. .get() rather than [] because a season
         # can exist in `races` and not in `seasons` -- enrich_seasons drops

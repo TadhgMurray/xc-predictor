@@ -503,23 +503,29 @@
      without updating this block, the newcomer and Flags SHARE the slack
      instead of the last column silently collapsing to zero width, which is
      exactly how this table broke twice. */
-.season table th:nth-child(1) { width: 12%; }   /* Date        */
-.season table th:nth-child(2) { width: 19%; }   /* Meet        */
+.season table th:nth-child(1) { width: 11%; }   /* Date        */
+.season table th:nth-child(2) { width: 18%; }   /* Meet        */
 .season table th:nth-child(3) { width:  7%; }   /* Event       */
 .season table th:nth-child(4) { width:  9%; }   /* Result      */
-.season table th:nth-child(5) { width: 13%; }   /* Place       */
-.season table th:nth-child(6) { width:  7%; }   /* Rating      */
-.season table th:nth-child(7) { width:  9%; }   /* Difficulty  */
+.season table th:nth-child(5) { width: 10%; }   /* Place       */
+.season table th:nth-child(6) { width:  9%; }   /* Rating + i  */
+.season table th:nth-child(7) { width: 12%; }   /* Difficulty + i */
 /* th:nth-child(8) Flags -- NO width: the auto column, absorbs the rest. */
 
-/* A one-word header ("DIFFICULTY") cannot wrap, so in a squeezed column it
-   overflowed into its neighbour. Ellipsize instead -- only ever visible at
-   narrow desktop widths; phones already get the scrolling table. */
+/* ⚠ NO ELLIPSIS ON A HEADER. The old rule ellipsized a squeezed header, and
+   once the "i" explainer joined the label the columns were squeezed at
+   ordinary desktop widths: "RATIN…" and "DIFFICULT…" hid one letter behind
+   three dots (owner, 2026-09-02). Rating and Difficulty are now sized for
+   the word plus the icon, and a two-word header ("PR/SR FLAGS") may wrap
+   instead of clipping. A single word still cannot wrap; the widths are what
+   keep it whole. */
 .season thead th {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: normal;
 }
+
 
 /* Meet is the only column with unbounded content. Ellipsis keeps a long name
    from forcing the row taller; title="" on the link shows the full text on
