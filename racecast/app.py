@@ -3966,6 +3966,13 @@ def api_units():
     if not cols:
         return jsonify([])
     q = (request.args.get("q") or "").strip()
+    if kind == "area":
+        # the column arrives with the next step-10d rebuild; until then the
+        # picker has nothing to offer rather than a 500
+        from school_units import hasAreaColumn
+        with getConn() as _conn, _conn.cursor() as _cur:
+            if not hasAreaColumn(_cur):
+                return jsonify([])
 
     # ! ONE UNION, NOT ONE QUERY PER COLUMN. state_div is the only two-column
     #   filter today, but a loop that grows with the mapping is a loop that

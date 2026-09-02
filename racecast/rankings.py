@@ -644,6 +644,8 @@ def _whereClauses(f, params, with_dates):
             # ! ONE SUBQUERY PER FILTER, OR-ING ITS COLUMNS INSIDE. Splitting
             #   state_div and class into two ANDed clauses would require a
             #   school to be in both, which no school is.
+            if _key == "area" and not _hasSchoolUnitArea():
+                continue                 # column not built yet: a no-op filter
             _ors = " OR ".join(f'u."{c}" = ANY(%({_key})s)'
                                for c in UNIT_COLUMNS[_key])
             parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
@@ -798,6 +800,25 @@ def _scaleExpr(f, expr):
 
 
 _EVENT_KIND_PRESENT = None
+_UNIT_AREA_PRESENT = None
+
+
+def _hasSchoolUnitArea():
+    """Does school_unit carry `area` yet? Same posture as _hasEventKind: the
+    column arrives with step 10d, and a filter on it before then is a
+    no-op rather than a 500."""
+    global _UNIT_AREA_PRESENT
+    if _UNIT_AREA_PRESENT is None:
+        try:
+            from database import getConn
+            with getConn() as conn, conn.cursor() as c:
+                c.execute("""SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'school_unit'
+                               AND column_name = 'area'""")
+                _UNIT_AREA_PRESENT = c.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            return False
+    return _UNIT_AREA_PRESENT
 
 
 def _hasEventKind(cur=None):

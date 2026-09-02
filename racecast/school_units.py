@@ -97,7 +97,27 @@ def _scalar(row):
     return row[0] if isinstance(row, (tuple, list)) else list(row.values())[0]
 
 
+_AREA_PRESENT = {"checked": False, "present": False}
+
+
+def hasAreaColumn(cur):
+    """Does school_unit carry `area` yet? Probed once per process; a
+    failure reads as absent, which only hides the chip."""
+    if not _AREA_PRESENT["checked"]:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'school_unit'
+                             AND column_name = 'area'""")
+            _AREA_PRESENT["present"] = cur.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _AREA_PRESENT["present"] = False
+        _AREA_PRESENT["checked"] = True
+    return _AREA_PRESENT["present"]
+
+
 def _exists(cur, name):
+
     cur.execute("SELECT to_regclass(%s)", (name,))
     return _scalar(cur.fetchone()) is not None
 
@@ -121,9 +141,16 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
     school pages use for the bare URL."""
     if not _exists(cur, "school_unit"):
         return []
-    cols = ("league", "section", "section_div", "district", "county",
+    # ⚠ THE AREA COLUMN IS NEWER THAN THE TABLE (2026-09-02, every athlete
+    #   page 500'd for an hour): between deploying the reader and the next
+    #   step-10d rebuild, school_unit has no `area`. Select it only when
+    #   it is there; the chip simply does not show until the rebuild.
+    cols = ["league", "section", "section_div", "district", "county",
             "region", "state_unit", "state_div", "class", "conference",
-            "division", "area", "is_college", "conflict", "asof", "state")
+            "division"]
+    if hasAreaColumn(cur):
+        cols.append("area")
+    cols += ["is_college", "conflict", "asof", "state"]
 
     args = [school, sport]
     sql = ("SELECT " + ", ".join('"%s"' % c for c in cols) +
@@ -207,6 +234,8 @@ def schoolsInUnits(cur, wanted, state=None):
     for kind, values in wanted.items():
         if kind not in _FILTERABLE or not values:
             continue
+        if kind == "area" and not hasAreaColumn(cur):
+            continue                     # no column yet: the filter is a no-op
         clauses.append('"%s" = ANY(%%s)' % kind)
         args.append([str(v).upper() for v in values])
     if not clauses:
