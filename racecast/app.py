@@ -217,6 +217,12 @@ import school_identity
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
+# ★ COURSE DIFFICULTY AS A PERCENTAGE AGAINST A TYPICAL COURSE OF ITS SPORT.
+#   The raw multiplier's zero sits between XC and track, so every XC course
+#   read ~2% harder than it is. See difficulty_view.py.
+import difficulty_view
+app.template_filter("diffpct")(difficulty_view.diffPct)
+app.jinja_env.globals["difficulty_words"] = difficulty_view.diffWords
 
 # ! FOR bareSchool ONLY -- the inverse of the "(ST)" label convention, which
 #   /search/api needs so a picker can show one string and filter on another.

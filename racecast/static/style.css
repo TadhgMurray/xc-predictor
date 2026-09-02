@@ -4129,3 +4129,19 @@ tr.row-hi > td { background: #fdf3cd; }
   margin-left: 3px;
   cursor: help;
 }
+
+/* The "what this number means" bars (_explain.html). Quiet, theme-neutral:
+   a tinted band with a left rule, inheriting the page's text colour. */
+.info-bar {
+    font-size: .85rem;
+    line-height: 1.4;
+    color: inherit;
+    background: rgba(46, 83, 230, .07);
+    border-left: 3px solid rgba(46, 83, 230, .6);
+    border-radius: 4px;
+    padding: .45rem .7rem;
+    margin: .5rem 0 .9rem;
+    max-width: 62rem;
+}
+.info-bar b { font-weight: 600; }
+.dv { font-variant-numeric: tabular-nums; }

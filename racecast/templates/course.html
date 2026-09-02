@@ -1,6 +1,7 @@
 {% from "_capped.html" import capped_note %}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -38,6 +39,7 @@
 
 <main class="page-wide">
     <h1>{{ course_name }}</h1>
+    {{ difficulty_bar("XC") }}
     {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
        the usual distance's, and says which -- a course is a different
        course at 2 miles and at 5K, and one bare number silently
@@ -47,11 +49,11 @@
         Difficulty:
         {% if sel_dist %}
             {% if sel_difficulty is not none %}
-                {{ "%+.3f"|format(sel_difficulty) }}
+                {{ dv(sel_difficulty, "XC") }}
                 <span class="dist-note-quiet">({{ sel_dist }}m)</span>
             {% else %}—{% endif %}
         {% elif primary_difficulty is not none %}
-            {{ "%+.3f"|format(primary_difficulty) }}
+            {{ dv(primary_difficulty, "XC") }}
             <span class="dist-note-quiet">({{ primary_dist }}m, the usual distance here)</span>
         {% else %}—{% endif %}
         {% if header %}
@@ -84,7 +86,7 @@
             {% for d in dist_table %}
             <tr>
                 <td><a href="/course/{{ course_name|urlencode }}?dist={{ d.distance }}">{{ d.distance }}m</a></td>
-                <td>{{ "%+.3f"|format(d.difficulty) if d.difficulty is not none else "—" }}</td>
+                <td>{{ dv(d.difficulty, "XC") }}</td>
                 <td>{{ "{:,}".format(d.n_results) }}</td>
                 <td class="no-break">{{ d.first_date }}</td>
                 <td class="no-break">{{ d.last_date }}</td>
@@ -162,7 +164,7 @@
     {# ======================== ONE DISTANCE =========================== #}
     <h2>Course records
         <span class="dist-note">{{ sel_dist }}m
-            {%- if sel_difficulty is not none %} · difficulty {{ "%+.3f"|format(sel_difficulty) }}{% endif %}
+            {%- if sel_difficulty is not none %} · difficulty {{ dv(sel_difficulty, "XC") }}{% endif %}
             {%- if sel_n %} · {{ "{:,}".format(sel_n) }} results{% endif %}</span>
     </h2>
     <div class="rec-pair">

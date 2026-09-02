@@ -1,0 +1,41 @@
+{# =====================================================================
+   _explain.html -- the two info bars that say what a number means.
+
+   rating_bar(pool_label)   what a rating is, in one sentence a runner reads.
+   difficulty_bar(sport)    what a course difficulty is, and the worked example.
+   dv(d, sport)             render a difficulty as a percentage against a
+                            typical course of its sport (difficulty_view.py),
+                            raw value in the title.
+
+   Import with:  {% from "_explain.html" import rating_bar, difficulty_bar, dv %}
+   ===================================================================== #}
+
+{% macro rating_bar(pool_label=None) %}
+    <div class="info-bar" role="note">
+        <b>What a rating means.</b>
+        100 is the average {{ pool_label if pool_label else "runner in the athlete's pool" }};
+        a rating of 133 means 33% faster than that average runner.
+        Ratings are distance-normalised and course-adjusted, so a hard course
+        and a fast track land on one number. Each pool (high school boys,
+        college women, middle school&hellip;) has its own average, and the
+        HS-equivalent view puts every pool on the high-school scale.
+    </div>
+{% endmacro %}
+
+{% macro difficulty_bar(sport="XC") %}
+    <div class="info-bar" role="note">
+        <b>What course difficulty means.</b>
+        How much slower times run here than on a typical
+        {{ "cross country course" if sport == "XC" else "track" }}:
+        +4% is about 40 seconds on a 16-minute 5K, 0% is typical, and a
+        negative number is a fast {{ "course" if sport == "XC" else "track" }}.
+        Ratings already account for it, so a 133 run here and a 133 run
+        anywhere else are the same performance.
+    </div>
+{% endmacro %}
+
+{% macro dv(d, sport="XC") -%}
+    {%- if d is none -%}&mdash;{%- else -%}
+    <span class="dv" title="raw difficulty {{ "%+.3f"|format(d) }}">{{ d|diffpct(sport) }}</span>
+    {%- endif -%}
+{%- endmacro %}

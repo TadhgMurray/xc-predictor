@@ -34,6 +34,7 @@
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_scale.html" import scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -59,6 +60,7 @@
   <p class="sub" id="subtitle">
     Season ability &mdash; averaged across a season.
   </p>
+  {{ rating_bar() }}
 
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" data-board="ability"     aria-selected="true">Ability</button>

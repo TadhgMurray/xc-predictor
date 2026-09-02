@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 {% from "_recflag.html" import recflag %}
 <html lang="en">
 <head>
@@ -26,9 +27,10 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
-        Venue difficulty:
-        {{ "%+.3f"|format(header.difficulty) if header.difficulty is not none else "—" }}
+        Venue difficulty: {{ dv(header.difficulty, "TF") }}
     </p>
+    {{ difficulty_bar("TF") }}
+    {{ rating_bar() }}
     <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}">View full meet →</a></p>
     <p>
         <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">

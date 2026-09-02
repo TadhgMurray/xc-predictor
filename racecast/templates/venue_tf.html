@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -17,12 +18,13 @@
     <p class="meta">
         {{ "Indoor" if is_indoor else "Outdoor" }} ·
         Difficulty:
-        {{ "%+.3f"|format(difficulty.difficulty) if difficulty and difficulty.difficulty is not none else "—" }}
+        {{ dv(difficulty.difficulty if difficulty else none, "TF") }}
         {% if difficulty %}
             · {{ "{:,}".format(difficulty.n_results) }} results
             · {{ "{:,}".format(difficulty.n_athletes) }} athletes
         {% endif %}
     </p>
+    {{ difficulty_bar("TF") }}
 
     <div class="placeholder-slot">
         Team records — coming later

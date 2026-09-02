@@ -153,6 +153,7 @@
 
 {# The shared rating-value + toggle macros; scale-view.js does the swap. #}
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 
 {% macro season_block(year, sport, season) %}
     <div class="season" id="{{ year }}-{{ sport }}">
@@ -219,7 +220,7 @@
                         {%- else -%}—{%- endif -%}
                     </td>
                     <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
-                    <td>{{ "%+.3f"|format(race.difficulty) if race.difficulty is not none else "—" }}</td>
+                    <td>{{ dv(race.difficulty, race.sport) }}</td>
                     {# Same nine conditions as before -- only the rendering moved
                        into the flag() macro, so each badge now carries its own
                        explanation. #}
@@ -240,6 +241,8 @@
 
     <h1>{{ athlete.name }}</h1>
     <p class="meta">{% if athlete.school %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label }}</a>{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+
+    {{ rating_bar() }}
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the

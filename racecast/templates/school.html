@@ -16,6 +16,7 @@
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -32,6 +33,7 @@
 {% include "_topbar.html" %}
 <main class="page-wide">
     <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    {{ rating_bar() }}
     {# the school's own facts, long-form: this line is not shared with a
        grade and a compare link, so there is room to spell them out #}
     {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
+{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
 {% from "_recflag.html" import recflag %}
 <html lang="en">
 <head>
@@ -30,9 +31,10 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
-        Course difficulty:
-        {{ "%+.3f"|format(header.difficulty) if header.difficulty is not none else "—" }}
+        Course difficulty: {{ dv(header.difficulty, "XC") }}
     </p>
+    {{ difficulty_bar("XC") }}
+    {{ rating_bar() }}
     {% if extras and extras.weather %}
     <p class="meta wx">
         Race-day weather: <b>{{ extras.weather.temp_f }}&deg;F</b>
