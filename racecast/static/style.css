@@ -3673,6 +3673,11 @@ td.margin-b { color: #b45309; font-weight: 600; }
                    font-variant-numeric: tabular-nums;
                    text-decoration: none; }
 .rank-line .rk a:hover { text-decoration: underline; }
+/* an entry never breaks inside itself: "Tri-Valley #2" split at the hyphen
+   on phones (issue 88). inline-block, not just nowrap: the template glues
+   entries to their separators with no whitespace, so the only break
+   opportunities are between atomic boxes. */
+.rank-line .rk, .rank-line .sep { display: inline-block; white-space: nowrap; }
 .rank-line .wip { color: #c2c7cf; }
 /* the "?" at the end: same circled-hint dress as the scale toggle's, but
    its tooltip keeps the default rightward opening -- this one sits at the
@@ -3852,6 +3857,18 @@ td.margin-b { color: #b45309; font-weight: 600; }
   /* Five board tabs are ~550px in a row; on a phone they wrap rather than
      push the page sideways (issue 130). */
   .rankings-page .tabs { flex-wrap: wrap; }
+  /* ---- athlete header on a phone (issue 88) ------------------------ *
+   * Looked at on a 390px screen for the first time (2026-09-02): the stat
+   * strip pushed "Races" to the edge and dropped "Seasons" onto its own
+   * row; "Tri-Valley #2" broke at its hyphen across two lines; the scale
+   * toggle's label wrapped and its two buttons each ran to two lines. */
+  .stat-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem 1rem; }
+  .stat-strip > div { min-width: 0; }
+  .toggle-row .scale-toggle { display: flex; flex-wrap: wrap; width: 100%; margin-left: 0; }
+  .toggle-row .scale-lab { flex: 0 0 100%; margin: 0 0 0.3rem; }
+  .toggle-row .scale-toggle button { flex: 1 1 0; padding: 0.4rem 0.5rem; font-size: 0.8rem; white-space: nowrap; }
+  .toggle-row .scale-toggle .scale-note { margin-left: 0.5rem; }
+
   /* The home board's rating head drops its "i" on a phone and takes back
      the width: at 5.5rem the name and school columns were three letters. */
   :root { --cols: 2.5rem minmax(0, 0.88fr) minmax(0, 1.15fr) 4.25rem minmax(0, 1.17fr); }
