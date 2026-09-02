@@ -725,8 +725,13 @@ def buildRankLine(cur, person_id, season):
         #   because 12 < 20 reads as a missing feature, not a policy. The
         #   href carries the same filter, so the board the link opens shows
         #   the same number the line does.
+        # ★ THE SEASON'S OWN FLOOR (season_floor): three up to 2026 TF, none
+        #   from 2026 XC on -- the same rule the board applies, so the number
+        #   here is the number the link opens on. Sent explicitly, so the
+        #   board holds this year's rows to exactly this floor.
         args = {"board": "ability", "pool": season["pool"], "sport": sport,
-                "year": str(label_year), "min_races": "1"}
+                "year": str(label_year),
+                "min_races": str(floorFor(season["year"]))}
         if with_state:
             args["state"] = state
         return args
@@ -749,6 +754,19 @@ def buildRankLine(cur, person_id, season):
         except Exception as exc:         # noqa: BLE001 -- a line, not a page
             cur.connection.rollback()
             print(f"rank_line: {which} rank failed "
+                  f"({type(exc).__name__}: {exc})", flush=True)
+            return None
+
+    def boardTotal():
+        f, err = parseFilters(MultiDict(boardArgs(False)))
+        if err:
+            return None
+        try:
+            with cur.connection.cursor() as plain:
+                return countOf(plain, f)
+        except Exception as exc:         # noqa: BLE001 -- a phrase, not a page
+            cur.connection.rollback()
+            print(f"rank_line: nation count failed "
                   f"({type(exc).__name__}: {exc})", flush=True)
             return None
 
@@ -822,8 +840,12 @@ def buildRankLine(cur, person_id, season):
         elif scope == "nation":
             r = boardRank(False)
             if r:
+                # `total` rides along for the header's "top 2%": the size
+                # of the same board, so the fraction is of what the link
+                # opens. The template ignores the key.
                 entries.append({"label": "Nation", "rank": r,
-                                "href": boardHref(False)})
+                                "href": boardHref(False),
+                                "total": boardTotal()})
         elif scope == "state" and state:
             r = boardRank(True)
             if r:
@@ -1038,6 +1060,27 @@ def athlete(person_id):
         label = (season_rating["year"] + 1 if season_rating["sport"] == "TF"
                  else season_rating["year"])
         athlete["rating_note"] = f"{label} {season_rating['sport']} season"
+        # ★ THE NUMBER IN WORDS A PARENT CAN READ (survey, 2026-09-02): the
+        #   5K the rating stands for at an average course, and where it sits
+        #   in the pool for that season. The time is the engine's own
+        #   algebra (conversions._norm_from_rating, difficulty 0); the
+        #   percentile is the nation rank over the size of that board.
+        athlete["pool_words"] = poolWords(season_rating["pool"])
+        athlete["rank_floor"] = floorLabel(season_rating["year"])
+        try:
+            from conversions import _norm_from_rating
+            athlete["equiv_time"] = clockFor(_norm_from_rating(
+                float(athlete["rating"]), season_rating["pool"],
+                0.0, season_rating["sport"]))
+        except Exception as exc:         # noqa: BLE001 -- a phrase, not a page
+            print(f"athlete: equiv time failed ({type(exc).__name__}: {exc})",
+                  flush=True)
+            athlete["equiv_time"] = None
+        nation = next((e for e in (rank_line or [])
+                       if e.get("label") == "Nation"), None)
+        athlete["percentile"] = (percentileWords(nation["rank"],
+                                                 nation.get("total"))
+                                 if nation else None)
         # A season MEAN has no single race context, so it scales by the
         # median per-race factor of the same displayed season -- computed
         # from the races already stamped above.
@@ -4627,7 +4670,8 @@ def athlete_results():
 
 
 from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
-                      getAbilityRankings, rankOf, PR_DISTANCES)
+                      getAbilityRankings, rankOf, countOf, PR_DISTANCES)
+from season_floor import floorFor, floorLabel, poolWords, percentileWords, clockFor
 
 
 @app.route("/api/rankings")

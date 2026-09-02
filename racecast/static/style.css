@@ -4193,3 +4193,13 @@ th .info-i { font-weight: 600; }
    page. Quiet tint, not a badge. */
 tr.hl-school td { background: #fef9c3; }
 .school-ran { margin-left: 0.4rem; font-size: 0.85em; color: #6b7280; }
+
+/* ---- athlete header phrases and the badge legend (survey, 2026-09-02) -- */
+.stat-strip .s-equiv { display: block; margin-left: 0; color: #374151; }
+.rank-line .rl-floor { color: var(--muted); font-size: 0.85em; margin-left: 0.3rem; }
+.flag-legend { font-size: 0.78rem; color: var(--muted); margin: 0.3rem 0 0.8rem; }
+.flag-legend b { color: #374151; font-weight: 600; }
+
+/* ---- about: the glossary ------------------------------------------- */
+.glossary dt { font-weight: 600; margin-top: 0.8rem; }
+.glossary dd { margin: 0.15rem 0 0 0; color: #374151; }

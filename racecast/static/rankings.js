@@ -157,8 +157,12 @@ function defaultMinRaces() {
 /* Follow the sport unless the user has typed their own. Once they have, the
    number is theirs and switching sport must not overwrite it. */
 function syncMinRaces() {
+  /* An untouched box stays EMPTY and shows the placeholder: a "3" in the
+     box would read as a filter that is on, while the API's default floor
+     lets open seasons through at any count. The value is only the
+     reader's once they type it. */
   const box = $("min_races");
-  if (!box.dataset.touched) box.value = defaultMinRaces();
+  if (!box.dataset.touched) box.value = "";
 }
 
 
@@ -352,7 +356,12 @@ function buildQuery() {
     if ($("date_to").value)   q.set("date_to",   $("date_to").value);
   } else if (state.board === "ability") {
 
-    q.set("min_races", $("min_races").value || defaultMinRaces());
+    /* ★ SENT ONLY WHEN TYPED. Absent, the API applies its own floor of
+       three and exempts open seasons from it (none from 2026 XC on); a
+       number the reader typed applies to every row. Sending the default
+       here would turn the exemption off for everyone. */
+    const mrBox = $("min_races");
+    if (mrBox.dataset.touched && mrBox.value) q.set("min_races", mrBox.value);
   } else {
     /* Performances: distance is OPTIONAL scope here (the board is already
        distance-normalised), so an empty "Any" sends nothing. */

@@ -402,6 +402,9 @@ def _multiInt(args, name, lo, hi):
     return out or None
 
 
+from season_floor import floorSql   # the race-count floor, one rule
+
+
 def parseFilters(args):
     """request.args -> (filters dict, error string or None).
 
@@ -548,6 +551,11 @@ def parseFilters(args):
         #   20 TF / 8 XC pair matches rankings.js's defaultMinRaces, which
         #   is what an unconfigured board actually sends.
         "min_races": _boundedInt(args, "min_races", 3, 1, 200),
+        # ★ TYPED OR DEFAULTED. The default floor exempts open seasons
+        #   (season_floor: none from 2026 XC on); a minimum the reader
+        #   typed applies to every row. rankings.js sends the field only
+        #   when the box was touched, so absent means default.
+        "min_races_explicit": (args.get("min_races") or "").strip() != "",
         "limit":     _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset":    _boundedInt(args, "offset", 0, 0, 100000),
         # ★ THE SCALE THE READER IS LOOKING AT. "hs" means the rows are shown
@@ -1103,7 +1111,7 @@ def getAbilityRankings(cur, f):
                COALESCE(a.name, 'Unknown')          AS name
         FROM   athlete_season s
         {nameLateral("s")}
-        WHERE  s.n_races >= %(min_races)s {where}
+        WHERE  {floorSql(f['min_races_explicit'])} {where}
         ORDER  BY {order}
         OFFSET %(offset)s
         LIMIT  %(limit)s
@@ -1189,6 +1197,20 @@ def _rankInResults(cur, f, person_id):
     return int(cur.fetchone()[0]) + 1
 
 
+def countOf(cur, f):
+    """How many rows the ability board holds under these filters -- the
+    denominator for 'top 2%' on the athlete header. Same floor and WHERE
+    as the board and rankOf, so the fraction is of the board it links to."""
+    params = {"min_races": f["min_races"]}
+    where = _whereClauses(f, params, with_dates=False)
+    cur.execute(f"""
+        SELECT count(*)
+        FROM   athlete_season s
+        WHERE  {floorSql(f['min_races_explicit'])} {where}
+    """, params)
+    return int(cur.fetchone()[0])
+
+
 def _rankByCount(cur, f, person_id):
     """Rank by COUNTING what outranks the athlete. Default sort only.
 
@@ -1212,7 +1234,7 @@ def _rankByCount(cur, f, person_id):
         SELECT s.mean_rating
         FROM   athlete_season s
         WHERE  s.person_id = %(person_id)s
-          AND  s.n_races >= %(min_races)s {where}
+          AND  {floorSql(f['min_races_explicit'])} {where}
         ORDER  BY s.mean_rating DESC NULLS LAST
         LIMIT  1
     """, params)
@@ -1224,7 +1246,7 @@ def _rankByCount(cur, f, person_id):
     cur.execute(f"""
         SELECT count(*)
         FROM   athlete_season s
-        WHERE  s.n_races >= %(min_races)s {where}
+        WHERE  {floorSql(f['min_races_explicit'])} {where}
           AND  (s.mean_rating > %(target)s
                 OR (s.mean_rating = %(target)s
                     AND s.person_id < %(person_id)s))
@@ -1289,7 +1311,7 @@ def rankOf(cur, f, person_id):
                    row_number() OVER (ORDER BY {order}) AS rn
             FROM   athlete_season s
             {nameLateral("s")}
-            WHERE  s.n_races >= %(min_races)s {where}
+            WHERE  {floorSql(f['min_races_explicit'])} {where}
         )
         SELECT min(rn) FROM ranked WHERE person_id = %(person_id)s
     """, params)

@@ -245,6 +245,9 @@
                 {% endfor %}
             </tbody>
         </table>
+        {# The badges, spelled out once per table (survey, 2026-09-02): the
+           hover blurbs stay, but a legend reads without a hover. #}
+        <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
     </div>
 {% endmacro %}
 
@@ -260,6 +263,16 @@
             <span class="s-lab">Athlete rating{{ rating_i() }}</span>
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
             {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
+            {# The rating in words: the 5K it stands for, and where it sits
+               in the pool. Either half may be missing; the line drops what
+               it cannot say rather than printing a blank. #}
+            {% if athlete.equiv_time or athlete.percentile %}
+            <span class="s-sub s-equiv">
+                {%- if athlete.equiv_time %}&asymp; {{ athlete.equiv_time }} 5K{% endif -%}
+                {%- if athlete.equiv_time and athlete.percentile %} &middot; {% endif -%}
+                {%- if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif -%}
+            </span>
+            {% endif %}
         </div>
         {% if alltime.rating %}
         <div>
@@ -300,6 +313,9 @@
                 <span class="rk"><span class="scope">{{ e.label }}</span> <a href="{{ e.href }}">#{{ e.rank }}</a></span>
             {%- endif -%}
         {%- endfor %}
+        {# The floor the line is held to. Empty for open seasons, which have
+           none (season_floor). #}
+        {%- if athlete.rank_floor %} <span class="rl-floor">{{ athlete.rank_floor }}</span>{% endif %}
         <span class="flag rank-note" tabindex="0"
               data-title="Season rankings"
               data-blurb="Where this athlete stands for their latest season: nationally, in their state, and their place on their own team's roster. National ranks carry a small unresolved state-to-state offset, so treat close national placings as approximate. Greyed scopes are coming soon."

@@ -133,6 +133,20 @@
     <p class="page-meta">Ratings last rebuilt {{ meta.built_at[:10] }}.</p>
   {% endif %}
 
+  <h2 id="glossary">Glossary</h2>
+  <dl class="glossary">
+    <dt>Rating</dt><dd>A race corrected for course, distance, weather and era, expressed against the athlete's pool. 100 is the pool's average runner; 133 means 33% faster than that runner. Roughly, a high-school boy rated 146 runs a 15:05 5K.</dd>
+    <dt>Athletes board (season average)</dt><dd>One row per athlete-season, ranked on the average of their rated races. The default, because one race is noisy by about four points.</dd>
+    <dt>Performances board (single races)</dt><dd>One row per race. A great day by an ordinary athlete outranks an ordinary day by a great one, which is right for a list of races and wrong for a list of athletes.</dd>
+    <dt>Best times/marks</dt><dd>The clock and the tape, uncorrected: fastest time at one distance, longest or highest mark in a field event.</dd>
+    <dt>HS scale / own pool</dt><dd>Every pool (high-school boys, college women, middle-school boys&hellip;) has its own 100. The HS scale re-expresses every rating as if the athlete were a high schooler of the same sex, so a college and a middle-school number can sit on one list. Own pool shows the number as fitted.</dd>
+    <dt>Difficulty</dt><dd>How much slower times run at a course than at an average course, one scale for cross country and track: +4% is about 40 seconds on a 16-minute 5K. Ratings already account for it.</dd>
+    <dt>PR, SR, CR, CSR, R, RSR</dt><dd>Personal record, season record, course record, course season record, rating record, rating season record. A star means it still stands.</dd>
+    <dt>League, area, section, division, class, conference, region</dt><dd>The units a school competes in, inferred from the championship meets it attends. High school runs league &rarr; area &rarr; section &rarr; state; college runs conference &rarr; region &rarr; division.</dd>
+    <dt>Compiled race</dt><dd>Every division of a meet at one distance and sex, merged and re-ordered by time, as if they had started together. A race that did not happen, and labelled as one.</dd>
+    <dt>Ranked line</dt><dd>Where the athlete's latest season stands nationally, in each unit, in the state and on their team, at three or more races for seasons up to 2026 track; seasons from 2026 cross country on have no floor.</dd>
+  </dl>
+
   <h2>Found something wrong?</h2>
   <p>
     Wrong ratings are the most useful thing you can report, and specific ones

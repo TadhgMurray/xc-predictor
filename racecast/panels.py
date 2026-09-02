@@ -137,6 +137,7 @@ _NON_SCHOOL_FRAGMENTS = ("dark sky", "under arm", "under armour", "under armor")
 # and the page it links to silently show different sets of athletes.
 sys.path.insert(0, "engine")
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
+from season_floor import OPEN_FROM, floorFor, isOpen
 from pool_resolve import resolvePool, inScope
 from dbfast import dictRows, tuneSession
 
@@ -1040,7 +1041,7 @@ _ATHLETE_SQL_TEMPLATE = """
     WHERE  s.sport = %(sport)s
       AND  s.mean_rating IS NOT NULL
       AND  s.mean_rating BETWEEN %(rmin)s AND %(rmax)s
-      AND  s.n_races >= %(minraces)s
+      AND  (s.n_races >= %(minraces)s OR s.year >= %(open_from)s)
 """
 
 
@@ -1073,7 +1074,10 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
     # The date, year and meet filters are gone: athlete_season was built from
     # rows that already passed them.
     params = {"rmin": RATING_MIN, "rmax": RATING_MAX, "sport": sport,
-              "minraces": min(SEASON_MIN_RACES, ALLTIME_MIN_RACES)}
+              "minraces": min(SEASON_MIN_RACES, ALLTIME_MIN_RACES),
+              # ★ OPEN SEASONS PASS THE SQL GATE AT ANY COUNT (season_floor:
+              #   none from 2026 XC on); the python gates below decide.
+              "open_from": OPEN_FROM}
 
     cur = _streamingCursor(conn, f"ath_{sport.lower()}")
     cur.execute(_athleteSql(sport), params)
@@ -1118,7 +1122,13 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
             if n >= ALLTIME_MIN_RACES:
                 _pushTop(buckets[("athlete", "alltime", sport, pool)],
                          COLLECT_N, score, dict(payload))
-            if str(row["yr"]) == str(season_year) and n >= SEASON_MIN_RACES:
+            # ! THE SEASON BOARD'S FLOOR FOLLOWS THE SEASON: four up to
+            #   2026 TF, none after (owner, 2026-09-02). The all-time board
+            #   keeps ALLTIME_MIN_RACES -- "best season ever" on one race
+            #   is a different claim, and the owner can flip it here.
+            season_floor = (floorFor(row["yr"]) if isOpen(row["yr"])
+                            else SEASON_MIN_RACES)
+            if str(row["yr"]) == str(season_year) and n >= season_floor:
                 _pushTop(buckets[("athlete", "season", sport, pool)],
                          COLLECT_N, score, dict(payload))
     finally:
