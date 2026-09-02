@@ -16,8 +16,15 @@ SANE_YEAR   = r'^(19|20)[0-9]{2}'
 #  SCHEMA
 # ===================================================================== #
 
+# ★ BUILT INTO A SHADOW TABLE AND SWAPPED (2026-09-02). A full rebuild
+#   dropped search_index first and reloaded it over several minutes, so
+#   the site's search was empty for the whole build. The loaders write to
+#   _TARGET; a full run points it at search_index_new and renames at the
+#   end, inside one transaction, so readers see the old index or the new.
+_TARGET = "search_index"
+
 _DDL = """
-CREATE TABLE IF NOT EXISTS search_index (
+CREATE TABLE IF NOT EXISTS {table} (
     id          bigserial PRIMARY KEY,
     kind        text NOT NULL,
     label       text NOT NULL,
@@ -59,10 +66,10 @@ _INDEX = """
 -- server without it fails the index create with a cryptic operator-class
 -- error (harmless everywhere it is already installed)
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS idx_search_prefix
-    ON search_index (search_text text_pattern_ops);
-CREATE INDEX IF NOT EXISTS idx_search_trgm
-    ON search_index USING gin (search_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS {prefix}_prefix
+    ON {table} (search_text text_pattern_ops);
+CREATE INDEX IF NOT EXISTS {prefix}_trgm
+    ON {table} USING gin (search_text gin_trgm_ops);
 """
 
 
@@ -135,8 +142,8 @@ def _stream_cursor(conn, name):
 def _flush(cur, batch):
     """Insert one batch. Every tuple MUST be 8 elements, in this order:
        (kind, label, sublabel, link, search_text, search_last, sort_year, sort_count)"""
-    psycopg2.extras.execute_values(cur, """
-        INSERT INTO search_index
+    psycopg2.extras.execute_values(cur, f"""
+        INSERT INTO {_TARGET}
             (kind, label, sublabel, link, search_text, search_last, sort_year, sort_count)
         VALUES %s
     """, batch, page_size=1000)
@@ -437,31 +444,46 @@ def main():
     ap.add_argument("--only", choices=list(_LOADERS))
     args = ap.parse_args()
 
+    global _TARGET
     with getConn() as conn:
         with conn.cursor() as cur:
             if args.only:
-                # partial: wipe just this kind, reload just this loader.
+                # partial: wipe just this kind, reload just this loader,
+                # in place -- a kind is small and the gap is seconds
+                _TARGET = "search_index"
+                cur.execute(_DDL.format(table=_TARGET))
                 cur.execute("DELETE FROM search_index WHERE kind = %s",
                             (_KIND[args.only],))
                 conn.commit()
             else:
-                cur.execute("DROP TABLE IF EXISTS search_index")
-                cur.execute(_DDL)
+                _TARGET = "search_index_new"
+                cur.execute("DROP TABLE IF EXISTS search_index_new")
+                cur.execute(_DDL.format(table=_TARGET))
                 conn.commit()
 
-        print("building search_index...")
+        print(f"building {_TARGET}...")
         if args.only:
             _LOADERS[args.only](conn)
         else:
             for fn in _LOADERS.values():
                 fn(conn)
 
-        # rebuild indexes only on a full run (partial keeps existing ones)
         if not args.only:
             with conn.cursor() as cur:
                 print("building indexes...")
-                cur.execute(_INDEX)
+                cur.execute(_INDEX.format(table="search_index_new",
+                                          prefix="idx_search_new"))
+                conn.commit()
+                # the swap, one transaction: old index or new, never none.
+                # The indexes are renamed with the table so the next run's
+                # CREATE INDEX IF NOT EXISTS makes fresh ones.
+                cur.execute("DROP TABLE IF EXISTS search_index")
+                cur.execute("ALTER TABLE search_index_new RENAME TO search_index")
+                cur.execute("ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix")
+                cur.execute("ALTER INDEX idx_search_new_trgm RENAME TO idx_search_trgm")
+                cur.execute("ANALYZE search_index")
             conn.commit()
+            print("search_index: swapped in")
 
         print("done.")
 

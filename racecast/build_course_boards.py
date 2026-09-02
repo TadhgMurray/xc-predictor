@@ -86,7 +86,48 @@ def main():
     ap.add_argument("--resume", action="store_true",
                     help="keep what course_boards_new already holds and "
                          "skip those courses (continue an interrupted run)")
+    # ★ SHARDS (2026-09-02). Step 12b took 41,047 s single-file: one
+    #   process, one course at a time, most of it waiting on the database.
+    #   --prepare makes the shadow table once; N --shard K/N workers each
+    #   build every Nth course into it side by side; --finish swaps. The
+    #   pipeline runs three shards. A plain run (no flag) still does the
+    #   whole thing in one process.
+    ap.add_argument("--prepare", action="store_true",
+                    help="create the empty shadow table and stop")
+    ap.add_argument("--shard", default=None,
+                    help="K/N: build courses K, K+N, K+2N... into the "
+                         "existing shadow table; no swap")
+    ap.add_argument("--finish", action="store_true",
+                    help="swap the shadow table in and stop")
     args = ap.parse_args()
+
+    if args.prepare:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS course_boards_new")
+                cur.execute(_DDL)
+            conn.commit()
+        print("course_boards_new: empty shadow table ready", flush=True)
+        return
+    if args.finish:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM course_boards_new")
+                n = cur.fetchone()[0]
+                if not n:
+                    sys.exit("course_boards_new is empty: refusing to swap")
+                cur.execute("DROP TABLE IF EXISTS course_boards")
+                cur.execute("ALTER TABLE course_boards_new RENAME TO course_boards")
+                cur.execute("ALTER INDEX course_boards_new_pkey "
+                            "RENAME TO course_boards_pkey")
+                cur.execute("ANALYZE course_boards")
+            conn.commit()
+        print(f"course_boards: swapped in, {n:,} rows", flush=True)
+        return
+    shard_k = shard_n = None
+    if args.shard:
+        shard_k, shard_n = (int(x) for x in args.shard.split("/"))
+        assert 0 <= shard_k < shard_n
 
     # app imports flask; on the pipeline machine that is the same env the
     # site runs in. db_timing rides along harmlessly.
@@ -95,7 +136,7 @@ def main():
     t0 = time.time()
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        if not args.resume:
+        if not args.resume and shard_n is None:
             cur.execute("DROP TABLE IF EXISTS course_boards_new")
         cur.execute("SELECT to_regclass('public.course_boards_new')")
         if next(iter(cur.fetchone().values())) is None:
@@ -113,11 +154,17 @@ def main():
             FROM meets
             WHERE course_name IS NOT NULL AND TRIM(course_name) <> ''
             GROUP BY course_name
-            ORDER BY n DESC
+            ORDER BY n DESC, course_name
         """)
         courses = [r["course_name"] for r in cur.fetchall()]
         if not args.all and args.limit:
             courses = courses[:args.limit]
+        if shard_n is not None:
+            # the same deterministic list in every worker; each takes
+            # every Nth entry, so the big courses spread across workers
+            courses = courses[shard_k::shard_n]
+            print(f"shard {shard_k}/{shard_n}: {len(courses):,} courses",
+                  flush=True)
         if done:
             courses = [c for c in courses if c not in done]
         print(f"building boards for {len(courses):,} courses",
@@ -160,13 +207,15 @@ def main():
             """, batch)
             conn.commit()
 
-        # the swap: readers keep the old table until the new one is whole
-        cur.execute("DROP TABLE IF EXISTS course_boards")
-        cur.execute("ALTER TABLE course_boards_new RENAME TO course_boards")
-        cur.execute("ALTER INDEX course_boards_new_pkey "
-                    "RENAME TO course_boards_pkey")
-        cur.execute("ANALYZE course_boards")
-        conn.commit()
+        # the swap: readers keep the old table until the new one is whole.
+        # A shard leaves it to --finish, once every shard is done.
+        if shard_n is None:
+            cur.execute("DROP TABLE IF EXISTS course_boards")
+            cur.execute("ALTER TABLE course_boards_new RENAME TO course_boards")
+            cur.execute("ALTER INDEX course_boards_new_pkey "
+                        "RENAME TO course_boards_pkey")
+            cur.execute("ANALYZE course_boards")
+            conn.commit()
 
     mins = (time.time() - t0) / 60
     print(f"done: {built:,} courses built, {skipped:,} empty, "

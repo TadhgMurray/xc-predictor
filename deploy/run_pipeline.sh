@@ -95,6 +95,46 @@ step() {
   fi
 }
 
+# shards <name> <n> <command...>  -- run <command> --shard k/n for k in
+# 0..n-1 in parallel, one log each, one summary line. Same --from and
+# --dry-run rules as step.
+shards() {
+  name="$1"; n="$2"; shift 2
+  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
+  if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
+    echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    echo "  $name : $* --shard k/$n  (x$n in parallel)"
+    return 0
+  fi
+  echo ""
+  echo "======================================================================"
+  echo "  $name    $(date +%H:%M:%S)   ($n shards in parallel)"
+  echo "======================================================================"
+  t0=$(date +%s)
+  pids=""
+  k=0
+  while [ "$k" -lt "$n" ]; do
+    "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
+    pids="$pids $!"
+    k=$((k + 1))
+  done
+  rc=0
+  for pid in $pids; do
+    wait "$pid" || rc=1
+  done
+  tail -n 2 "$LOGDIR/${name}"_shard*.log
+  el=$(( $(date +%s) - t0 ))
+  if [ "$rc" -ne 0 ]; then
+    echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
+    FAILED="$FAILED $name"
+  else
+    echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
+  fi
+}
+
 # ---- verdicts ------------------------------------------------------- #
 # ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
 step 01_season_year   "$PY" -u engine/season_year.py
@@ -188,13 +228,26 @@ step 10d_school_units "$PY" -u racecast/build_school_units.py
 # issue 34: which meets are championships, and of what; then the units
 # reach the site search (a partial index rebuild, cheap)
 step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
-step 10f_search_units "$PY" -u racecast/search_index.py --only units
 step 11_teams         "$PY" -u racecast/build_team_season.py
+# ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
+#   (step 14), so every course page of a first run was built without the
+#   indexes the course queries need; 12b took 41,047 s on 2026-09-02.
+step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
 step 12_courses       "$PY" -u racecast/build_course_rank.py
-step 12b_course_pages "$PY" -u racecast/build_course_boards.py --limit 1200
+# ★ COURSE PAGES IN THREE SHARDS (issue 140). One process building 1,200
+#   courses in a row was mostly waiting on the database; three workers on
+#   every third course cut the wall time to about a third. --prepare and
+#   --finish bracket them so the swap happens once, after all three.
+step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
+shards 12b_course_pages 3 "$PY" -u racecast/build_course_boards.py --limit 1200
+step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 step 13_panels        "$PY" -u racecast/panels.py
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
-step 14_indexes       "$PY" -u scripts/add_page_indexes.py
+# ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
+#   pipeline, so new athletes and meets stayed unsearchable until someone
+#   rebuilt it by hand. Built into a shadow table and swapped, so search
+#   never goes dark.
+step 13c_search_index "$PY" -u racecast/search_index.py
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.

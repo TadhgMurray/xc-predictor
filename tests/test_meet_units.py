@@ -78,6 +78,6 @@ def test_unit_search_links_land_on_the_board():
 
 def test_pipeline_and_template_carry_the_feature():
     sh = read("deploy", "run_pipeline.sh")
-    assert "10e_meet_units" in sh and "search_index.py --only units" in sh
+    assert "10e_meet_units" in sh and "13c_search_index" in sh
     tpl = read("racecast", "templates", "meets.html")
     assert 'name="champ"' in tpl and 'name="unit"' in tpl and "Championship of" in tpl
