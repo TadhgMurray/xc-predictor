@@ -120,6 +120,7 @@ SELECT k.person_id, k.year, k.race_date, k.meet_id, k.div_id,
        k.distance::float8                        AS distance,
        ln(r.normalized_time)                     AS lnorm,
        mt.meet_name,
+       k.state                                   AS state,
        (mt.meet_name ILIKE %(venue)s)            AS at_venue,
        (mt.meet_name ILIKE '%%invit%%')          AS invitational,
        ln(1.0 + cd.difficulty)                   AS ldiff
@@ -166,13 +167,18 @@ spring AS (
            avg(ldiff)    AS ldiff_tf,
            count(*)      AS n_tf,
            bool_or(at_venue) AS any_venue,
-           (array_agg(at_venue ORDER BY t))[1] AS best_at_venue
+           (array_agg(at_venue ORDER BY t))[1] AS best_at_venue,
+           -- ! THE MEET'S STATE, NOT THE ATHLETE'S. ranking_results.state is
+           --   where the race was; the mode over an athlete's spring rows is
+           --   where they live, near enough, and it is what separates the
+           --   track side of two athletes who ran the SAME fall cell.
+           mode() WITHIN GROUP (ORDER BY state) AS tf_state
     FROM   tj_tf
     GROUP  BY person_id, year
 )
 SELECT f.person_id, f.year, f.best_xc, f.mean_lnorm_xc, f.ldiff_xc, f.n_xc,
        s.best_tf, s.mean_lnorm_tf, s.ldiff_tf, s.n_tf, s.any_venue,
-       s.best_at_venue
+       s.best_at_venue, s.tf_state
 FROM   fall f
 LEFT   JOIN spring s ON s.person_id = f.person_id AND s.year = f.year
 """
@@ -402,6 +408,48 @@ def meansTable(pairs, args):
           "ends. A residual flat and non-zero is a level error in the pair.\n")
 
 
+def stateTable(pairs, args):
+    """The focus band, split by where the athlete raced in spring.
+
+    ★ SAME FALL CELL, DIFFERENT TRACK SIDES. Everyone here ran the same
+      course, so a residual that differs by spring state cannot be the
+      course. It is the track cells of that state against the fall cell,
+      i.e. a regional XC-versus-track level.
+    """
+    lo, hi = args.focus
+    rows = [p for p in pairs
+            if lo <= p["best_xc"] < hi and p["mean_lnorm_tf"] is not None
+            and p["ldiff_xc"] is not None and p["ldiff_tf"] is not None]
+    by = {}
+    for p in rows:
+        by.setdefault(p.get("tf_state") or "??", []).append(p)
+    print("\n" + "=" * 78)
+    print(f"  BY SPRING STATE, focus band {_mmss(lo)}-{_mmss(hi)}: same fall "
+          f"cell, each state's own track cells")
+    print("=" * 78)
+    print(f"    {'state':<7}{'n':>7}{'obs gap':>10}{'implied':>10}"
+          f"{'resid med':>11}{'pts@130':>9}{'r med':>9}{'sp med':>9}")
+    print("    " + "-" * 72)
+    for st, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        if len(rs) < 30:
+            continue
+        obs = [float(p["mean_lnorm_xc"]) - float(p["mean_lnorm_tf"]) for p in rs]
+        imp = [float(p["ldiff_xc"]) - float(p["ldiff_tf"]) for p in rs]
+        res = sorted(o - i for o, i in zip(obs, imp))
+        r = sorted(math.log(float(p["best_tf"]) / float(p["best_xc"]))
+                   for p in rs if p["best_tf"] is not None)
+        tf = sorted(float(p["best_tf"]) for p in rs if p["best_tf"] is not None)
+        med = _pct(res, .5)
+        print(f"    {st:<7}{len(rs):>7}{sum(obs) / len(obs):>+10.4f}"
+              f"{sum(imp) / len(imp):>+10.4f}{med:>+11.4f}{_pts(med):>+9.1f}"
+              f"{(_pct(r, .5) if r else float('nan')):>+9.4f}"
+              f"{_mmss(_pct(tf, .5)) if tf else '--':>9}")
+    print("\n    READ: a state whose residual is near zero has its track cells "
+          "level with this fall cell;\n          one far below has track cells "
+          "the engine credits too much relative to it, or the\n          reverse. "
+          "Same course for all of them, so the course is not the difference.\n")
+
+
 def reverseTable(rows, args):
     """Spring window -> what the previous fall at this course looked like."""
     tlo, thi = args.reverse
@@ -589,6 +637,7 @@ def main():
 
     forwardTable(pairs, args)
     meansTable(pairs, args)
+    stateTable(pairs, args)
     reverseTable(rev, args)
     liftTable(lift, venue, args)
     return 0
