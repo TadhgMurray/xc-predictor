@@ -81,11 +81,23 @@ def _rowFor(school, st, kinds):
     college = any(k in ("conference", "division") for k in kinds)
     wanted = _COLLEGE_KINDS if college else _HS_KINDS
     for kind in wanted:
-        got = C.current(kinds.get(kind))
+        counter = kinds.get(kind)
+        if kind == "conference" and counter:
+            # ★ ALIAS BEFORE COUNTING, so "SOUTHEASTERN" and "SEC" are one
+            #   vote pile and a KNOWN conference wins the latest season
+            #   over a host-named meet however the attendance fell
+            #   (school_unit_overrides.KNOWN_CONFERENCES).
+            merged = C.Counter()
+            for (u, yr), n in counter.items():
+                merged[(OV.aliasFor(kind, u), yr)] += n
+            got = C.current(merged, prefer=OV.KNOWN_CONFERENCES)
+        else:
+            got = C.current(counter)
         if not got:
             continue
         unit, yr, clash = got
         unit = OV.aliasFor(kind, unit)
+
         # "state" is a column name in its own right; the unit column is
         # state_unit so the schema keeps the school's own state distinct
         cells["state_unit" if kind == "state" else kind] = unit

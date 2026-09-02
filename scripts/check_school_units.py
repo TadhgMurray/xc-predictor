@@ -251,8 +251,25 @@ _COLLEGE_REGION_RX = re.compile(
     r"\b([\w .&'-]+?)\s+region(?:al)?s?\b", re.I)
 
 
+# ★ A HOST IS NOT A CONFERENCE (owner, 2026-09-02: an Arkansas athlete's
+#   rank line read "ARKANSAS STATE #3" where the SEC belongs). The
+#   mixed-case rule below reads the title-cased phrase before "Champ" as
+#   the conference, and "Arkansas State Championships" -- a meet named for
+#   its host, or for the state -- fits it perfectly. A phrase that names a
+#   US state, or a school ("... State", "University", "College"), is a
+#   place or a host, never a membership unit, whichever rule produced it.
+_NOT_A_CONFERENCE_RX = re.compile(
+    r"\b(?:STATE|UNIVERSITY|UNIV|COLLEGE|INSTITUTE|ACADEMY|TECH)\b")
+
+
+def _hostNotConference(unit):
+    return bool(_NOT_A_CONFERENCE_RX.search(unit)
+                or _STATE_NAME_RX.search(unit))
+
+
 def _collegeUnits(name):
     facts = []
+
     org = _COLLEGE_ORG_RX.search(name)
     dm = _COLLEGE_DIV_RX.search(name)
     if dm:
@@ -297,10 +314,12 @@ def _collegeUnits(name):
             continue
         unit = _cleanUnit("league", m.group(grp).strip().upper())
         if not unit or unit in _NOT_A_LEAGUE or _ASSOC_RX.search(unit) \
-                or re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit):
+                or re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit) \
+                or _hostNotConference(unit):
             continue
         facts.append(("conference", unit))
         break
+
     # mixed-case conference names carry no League/Conference word at all
     # ("Big Ten Outdoor Track & Field Championships"): on the COLLEGE feed
     # a leading title-cased phrase before the sport words + Champ is the
@@ -323,9 +342,11 @@ def _collegeUnits(name):
                     and not _ASSOC_RX.search(unit) \
                     and not _COLLEGE_ORG_RX.search(unit) \
                     and not re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit) \
-                    and "REGION" not in unit and "DIVISION" not in unit:
+                    and "REGION" not in unit and "DIVISION" not in unit \
+                    and not _hostNotConference(unit):
                 facts.append(("conference", unit))
     return facts
+
 
 
 _UNIT_RULES = [
@@ -601,8 +622,15 @@ def _rows(cur, sport, lo, hi):
 # ---- resolution (shared by the census and the writer) ---------------- #
 #   The owner's rule: the most recent season is the end-all. Older
 #   seasons are provenance, never the answer.
-def current(counter):
-    """(unit, latest_yr, conflict) or None."""
+def current(counter, prefer=None):
+    """(unit, latest_yr, conflict) or None.
+
+    ★ prefer: a set of units that win the latest season whenever any of
+      them was voted at all, whatever the counts (the writer passes the
+      known college conferences, alias-resolved). A meet named for its
+      host can out-vote the real conference championship -- the host
+      meet is bigger -- and the count is then the wrong judge. The
+      conflict flag still reports the disagreement."""
     if not counter:
         return None
     latest = max(yr for (_u, yr) in counter)
@@ -612,7 +640,12 @@ def current(counter):
             in_latest[u] += n
     top = in_latest.most_common()
     conflict = len(top) > 1 and top[1][1] >= 2
+    if prefer:
+        known = [(u, n) for u, n in top if u in prefer]
+        if known:
+            return known[0][0], latest, conflict
     return top[0][0], latest, conflict
+
 
 
 def rivals(counter):

@@ -36,8 +36,62 @@ _ALIAS = {
     },
     "conference": {
         "SO CAL JC": "CALIFORNIA STATE JUNIOR COLLEGE",
+        # ★ THE NAMED FORM AND THE ACRONYM ARE ONE CONFERENCE (owner,
+        #   2026-09-02: SEC). tfrrs writes both, season by season.
+        "SOUTHEASTERN": "SEC",
+        "ATLANTIC COAST": "ACC",
+        "BIG 10": "BIG TEN",
+        "PAC 12": "PAC-12", "PACIFIC-12": "PAC-12", "PACIFIC 12": "PAC-12",
+        # ! NOT "PAC" -> "PAC-12": the Presidents' Athletic Conference (DIII)
+        #   is spelled PAC and is a real, different conference.
+        "AMERICAN ATHLETIC": "AAC", "AMERICAN": "AAC",
+        "CONFERENCE USA": "C-USA", "CUSA": "C-USA",
+        "MID-AMERICAN": "MAC",
+        "SOUTHWESTERN ATHLETIC": "SWAC",
+        "MID-EASTERN ATHLETIC": "MEAC",
+        "ATLANTIC 10": "A-10", "A10": "A-10",
+        "MISSOURI VALLEY": "MVC",
+        "WEST COAST": "WCC",
+        "WESTERN ATHLETIC": "WAC",
+        "COLONIAL ATHLETIC": "CAA", "COLONIAL": "CAA",
+        "SOUTHERN": "SOCON",
+        "OHIO VALLEY": "OVC",
+        "METRO ATLANTIC ATHLETIC": "MAAC", "METRO ATLANTIC": "MAAC",
+        "NORTHEAST": "NEC",
+        "ATLANTIC SUN": "ASUN",
+        "IVY": "IVY LEAGUE",
     },
 }
+
+# ---- 1b. the conferences we KNOW exist ------------------------------- #
+# ★ A KNOWN CONFERENCE WINS ITS SCHOOL'S LATEST SEASON whenever it was
+#   voted at all (check_school_units.current(prefer=...)). The census
+#   counts attendance, and a meet named for its host -- "Arkansas State
+#   Championships" -- draws more of a school's athletes than the SEC meet
+#   it also attends; without this the host out-votes the conference. Names
+#   here are the alias-resolved spellings. Not exhaustive on purpose: an
+#   unknown name still wins when nothing known was voted.
+KNOWN_CONFERENCES = frozenset({
+    # NCAA DI
+    "SEC", "ACC", "BIG TEN", "BIG 12", "PAC-12", "BIG EAST", "AAC", "C-USA",
+    "MAC", "MOUNTAIN WEST", "SUN BELT", "WCC", "WAC", "BIG SKY", "MVC",
+    "A-10", "IVY LEAGUE", "PATRIOT", "CAA", "SOCON", "OVC", "BIG SOUTH",
+    "ASUN", "HORIZON", "SUMMIT", "MAAC", "NEC", "MEAC", "SWAC",
+    "AMERICA EAST", "SOUTHLAND", "BIG WEST",
+    # NCAA DII / DIII and NAIA, the ones the corpus spells consistently
+    "NESCAC", "NEWMAC", "UAA", "CCIW", "WIAC", "MIAC", "NCAC", "OAC",
+    "SCIAC", "CENTENNIAL", "LIBERTY", "LANDMARK", "SUNYAC", "NJAC",
+    "MASCAC", "LITTLE EAST", "GNAC", "NWC", "SCAC", "ASC", "HCAC", "IIAC",
+    "ARC", "MIAA", "GLIAC", "GLVC", "PSAC", "NE10", "CACC", "SAC", "PBC",
+    "GSC", "LSC", "RMAC", "CCAA", "PACWEST", "GAC", "MIAA", "NSIC",
+    "SSC", "CIAA", "SIAC", "HEART", "KCAC", "GPAC", "CROSSROADS", "MSC",
+    "AII", "CASCADE", "FRONTIER", "SOONER", "RED RIVER", "AAC", "GSAC",
+    "SUN", "WOLVERINE-HOOSIER", "CHICAGOLAND", "NAC", "AMCC", "SLIAC",
+    "USA SOUTH", "ODAC", "CC", "MAC FREEDOM", "MAC COMMONWEALTH",
+    "EMPIRE 8", "SKYLINE", "CUNYAC", "NECC", "CCC", "NAC", "MWC",
+    "UMAC", "NACC", "SAA", "PAC", "AEC", "GNAC",
+})
+
 
 # ---- 2. per-school verdicts: eyes overrule the votes ----------------- #
 #   (school, state) -> {kind: unit}.  Add a one-line WHY on every entry;
