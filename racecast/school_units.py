@@ -31,10 +31,13 @@ _SHORT_TO_LONG = {
 #   NOT a separate chip: "NCS" and "NCS D1" side by side says NCS twice.
 #   The RANK LINE still ranks both, because placing 12th in the section
 #   and 4th in your division are different facts.
-# ★ THE AREA SITS BETWEEN LEAGUE AND SECTION (owner, 2026-09-02): EBAL,
-#   Tri-Valley, NCS D1 -- spoken smallest first, like the rest.
-_HS_CHIPS = ("league", "area", "state_div", "section_div", "section",
-             "district", "county", "class")
+# ★ BIGGEST FIRST (owner, 2026-09-02, later the same day): CA D2, NCS D2,
+#   Tri-Valley, EBAL -- the order the rank line reads, widest scope down
+#   to the league. A class (6A) is a state-wide size band, so it sits with
+#   the state division; a county or district is a region inside a state,
+#   so it sits between the section and the area.
+_HS_CHIPS = ("state_div", "class", "section", "section_div", "county",
+             "district", "area", "league")
 
 # ! AND COLLEGE IS THE OPPOSITE CASE. A division IS its own unit here,
 #   and it is the TOP of the hierarchy: division, region, conference.
@@ -74,7 +77,9 @@ def _label(kind, value, long, row=None):
         # it sits beside "CA #55" and must not dwarf it
         return f"{parent} D{value}" if parent else f"D{value}"
     if kind == "class":
-        return f"Class {value}" if long else value
+        # "Class 6A" in both forms: a bare "6A" reads, a bare "2" does not
+        # (owner saw one on an athlete page, issue 134)
+        return f"Class {value}"
     if kind == "district":
         return f"District {value}"
     # NCAA DIII is an org code, not a name -- never title-cased
@@ -182,6 +187,16 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
         #   beside "NCS D1" on a meta line -- but placing 12th in the
         #   section and 4th in your division are different facts, so the
         #   rank line asks for collapse=False and gets both.
+        # ! A DIGIT-ONLY CLASS THAT REPEATS A DIVISION IS THE SAME FACT
+        #   TWICE. The parser files a division word off a meet that names
+        #   neither its section nor its state as a class; when the number
+        #   is already the school's section or state division, showing
+        #   "Class 2" beside "NCS D2" says D2 twice (issue 134).
+        if (col == "class" and value is not None
+                and str(value).strip().isdigit()
+                and str(value).strip() in (str(row.get("section_div") or ""),
+                                           str(row.get("state_div") or ""))):
+            continue
         if collapse and col == "section" and row.get("section_div"):
             continue
         out.append({"kind": col,

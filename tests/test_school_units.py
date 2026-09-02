@@ -47,6 +47,15 @@ def main():
              NULL,NULL,false,false,9,'2025'),
             ('T_COL','NY','XC',NULL,NULL,NULL,NULL,NULL,'LIBERTY','MIDEAST',
              'NCAA DIII',true,false,24,'2025')""")
+        # a class that only repeats the section division (issue 134)
+        cur.execute("""
+            INSERT INTO school_unit (school, state, sport, league, section,
+                section_div, state_unit, state_div, class, is_college,
+                conflict, votes, asof) VALUES
+            ('T_HS_DUP','CA','XC','EBAL','NCS','2','CA','2','2',false,false,
+             30,'2025'),
+            ('T_HS_TX','TX','XC','D12','REGION II',NULL,NULL,NULL,'6A',false,
+             false,30,'2025')""")
 
         def labels(school, st, **kw):
             return [u["label"] for u in unitsFor(cur, school, st, **kw)]
@@ -67,16 +76,21 @@ def main():
               labels("T_COL", "NY"), labels("T_COL", "NY", collapse=False))
 
         # ---- high school: a division always names its parent ---------- #
-        check("HS chips qualify every division and drop the bare section",
-              labels("T_HS", "CA"), ["EBAL", "CA D4", "NCS D1"])
+        check("HS chips qualify every division, drop the bare section, "
+              "biggest first",
+              labels("T_HS", "CA"), ["CA D4", "NCS D1", "EBAL"])
         check("HS long form spells the parent out",
               labels("T_HS", "CA", long=True),
-              ["EBAL", "CA Division 4", "North Coast Section Division 1"])
+              ["CA Division 4", "North Coast Section Division 1", "EBAL"])
+        check("a digit class that repeats the division is not a chip",
+              labels("T_HS_DUP", "CA"), ["CA D2", "NCS D2", "EBAL"])
+        check("a real class shows as Class 6A, before the section",
+              labels("T_HS_TX", "TX"), ["Class 6A", "REGION II", "D12"])
         check("HS ranking keeps the section as its own scope",
               sorted(kinds("T_HS", "CA", collapse=False)),
               ["league", "section", "section_div", "state_div"])
         check("HS with no divisions still shows its section",
-              labels("T_HS_NODIV", "OR"), ["TRICO", "SOUTH"])
+              labels("T_HS_NODIV", "OR"), ["SOUTH", "TRICO"])
 
         # ---- the rule that must never cross over ---------------------- #
         bare = [u for u in unitsFor(cur, "T_HS", "CA")

@@ -603,7 +603,12 @@ def parseUnits(meet_name, div_title, college=False, state=None):
                 #   and one 'class' kind made them fight every season).
                 #   The div attaches to the unit that carried it.
                 kinds_here = {k for k, _ in facts} | bare_kinds
-                dk = ("section_div" if "section" in kinds_here else
+                # ★ AN AREA MEET'S DIVISION IS ITS SECTION'S DIVISION.
+                #   "NCS Tri-Valley Area Championships Division 2" is the
+                #   NCS D2 field for that area; filed as a class it showed
+                #   up as a bare "2" chip beside "NCS D2" (issue 134).
+                dk = ("section_div" if ("section" in kinds_here
+                                        or "area" in kinds_here) else
                       "state_div" if "state" in kinds_here else "class")
                 facts.append((dk, tok))
                 break
