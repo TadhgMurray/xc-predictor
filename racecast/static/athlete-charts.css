@@ -535,6 +535,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The course under the meet name on XC rows (issue 119): its own line,
+   smaller and muted, ellipsized the same way. */
+.season table td.meet-cell .meet-course {
+  display: block;
+  font-size: 0.85em;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 
 /* Flags wrap to a second line on narrow screens rather than overflowing. A row
    with six badges is the widest case and ~18% will not always hold it. */

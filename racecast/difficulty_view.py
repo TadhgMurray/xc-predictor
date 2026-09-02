@@ -2,24 +2,27 @@
 
 The engine stores difficulty as a multiplier on time, (1 + d), anchored so
 the row-weighted mean over EVERY cell, cross country and track together, is
-zero. Two things make the raw number misleading on a page:
+zero.
 
-  ★ THE ZERO IS NOT "A TYPICAL COURSE OF THIS SPORT". The sport recentring
-    puts XC cells about +0.02 above the corpus zero and track cells about the
-    same below it, so a perfectly ordinary XC course reads +0.02 and the
-    fastest three-mile course in California displayed as average (owner,
-    2026-09-02). Readers compare a course with other courses of its sport, so
-    that is the zero this file uses: the row-weighted mean of the sport's own
-    cells, read once from course_difficulties and cached.
+  ★ ONE ZERO FOR BOTH SPORTS (owner, 2026-09-02: "I wanted them on the same
+    scale"). An earlier version of this file gave cross country and track
+    each their own zero -- the mean of the sport's own cells -- so an
+    ordinary XC course read 0% and an ordinary track read 0%, and the two
+    could not be compared. That was wrong. The zero is the corpus mean,
+    read from course_difficulties and cached, so a hard XC course and a fast
+    track sit on one line and the gap between them is the sport gap the
+    engine measured. An ordinary XC course therefore reads a little above
+    0% and an ordinary track a little below, which is the truth.
 
-  ★ A PERCENTAGE, NOT A DECIMAL. "+4% slower than a typical XC course, about
-    40 seconds on a 16-minute 5K" is what +0.0589 means, and it is what the
+  ★ A PERCENTAGE, NOT A DECIMAL. "+4% slower than a typical course, about 40
+    seconds on a 16-minute 5K" is what +0.04 means, and it is what the
     templates print. The raw value stays available in a title attribute.
 
 Display only. Nothing here changes a rating; ratings already carry the
 difficulty, which is why a 133 here and a 133 anywhere else are the same
 performance.
 """
+
 
 import math
 import threading
@@ -29,44 +32,48 @@ import time
 REFERENCE_SECONDS = 960.0
 REFERENCE_LABEL = "a 16-minute 5K"
 
-# The per-sport zero, re-read this often. course_difficulties changes once a
-# pipeline run, so an hour is generous.
+# The zero, re-read this often. course_difficulties changes once a pipeline
+# run, so an hour is generous.
 _TTL = 3600.0
-_state = {"at": 0.0, "mean": {}}
+_state = {"at": 0.0, "mean": 0.0}
 _lock = threading.Lock()
 
+# ! ONE ROW, BOTH SPORTS. The engine anchors its difficulties to this same
+#   row-weighted mean, so the value is ~0 by construction and the read is a
+#   guard against a table written with a different anchor, not a
+#   recentring.
 _SQL = """
-    SELECT CASE WHEN course_name LIKE 'XC:%%' THEN 'XC' ELSE 'TF' END AS sport,
-           sum(ln(1.0 + difficulty) * n_results) / NULLIF(sum(n_results), 0)
-               AS mean_log
+    SELECT sum(ln(1.0 + difficulty) * n_results) / NULLIF(sum(n_results), 0)
     FROM   course_difficulties
     WHERE  difficulty IS NOT NULL AND difficulty > -0.9
       AND  n_results > 0
-    GROUP  BY 1
 """
 
 
 def _refresh():
-    """Read the per-sport mean log-multiplier. A failure leaves the last
-    good values in place, or zeros on a fresh process: a page must not 500
-    because the database is mid-rebuild."""
+    """Read the corpus mean log-multiplier. A failure leaves the last good
+    value in place, or zero on a fresh process: a page must not 500 because
+    the database is mid-rebuild."""
     try:
         from database import getConn
         with getConn() as conn, conn.cursor() as cur:
             cur.execute(_SQL)
-            mean = {r[0]: float(r[1] or 0.0) for r in cur.fetchall()}
-        _state["mean"] = mean
+            row = cur.fetchone()
+        _state["mean"] = float(row[0] or 0.0) if row else 0.0
     except Exception:                                    # noqa: BLE001
-        _state.setdefault("mean", {})
+        _state.setdefault("mean", 0.0)
     _state["at"] = time.time()
 
 
-def sportMeanLog(sport):
-    """ln(1 + d) of the typical course of this sport."""
+def sportMeanLog(sport=None):
+    """ln(1 + d) of the typical course -- the same zero whatever the sport.
+    The argument is kept so every caller and template filter keeps working;
+    it no longer selects anything."""
     with _lock:
         if time.time() - _state["at"] > _TTL:
             _refresh()
-    return _state["mean"].get((sport or "XC").upper(), 0.0)
+    return float(_state["mean"])
+
 
 
 def relativePct(difficulty, sport="XC"):
@@ -99,10 +106,10 @@ def diffWords(difficulty, sport="XC"):
     pct = relativePct(difficulty, sport)
     if pct is None:
         return "no difficulty solved for this course yet"
-    kind = "cross country course" if (sport or "XC").upper() == "XC" else "track"
     secs = REFERENCE_SECONDS * pct / 100.0
     if abs(pct) < 0.05:
-        return f"about the same as a typical {kind}"
+        return "about the same as a typical course"
     how = "slower" if pct > 0 else "faster"
-    return (f"{abs(pct):.1f}% {how} than a typical {kind}, about "
+    return (f"{abs(pct):.1f}% {how} than a typical course, about "
             f"{abs(secs):.0f} seconds on {REFERENCE_LABEL}")
+

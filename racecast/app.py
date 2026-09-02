@@ -1117,8 +1117,16 @@ def get_races(cur, person_id):
                -- with no COURSE name still has a MEET name -- falling all
                -- the way through is what rendered "Unlinked meet" on rows
                -- whose race page existed the whole time.
-               COALESCE({_xc_course_sql('r')},
-                        m.meet_name, mt.meet_name) AS meet,
+               -- ★ THE MEET, NOT THE COURSE (owner, 2026-09-02, issue 119).
+               --   The column is headed Meet, and the athlete remembers the
+               --   meet; the course rides beside it in `course` below and
+               --   the template prints it as a second line, because the
+               --   difficulty column refers to the course. A meet with no
+               --   name of its own still falls through to the course name
+               --   rather than to "Unlinked meet".
+               COALESCE(m.meet_name, mt.meet_name,
+                        {_xc_course_sql('r')}) AS meet,
+
                -- XC "event" is the race distance. anet keeps it on `meets`;
                -- tfrrs keeps it PER DIVISION inside a jsonb blob.
                -- ::text so this column is text in BOTH halves (types must match).
@@ -1143,7 +1151,9 @@ def get_races(cur, person_id):
                -- ! ONE lateral pass per race, both counts via FILTER: the
                --   two-subquery version scanned each division twice, and a
                --   200-race career paid 400 scans per page view.
-               pl.place, pl.team_place
+               pl.place, pl.team_place,
+               -- the course, for the second line under the meet name
+               {_xc_course_sql('r')}        AS course
         FROM results r
         LEFT JOIN LATERAL (
             SELECT count(*) FILTER (WHERE r2.time_seconds < r.time_seconds)
@@ -1158,6 +1168,7 @@ def get_races(cur, person_id):
         ) pl ON TRUE
         LEFT JOIN meets m
                ON m.div_id  = r.div_id
+
               AND m.meet_id = r.meet_id
               AND m.source  = r.source
         {_tfrrs_join('r')}{_dist_override_join('r')}
@@ -1214,7 +1225,8 @@ def get_races(cur, person_id):
                CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL
                     ELSE pl.place END       AS place,
                CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL
-                    ELSE pl.team_place END  AS team_place
+                    ELSE pl.team_place END  AS team_place,
+               NULL::text                    AS course
        FROM results_tf r
         LEFT JOIN LATERAL (
             SELECT count(*) FILTER (WHERE r2.time_seconds < r.time_seconds)
@@ -2227,7 +2239,7 @@ def _tf_meet_sources(cur, meet_id, args):
 
 @app.route("/meet/xc/<int:meet_id>")
 def meet_xc(meet_id):
-    from meet_compile import compiledResults, publishedScores
+    from meet_compile import compiledIndex, publishedScores
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -2236,20 +2248,14 @@ def meet_xc(meet_id):
                 sources, request.args.get("alt"))
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
-            compiled  = compiledResults(cur, meet_id, source=src)
+            # ★ THE MEET PAGE ONLY LISTS THE COMPILED RACES; each one has
+            #   its own page. It used to run the full compile -- names,
+            #   places, team splits, scoring -- for five numbers a group
+            #   (issue 121: "meet page loads really slowly"). One aggregate
+            #   query now.
+            compiled_index = compiledIndex(cur, meet_id, source=src)
             meet_date = get_meet_date(cur, "results", meet_id, source=src)
 
-    # ★ THE MEET PAGE ONLY LISTS THE COMPILED RACES; each one has its own
-    #   page. A compiled result IS a race -- it has a distance, a gender, a
-    #   field and a set of team scores -- so it belongs at its own URL,
-    #   linkable and shareable, rather than as a section of something else.
-    #   Embedding them also meant a big invitational rendered several hundred
-    #   rows per group into a page nobody asked for all of.
-    compiled_index = [{"distance": g["distance"], "gender": g["gender"],
-                       "n_results": len(g["results"]),
-                       "n_divisions": len(g["divisions"]),
-                       "n_teams": len(g["scores"]["teams"])}
-                      for g in compiled]
 
     if header is None:
         abort(404)

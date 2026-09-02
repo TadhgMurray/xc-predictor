@@ -250,9 +250,103 @@ def compiledResults(cur, meet_id, source=None):
     return out
 
 
+# compiledIndex
+# Purpose:   the meet page's LIST of compiled races -- (distance, gender,
+#            how many results, divisions, scoring teams) -- without
+#            compiling any of them.
+#
+# ★ THE MEET PAGE WAS DOING ALL OF compiledResults FOR FIVE NUMBERS A GROUP
+#   (owner, 2026-09-02: "meet page loads really slowly"). It fetched every
+#   finisher with a name lateral, derived every division place, split the
+#   colliding school names with a database probe per team, and scored every
+#   race -- then threw all of it away and kept len(). A big invitational is
+#   thousands of rows and dozens of teams, per page view, uncached. This is
+#   one aggregate query: the same distance/gender/source discipline, the
+#   same finisher filter, grouped in SQL.
+#
+# ⚠ n_teams IS "SCHOOLS WITH FIVE OR MORE FINISHERS", the scoring rule's
+#   threshold, counted by name. The full compile also splits colliding
+#   names by home state before scoring, so on a meet where two "Central"s
+#   both fielded five it can count one more team than this does. The index
+#   is a link list; the compiled page itself is still the full compile.
+def compiledIndex(cur, meet_id, source=None):
+    cur.execute("""
+        WITH rows AS (
+            SELECT r.div_id, r.school, r.person_id,
+                   (round(COALESCE(
+                       m.distance,
+                       (mt.division_distances -> r.div_id::text ->> 'distance')::real
+                    ) / 100.0) * 100)::int                AS distance,
+                   a.gender
+            FROM   results r
+            LEFT JOIN meets m ON m.meet_id = r.meet_id
+                             AND m.div_id  = r.div_id
+                             AND m.source  = r.source
+            LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
+                                    AND mt.sport   = 'XC'
+            LEFT JOIN LATERAL (
+                SELECT x.gender
+                FROM   athletes x
+                WHERE  x.athlete_id = r.person_id
+                  AND  x.gender IN ('M', 'F')
+                ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
+                LIMIT  1
+            ) a ON TRUE
+            WHERE  r.meet_id = %(meet)s
+              AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+              AND  r.time_seconds IS NOT NULL
+              AND  r.time_seconds < 999999
+              AND  COALESCE(
+                     m.distance,
+                     (mt.division_distances -> r.div_id::text ->> 'distance')::real
+                   ) > 0
+        ),
+        teams AS (
+            SELECT distance, COALESCE(gender, '?') AS gender, school
+            FROM   rows
+            WHERE  school IS NOT NULL
+            GROUP  BY distance, COALESCE(gender, '?'), school
+            HAVING count(*) >= 5
+        )
+        SELECT g.distance, g.gender, g.n_results, g.n_divisions,
+               COALESCE(t.n_teams, 0) AS n_teams
+        FROM (
+            SELECT distance, COALESCE(gender, '?') AS gender,
+                   count(*)              AS n_results,
+                   count(DISTINCT div_id) AS n_divisions
+            FROM   rows
+            GROUP  BY distance, COALESCE(gender, '?')
+        ) g
+        LEFT JOIN (
+            SELECT distance, gender, count(*) AS n_teams
+            FROM   teams
+            GROUP  BY distance, gender
+        ) t ON t.distance = g.distance AND t.gender = g.gender
+        ORDER  BY g.n_results DESC
+    """, {"meet": meet_id, "src": source})
+    out = []
+    for row in cur.fetchall():
+        get = row.get if isinstance(row, dict) else None
+        if get is None:
+            distance, gender, n_results, n_divisions, n_teams = row
+        else:
+            distance, gender, n_results, n_divisions, n_teams = (
+                row["distance"], row["gender"], row["n_results"],
+                row["n_divisions"], row["n_teams"])
+        # isTeam() is the compile's own rule for what counts as a school;
+        # its non-team names (unattached, countries) cannot field a squad
+        # in the compile and are not worth a second query to exclude here.
+        out.append({"distance": int(distance), "gender": gender,
+                    "n_results": int(n_results),
+                    "n_divisions": int(n_divisions),
+                    "n_teams": int(n_teams)})
+    return out
+
+
 # ------------------------------------------------------------------ #
 #  2. SCORING
 # ------------------------------------------------------------------ #
+
 
 def _finished(r):
     """A row with a real time. 999999 is the DNS/DNF sentinel, not a time."""

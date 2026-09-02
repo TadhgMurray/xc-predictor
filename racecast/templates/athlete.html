@@ -204,7 +204,14 @@
                         {% else %}
                             <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or "—" }}</span>
                         {% endif %}
+                        {# The course, under the meet, on XC rows whose
+                           course is not already the name shown (issue
+                           119): the difficulty column refers to it. #}
+                        {% if race.sport == 'XC' and race.course and race.course != race.meet %}
+                            <span class="meet-course" title="{{ race.course }}">{{ race.course }}</span>
+                        {% endif %}
                     </td>
+
                     <td>{{ race.event|event_label }}</td>
                     <td>{{ race.result }}</td>
                     {# Derived within the division, ties share a place. No
