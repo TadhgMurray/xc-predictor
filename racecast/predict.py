@@ -396,15 +396,25 @@ def _predictTimes(cur, person_ids, target):
             #   legacy z * std + mean is kept for a checkpoint written before
             #   that existed.
             if art.get("kind") == "log_ratio" and hasattr(model,
-                                                          "predictSeconds"):
-                secs = model.predictSeconds(seqs, masks, ctxs, vens)
+                                                          "predictInterval"):
+                secs, lo, hi, sig = model.predictInterval(seqs, masks, ctxs,
+                                                          vens)
             else:
                 secs = model(seqs, masks, ctxs, vens) * art["std"] + art["mean"]
-        for (slot, s, _c, _v), si in zip(batch, secs):
+                lo = hi = sig = None
+        for i, ((slot, s, _c, _v), si) in enumerate(zip(batch, secs)):
             entry = entries[slot] or {}
             entry.update({
                 "seconds": round(float(si), 1),
                 "n_races": len(s)})
+            if sig is not None:
+                # ★ THE MODEL'S OWN BAND: one sigma in log time, so
+                #   sigma_pct 2.0 means "about 2% either way", and lo/hi are
+                #   the 68% interval in seconds.
+                entry.update({
+                    "lo": round(float(lo[i]), 1),
+                    "hi": round(float(hi[i]), 1),
+                    "sigma_pct": round(100.0 * float(sig[i]), 2)})
             entries[slot] = entry
     return entries
 

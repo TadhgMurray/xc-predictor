@@ -100,6 +100,9 @@ _STD_FLOOR = 1e-6
 # The smallest seconds value a target or a baseline may take inside a log.
 _MIN_SECONDS = 1.0
 
+# Bounds on the variance head's log-variance, in z units. See forwardDist.
+LOGVAR_MIN, LOGVAR_MAX = -7.0, 3.0
+
 
 # ------------------------------------------------------------------ #
 # THE MODEL
@@ -142,10 +145,17 @@ class XCPredictor(nn.Module):
         self.pool_attention = nn.MultiheadAttention(
             EMBED_DIM, N_HEADS, dropout=DROPOUT, batch_first=True)
 
+        # ★ TWO OUTPUTS: the predicted z-scored log ratio and its LOG
+        #   VARIANCE. Trained under Gaussian negative log-likelihood, the
+        #   second output learns where the first one's errors are large --
+        #   two prior races against forty, a comeback after a long gap -- so
+        #   every prediction comes with its own band. forward() returns only
+        #   the mean, so every existing caller is unchanged; forwardDist()
+        #   returns both.
         self.head = nn.Sequential(
             nn.Linear(2 * EMBED_DIM + CONTEXT_FEATURES + VENUE_EMBED_DIM, 64),
             nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(64, 2),
         )
 
         # ★ CALIBRATION BUFFERS. Part of the state_dict, so model.pt carries
@@ -221,9 +231,9 @@ class XCPredictor(nn.Module):
 
     # ---- the forward pass ------------------------------------------ #
 
-    def forward(self, sequences: torch.Tensor, masks: torch.Tensor,
-                context: torch.Tensor,
-                venues: torch.Tensor = None) -> torch.Tensor:
+    def _forwardRaw(self, sequences: torch.Tensor, masks: torch.Tensor,
+                    context: torch.Tensor,
+                    venues: torch.Tensor = None) -> torch.Tensor:
         x = (sequences.to(torch.float32) - self.seq_mean) / self.seq_std
         ctx = (context.to(torch.float32) - self.ctx_mean) / self.ctx_std
 
@@ -239,7 +249,36 @@ class XCPredictor(nn.Module):
         venue_vec = self.venue_embedding(venues)          # [B,16]
 
         combined = torch.cat([attended, pooled, ctx, venue_vec], dim=1)
-        return self.head(combined).squeeze(-1)            # [B]
+        return self.head(combined)                         # [B,2]
+
+    def forwardDist(self, sequences, masks, context, venues=None):
+        """(mu, logvar), both [B], in z units of the log ratio.
+
+        ⚠ logvar IS CLAMPED. Unbounded, the variance head can run to -inf on
+          an easy example (infinite confidence, infinite gradient) or to +inf
+          to make a hard example cost nothing. [-7, 3] in z units spans a
+          sigma from 0.03 to 4.5 standard deviations, which is every case
+          that means anything.
+        """
+        out = self._heads(sequences, masks, context, venues)
+        mu = out[:, 0]
+        logvar = out[:, 1].clamp(min=LOGVAR_MIN, max=LOGVAR_MAX)
+        return mu, logvar
+
+    def forward(self, sequences: torch.Tensor, masks: torch.Tensor,
+                context: torch.Tensor,
+                venues: torch.Tensor = None) -> torch.Tensor:
+        """The mean prediction, z-scored log ratio. [B]"""
+        return self._heads(sequences, masks, context, venues)[:, 0]
+
+    def sigmaLog(self, sequences, masks, context, venues=None):
+        """Predicted one-sigma spread of ln(time), per example. [B]
+
+        In natural-log units, so 0.02 means "about 2% of the time". Undo the
+        z-scoring: the head's variance is in z units of the log ratio.
+        """
+        _mu, logvar = self.forwardDist(sequences, masks, context, venues)
+        return torch.exp(0.5 * logvar.to(torch.float32)) * self.target_std
 
     def predictSeconds(self, sequences, masks, context,
                        venues=None) -> torch.Tensor:
@@ -249,7 +288,27 @@ class XCPredictor(nn.Module):
         return base * torch.exp(z.to(torch.float32) * self.target_std
                                 + self.target_mean)
 
+    def predictInterval(self, sequences, masks, context, venues=None,
+                        z_score: float = 1.0):
+        """(seconds, lo, hi, sigma_log): the prediction with its band.
+
+        lo/hi are seconds at -/+ z_score sigma in LOG time, so the band is
+        multiplicative and never crosses zero. z_score 1.0 is a 68% band
+        under the model's own Gaussian; 1.645 is 90%.
+        """
+        mu, logvar = self.forwardDist(sequences, masks, context, venues)
+        base = self.baselineSeconds(sequences, masks)
+        mu = mu.to(torch.float32) * self.target_std + self.target_mean
+        sig = torch.exp(0.5 * logvar.to(torch.float32)) * self.target_std
+        secs = base * torch.exp(mu)
+        return (secs, base * torch.exp(mu - z_score * sig),
+                base * torch.exp(mu + z_score * sig), sig)
+
     # ---- pieces ------------------------------------------------------ #
+
+    def _heads(self, sequences, masks, context, venues=None):
+        """The raw [B,2] head output; forward/forwardDist read it."""
+        return self._forwardRaw(sequences, masks, context, venues)
 
     def _encode(self, x: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
         padding_mask = ~masks                    # True = padding = ignore

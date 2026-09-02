@@ -137,11 +137,13 @@ SEED = 42
 STATS_OUT = "model/data/target_stats.pkl"
 
 # ★ THE TARGET IS A LOG RATIO TO THE ATHLETE'S LAST RACE, and the loss is
-#   Huber on its z-score. See transformer.py's header for why. HUBER_DELTA is
-#   in z units: inside one standard deviation the loss is squared error,
-#   beyond it linear, so a single blown-up race (a fall, a DNF-ish jog) does
-#   not own the gradient of its batch.
-HUBER_DELTA = 1.0
+#   Gaussian negative log-likelihood on its z-score with a LEARNED variance
+#   per example (transformer.forwardDist). The model is rewarded for being
+#   right and for knowing how unsure it is: a wrecked race costs little when
+#   the variance head has already said "this one is uncertain", which is the
+#   same protection Huber gave, and the band it learns is a real output.
+#   GaussianNLLLoss takes the variance, not its log; VAR_EPS keeps it off 0.
+VAR_EPS = 1e-6
 
 # ★ FEATURE AND TARGET STATS COME FROM A CHUNK PREFIX, not the whole corpus.
 #   Chunks are corpus-wide shuffles, so the first STATS_CHUNKS (2M examples)
@@ -900,8 +902,11 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
 
         optimizer.zero_grad()                      # 1. clear old gradients
         with _autocast():
-            preds = model(sequences, masks, context, venues)  # 2. forward
-            loss  = criterion(preds, z_true)       # 3. measure how wrong
+            mu, logvar = model.forwardDist(sequences, masks, context,
+                                           venues)             # 2. forward
+        # The likelihood in fp32: exp(logvar) under bf16 is too coarse.
+        loss = criterion(mu.to(torch.float32), z_true,
+                         torch.exp(logvar.to(torch.float32)) + VAR_EPS)
         loss.backward()                            # 4a. compute gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()                           # 4b. apply the update
@@ -944,6 +949,9 @@ def _validateOneEpoch(model, loader, criterion):
     n_batches  = 0
     err_model = 0.0
     err_base = 0.0
+    sq_err = 0.0
+    sq_sig = 0.0
+    inside = 0
     n_ex = 0
 
     with torch.no_grad():
@@ -961,15 +969,26 @@ def _validateOneEpoch(model, loader, criterion):
             # Same precision as training, so val loss is comparable to
             # train loss rather than measured on a different arithmetic.
             with _autocast():
-                preds = model(sequences, masks, context, venues)
-            loss  = criterion(preds.to(torch.float32), z_true)
+                mu, logvar = model.forwardDist(sequences, masks, context,
+                                               venues)
+            mu = mu.to(torch.float32)
+            var = torch.exp(logvar.to(torch.float32)) + VAR_EPS
+            loss = criterion(mu, z_true, var)
 
             std = float(model.target_std)
             mean = float(model.target_mean)
             lr_true = z_true * std + mean                 # ln(t / last race)
-            lr_pred = preds.to(torch.float32) * std + mean
-            err_model += float((lr_pred - lr_true).abs().sum())
+            lr_pred = mu * std + mean
+            err = lr_pred - lr_true
+            sig = torch.sqrt(var) * std                   # predicted sigma
+            err_model += float(err.abs().sum())
             err_base += float(lr_true.abs().sum())
+            # ★ CALIBRATION. If the variance head is honest, the RMS error
+            #   equals the RMS predicted sigma and ~68% of truths fall inside
+            #   one predicted sigma. Both are printed per epoch.
+            sq_err += float((err * err).sum())
+            sq_sig += float((sig * sig).sum())
+            inside += int((err.abs() <= sig).sum())
             n_ex += int(targets.shape[0])
 
             total_loss += loss.item()
@@ -977,7 +996,10 @@ def _validateOneEpoch(model, loader, criterion):
 
     n_ex = max(n_ex, 1)
     return (total_loss / max(n_batches, 1),
-            100.0 * err_model / n_ex, 100.0 * err_base / n_ex)
+            100.0 * err_model / n_ex, 100.0 * err_base / n_ex,
+            {"rmse_pct": 100.0 * (sq_err / n_ex) ** 0.5,
+             "sigma_pct": 100.0 * (sq_sig / n_ex) ** 0.5,
+             "inside_1s": 100.0 * inside / n_ex})
 
 
 # ------------------------------------------------------------------ #
@@ -1139,9 +1161,9 @@ def main():
                                   weight_decay=WEIGHT_DECAY)
     scheduler = _buildScheduler(optimizer, len(train_loader))
 
-    # 7. Huber on the z-scored log ratio: squared inside HUBER_DELTA, linear
-    #    beyond, so one wrecked race cannot own its batch's gradient.
-    criterion = nn.HuberLoss(delta=HUBER_DELTA)
+    # 7. Gaussian NLL on the z-scored log ratio with the learned variance.
+    #    See VAR_EPS. reduction='mean' over the batch, as MSE was.
+    criterion = nn.GaussianNLLLoss(eps=VAR_EPS)
 
     start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
         CHECKPOINT, model, optimizer, scheduler)
@@ -1149,7 +1171,7 @@ def main():
     for epoch in range(start_epoch, EPOCHS):
         train_loss, st = _trainOneEpoch(model, train_loader, optimizer,
                                         criterion, scheduler)
-        val_loss, pct_model, pct_base = _validateOneEpoch(
+        val_loss, pct_model, pct_base, cal = _validateOneEpoch(
             model, val_loader, criterion)
 
         # ! THE TWO PERCENTAGES ARE THE NUMBERS TO READ. `model` is the
@@ -1159,6 +1181,8 @@ def main():
         print(f"epoch {epoch + 1:2d}/{EPOCHS}  "
               f"train {train_loss:.4f}  val {val_loss:.4f}  "
               f"model {pct_model:.2f}%  last-race {pct_base:.2f}%  "
+              f"rmse {cal['rmse_pct']:.2f}% vs sigma {cal['sigma_pct']:.2f}% "
+              f"({cal['inside_1s']:.0f}% inside 1s)  "
               f"{st['examples_per_s']:,.0f} ex/s  "
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "

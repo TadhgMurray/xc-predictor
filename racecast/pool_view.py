@@ -485,6 +485,31 @@ def stampBoardRows(rows, rating_keys=("rating",), pool=None, sport=None):
     return has_alt
 
 
+def sortByShown(rows, key):
+    """Order board rows by the number the page SHOWS: hs_<key> where it was
+    stamped, else <key>. Descending; rows with neither go last.
+
+    ★ A ROSTER THAT MIXES POOLS READS UNSORTED OTHERWISE. schoolRoster orders
+      by the stored own-pool rating; the page then renders the HS-equivalent
+      (the default view), and two pools with different factors -- college_m
+      onto hs_m against college_f onto hs_f -- interleave out of order. The
+      rank column is loop.index, so the order of this list IS the rank.
+      Within one pool the factor is a constant and this changes nothing.
+
+    ! SORTED FOR THE DEFAULT VIEW. The scale toggle is client-side and swaps
+      numbers without re-ranking, so the own-pool view of a mixed table can
+      read unsorted the way the HS view used to. That is the smaller wrong
+      way round: own-pool numbers across pools were never comparable.
+    """
+    def shown(r):
+        v = r.get("hs_" + key)
+        if v is None:
+            v = r.get(key)
+        return (v is None, -(float(v) if v is not None else 0.0))
+    rows.sort(key=shown)
+    return rows
+
+
 def seasonFactor(races, label=None, sport=None):
     """The median hs/own ratio over stamped races, optionally filtered to
     one (season label, sport). For scaling season-level MEANS (the header

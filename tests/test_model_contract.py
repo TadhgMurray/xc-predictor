@@ -84,11 +84,20 @@ ok("clip_grad_norm_(model.parameters(), GRAD_CLIP)" in body(TR, "_trainOneEpoch"
    "gradients are clipped between backward and step")
 ok("scheduler.step()" in body(TR, "_trainOneEpoch"),
    "the LR schedule advances once per optimizer step")
-ok("nn.HuberLoss(" in TR, "Huber loss, not MSE")
+ok("nn.GaussianNLLLoss(" in TR and "model.forwardDist(" in body(TR, "_trainOneEpoch"),
+   "Gaussian NLL with the learned variance, not MSE")
+ok("def forwardDist(" in TF and "def predictInterval(" in TF
+   and "nn.Linear(64, 2)" in TF, "the head predicts a mean and a log-variance")
+ok("clamp(min=LOGVAR_MIN, max=LOGVAR_MAX)" in body(TF, "forwardDist"),
+   "the log-variance is clamped")
+ok("inside_1s" in body(TR, "_validateOneEpoch") and "sigma_pct" in body(TR, "main"),
+   "calibration is printed every epoch")
+ok("model.predictInterval(" in PR and '"sigma_pct"' in PR,
+   "predict.py returns the band")
 ok('"scheduler": (scheduler.state_dict()' in body(TR, "_saveCheckpoint")
    and 'scheduler.load_state_dict(ck["scheduler"])' in body(TR, "_loadCheckpoint"),
    "the schedule resumes with the run")
-for c in ("HUBER_DELTA", "WEIGHT_DECAY", "WARMUP_STEPS", "LR_FLOOR_FRAC",
+for c in ("VAR_EPS", "WEIGHT_DECAY", "WARMUP_STEPS", "LR_FLOOR_FRAC",
           "GRAD_CLIP", "STATS_CHUNKS"):
     ok(re.search(rf"^{c} = ", TR, re.M) is not None, f"{c} is a named constant")
 
@@ -97,14 +106,14 @@ ok("last-race" in body(TR, "main") and "pct_base" in body(TR, "main"),
    "every epoch prints the last-race error beside the model's")
 
 # ---- 6. THE SITE INVERTS WITH THE MODEL, AND READS EITHER KEY. ---- #
-ok("model.predictSeconds(seqs, masks, ctxs, vens)" in PR,
-   "predict.py uses predictSeconds for a log-ratio model")
+ok("predictInterval" in PR,
+   "predict.py inverts through the model for a log-ratio model")
 ok('stats.get("mean", stats.get("target_mean"))' in PR,
    "predict.py reads either spelling of the stats keys")
 ok('"mean": float(stats["mean"])' in body(TR, "saveTargetStats")
    and '"target_mean": float(stats["mean"])' in body(TR, "saveTargetStats"),
    "train.py writes both spellings")
-ok("predictSeconds" in PC, "predict_check inverts with the model too")
+ok("predictInterval" in PC, "predict_check inverts with the model too")
 
 if failed:
     for f in failed:
@@ -115,7 +124,7 @@ if failed:
 print("  one target definition, owned by the model ......... OK")
 print("  inputs standardised, stats saved with the weights .. OK")
 print("  the target race queries the history ................ OK")
-print("  AdamW, clipping, warmup/cosine, Huber, resumable ... OK")
+print("  AdamW, clipping, warmup/cosine, NLL+variance, resumable OK")
 print("  last-race baseline printed every epoch ............. OK")
 print("  the site inverts with the model .................... OK")
 print("\nall model-contract checks passed")

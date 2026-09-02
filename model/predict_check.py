@@ -76,7 +76,7 @@ def main():
     n = min(args.n, len(dataset))
 
     print(f"running {n} examples...")
-    preds, actuals, bases = [], [], []
+    preds, actuals, bases, los, his = [], [], [], [], []
     with torch.no_grad():
         batch = []
         for i in range(n):
@@ -84,9 +84,12 @@ def main():
             if len(batch) == 256 or i == n - 1:
                 sequences, masks, context, targets, venues = \
                     T.collateRagged(batch)
-                if kind == "log_ratio" and hasattr(model, "predictSeconds"):
-                    preds.append(model.predictSeconds(sequences, masks,
-                                                      context, venues))
+                if kind == "log_ratio" and hasattr(model, "predictInterval"):
+                    p, lo, hi, _sig = model.predictInterval(
+                        sequences, masks, context, venues)
+                    preds.append(p)
+                    los.append(lo)
+                    his.append(hi)
                     bases.append(model.baselineSeconds(sequences, masks))
                 else:
                     out = model(sequences, masks, context, venues)
@@ -114,6 +117,11 @@ def main():
         b_err = (torch.cat(bases) - actuals).abs()
         print(f"  last-race baseline MAE {b_err.mean():6.1f}s  "
               f"(the model must beat this to be worth having)")
+    if los:
+        lo, hi = torch.cat(los), torch.cat(his)
+        inside = ((actuals >= lo) & (actuals <= hi)).float().mean()
+        print(f"  1-sigma band: mean width {(hi - lo).mean():6.1f}s, "
+              f"{100 * inside:.0f}% of actuals inside (68% if calibrated)")
     print("\nthe model runs and outputs. Judge the NUMBERS by what "
           "trained this model.pt (a smoke run is a smoke run).")
 

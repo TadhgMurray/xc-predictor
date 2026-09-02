@@ -26,7 +26,7 @@ from flask import Flask, render_template, abort
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
-                       stampRowsHs, stampBoardRows)
+                       stampRowsHs, stampBoardRows, sortByShown)
 from teams import (parseFilters as parseTeamFilters, serveBoard,
                    getCoursePerformances as getTeamCoursePerformances)
 from courses import (parseFilters as parseCourseFilters,
@@ -3259,7 +3259,8 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
             OR bool_or(round(m.distance)::int = %(dist)s)
         ORDER BY max(r.date) DESC
         LIMIT %(limit)s
-    # +1: the extra row is how the cap reports that it bit. See capped.py.
+        -- +1: the extra row is how the cap reports that it bit. See capped.py.
+        -- (a '#' here is not a SQL comment: it 500'd every course page.)
     """, {"course": course_name, "dist": dist, "limit": limit + 1})
     return fetchCapped(cur, limit)
 
@@ -3365,6 +3366,13 @@ def school_page(school_name):
     has_hs_view = stampBoardRows(roster, rating_keys=("mean_rating",
                                                       "best_rating"),
                                  sport=sport) or has_hs_view
+    # ★ THE RANK IS THE ROW ORDER, so order on the number the page shows.
+    #   A college school page mixes college_m and college_f, whose HS factors
+    #   differ, and read unsorted in the HS-equivalent view (owner,
+    #   2026-09-02). See pool_view.sortByShown.
+    sortByShown(best, "rating")
+    sortByShown(top, "best")
+    sortByShown(roster, "mean_rating")
 
     # ⚠ SAY WHY THE ROSTER IS MISSING. Years and rosters live in
     #   athlete_season, a rebuilt table that is empty mid-rebuild (and
