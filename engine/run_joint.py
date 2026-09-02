@@ -230,7 +230,22 @@ def main():
     ap.add_argument("--no-sport-offset", action="store_true")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
+    # ⚠ THE LIVE SWITCH (issue 116). --golive writes course_difficulties,
+    #   athlete_ratings, results.speed_rating and pair_difficulty.npz from
+    #   THIS solve, through joint_golive. --golive-dry builds all of it and
+    #   writes only the npz, for a look before the irreversible part.
+    ap.add_argument("--golive", action="store_true")
+    ap.add_argument("--golive-dry", action="store_true")
+    ap.add_argument("--anchor", default="career",
+                    choices=("career", "seasonal"),
+                    help="pool mean for the per-result rating")
+    ap.add_argument("--collapse", default="best",
+                    choices=("best", "recent", "weighted"),
+                    help="season -> athlete_ratings row")
+    ap.add_argument("--no-race-effect", action="store_true",
+                    help="leave the race-day effect out of per-result ratings")
     args = ap.parse_args()
+
 
     if not os.path.exists(args.pack):
         sys.exit(f"[joint] no pack at {args.pack} -- run 07_pack first")
@@ -312,7 +327,21 @@ def main():
     np.savez(args.out, **save)
     print(f"[joint] wrote {args.out}")
 
+    if args.golive or args.golive_dry:
+        import joint_golive as jg
+        live = jg.buildLive(out, D, cols, keep, collapse=args.collapse,
+                            anchor=args.anchor,
+                            use_race_effect=not args.no_race_effect)
+        jg.report(live)
+        jg.writeNpz(live, os.path.join(os.path.dirname(args.out),
+                                       "pair_difficulty.npz"))
+        if args.golive:
+            jg.writeLive(live)
+        else:
+            print("[joint/live] --golive-dry: nothing written to the database")
+
     # ★ THE COMPARISON IS THE POINT. Same cells -- so a large move is the
+
     #   race-day term, the robust weights and the curve, and it should be
     #   biggest exactly where the old engine's SE was least trustworthy.
     if old_delta is not None:

@@ -741,17 +741,32 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     }
     if D.has_curve:
         c = b["c"].reshape(D.n_pool, D.n_knot)
-        # anchored per pool to its row-weighted mean: the curve's constant is
-        # the pool's abilities' constant, so only the shape is reportable
+        # ★ THE CURVE'S GAUGE IS THE SEASON RATING'S MEANING. The fit pins
+        #   one knot (1 October) at zero, so the raw abilities are "ability
+        #   at October form". Per-result ratings leave the curve out and so
+        #   scatter around ability at the athlete's AVERAGE form over the
+        #   year; the two only agree if the curve is anchored to its
+        #   row-weighted mean per pool and the abilities are shifted by the
+        #   same amount, scaled by each athlete-season's own amplitude --
+        #   an exact reparameterisation, since amp is constant within an
+        #   athlete-season. Measured on the synthetic year before this: the
+        #   per-race median sat 1.1 points above the season rating.
         f_row = D.w0 * b["c"][D.k0] + D.w1 * b["c"][D.k1]
         mean_p = (np.bincount(D.pool_row, weights=w * f_row, minlength=D.n_pool)
                   / np.maximum(np.bincount(D.pool_row, weights=w,
                                            minlength=D.n_pool), 1e-12))
+        amp_g = np.ones(D.n_ath)
+        amp_g[D.athlete] = amp
+        pool_g = np.zeros(D.n_ath, dtype=np.int64)
+        pool_g[D.athlete] = D.pool_row
+        out["ability_raw"] = b["a"]
+        out["ability"] = b["a"] + amp_g * mean_p[pool_g]
         out["curve"] = c
         out["curve_anchored"] = c - mean_p[:, None]
         out["curve_knot_days"] = np.arange(D.n_knot) * D.knot_days
         out["curve_lambda"] = lam
     return out
+
 
 
 # ------------------------------------------------------------------ #

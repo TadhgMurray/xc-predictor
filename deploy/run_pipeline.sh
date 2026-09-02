@@ -140,25 +140,44 @@ else
 fi
 
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
-step 08_golive        "$PY" -u engine/linkage_check.py --golive --split
 
-# ★ SHADOW ONLY. Writes engine/data/joint_difficulty.npz and nothing else.
-if [ "${XCP_JOINT:-0}" = "1" ]; then
-  # --holdout scores 10% of rows first (a second solve); --probes 16 keeps
-  # the posterior-variance pass to minutes rather than hours on a first run.
-  step 08b_joint_shadow "$PY" -u engine/run_joint.py --holdout --probes 16
-
+# ★ TWO SOLVERS, ONE SWITCH.
+#   XCP_JOINT_LIVE=1  the joint solve IS step 08: it writes course_difficulties,
+#                     athlete_ratings, results.speed_rating and
+#                     pair_difficulty.npz (issue 116). The tilt is inside its
+#                     ratings, so 09_tilt is skipped -- running it would tilt
+#                     twice -- and 10c_gap is skipped, since the sport level is
+#                     a parameter and the bbar loop has nothing to steer.
+#   XCP_JOINT=1       the sequential solve stays live; the joint solve runs
+#                     beside it as a shadow and writes joint_difficulty.npz only.
+if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
+  step 08_golive        "$PY" -u engine/run_joint.py --golive --holdout --probes 16
+  echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
+  echo "  09_tilt skipped: the joint ratings carry the tilt"
 else
-  echo "  08b_joint_shadow skipped (set XCP_JOINT=1 to run)"
+  step 08_golive        "$PY" -u engine/linkage_check.py --golive --split
+  if [ "${XCP_JOINT:-0}" = "1" ]; then
+    # --holdout scores 10% of rows first (a second solve); --probes 16 keeps
+    # the posterior-variance pass to minutes rather than hours on a first run.
+    step 08b_joint_shadow "$PY" -u engine/run_joint.py --holdout --probes 16
+  else
+    echo "  08b_joint_shadow skipped (set XCP_JOINT=1 to run)"
+  fi
+  step 09_tilt          "$PY" -u engine/apply_tilt.py --refresh --write
 fi
-
-step 09_tilt          "$PY" -u engine/apply_tilt.py --refresh --write
 step 09b_fill         "$PY" -u engine/fill_ratings.py
+
 
 # ---- boards and pages ----------------------------------------------- #
 step 10_rankings      "$PY" -u racecast/build_ranking_results.py
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
-step 10c_gap          "$PY" -u scripts/measure_sport_gap.py --emit
+if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
+  # measured for telemetry only: the joint level is not steered by the json
+  step 10c_gap        "$PY" -u scripts/measure_sport_gap.py
+else
+  step 10c_gap        "$PY" -u scripts/measure_sport_gap.py --emit
+fi
+
 step 10d_school_units "$PY" -u racecast/build_school_units.py
 step 11_teams         "$PY" -u racecast/build_team_season.py
 step 12_courses       "$PY" -u racecast/build_course_rank.py
