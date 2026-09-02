@@ -4235,3 +4235,6 @@ tr.hl-school td { background: #fef9c3; }
 .meet-filters .field-check { align-self: flex-end; padding-bottom: 0.45rem; }
 .meet-filters .field-check label { font-weight: 500; white-space: nowrap; }
 
+/* the pager's one-line status: counting, or why Last could not */
+.pager .page-note { font-size: 0.8rem; color: var(--muted); margin-left: 0.6rem; }
+

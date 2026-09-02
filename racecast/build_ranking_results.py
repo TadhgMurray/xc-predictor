@@ -1775,6 +1775,44 @@ def seedOtherSports(conn, keep_sports):
     print(f"  carried over {moved:,} {'/'.join(missing)} rows from the live table")
 
 
+# ★ THE DEFAULT BOARDS' LENGTHS, WRITTEN ONCE PER BUILD. The rankings pager's
+#   Last button needs the board's length, and counting a board narrowed
+#   only by pool and sport is a twenty-million-row scan on the live corpus
+#   (owner, 2026-09-02: "pressing last doesn't work"). Counted here, after
+#   the swap, through rankings.countRows -- the same code the page uses --
+#   so the stored number is the number the page would have computed.
+_BOARD_SIZE_SPORTS = ("XC", "TF", "both")
+_BOARD_SIZE_BOARDS = ("ability", "performance")
+
+
+def buildBoardSizes(conn):
+    from werkzeug.datastructures import MultiDict
+    import rankings as RK
+    t0 = time.time()
+    rows = []
+    with conn.cursor() as cur:
+        for board in _BOARD_SIZE_BOARDS:
+            for pool in sorted(RK.POOLS):
+                for sport in _BOARD_SIZE_SPORTS:
+                    f, err = RK.parseFilters(MultiDict(
+                        {"board": board, "pool": pool, "sport": sport}))
+                    if err:
+                        continue
+                    n = RK.countRows(cur, f, timeout_ms=0)
+                    rows.append((board, pool, sport, int(n or 0)))
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS board_size (
+                board text NOT NULL, pool text NOT NULL, sport text NOT NULL,
+                n bigint NOT NULL, built_at timestamptz DEFAULT now(),
+                PRIMARY KEY (board, pool, sport))
+        """)
+        cur.execute("DELETE FROM board_size")
+        psycopg2.extras.execute_values(
+            cur, "INSERT INTO board_size (board, pool, sport, n) VALUES %s", rows)
+    conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] board_size: {len(rows)} default boards counted")
+
+
 def swapIn(conn):
     """Four renames in ONE transaction. This is the only visible moment.
 
@@ -2137,6 +2175,21 @@ def main():
             refreshAthleteSeason(conn)
         with phase("swap in + drop old"):
             swapIn(conn)
+    # ! VACUUM AFTER THE SWAP, OUTSIDE A TRANSACTION. A freshly built table
+    #   has an empty visibility map, so every index-only count and every
+    #   board scan visits the heap until the first vacuum; autovacuum may
+    #   take hours to get to a table this size. Minutes here buy the fast
+    #   counts Last relies on for every filtered board.
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            t0 = time.time()
+            cur.execute("VACUUM (ANALYZE) ranking_results")
+            cur.execute("VACUUM (ANALYZE) athlete_season")
+            print(f"    [{time.time() - t0:7.1f}s] VACUUM ANALYZE both tables")
+    finally:
+        conn.autocommit = False
+    buildBoardSizes(conn)
 
     elapsed = (datetime.datetime.now() - started).total_seconds()
     total = sum(v for k, v in stats.items() if k.endswith("_written"))

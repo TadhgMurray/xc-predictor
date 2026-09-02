@@ -4792,10 +4792,14 @@ def api_rankings():
             #   separate request rather than a field on every load.
             if (request.args.get("count") or "") == "1":
                 try:
-                    return jsonify({"filters": f, "total": countRows(cur, f)})
+                    n = countRows(cur, f)
                 except Exception as exc:                # noqa: BLE001
                     conn.rollback()
                     return jsonify({"error": f"count failed: {exc}"}), 400
+                return jsonify({"filters": f, "total": n,
+                                "reason": (None if n is not None else
+                                           "This board is too long to count "
+                                           "quickly. Narrow it, or use Next.")})
             try:
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,

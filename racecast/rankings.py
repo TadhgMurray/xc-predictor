@@ -1211,13 +1211,77 @@ def countOf(cur, f):
     return int(cur.fetchone()[0])
 
 
-def countRows(cur, f):
+# ★ THE DEFAULT BOARDS ARE COUNTED AT BUILD TIME. A board narrowed only by
+#   pool and sport is most of what anyone presses Last on, and on the live
+#   corpus that count is a scan of twenty million rows -- the button just
+#   hung (owner, 2026-09-02). build_ranking_results writes board_size after
+#   every swap; countRows reads it when the filters are exactly the default
+#   and only counts live, under a time limit, for everything else.
+_DEFAULT_NEUTRAL = ("state", "year", "school", "grade", "course", "event",
+                    "date_from", "date_to", "gender")
+COUNT_TIMEOUT_MS = 8000
+
+
+def isDefaultBoard(f):
+    """True when nothing but board, pool and sport narrows the rows."""
+    if f.get("scope", "usa") != "usa" or f.get("min_races_explicit"):
+        return False
+    if f["board"] not in ("ability", "performance"):
+        return False
+    for k in _DEFAULT_NEUTRAL:
+        if f.get(k):
+            return False
+    if f["board"] == "performance" and f.get("distance") is not None:
+        return False
+    return True
+
+
+def storedBoardSize(cur, f):
+    """board_size row for a default board, or None when the table or the
+    row is absent (an older build, or a pool nobody counted)."""
+    try:
+        cur.execute("""
+            SELECT n FROM board_size
+            WHERE  board = %(b)s AND pool = %(p)s AND sport = %(s)s
+        """, {"b": f["board"], "p": f["pool"], "s": f["sport"]})
+        row = cur.fetchone()
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        return None
+    if row is None:
+        return None
+    return int(row[0] if isinstance(row, (tuple, list)) else list(row.values())[0])
+
+
+def countRows(cur, f, timeout_ms=COUNT_TIMEOUT_MS):
     """How long the board is under these filters, for the pager's Last
-    button (?count=1). Each board counts what it ranks: ability counts
-    athlete-seasons above the floor, performances counts rated rows, best
-    times counts PEOPLE with a usable mark or time -- one row per athlete
-    is what that board shows. A scan on a wide filter, which is why it is a
-    separate request and not a field on every load."""
+    button (?count=1), or None when it cannot be known in time.
+
+    Each board counts what it ranks: ability counts athlete-seasons above
+    the floor, performances counts rated rows, best times counts PEOPLE
+    with a usable mark or time -- one row per athlete is what that board
+    shows. The default boards come from board_size; the rest are counted
+    live inside a statement timeout, and a board too wide to count in
+    time answers None rather than holding the page."""
+    if isDefaultBoard(f):
+        n = storedBoardSize(cur, f)
+        if n is not None:
+            return n
+    cur.execute("SAVEPOINT board_count")
+    try:
+        if timeout_ms:
+            cur.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+        n = _countLive(cur, f)
+        cur.execute("RELEASE SAVEPOINT board_count")
+        return n
+    except Exception as exc:                         # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT board_count")
+        if "canceling statement" in str(exc) or "timeout" in str(exc).lower():
+            return None
+        raise
+
+
+def _countLive(cur, f):
     board = f["board"]
     if board == "ability":
         return countOf(cur, f)

@@ -1724,6 +1724,15 @@ $("next").addEventListener("click", () => {
   load();
 });
 
+let _noteTimer = null;
+function pagerNote(text) {
+  const el = $("pageNote");
+  if (!el) return;
+  el.textContent = text;
+  clearTimeout(_noteTimer);
+  _noteTimer = setTimeout(() => { el.textContent = ""; }, 6000);
+}
+
 /* ★ LAST asks the server how long the board is, then lands on its final
    page. The count is a separate request on purpose: a board load must not
    pay for a count(*) it will not use, and pressing Last is the one time
@@ -1731,13 +1740,20 @@ $("next").addEventListener("click", () => {
 $("last").addEventListener("click", async () => {
   const btn = $("last");
   btn.disabled = true;
+  pagerNote("Counting\u2026");
   try {
     const q = buildQuery();
     q.set("count", "1");
     const res = await fetch("/api/rankings?" + q.toString());
     const data = await res.json();
-    if (!res.ok || !Number.isInteger(data.total)) return;
+    if (!res.ok || !Number.isInteger(data.total)) {
+      /* the server gave up inside its time limit: say so where the eye
+         is, and leave the board alone */
+      pagerNote(data.reason || data.error || "Could not count this board.");
+      return;
+    }
     const lastOffset = Math.max(0, Math.floor((data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+    pagerNote("");
     if (lastOffset === state.offset) return;
     state.offset = lastOffset;
     load();
