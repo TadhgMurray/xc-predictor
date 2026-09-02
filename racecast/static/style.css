@@ -4161,10 +4161,15 @@ tr.row-hi > td { background: #fdf3cd; }
     margin-left: 0.35rem;
     font: italic 600 10px Georgia, "Times New Roman", serif;
     letter-spacing: 0;
-    vertical-align: -0.15em;
+    /* middle: the ring's centre sits on the text's x-height midline, so
+       the whole symbol reads on the same line as the label beside it. */
+    vertical-align: middle;
+    position: relative;
+    top: -0.05em;
     cursor: help;
     opacity: 0.8;
 }
+
 
 .info-i:hover, .info-i:focus { color: #111; border-color: #111; opacity: 1; }
 th .info-i { font-weight: 600; }
