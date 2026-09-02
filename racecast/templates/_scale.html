@@ -25,9 +25,11 @@
    by JS -- rankings.js shows it only when the served rows actually move. #}
 {% macro scale_toggle(hidden=False, same=False) %}
     {# `same`: every rating on the page is already on the HS scale, so the
-       two views show the same numbers. The control still renders -- a
-       toggle that comes and goes between athletes read as a fault (owner,
-       2026-09-02) -- and says so beside the buttons. #}
+       two views show the same numbers. The control still renders, looking
+       exactly as it does everywhere else -- a toggle that came and went
+       between athletes read as a fault, and a note saying "same on both"
+       was not wanted either (owner, 2026-09-02). The class is kept for
+       scripts; nothing styles it. #}
     <div class="scale-toggle{% if same %} is-same{% endif %}" id="scale-toggle"{% if hidden %} style="display:none"{% endif %}>
         <span class="scale-lab">Rating scale</span>
 
@@ -40,7 +42,6 @@
               data-title="Rating scale"
               data-blurb="Each pool has its own rating scale, which means speed ratings are not comparable across pools. The HS-equivalent view (the default) rates everyone like a high schooler, which makes ratings comparable across age. Own pool shows each rating on its own pool's scale, where 100 is that pool's average -- the scale the model fitted, and the one to read when comparing an athlete against their own peers. They are still not one-to-one comparable across gender (although they are close in percentiles)."
               aria-label="Rating scale. Each pool has its own rating scale, which means speed ratings are not comparable across pools. The HS-equivalent view, the default, rates everyone like a high schooler, which makes ratings comparable across age. Own pool shows each rating on its own pool's scale, where 100 is that pool's average. They are still not one-to-one comparable across gender, although they are close in percentiles.">?</span>
-        {% if same %}<span class="scale-same" title="Every rating on this page is on the high-school scale already, so both views show the same numbers.">same on both</span>{% endif %}
     </div>
 
 {% endmacro %}

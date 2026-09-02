@@ -4184,16 +4184,6 @@ th .info-i { font-weight: 600; }
 
 .dv { font-variant-numeric: tabular-nums; }
 
-/* The scale toggle on a page whose ratings are all on the HS scale already:
-   the control stays (it must not come and go between athletes) and LOOKS
-   THE SAME -- the owner does not want it faded (2026-09-02); only the note
-   beside it says the two views agree. */
-.scale-toggle .scale-same {
-    margin-left: 0.5rem;
-    font-size: 0.78em;
-    color: #6b7280;
-    cursor: help;
-}
 
 /* A school's own rows on a race page reached from its meets table
    (?school=), and the "· School" mark beside the races it ran on the meet
