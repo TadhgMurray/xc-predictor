@@ -1449,6 +1449,10 @@ async function load() {
     $("next").disabled = Number.isInteger(data.total)
       ? state.offset + rows.length >= data.total
       : rows.length < PAGE_SIZE;
+    /* Last is pointless when Next is: a short page is the end of the board.
+       Only the three rating boards can be counted (see api_rankings). */
+    $("last").disabled = $("next").disabled
+      || !["ability", "performance", "pr"].includes(state.board);
     $("pageLabel").textContent =
       `${state.offset + 1}\u2013${state.offset + rows.length}`;
 
@@ -1718,6 +1722,30 @@ $("prev").addEventListener("click", () => {
 $("next").addEventListener("click", () => {
   state.offset += PAGE_SIZE;
   load();
+});
+
+/* ★ LAST asks the server how long the board is, then lands on its final
+   page. The count is a separate request on purpose: a board load must not
+   pay for a count(*) it will not use, and pressing Last is the one time
+   the number is wanted. Nothing to do on a board of one page. */
+$("last").addEventListener("click", async () => {
+  const btn = $("last");
+  btn.disabled = true;
+  try {
+    const q = buildQuery();
+    q.set("count", "1");
+    const res = await fetch("/api/rankings?" + q.toString());
+    const data = await res.json();
+    if (!res.ok || !Number.isInteger(data.total)) return;
+    const lastOffset = Math.max(0, Math.floor((data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+    if (lastOffset === state.offset) return;
+    state.offset = lastOffset;
+    load();
+  } catch (err) {
+    /* the button just re-enables; the board on screen is unchanged */
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // Enter anywhere in the filter bar applies, instead of doing nothing.

@@ -1211,6 +1211,36 @@ def countOf(cur, f):
     return int(cur.fetchone()[0])
 
 
+def countRows(cur, f):
+    """How long the board is under these filters, for the pager's Last
+    button (?count=1). Each board counts what it ranks: ability counts
+    athlete-seasons above the floor, performances counts rated rows, best
+    times counts PEOPLE with a usable mark or time -- one row per athlete
+    is what that board shows. A scan on a wide filter, which is why it is a
+    separate request and not a field on every load."""
+    board = f["board"]
+    if board == "ability":
+        return countOf(cur, f)
+    params = {}
+    where = _whereClauses(f, params, with_dates=True)
+    if board == "performance":
+        cur.execute(f"""
+            SELECT count(*) FROM ranking_results
+            WHERE  speed_rating IS NOT NULL {where}
+        """, params)
+        return int(cur.fetchone()[0])
+    if board == "pr":
+        is_field = f.get("event") in PR_FIELD_EVENTS
+        cand_where = ("mark IS NOT NULL" if is_field else
+                      f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}")
+        cur.execute(f"""
+            SELECT count(DISTINCT person_id) FROM ranking_results
+            WHERE  {cand_where} {where}
+        """, params)
+        return int(cur.fetchone()[0])
+    raise ValueError(f"no count for board {board!r}")
+
+
 def _rankByCount(cur, f, person_id):
     """Rank by COUNTING what outranks the athlete. Default sort only.
 

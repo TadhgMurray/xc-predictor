@@ -484,6 +484,11 @@
     <button id="prev">&larr; Prev</button>
     <span class="page" id="pageLabel"></span>
     <button id="next">Next &rarr;</button>
+    {# ★ LAST (owner, 2026-09-02). The board does not know its length on an
+       ordinary load -- counting is a scan the page should not pay for on
+       every filter change -- so the button asks for the count when pressed
+       (?count=1) and jumps. #}
+    <button id="last" title="Jump to the last page">Last &raquo;</button>
   </div>
 
 </div>

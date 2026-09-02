@@ -4767,7 +4767,7 @@ def athlete_results():
 
 
 from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
-                      getAbilityRankings, rankOf, countOf, PR_DISTANCES)
+                      getAbilityRankings, rankOf, countOf, countRows, PR_DISTANCES)
 from season_floor import floorFor, floorLabel, poolWords, percentileWords, clockFor
 
 
@@ -4787,6 +4787,15 @@ def api_rankings():
             uerr = applyUnitFilters(cur, f, request.args)
             if uerr:
                 return jsonify({"error": uerr}), 400
+            # ★ ?count=1: only the length of the board, for the pager's Last
+            #   button (owner, 2026-09-02). A count is a scan, so it is a
+            #   separate request rather than a field on every load.
+            if (request.args.get("count") or "") == "1":
+                try:
+                    return jsonify({"filters": f, "total": countRows(cur, f)})
+                except Exception as exc:                # noqa: BLE001
+                    conn.rollback()
+                    return jsonify({"error": f"count failed: {exc}"}), 400
             try:
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,
