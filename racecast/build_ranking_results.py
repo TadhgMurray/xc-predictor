@@ -1584,6 +1584,14 @@ _CANONICAL_INDEXES = {
         # rankings performance boards: pool/sport/year equality, then
         #   ORDER BY speed_rating DESC LIMIT cand
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
+        # ★ THE DEFAULT BOARDS WALK THE RATING IN INDEX ORDER (owner,
+        #   2026-09-02: "make the rankings faster"). A board narrowed only
+        #   by pool, or by pool and sport, has no year to pin the index
+        #   above, so its candidate stage sorted every row of the pool
+        #   before taking the first fifty. These two let it stop after the
+        #   fifty; the state and floor filters drop few rows along the way.
+        ("rr_pool_rating_idx", "(pool, speed_rating DESC)"),
+        ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
         ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
         # rankings marks boards: WHERE event_kind = 'shot_put' ...
@@ -1601,6 +1609,10 @@ _CANONICAL_INDEXES = {
         # rankings ability boards: WHERE n_races >= .. AND pool/sport/year,
         #   ORDER BY mean_rating DESC
         ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC)"),
+        # the same two for the athletes board (its ORDER BY is mean_rating
+        # DESC, person_id -- the tiebreak rides in the index)
+        ("as_pool_mean_idx", "(pool, mean_rating DESC, person_id)"),
+        ("as_pool_sport_mean_idx", "(pool, sport, mean_rating DESC, person_id)"),
         # the same boards sorted on the season best instead
         ("as_board_best_idx", "(pool, sport, year, best_rating DESC)"),
         # school.py roster/years/currentSeason: WHERE school = %s

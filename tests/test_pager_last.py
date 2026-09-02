@@ -63,3 +63,11 @@ def test_default_boards_are_read_not_counted():
     js = read("racecast", "static", "rankings.js")
     assert "pagerNote(data.reason" in js
 
+
+def test_default_boards_have_a_rating_ordered_index():
+    brr = read("racecast", "build_ranking_results.py")
+    for name in ("rr_pool_rating_idx", "rr_pool_sport_rating_idx",
+                 "as_pool_mean_idx", "as_pool_sport_mean_idx"):
+        assert f'("{name}"' in brr
+    assert '"(pool, mean_rating DESC, person_id)"' in brr
+
