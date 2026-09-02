@@ -217,21 +217,15 @@ def recenterSport(D):
     #    says, which inflates every XC rating. That is issue #64's symptom,
     #    manufactured by the recentring step rather than found in the corpus.
     #
-    # ! SIGN DISAGREEMENT IS THE HARD STOP, not a warning. Drift away from
-    #   the constant is expected and is the telemetry the file was built for;
-    #   a sign flip is not drift, it means the constant describes a different
-    #   parameterisation. Fall back to the solve's own estimate and say so.
+    # ! THE GUARD IS THE RIDGE THE FILE RECORDS (pair_recenter.measuredFor),
+    #   not the sign of the solve's own estimate: at ridge 0.5 that estimate
+    #   is ~0 by construction and its sign is noise. See linkage_check.
     own_bbar, _n = prc.meanOffset(D["beta"], D["sc"], D["group"],
                                   D["n_groups"])
-    use_bbar = prc.MEASURED_BBAR
-    if use_bbar is not None and own_bbar * use_bbar < 0:
-        print(f"[all] ⚠ MEASURED_BBAR {use_bbar:+.5f} disagrees in SIGN with "
-              f"this solve's {own_bbar:+.5f} -- it was measured at a "
-              f"different ridge. Falling back to the solve's own estimate; "
-              f"re-run scripts/measure_sport_gap.py at ridge "
-              f"{D.get('ridge', 0.0):g} to refresh "
-              f"engine/data/sport_gap_bbar.json.")
-        use_bbar = None
+    use_bbar, note = prc.measuredFor(D.get("ridge", 0.0), own_bbar)
+    if note:
+        print(note)
+
 
     delta, alpha, beta, bbar, n_ident = prc.recenter(
         D["delta"], D["alpha"], D["beta"], D["sc"], D["group"],

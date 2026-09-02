@@ -688,6 +688,13 @@ def _emit(d, args):
                 "applied_bbar": float(applied),
                 "D": float(d),
                 "measured_date": datetime.date.today().isoformat()})
+    # ! THE RIDGE TRAVELS WITH THE CONSTANT. applied_ridge is what the 08
+    #   golive recorded for the recentring D was measured against, so it
+    #   is the ridge this measured_bbar is valid at. pair_recenter.measuredFor
+    #   applies the constant only to a solve at that ridge (issue #74).
+    if doc.get("applied_ridge") is not None:
+        doc["measured_ridge"] = float(doc["applied_ridge"])
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)

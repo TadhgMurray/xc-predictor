@@ -369,6 +369,15 @@ OUTPUT_FILE = os.path.join(OUTPUT_DIR, "distance_spline.pkl")
 # happened twice) should never charge the streams again. Pairs are cached
 # as PLAIN TUPLES, not dicts — same data at ~1/4 the pickle size.
 CACHE_FILE = os.path.join(OUTPUT_DIR, "distance_pairs_cache.pkl")
+# Season-best TF pairs (--season-best, issue #109) are a different sample
+# of the same tables; they get their own cache so the two can never mix.
+CACHE_FILE_SEASON_BEST = os.path.join(OUTPUT_DIR,
+                                      "distance_pairs_cache_seasonbest.pkl")
+
+
+def _cachePath(season_best_tf):
+    return CACHE_FILE_SEASON_BEST if season_best_tf else CACHE_FILE
+
 
 # ------------------------------------------------------------------ #
 # SMALL SHARED HELPERS (dates, pools)
@@ -712,6 +721,67 @@ def _flushAthletePairs(records, pairs_out, ledger):
         ledger["pairs"] += 1
 
 
+# _flushAthleteSeasonBest
+# Purpose:   ONE athlete's records -> SEASON-BEST pairs (issue #109).
+#            Per (season, 100m distance bucket) keep the fastest time, then
+#            pair the bests across buckets. The estimand changes: a windowed
+#            pair records what the athlete ran that month, effort asymmetry
+#            included -- the 3200 raced below its equal-quality mark in a
+#            dual or a double -- while best-against-best records equal-
+#            QUALITY performances, which is what equal rating has to mean.
+#            diag_exponent_season_best measured the difference: fast HS boys
+#            fade at k=1.16 on season bests against a saved curve that runs
+#            1.14 -> 1.09 across 1600 -> 3200, so a top-decile 3200
+#            normalised ~3.5% slower than the same athlete's 1600.
+#
+#            ⚠ A RUNG RACED TEN TIMES YIELDS A BETTER BEST THAN ONE RACED
+#              ONCE (order statistics), which flatters the distance the
+#              athlete races more -- in TF usually the shorter one, so the
+#              bias INFLATES k slightly. min_per_rung >= 2 tightens it; the
+#              ledger counts what it drops.
+#
+#            The pair's earlier race is race 1, exactly as the windowed
+#            path, so the pool is read off it; the canon dedupe runs first
+#            for the same reason it does there.
+# Arguments: records -- this athlete's record dicts; pairs_out; ledger;
+#            min_per_rung -- a bucket needs this many races to field a best.
+# Output:    None (mutates pairs_out and ledger).
+def _flushAthleteSeasonBest(records, pairs_out, ledger, min_per_rung=1):
+    rows = _dropCanonDuplicates(records, ledger)
+
+    rungs = {}                                 # (season, bucket) -> [best, n]
+    for r in rows:
+        key = (r["season"], round(r["dist"] / TRANSITION_BUCKET_M))
+        slot = rungs.get(key)
+        if slot is None:
+            rungs[key] = [r, 1]
+        else:
+            slot[1] += 1
+            if r["time"] < slot[0]["time"]:
+                slot[0] = r
+
+    by_season = {}
+    for (season, _bucket), (best, n) in rungs.items():
+        if n < min_per_rung:
+            ledger["rung_under_min"] += 1
+            continue
+        by_season.setdefault(season, []).append(best)
+
+    for season, bests in by_season.items():
+        bests.sort(key=lambda r: r["dist"])
+        for i, ra in enumerate(bests):
+            for rb in bests[i + 1:]:
+                if abs(rb["dist"] - ra["dist"]) < MIN_DISTANCE_DIFF_METERS:
+                    continue
+                if not _ratioOk(ra["dist"], rb["dist"]):
+                    ledger["near_equal_ratio"] += 1
+                    continue
+                r1, r2 = (ra, rb) if ra["ord"] <= rb["ord"] else (rb, ra)
+                pairs_out.append(_makePair(r1, r2))
+                ledger["pairs"] += 1
+
+
+
 # _dropCanonDuplicates
 # Purpose:   Remove same-race copies inside one athlete: at canon-linked
 #            meets the anet and tfrrs rows describe one result. Key =
@@ -772,20 +842,21 @@ def _makePair(r1, r2):
 #            prepare — _prepareXCRow or _prepareTFRow;
 #            ledger — {reason: n}, mutated throughout.
 # Output:    list of pair dicts for the whole sport.
-def _consumePairStream(cur, prepare, ledger):
+def _consumePairStream(cur, prepare, ledger, flush=_flushAthletePairs):
     pairs, buffer, current_aid = [], [], None
     for row in cur:                     # named cursor: fetches ITERSIZE
         aid = row[0]                    # rows per round trip, transparently
         if aid != current_aid:
             if buffer:
-                _flushAthletePairs(buffer, pairs, ledger)
+                flush(buffer, pairs, ledger)
             buffer, current_aid = [], aid
         rec = prepare(row, ledger)
         if rec is not None:
             buffer.append(rec)
     if buffer:                          # the last athlete has no aid-change
-        _flushAthletePairs(buffer, pairs, ledger)   # to flush them — do it
+        flush(buffer, pairs, ledger)    # to flush them — do it
     return pairs
+
 
 
 # _setSortMemory
@@ -803,9 +874,15 @@ def _setSortMemory(conn):
 #            plumbing problems must be read before curves are interpreted.
 # Arguments: conn — open connection; sport — "XC" | "TF".
 # Output:    list of pair dicts.
-def _loadSportPairs(conn, sport):
+def _loadSportPairs(conn, sport, season_best=False, min_per_rung=1):
     sql, prepare = ((_XC_SQL, _prepareXCRow) if sport == "XC"
                     else (_TF_SQL, _prepareTFRow))
+    if season_best:
+        def flush(buffer, pairs, ledger):
+            _flushAthleteSeasonBest(buffer, pairs, ledger, min_per_rung)
+    else:
+        flush = _flushAthletePairs
+
     # PRE-EXISTING BUG (surfaced by --fresh, which forces the streaming path the
     # cache used to skip): `insane_pace` and `near_equal_ratio` are incremented
     # by _finishRecord / _flushAthletePairs but were never initialised here, so
@@ -816,17 +893,21 @@ def _loadSportPairs(conn, sport):
                    "insane_time", "insane_pace", "near_equal_ratio",
                    "unknown_pool",
                    "not_flat", "racewalk", "relay", "indoor",
-                   "unknown_venue_offseason"]
+                   "unknown_venue_offseason", "rung_under_min"]
     ledger = {k: 0 for k in ledger_keys}
 
-    print(f"Loading {sport} pairs (streamed)...")
+    print(f"Loading {sport} pairs (streamed"
+          f"{', SEASON BESTS per rung' if season_best else ''}"
+          f"{f', rung needs {min_per_rung} races' if season_best and min_per_rung > 1 else ''})...")
+
     # A NAMED cursor is server-side: rows stay in Postgres and arrive in
     # ITERSIZE batches as we iterate — fetchall of 193M rows can't happen.
     cur = conn.cursor(name=f"dist_pairs_{sport.lower()}")
     cur.itersize = ITERSIZE
     cur.execute(sql)
-    pairs = _consumePairStream(cur, prepare, ledger)
+    pairs = _consumePairStream(cur, prepare, ledger, flush)
     cur.close()
+
 
     print(f"  [{sport} ledger]  " + "  ".join(
         f"{k}={ledger[k]:,}" for k in ledger_keys if ledger[k]))
@@ -854,22 +935,23 @@ def _tuplesToPairs(tuples):
 # _saveCache / _loadCache
 # Purpose:   Persist / restore both sports' pairs in one file. _loadCache
 #            returns None when the file is absent — the caller streams.
-def _saveCache(xc_pairs, tf_pairs):
+def _saveCache(xc_pairs, tf_pairs, path=CACHE_FILE):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with open(CACHE_FILE, "wb") as f:
+    with open(path, "wb") as f:
         pickle.dump({"xc": _pairsToTuples(xc_pairs),
                      "tf": _pairsToTuples(tf_pairs)}, f)
-    print(f"  pair cache written -> {CACHE_FILE}")
+    print(f"  pair cache written -> {path}")
 
 
-def _loadCache():
-    if not os.path.exists(CACHE_FILE):
+def _loadCache(path=CACHE_FILE):
+    if not os.path.exists(path):
         return None
-    with open(CACHE_FILE, "rb") as f:
+    with open(path, "rb") as f:
         c = pickle.load(f)
-    print(f"  pair cache loaded <- {CACHE_FILE}  "
+    print(f"  pair cache loaded <- {path}  "
           f"(--fresh to re-stream; delete it after schema changes)")
     return _tuplesToPairs(c["xc"]), _tuplesToPairs(c["tf"])
+
 
 
 # _dropOverMaxPairs
@@ -970,9 +1052,16 @@ def _dropOverPoolRange(pairs):
 #            cache is filtered here) so no path can carry a monster.
 # Arguments: use_cache — False (--fresh) forces a re-stream.
 # Output:    (xc_by_pool, tf_by_pool) — {pool: [pair, ...]} each.
-def loadAllPairs(use_cache=True):
+def loadAllPairs(use_cache=True, season_best_tf=False, min_per_rung=1):
+    # ★ --season-best CHANGES THE TF SAMPLE ONLY. XC keeps its windowed
+    #   pairs: an XC athlete-season rarely fields two distances at all, and
+    #   where it does (a 4828 and a 5000) the pair is one course against
+    #   another, which no season-best selection makes cleaner. The track
+    #   curve is where the effort asymmetry lives (issue #109).
+    cache_path = _cachePath(season_best_tf)
     if use_cache:
-        cached = _loadCache()
+        cached = _loadCache(cache_path)
+
         if cached is not None:
             xc_pairs, tf_pairs = cached
             xc_pairs = _dropOverMaxPairs(xc_pairs, "XC")
@@ -985,9 +1074,11 @@ def loadAllPairs(use_cache=True):
     with getConn() as conn:
         _setSortMemory(conn)
         xc_pairs = _loadSportPairs(conn, "XC")
-        tf_pairs = _loadSportPairs(conn, "TF")
-    _saveCache(xc_pairs, tf_pairs)       # persist BEFORE anything can crash
+        tf_pairs = _loadSportPairs(conn, "TF", season_best=season_best_tf,
+                                   min_per_rung=min_per_rung)
+    _saveCache(xc_pairs, tf_pairs, cache_path)   # persist BEFORE any crash
     return _groupByPool(xc_pairs), _groupByPool(tf_pairs)
+
 
 
 # _groupByPool
@@ -2321,11 +2412,30 @@ def main():
     parser.add_argument("--residuals", action="store_true",
                         help="print the per-pool residual instrument "
                              "(debiased evidence vs fitted curve)")
+    parser.add_argument("--season-best", action="store_true",
+                        help="TF pairs are each athlete-season's BEST per "
+                             "100m distance rung, paired across rungs "
+                             "(issue #109: equal-quality, not same-month). "
+                             "XC pairs are unchanged. Own pair cache.")
+    parser.add_argument("--min-per-rung", type=int, default=1,
+                        help="with --season-best: a rung needs this many "
+                             "races before its best counts (2 tightens the "
+                             "order-statistic bias toward the more-raced "
+                             "distance)")
     args = parser.parse_args()
 
     print("=== fit_distance_exponent.py (rewrite) ===\n")
+    if args.season_best:
+        print("TF SAMPLE: season bests per rung (--season-best"
+              f"{f', --min-per-rung {args.min_per_rung}' if args.min_per_rung > 1 else ''})."
+              " The saved hs TF curve will be refit on equal-quality "
+              "pairs; compare its local exponents against the windowed "
+              "fit before trusting either.\n")
 
-    xc_by_pool, tf_by_pool = loadAllPairs(use_cache=not args.fresh)
+    xc_by_pool, tf_by_pool = loadAllPairs(use_cache=not args.fresh,
+                                          season_best_tf=args.season_best,
+                                          min_per_rung=args.min_per_rung)
+
     total_xc = sum(len(p) for p in xc_by_pool.values())
     total_tf = sum(len(p) for p in tf_by_pool.values())
     if total_xc + total_tf == 0:

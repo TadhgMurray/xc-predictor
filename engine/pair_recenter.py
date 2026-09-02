@@ -156,17 +156,99 @@ def meanOffset(beta, sc, group, n_groups):
 _GAP_JSON = os.path.join(_HERE, "data", "sport_gap_bbar.json")
 
 
-def _loadMeasured():
+def _loadDoc():
     import json
     try:
         with open(_GAP_JSON, encoding="utf-8") as f:
-            v = json.load(f).get("measured_bbar")
+            doc = json.load(f)
     except (OSError, ValueError):
-        return None
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _loadMeasured():
     try:
+        v = _loadDoc().get("measured_bbar")
         return float(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+# ★ THE RIDGE THE MEASURED CONSTANT BELONGS TO. measured_bbar = applied + D,
+#   and `applied` was a recentring at one ridge; the loop only closes when
+#   the next solve runs at the same one. measured_ridge is written by the
+#   --emit step (it copies applied_ridge across).
+#
+#   Without measured_ridge the file is older than that write, and the
+#   dates decide: applied_ridge describes the LAST golive, and the measured
+#   value belongs to it only if it was measured AFTER that golive ran
+#   (measured_date >= applied_date -- 08 then 10c on the same day). A
+#   measured value older than the last application is a leftover from an
+#   earlier parameterisation, and every solve before 2026-09-02 ran the
+#   split at ridge 0, so 0.0 is the ridge it was measured at, not a guess.
+#   The failure this avoids: the 09-02 golive stamped applied_ridge 0.5
+#   beside a measured_bbar the 10c step never refreshed; reading that as
+#   "measured at 0.5" would re-apply the ridge-0 constant on top of a solve
+#   whose delta already carries the gap -- the #73 double count again.
+def _loadMeasuredRidge():
+    doc = _loadDoc()
+    try:
+        if doc.get("measured_ridge") is not None:
+            return float(doc["measured_ridge"])
+        ar = doc.get("applied_ridge")
+        if ar is not None and (str(doc.get("measured_date") or "")
+                               >= str(doc.get("applied_date") or "")):
+            return float(ar)
+    except (TypeError, ValueError):
+        pass
+    return 0.0
+
+
+
+# measuredFor
+# Purpose:   the bbar a solve at `ridge` should apply: the measured constant
+#            when it was measured at this ridge, else None (the solve's own
+#            estimate), with the reason.
+# Arguments: ridge -- this solve's K; own_bbar -- the solve's own weighted
+#            mean of beta; measured / measured_ridge -- default to the file.
+# Output:    (bbar or None, note). `note` is None when the constant applies
+#            cleanly, else the one line the golive should print.
+#
+# ⚠ KEYED ON THE RIDGE, NOT ON THE SIGN. The guard shipped 2026-08-31
+#   compared the sign of the solve's own estimate with the measured one.
+#   At ridge 0.5 the solve's own bbar is ~0 BY CONSTRUCTION -- the ridge
+#   pushes the mean offset out of beta and into delta -- so its sign is
+#   noise, and the guard fired or stayed silent at random. Silent, it
+#   double-counted the gap (issue #73, the -0.109); fired, it discarded a
+#   correction the loop had just written, and once D had pushed measured
+#   across zero it discarded every one after it, so the loop could never
+#   converge. The ridge is a fact the file records; the sign was a proxy.
+def measuredFor(ridge, own_bbar, measured=None, measured_ridge=None):
+    measured = MEASURED_BBAR if measured is None else measured
+    measured_ridge = (MEASURED_RIDGE if measured_ridge is None
+                      else measured_ridge)
+    if measured is None:
+        return None, None
+    ridge = float(ridge or 0.0)
+    if abs(float(measured_ridge) - ridge) > 1e-9:
+        return None, (
+            f"[all] ⚠ MEASURED_BBAR {measured:+.5f} was measured at ridge "
+            f"{float(measured_ridge):g}; this solve runs ridge {ridge:g}. "
+            f"A bbar is only valid at the ridge it was measured at, so the "
+            f"solve's own estimate ({own_bbar:+.5f}) applies; the 10c gap "
+            f"step re-measures at ridge {ridge:g} and the next solve picks "
+            f"that up.")
+    note = None
+    if own_bbar * measured < 0:
+        # Telemetry only. At the same ridge the measured constant is the
+        # loop's corrected value and the solve's own is the uncorrected
+        # one; they may legitimately straddle zero once D has been folded in.
+        note = (f"[all] note: MEASURED_BBAR {measured:+.5f} and the solve's "
+                f"own estimate {own_bbar:+.5f} differ in sign at ridge "
+                f"{ridge:g} -- expected once the loop has nudged the "
+                f"constant across zero; applying the measured value.")
+    return float(measured), note
+
 
 
 # recordApplied : the golive calls this with the bbar it ACTUALLY applied,
@@ -194,6 +276,8 @@ def recordApplied(bbar, ridge=None):
 
 
 MEASURED_BBAR = _loadMeasured()
+MEASURED_RIDGE = _loadMeasuredRidge()
+
 
 
 def recenter(delta, alpha, beta, sc, group, sport, course, n_cells, n_groups,
