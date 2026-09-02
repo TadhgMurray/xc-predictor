@@ -51,6 +51,22 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
   difference the view exists to remove. A pool without a gender suffix
   (unknown_gender) gets no factor and keeps its own-scale number.
 
+★ ONE FACTOR PER POOL (owner, 2026-09-02: "hs-equivalent changes between
+  sports too ... it totally fucks the rankings"). The per-(pool, sport,
+  distance) factor above was right about the LEVEL and wrong about the
+  BOARDS: a middle-school board of both sports sorted on HS-equivalents
+  put a 142.2 XC season under a 138.2 track season, because the two rows
+  wore different multipliers. A view that reorders rows inside one pool is
+  not a view of that pool. So the factor is now C(hs)/C(pool) alone, with
+  C sampled over BOTH sports, one number per pool -- which is exactly the
+  old factor at the normalising distance (5000 m, where F is 1 on both
+  sides), and which the joint solve's sport offset licenses: inside a pool,
+  XC and TF ratings are already on one scale, so their HS multiplier must
+  be too. Within a pool the HS view is now a monotone rescale of the own
+  view -- same order on every board, for every mix of sport and distance.
+  The `sport` and `distance_m` arguments stay for the callers and are
+  ignored.
+
 ⚠ THE VIEW CHANGES NUMBERS ONLY, NEVER VERDICTS. PR/SR flags, board
   eligibility and record stars are all computed on the own-pool scale and
   stay put when the reader toggles -- a view must not re-adjudicate records.
@@ -189,16 +205,20 @@ _loadConstFile()
 
 def _poolConstant(pool, sport):
     """C(pool, sport): median of rating*nt/(1+difficulty)/100 over rows the
-    athlete ran WHILE IN this pool. None when the pool cannot be sampled."""
+    athlete ran WHILE IN this pool. None when the pool cannot be sampled.
+    sport=None samples BOTH sports and medians the union -- the one number
+    per pool the HS factor uses now (module header)."""
     key = (pool, sport)
     if key in _CONST_CACHE:
         return _CONST_CACHE[key]
-
-    sql = _CONST_SQL.get(sport)
+    sports = ("XC", "TF") if sport is None else (sport,)
     vals = []
-    if sql is not None:
+    for sp in sports:
+        sql = _CONST_SQL.get(sp)
+        if sql is None:
+            continue
         try:
-            d = default_difficulty(sport)     # see the trade note above
+            d = default_difficulty(sp)      # see the trade note above
             with getConn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
@@ -210,9 +230,8 @@ def _poolConstant(pool, sport):
         except Exception as exc:         # noqa: BLE001 -- a view, not a page
             if key not in _FAILED:
                 _FAILED.add(key)
-                print(f"pool_view: constant sample for {pool}/{sport} "
+                print(f"pool_view: constant sample for {pool}/{sp} "
                       f"raised {type(exc).__name__}: {exc}", flush=True)
-
     value = median(vals) if len(vals) >= _CONST_MIN_ROWS else None
     if value is None and key not in _FAILED:
         _FAILED.add(key)
@@ -224,69 +243,47 @@ def _poolConstant(pool, sport):
 
 
 def hsFactor(pool, sport, distance_m):
-    """Multiplier from `pool`'s scale onto the same-gender HS scale, for one
-    race context (sport + distance in metres).
+    """Multiplier from `pool`'s scale onto the same-gender HS scale.
+
+    ONE NUMBER PER POOL (module header): C(hs_g) / C(pool), with C sampled
+    over both sports. `sport` and `distance_m` are accepted for the callers
+    and ignored -- a factor that varied by them reordered rows inside a
+    pool on every mixed board.
 
     Returns None when no factor can be computed (no pool, no gender suffix,
-    no distance, engine refused, sanity rail) -- callers must treat None as
-    "leave the rating on its own scale", never as 1.0-with-a-shrug.
+    constant unavailable, sanity rail) -- callers must treat None as "leave
+    the rating on its own scale", never as 1.0-with-a-shrug.
     """
-    if not pool or not distance_m:
+    if not pool:
         return None
+    pool = pool.split("|", 1)[0]
     if pool in ("hs_m", "hs_f"):
         return 1.0
     suffix = pool.rsplit("_", 1)[-1]
     if suffix not in ("m", "f"):
         return None                      # unknown_gender etc: no HS twin
-
-    try:
-        dq = int(round(float(distance_m)))
-    except (TypeError, ValueError):
-        return None
-    key = (pool, sport, dq)
+    key = pool
     if key in _FACTOR_CACHE:
         return _FACTOR_CACHE[key]
-
-    # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
-    #   with no other symptom, so say why ONCE on the server console.
     why = None
     factor = None
-    try:
-        # season/track/event_short deliberately None: era keys off the
-        # pool's GENDER (identical on both sides) and geometry never sees
-        # the pool, so both cancel in the ratio -- the F ratio isolates
-        # exactly the per-pool spline level, which the C ratio then
-        # cancels back out (see the module header: the two ratios
-        # together are the talent gap, neither alone is).
-        f_own = _forward_factor(float(dq), pool, None, None, None, sport, None)
-        f_hs = _forward_factor(float(dq), "hs_" + suffix,
-                               None, None, None, sport, None)
-    except Exception as exc:             # noqa: BLE001 -- a view, not a page
-        f_own = f_hs = None
-        why = f"engine factor raised {type(exc).__name__}: {exc}"
-
-    if why is None and (not f_own or not f_hs):
-        why = f"engine factor returned {pool}={f_own!r}, hs_{suffix}={f_hs!r}"
-
-    if why is None:
-        c_own = _poolConstant(pool, sport)
-        c_hs = _poolConstant("hs_" + suffix, sport)
-        if not c_own or not c_hs:
-            why = (f"pool constant unavailable "
-                   f"({pool}={c_own!r}, hs_{suffix}={c_hs!r})")
-        else:
-            factor = (float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs))
-            if not (_FACTOR_LO <= factor <= _FACTOR_HI):
-                why = (f"factor {factor:.3f} outside the "
-                       f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
-                       f"(C {c_own:.1f}->{c_hs:.1f}, "
-                       f"F {f_own:.4f}->{f_hs:.4f})")
-                factor = None
-
+    c_own = _poolConstant(pool, None)
+    c_hs = _poolConstant("hs_" + suffix, None)
+    if not c_own or not c_hs:
+        why = (f"pool constant unavailable "
+               f"({pool}={c_own!r}, hs_{suffix}={c_hs!r})")
+    else:
+        factor = float(c_hs) / float(c_own)
+        if not (_FACTOR_LO <= factor <= _FACTOR_HI):
+            why = (f"factor {factor:.3f} outside the "
+                   f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
+                   f"(C {c_own:.1f}->{c_hs:.1f})")
+            factor = None
+    # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
+    #   with no other symptom, so say why ONCE on the server console.
     if why is not None and key not in _FAILED:
         _FAILED.add(key)
-        print(f"pool_view: no HS factor for {pool}/{sport}/{dq}m -- {why}",
-              flush=True)
+        print(f"pool_view: no HS factor for {pool} -- {why}", flush=True)
     _FACTOR_CACHE[key] = factor
     return factor
 
