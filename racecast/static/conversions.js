@@ -293,6 +293,51 @@
         }
     );
 
+    function hsMode() {
+        return Boolean(window.rcScale && window.rcScale.mode === 'hs');
+    }
+
+    // ★ THE POOL FOLLOWS THE ATHLETE (issue 49). The select defaulted to
+    //   hs_m, so a college runner arriving from their page was converted as
+    //   a high schooler. /api/athlete_pool says which pool their latest
+    //   season is in; the select follows, and the reader can still change it.
+    function adoptAthletePool(pid, then) {
+        fetch('/api/athlete_pool?person_id=' + encodeURIComponent(pid))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; })
+            .then(function (d) {
+                if (d && d.pool && poolSel) {
+                    var has = Array.prototype.some.call(poolSel.options,
+                        function (o) { return o.value === d.pool; });
+                    if (has) poolSel.value = d.pool;
+                }
+                if (then) then();
+            });
+    }
+
+    function paintScaleHint() {
+        var el = document.getElementById('rating-scale-hint');
+        if (!el) return;
+        el.textContent = hsMode() ? '(HS-equivalent scale)'
+                                  : '(own-pool scale: ' + (poolSel ? poolSel.value : '') + ')';
+    }
+    paintScaleHint();
+    if (poolSel) poolSel.addEventListener('change', paintScaleHint);
+    document.addEventListener('rc-scale-change', function () {
+        paintScaleHint();
+        paintBaseRating();
+        // a typed rating means something else on the other scale: convert again
+        if (typeSel && typeSel.value === 'rating') convert();
+    });
+
+    var lastBase = null;
+    function paintBaseRating() {
+        if (!lastBase) return;
+        var v = hsMode() && lastBase.hs != null ? lastBase.hs : lastBase.pool;
+        showNorm('Speed rating: ' + (v != null ? v : '\u2014') +
+                 (hsMode() ? ' (HS-equivalent)' : ' (own pool)') + lastBase.tail);
+    }
+
     function buildSource() {
         var t = typeSel.value;
         var src = { type: t, pool: poolSel.value, sport: sportSel.value };
@@ -311,6 +356,10 @@
             }
         } else if (t === 'rating') {
             src.rating = parseFloat(document.getElementById('in-rating').value);
+            // the scale the number was typed on (issue 49); the API converts
+            // an HS-equivalent to the pool's own scale before it converts
+            // anything else
+            src.scale = hsMode() ? 'hs' : 'pool';
         } else if (t === 'athlete') {
             src.person_id = parseInt(chosenAthlete.person_id);
         } else if (t === 'result') {
@@ -389,7 +438,15 @@
                 if (box) box.textContent = name;
                 var inp = document.getElementById('in-athlete');
                 if (inp) inp.value = name;
-                convert();
+                var pre = host.getAttribute('data-prefill-pool');
+                if (pre && poolSel && Array.prototype.some.call(poolSel.options,
+                        function (o) { return o.value === pre; })) {
+                    poolSel.value = pre;
+                    paintScaleHint();
+                    convert();
+                } else {
+                    adoptAthletePool(pid, convert);
+                }
             });
     })();
 
@@ -398,8 +455,9 @@
             showNorm(data.error ? ('Error: ' + data.error) : 'Could not resolve source.');
             return;
         }
-        showNorm('Speed rating: ' + (data.base_rating != null ? data.base_rating : '—') +
-                 '  ·  normalized 5K: ' + fmt(data.normalized_time));
+        lastBase = { pool: data.base_rating, hs: data.base_rating_hs,
+                     tail: '  ·  normalized 5K: ' + fmt(data.normalized_time) };
+        paintBaseRating();
         fill('#xc-body', data.xc);
         fill('#tf-body', data.tf);
         paintPaces(data);
@@ -603,6 +661,7 @@
             document.getElementById('in-athlete').value = item.getAttribute('data-name');
             document.getElementById('athlete-chosen').textContent =
                 'Selected: ' + item.getAttribute('data-name');
+            adoptAthletePool(chosenAthlete.person_id, paintScaleHint);
             // if result source, load their races into the select
             if (typeSel.value === 'result') loadRaces(chosenAthlete.person_id);
         }

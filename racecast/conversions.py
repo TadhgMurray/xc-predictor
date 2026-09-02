@@ -665,15 +665,35 @@ def convert_spread(source, xc_targets, tf_targets):
     Returns {normalized_time, xc: [{label, time, rating}], tf: [...]}.
     Every cell is the SAME normalized_time expressed in that target's context.
     """
+    # ★ A TYPED RATING IS ON THE SCALE THE READER WAS LOOKING AT (issue 49).
+    #   The site shows HS-equivalents by default, so a number copied off a
+    #   college athlete's page is an HS-equivalent; source["scale"] says so,
+    #   and it is brought back to the pool's own scale before anything is
+    #   converted. pool_view is imported here, not at the top: it imports
+    #   this module for pool_mean.
+    pool = source.get("pool", "hs_m")
+    hs_factor = None
+    if source.get("type") == "rating" and source.get("scale") == "hs":
+        from pool_view import repFactor
+        hs_factor = repFactor(pool, source.get("sport"))
+        if hs_factor and source.get("rating"):
+            source = dict(source, rating=float(source["rating"]) / hs_factor)
+
     norm = source_to_normalized(source)
     if norm is None:
         return {"normalized_time": None, "base_rating": None,
+                "base_rating_hs": None,
                 "xc": [], "tf": [], "error": "unresolvable source"}
 
     # ONE rating for the whole source -- it's the athlete's, not the course's.
-    pool = source.get("pool", "hs_m")
     base_rating = normalized_to_rating(norm, pool,
                                        sport=source.get("sport"))
+    if hs_factor is None:
+        try:
+            from pool_view import repFactor
+            hs_factor = repFactor(pool, source.get("sport"))
+        except Exception:                           # noqa: BLE001
+            hs_factor = None
 
     def _cells(targets, sport):
         out = []
@@ -737,6 +757,9 @@ def convert_spread(source, xc_targets, tf_targets):
     return {
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
+        # the same number on the HS scale, for the page's toggle (issue 49)
+        "base_rating_hs": (round(base_rating * hs_factor, 1)
+                           if base_rating and hs_factor else None),
         # ★ THE FITTED LADDER WHEN THE SOURCE NAMES SOMEBODY, THE PROJECTED
         #   ONE OTHERWISE. Both are built from something measured -- an
         #   athlete's own critical speed, or this performance projected to

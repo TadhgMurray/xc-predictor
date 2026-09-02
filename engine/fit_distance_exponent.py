@@ -70,6 +70,9 @@ MAX_DAYS_APART = 21          # pair window: same athlete, races <= 21d apart
                              # (fitness ~constant; the ability term cancels)
 MIN_DISTANCE_DIFF_METERS = 10    # same-distance pairs carry no signal
 MIN_DISTANCE_METERS = 800        # power law breaks below 800m (anaerobic)
+# ! THE FIT FLOOR, NOT THE RATING FLOOR. event_parse and the backfill admit
+#   600 m (issue 42); the potential is fitted here on 800+ and evaluated at
+#   600 by extrapolating its last local exponent (normalize_distance).
 MAX_DISTANCE_METERS = 12_000     # ...and above this nothing is a race this
                                  # law covers: 10K championships + fuzz
                                  # margin. THE FINDING (residual run,

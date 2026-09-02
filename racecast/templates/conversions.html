@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -11,13 +12,16 @@
 {% include "_topbar.html" %}
 
 {# the athlete a /conversions?athlete=<id> link named, for conversions.js #}
-<section class="conv" data-prefill-athlete="{{ prefill_athlete or '' }}">
+<section class="conv" data-prefill-athlete="{{ prefill_athlete or '' }}" data-prefill-pool="{{ prefill_pool or '' }}">
     <h1>Conversions</h1>
     <p class="conv-intro">
         Enter one performance — a time, a rating, an athlete, or a specific
         result — and see it projected across courses and distances.
         <span class="req-key"><span class="req">*</span> required (or a source that implies it)</span>
     </p>
+    {# One scale for the page: what a typed rating means and what the
+       computed one shows. Same control as every other page. #}
+    <div class="toggle-row">{{ scale_toggle() }}</div>
 
     {# ---- SOURCE CONTROLS ------------------------------------------- #}
     <div class="conv-source">
@@ -103,7 +107,11 @@
 
         <!-- RATING source -->
         <label data-for="rating" class="src-field">
-            <span class="field-label">Speed rating <span class="req">*</span></span>
+            <span class="field-label">Speed rating <span class="req">*</span>
+                {# The scale a typed rating is read on follows the page's
+                   rating-scale toggle (issue 49): a number copied off an
+                   athlete page is on the scale that page was showing. #}
+                <span class="scale-hint" id="rating-scale-hint"></span></span>
             <input type="number" id="in-rating" step="0.1">
         </label>
 
@@ -243,6 +251,7 @@
     </section>
 </section>
 
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('conversions.js') }}"></script>
 </body>
 </html>

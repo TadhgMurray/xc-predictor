@@ -74,7 +74,11 @@ from normalize_distance import EVENT_DISTANCES_TF   # one-way import; no cycle
 # Below 800m the event is anaerobic and outside the distance model's domain.
 # Above 12,000m is corruption (the *1609.344 unit-conversion monsters). Both
 # mirror fit_distance_exponent.py's MIN_DISTANCE / MAX_DISTANCE. Keep in sync.
-_MIN_DISTANCE = 800.0
+# ★ 600, NOT 800 (issue 42, owner 2026-09-02: "we should try to rate 600m").
+#   The distance potential is FITTED on 800 m and up (fit_distance_exponent
+#   keeps its own floor) and evaluated at 600 by its last local exponent,
+#   one short step of extrapolation. Below 600 the sprints stay unrated.
+_MIN_DISTANCE = 600.0
 _MAX_DISTANCE = 12_000.0
 
 _MILE = 1609.344

@@ -14,6 +14,7 @@ import psycopg2
 from playwright.async_api import async_playwright
 
 from database import (
+    _statusOf,
     createTables, getConn,
     saveMeet, saveAthletesBulk, saveResultsBulk,
     saveMeetTF, saveResultsTFBulk,
@@ -763,7 +764,10 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
             if not result.get("Result"):
                 continue
         else:
-            if isSentinelTime(result.get("SortInt", 0)):
+            # ! A NON-FINISH WITH ITS LETTERS IS KEPT (issue 59): the row
+            #   saves with no time and the status in `mark`. A sentinel
+            #   the feed cannot name is still dropped.
+            if isSentinelTime(result.get("SortInt", 0)) and not _statusOf(result):
                 continue
         
         # Relay results: skip athlete creation (smushed FirstName + pseudo
@@ -826,8 +830,8 @@ def _collectFlatEvent(event: dict, meet_info: dict,
             if not result.get("Result"):
                 continue
         else:
-            if isSentinelTime(result.get("SortInt")):
-                continue
+            if isSentinelTime(result.get("SortInt")) and not _statusOf(result):
+                continue                                  # issue 59, as above
  
         # Relay results carry a smushed FirstName ("A<BR>B<BR>C<BR>D") and a
         # pseudo-athlete AthleteID — don't make an athlete record from them.

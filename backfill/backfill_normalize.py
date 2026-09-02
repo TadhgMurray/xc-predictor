@@ -1095,7 +1095,7 @@ def _isSentinelTime(time_seconds):
 # (anaerobic); above 12,000m nothing this law covers is a race (10K champs +
 # fuzz). The double-conversion monsters (3000*1609 = 4.8M) and the ~1,685
 # other over-ceiling corruptions all fail the MAX; genuine races never do.
-_MIN_DISTANCE_M = 800.0
+_MIN_DISTANCE_M = 600.0        # 600 since issue 42; see event_parse._MIN_DISTANCE
 _MAX_DISTANCE_M = 12_000.0
 
 # Pace sanity — the CEILING only (a flat slow bound for garbage-slow times).

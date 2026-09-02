@@ -994,8 +994,20 @@ def athlete(person_id):
 
     # 1. format times for display
     for race in races:
-        if not race["is_field"] and race["result"] is not None:
-            race["result"] = format_time(race["result"])
+        if race["is_field"]:
+            continue
+        # ★ A NON-FINISH SAYS WHICH (issue 59). The sentinel time formats
+        #   to a dash; the letters, when the scraper kept them, replace it.
+        #   A TF non-finish arrives with no time and its letters in result.
+        t = race.get("time_raw")
+        if t is not None and float(t) < 100_000:
+            race["result"] = format_time(t)
+        else:
+            race["result"] = (race.get("status")
+                              or (race["result"] if race.get("result")
+                                  and not str(race["result"]).replace(".", "", 1).isdigit()
+                                  else None)
+                              or "—")
 
     # (chart_data is built ONCE, below, after the record walk -- an earlier
     # copy of the call here was dead work thrown away by the second.)
@@ -1148,6 +1160,25 @@ def athlete(person_id):
                            chart_data=chart_data)
 
 
+_RESULTS_STATUS = {"checked": False, "present": False}
+
+
+def _hasResultsStatus(cur):
+    """Does results carry `status` yet (issue 59)? The scraper adds it on
+    its first save after deploy; until then the page reads NULL."""
+    if not _RESULTS_STATUS["checked"]:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'results'
+                             AND column_name = 'status'""")
+            _RESULTS_STATUS["present"] = cur.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _RESULTS_STATUS["present"] = False
+        _RESULTS_STATUS["checked"] = True
+    return _RESULTS_STATUS["present"]
+
+
 def get_races(cur, person_id):
     """Return one athlete's FULL competition history, both sports, newest first.
 
@@ -1155,6 +1186,8 @@ def get_races(cur, person_id):
     so this is the complete record, not just the distance races the engine rates.
     Both halves of the UNION produce the SAME columns in the SAME order.
     """
+    # results.status exists only once the scraper has run after deploy
+    status_sql = "r.status" if _hasResultsStatus(cur) else "NULL::text"
     cur.execute(f"""
         -- ================= XC half: results + meets =================
         SELECT r.date,
@@ -1181,6 +1214,7 @@ def get_races(cur, person_id):
                r.time_seconds                AS time_raw,     -- numeric, for PR comparison
                r.result_id                   AS result_id,
                r.time_seconds::text          AS result,
+               {status_sql}                  AS status,
                r.grade                       AS grade,
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
@@ -1253,8 +1287,11 @@ def get_races(cur, person_id):
                r.event_short                 AS event,
                r.time_seconds                AS time_raw,     -- same slot as XC
                r.result_id                   AS result_id,    -- same slot as XC
-               CASE WHEN r.is_field = 1 THEN r.mark
+               -- a running row with no time is a non-finish whose letters
+               -- sit in mark (issue 59)
+               CASE WHEN r.is_field = 1 OR r.time_seconds IS NULL THEN r.mark
                     ELSE r.time_seconds::text END AS result,
+               NULL::text                    AS status,
                r.grade                       AS grade,
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
@@ -4544,11 +4581,43 @@ def conversions_page():
     #   the source already chosen, so the handoff is one click rather than a
     #   name typed twice.
     prefill = request.args.get("athlete", type=int)
+    # ★ AND THEIR POOL (issue 49): the select defaulted to hs_m, so a college
+    #   runner arriving from their page was converted as a high schooler.
+    prefill_pool = _latestPool(prefill) if prefill else None
     return render_template("conversions.html",
                            prefill_athlete=prefill,
+                           prefill_pool=prefill_pool,
                            xc_courses=xc_courses,
                            tf_distances=_TF_DEFAULT_DISTANCES,
                            pools=_POOLS)
+
+
+def _latestPool(person_id):
+    """The pool of this athlete's latest season (athlete_season), or None."""
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT pool FROM athlete_season
+                    WHERE  person_id = %s
+                    ORDER  BY last_race DESC NULLS LAST, year DESC
+                    LIMIT  1
+                """, (person_id,))
+                row = cur.fetchone()
+                return (row[0].split("|", 1)[0] if row and row[0] else None)
+    except Exception as exc:                        # noqa: BLE001
+        print(f"athlete_pool: {type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+@app.route("/api/athlete_pool")
+def api_athlete_pool():
+    """{pool} for the conversions page, so the pool select can follow the
+    athlete the reader picked (issue 49)."""
+    pid = request.args.get("person_id", type=int)
+    if not pid:
+        return jsonify({"error": "person_id required"}), 400
+    return jsonify({"person_id": pid, "pool": _latestPool(pid)})
 
 
 @app.route("/api/convert", methods=["POST"])

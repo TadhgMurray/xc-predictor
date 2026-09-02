@@ -1109,7 +1109,43 @@ def saveAthletesBulk(conn, athletes: list):
 #               below is read straight off it.
 # Output:
 #           None. Inserts/updates one row per result.
+# ★ THE NON-FINISH, PRESERVED (issue 59). Athletic.net writes one sentinel
+#   SortValue for every kind of non-finish, so DNF, DNS and DQ were the same
+#   999999 by the time anything read them. The feed's own text carries the
+#   letters; this keeps them in a `status` column beside the sentinel time,
+#   so the page can say which. Only the vocabulary below is stored -- a
+#   result string that is a real time is not a status.
+_STATUS_VOCAB = {"DNF", "DNS", "DQ", "DSQ", "NT", "SCR", "WD", "FS", "NH",
+                 "ND", "NM", "DNP"}
+
+
+def _statusOf(resultData: dict):
+    for key in ("Result", "ShortCode", "Status", "ResultText"):
+        v = resultData.get(key)
+        if v is None:
+            continue
+        t = str(v).strip().upper().replace(".", "")
+        if t in _STATUS_VOCAB:
+            return "DQ" if t == "DSQ" else t
+    return None
+
+
+_RESULTS_STATUS_READY = False
+
+
+def _ensureResultsStatus(conn):
+    """results.status, added once per process. IF NOT EXISTS, so a database
+    that already has it is untouched."""
+    global _RESULTS_STATUS_READY
+    if _RESULTS_STATUS_READY:
+        return
+    cur = conn.cursor()
+    cur.execute("ALTER TABLE results ADD COLUMN IF NOT EXISTS status TEXT")
+    _RESULTS_STATUS_READY = True
+
+
 def saveResultsBulk(conn, results: list):
+    _ensureResultsStatus(conn)
 
     if not results:
         return
@@ -1161,6 +1197,7 @@ def saveResultsBulk(conn, results: list):
             "anet",    # source
             "anet",    # id_system
             resultData.get("AthleteID"),   # person_id: seeded = athlete_id AT INSERT
+            _statusOf(resultData),         # the letters behind a sentinel time (issue 59)
         ))
     
     # Insert every athlete this batch references, under the SAME school the
@@ -1202,11 +1239,12 @@ def saveResultsBulk(conn, results: list):
                 time_seconds, grade, date, school, school_source, scraped_at,
                 place, score, exhibition, official, team_id,
                 is_pr, is_sr, has_splits, video_count, age_grade,
-                source, id_system, person_id
+                source, id_system, person_id, status
             )
             VALUES %s
             ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
+            status        = COALESCE(EXCLUDED.status, results.status),
             -- fill person_id only if missing; NEVER overwrite one dedup wrote
             person_id     = COALESCE(results.person_id, EXCLUDED.person_id),
             -- fill div_id only if missing; a re-scrape of an EXISTING orphan row
@@ -1285,7 +1323,10 @@ def saveResultsTFBulk(conn, results: list):
         else:
             sort_int = result.get("SortInt")
             time_seconds = sort_int / 1000 if (sort_int is not None and sort_int < 100000000) else None
-            mark = None
+            # a running non-finish keeps its letters in `mark`, the text
+            # column the page already reads (issue 59); a real time keeps
+            # mark NULL as before
+            mark = _statusOf(result) if time_seconds is None else None
  
         # Meet date as YYYY-MM-DD.
         meet_date_raw = meet_info.get("MeetDate", "")

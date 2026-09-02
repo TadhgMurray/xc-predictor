@@ -322,7 +322,11 @@ def prepareXcTfrrsDistTemp(conn):
 #     nobody else's; reimplementing it as a SQL LIKE would be a second answer
 #     that drifts. results_tf has few DISTINCT event_short values relative to
 #     its rows, so one pass over them is cheap and the join is then a hash.
-_SPRINT_MAX_DISTANCE = 800.0       # the engine's floor; see _tfQuery
+# ! 800 STAYS HERE WHILE THE ENGINE'S FLOOR IS 600 (issue 42, owner
+#   2026-09-02): a 600 m row is admitted to the times board by this
+#   whitelist whether or not the backfill has normalised it yet, and once
+#   it carries a rating the rated path above takes it first.
+_SPRINT_MAX_DISTANCE = 800.0
 
 
 def prepareSprintEvents(conn):
@@ -635,6 +639,10 @@ _SQL = {
         --   parses the mark and refuses what it cannot read (marks.py).
         WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL
                OR COALESCE(r.is_field, 0) = 1)
+          -- ! A RUNNING ROW WITH NO TIME IS A NON-FINISH (issue 59): the
+          --   scraper now keeps DNF/DNS/DQ rows with their letters in
+          --   `mark`. They belong on the athlete page, never on a board.
+          AND NOT (COALESCE(r.is_field, 0) = 0 AND r.time_seconds IS NULL)
           AND r.person_id IS NOT NULL
           AND COALESCE(r.is_relay, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
