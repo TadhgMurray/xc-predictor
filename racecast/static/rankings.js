@@ -1787,7 +1787,11 @@ function applyUrlFilters(params) {
   for (const k of UNIT_KEYS) {
     if (combos[k] && params.get(k)) combos[k].set(params.get(k).split(","));
   }
-  syncGenderField();
+  /* (A call to syncGenderField() stood here. The function never existed --
+     the page has no gender control; gender=m|f is a URL-only narrowing of
+     pool=all on the times board -- and the ReferenceError aborted the URL
+     bootstrap before its load(), so the first paint showed no rows and the
+     filters after this line were lost. Issue 130.) */
   /* ! ON TEAMS THE DISTANCE CAN BE OFF THE MENU. Course pages link the
        teams board with the course's own distance -- 2900m is real there --
        and setting a <select> to a value it has no option for silently

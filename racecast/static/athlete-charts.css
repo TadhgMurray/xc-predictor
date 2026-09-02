@@ -503,7 +503,7 @@
      without updating this block, the newcomer and Flags SHARE the slack
      instead of the last column silently collapsing to zero width, which is
      exactly how this table broke twice. */
-.season table th:nth-child(1) { width: 11%; }   /* Date        */
+.season table th:nth-child(1) { width: 6.6rem; } /* Date: rem, not %. Ten fixed characters; at the 720px minimum an 11% share was 70px and the date ran into the meet cell (issue 130) */
 .season table th:nth-child(2) { width: 18%; }   /* Meet        */
 .season table th:nth-child(3) { width:  7%; }   /* Event       */
 .season table th:nth-child(4) { width:  9%; }   /* Result      */
@@ -563,7 +563,7 @@
    which the owner prefers to a squeezed table. min-content lets the
    column grow to the table instead of holding at 20rem and overflowing
    into the sidebar. */
-.season table { min-width: 640px; }
+.season table { min-width: 720px; }  /* 640 collided EVENT/RESULT and DIFFICULTY/FLAGS headers at phone font size (issue 130) */
 @media (max-width: 900px) {
   .main-col:has(.season) { min-width: min-content; }
 }

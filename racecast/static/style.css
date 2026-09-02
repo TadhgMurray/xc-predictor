@@ -3845,6 +3845,9 @@ td.margin-b { color: #b45309; font-weight: 600; }
   .search-wrap { flex: 1 1 100%; margin-left: 0; }
 
   table { display: block; overflow-x: auto; font-size: 1rem; }
+  /* Five board tabs are ~550px in a row; on a phone they wrap rather than
+     push the page sideways (issue 130). */
+  .rankings-page .tabs { flex-wrap: wrap; }
   /* Tighter cells: the padding was sized for desktop whitespace, and on a
      phone it is the difference between four visible columns and six. */
   th, td { padding: 0.35rem 0.55rem; }
