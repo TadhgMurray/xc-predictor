@@ -208,8 +208,10 @@
                            course is not already the name shown (issue
                            119): the difficulty column refers to it. #}
                         {% if race.sport == 'XC' and race.course and race.course != race.meet %}
-                            <span class="meet-course" title="{{ race.course }}">{{ race.course }}</span>
+                            <a class="meet-course" href="/course/{{ race.course|urlencode }}"
+                               title="{{ race.course }}">{{ race.course }}</a>
                         {% endif %}
+
                     </td>
 
                     <td>{{ race.event|event_label }}</td>

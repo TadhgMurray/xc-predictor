@@ -536,15 +536,43 @@
   white-space: nowrap;
 }
 /* The course under the meet name on XC rows (issue 119): its own line,
-   smaller and muted, ellipsized the same way. */
+   smaller and muted, ellipsized the same way. A link to the course page,
+   but NOT the link blue (owner): grey, underlined only under the pointer,
+   so the meet stays the row's one blue thing. */
 .season table td.meet-cell .meet-course {
   display: block;
   font-size: 0.85em;
   color: #6b7280;
+  text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.season table td.meet-cell .meet-course:hover,
+.season table td.meet-cell .meet-course:focus {
+  color: #374151;
+  text-decoration: underline;
+}
+
+/* ★ THE TABLE NEVER SQUASHES; THE PAGE SCROLLS (owner, 2026-09-02). With
+   table-layout: fixed and percentage widths, a narrow main column shrank
+   every column until nowrap text overlapped its neighbour -- dates over
+   meet names, results over places. A real minimum width keeps the
+   proportions honest, and the layout's own horizontal scroll (style.css,
+   <= 900px) carries the overflow: the reader scrolls the page sideways,
+   which the owner prefers to a squeezed table. min-content lets the
+   column grow to the table instead of holding at 20rem and overflowing
+   into the sidebar. */
+.season table { min-width: 640px; }
+@media (max-width: 900px) {
+  .main-col:has(.season) { min-width: min-content; }
+}
+@media (max-width: 700px) {
+  /* The site-wide phone rule turns every table into its own scroller;
+     here the page is the scroller, so the table stays a table. */
+  .season table { display: table; overflow-x: visible; }
+}
+
 
 
 /* Flags wrap to a second line on narrow screens rather than overflowing. A row
