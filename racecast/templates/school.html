@@ -16,7 +16,7 @@
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
-{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
+{% from "_explain.html" import rating_i, difficulty_i, dv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -33,7 +33,6 @@
 {% include "_topbar.html" %}
 <main class="page-wide">
     <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
-    {{ rating_bar() }}
     {# the school's own facts, long-form: this line is not shared with a
        grade and a compare link, so there is room to spell them out #}
     {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}
@@ -106,7 +105,7 @@
     <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
             <tr>
-                <th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
+                <th>#</th><th>Athlete</th><th>Grade</th><th>Rating{{ rating_i() }}</th>
                 <th>Best</th><th>Races</th><th>Last raced</th>
             </tr>
         </thead>
@@ -140,7 +139,7 @@
     <p class="meta">Best career rating, one row per athlete.</p>
     <table class="staged" data-step="20" data-scale-sort="3">
         <thead>
-            <tr><th>#</th><th>Athlete</th><th>Best</th><th>Seasons</th><th>Years</th></tr>
+            <tr><th>#</th><th>Athlete</th><th>Best{{ rating_i() }}</th><th>Seasons</th><th>Years</th></tr>
         </thead>
         <tbody>
             {% for a in top %}
@@ -171,7 +170,7 @@
        that is the school's history. The table above is the per athlete one. #}
     <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
-            <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating</th>
+            <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating{{ rating_i() }}</th>
                 <th>Season</th><th>Date</th></tr>
         </thead>
         <tbody>

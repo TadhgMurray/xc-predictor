@@ -1,47 +1,31 @@
 {# =====================================================================
-   _explain.html -- the two "i" disclosures that say what a number means.
+   _explain.html -- the circled "i" beside a rating or a difficulty.
 
-   rating_bar(pool_label)   what a rating is, in one sentence a runner reads.
-   difficulty_bar(sport)    what a course difficulty is, and the worked example.
-   dv(d, sport)             render a difficulty as a percentage against a
-                            typical course of its sport (difficulty_view.py),
-                            raw value in the title.
+   rating_i(pool_label)      hover/focus hint: what a rating is.
+   difficulty_i(sport)       hover/focus hint: what a course difficulty is.
+   dv(d, sport)              a difficulty as a percentage against a typical
+                             course of its sport (difficulty_view.py), raw
+                             value in the title.
 
-   Each is a native <details>: a small "i" badge with a short label, expanding
-   to the explanation on click or Enter. No script, keyboard reachable, and
-   the page reads clean until someone asks.
+   The hint rides the .flag tooltip machinery (data-title / data-blurb in a
+   ::after, shown on :hover and :focus, tabindex so keyboards and touch reach
+   it). Quiet by design: a 1.15rem circle in the muted colour, inline after
+   the label it explains.
 
-   Import with:  {% from "_explain.html" import rating_bar, difficulty_bar, dv %}
+   Import with:  {% from "_explain.html" import rating_i, difficulty_i, dv %}
    ===================================================================== #}
 
-{% macro rating_bar(pool_label=None) %}
-    <details class="info-i">
-        <summary><span class="i-badge" aria-hidden="true">i</span>what a rating means</summary>
-        <div class="info-body">
-            100 is the average {{ pool_label if pool_label else "runner in the athlete's pool" }};
-            a rating of 133 means 33% faster than that average runner.
-            Ratings are distance-normalised and course-adjusted, so a hard
-            course and a fast track land on one number. Each pool (high
-            school boys, college women, middle school&hellip;) has its own
-            average, and the HS-equivalent view puts every pool on the
-            high-school scale.
-        </div>
-    </details>
-{% endmacro %}
+{% macro rating_i(pool_label=None) -%}
+<span class="flag info-i" tabindex="0" data-title="What a rating means"
+      data-blurb="100 is the average {{ pool_label if pool_label else 'runner in the athlete&#39;s pool' }}; a rating of 133 means 33% faster than that average runner. Ratings are distance-normalised and course-adjusted, so a hard course and a fast track land on one number. Each pool (high school boys, college women, middle school...) has its own average; the HS-equivalent view puts every pool on the high-school scale."
+      aria-label="What a rating means. 100 is the average runner in the pool; 133 means 33% faster than that average runner.">i</span>
+{%- endmacro %}
 
-{% macro difficulty_bar(sport="XC") %}
-    <details class="info-i">
-        <summary><span class="i-badge" aria-hidden="true">i</span>what course difficulty means</summary>
-        <div class="info-body">
-            How much slower times run here than on a typical
-            {{ "cross country course" if sport == "XC" else "track" }}:
-            +4% is about 40 seconds on a 16-minute 5K, 0% is typical, and a
-            negative number is a fast {{ "course" if sport == "XC" else "track" }}.
-            Ratings already account for it, so a 133 run here and a 133 run
-            anywhere else are the same performance.
-        </div>
-    </details>
-{% endmacro %}
+{% macro difficulty_i(sport="XC") -%}
+<span class="flag info-i" tabindex="0" data-title="What course difficulty means"
+      data-blurb="How much slower times run here than on a typical {{ 'cross country course' if sport == 'XC' else 'track' }}: +4% is about 40 seconds on a 16-minute 5K, 0% is typical, and a negative number is a fast {{ 'course' if sport == 'XC' else 'track' }}. Ratings already account for it, so a 133 run here and a 133 run anywhere else are the same performance."
+      aria-label="What course difficulty means. How much slower times run here than on a typical course; ratings already account for it.">i</span>
+{%- endmacro %}
 
 {% macro dv(d, sport="XC") -%}
     {%- if d is none -%}&mdash;{%- else -%}

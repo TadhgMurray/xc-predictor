@@ -1,7 +1,7 @@
 {% from "_capped.html" import capped_note %}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
-{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
+{% from "_explain.html" import rating_i, difficulty_i, dv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -39,14 +39,13 @@
 
 <main class="page-wide">
     <h1>{{ course_name }}</h1>
-    {{ difficulty_bar("XC") }}
     {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
        the usual distance's, and says which -- a course is a different
        course at 2 miles and at 5K, and one bare number silently
        averaging them claimed more than the fit knows. Scoped, both the
        difficulty and the counts are the selected distance's. #}
     <p class="meta">
-        Difficulty:
+        Difficulty:{{ difficulty_i("XC") }}
         {% if sel_dist %}
             {% if sel_difficulty is not none %}
                 {{ dv(sel_difficulty, "XC") }}
@@ -80,7 +79,7 @@
     {% if dist_table %}
     <h2>Distances raced here</h2>
     <table class="dist-table">
-        <thead><tr><th>Distance</th><th>Difficulty</th><th>Results</th>
+        <thead><tr><th>Distance</th><th>Difficulty{{ difficulty_i("XC") }}</th><th>Results</th>
             <th>First</th><th>Last</th></tr></thead>
         <tbody>
             {% for d in dist_table %}
@@ -105,7 +104,7 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>
                     <th>Time</th><th>Dist</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
@@ -176,7 +175,7 @@
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Time</th>
-                    <th>Rating</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
+                    <th>Rating{{ rating_i() }}</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
@@ -242,7 +241,7 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating</th>
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>
                     <th>Time</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}

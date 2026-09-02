@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
-{% from "_explain.html" import rating_bar, difficulty_bar, dv %}
+{% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_recflag.html" import recflag %}
 <html lang="en">
 <head>
@@ -31,10 +31,8 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
-        Course difficulty: {{ dv(header.difficulty, "XC") }}
+        Course difficulty: {{ dv(header.difficulty, "XC") }}{{ difficulty_i("XC") }}
     </p>
-    {{ difficulty_bar("XC") }}
-    {{ rating_bar() }}
     {% if extras and extras.weather %}
     <p class="meta wx">
         Race-day weather: <b>{{ extras.weather.temp_f }}&deg;F</b>
@@ -142,7 +140,7 @@
                 <th>Grade</th>
                 <th>School</th>
                 <th>Time</th>
-                <th>Rating</th>
+                <th>Rating{{ rating_i() }}</th>
                 {# Rank among runners who can score or displace: complete
                    teams' first seven only. The gap between Place and Points
                    is the unattached, the incomplete teams, and the 8th men. #}
