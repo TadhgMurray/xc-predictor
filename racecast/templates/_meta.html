@@ -52,7 +52,12 @@
 <meta property="og:site_name" content="Racecast">
 <meta property="og:title" content="{{ _full_title }}">
 <meta property="og:description" content="{{ _desc }}">
-<meta property="og:url" content="{{ request.url_root.rstrip('/') ~ (meta_path | default(request.path)) }}">
+{# ★ CANONICAL, ON THE SITE'S OWN ORIGIN. The same page is reachable with
+   query strings (?school=, ?r=, ?state=) and, behind the proxy, the
+   request's own root reads http. Without this Google indexes the
+   variants as duplicates of each other. #}
+<link rel="canonical" href="{{ site_origin ~ (meta_path | default(request.path)) }}">
+<meta property="og:url" content="{{ site_origin ~ (meta_path | default(request.path)) }}">
 <meta property="og:image" content="{{ url_for('static', filename='og-image.png', _external=True) }}">
 {# Declared dimensions let a scraper lay out the card before the image
    finishes downloading -- without them, first-time shares often render
@@ -111,7 +116,7 @@
       "position": {{ loop.index }},
       "name": "{{ label }}"
       {%- if path %},
-      "item": "{{ request.url_root.rstrip('/') ~ path }}"
+      "item": "{{ site_origin ~ path }}"
       {%- endif %}
     }{{ "," if not loop.last }}
     {%- endfor %}
@@ -126,13 +131,13 @@
   "@context": "https://schema.org",
   "@type": "WebSite",
   "name": "Racecast",
-  "url": "{{ request.url_root }}",
+  "url": "{{ site_origin }}/",
   "description": "{{ _desc }}",
   "potentialAction": {
     "@type": "SearchAction",
     "target": {
       "@type": "EntryPoint",
-      "urlTemplate": "{{ request.url_root }}search?q={search_term_string}"
+      "urlTemplate": "{{ site_origin }}/search?q={search_term_string}"
     },
     "query-input": "required name=search_term_string"
   }

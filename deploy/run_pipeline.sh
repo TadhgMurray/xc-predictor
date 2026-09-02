@@ -248,6 +248,8 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   rebuilt it by hand. Built into a shadow table and swapped, so search
 #   never goes dark.
 step 13c_search_index "$PY" -u racecast/search_index.py
+# the sitemap for Google: every ranked athlete, school, course and meet
+step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.

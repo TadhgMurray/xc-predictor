@@ -1,3 +1,4 @@
+import os
 import sys
 import re
 import time          # _reportThrottled
@@ -267,6 +268,40 @@ def staticV(filename):
 
 
 app.jinja_env.globals["static_v"] = staticV
+
+# ★ THE SITE'S OWN ORIGIN, FOR CANONICAL AND SHARE URLS. Behind Cloudflare
+#   and nginx, request.url_root reads http://... (the proxy hop is plain),
+#   and a canonical tag pointing at http is worse than none: Google treats
+#   it as a second site. One constant, overridable for a staging box.
+SITE_ORIGIN = os.environ.get("XCP_SITE_ORIGIN", "https://racecast.co").rstrip("/")
+app.jinja_env.globals["site_origin"] = SITE_ORIGIN
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    body = "\n".join([
+        "User-agent: *",
+        "Disallow: /api/",
+        "Disallow: /search",
+        "Disallow: /debug/",
+        "Disallow: /compare",
+        "Allow: /",
+        f"Sitemap: {SITE_ORIGIN}/sitemap.xml",
+        "",
+    ])
+    return app.response_class(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_index():
+    """The index written by racecast/build_sitemap.py (step 13d); the files
+    it names live under /static/sitemaps/ and nginx serves those."""
+    from flask import send_from_directory
+    folder = os.path.join(app.static_folder, "sitemaps")
+    if not os.path.exists(os.path.join(folder, "sitemap.xml")):
+        return app.response_class("no sitemap built yet\n", status=404,
+                                  mimetype="text/plain")
+    return send_from_directory(folder, "sitemap.xml", mimetype="application/xml")
 
 
 @app.errorhandler(404)
