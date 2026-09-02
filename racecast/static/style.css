@@ -4213,3 +4213,8 @@ tr.hl-school td { background: #fef9c3; }
 /* ---- about: the glossary ------------------------------------------- */
 .glossary dt { font-weight: 600; margin-top: 0.8rem; }
 .glossary dd { margin: 0.15rem 0 0 0; color: #374151; }
+
+/* meets filter: the championships checkbox sits on the input line */
+.meet-filters .field-check { align-self: flex-end; padding-bottom: 0.45rem; }
+.meet-filters .field-check label { font-weight: 500; white-space: nowrap; }
+

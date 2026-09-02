@@ -364,15 +364,72 @@ def _load_venues(conn):
 #  MAIN
 # ===================================================================== #
 
+# ★ UNITS (issue 34): a league, section, area, conference, region or
+#   division is searchable and lands on the rankings board narrowed to it.
+#   Read from school_unit -- the resolved units, one row per school -- so a
+#   unit exists here exactly when some school is in it. Numbered divisions
+#   (section_div, state_div, class) are not searchable on their own: "2"
+#   names nothing.
+_UNIT_KINDS_HS = ("league", "area", "section", "district", "county")
+_UNIT_KINDS_COLLEGE = ("conference", "region", "division")
+
+
+def unitLink(kind, unit, state, college):
+    """The rankings board narrowed to one unit. High-school units are
+    scoped to their state, college units are nationwide (app.unitArgs
+    makes the same split for the athlete page's chips)."""
+    from urllib.parse import quote
+    pool = "college_m" if college else "hs_m"
+    q = f"/rankings?board=ability&pool={pool}&{kind}={quote(unit)}"
+    if not college and state:
+        q += f"&state={quote(state)}"
+    return q
+
+
+def _load_units(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('school_unit')")
+    if cur.fetchone()[0] is None:
+        print("  units: school_unit absent, skipped")
+        return
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'school_unit'""")
+    have = {r[0] for r in cur.fetchall()}
+    wr = conn.cursor()
+    out = []
+    for college, kinds in ((False, _UNIT_KINDS_HS), (True, _UNIT_KINDS_COLLEGE)):
+        for kind in kinds:
+            if kind not in have:
+                continue
+            cur.execute(f"""
+                SELECT "{kind}", state, count(DISTINCT school)
+                FROM   school_unit
+                WHERE  "{kind}" IS NOT NULL AND is_college = %s
+                GROUP  BY "{kind}", state
+            """, (college,))
+            for unit, state, n in cur.fetchall():
+                label = str(unit)
+                sub = f"{kind}{' · ' + state if state and not college else ''}"
+                sub += f" · {n} school{'s' if n != 1 else ''}"
+                out.append((
+                    "unit", label, sub,
+                    unitLink(kind, str(unit), state, college),
+                    label.lower(), label.lower(), 0, int(n),
+                ))
+    _flush(wr, out); conn.commit()
+    print(f"  units: {len(out):,}")
+
+
 _LOADERS = {
     "athletes": _load_athletes,
     "schools":  _load_schools,
     "courses":  _load_courses,
     "meets":    _load_meets,
     "venues":   _load_venues,
+    "units":    _load_units,
 }
 _KIND = {"athletes":"athlete", "schools":"school", "courses":"course",
-         "meets":"meet", "venues":"venue"}
+         "meets":"meet", "venues":"venue", "units":"unit"}
 
 
 def main():

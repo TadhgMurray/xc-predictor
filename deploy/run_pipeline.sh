@@ -182,6 +182,10 @@ else
 fi
 
 step 10d_school_units "$PY" -u racecast/build_school_units.py
+# issue 34: which meets are championships, and of what; then the units
+# reach the site search (a partial index rebuild, cheap)
+step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
+step 10f_search_units "$PY" -u racecast/search_index.py --only units
 step 11_teams         "$PY" -u racecast/build_team_season.py
 step 12_courses       "$PY" -u racecast/build_course_rank.py
 step 12b_course_pages "$PY" -u racecast/build_course_boards.py --limit 1200

@@ -124,6 +124,18 @@
                    value="{{ filters.q if filters else '' }}">
         </div>
         <div class="field">
+            <label for="mf-unit">Unit</label>
+            {# A league, section, area, conference ... (issue 34). Implies
+               championships: meet_unit holds nothing else. #}
+            <input id="mf-unit" name="unit" type="search" class="narrow"
+                   placeholder="NCS, EBAL, SEC…"
+                   value="{{ filters.unit if filters else '' }}">
+        </div>
+        <div class="field field-check">
+            <label for="mf-champ"><input id="mf-champ" name="champ" type="checkbox" value="1"
+                   {{ 'checked' if filters and filters.champ }}> Championships only</label>
+        </div>
+        <div class="field">
             <label for="mf-year">Season</label>
             <input id="mf-year" name="year" type="number" class="narrow"
                    placeholder="Any" min="1990" max="2036"
@@ -160,6 +172,7 @@
                 <th>Meet</th>
                 <th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
                 <th>State</th>
+                {% if filters and filters.champ %}<th>Championship of</th>{% endif %}
                 <th>Results</th>
             </tr>
         </thead>
@@ -174,6 +187,7 @@
                     {% else %}{{ m.course_name or "—" }}{% endif %}
                 </td>
                 <td>{{ m.state or "—" }}</td>
+                {% if filters and filters.champ %}<td>{{ m.units or "—" }}</td>{% endif %}
                 <td>{{ m.n_results }}</td>
             </tr>
             {% endfor %}

@@ -96,9 +96,17 @@ def parseFilters(args):
     year = (args.get("year") or "").strip()
     label = int(year) if _YEAR_RX.match(year) else None
 
+    # ★ CHAMPIONSHIPS, AND THE CHAMPIONSHIPS OF ONE UNIT (issue 34). Both
+    #   read meet_unit (build_meet_units, step 10e). A unit alone implies
+    #   championships: the table only holds championship meets.
+    champ = (args.get("champ") or "").strip().lower() in ("1", "on", "true")
+    unit = (args.get("unit") or "").strip().upper()[:40]
+
     return {"sport": sport, "state": state, "school": school, "q": q,
             "year": storedYear(sport, label), "year_label": label,
-            "active": bool(state or school or q or label is not None)}
+            "champ": champ or bool(unit), "unit": unit,
+            "active": bool(state or school or q or label is not None
+                           or champ or unit)}
 
 
 # describe
@@ -116,6 +124,10 @@ def describe(f):
         bits.append(f"matching “{f['q']}”")
     if f["year_label"] is not None:
         bits.append(f"in the {f['year_label']} season")
+    if f.get("unit"):
+        bits.insert(0, f"{f['unit']} championships")
+    elif f.get("champ"):
+        bits.insert(0, "championships only")
     return " ".join(bits)
 
 
@@ -144,8 +156,10 @@ _SCHOOL_SQL = """
            {name_expr}  AS meet_name,
            {course_expr} AS course_name,
            m.state
+           {unit_cols}
     FROM   mine x
     {meet_join}
+    WHERE  TRUE {unit_clause}
     ORDER  BY x.date DESC
 """
 
@@ -168,11 +182,13 @@ _BROWSE_SQL = """
         WHERE  m.meet_name IS NOT NULL
           {state_clause}
           {q_clause}
+          {unit_clause}
         GROUP  BY m.meet_id
         LIMIT  %(scan)s
     )
     SELECT p.meet_id, p.meet_name, p.course_name, p.state,
            agg.date, agg.n_results
+           {unit_cols}
     FROM   picked p
     JOIN   LATERAL (
         SELECT max(r.date) AS date, count(*) AS n_results
@@ -192,10 +208,55 @@ _BROWSE_SQL = """
 #            f      -- the dict from parseFilters
 # Output:    [{meet_id, meet_name, course_name, state, date, n_results}],
 #            newest first, at most MAX_MEETS.
+_MEET_UNIT = {"checked": False, "present": False}
+
+
+def hasMeetUnits(cur):
+    """Does meet_unit exist yet? Probed once per process. Absent, the
+    championship and unit filters are simply not applied."""
+    if not _MEET_UNIT["checked"]:
+        try:
+            cur.execute("SELECT to_regclass('meet_unit')")
+            row = cur.fetchone()
+            v = row[0] if isinstance(row, (tuple, list)) else list(row.values())[0]
+            _MEET_UNIT["present"] = v is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _MEET_UNIT["present"] = False
+        _MEET_UNIT["checked"] = True
+    return _MEET_UNIT["present"]
+
+
+def unitSql(f, alias, params, present=True):
+    """(clause, columns) for meet_unit against `alias`.meet_id.
+
+    clause   -- "AND EXISTS (...)" narrowing to championships, or to one
+                unit's championships, when the filter asks; else "".
+    columns  -- ", units" listing the meet's parsed units, so the table can
+                say what each championship is of; empty when the table
+                is absent."""
+    if not present:
+        return "", ""
+    params["sport"] = f["sport"]
+    cols = (f", (SELECT string_agg(DISTINCT u.unit, ' · ') FROM meet_unit u "
+            f"WHERE u.sport = %(sport)s AND u.meet_id = {alias}.meet_id "
+            f"AND u.unit IS NOT NULL) AS units")
+    if not f.get("champ"):
+        return "", cols
+    narrow = ""
+    if f.get("unit"):
+        params["unit"] = f["unit"]
+        narrow = " AND u.unit = %(unit)s"
+    clause = (f"AND EXISTS (SELECT 1 FROM meet_unit u WHERE u.sport = %(sport)s "
+              f"AND u.meet_id = {alias}.meet_id{narrow})")
+    return clause, cols
+
+
 def filteredMeets(cur, f):
     sport = f["sport"]
     table = "results" if sport == "XC" else "results_tf"
     params = {"sane": _SANE_DATE, "lim": MAX_MEETS}
+    units_present = hasMeetUnits(cur)
 
     # The season, not substring(date, 1, 4) -- a track season crosses New
     # Year, so a calendar year puts December in the season before its own.
@@ -241,10 +302,12 @@ def filteredMeets(cur, f):
             course_expr = ("CASE WHEN COALESCE(m.is_indoor, 0) = 1 "
                            "THEN 'Indoor' ELSE 'Outdoor' END")
 
+        unit_clause, unit_cols = unitSql(f, "x", params, units_present)
         sql = _SCHOOL_SQL.format(table=table,
                                  year_clause=year_clause,
                                  meet_join=meet_join, name_expr=name_expr,
-                                 course_expr=course_expr)
+                                 course_expr=course_expr,
+                                 unit_clause=unit_clause, unit_cols=unit_cols)
         cur.execute(sql, params)
         rows = cur.fetchall()
         # State is applied here, in Python, over a few hundred rows -- see the
@@ -271,10 +334,14 @@ def filteredMeets(cur, f):
     #   because the outer ORDER BY date needs more candidates than it keeps.
     params["scan"] = MAX_MEETS * 8
 
+    unit_clause, unit_cols = unitSql(f, "m", params, units_present)
+    # the columns read the picked meet, the clause narrows the scan
     sql = _BROWSE_SQL.format(meets_table=meets_table, table=table,
                              course_pick=course_pick,
                              state_clause=state_clause, q_clause=q_clause,
-                             year_clause=year_clause)
+                             year_clause=year_clause,
+                             unit_clause=unit_clause,
+                             unit_cols=unit_cols.replace("m.meet_id", "p.meet_id"))
     cur.execute(sql, params)
     return cur.fetchall()
 
