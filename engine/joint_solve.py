@@ -77,6 +77,7 @@ callers keep working.
 """
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
@@ -629,12 +630,18 @@ def _pack(b, D):
 #   64 is a usable default for shrinkage weights; use several hundred before
 #   PUBLISHING a per-cell standard error.
 def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
-                     n_probe=64, seed=0, tol=CG_TOL_PROBE):
+                     n_probe=64, seed=0, tol=CG_TOL_PROBE, verbose=False):
     rng = np.random.default_rng(seed)
     acc = np.zeros(n_cell)
-    for _ in range(n_probe):
+    t0 = time.time()
+    for k in range(n_probe):
         z = rng.integers(0, 2, size=n_total).astype(np.float64) * 2.0 - 1.0
-        x, _ = conjugateGradient(z, matvec, diag, tol=tol)
+        x, iters = conjugateGradient(z, matvec, diag, tol=tol)
+        if verbose:
+            # ! SAY SO. Sixteen probes on 59M rows is hours of silence
+            #   otherwise, and a silent step reads as a hung one.
+            print(f"  [joint] probe {k + 1}/{n_probe}: cg {iters} iters "
+                  f"[{time.time() - t0:.0f}s]", flush=True)
         acc += z[n_ath:n_ath + n_cell] * x[n_ath:n_ath + n_cell]
     return sigma2 * np.maximum(acc / n_probe, 1e-12)
 
@@ -756,7 +763,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
-                                D.n_cell, sigma2, n_probe=n_probe, seed=seed)
+                                D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
 
     b = D.unpack(theta)
     out = {
