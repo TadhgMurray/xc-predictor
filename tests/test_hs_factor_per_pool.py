@@ -27,6 +27,9 @@ def _constants(values):
     PV._FACTOR_CACHE.clear()
     PV._CONST_CACHE.clear()
     PV._FAILED.clear()
+    # the engine's distance factor is stubbed to 1 (same reference distance
+    # on both sides); the unit-conversion case below sets it explicitly
+    PV._forward_factor = lambda d, pool, *a: 1.0
     if values and isinstance(next(iter(values)), tuple):
         PV._poolConstant = lambda pool, sport: values.get((pool, sport))
     else:
@@ -71,8 +74,19 @@ def test_two_scales_do_not_mix():
     assert abs(PV.hsFactor("college_f", "TF", 1600) - 1.2) < 1e-9
 
 
+def test_reference_distances_are_converted():
+    # middle school normalises to 3000 m, high school to 5000: the bare
+    # constant ratio is 1.43 (the live box, 2026-09-03), the engine's
+    # factor from 5000 to 3000 is about 0.58, and the honest factor is
+    # their product, about 0.83 -- below 1, as a younger pool must be
+    _constants({("ms_m", "XC"): 860.0, ("hs_m", "XC"): 1229.0})
+    PV._forward_factor = lambda d, pool, *a: 0.58 if pool == "ms_m" else 1.0
+    f = PV.hsFactor("ms_m", "XC", 5000)
+    assert abs(f - (1229.0 / 860.0) * 0.58) < 1e-9 and f < 1.0
+
+
 def test_the_source_no_longer_prices_by_distance():
     src = io.open(os.path.join(ROOT, "racecast", "pool_view.py"), encoding="utf-8").read()
     body = src[src.index("def hsFactor("):src.index("def _raceDistance(")]
-    assert "_forward_factor(" not in body
-    assert "_poolConstant(pool, sp)" in body and "np.log(ratios)" in body
+    assert "_REP_DIST[sp]" in body and "np.log(ratios)" in body
+    assert "distance_m" not in body.split('"""')[2], "the distance argument is not read"

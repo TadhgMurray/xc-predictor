@@ -57,13 +57,11 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
   BOARDS: a middle-school board of both sports sorted on HS-equivalents
   put a 142.2 XC season under a 138.2 track season, because the two rows
   wore different multipliers. A view that reorders rows inside one pool is
-  not a view of that pool. So the factor is now C(hs)/C(pool) alone, taken
-  inside each sport (the two sports' constants sit on different scales,
-  1600 m against 5000 m) and combined as the geometric mean of the two
-  ratios -- one number per pool, which is exactly the old factor at the
-  normalising distance (where F is 1 on both sides), and which the joint
-  solve's sport offset licenses: inside a pool, XC and TF ratings are
-  already on one scale, so their HS multiplier must be too. Within a pool the HS view is now a monotone rescale of the own
+  not a view of that pool. So the factor is now the SAME two-ratio formula
+  evaluated once per sport at that sport's representative distance, and
+  the two sports combined as a geometric mean -- one number per pool,
+  which the joint solve's sport offset licenses: inside a pool, XC and TF
+  ratings are already on one scale, so their HS multiplier must be too. Within a pool the HS view is now a monotone rescale of the own
   view -- same order on every board, for every mix of sport and distance.
   The `sport` and `distance_m` arguments stay for the callers and are
   ignored.
@@ -245,6 +243,11 @@ def _poolConstant(pool, sport):
     return value
 
 
+# the representative distance per sport: where aggregate numbers (season
+# means, board rows) and the per-pool factor are priced
+_REP_DIST = {"XC": 5000.0, "TF": 1600.0}
+
+
 def hsFactor(pool, sport, distance_m):
     """Multiplier from `pool`'s scale onto the same-gender HS scale.
 
@@ -277,14 +280,36 @@ def hsFactor(pool, sport, distance_m):
     #   number per pool. (A median over both sports' samples, tried on
     #   2026-09-02, mixed a 1600 m scale with a 5000 m one and put the
     #   middle-school boards at 220.)
+    # ⚠ AND THE UNIT CONVERSION STAYS (2026-09-03, diag_hs_factor on the
+    #   live box). Each pool is normalised to its OWN reference distance --
+    #   middle school near 3000 m, high school 5000, college men 8000,
+    #   college women 6000 -- so the constants are in different units per
+    #   pool (ms_m 860 against hs_m 1229) and their bare ratio read 1.41,
+    #   which put the middle-school boards at 220. F(d, pool)/F(d, hs) at
+    #   one fixed distance per sport converts the units; the module header
+    #   explains why the two ratios together are the talent gap and neither
+    #   alone is. Fixed at the sport's representative distance, the factor
+    #   is still one number per pool.
     ratios = []
     for sp in ("XC", "TF"):
         c_own = _poolConstant(pool, sp)
         c_hs = _poolConstant("hs_" + suffix, sp)
-        if c_own and c_hs:
-            ratios.append(float(c_hs) / float(c_own))
+        if not (c_own and c_hs):
+            continue
+        d = _REP_DIST[sp]
+        try:
+            f_own = _forward_factor(d, pool, None, None, None, sp, None)
+            f_hs = _forward_factor(d, "hs_" + suffix, None, None, None, sp, None)
+        except Exception as exc:         # noqa: BLE001 -- a view, not a page
+            if key not in _FAILED:
+                print(f"pool_view: engine factor for {pool}/{sp} raised "
+                      f"{type(exc).__name__}: {exc}", flush=True)
+            continue
+        if not f_own or not f_hs:
+            continue
+        ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
     if not ratios:
-        why = f"no sport with both constants ({pool} and hs_{suffix})"
+        why = f"no sport with both constants and factors ({pool} and hs_{suffix})"
     else:
         factor = float(np.exp(np.mean(np.log(ratios))))
         if not (_FACTOR_LO <= factor <= _FACTOR_HI):
@@ -404,7 +429,6 @@ def stampHsRatings(pool_rows, races):
 # typical rated race in each sport actually has, and the F ratio moves only
 # ~1-2% across the realistic distance range, so one representative factor
 # per (pool, sport) is honest for aggregate numbers.
-_REP_DIST = {"XC": 5000.0, "TF": 1600.0}
 
 
 def repFactor(pool, sport):
