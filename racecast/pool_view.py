@@ -57,12 +57,13 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
   BOARDS: a middle-school board of both sports sorted on HS-equivalents
   put a 142.2 XC season under a 138.2 track season, because the two rows
   wore different multipliers. A view that reorders rows inside one pool is
-  not a view of that pool. So the factor is now C(hs)/C(pool) alone, with
-  C sampled over BOTH sports, one number per pool -- which is exactly the
-  old factor at the normalising distance (5000 m, where F is 1 on both
-  sides), and which the joint solve's sport offset licenses: inside a pool,
-  XC and TF ratings are already on one scale, so their HS multiplier must
-  be too. Within a pool the HS view is now a monotone rescale of the own
+  not a view of that pool. So the factor is now C(hs)/C(pool) alone, taken
+  inside each sport (the two sports' constants sit on different scales,
+  1600 m against 5000 m) and combined as the geometric mean of the two
+  ratios -- one number per pool, which is exactly the old factor at the
+  normalising distance (where F is 1 on both sides), and which the joint
+  solve's sport offset licenses: inside a pool, XC and TF ratings are
+  already on one scale, so their HS multiplier must be too. Within a pool the HS view is now a monotone rescale of the own
   view -- same order on every board, for every mix of sport and distance.
   The `sport` and `distance_m` arguments stay for the callers and are
   ignored.
@@ -73,6 +74,8 @@ pool_view.py -- the HS-equivalent rating view for the athlete page.
 """
 
 import sys
+
+import numpy as np
 from collections import Counter
 from statistics import median
 
@@ -206,19 +209,19 @@ _loadConstFile()
 def _poolConstant(pool, sport):
     """C(pool, sport): median of rating*nt/(1+difficulty)/100 over rows the
     athlete ran WHILE IN this pool. None when the pool cannot be sampled.
-    sport=None samples BOTH sports and medians the union -- the one number
-    per pool the HS factor uses now (module header)."""
+    ⚠ PER SPORT, ALWAYS. The track pools normalise to 1600 m and the
+      cross-country pools to 5000 m, so the two sports' constants sit on
+      different scales (about 300 against 1300); a median over both is a
+      number on neither scale. hsFactor takes the ratio inside each sport
+      and combines the ratios, which are scale-free."""
     key = (pool, sport)
     if key in _CONST_CACHE:
         return _CONST_CACHE[key]
-    sports = ("XC", "TF") if sport is None else (sport,)
+    sql = _CONST_SQL.get(sport)
     vals = []
-    for sp in sports:
-        sql = _CONST_SQL.get(sp)
-        if sql is None:
-            continue
+    if sql is not None:
         try:
-            d = default_difficulty(sp)      # see the trade note above
+            d = default_difficulty(sport)     # see the trade note above
             with getConn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
@@ -230,7 +233,7 @@ def _poolConstant(pool, sport):
         except Exception as exc:         # noqa: BLE001 -- a view, not a page
             if key not in _FAILED:
                 _FAILED.add(key)
-                print(f"pool_view: constant sample for {pool}/{sp} "
+                print(f"pool_view: constant sample for {pool}/{sport} "
                       f"raised {type(exc).__name__}: {exc}", flush=True)
     value = median(vals) if len(vals) >= _CONST_MIN_ROWS else None
     if value is None and key not in _FAILED:
@@ -267,17 +270,27 @@ def hsFactor(pool, sport, distance_m):
         return _FACTOR_CACHE[key]
     why = None
     factor = None
-    c_own = _poolConstant(pool, None)
-    c_hs = _poolConstant("hs_" + suffix, None)
-    if not c_own or not c_hs:
-        why = (f"pool constant unavailable "
-               f"({pool}={c_own!r}, hs_{suffix}={c_hs!r})")
+    # ★ ONE RATIO PER SPORT, THEN THE GEOMETRIC MEAN. Each sport's
+    #   constants share a scale, so C(hs)/C(pool) inside a sport is a
+    #   pure multiplier; under the joint solve the two sports' ratios
+    #   should agree, and averaging them is what makes the factor one
+    #   number per pool. (A median over both sports' samples, tried on
+    #   2026-09-02, mixed a 1600 m scale with a 5000 m one and put the
+    #   middle-school boards at 220.)
+    ratios = []
+    for sp in ("XC", "TF"):
+        c_own = _poolConstant(pool, sp)
+        c_hs = _poolConstant("hs_" + suffix, sp)
+        if c_own and c_hs:
+            ratios.append(float(c_hs) / float(c_own))
+    if not ratios:
+        why = f"no sport with both constants ({pool} and hs_{suffix})"
     else:
-        factor = float(c_hs) / float(c_own)
+        factor = float(np.exp(np.mean(np.log(ratios))))
         if not (_FACTOR_LO <= factor <= _FACTOR_HI):
             why = (f"factor {factor:.3f} outside the "
                    f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
-                   f"(C {c_own:.1f}->{c_hs:.1f})")
+                   f"(ratios {', '.join(f'{r:.3f}' for r in ratios)})")
             factor = None
     # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
     #   with no other symptom, so say why ONCE on the server console.

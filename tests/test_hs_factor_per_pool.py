@@ -21,10 +21,16 @@ import pool_view as PV                                           # noqa: E402
 
 
 def _constants(values):
+    """values: {pool: C} on one scale; the stub serves the same number for
+    both sports so the geometric mean is the plain ratio. A second dict
+    keyed (pool, sport) exercises the two-scale case."""
     PV._FACTOR_CACHE.clear()
     PV._CONST_CACHE.clear()
     PV._FAILED.clear()
-    PV._poolConstant = lambda pool, sport: values.get(pool)
+    if values and isinstance(next(iter(values)), tuple):
+        PV._poolConstant = lambda pool, sport: values.get((pool, sport))
+    else:
+        PV._poolConstant = lambda pool, sport: values.get(pool)
 
 
 def test_same_factor_for_every_sport_and_distance():
@@ -54,8 +60,19 @@ def test_the_rail_and_a_missing_constant():
     assert PV.hsFactor("college_m", "XC", 5000) is None, "no college constant"
 
 
+def test_two_scales_do_not_mix():
+    # track constants near 300, cross country near 1300: the ratio inside
+    # each sport is 0.9, and so is the factor -- never a number in the gap
+    _constants({("ms_m", "XC"): 1400.0, ("hs_m", "XC"): 1260.0,
+                ("ms_m", "TF"): 330.0, ("hs_m", "TF"): 297.0})
+    assert abs(PV.hsFactor("ms_m", "XC", 5000) - 0.9) < 1e-9
+    # one sport missing: the other's ratio stands alone
+    _constants({("college_f", "XC"): 1200.0, ("hs_f", "XC"): 1440.0})
+    assert abs(PV.hsFactor("college_f", "TF", 1600) - 1.2) < 1e-9
+
+
 def test_the_source_no_longer_prices_by_distance():
     src = io.open(os.path.join(ROOT, "racecast", "pool_view.py"), encoding="utf-8").read()
     body = src[src.index("def hsFactor("):src.index("def _raceDistance(")]
     assert "_forward_factor(" not in body
-    assert "_poolConstant(pool, None)" in body
+    assert "_poolConstant(pool, sp)" in body and "np.log(ratios)" in body
