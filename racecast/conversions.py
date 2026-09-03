@@ -22,8 +22,11 @@
 # IS the multiplier. To go backward we compute that same factor and MULTIPLY
 # instead of divide. Weather is the same trick (probe _applyWeather at 1.0).
 
+import math
 import statistics
 import sys
+import threading
+import time
 sys.path.insert(0, "engine")
 # The engine's forward machinery -- we reuse it, never reimplement it.
 from normalize_distance import (
@@ -83,7 +86,7 @@ _MEAN_SQL = {
             WHERE  rr.pool = %(pool)s AND rr.sport = 'XC'
             LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time
+        SELECT r.speed_rating, r.normalized_time, NULL::real AS distance_m
         FROM   sample s
         JOIN   results r ON r.result_id = s.result_id
         WHERE  r.speed_rating > 0 AND r.normalized_time > 0
@@ -95,9 +98,15 @@ _MEAN_SQL = {
             WHERE  rr.pool = %(pool)s AND rr.sport = 'TF'
             LIMIT  %(n)s
         )
-        SELECT r.speed_rating, r.normalized_time
+        SELECT r.speed_rating, r.normalized_time, m.distance_meters
         FROM   sample s
         JOIN   results_tf r ON r.result_id = s.result_id
+        -- the event's distance, for the track distance offset the rating
+        -- carries (distance_offset); the join is meets_tf's own key
+        LEFT JOIN meets_tf m
+               ON m.meet_id  = r.meet_id
+              AND m.div_id   = r.div_id
+              AND m.event_id = r.event_id
         WHERE  r.speed_rating > 0 AND r.normalized_time > 0
     """,
 }
@@ -110,6 +119,55 @@ def _bare(pool):
     if pool and "|" in pool:
         return pool.rsplit("|", 1)[0]
     return pool
+
+
+# ===================================================================== #
+#  THE TRACK DISTANCE OFFSET (issue 148 / 150)
+# ===================================================================== #
+#
+# The joint solve fits one log-time offset per (pool, track distance) --
+# the error of the distance potential by event, pinned at the pool's 1600
+# -- and divides every track row's normalized_time by exp(offset) before
+# it becomes a rating, the same way it divides by (1 + difficulty). A
+# conversion that ignored it would put a 3200 converted from a 1600 a few
+# percent from where the ratings put it. So the forward path divides by
+# exp(offset) and the inverse multiplies, on the same key the engine wrote
+# to distance_offset: bare pool, 'TF', the distance rounded to 100 m. XC
+# rows carry no offset (their cells absorb it). Missing table, missing row
+# or the pinned event all read 0, so an older database converts exactly as
+# before.
+_OFFSET_TTL = 3600.0
+_offsets = {"at": 0.0, "map": {}}
+_offset_lock = threading.Lock()
+
+
+def _loadDistanceOffsets():
+    out = {}
+    try:
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pool, sport, distance_m, log_offset "
+                        "FROM distance_offset")
+            for pool, sport, dm, off in cur.fetchall():
+                out[(_bare(pool), (sport or "").upper(), int(dm))] = float(off or 0.0)
+    except Exception:                                    # noqa: BLE001
+        out = {}                                         # no table yet: 0
+    _offsets["map"] = out
+    _offsets["at"] = time.time()
+
+
+def distance_offset(pool, sport, distance_meters):
+    """log-time offset the engine applied to this (pool, sport, distance);
+    0.0 wherever it applied none."""
+    if not pool or not sport or not distance_meters:
+        return 0.0
+    if (sport or "").upper() != "TF":
+        return 0.0
+    with _offset_lock:
+        if time.time() - _offsets["at"] > _OFFSET_TTL:
+            _loadDistanceOffsets()
+        m = _offsets["map"]
+    key = (_bare(pool), "TF", int(round(float(distance_meters) / 100.0)) * 100)
+    return m.get(key, 0.0)
 
 
 def pool_mean(pool, sport=None):
@@ -175,10 +233,12 @@ def _recover_pool_mean(pool):
                 # see the note on _MEAN_SQL for why that trade is taken.
                 d = default_difficulty(sport)
                 cur.execute(sql, {"pool": pool, "n": _SAMPLE_PER_POOL})
-                for rating, norm in cur.fetchall():
+                for rating, norm, dist in cur.fetchall():
                     if not rating or not norm:
                         continue
-                    vals.append(float(rating) * float(norm) / (1.0 + d) / 100.0)
+                    off = distance_offset(pool, sport, dist)
+                    vals.append(float(rating) * float(norm) / (1.0 + d)
+                                / math.exp(off) / 100.0)
 
     if not vals:
         return _read_pool_mean(pool)      # nothing sampled: better than nothing
@@ -347,6 +407,10 @@ def _norm_from_time(time_seconds, distance_meters, pool, difficulty=0.0,
                          event_short=event_short, weather=weather, course=course)
     if norm is not None and difficulty:
         norm = norm / (1.0 + difficulty)    # remove course difficulty
+    if norm is not None:
+        off = distance_offset(pool, sport, distance_meters)
+        if off:
+            norm = norm / math.exp(off)     # remove the event's own error
     return norm
 
 
@@ -364,7 +428,7 @@ def _norm_from_rating(rating, pool, difficulty=0.0, sport=None):
 # their cells differently -- see venue_difficulty above.
 _RESULT_SQL = {
     "XC": """
-        SELECT r.normalized_time, cd.difficulty
+        SELECT r.normalized_time, cd.difficulty, NULL::real, NULL::text
         FROM results r
         LEFT JOIN meets m
                ON m.div_id  = r.div_id
@@ -380,12 +444,16 @@ _RESULT_SQL = {
         WHERE r.result_id = %(rid)s
     """,
     "TF": """
-        SELECT r.normalized_time, cd.difficulty
+        SELECT r.normalized_time, cd.difficulty, m.distance_meters, rr.pool
         FROM results_tf r
         LEFT JOIN meets_tf m
                ON m.meet_id  = r.meet_id
               AND m.div_id   = r.div_id
               AND m.event_id = r.event_id
+        -- the row's own pool, for the track distance offset; a row that
+        -- never reached a board has none and takes no offset
+        LEFT JOIN ranking_results rr
+               ON rr.result_id = r.result_id AND rr.sport = 'TF'
         LEFT JOIN course_difficulties cd
                ON m.location_id IS NOT NULL
               AND m.location_id <> 0
@@ -427,10 +495,13 @@ def _norm_from_result(result_id, sport):
     if not row or not row[0]:
         return None
 
-    norm, difficulty = row[0], row[1]
+    norm, difficulty, dist, pool = row[0], row[1], row[2], row[3]
     if difficulty is None:
         difficulty = default_difficulty(sport)
-    return norm / (1.0 + difficulty)
+    out = norm / (1.0 + difficulty)
+    if sport == "TF" and pool and dist:
+        out = out / math.exp(distance_offset(pool, "TF", dist))
+    return out
 
 
 def _norm_from_athlete(person_id, pool, sport):
@@ -563,8 +634,11 @@ def normalized_to_time(norm, context):
 
     # norm = time * factor / wmult  ->  time = norm / factor * wmult
     base = norm / factor * wmult
-    # apply the course/venue difficulty (harder course -> slower time)
-    return base * (1.0 + difficulty)
+    # apply the course/venue difficulty (harder course -> slower time), and
+    # the event's own normalisation error the ratings carry (issue 148)
+    off = distance_offset(context["pool"], context.get("sport"),
+                          context["distance"])
+    return base * (1.0 + difficulty) * math.exp(off)
 
 
 def normalized_to_rating(norm, pool, difficulty=0.0, sport=None):
