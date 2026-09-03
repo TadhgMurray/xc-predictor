@@ -310,8 +310,57 @@ def _load_courses(conn):
     _flush(wr, rows); conn.commit(); print(f"  courses: {len(rows):,}")
 
 
+# ★ THE meet_agg_* TABLES ARE BUILT HERE, EVERY RUN. Nothing else in the
+#   repository creates them: meet_agg_xc was a hand-made table that never
+#   followed the corpus, and meet_agg_tf never existed at all -- the
+#   2026-09-03 run's step 13c died on it (UndefinedTable). One aggregate
+#   per sport, keyed the way the meet pages are (/meet/xc/<meet_id>,
+#   /meet/tf/<meet_id>): the name, the first year raced, and the row count
+#   as the search weight (count(*) rather than distinct people: the
+#   ordering is the same and the distinct is the expensive half of a
+#   121M-row group-by). Built beside, then swapped, so the sitemap step
+#   that reads them never sees an empty table.
+_MEET_AGG = {
+    "meet_agg_xc": """
+        SELECT r.meet_id,
+               min(m.meet_name)                 AS meet_name,
+               min(substr(r.date, 1, 4))::int   AS yr,
+               count(*)                         AS n_ath
+        FROM   results r
+        JOIN   meets m ON m.div_id = r.div_id
+        WHERE  r.meet_id IS NOT NULL AND m.meet_name IS NOT NULL
+        GROUP  BY r.meet_id
+    """,
+    "meet_agg_tf": """
+        SELECT r.meet_id,
+               min(m.meet_name)                 AS meet_name,
+               min(substr(r.date, 1, 4))::int   AS yr,
+               count(*)                         AS n_ath
+        FROM   results_tf r
+        JOIN   meets_tf m ON m.div_id = r.div_id AND m.event_id = r.event_id
+        WHERE  r.meet_id IS NOT NULL AND m.meet_name IS NOT NULL
+        GROUP  BY r.meet_id
+    """,
+}
+
+
+def _ensure_meet_agg(conn):
+    with conn.cursor() as cur:
+        for table, sql in _MEET_AGG.items():
+            cur.execute(f"DROP TABLE IF EXISTS {table}_new")
+            cur.execute(f"CREATE TABLE {table}_new AS {sql}")
+            cur.execute(f"ALTER TABLE {table}_new ADD PRIMARY KEY (meet_id)")
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
+            cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+            cur.execute(f"ANALYZE {table}")
+            conn.commit()
+            cur.execute(f"SELECT count(*) FROM {table}")
+            print(f"  {table}: {cur.fetchone()[0]:,} meets (rebuilt)")
+
+
 def _load_meets(conn):
-    """XC + TF meets from precomputed meet_agg_* tables. Fast."""
+    """XC + TF meets from the meet_agg_* tables, rebuilt first."""
+    _ensure_meet_agg(conn)
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     wr  = conn.cursor()
 

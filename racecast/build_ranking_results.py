@@ -802,7 +802,21 @@ def _loadUnits(conn):
             if cur.fetchone()[0] is None:
                 print("    school_unit not found -- unit columns will be NULL")
                 return
-            cols = ", ".join(f'"{c}"' for c in _UNIT_COLS)
+            # ★ ONLY THE COLUMNS THE TABLE HAS. school_unit is rebuilt by
+            #   step 10d, which runs AFTER this step, so a column added to
+            #   its DDL does not exist here until the run after -- `area`
+            #   took the 2026-09-03 run down this way. A missing column
+            #   reads NULL, exactly like a missing table.
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'school_unit'""")
+            have = {r[0] for r in cur.fetchall()}
+            missing = [c for c in _UNIT_COLS if c not in have]
+            if missing:
+                print(f"    school_unit lacks {missing} (older than the "
+                      f"code; step 10d rebuilds it) -- those columns NULL")
+            cols = ", ".join(f'"{c}"' if c in have else f"NULL::text AS \"{c}\""
+                             for c in _UNIT_COLS)
             # votes DESC so the bare-school fallback keeps the best-attested
             # row, and the (school, state) key keeps the exact one.
             cur.execute(f"SELECT school, state, {cols} FROM school_unit "
@@ -814,6 +828,14 @@ def _loadUnits(conn):
                     _UNITS["by_key"][(school, state)] = vals
     except Exception as exc:                        # noqa: BLE001
         print(f"    school_unit unreadable ({exc}) -- unit columns NULL")
+        # ! THE TRANSACTION IS ABORTED BY THE FAILED STATEMENT, and every
+        #   later statement on this connection fails with
+        #   InFailedSqlTransaction until it is rolled back. That, not the
+        #   missing column, is what killed step 10.
+        try:
+            conn.rollback()
+        except Exception:                           # noqa: BLE001
+            pass
 
 
 def _unitsOf(school, state):
