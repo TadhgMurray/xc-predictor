@@ -1305,7 +1305,7 @@ def get_races(cur, person_id):
                --   3-miler read 18 percent hard beside a rating that carried
                --   nothing. Same test as the boards' dist_corrected.
                -- ! NO PERCENT SIGN ANYWHERE IN THIS QUERY, COMMENTS INCLUDED:
-               --   psycopg2 reads every % as a placeholder and the dict of
+               --   psycopg2 reads every percent sign as a placeholder and the dict of
                --   params then fails with "dict is not a sequence" (2026-09-03,
                --   every athlete page 500ed for it).
                CASE WHEN dov.distance IS NOT NULL
