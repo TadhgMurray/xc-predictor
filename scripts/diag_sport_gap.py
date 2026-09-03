@@ -41,6 +41,19 @@ WHERE  x.n >= 2 AND t.n >= 2
   AND  x.xc >= %(min_xc)s
 """
 
+# ★ BANDED ON THE AVERAGE OF THE TWO SEASONS, NOT ON ONE OF THEM. Selecting
+#   people on their XC mean alone picks the ones whose fall was unusually
+#   good (regression to the mean: the spring comes back down) AND the XC
+#   specialists (beta > 0), and both read as "track is under XC at the top"
+#   whether or not it is. --min-xc 125 read -4.5 on 2026-09-03 for exactly
+#   that reason. (xc + tf) / 2 is symmetric in the two, so a band of it
+#   shows how the gap moves with ability and nothing else.
+_BANDS = _SQL.replace(
+    "SELECT count(*)                                            AS people,",
+    "SELECT (floor(((x.xc + t.tf) / 2.0) / 10.0) * 10)::int    AS band,\n"
+    "       count(*)                                            AS people,"
+) + "GROUP BY 1 ORDER BY 1"
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -58,6 +71,9 @@ def main():
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_SQL, p)
         row = cur.fetchone()
+        cur.execute(_BANDS, p)
+        bands = [list(r.values()) if isinstance(r, dict) else list(r)
+                 for r in cur.fetchall()]
     if isinstance(row, dict):
         row = list(row.values())
     people, mean_gap, median, mxc, mtf = row
@@ -69,6 +85,17 @@ def main():
     print(f"  mean XC {mxc}   mean TF {mtf}")
     print("  A sequential-engine run reads about 0 here. +10 or more is the "
           "level or the curve on every XC row (issue 143).")
+    print("\n  by band of (XC + TF) / 2, the symmetric cut:")
+    print(f"  {'band':>6} {'people':>9} {'mean':>7} {'median':>7} "
+          f"{'xc':>7} {'tf':>7}")
+    for band, people, mean_gap, median, mxc, mtf in bands:
+        if people < 200:
+            continue
+        print(f"  {band:>4d}+ {people:>9,} {mean_gap:>+7} {median:>+7} "
+              f"{mxc:>7} {mtf:>7}")
+    print("  A slope here is ability-shaped structure (the amplitude tilt, "
+          "issue 109's distance curve), not the winter gain, which is one "
+          "number for everyone.")
 
 
 if __name__ == "__main__":
