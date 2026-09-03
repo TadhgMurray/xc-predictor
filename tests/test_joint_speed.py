@@ -83,10 +83,13 @@ def test_no_probes_gives_the_diagonal_bound():
     var = js.cellPosteriorVar(lambda x: x, diag, n_total, n_ath, n_cell,
                               sigma2=2.0, n_probe=0)
     assert np.allclose(var, 2.0 / diag[n_ath:n_ath + n_cell])
-    var16 = js.cellPosteriorVar(lambda x: x, diag, n_total, n_ath, n_cell,
+    ones = np.ones(n_total)
+    var16 = js.cellPosteriorVar(lambda x: x, ones, n_total, n_ath, n_cell,
                                 sigma2=2.0, n_probe=16)
-    assert np.allclose(var16, 2.0 / diag[n_ath:n_ath + n_cell], rtol=1e-3), \
-        "on the identity the probes recover the same answer"
-    sh = read("deploy", "run_pipeline.sh")
+    assert np.allclose(var16, 2.0), "on the identity the probes recover sigma2"
+    var0 = js.cellPosteriorVar(lambda x: x, ones, n_total, n_ath, n_cell,
+                               sigma2=2.0, n_probe=0)
+    assert np.allclose(var0, var16), "and the bound agrees where A is diagonal"
+    sh = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"), encoding="utf-8").read()
     assert "run_joint.py --golive --probes 4" in sh
 
