@@ -245,6 +245,21 @@ def test_window_balance_pins_the_level():
           f"= surface {truth['level']:+.4f} + curve step {step:+.4f} ... OK")
 
 
+def test_stated_winter_gain_moves_the_level_by_that_much():
+    """--winter-gain G: the curve's track window sits G below its XC
+    window and the level rises by G against the zero-gain fit."""
+    y, D, truth, raw = world(indoor=True)
+    base = fit(y, D, truth)
+    gain = fit(y, D, truth, winter_gain=0.03)
+    gaps = gain["curve_window_gap"]
+    assert np.all(np.abs(gaps + 0.03) < 1e-3), gaps
+    d_level = float((gain["mu"][1] - gain["mu"][0])
+                    - (base["mu"][1] - base["mu"][0]))
+    assert abs(d_level - 0.03) < 0.004, d_level
+    print(f"  stated winter gain 0.03: window gaps {np.round(gaps, 4)}, "
+          f"level moved {d_level:+.4f} ... OK")
+
+
 def test_without_indoor_the_level_is_the_penalty():
     """No December overlap: the level and the curve's winter step are
     separated by the smoothness prior alone. The fit still predicts, but the

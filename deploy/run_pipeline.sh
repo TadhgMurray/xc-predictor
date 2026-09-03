@@ -200,7 +200,10 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # --probes 4: the probes size per-cell uncertainty for the report and
   #   nothing the site reads; sixteen took most of a night on the first
   #   live run (each capped at 150 iterations now). 0 skips them.
-  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4
+  # XCP_WINTER_GAIN=0.03 states the average athlete's fall-to-spring gain
+  # (issue 143); unset, the level carries the whole change.
+  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4 \
+      ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"}
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else
@@ -208,7 +211,8 @@ else
   if [ "${XCP_JOINT:-0}" = "1" ]; then
     # --holdout scores 10% of rows first (a second solve); --probes 16 keeps
     # the posterior-variance pass to minutes rather than hours on a first run.
-    step 08b_joint_shadow "$PY" -u engine/run_joint.py --holdout --probes 16
+    step 08b_joint_shadow "$PY" -u engine/run_joint.py --holdout --probes 16 \
+        ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"}
   else
     echo "  08b_joint_shadow skipped (set XCP_JOINT=1 to run)"
   fi

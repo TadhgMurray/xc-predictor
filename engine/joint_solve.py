@@ -130,6 +130,13 @@ CURVE_REF_KNOT = 2
 #   the level in the first outer instead of drifting toward it for six.
 #   Weight in units of a pool's rows; 0 restores the penalty-only split.
 CURVE_GAP_WEIGHT = 100.0
+# The stated winter gain (issue 113 / 143): the penalty pins the curve's
+# track-window mean BELOW its XC-window mean by this much (log-time, so
+# 0.03 = the average athlete 3% fitter in spring than in fall). 0 books
+# the whole fall-to-spring change into the level, as the sequential engine
+# did. A number here is a stated assumption, printed in the log, never a
+# measurement -- the data cannot make it.
+WINTER_GAIN = 0.0
 
 
 # Amplitude tilt: the season-form swing shrinks with ability
@@ -379,12 +386,14 @@ class _Operator:
     """(Z'WZ + P) as a matvec, with its diagonal, for one outer iteration."""
 
     def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
-                 lam_gap=None):
+                 lam_gap=None, gap_target=0.0):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
-        # the window-balance penalty (CURVE_GAP_WEIGHT): rank one per pool
+        # the window-balance penalty (CURVE_GAP_WEIGHT): rank one per pool,
+        # lg * (g.c - target)^2 with target = -winter_gain
         self.gap = []
+        self.gap_target = float(gap_target)
         if lam_gap is not None and D.n_c:
             for lg, g in zip(lam_gap, curveGapVectors(D, w, amp)):
                 if g is not None and lg > 0:
@@ -438,7 +447,12 @@ class _Operator:
 
 
     def rhs(self, y):
-        return self.adjoint(self.w * y)
+        out = self.adjoint(self.w * y)
+        if self.gap and self.gap_target:
+            D = self.D
+            for lg, g in self.gap:
+                out[D.o_c:D.o_r] += lg * self.gap_target * g
+        return out
 
     def diag(self):
         D, w, h, amp = self.D, self.w, self.h, self.amp
@@ -746,7 +760,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                n_probe=64, seed=0, verbose=False,
                design=None, athlete_pool=None, ridge=SPORT_RIDGE,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
-               curve_gap=CURVE_GAP_WEIGHT):
+               curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -773,6 +787,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         lam = curve_smooth * rows_per_pool / float(D.n_knot)
         lam = np.maximum(lam, 1.0)
     lam_gap = None
+    gap_target = -float(winter_gain or 0.0)
     if D.has_curve and curve_gap and curve_gap > 0:
         lam_gap = float(curve_gap) * rows_per_pool.astype(np.float64)
     theta = None
@@ -782,7 +797,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
         pen_race = sigma2 / max(sigma_u2, 1e-12)
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
-                       lam_gap)
+                       lam_gap, gap_target)
         diag = op.diag()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
@@ -850,7 +865,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     # --- posterior variance, and the shrinkage it licenses ----------- #
     pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
     pen_race = sigma2 / max(sigma_u2, 1e-12)
-    op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap)
+    op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
+                   gap_target)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
                                 D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
@@ -897,6 +913,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         out["curve_knot_days"] = np.arange(D.n_knot) * D.knot_days
         out["curve_lambda"] = lam
         out["curve_gap_weight"] = float(curve_gap or 0.0)
+        out["winter_gain"] = float(winter_gain or 0.0)
         out["curve_window_gap"] = curveWindowGaps(
             theta[D.o_c:D.o_r], curveGapVectors(D, w, amp))
     return out
