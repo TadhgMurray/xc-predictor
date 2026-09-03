@@ -197,7 +197,10 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # ! NO --holdout ON THE LIVE STEP: it is a second full solve (three hours
   #   on 59M rows) that scores a split and publishes nothing. The shadow
   #   step keeps it; that is what the shadow is for.
-  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 16
+  # --probes 4: the probes size per-cell uncertainty for the report and
+  #   nothing the site reads; sixteen took most of a night on the first
+  #   live run (each capped at 150 iterations now). 0 skips them.
+  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else

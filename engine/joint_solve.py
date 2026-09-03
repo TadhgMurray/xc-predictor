@@ -637,6 +637,17 @@ def _pack(b, D):
 #   PUBLISHING a per-cell standard error.
 def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
                      n_probe=64, seed=0, tol=CG_TOL_PROBE, verbose=False):
+    # ★ NO PROBES: THE INFORMATION-DIAGONAL BOUND. sigma2 / A_ii is a lower
+    #   bound on the posterior variance (it ignores the off-diagonal
+    #   coupling), which is what the outer loop's own updates already use.
+    #   n_probe=0 is the fast path for a go-live run that does not need
+    #   per-cell standard errors that night; the probes are telemetry.
+    if not n_probe or n_probe <= 0:
+        d = diag[n_ath:n_ath + n_cell]
+        if verbose:
+            print("  [joint] probes off: cell variance from the information "
+                  "diagonal (a lower bound)", flush=True)
+        return sigma2 / np.maximum(d, 1e-12)
     rng = np.random.default_rng(seed)
     acc = np.zeros(n_cell)
     t0 = time.time()

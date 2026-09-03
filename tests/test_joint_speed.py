@@ -75,3 +75,18 @@ def test_live_step_has_no_holdout():
     assert shadow and all("--holdout" in ln for ln in shadow)
     assert js.CG_TOL_OUTER == js.CG_TOL, "every outer solves tight (the level swung otherwise)"
     assert js.CG_TOL_PROBE > js.CG_TOL and js.CG_MAX_ITER_PROBE < js.CG_MAX_ITER
+
+
+def test_no_probes_gives_the_diagonal_bound():
+    n_ath, n_cell, n_total = 3, 4, 10
+    diag = np.arange(1, n_total + 1, dtype=float)
+    var = js.cellPosteriorVar(lambda x: x, diag, n_total, n_ath, n_cell,
+                              sigma2=2.0, n_probe=0)
+    assert np.allclose(var, 2.0 / diag[n_ath:n_ath + n_cell])
+    var16 = js.cellPosteriorVar(lambda x: x, diag, n_total, n_ath, n_cell,
+                                sigma2=2.0, n_probe=16)
+    assert np.allclose(var16, 2.0 / diag[n_ath:n_ath + n_cell], rtol=1e-3), \
+        "on the identity the probes recover the same answer"
+    sh = read("deploy", "run_pipeline.sh")
+    assert "run_joint.py --golive --probes 4" in sh
+
