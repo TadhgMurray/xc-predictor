@@ -143,6 +143,12 @@ CG_MAX_ITER = 600
 #   size uncertainties, they do not move the point estimate.
 CG_TOL_OUTER = CG_TOL
 CG_TOL_PROBE = 1e-4
+# ⚠ AND A PROBE IS CAPPED (first live run, 2026-09-03). A random probe
+#   excites the level direction the solve finds hardest, and a probe that
+#   cannot reach 1e-4 ran to CG_MAX_ITER: sixteen of those took most of a
+#   night. At 150 iterations a probe is a usable Hutchinson sample -- the
+#   estimate's own error is 1/sqrt(16) -- and the pass is under an hour.
+CG_MAX_ITER_PROBE = 150
 # bincount and fancy indexing release the GIL; the operator's independent
 # block reductions run on a small pool. Sized to the box, capped at four:
 # past that the scatter is memory-bound and more threads just contend.
@@ -636,7 +642,8 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
     t0 = time.time()
     for k in range(n_probe):
         z = rng.integers(0, 2, size=n_total).astype(np.float64) * 2.0 - 1.0
-        x, iters = conjugateGradient(z, matvec, diag, tol=tol)
+        x, iters = conjugateGradient(z, matvec, diag, tol=tol,
+                                     max_iter=CG_MAX_ITER_PROBE)
         if verbose:
             # ! SAY SO. Sixteen probes on 59M rows is hours of silence
             #   otherwise, and a silent step reads as a hung one.
