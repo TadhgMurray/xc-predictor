@@ -251,8 +251,10 @@ _REP_DIST = {"XC": 5000.0, "TF": 1600.0}
 def hsFactor(pool, sport, distance_m):
     """Multiplier from `pool`'s scale onto the same-gender HS scale.
 
-    ONE NUMBER PER POOL (module header): C(hs_g) / C(pool), with C sampled
-    over both sports. `sport` and `distance_m` are accepted for the callers
+    ONE NUMBER PER POOL (module header): per sport, C(hs_g)/C(pool) times
+    F(REP_DIST[sp], pool)/F(REP_DIST[sp], hs_g) -- the F ratio converts the
+    pools' different reference distances -- then the geometric mean over
+    the two sports. `sport` and `distance_m` are accepted for the callers
     and ignored -- a factor that varied by them reordered rows inside a
     pool on every mixed board.
 
