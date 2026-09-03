@@ -38,6 +38,7 @@ SELECT count(*)                                            AS people,
        round(avg(t.tf)::numeric, 2)                        AS mean_tf
 FROM   x JOIN t USING (person_id)
 WHERE  x.n >= 2 AND t.n >= 2
+  AND  x.xc >= %(min_xc)s
 """
 
 
@@ -45,16 +46,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=2024,
                     help="the XC year; track is the following spring")
+    ap.add_argument("--min-xc", type=float, default=0.0,
+                    help="only people whose fall XC mean rating is at least "
+                         "this: the corpus mean is ~105, so --min-xc 125 "
+                         "asks whether the gap differs at the top (the "
+                         "amplitude tilt says it may)")
     a = ap.parse_args()
     p = {"xc0": f"{a.year}-08-01", "xc1": f"{a.year}-12-31",
-         "tf0": f"{a.year + 1}-01-01", "tf1": f"{a.year + 1}-06-30"}
+         "tf0": f"{a.year + 1}-01-01", "tf1": f"{a.year + 1}-06-30",
+         "min_xc": a.min_xc}
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_SQL, p)
         row = cur.fetchone()
     if isinstance(row, dict):
         row = list(row.values())
     people, mean_gap, median, mxc, mtf = row
-    print(f"XC {a.year} fall vs TF {a.year + 1} spring, people rated 2+ in both: "
+    print(f"XC {a.year} fall vs TF {a.year + 1} spring, people rated 2+ in both"
+          f"{f' with XC mean >= {a.min_xc:g}' if a.min_xc else ''}: "
           f"{people:,}")
     print(f"  mean  TF - XC rating: {mean_gap:+}")
     print(f"  median              : {median:+}")
