@@ -205,13 +205,31 @@ def _is_better_time(race, current):
     return race["time_raw"] < current["time_raw"]
 
 
+def _shownRating(race):
+    """The number the page SHOWS for this race: the HS-equivalent where it
+    was stamped, else the own-pool rating. None when unrated.
+
+    ★ THE BEST RACE IS PICKED ON THE SHOWN SCALE (issue 142). A career that
+      spans pools (HS then college) compared own-pool ratings, so a 128 HS
+      race beat a college 121 that reads 132 on the HS-equivalent view the
+      page opens on. Inside one pool the factor is a constant and this
+      changes nothing; across pools it agrees with pool_view.sortByShown.
+    """
+    v = race.get("hs_rating")
+    if v is None:
+        v = race.get("speed_rating")
+    return None if v is None else float(v)
+
+
 def _is_better_rating(race, current):
-    """Higher wins. A race with no rating can never be a best."""
-    if race.get("speed_rating") is None:
+    """Higher wins, on the shown scale. A race with no rating can never be
+    a best."""
+    v = _shownRating(race)
+    if v is None:
         return False
     if current is None:
         return True
-    return race["speed_rating"] > current["speed_rating"]
+    return v > _shownRating(current)
 
 
 def _empty_sport():
