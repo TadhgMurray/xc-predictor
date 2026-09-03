@@ -1302,8 +1302,12 @@ def get_races(cur, person_id):
                --   rows are not in the solve at all; fill_ratings prices
                --   them flat. The cell's number beside such a row described
                --   an adjustment the rating never received -- a Woodbridge
-               --   3-miler read +18% with a rating that carried 0%. Same
-               --   test as the boards' dist_corrected.
+               --   3-miler read 18 percent hard beside a rating that carried
+               --   nothing. Same test as the boards' dist_corrected.
+               -- ! NO PERCENT SIGN ANYWHERE IN THIS QUERY, COMMENTS INCLUDED:
+               --   psycopg2 reads every % as a placeholder and the dict of
+               --   params then fails with "dict is not a sequence" (2026-09-03,
+               --   every athlete page 500ed for it).
                CASE WHEN dov.distance IS NOT NULL
                      AND COALESCE(m.distance, {_blob('r')}::real) IS NOT NULL
                      AND abs(dov.distance::real
