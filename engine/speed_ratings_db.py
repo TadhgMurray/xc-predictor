@@ -76,7 +76,12 @@ from merge_column import mergeColumn      # heap-rebuild write path (see below)
 
 # Column order every loader yields. The engine unpacks by these indices.
 COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
-           "school", "date", "sport", "venue", "gender")
+           "school", "date", "sport", "venue", "gender",
+           # ★ THE ROW'S OWN DISTANCE (issue 148): the corrected one for XC,
+           #   the event's for track. The joint solve fits one offset per
+           #   (pool, track distance) from it; a pack without it runs with
+           #   that block off.
+           "dist_m")
 
 
 # ------------------------------------------------------------------ #
@@ -508,7 +513,12 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                                      / 100.0) * 100)::int::text,
                               'NA')
                END AS venue,
-               a.gender
+               a.gender,
+               COALESCE(dov.distance,
+                        m.distance,
+                        (mt.division_distances -> r.div_id::text
+                           ->> 'distance')::real,
+                        mt.distance)::real AS dist_m
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -594,7 +604,8 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                          CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in'
                               ELSE ':out' END
                END AS venue,
-               a.gender
+               a.gender,
+               m.distance_meters::real AS dist_m
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id

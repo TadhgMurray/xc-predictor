@@ -243,6 +243,7 @@ REGION_REF_COUNTS_CSV = None
 
 # Column order from speed_ratings_db.COLUMNS.
 _RID, _PID, _NORM, _GRADE, _SRC, _SCHOOL, _DATE, _SPORT, _VENUE, _GENDER = range(10)
+_DIST = 10          # speed_ratings_db.COLUMNS: dist_m (issue 148)
 
 
 # ------------------------------------------------------------------ #
@@ -935,6 +936,7 @@ def packResults(batches, today, merge=False):
 
     for rows in batches:
         rid, acode, vcode, norm, wt, scode, doys, yrs = [], [], [], [], [], [], [], []
+        dists = []
         for r in rows:
             # ⚠ DATE FIRST. The pool now depends on the SEASON, because a
             #   professional flag is per athlete-season. A row with an
@@ -1015,6 +1017,9 @@ def packResults(batches, today, merge=False):
             #    is the last table on the old clock.
             # ============================================================ #
             yrs.append(seasonYearFor(r[_SPORT], d, _rollover))
+            # the row's distance in metres, 0 when the loader had none
+            dm = r[_DIST] if len(r) > _DIST else None
+            dists.append(float(dm) if dm is not None and dm > 0 else 0.0)
             census["kept"] += 1
 
         census["tf_rollover_moved"] = _rollover.moved
@@ -1031,7 +1036,7 @@ def packResults(batches, today, merge=False):
                 np.asarray(doys, dtype=np.int16),    # day-of-year
 
                 np.asarray(yrs, dtype=np.int16),     # season year (rust/fitness)
-
+                np.asarray(dists, dtype=np.float32), # distance in metres, 0 = none
             ))
 
     if not chunks:
@@ -1044,6 +1049,7 @@ def packResults(batches, today, merge=False):
     doy = np.concatenate([c[6] for c in chunks])
 
     year = np.concatenate([c[7] for c in chunks])
+    dist_m = np.concatenate([c[8] for c in chunks])
     n_ath, n_crs = len(a_uniq), len(v_uniq)
 
     # Two decay curves from one day count, computed vectorised in float64.
@@ -1078,6 +1084,7 @@ def packResults(batches, today, merge=False):
     sport = sport[order]
     doy = doy[order]
     year = year[order]
+    dist_m = dist_m[order]
     w_ath = w_ath[order]
     w_crs_norm = w_crs_norm[order]
 
@@ -1134,6 +1141,7 @@ def packResults(batches, today, merge=False):
         "doy":       doy,            # day-of-year per row
 
         "year":      year,           # season year per row (rust/fitness term)
+        "dist_m":    dist_m,         # the row's distance, 0 = none (issue 148)
         "athlete_keys": a_uniq,
         "course_keys":  v_uniq,
         "cell_days": cell_days,      # PER CELL: distinct race days, length n_crs
@@ -1149,7 +1157,7 @@ def packResults(batches, today, merge=False):
         "packResults: athlete column is not sorted -- kernels would be wrong"
     n_rows = len(out["athlete"])
     for k in ("result_id", "course", "norm", "weight", "cweight",
-              "days", "sport", "doy", "year"):
+              "days", "sport", "doy", "year", "dist_m"):
         assert len(out[k]) == n_rows, f"packResults: {k} length mismatch"
     # cell_days is indexed by CELL, so it gets its own check rather than
     # joining the row loop above -- a length bug here would surface as a

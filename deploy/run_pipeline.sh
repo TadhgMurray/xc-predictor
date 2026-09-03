@@ -182,6 +182,11 @@ else
   echo "  06_clear_cache skipped (--from $FROM)"
 fi
 
+# ★ THE PACK CARRIES dist_m SINCE 2026-09-03 (issue 148): the joint solve
+#   fits one offset per (pool, track distance) from it. A pack from before
+#   that runs with the block OFF (08 prints "track distance offsets: OFF"),
+#   so the first run after the change is --from 6, which clears the cache
+#   above and rebuilds here. --from 8 keeps whatever pack is on disk.
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 
 # ★ TWO SOLVERS, ONE SWITCH.

@@ -73,9 +73,13 @@ def rowTerms(D, npz, j):
     else:
         h, amp = 1.0, 1.0
     u = float(npz["race_effect"][int(D.race[j])])
+    dist = 0.0
+    if getattr(D, "n_e", 0) and "dist_offset" in npz:
+        dist = float(D.e_w[j]) * float(npz["dist_offset"][int(D.e_idx[j])])
     out = {"cell": cell, "athlete": ath, "delta": delta,
            "delta_anchored": anchored, "rating_season": rating,
-           "h": h, "amp": amp, "u": u, "effect": h * delta + u,
+           "h": h, "amp": amp, "u": u, "dist": dist,
+           "effect": h * delta + u + dist,
            "curve": 0.0, "rust": 0.0, "beta": 0.0}
     if D.has_curve and "curve" in npz:
         # the solver's own row basis: full grid, pinned knot at zero, its
@@ -205,7 +209,8 @@ def main():
         print(f"   cell {keys[t['cell']]}   delta raw {t['delta']:+.4f}   "
               f"display {disp:+.1f}% (anchored {t['delta_anchored']:+.4f})")
         print(f"   h {t['h']:.3f} at season rating {t['rating_season']:.1f}   "
-              f"race-day u {t['u']:+.4f}   -> applied to the time: "
+              f"race-day u {t['u']:+.4f}   track distance offset "
+              f"{t['dist']:+.4f}   -> applied to the time: "
               f"{t['effect']:+.4f} in log = x{np.exp(-t['effect']):.4f}, "
               f"i.e. {100.0 * np.expm1(t['effect']):+.1f}% against the "
               f"column's {disp:+.1f}%")

@@ -135,10 +135,54 @@ def sortRowsByAthlete(cols):
     return out
 
 
+# ★ THE TRACK DISTANCE CLASSES (issue 148). One class per (pool, track
+#   distance rounded to 100 m) over EVERY row of the pack, so a held-out
+#   split shares the code space; the pool's reference event (DIST_REF where
+#   the pool has it, else its most-raced event) is pinned and reads -1, as
+#   does every XC row and every row without a distance. Returns the per-row
+#   FREE class index, the labels of the free classes, and the reference
+#   distance per pool name.
+DIST_REF = 1600.0
+
+
+def distClasses(cols, pool_of_athlete, pool_names, ref=DIST_REF):
+    n = cols["norm"].shape[0]
+    out = np.full(n, -1, dtype=np.int64)
+    if "dist_m" not in cols:
+        return out, [], {}
+    dist = np.asarray(cols["dist_m"], dtype=np.float64)
+    sport = np.asarray(cols["sport"])
+    pool_row = pool_of_athlete[np.asarray(cols["athlete"])]
+    m = (sport == 1) & (dist > 0)
+    if not m.any():
+        return out, [], {}
+    bucket = (np.round(dist[m] / 100.0) * 100).astype(np.int64)
+    key = pool_row[m] * 1_000_000 + bucket
+    uniq, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+    u_pool = (uniq // 1_000_000).astype(np.int64)
+    u_dist = (uniq % 1_000_000).astype(np.int64)
+    ref_of = {}
+    for p in np.unique(u_pool):
+        mine = np.flatnonzero(u_pool == p)
+        at_ref = mine[u_dist[mine] == int(round(ref / 100.0)) * 100]
+        pick = at_ref[0] if at_ref.size else mine[np.argmax(cnt[mine])]
+        ref_of[int(p)] = int(pick)
+    is_ref = np.zeros(uniq.size, dtype=bool)
+    is_ref[list(ref_of.values())] = True
+    free = np.full(uniq.size, -1, dtype=np.int64)
+    free[~is_ref] = np.arange(int((~is_ref).sum()))
+    out[m] = free[inv]
+    labels = [f"{pool_names[int(u_pool[i])]}:{int(u_dist[i])}"
+              for i in np.flatnonzero(~is_ref)]
+    refs = {pool_names[p]: int(u_dist[i]) for p, i in ref_of.items()}
+    return out, labels, refs
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
-                sizes=None):
+                sizes=None, dist=True):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
-    codes and names. `sizes` (from a full design) keeps a subset aligned."""
+    codes and names. `sizes` (from a full design) keeps a subset aligned.
+    The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
     athlete_raw = cols["athlete"][keep]
     year = cols["year"][keep]
     course = cols["course"][keep].astype(np.int64)
@@ -167,10 +211,21 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
     day = cols["doy"][keep] if curve else None
     first = (openers(athlete_raw, year, sport, days) if rust else None)
 
+    dist_row, dist_labels, dist_refs = None, [], {}
+    if dist and "dist_m" in cols:
+        classes, dist_labels, dist_refs = distClasses(cols, pool_of_athlete,
+                                                      pool_names)
+        if dist_labels:
+            dist_row = classes[keep]
+
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
-                  n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool)
+                  n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
+                  dist=dist_row, n_e=len(dist_labels) if dist_row is not None
+                  else None)
+    D.dist_labels = dist_labels
+    D.dist_refs = dist_refs
     return D, athlete_pool, pool_names
 
 
@@ -203,6 +258,34 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
         print(f"[joint] sport offset: |beta| mean {np.abs(b).mean():.4f}, "
               f"share > 0.02: {(np.abs(b) > 0.02).mean():.1%}, "
               f"unweighted mean {b.mean():+.5f}")
+    reportDistOffsets(out, D)
+
+
+def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
+                                     "college_m", "college_f")):
+    """The fitted track distance offsets, per pool: log-time against the
+    pool's reference event, + = that event normalises SLOW (its ratings
+    were reading low, and now rise by that much)."""
+    e = out.get("dist_offset")
+    labels = getattr(D, "dist_labels", [])
+    if e is None or not labels:
+        print("[joint] track distance offsets: OFF (pack has no dist_m, or "
+              "--no-dist)")
+        return
+    rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
+    by_pool = {}
+    for i, lab in enumerate(labels):
+        p, d = lab.rsplit(":", 1)
+        by_pool.setdefault(p, []).append((int(d), float(e[i]), int(rows[i])))
+    print("[joint] track distance offsets, log-time vs the pool's reference "
+          "event (+ = that event was normalising slow):")
+    for p in list(pools) + sorted(k for k in by_pool if k not in pools):
+        if p not in by_pool:
+            continue
+        ref = D.dist_refs.get(p, "?")
+        cells = "  ".join(f"{d}: {v:+.4f} ({n:,})"
+                          for d, v, n in sorted(by_pool[p]) if n >= 1000)
+        print(f"    {p:<10} ref {ref}   {cells}")
 
 
 def holdout(cols, keep, args, athlete_pool, D_full):
@@ -213,9 +296,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
     keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
     D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
-                             not args.no_curve, not args.no_rust)
+                             not args.no_curve, not args.no_rust,
+                             dist=not args.no_dist)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
-                             not args.no_curve, not args.no_rust)
+                             not args.no_curve, not args.no_rust,
+                             dist=not args.no_dist)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
@@ -266,6 +351,8 @@ def main():
                          "level (issue 113). An assumption, not a measurement")
     ap.add_argument("--no-curve", action="store_true")
     ap.add_argument("--no-rust", action="store_true")
+    ap.add_argument("--no-dist", action="store_true",
+                    help="no per-(pool, track distance) offset (issue 148)")
     ap.add_argument("--no-sport-offset", action="store_true")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
@@ -297,7 +384,7 @@ def main():
 
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
-        not args.no_rust)
+        not args.no_rust, dist=not args.no_dist)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -307,6 +394,7 @@ def main():
           f"{args.curve_smooth:g}, window gap weight {args.curve_gap:g}, "
           f"stated winter gain {args.winter_gain:g}), "
           f"rust {'ON' if D.n_r else 'off'}, "
+          f"track distance offsets {f'ON ({D.n_e} classes)' if D.n_e else 'off'}, "
           f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
 
@@ -366,6 +454,11 @@ def main():
                     curve_lambda=out["curve_lambda"])
     if out.get("rust") is not None:
         save["rust"] = out["rust"]
+    if out.get("dist_offset") is not None and D.n_e:
+        save["dist_offset"] = out["dist_offset"]
+        save["dist_labels"] = np.array(D.dist_labels)
+        save["dist_rows"] = np.bincount(D.e_idx, weights=D.e_w,
+                                        minlength=D.n_e).astype(np.int64)
     np.savez(args.out, **save)
     print(f"[joint] wrote {args.out}")
 

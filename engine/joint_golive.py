@@ -77,6 +77,11 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     eff = out["h"] * out["delta"][D.cell]
     if use_race_effect:
         eff = eff + out["race_effect"][D.race]
+    # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
+    #   the normalisation the row arrived with, exactly as the cell corrects
+    #   the course. Untilted. XC rows carry none (e_w = 0).
+    if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
+        eff = eff + D.e_w * out["dist_offset"][D.e_idx]
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):
         rc = 100.0 * pm_c[D.athlete] / adjusted
@@ -123,6 +128,16 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                joint=np.array([1]), mu=out["mu"],
                race_effect_in_rating=np.array([int(use_race_effect)]))
 
+    dist_rows = []
+    if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
+        n_e_rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
+        for i, lab in enumerate(getattr(D, "dist_labels", [])):
+            p, d = lab.rsplit(":", 1)
+            dist_rows.append((p, "TF", int(d), float(out["dist_offset"][i]),
+                              int(n_e_rows[i])))
+        for p, d in getattr(D, "dist_refs", {}).items():
+            dist_rows.append((p, "TF", int(d), 0.0, 0))
+
     u_pts = (130.0 * (np.exp(np.abs(out["race_effect"][D.race][rated])) - 1)
              if use_race_effect else np.zeros(1))
     summary = {
@@ -134,7 +149,43 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     }
     return {"diffs": diffs, "athletes": athletes, "per_sport": per_sport,
             "npz": npz, "summary": summary, "rated": rated, "chosen": chosen,
-            "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat}
+            "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
+            "dist_rows": dist_rows}
+
+
+# The fitted track distance offsets, for the readers that do not run the
+# solve: the conversions page, distance_bake (to fold into the pickle so the
+# backfill and every reader carry it), diag scripts. One row per (pool,
+# sport, distance); log_offset 0 on the pinned reference event.
+_DIST_DDL = """
+    CREATE TABLE IF NOT EXISTS distance_offset (
+        pool         text    NOT NULL,
+        sport        text    NOT NULL,
+        distance_m   integer NOT NULL,
+        log_offset   real    NOT NULL,
+        n_rows       bigint  NOT NULL,
+        last_updated text,
+        PRIMARY KEY (pool, sport, distance_m)
+    )
+"""
+
+
+def writeDistOffsets(rows):
+    from datetime import date
+    from database import getConn
+    if not rows:
+        print("[joint/live] distance_offset: nothing to write (block off)")
+        return
+    today = date.today().isoformat()
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(_DIST_DDL)
+        cur.execute("DELETE FROM distance_offset")
+        cur.executemany(
+            "INSERT INTO distance_offset (pool, sport, distance_m, log_offset,"
+            " n_rows, last_updated) VALUES (%s, %s, %s, %s, %s, %s)",
+            [(p, s, d, v, n, today) for p, s, d, v, n in rows])
+        conn.commit()
+    print(f"[joint/live] distance_offset: {len(rows):,} rows written")
 
 
 def report(live):
@@ -173,6 +224,7 @@ def writeLive(live):
     for name, (rid, rating) in live["per_sport"].items():
         saveResultSpeedRatings(name, (rid, rating))
         print(f"[joint/live] {name}: {rid.size:,} result ratings written")
+    writeDistOffsets(live.get("dist_rows", []))
     print("\n[joint/live] LIVE. To undo:\n" + pg.restoreSql())
     print("[joint/live] ⚠ do NOT run apply_tilt after this: the tilt is "
           "inside these ratings already.")
