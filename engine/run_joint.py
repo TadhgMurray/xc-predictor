@@ -220,7 +220,7 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=4,
-                        curve_smooth=args.curve_smooth, verbose=False)
+                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, verbose=False)
     pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
                                   tilt=not args.no_tilt)
     y_te = y_all[keep_te]
@@ -252,6 +252,12 @@ def main():
                          "by held-out error)")
     ap.add_argument("--holdout", action="store_true",
                     help="also fit on 90%% of rows and score the rest")
+    ap.add_argument("--curve-gap", type=float, default=js.CURVE_GAP_WEIGHT,
+                    help="weight (x rows per pool) pinning the curve's "
+                         "track-window mean to its XC-window mean, so the "
+                         "level mu carries the whole between-sport "
+                         "difference (issue 143); 0 = the smoothness prior "
+                         "alone decides the split")
     ap.add_argument("--no-curve", action="store_true")
     ap.add_argument("--no-rust", action="store_true")
     ap.add_argument("--no-sport-offset", action="store_true")
@@ -292,7 +298,8 @@ def main():
     print(f"[joint] blocks: sport offset {'ON' if D.n_beta else 'off'}, "
           f"year curve {'ON' if D.n_c else 'off'} "
           f"({D.n_knot} knots x {D.knot_days:g} days, smooth "
-          f"{args.curve_smooth:g}), rust {'ON' if D.n_r else 'off'}, "
+          f"{args.curve_smooth:g}, window gap weight {args.curve_gap:g}), "
+          f"rust {'ON' if D.n_r else 'off'}, "
           f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
 
@@ -303,7 +310,7 @@ def main():
     out = js.solveJoint(y, design=D, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=args.probes,
-                        curve_smooth=args.curve_smooth, verbose=True)
+                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, verbose=True)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
 
     delta = out["delta"]

@@ -114,6 +114,23 @@ CURVE_SMOOTH = 1.0
 # 1 October). The reported curve is re-anchored to its row-weighted mean.
 CURVE_REF_KNOT = 2
 
+# ★ THE CURVE CARRIES NO NET LEVEL BETWEEN THE SPORTS' WINDOWS (issue 143).
+#   The between-sport level mu and the curve's fall-to-spring step are
+#   collinear on every row except the December bridge; the smoothness
+#   prior alone decided the split, and on the real data it decided that
+#   runners gain 13% over the winter and the track is 8% HARDER than XC
+#   (mu[TF] +0.081 where the sequential engine's gap read -0.047), which
+#   put every XC rating 14 points under the same athlete's track rating.
+#   This penalty pins, per pool, the row-weighted mean of amp*f over the
+#   non-reference rows (track) to the mean over the reference rows (XC), so
+#   the curve is within-window form only and mu carries the whole
+#   between-sport difference -- the sequential engine's identification (the
+#   average dual-sport athlete has no sport preference), with the
+#   within-season shape kept. It is the stiff direction now, so CG resolves
+#   the level in the first outer instead of drifting toward it for six.
+#   Weight in units of a pool's rows; 0 restores the penalty-only split.
+CURVE_GAP_WEIGHT = 100.0
+
 
 # Amplitude tilt: the season-form swing shrinks with ability
 # (rust_fitness._TILT_PER_POINT and its clamps).
@@ -323,13 +340,55 @@ def _curvePenaltyDiag(D, lam):
 
 
 
+def curveGapVectors(D, w, amp):
+    """Per pool, the vector g over the FREE curve block with
+    g . c = mean over the pool's non-reference-group rows of amp*f
+          - mean over its reference-group rows of amp*f,
+    both row-weighted by w. None for a pool that has rows of only one
+    group (nothing to balance)."""
+    if not D.n_c:
+        return []
+    ref = D.group_row == 0
+    wa = w * amp
+    vecs = []
+    for p in range(D.n_pool):
+        m = D.pool_row == p
+        g = np.zeros(D.n_c)
+        ok = True
+        for sign, mm in ((-1.0, m & ref), (1.0, m & ~ref)):
+            tot = float(w[mm].sum())
+            if tot <= 0:
+                ok = False
+                break
+            g += sign * (np.bincount(D.c0[mm], weights=wa[mm] * D.w0[mm],
+                                     minlength=D.n_c)
+                         + np.bincount(D.c1[mm], weights=wa[mm] * D.w1[mm],
+                                       minlength=D.n_c)) / tot
+        vecs.append(g if ok else None)
+    return vecs
+
+
+def curveWindowGaps(c_free, vecs):
+    """The realised track-minus-XC mean of amp*f per pool (nan where
+    unbalanced), for the log."""
+    return np.array([np.nan if g is None else float(g @ c_free)
+                     for g in vecs])
+
+
 class _Operator:
     """(Z'WZ + P) as a matvec, with its diagonal, for one outer iteration."""
 
-    def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam):
+    def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
+                 lam_gap=None):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
+        # the window-balance penalty (CURVE_GAP_WEIGHT): rank one per pool
+        self.gap = []
+        if lam_gap is not None and D.n_c:
+            for lg, g in zip(lam_gap, curveGapVectors(D, w, amp)):
+                if g is not None and lg > 0:
+                    self.gap.append((float(lg), g))
         self.pool = (ThreadPoolExecutor(_N_THREADS) if _N_THREADS > 1
                      else None)
 
@@ -371,8 +430,10 @@ class _Operator:
         if D.n_beta:
             out[D.o_beta:D.o_c] += self.ridge * b["beta"]
         if D.n_c:
-            out[D.o_c:D.o_r] += _curvePenaltyApply(theta[D.o_c:D.o_r], D,
-                                                   self.lam)
+            c_free = theta[D.o_c:D.o_r]
+            out[D.o_c:D.o_r] += _curvePenaltyApply(c_free, D, self.lam)
+            for lg, g in self.gap:
+                out[D.o_c:D.o_r] += lg * g * float(g @ c_free)
         return out
 
 
@@ -397,7 +458,9 @@ class _Operator:
                                             minlength=D.n_c)
                         + np.bincount(D.c1, weights=w * amp * amp * D.w1 * D.w1,
                                       minlength=D.n_c)
-                        + _curvePenaltyDiag(D, self.lam))
+                        + _curvePenaltyDiag(D, self.lam)
+                        + sum((lg * g * g for lg, g in self.gap),
+                              np.zeros(D.n_c)))
         if D.n_r:
             jobs.append(lambda: np.bincount(D.pool_row, weights=w * D.first,
                                             minlength=D.n_pool))
@@ -682,7 +745,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                pool_mean_row=None, n_outer=6, robust=True, tilt=True,
                n_probe=64, seed=0, verbose=False,
                design=None, athlete_pool=None, ridge=SPORT_RIDGE,
-               curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER):
+               curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
+               curve_gap=CURVE_GAP_WEIGHT):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -708,13 +772,17 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         rows_per_pool = np.bincount(D.pool_row, minlength=D.n_pool)
         lam = curve_smooth * rows_per_pool / float(D.n_knot)
         lam = np.maximum(lam, 1.0)
+    lam_gap = None
+    if D.has_curve and curve_gap and curve_gap > 0:
+        lam_gap = float(curve_gap) * rows_per_pool.astype(np.float64)
     theta = None
     rating = None
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
         pen_race = sigma2 / max(sigma_u2, 1e-12)
-        op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam)
+        op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
+                       lam_gap)
         diag = op.diag()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
@@ -769,6 +837,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             if D.n_beta:
                 extra += (f", |beta| mean {np.abs(b['beta']).mean():.4f}, "
                           f"recentred by {bbar:+.5f}")
+            if D.n_c:
+                gaps = curveWindowGaps(theta[D.o_c:D.o_r],
+                                       curveGapVectors(D, w, amp))
+                extra += f", curve TF-XC window gap {np.round(gaps, 4)}"
 
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
@@ -778,7 +850,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     # --- posterior variance, and the shrinkage it licenses ----------- #
     pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
     pen_race = sigma2 / max(sigma_u2, 1e-12)
-    op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam)
+    op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
                                 D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
@@ -824,6 +896,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         out["curve_anchored"] = c - mean_p[:, None]
         out["curve_knot_days"] = np.arange(D.n_knot) * D.knot_days
         out["curve_lambda"] = lam
+        out["curve_gap_weight"] = float(curve_gap or 0.0)
+        out["curve_window_gap"] = curveWindowGaps(
+            theta[D.o_c:D.o_r], curveGapVectors(D, w, amp))
     return out
 
 

@@ -154,8 +154,12 @@ def report_curve(out, D, doy):
 
 
 def test_full_recovery():
+    """With the window-balance penalty OFF: the smoothness prior and the
+    December bridge separate the level from a curve that this world
+    generates smooth across the winter. This is the pure-recovery check;
+    the default split is test_window_balance_pins_the_level."""
     y, D, truth, raw = world(indoor=True)
-    out = fit(y, D, truth)
+    out = fit(y, D, truth, curve_gap=0.0)
 
 
     # the difficulty, level included, centred
@@ -201,12 +205,52 @@ def test_full_recovery():
     return out
 
 
+def test_window_balance_pins_the_level():
+    """The DEFAULT split (issue 143): the curve's track-window mean equals
+    its XC-window mean per pool, so the level mu carries the generated
+    surface level PLUS the curve's net fall-to-spring step. Within a sport
+    the difficulties are as good as before; the indoor cells, which this
+    world generates on a curve that is smooth through the winter, pay for
+    the constraint -- on real data that smoothness is the assumption the
+    penalty exists to stop deciding the level."""
+    y, D, truth, raw = world(indoor=True)
+    out = fit(y, D, truth)
+    gaps = out["curve_window_gap"]
+    assert np.all(np.abs(gaps) < 1e-4), gaps
+
+    aday = js.academicDay(raw["doy"])
+    f_true = np.where(raw["pool_row"] == 0, trueCurve(aday, 0),
+                      trueCurve(aday, 1))
+    ref = D.group_row == 0
+    step = float((out["amp"][~ref] * f_true[~ref]).mean()
+                 - (out["amp"][ref] * f_true[ref]).mean())
+    level = float(out["mu"][1] - out["mu"][0])
+    assert abs(level - (truth["level"] + step)) < 0.008, \
+        (level, truth["level"], step)
+
+    got, exp = out["delta"], truth["delta"]
+    idx = np.arange(got.size)
+    # cells: [XC x 40 | TF outdoor x 30 | TF indoor x 10], as world() lays
+    # them out. The indoor ten sit on the winter of a curve this world
+    # generates smooth, which the constraint forbids; they pay, the rest
+    # do not.
+    for name, m, floor in (("XC", idx < 40, 0.96),
+                           ("TF outdoor", (idx >= 40) & (idx < 70), 0.96),
+                           ("TF indoor", idx >= 70, 0.85)):
+        g = got[m] - got[m].mean()
+        e = exp[m] - exp[m].mean()
+        r = float(np.corrcoef(g, e)[0, 1])
+        assert r > floor, (name, r)
+    print(f"  window balance: gaps {np.round(gaps, 5)}, level {level:+.4f} "
+          f"= surface {truth['level']:+.4f} + curve step {step:+.4f} ... OK")
+
+
 def test_without_indoor_the_level_is_the_penalty():
     """No December overlap: the level and the curve's winter step are
     separated by the smoothness prior alone. The fit still predicts, but the
     level is no longer a measurement -- print how far it drifts."""
     y, D, truth, raw = world(indoor=False, seed=2)
-    out = fit(y, D, truth)
+    out = fit(y, D, truth, curve_gap=0.0)
     level = float(out["mu"][1] - out["mu"][0])
     print(f"  without indoor: TF-XC level {level:+.4f} (generated "
           f"{truth['level']:+.4f}); the winter is carried by the penalty")
