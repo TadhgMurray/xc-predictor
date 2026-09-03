@@ -33,6 +33,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Search: {{ q }} — Racecast</title>
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    {# the favicon rides in _meta.html on every other page; this head does
+       not include that partial, so the tag is here by hand (issue 149) #}
+    <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
