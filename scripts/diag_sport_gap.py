@@ -29,14 +29,23 @@ t AS (
     FROM   results_tf
     WHERE  date BETWEEN %(tf0)s AND %(tf1)s
       AND  speed_rating IS NOT NULL AND person_id IS NOT NULL
-    GROUP  BY person_id)
+      -- --tf-event: one track event class against the XC season, so the
+      -- distance law (issue 109) can be told from the calendar
+      AND  (%(tf_event)s = '' OR event_short ~* %(tf_event)s)
+    GROUP  BY person_id),
+-- --pool: the person's pool from athlete_ratings (bare pool names on a
+-- merged run), so the band table is read within one pool and not across
+-- middle school, high school and college at once
+pp AS (
+    SELECT DISTINCT athlete_id AS person_id FROM athlete_ratings
+    WHERE  %(pool)s = '' OR pool = %(pool)s)
 SELECT count(*)                                            AS people,
        round(avg(t.tf - x.xc)::numeric, 2)                 AS mean_tf_minus_xc,
        round((percentile_cont(0.5) WITHIN GROUP (ORDER BY t.tf - x.xc))::numeric, 2)
                                                            AS median,
        round(avg(x.xc)::numeric, 2)                        AS mean_xc,
        round(avg(t.tf)::numeric, 2)                        AS mean_tf
-FROM   x JOIN t USING (person_id)
+FROM   x JOIN t USING (person_id) JOIN pp USING (person_id)
 WHERE  x.n >= 2 AND t.n >= 2
   AND  x.xc >= %(min_xc)s
 """
@@ -64,10 +73,18 @@ def main():
                          "this: the corpus mean is ~105, so --min-xc 125 "
                          "asks whether the gap differs at the top (the "
                          "amplitude tilt says it may)")
+    ap.add_argument("--pool", default="",
+                    help="one pool only (hs_m, hs_f, college_m, ms_f ...), "
+                         "from athlete_ratings")
+    ap.add_argument("--tf-event", default="",
+                    help="regex on results_tf.event_short for the track "
+                         "side, e.g. '3200|2 mile', '1600|mile', '^800'. "
+                         "A gap that moves with the event at one ability "
+                         "band is the distance law (issue 109), not fitness")
     a = ap.parse_args()
     p = {"xc0": f"{a.year}-08-01", "xc1": f"{a.year}-12-31",
          "tf0": f"{a.year + 1}-01-01", "tf1": f"{a.year + 1}-06-30",
-         "min_xc": a.min_xc}
+         "min_xc": a.min_xc, "pool": a.pool, "tf_event": a.tf_event}
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_SQL, p)
         row = cur.fetchone()
@@ -78,7 +95,9 @@ def main():
         row = list(row.values())
     people, mean_gap, median, mxc, mtf = row
     print(f"XC {a.year} fall vs TF {a.year + 1} spring, people rated 2+ in both"
-          f"{f' with XC mean >= {a.min_xc:g}' if a.min_xc else ''}: "
+          f"{f' with XC mean >= {a.min_xc:g}' if a.min_xc else ''}"
+          f"{f', pool {a.pool}' if a.pool else ''}"
+          f"{f', track events ~ {a.tf_event!r}' if a.tf_event else ''}: "
           f"{people:,}")
     print(f"  mean  TF - XC rating: {mean_gap:+}")
     print(f"  median              : {median:+}")
