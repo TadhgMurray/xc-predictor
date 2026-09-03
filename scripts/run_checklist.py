@@ -245,6 +245,20 @@ def checkWheelchairPeople(cur):
             FROM   results_tf r
             WHERE  r.event_short ~* '{_WHEEL_RX}')
         SELECT DISTINCT person_id, athlete_id, source FROM wc""")
+    # ★ AND THE LIST THE ENGINE ACTUALLY CONSULTS (2026-09-03). The labels
+    #   above are the narrow rule; wheelchair_person (engine/wheelchair_flag,
+    #   step 04b) carries the wider one -- para words, the T/F class codes,
+    #   the tfrrs division titles -- and it is by that list that the pack
+    #   refused rows. A check on the labels alone passed while fill_ratings
+    #   was pricing every athlete the wider rule had excluded.
+    n_wcp = 0
+    if _exists(cur, "wheelchair_person"):
+        cur.execute("""
+            INSERT INTO _ck_wcp (person_id, athlete_id, source)
+            SELECT w.person_id, NULL, NULL FROM wheelchair_person w
+            WHERE  NOT EXISTS (SELECT 1 FROM _ck_wcp c
+                               WHERE c.person_id = w.person_id)""")
+        n_wcp = cur.rowcount
     bad = []
     for t in ("results", "results_tf"):
         cur.execute(f"""
@@ -260,11 +274,13 @@ def checkWheelchairPeople(cur):
         n = cur.fetchone()[0]
         if n:
             bad.append(f"{t}: {n:,}")
+    via = (f" (labels + {n_wcp:,} more from wheelchair_person)" if n_wcp
+           else " (labels only; wheelchair_person absent or adds nobody)")
     _mark("FAIL" if bad else "PASS", "wheelchair athletes",
-          "rated rows survive for athletes who raced a wheelchair "
-          "division: " + "; ".join(bad) if bad
-          else "no rated row for any athlete who raced a wheelchair "
-               "division")
+          ("rated rows survive for athletes who raced a wheelchair "
+           "division: " + "; ".join(bad) if bad
+           else "no rated row for any athlete who raced a wheelchair "
+                "division") + via)
 
 
 # ---- 4b. the stale-rating invariant (2026-08-27 postmortem) ----------- #

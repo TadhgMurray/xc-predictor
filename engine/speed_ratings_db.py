@@ -318,6 +318,12 @@ def _chairFilter() -> str:
             with getConn() as conn, conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('public.wheelchair_person')")
                 _CHAIR_READY = cur.fetchone()[0] is not None
+                # ! AND NOT EMPTY. The boards' ensureWheelchairPerson creates
+                #   the table bare so their anti-join can run; an empty table
+                #   excludes nobody and deserves the same banner as no table.
+                if _CHAIR_READY:
+                    cur.execute("SELECT count(*) FROM wheelchair_person")
+                    _CHAIR_READY = cur.fetchone()[0] > 0
         except Exception:                               # noqa: BLE001
             _CHAIR_READY = False
         if not _CHAIR_READY:

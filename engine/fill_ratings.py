@@ -240,6 +240,12 @@ def main():
         # The board query's temp tables, prepared exactly as the board build
         # prepares them -- the reused SQL joins them per sport.
         B.ensureResultTwin(conn)       # the boards' WHERE anti-joins it
+        # ★ AND THE CHAIR ATHLETES, BY PERSON (2026-09-03). The engine refused
+        #   every row of theirs, so every row of theirs arrived here NULL and
+        #   was priced flat -- a racing chair's 5K at K / normalized_time is
+        #   a 140-something on a running scale. The anti-join lives in the
+        #   boards' WHERE, which this file inverts, so it holds here too.
+        B.ensureWheelchairPerson(conn)
         B.prepareGenderTemp(conn)
         if "XC" in sports:
             B.prepareXcTfrrsDistTemp(conn)

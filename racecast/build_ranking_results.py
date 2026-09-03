@@ -329,6 +329,34 @@ def prepareXcTfrrsDistTemp(conn):
 _SPRINT_MAX_DISTANCE = 800.0
 
 
+def ensureWheelchairPerson(conn):
+    """wheelchair_person exists, possibly empty, before any query anti-joins
+    it. Built for real by engine/wheelchair_flag.py --write (step 04b).
+
+    ★ THE PERSON-LEVEL CHAIR EXCLUSION, ON THE BOARDS AND THE PRICER
+      (2026-09-03). The engine refuses every row of a chair athlete
+      (speed_ratings_db._chairFilter), so their rows leave the go-live with
+      speed_rating NULL -- and fill_ratings, which inverts _SQL below to
+      price every row the solve refused, priced them at K / normalized_time.
+      The backfill only blanks normalized_time for athletes the DIVISION
+      LABELS name; wheelchair_person carries the wider rule (para words, the
+      T/F class codes, both feeds), and those athletes came back with flat
+      ratings on their pages and, when the pace band let them through, on
+      the boards. The anti-join in _SQL keeps them out of both: the boards
+      read it directly, the pricer through the inverted WHERE."""
+    from wheelchair_flag import ensureTable
+    with conn.cursor() as cur:
+        n = ensureTable(cur)
+    conn.commit()
+    if n:
+        print(f"  wheelchair_person: {n:,} chair athletes excluded by person")
+    else:
+        print("  ⚠ wheelchair_person is EMPTY -- no chair athlete is excluded "
+              "by person. Run: python engine/wheelchair_flag.py --write "
+              "(step 04b)")
+    return n
+
+
 def ensureResultTwin(conn):
     """result_twin exists, possibly empty, before any query anti-joins it.
     Built for real by engine/twin_flag.py --write (step 04c)."""
@@ -571,6 +599,13 @@ _SQL = {
           --   exist (possibly empty) before this runs.
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'XC' AND x.result_id = r.result_id)
+          -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
+          --   person: the same list the engine consults. fill_ratings
+          --   inverts only the speed_rating clause of this WHERE, so this
+          --   keeps chair athletes out of the flat pricing too. See
+          --   ensureWheelchairPerson.
+          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
+                          WHERE wc.person_id = r.person_id)
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
     """,
@@ -660,6 +695,10 @@ _SQL = {
           AND r.person_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'TF' AND x.result_id = r.result_id)
+          -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
+          --   person; see the XC half and ensureWheelchairPerson.
+          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
+                          WHERE wc.person_id = r.person_id)
           AND COALESCE(r.is_relay, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
@@ -2163,6 +2202,7 @@ def main():
             prepareGenderTemp(conn)
             prepareXcTfrrsDistTemp(conn)
             ensureResultTwin(conn)
+            ensureWheelchairPerson(conn)
             prepareTfStateTemp(conn)
             prepareSprintEvents(conn)
 

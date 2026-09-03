@@ -352,14 +352,32 @@ def curveGapVectors(D, w, amp):
     g . c = mean over the pool's non-reference-group rows of amp*f
           - mean over its reference-group rows of amp*f,
     both row-weighted by w. None for a pool that has rows of only one
-    group (nothing to balance)."""
+    group (nothing to balance).
+
+    ★ OVER THE ROWS THAT IDENTIFY THE LEVEL (2026-09-03). A per-result
+      rating leaves the curve out, so for an athlete-season raced in both
+      sports the track-minus-XC gap of its race ratings is exactly
+      -amp * (mean f over its track rows - mean f over its XC rows) minus
+      beta. The recentre puts mean beta at zero over those athlete-seasons;
+      this pin puts the curve part at zero (or -winter_gain) over the SAME
+      rows -- the ones with sc != 0 -- so the stated gain is the gain the
+      dual-sport athlete's page shows, not the gain of a pool whose track
+      rows are mostly single-sport people on a different calendar (the
+      indoor Northeast in January). The live run of 2026-09-03 pinned over
+      every row of the pool and the owner read track as underrated against
+      XC on dual-sport pages. A pool with no dual-sport rows on one side
+      falls back to all its rows."""
     if not D.n_c:
         return []
     ref = D.group_row == 0
+    both = None if D.sc is None else np.abs(D.sc) > 1e-9
     wa = w * amp
     vecs = []
     for p in range(D.n_pool):
         m = D.pool_row == p
+        if both is not None and (m & both & ref).any() \
+                and (m & both & ~ref).any():
+            m = m & both
         g = np.zeros(D.n_c)
         ok = True
         for sign, mm in ((-1.0, m & ref), (1.0, m & ~ref)):

@@ -1296,7 +1296,20 @@ def get_races(cur, person_id):
                r.grade                       AS grade,
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
-               cd.difficulty                 AS difficulty,
+               -- ★ A CORRECTED DIVISION SHOWS NO DIFFICULTY (2026-09-03). A
+               --   division whose distance was overridden votes on no course
+               --   (speed_ratings_db._xcQuery: the venue is NULL) and its
+               --   rows are not in the solve at all; fill_ratings prices
+               --   them flat. The cell's number beside such a row described
+               --   an adjustment the rating never received -- a Woodbridge
+               --   3-miler read +18% with a rating that carried 0%. Same
+               --   test as the boards' dist_corrected.
+               CASE WHEN dov.distance IS NOT NULL
+                     AND COALESCE(m.distance, {_blob('r')}::real) IS NOT NULL
+                     AND abs(dov.distance::real
+                             - COALESCE(m.distance, {_blob('r')}::real)) >= 1
+                    THEN NULL
+                    ELSE cd.difficulty END   AS difficulty,
                0                             AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id                      AS div_id,

@@ -194,6 +194,32 @@ _PEOPLE = """
     ANALYZE wheelchair_person;
 """
 
+# ★ THE TABLE, POSSIBLY EMPTY, FOR EVERY READER THAT ANTI-JOINS IT (2026-09-03).
+#   The boards and fill_ratings exclude chair athletes by person through this
+#   table; a database that has never run --write must still build. Same
+#   contract as twin_flag.ensureTable. Column shape matches _PEOPLE so a
+#   later --write can DROP and recreate it without a reader noticing.
+_EMPTY_DDL = """
+    CREATE TABLE IF NOT EXISTS wheelchair_person (
+        person_id  bigint PRIMARY KEY,
+        n_chair    bigint,
+        n_total    bigint,
+        first_date text,
+        last_date  text,
+        label      text,
+        via        text
+    )
+"""
+
+
+def ensureTable(cur):
+    """wheelchair_person exists, possibly empty. Returns its row count so
+    the caller can say out loud when the exclusion is a no-op."""
+    cur.execute(_EMPTY_DDL)
+    cur.execute("SELECT count(*) FROM wheelchair_person")
+    return int(cur.fetchone()[0])
+
+
 _SUMMARY = """
     SELECT count(*)                                        AS people,
            sum(n_chair)                                    AS chair_races,
