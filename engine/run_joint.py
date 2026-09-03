@@ -178,8 +178,38 @@ def distClasses(cols, pool_of_athlete, pool_names, ref=DIST_REF):
     return out, labels, refs
 
 
+def logDistCentered(cols, keep, athlete, n_ath):
+    """The row's log distance minus its athlete-season's mean over the
+    rows that have one; 0 where the row has none. Issue 154."""
+    dist = np.asarray(cols["dist_m"], dtype=np.float64)[keep]
+    has = dist > 0
+    lz = np.zeros(dist.size)
+    lz[has] = np.log(dist[has])
+    tot = np.bincount(athlete, weights=lz, minlength=n_ath)
+    cnt = np.bincount(athlete[has], minlength=n_ath)
+    mean = np.where(cnt > 0, tot / np.maximum(cnt, 1), 0.0)
+    out = np.where(has, lz - mean[athlete], 0.0)
+    return out
+
+
+def seasonLinks(athlete_raw, year, athlete, n_ath):
+    """Consecutive athlete-seasons of one athlete key (person, pool):
+    (k0, k1, 1 / years apart). Issue 154."""
+    raw_of = np.zeros(n_ath, dtype=np.int64)
+    yr_of = np.zeros(n_ath, dtype=np.int64)
+    raw_of[athlete] = athlete_raw
+    yr_of[athlete] = year
+    order = np.lexsort((yr_of, raw_of))
+    r, y = raw_of[order], yr_of[order]
+    same = r[1:] == r[:-1]
+    k0 = order[:-1][same]
+    k1 = order[1:][same]
+    dt = np.maximum(y[1:][same] - y[:-1][same], 1).astype(np.float64)
+    return k0, k1, 1.0 / dt
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
-                sizes=None, dist=True):
+                sizes=None, dist=True, slope=True, link=True):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
@@ -218,12 +248,17 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
         if dist_labels:
             dist_row = classes[keep]
 
+    lz = (logDistCentered(cols, keep, athlete, n_ath)
+          if slope and "dist_m" in cols else None)
+    links = (seasonLinks(athlete_raw, year, athlete, n_ath)
+             if link else None)
+
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
-                  else None)
+                  else None, lz=lz, link=links)
     D.dist_labels = dist_labels
     D.dist_refs = dist_refs
     return D, athlete_pool, pool_names
@@ -259,6 +294,15 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
               f"share > 0.02: {(np.abs(b) > 0.02).mean():.1%}, "
               f"unweighted mean {b.mean():+.5f}")
     reportDistOffsets(out, D)
+    if out.get("slope") is not None:
+        g = out["slope"]
+        print(f"[joint] endurance slope: |g| mean {np.abs(g).mean():.4f}, "
+              f"share > 0.02: {(np.abs(g) > 0.02).mean():.1%}, "
+              f"share exactly 0 (one distance raced): "
+              f"{(g == 0).mean():.1%}")
+    if getattr(D, "has_link", False):
+        print(f"[joint] season link: {D.link_k0.size:,} consecutive-season "
+              f"pairs at weight {js.LINK_WEIGHT} / year")
 
 
 def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
@@ -297,10 +341,12 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
     D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
-                             dist=not args.no_dist)
+                             dist=not args.no_dist, slope=not args.no_slope,
+                             link=not args.no_link)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
-                             dist=not args.no_dist)
+                             dist=not args.no_dist, slope=not args.no_slope,
+                             link=not args.no_link)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
@@ -353,6 +399,10 @@ def main():
     ap.add_argument("--no-rust", action="store_true")
     ap.add_argument("--no-dist", action="store_true",
                     help="no per-(pool, track distance) offset (issue 148)")
+    ap.add_argument("--no-slope", action="store_true",
+                    help="no per-athlete endurance slope (issue 154)")
+    ap.add_argument("--no-link", action="store_true",
+                    help="no consecutive-season link (issue 154)")
     ap.add_argument("--no-sport-offset", action="store_true")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
@@ -384,7 +434,8 @@ def main():
 
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
-        not args.no_rust, dist=not args.no_dist)
+        not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
+        link=not args.no_link)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -395,6 +446,8 @@ def main():
           f"stated winter gain {args.winter_gain:g}), "
           f"rust {'ON' if D.n_r else 'off'}, "
           f"track distance offsets {f'ON ({D.n_e} classes)' if D.n_e else 'off'}, "
+          f"endurance slope {'ON' if D.n_g else 'off'}, "
+          f"season link {'ON' if getattr(D, 'has_link', False) else 'off'}, "
           f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
 
@@ -454,6 +507,8 @@ def main():
                     curve_lambda=out["curve_lambda"])
     if out.get("rust") is not None:
         save["rust"] = out["rust"]
+    if out.get("slope") is not None and D.n_g:
+        save["slope"] = out["slope"]
     if out.get("dist_offset") is not None and D.n_e:
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)

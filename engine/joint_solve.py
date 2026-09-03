@@ -152,6 +152,29 @@ WINTER_GAIN = 0.0
 #   their rows, the tiny ones fall to zero.
 DIST_PRIOR_SD = 0.03
 
+# ★ THE PER-ATHLETE ENDURANCE SLOPE (issue 154, 2026-09-03). One number per
+#   athlete-season, how steeply THEIR log time rises with log distance
+#   beyond the pool's law, times the row's log distance centred on the
+#   distances that athlete-season raced. A miler's 3200 is slower than the
+#   pool law says from their 1600 and a strength runner's is faster; today
+#   that leaks into the ability, the sport offset and the cells. Centred
+#   on the athlete's own distances so the ability keeps its meaning (the
+#   speed at the distances they race) and moves little. Like the sport
+#   offset it is NOT in a race rating: same time, same course, same day is
+#   the same number for everyone. Ridge in row units, like SPORT_RIDGE:
+#   a season racing one distance has every lz = 0 and the slope is exactly
+#   zero, which is the pool's law.
+SLOPE_RIDGE = 2.0
+
+# ★ THE SEASON LINK (issue 154). Consecutive athlete-seasons of one person
+#   (same person, same pool) are tied by a zero-mean difference penalty of
+#   LINK_WEIGHT / years between them, in row units. Less than one race's
+#   worth of evidence, so it steadies a one- or two-race season against
+#   the neighbouring years and does nothing to a full one. It is a
+#   smoothing prior: it says nothing about the winter gain, and it pulls
+#   year-to-year change toward zero, which is why it must stay weak.
+LINK_WEIGHT = 0.8
+
 
 # Amplitude tilt: the season-form swing shrinks with ability
 # (rust_fitness._TILT_PER_POINT and its clamps).
@@ -213,7 +236,7 @@ class Design:
                  pool_row=None, day=None, first=None,
                  n_ath=None, n_cell=None, n_race=None, n_pool=None,
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
-                 dist=None, n_e=None):
+                 dist=None, n_e=None, lz=None, link=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -289,6 +312,20 @@ class Design:
             if self.n_e <= 0:
                 self.n_e = 0
 
+        # the endurance slope (SLOPE_RIDGE): per row the centred log distance
+        self.has_slope = lz is not None
+        self.n_g = 0
+        if self.has_slope:
+            self.lz = np.asarray(lz, dtype=np.float64)
+            self.n_g = self.n_ath
+        # the season link (LINK_WEIGHT): pairs of athlete-season indices and
+        # a weight per pair (1 / years apart)
+        self.has_link = link is not None and len(link[0]) > 0
+        if self.has_link:
+            self.link_k0 = np.asarray(link[0], dtype=np.int64)
+            self.link_k1 = np.asarray(link[1], dtype=np.int64)
+            self.link_w = np.asarray(link[2], dtype=np.float64)
+
         # packing
         self.o_a = 0
         self.o_d = self.n_ath
@@ -300,7 +337,8 @@ class Design:
         self.o_r = self.o_c + self.n_c
         self.n_r = self.n_pool if self.has_rust else 0
         self.o_e = self.o_r + self.n_r
-        self.n_total = self.o_e + self.n_e
+        self.o_g = self.o_e + self.n_e
+        self.n_total = self.o_g + self.n_g
 
     def unpack(self, theta):
         """Blocks as FULL arrays: mu over every group (0 for the reference),
@@ -319,7 +357,8 @@ class Design:
         else:
             b["c"] = None
         b["r"] = theta[self.o_r:self.o_e] if self.n_r else None
-        b["e"] = theta[self.o_e:self.n_total] if self.n_e else None
+        b["e"] = theta[self.o_e:self.o_g] if self.n_e else None
+        b["g"] = theta[self.o_g:self.n_total] if self.n_g else None
         return b
 
 
@@ -350,6 +389,8 @@ def rowPrediction(b, D, h, amp, u_missing_zero=True):
         row = row + D.first * b["r"][D.pool_row]
     if b.get("e") is not None and getattr(D, "n_e", 0):
         row = row + D.e_w * b["e"][D.e_idx]
+    if b.get("g") is not None and getattr(D, "n_g", 0):
+        row = row + b["g"][D.athlete] * D.lz
     return row
 
 
@@ -436,11 +477,14 @@ class _Operator:
     """(Z'WZ + P) as a matvec, with its diagonal, for one outer iteration."""
 
     def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
-                 lam_gap=None, gap_target=0.0, pen_dist=0.0):
+                 lam_gap=None, gap_target=0.0, pen_dist=0.0,
+                 ridge_slope=0.0, link_weight=0.0):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
         self.pen_dist = float(pen_dist)
+        self.ridge_slope = float(ridge_slope)
+        self.link_weight = float(link_weight)
         # the window-balance penalty (CURVE_GAP_WEIGHT): rank one per pool,
         # lg * (g.c - target)^2 with target = -winter_gain
         self.gap = []
@@ -482,6 +526,9 @@ class _Operator:
         if D.n_e:
             jobs.append(lambda: np.bincount(D.e_idx, weights=wr * D.e_w,
                                             minlength=D.n_e))
+        if D.n_g:
+            jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.lz,
+                                            minlength=D.n_ath))
         return np.concatenate(self._reduce(jobs))
 
     def matvec(self, theta):
@@ -498,7 +545,16 @@ class _Operator:
             for lg, g in self.gap:
                 out[D.o_c:D.o_r] += lg * g * float(g @ c_free)
         if D.n_e:
-            out[D.o_e:D.n_total] += self.pen_dist * b["e"]
+            out[D.o_e:D.o_g] += self.pen_dist * b["e"]
+        if D.n_g:
+            out[D.o_g:D.n_total] += self.ridge_slope * b["g"]
+        if getattr(D, "has_link", False) and self.link_weight > 0:
+            a = b["a"]
+            d = self.link_weight * D.link_w * (a[D.link_k0] - a[D.link_k1])
+            out[:D.n_ath] += (np.bincount(D.link_k0, weights=d,
+                                          minlength=D.n_ath)
+                              - np.bincount(D.link_k1, weights=d,
+                                            minlength=D.n_ath))
         return out
 
 
@@ -537,7 +593,16 @@ class _Operator:
         if D.n_e:
             jobs.append(lambda: np.bincount(D.e_idx, weights=w * D.e_w,
                                             minlength=D.n_e) + self.pen_dist)
-        return np.concatenate(self._reduce(jobs))
+        if D.n_g:
+            jobs.append(lambda: np.bincount(D.athlete, weights=w * D.lz * D.lz,
+                                            minlength=D.n_ath)
+                        + self.ridge_slope)
+        out = np.concatenate(self._reduce(jobs))
+        if getattr(D, "has_link", False) and self.link_weight > 0:
+            out[:D.n_ath] += self.link_weight * (
+                np.bincount(D.link_k0, weights=D.link_w, minlength=D.n_ath)
+                + np.bincount(D.link_k1, weights=D.link_w, minlength=D.n_ath))
+        return out
 
 
 # ---- the legacy three-block operator, kept for its callers ---------------- #
@@ -761,6 +826,8 @@ def _pack(b, D):
         parts.append(b["r"])
     if D.n_e:
         parts.append(b["e"])
+    if D.n_g:
+        parts.append(b["g"])
     return np.concatenate(parts)
 
 
@@ -821,7 +888,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                n_probe=64, seed=0, verbose=False,
                design=None, athlete_pool=None, ridge=SPORT_RIDGE,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
-               curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN):
+               curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
+               ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -859,7 +927,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         pen_race = sigma2 / max(sigma_u2, 1e-12)
         pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
-                       lam_gap, gap_target, pen_dist=pen_dist)
+                       lam_gap, gap_target, pen_dist=pen_dist,
+                       ridge_slope=ridge_slope, link_weight=link_weight)
         diag = op.diag()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
@@ -932,7 +1001,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     pen_race = sigma2 / max(sigma_u2, 1e-12)
     pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
-                   gap_target, pen_dist=pen_dist)
+                   gap_target, pen_dist=pen_dist,
+                   ridge_slope=ridge_slope, link_weight=link_weight)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
                                 D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
@@ -946,6 +1016,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "beta": b["beta"],
         "rust": b["r"],
         "dist_offset": b["e"],
+        "slope": b["g"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),
         "sigma2": sigma2, "sigma_u2": sigma_u2, "tau2": tau2,
         "weights": w, "robust_scale": scale, "h": h, "amp": amp,
