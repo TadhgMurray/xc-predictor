@@ -44,7 +44,12 @@ def test_days_average_to_zero_inside_the_cell_with_the_tilt_on():
     den = np.bincount(race_cell, weights=rows, minlength=true_delta.size)
     cell_mean_u = num / np.maximum(den, 1)
     assert np.abs(cell_mean_u).max() < 0.02, cell_mean_u
-    ru = float(np.corrcoef(out["race_effect"], race_u)[0, 1])
+    # u is each day's deviation from its cell's mean, so compare it to the
+    # truth centred the same way
+    t_num = np.bincount(race_cell, weights=race_u * rows,
+                        minlength=true_delta.size)
+    race_u_c = race_u - (t_num / np.maximum(den, 1))[race_cell]
+    ru = float(np.corrcoef(out["race_effect"], race_u_c)[0, 1])
     assert ru > 0.9, ru
     print(f"  tilted u: delta corr {r:.3f}, u corr {ru:.3f}, max |cell mean "
           f"u| {np.abs(cell_mean_u).max():.4f} ... OK")
