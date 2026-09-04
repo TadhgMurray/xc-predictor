@@ -137,7 +137,20 @@ def _loadPickle(path, label):
 #                           "curves": {"SPORT|band|gender": {curve, reference}}}
 #                | None
 _SPLINES  = _loadPickle(_SPLINE_FILE, "Distance splines")
-_GEOMETRY = _loadPickle(_GEOMETRY_FILE, "Geometry spline")
+# ★ GEOMETRY IS OFF UNLESS XCP_GEOMETRY=1 (owner, 2026-09-04, issue 176).
+#   The joint solve keys a track cell by (location, indoor/outdoor), so a
+#   venue's length and banking are the cell's to carry, and they are
+#   carried exactly, from the athletes who race there and elsewhere. A
+#   correction applied first is a second mechanism for the same fact,
+#   fitted on same-athlete pairs that are mostly sea-level 200s: at
+#   Simplot it credited a banked-200 time about 6% before the solve saw
+#   it, the cell took back 3.5%, and an 8:50 there out-rated the same
+#   athlete's 8:31 at Arcadia by five points. One mechanism, the cell.
+_GEOMETRY = (_loadPickle(_GEOMETRY_FILE, "Geometry spline")
+             if os.environ.get("XCP_GEOMETRY", "0") == "1" else None)
+if _GEOMETRY is None:
+    print("[normalize_distance] Geometry correction OFF (XCP_GEOMETRY=1 to apply "
+          "the spline; the track cell carries length and banking)")
 _ERA      = _loadPickle(_ERA_FILE, "Era curve")
 
 # WEATHER: the race-day correction, the LAST link in the chain (after era). One
