@@ -208,8 +208,35 @@ def seasonLinks(athlete_raw, year, athlete, n_ath):
     return k0, k1, 1.0 / dt
 
 
+def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
+    """Per row, km of the cell's venue elevation above the floor (issue
+    172), from venue_elevation keyed by the cell key's venue part; 0 where
+    unknown. Returns (x, n_cells_known, n_cells)."""
+    from database import getConn
+    keys = [str(k) for k in cols["course_keys"]]
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.venue_elevation')")
+        if cur.fetchone()[0] is None:
+            return None, 0, len(keys)
+        cur.execute("SELECT key, elevation_m FROM venue_elevation")
+        elev = {k: float(v) for k, v in cur.fetchall()}
+    per_cell = np.zeros(len(keys))
+    known = 0
+    for i, k in enumerate(keys):
+        if k.startswith("XC:"):
+            venue = ":".join(k.split(":")[:2])            # XC:<canonical>
+        else:
+            venue = ":".join(k.split(":")[:3])            # TF:loc:<id>
+        e = elev.get(venue)
+        if e is not None:
+            per_cell[i] = max(e - floor_m, 0.0) / 1000.0
+            known += 1
+    course = cols["course"][keep].astype(np.int64)
+    return per_cell[course], known, len(keys)
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
-                sizes=None, dist=True, slope=True, link=True):
+                sizes=None, dist=True, slope=True, link=True, altitude=False):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
@@ -252,15 +279,22 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
           if slope and "dist_m" in cols else None)
     links = (seasonLinks(athlete_raw, year, athlete, n_ath)
              if link else None)
+    alt, alt_known, alt_cells = None, 0, 0
+    if altitude:
+        alt, alt_known, alt_cells = venueAltitude(cols, keep)
+        if alt is None:
+            print("[joint] altitude: venue_elevation is absent -- run "
+                  "scripts/build_venue_elevation.py; the term is OFF")
 
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
-                  else None, lz=lz, link=links)
+                  else None, lz=lz, link=links, alt=alt)
     D.dist_labels = dist_labels
     D.dist_refs = dist_refs
+    D.alt_known, D.alt_cells = alt_known, alt_cells
     return D, athlete_pool, pool_names
 
 
@@ -303,6 +337,14 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
     if getattr(D, "has_link", False):
         print(f"[joint] season link: {D.link_k0.size:,} consecutive-season "
               f"pairs at weight {js.LINK_WEIGHT} / year")
+    if out.get("altitude_coef") is not None:
+        k = out["altitude_coef"]
+        rows_alt = int((D.alt > 0).sum())
+        print(f"[joint] altitude: k {np.round(k, 4)} log-time per km above "
+              f"{js.ALT_FLOOR_M:.0f} m [XC TF]; at 1500 m that is "
+              f"{', '.join(f'{100 * v * 0.9:+.1f}%' for v in k)}; "
+              f"{D.alt_known:,} of {D.alt_cells:,} cells have an elevation, "
+              f"{rows_alt:,} rows above the floor")
 
 
 def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
@@ -399,6 +441,11 @@ def main():
     ap.add_argument("--no-rust", action="store_true")
     ap.add_argument("--no-dist", action="store_true",
                     help="no per-(pool, track distance) offset (issue 148)")
+    ap.add_argument("--altitude", action="store_true",
+                    help="the altitude term (issue 172): one coefficient per "
+                         "sport on the venue's elevation above 600 m, from "
+                         "venue_elevation (scripts/build_venue_elevation.py). "
+                         "Off by default until the owner has read k.")
     ap.add_argument("--tau-tf-max", type=float, default=None,
                     help="cap the track cells' prior sd (log time), e.g. 0.02: "
                          "more shrinkage toward the track level than the "
@@ -449,7 +496,7 @@ def main():
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
-        link=args.link and not args.no_link)
+        link=args.link and not args.no_link, altitude=args.altitude)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -462,6 +509,7 @@ def main():
           f"track distance offsets {f'ON ({D.n_e} classes)' if D.n_e else 'off'}, "
           f"endurance slope {'ON' if D.n_g else 'off'}, "
           f"season link {'ON' if getattr(D, 'has_link', False) else 'off'}, "
+          f"altitude {'ON' if getattr(D, 'n_k', 0) else 'off'}, "
           f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
 
@@ -524,6 +572,9 @@ def main():
         save["rust"] = out["rust"]
     if out.get("slope") is not None and D.n_g:
         save["slope"] = out["slope"]
+    if out.get("altitude_coef") is not None and getattr(D, "n_k", 0):
+        save["altitude_coef"] = out["altitude_coef"]
+        save["altitude_floor_m"] = np.array([js.ALT_FLOOR_M])
     if out.get("dist_offset") is not None and D.n_e:
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)

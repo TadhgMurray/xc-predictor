@@ -175,6 +175,21 @@ SLOPE_RIDGE = 2.0
 #   year-to-year change toward zero, which is why it must stay weak.
 LINK_WEIGHT = 0.8
 
+# ★ THE ALTITUDE TERM (issue 172, 2026-09-04; OFF unless run_joint
+#   --altitude). One coefficient per sport group times the row's venue
+#   elevation above ALT_FLOOR_M, in km. In the ROW model, not the cell's
+#   prior: a resident of altitude has every ability-row at altitude, so
+#   without this term their ability IS their altitude-slowed speed, they
+#   run "as expected" at Simplot and contribute nothing to its cell, and
+#   the sea-level visitors contribute the whole penalty -- the cell lands
+#   between, residents' ratings there come out inflated and their careers
+#   sit below their sea-level worth. With the term in every row, an
+#   ability is the sea-level speed for everyone, the cell is terrain, and
+#   k is measured by the athletes who race at both elevations. Goes into
+#   the per-race effect like difficulty. The ridge is only numerical.
+ALT_FLOOR_M = 600.0
+ALT_RIDGE = 1e-6
+
 
 # Amplitude tilt: the season-form swing shrinks with ability
 # (rust_fitness._TILT_PER_POINT and its clamps).
@@ -236,7 +251,7 @@ class Design:
                  pool_row=None, day=None, first=None,
                  n_ath=None, n_cell=None, n_race=None, n_pool=None,
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
-                 dist=None, n_e=None, lz=None, link=None):
+                 dist=None, n_e=None, lz=None, link=None, alt=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -325,6 +340,12 @@ class Design:
             self.link_k0 = np.asarray(link[0], dtype=np.int64)
             self.link_k1 = np.asarray(link[1], dtype=np.int64)
             self.link_w = np.asarray(link[2], dtype=np.float64)
+        # the altitude term (ALT_FLOOR_M): per row, km of venue elevation
+        # above the floor, 0 where unknown; one coefficient per group
+        self.n_k = 0
+        if alt is not None:
+            self.alt = np.asarray(alt, dtype=np.float64)
+            self.n_k = self.n_group
 
         # packing
         self.o_a = 0
@@ -338,7 +359,8 @@ class Design:
         self.n_r = self.n_pool if self.has_rust else 0
         self.o_e = self.o_r + self.n_r
         self.o_g = self.o_e + self.n_e
-        self.n_total = self.o_g + self.n_g
+        self.o_k = self.o_g + self.n_g
+        self.n_total = self.o_k + self.n_k
 
     def unpack(self, theta):
         """Blocks as FULL arrays: mu over every group (0 for the reference),
@@ -358,7 +380,8 @@ class Design:
             b["c"] = None
         b["r"] = theta[self.o_r:self.o_e] if self.n_r else None
         b["e"] = theta[self.o_e:self.o_g] if self.n_e else None
-        b["g"] = theta[self.o_g:self.n_total] if self.n_g else None
+        b["g"] = theta[self.o_g:self.o_k] if self.n_g else None
+        b["k"] = theta[self.o_k:self.n_total] if self.n_k else None
         return b
 
 
@@ -401,6 +424,8 @@ def rowPrediction(b, D, h, amp, u_missing_zero=True):
         row = row + D.e_w * b["e"][D.e_idx]
     if b.get("g") is not None and getattr(D, "n_g", 0):
         row = row + b["g"][D.athlete] * D.lz
+    if b.get("k") is not None and getattr(D, "n_k", 0):
+        row = row + b["k"][D.group_row] * D.alt
     return row
 
 
@@ -539,6 +564,9 @@ class _Operator:
         if D.n_g:
             jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.lz,
                                             minlength=D.n_ath))
+        if D.n_k:
+            jobs.append(lambda: np.bincount(D.group_row, weights=wr * D.alt,
+                                            minlength=D.n_group))
         return np.concatenate(self._reduce(jobs))
 
     def matvec(self, theta):
@@ -557,7 +585,9 @@ class _Operator:
         if D.n_e:
             out[D.o_e:D.o_g] += self.pen_dist * b["e"]
         if D.n_g:
-            out[D.o_g:D.n_total] += self.ridge_slope * b["g"]
+            out[D.o_g:D.o_k] += self.ridge_slope * b["g"]
+        if D.n_k:
+            out[D.o_k:D.n_total] += ALT_RIDGE * b["k"]
         if getattr(D, "has_link", False) and self.link_weight > 0:
             a = b["a"]
             d = self.link_weight * D.link_w * (a[D.link_k0] - a[D.link_k1])
@@ -608,6 +638,9 @@ class _Operator:
             jobs.append(lambda: np.bincount(D.athlete, weights=w * D.lz * D.lz,
                                             minlength=D.n_ath)
                         + self.ridge_slope)
+        if D.n_k:
+            jobs.append(lambda: np.bincount(D.group_row, weights=w * D.alt * D.alt,
+                                            minlength=D.n_group) + ALT_RIDGE)
         out = np.concatenate(self._reduce(jobs))
         if getattr(D, "has_link", False) and self.link_weight > 0:
             out[:D.n_ath] += self.link_weight * (
@@ -839,6 +872,8 @@ def _pack(b, D):
         parts.append(b["e"])
     if D.n_g:
         parts.append(b["g"])
+    if D.n_k:
+        parts.append(b["k"])
     return np.concatenate(parts)
 
 
@@ -1006,6 +1041,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             if D.n_e:
                 extra += (f", track distance offsets |e| max "
                           f"{np.abs(b['e']).max():.4f}")
+            if D.n_k:
+                extra += f", altitude k {np.round(b['k'], 4)} /km"
 
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
@@ -1033,6 +1070,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "rust": b["r"],
         "dist_offset": b["e"],
         "slope": b["g"],
+        "altitude_coef": b["k"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),
         "sigma2": sigma2, "sigma_u2": sigma_u2, "tau2": tau2,
         "weights": w, "robust_scale": scale, "h": h, "amp": amp,

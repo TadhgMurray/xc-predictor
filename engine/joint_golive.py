@@ -83,6 +83,9 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   the course. Untilted. XC rows carry none (e_w = 0).
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
         eff = eff + D.e_w * out["dist_offset"][D.e_idx]
+    # the altitude term (issue 172): credit at altitude, for everyone there
+    if out.get("altitude_coef") is not None and getattr(D, "n_k", 0):
+        eff = eff + out["altitude_coef"][D.group_row] * D.alt
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):
         rc = 100.0 * pm_c[D.athlete] / adjusted

@@ -76,6 +76,8 @@ def rowTerms(D, npz, j):
     dist = 0.0
     if getattr(D, "n_e", 0) and "dist_offset" in npz:
         dist = float(D.e_w[j]) * float(npz["dist_offset"][int(D.e_idx[j])])
+    if getattr(D, "n_k", 0) and "altitude_coef" in npz:
+        dist += float(npz["altitude_coef"][int(D.group_row[j])]) * float(D.alt[j])
     out = {"cell": cell, "athlete": ath, "delta": delta,
            "delta_anchored": anchored, "rating_season": rating,
            "h": h, "amp": amp, "u": u, "dist": dist,
