@@ -152,6 +152,93 @@ def _bandOf(rating):
     return sum(1 for t in _DIST_BANDS if r >= t)
 
 
+# ===================================================================== #
+#  THE ENGINE'S SCALE (issue 177)
+# ===================================================================== #
+#
+# ★ A RATING IS 100 * pool_mean / adjusted, where adjusted is the normalised
+#   time with the row's WHOLE applied effect divided out: the tilt times the
+#   raw cell delta and the day, plus the event offset. The page used to
+#   define its neutral time as normalised time over (1 + displayed
+#   difficulty) -- the displayed difficulty is anchored to a zero mean, is
+#   not tilted, and carries no day or offset -- so a rating and a time did
+#   not land on one scale, and a 9:01 converted to its own event came back
+#   as a 9:30. The go-live now writes engine_scale: the pool mean the
+#   ratings hang on, the median venue effect the rated rows carried per
+#   (pool, sport), and the shift from the raw cell scale to the displayed
+#   one. With it, every path here works in the engine's adjusted time:
+#       time  -> adjusted : normalised / exp(effect)
+#       rating-> adjusted : 100 * pool_mean / rating
+#       adjusted -> time  : adjusted * exp(effect) / factor
+#   where effect = tilt(rating) * (log1p(displayed difficulty) + shift)
+#   + event offset for a chosen venue, or the sport's median effect for
+#   none. The same context forward and back cancels exactly. A database
+#   without the table falls back to the old (1 + difficulty) arithmetic.
+_TILT_K = -0.031            # must match joint_solve.TILT_K (pinned by test)
+_TILT_LO, _TILT_HI = 70.0, 140.0
+_scale = {"at": 0.0, "map": {}}
+
+
+def _loadEngineScale():
+    out = {}
+    try:
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pool, sport, pool_mean, median_effect, "
+                        "anchor_shift FROM engine_scale")
+            for pool, sport, pm, me, sh in cur.fetchall():
+                out[(_bare(pool), (sport or "").upper())] = (
+                    float(pm), float(me), float(sh))
+    except Exception:                                    # noqa: BLE001
+        out = {}
+    _scale["map"] = out
+    _scale["at"] = time.time()
+
+
+def engineScale(pool, sport):
+    """(pool_mean, median_effect, anchor_shift) or None."""
+    if not pool:
+        return None
+    with _offset_lock:
+        if time.time() - _scale["at"] > _OFFSET_TTL:
+            _loadEngineScale()
+        m = _scale["map"]
+    sp = (sport or "").upper()
+    return m.get((_bare(pool), sp)) or m.get((_bare(pool), "XC")) \
+        or m.get((_bare(pool), "TF"))
+
+
+def _tilt(rating):
+    r = min(max(float(rating), _TILT_LO), _TILT_HI)
+    return 1.0 + _TILT_K * (r - 100.0) / 10.0
+
+
+def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
+    """The applied effect (log) a race in this context carries on the
+    engine's scale: a chosen venue's own, else the sport's median."""
+    sc = engineScale(pool, sport)
+    if sc is None:
+        return None
+    _pm, med, shift = sc
+    if chosen_difficulty is None:
+        base = med
+    else:
+        base = _tilt(rating) * (math.log1p(float(chosen_difficulty)) + shift)
+    return base + distance_offset(pool, sport, distance_meters, rating=rating)
+
+
+def chosen_difficulty(spec, sport):
+    """An explicit or venue-fitted difficulty, or None for 'a typical
+    race' -- resolve_difficulty without its default."""
+    if spec.get("difficulty") is not None:
+        return spec["difficulty"]
+    return venue_difficulty(
+        sport,
+        canonical_id=spec.get("canonical_id"),
+        distance_meters=spec.get("distance"),
+        location_id=spec.get("location_id"),
+        is_indoor=spec.get("is_indoor"))
+
+
 def _loadDistanceOffsets():
     out = {}
     try:
@@ -223,6 +310,9 @@ def pool_mean(pool, sport=None):
       here without changing what pool_mean MEANS in the engine first.
     """
     key = _bare(pool)
+    sc = engineScale(key, sport)
+    if sc is not None:
+        return sc[0]                       # the engine's own number (177)
     if key not in _POOL_MEAN_CACHE:
         _POOL_MEAN_CACHE[key] = _recover_pool_mean(key)
     return _POOL_MEAN_CACHE[key]
@@ -375,6 +465,8 @@ def venue_difficulty(sport, canonical_id=None, distance_meters=None,
     take default_difficulty(sport) instead.
     '''
     sport = (sport or "XC").upper()
+    if canonical_id is None and location_id is None:
+        return None                      # nothing names a venue
     with getConn() as conn:
         with conn.cursor() as cur:
             if sport == "TF":
@@ -421,12 +513,23 @@ def resolve_difficulty(spec, sport):
 
 def _norm_from_time(time_seconds, distance_meters, pool, difficulty=0.0,
                     season=None, track_length=None, track_type=None,
-                    sport=None, event_short=None, weather=None, course=None):
+                    sport=None, event_short=None, weather=None, course=None,
+                    chosen=None):
     """A raw time in a stated context -> normalized_time. The forward call."""
     norm = normalizeTime(time_seconds, distance_meters, pool,
                          season=season, track_length=track_length,
                          track_type=track_type, sport=sport,
                          event_short=event_short, weather=weather, course=course)
+    sc = engineScale(pool, sport)
+    if norm is not None and sc is not None:
+        # the engine's scale (177): divide the applied effect out, with the
+        # tilt and the band at the rating this time implies (two passes)
+        adjusted = norm
+        for _ in range(2):
+            est = 100.0 * sc[0] / adjusted
+            eff = venueEffect(pool, sport, est, chosen, distance_meters)
+            adjusted = norm / math.exp(eff)
+        return adjusted
     if norm is not None and difficulty:
         norm = norm / (1.0 + difficulty)    # remove course difficulty
     if norm is not None:
@@ -446,6 +549,8 @@ def _norm_from_rating(rating, pool, difficulty=0.0, sport=None):
     pm = pool_mean(pool, sport)
     if pm is None or not rating:
         return None
+    if engineScale(pool, sport) is not None:
+        return 100.0 * pm / rating          # a rating is neutral already (177)
     return 100.0 * pm * (1.0 + difficulty) / rating
 
 
@@ -609,7 +714,8 @@ def source_to_normalized(source):
             season=source.get("season"), track_length=source.get("track_length"),
             track_type=source.get("track_type"), sport=source.get("sport"),
             event_short=source.get("event_short"),
-            weather=source.get("weather"), course=source.get("course"))
+            weather=source.get("weather"), course=source.get("course"),
+            chosen=chosen_difficulty(source, source.get("sport")))
     if t == "rating":
         return _norm_from_rating(source["rating"], source["pool"],
                                  difficulty=source.get("difficulty", 0.0),
@@ -671,6 +777,15 @@ def normalized_to_time(norm, context):
                           context.get("sport"), context["distance"])
     # A target with no stated venue is a TYPICAL venue for its sport, not a
     # neutral one. For TF the difference is ~3%.
+    sc = engineScale(context["pool"], context.get("sport"))
+    if sc is not None:
+        # the engine's scale (177): put the target's applied effect back
+        rating = 100.0 * sc[0] / norm
+        eff = venueEffect(context["pool"], context.get("sport"), rating,
+                          chosen_difficulty(context, context.get("sport")),
+                          context["distance"])
+        return norm * math.exp(eff) / factor * wmult
+
     difficulty = resolve_difficulty(context, context.get("sport"))
 
     # norm = time * factor / wmult  ->  time = norm / factor * wmult

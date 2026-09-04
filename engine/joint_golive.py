@@ -79,6 +79,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     if use_race_effect:
         # tilted like the course (issue 156): the solve fitted h * u
         eff = eff + out["h"] * out["race_effect"][D.race]
+    eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects
     #   the course. Untilted. XC rows carry none (e_w = 0).
@@ -133,6 +134,27 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                joint=np.array([1]), mu=out["mu"],
                race_effect_in_rating=np.array([int(use_race_effect)]))
 
+    # ★ THE ENGINE'S SCALE, WRITTEN DOWN (issue 177): the pool mean the
+    #   ratings hang on, the median venue effect the rated rows carried
+    #   per (pool, sport), and the shift between the raw cell scale and the
+    #   displayed one. The conversions page converts on this scale; without
+    #   it, a 9:01 converted to a 3200 came back as a 9:30.
+    scale_rows = []
+    shift = float(np.average(raw[solved], weights=w[solved]))
+    pool_row = attrs["pool"][D.athlete]
+    pm_row = pm_c[D.athlete]
+    for p in np.unique(pool_row):
+        if p < 0:
+            continue
+        for code, name in ((0, "XC"), (1, "TF")):
+            m = rated & (pool_row == p) & (sport == code)
+            if m.sum() < 500:
+                continue
+            scale_rows.append((attrs["pool_names"][p], name,
+                               float(np.median(pm_row[m])),
+                               float(np.median(eff_venue[m])),
+                               shift, int(m.sum())))
+
     dist_rows = []
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
         n_e_rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
@@ -157,7 +179,38 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     return {"diffs": diffs, "athletes": athletes, "per_sport": per_sport,
             "npz": npz, "summary": summary, "rated": rated, "chosen": chosen,
             "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
-            "dist_rows": dist_rows}
+            "dist_rows": dist_rows, "scale_rows": scale_rows}
+
+
+_SCALE_DDL = """
+    CREATE TABLE IF NOT EXISTS engine_scale (
+        pool           text NOT NULL,
+        sport          text NOT NULL,
+        pool_mean      real NOT NULL,
+        median_effect  real NOT NULL,
+        anchor_shift   real NOT NULL,
+        n_rows         bigint NOT NULL,
+        last_updated   text,
+        PRIMARY KEY (pool, sport)
+    )
+"""
+
+
+def writeEngineScale(rows):
+    from datetime import date
+    from database import getConn
+    if not rows:
+        return
+    today = date.today().isoformat()
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(_SCALE_DDL)
+        cur.execute("DELETE FROM engine_scale")
+        cur.executemany(
+            "INSERT INTO engine_scale (pool, sport, pool_mean, median_effect,"
+            " anchor_shift, n_rows, last_updated) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [(p, s, pm, me, sh, n, today) for p, s, pm, me, sh, n in rows])
+        conn.commit()
+    print(f"[joint/live] engine_scale: {len(rows):,} (pool, sport) rows")
 
 
 # The fitted track distance offsets, for the readers that do not run the
@@ -234,6 +287,7 @@ def writeLive(live):
         saveResultSpeedRatings(name, (rid, rating))
         print(f"[joint/live] {name}: {rid.size:,} result ratings written")
     writeDistOffsets(live.get("dist_rows", []))
+    writeEngineScale(live.get("scale_rows", []))
     print("\n[joint/live] LIVE. To undo:\n" + pg.restoreSql())
     print("[joint/live] ⚠ do NOT run apply_tilt after this: the tilt is "
           "inside these ratings already.")
