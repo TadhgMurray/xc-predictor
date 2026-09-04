@@ -320,32 +320,49 @@ def _load_courses(conn):
 #   ordering is the same and the distinct is the expensive half of a
 #   121M-row group-by). Built beside, then swapped, so the sitemap step
 #   that reads them never sees an empty table.
+# ! TWO SINGLE-TABLE AGGREGATES, JOINED SMALL. The first version joined
+#   results_tf (121M rows) to meets_tf on (div_id, event_id) inside the
+#   group-by and ran for six hours before failing (run8's 13c). Counting
+#   and dating per meet_id from the results table ALONE is one parallel
+#   scan; the name comes from the meets table alone; the two aggregates
+#   join on meet_id, a few hundred thousand rows each.
 _MEET_AGG = {
     "meet_agg_xc": """
-        SELECT r.meet_id,
-               min(m.meet_name)                 AS meet_name,
-               min(substr(r.date, 1, 4))::int   AS yr,
-               count(*)                         AS n_ath
-        FROM   results r
-        JOIN   meets m ON m.div_id = r.div_id
-        WHERE  r.meet_id IS NOT NULL AND m.meet_name IS NOT NULL
-        GROUP  BY r.meet_id
+        WITH c AS (
+            SELECT meet_id, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
+            FROM   results
+            WHERE  meet_id IS NOT NULL
+            GROUP  BY meet_id),
+        nm AS (
+            SELECT meet_id, min(meet_name) AS meet_name
+            FROM   meets
+            WHERE  meet_name IS NOT NULL
+            GROUP  BY meet_id)
+        SELECT c.meet_id, nm.meet_name, c.yr, c.n_ath
+        FROM   c JOIN nm USING (meet_id)
     """,
     "meet_agg_tf": """
-        SELECT r.meet_id,
-               min(m.meet_name)                 AS meet_name,
-               min(substr(r.date, 1, 4))::int   AS yr,
-               count(*)                         AS n_ath
-        FROM   results_tf r
-        JOIN   meets_tf m ON m.div_id = r.div_id AND m.event_id = r.event_id
-        WHERE  r.meet_id IS NOT NULL AND m.meet_name IS NOT NULL
-        GROUP  BY r.meet_id
+        WITH c AS (
+            SELECT meet_id, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
+            FROM   results_tf
+            WHERE  meet_id IS NOT NULL
+            GROUP  BY meet_id),
+        nm AS (
+            SELECT meet_id, min(meet_name) AS meet_name
+            FROM   meets_tf
+            WHERE  meet_name IS NOT NULL
+            GROUP  BY meet_id)
+        SELECT c.meet_id, nm.meet_name, c.yr, c.n_ath
+        FROM   c JOIN nm USING (meet_id)
     """,
 }
 
 
 def _ensure_meet_agg(conn):
     with conn.cursor() as cur:
+        # the scan is the cost: let it run parallel and keep the hash in RAM
+        cur.execute("SET max_parallel_workers_per_gather = 4")
+        cur.execute("SET work_mem = '1GB'")
         for table, sql in _MEET_AGG.items():
             cur.execute(f"DROP TABLE IF EXISTS {table}_new")
             cur.execute(f"CREATE TABLE {table}_new AS {sql}")

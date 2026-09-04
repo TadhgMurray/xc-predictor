@@ -1084,9 +1084,33 @@ def _updateFromStaging(conn, sport, table, staging):
 #
 # mode="update" is the old path: slower, but concurrent-safe and it leaves no
 #   _old table. Use it if the launcher must keep running.
+# ★ ONE GO-LIVE AT A TIME (2026-09-04). run9's go-live died 5.4 h in with
+#   `relation "sr_staging_xc" does not exist` between its own COPY and its
+#   own ANALYZE on the same connection. Nothing in this process drops that
+#   table there; a SECOND go-live's _fillStaging does (DROP TABLE IF EXISTS
+#   sr_staging_xc), and two pipelines were running. A session-level advisory
+#   lock, taken before the staging table is touched and held for the whole
+#   write, makes the second one fail at once with a sentence instead of
+#   killing the first one hours later.
+_GOLIVE_LOCK_KEY = 0x5C0_11FE                  # arbitrary, project-wide
+
+
+def _takeGoLiveLock(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (_GOLIVE_LOCK_KEY,))
+        got = bool(cur.fetchone()[0])
+    conn.commit()
+    if not got:
+        raise RuntimeError(
+            "another process holds the go-live lock: a second run_joint "
+            "--golive (or apply_tilt / fill) is writing speed ratings right "
+            "now. Let it finish, or kill it, then rerun this step.")
+
+
 def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
     table = {"XC": "results", "TF": "results_tf"}[sport]
     with getConn() as conn:
+        _takeGoLiveLock(conn)
         staging, n = _fillStaging(conn, sport, pairs)
         if n == 0:
             print(f"[db] {sport}: nothing to save")

@@ -30,5 +30,15 @@ def test_search_index_builds_both_meet_aggregates():
     lm = s[s.index("def _load_meets("):]
     assert lm.index("_ensure_meet_agg(conn)") < lm.index('_meet_rows("meet_agg_xc"')
     agg = s[s.index("_MEET_AGG = {"):s.index("def _ensure_meet_agg(")]
-    assert "JOIN   meets_tf m ON m.div_id = r.div_id AND m.event_id = r.event_id" in agg
+    # single-table aggregates joined small: no results-to-meets join
+    assert "FROM   results_tf\n" in agg and "FROM   meets_tf\n" in agg
+    assert "JOIN   meets_tf m" not in agg
     assert "RENAME TO {table}" in s
+
+
+def test_golive_takes_the_advisory_lock_first():
+    s = _src("engine", "speed_ratings_db.py")
+    body = s[s.index("def saveResultSpeedRatings("):]
+    body = body[:body.index("\ndef ", 1)]
+    assert body.index("_takeGoLiveLock(conn)") < body.index("_fillStaging(conn")
+    assert "pg_try_advisory_lock" in s
