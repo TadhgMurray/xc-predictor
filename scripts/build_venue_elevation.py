@@ -78,17 +78,21 @@ def _usgsOne(point):
     key, lat, lon = point
     q = urllib.parse.urlencode({"x": f"{lon:.6f}", "y": f"{lat:.6f}",
                                 "units": "Meters", "output": "json"})
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            with urllib.request.urlopen(f"{_USGS}?{q}", timeout=20) as r:
+            with urllib.request.urlopen(f"{_USGS}?{q}", timeout=8) as r:
                 v = json.load(r).get("value")
             if v is None:
                 return key, None
             v = float(v)
             return key, (v if -500 < v < 9000 else None)
-        except Exception:                                    # noqa: BLE001
-            time.sleep(1.5 * (attempt + 1))
+        except Exception as exc:                             # noqa: BLE001
+            _usgs_err["last"] = f"{type(exc).__name__}: {exc}"
+            time.sleep(1.0 * (attempt + 1))
     return key, None
+
+
+_usgs_err = {"last": ""}
 
 
 def _meteoBatch(points):
@@ -126,7 +130,8 @@ def main():
         cur.execute(_WANT)
         want = [(k, float(la), float(lo)) for k, la, lo in cur.fetchall()
                 if k not in have]
-        print(f"  venue_elevation: {len(have):,} known, {len(want):,} to fetch")
+        print(f"  venue_elevation: {len(have):,} known, {len(want):,} to fetch",
+              flush=True)
         if args.report or not want:
             return
         ins = ("INSERT INTO venue_elevation (key, elevation_m, source) "
@@ -143,20 +148,33 @@ def main():
         # USGS for the US, a few at a time
         us = [p for p in todo if _inUS(p[1], p[2])]
         rest = [p for p in todo if not _inUS(p[1], p[2])]
-        print(f"    USGS: {len(us):,} venues, {_WORKERS} at a time")
+        print(f"    USGS: {len(us):,} US venues, {_WORKERS} at a time; "
+              f"{len(rest):,} outside the US go to open-meteo", flush=True)
         from concurrent.futures import ThreadPoolExecutor
-        done, misses = 0, []
+        done, misses, t0 = 0, [], time.time()
         with ThreadPoolExecutor(_WORKERS) as ex:
-            for i in range(0, len(us), 200):
-                chunk = us[i:i + 200]
+            for i in range(0, len(us), 120):
+                chunk = us[i:i + 120]
                 got = list(ex.map(_usgsOne, chunk))
-                cur.executemany(ins, [(k, v, "usgs") for k, v in got if v is not None])
+                hits = [(k, v, "usgs") for k, v in got if v is not None]
+                cur.executemany(ins, hits)
                 conn.commit()
                 misses += [p for p, (k, v) in zip(chunk, got) if v is None]
                 done += len(chunk)
-                if (i // 200) % 10 == 0:
-                    print(f"    {done:,} / {len(us):,}  ({len(misses):,} misses)",
-                          flush=True)
+                el = time.time() - t0
+                print(f"    USGS {done:,} / {len(us):,}  hits {done - len(misses):,}"
+                      f"  misses {len(misses):,}  [{el:.0f}s"
+                      f"{(', ' + _usgs_err['last']) if _usgs_err['last'] else ''}]",
+                      flush=True)
+                # ! IF USGS IS NOT ANSWERING, STOP ASKING. Half misses after
+                #   the first few hundred means blocked or down; the rest of
+                #   the country goes to open-meteo instead of grinding
+                #   through timeouts.
+                if done >= 360 and len(misses) * 2 > done:
+                    print("    USGS is mostly failing -- the remaining "
+                          f"{len(us) - done:,} go to open-meteo", flush=True)
+                    misses += us[done:]
+                    break
         rest += misses
         if rest:
             print(f"    open-meteo: {len(rest):,} venues in batches of {_BATCH}")
@@ -166,8 +184,8 @@ def main():
                 cur.executemany(ins, [(p[0], float(e), "open-meteo")
                                       for p, e in zip(chunk, elev) if e is not None])
                 conn.commit()
-                if (i // _BATCH) % 20 == 0:
-                    print(f"    {i + len(chunk):,} / {len(rest):,}", flush=True)
+                print(f"    open-meteo {i + len(chunk):,} / {len(rest):,}  "
+                      f"(pace {_meteo_pace['s']:.0f}s)", flush=True)
         cur.execute("SELECT count(*), max(elevation_m), "
                     "count(*) FILTER (WHERE elevation_m > 1200) FROM venue_elevation")
         n, mx, high = cur.fetchone()
