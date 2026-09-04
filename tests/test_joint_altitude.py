@@ -78,8 +78,11 @@ def test_altitude_term_is_a_split_of_the_cell_effect():
     assert abs(gap(on)) < 0.01 and abs(gap(off)) < 0.01, (gap(on), gap(off))
     hi = np.arange(10, 20)
     a_hi = np.linspace(0.2, 1.6, 10)
-    tot_on = on["delta"][hi] + k * a_hi
-    tot_off = off["delta"][hi]
+    lo = np.arange(10)
+    # relative to the sea-level cells: the term moves a constant between
+    # the cells' mean and the level (a gauge), never a cell's standing
+    tot_on = on["delta"][hi] + k * a_hi - on["delta"][lo].mean()
+    tot_off = off["delta"][hi] - off["delta"][lo].mean()
     assert np.abs(tot_on - tot_off).max() < 0.01, "the split changed the total"
     print(f"  altitude: k {k:.4f} of {k_true} (the prior's split); abilities "
           f"unchanged ({gap(on):+.3f} vs {gap(off):+.3f}) ... OK")
