@@ -2158,8 +2158,10 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
               "lo": float(distance) * (1 - _REC_DIST_TOL),
               "hi": float(distance) * (1 + _REC_DIST_TOL)})
         prior = {r["person_id"]: r for r in cur.fetchall()}
-    except Exception:                    # noqa: BLE001 -- UndefinedTable et al.
+    except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
         cur.connection.rollback()
+        print(f"stampRecordFlags: {sport} {race_date} skipped: "
+              f"{type(exc).__name__}: {exc}", flush=True)
         return
 
     for row in rows:
@@ -2874,8 +2876,16 @@ def race_tf(meet_id, event_id, div_id):
                                        distance=header.get("distance_meters"))
                            if header else False)
             if header and results:
-                stampRecordFlags(cur, "TF", results,
-                                 header.get("distance_meters"),
+                # ! THE EVENT NAME WHEN THE HEADER HAS NO DISTANCE. "2miles"
+                #   at The CIRCUIT carried distance_meters NULL, the stamper
+                #   returned before it looked, and a page of PRs showed
+                #   none (owner, 2026-09-04). The same parser the backfill
+                #   used to rate the rows says what the event was.
+                dist = header.get("distance_meters")
+                if not dist:
+                    from normalize_distance import parseEventShort
+                    dist = parseEventShort(header.get("event_short")).get("meters")
+                stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
             # Points come from scoring the WHOLE meet, not this page's rows:
             # a prelim page's athletes score in the final, and a sectioned

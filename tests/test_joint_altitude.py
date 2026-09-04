@@ -56,10 +56,19 @@ def test_altitude_term_is_a_split_of_the_cell_effect():
     y, ath, cel, rac, alt, a_true, d_true, k_true, n_low, n_high = _world()
     D_on = js.Design(ath, cel, rac, alt=alt)
     D_off = js.Design(ath, cel, rac)
-    on = js.solveJoint(y, design=D_on, n_outer=6, tilt=False, n_probe=1)
+    # free: the prior-side split, about half the truth
+    free = js.solveJoint(y, design=D_on, n_outer=6, tilt=False, n_probe=1,
+                         alt_prior_pen=0.0)
+    assert 0.005 < float(free["altitude_coef"][0]) < k_true, free["altitude_coef"]
+    # with the physiology as a loose prior (--altitude-fit), the bridge
+    # athletes keep it near the truth; held (the default) it IS the prior
+    on = js.solveJoint(y, design=D_on, n_outer=6, tilt=False, n_probe=1,
+                       alt_prior_pen=js.ALT_PRIOR_PEN_FIT)
     off = js.solveJoint(y, design=D_off, n_outer=6, tilt=False, n_probe=1)
     k = float(on["altitude_coef"][0])
-    assert 0.005 < k < k_true + 0.01, k        # the right sign and order
+    assert abs(k - k_true) < 0.005, k
+    held = js.solveJoint(y, design=D_on, n_outer=6, tilt=False, n_probe=1)
+    assert abs(float(held["altitude_coef"][0]) - js.ALT_PRIOR_MEAN) < 1e-3
     res = slice(n_low, n_low + n_high)
     low = slice(0, n_low)
 

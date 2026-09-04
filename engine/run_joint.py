@@ -340,11 +340,19 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
     if out.get("altitude_coef") is not None:
         k = out["altitude_coef"]
         rows_alt = int((D.alt > 0).sum())
-        print(f"[joint] altitude: k {np.round(k, 4)} log-time per km above "
+        print(f"[joint] altitude ({'fitted around' if args_altitude_fit() else 'held at'} "
+              f"{js.ALT_PRIOR_MEAN}): k {np.round(k, 4)} log-time per km above "
               f"{js.ALT_FLOOR_M:.0f} m [XC TF]; at 1500 m that is "
               f"{', '.join(f'{100 * v * 0.9:+.1f}%' for v in k)}; "
               f"{D.alt_known:,} of {D.alt_cells:,} cells have an elevation, "
               f"{rows_alt:,} rows above the floor")
+
+
+_ALT_FIT = {"on": False}
+
+
+def args_altitude_fit():
+    return _ALT_FIT["on"]
 
 
 def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
@@ -446,6 +454,10 @@ def main():
                          "sport on the venue's elevation above 600 m, from "
                          "venue_elevation (scripts/build_venue_elevation.py). "
                          "Off by default until the owner has read k.")
+    ap.add_argument("--altitude-fit", action="store_true",
+                    help="let the bridge athletes move the altitude "
+                         "coefficient (prior sd ~0.01 around 0.035/km); "
+                         "default holds it at the physiology")
     ap.add_argument("--tau-tf-max", type=float, default=None,
                     help="cap the track cells' prior sd (log time), e.g. 0.02: "
                          "more shrinkage toward the track level than the "
@@ -493,6 +505,7 @@ def main():
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
     y = np.log(cols["norm"][keep])
 
+    _ALT_FIT["on"] = bool(args.altitude_fit)
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
@@ -521,7 +534,9 @@ def main():
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=args.probes,
                         curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
-                        tau_max={1: args.tau_tf_max} if args.tau_tf_max else None)
+                        tau_max={1: args.tau_tf_max} if args.tau_tf_max else None,
+                        alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
+                                       else js.ALT_PRIOR_PEN_FIXED))
     print(f"[joint] solved in {time.time() - t0:.0f}s")
 
     delta = out["delta"]

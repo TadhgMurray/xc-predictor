@@ -189,6 +189,21 @@ LINK_WEIGHT = 0.8
 #   the per-race effect like difficulty. The ridge is only numerical.
 ALT_FLOOR_M = 600.0
 ALT_RIDGE = 1e-6
+# ★ THE PHYSIOLOGY IS THE PRIOR, AND BY DEFAULT IT DECIDES (2026-09-04).
+#   The synthetic world showed the fitted k is a prior-side split with the
+#   cells (about half the truth), because a closed altitude community
+#   cannot separate "slow venue" from "slow athletes". The owner's case is
+#   exactly that community: altitude-to-altitude runners are a minority at
+#   Simplot, their abilities carry their home altitude, and the sea-level
+#   field's credit lands on them there. With k held at the distance-
+#   running literature's ~3.5% per km above 600 m, every altitude row gets
+#   the same credit whoever ran it: home rows and Simplot rows alike, so
+#   the resident's ability is their sea-level speed and Simplot is
+#   terrain. run_joint --altitude-fit loosens the prior to let the bridge
+#   athletes move k; the log prints where it landed either way.
+ALT_PRIOR_MEAN = 0.035          # log-time per km above ALT_FLOOR_M
+ALT_PRIOR_PEN_FIXED = 1e9       # row units: physiology decides
+ALT_PRIOR_PEN_FIT = 20.0        # row units: about sd 0.01 around it
 
 
 # Amplitude tilt: the season-form swing shrinks with ability
@@ -513,13 +528,16 @@ class _Operator:
 
     def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
                  lam_gap=None, gap_target=0.0, pen_dist=0.0,
-                 ridge_slope=0.0, link_weight=0.0):
+                 ridge_slope=0.0, link_weight=0.0,
+                 alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
         self.pen_dist = float(pen_dist)
         self.ridge_slope = float(ridge_slope)
         self.link_weight = float(link_weight)
+        self.alt_prior_mean = float(alt_prior_mean)
+        self.alt_prior_pen = float(alt_prior_pen)
         # the window-balance penalty (CURVE_GAP_WEIGHT): rank one per pool,
         # lg * (g.c - target)^2 with target = -winter_gain
         self.gap = []
@@ -587,7 +605,7 @@ class _Operator:
         if D.n_g:
             out[D.o_g:D.o_k] += self.ridge_slope * b["g"]
         if D.n_k:
-            out[D.o_k:D.n_total] += ALT_RIDGE * b["k"]
+            out[D.o_k:D.n_total] += (ALT_RIDGE + self.alt_prior_pen) * b["k"]
         if getattr(D, "has_link", False) and self.link_weight > 0:
             a = b["a"]
             d = self.link_weight * D.link_w * (a[D.link_k0] - a[D.link_k1])
@@ -600,10 +618,12 @@ class _Operator:
 
     def rhs(self, y):
         out = self.adjoint(self.w * y)
+        D = self.D
         if self.gap and self.gap_target:
-            D = self.D
             for lg, g in self.gap:
                 out[D.o_c:D.o_r] += lg * self.gap_target * g
+        if D.n_k:
+            out[D.o_k:D.n_total] += self.alt_prior_pen * self.alt_prior_mean
         return out
 
     def diag(self):
@@ -640,7 +660,8 @@ class _Operator:
                         + self.ridge_slope)
         if D.n_k:
             jobs.append(lambda: np.bincount(D.group_row, weights=w * D.alt * D.alt,
-                                            minlength=D.n_group) + ALT_RIDGE)
+                                            minlength=D.n_group)
+                        + ALT_RIDGE + self.alt_prior_pen)
         out = np.concatenate(self._reduce(jobs))
         if getattr(D, "has_link", False) and self.link_weight > 0:
             out[:D.n_ath] += self.link_weight * (
@@ -936,7 +957,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
-               tau_max=None):
+               tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -975,7 +996,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
-                       ridge_slope=ridge_slope, link_weight=link_weight)
+                       ridge_slope=ridge_slope, link_weight=link_weight,
+                       alt_prior_pen=alt_prior_pen)
         diag = op.diag()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
@@ -1055,7 +1077,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,
-                   ridge_slope=ridge_slope, link_weight=link_weight)
+                   ridge_slope=ridge_slope, link_weight=link_weight,
+                   alt_prior_pen=alt_prior_pen)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
                                 D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
