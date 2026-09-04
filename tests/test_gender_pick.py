@@ -64,7 +64,7 @@ ok("order by person_id, school" not in tmp,
 # 3. THE BACKFILL. Third copy, and the one that matters most: the gender
 #    picks the pool, the pool sets the scale normalized_time is written on,
 #    and that value is frozen into the row.
-m2 = re.search(r"def _loadGenders\(cur\):(.*?)return \{aid", BF, re.S)
+m2 = re.search(r"def _loadGenders\(cur\):(.*?)out = \{aid", BF, re.S)
 ok(m2 is not None, "_loadGenders not found")
 bf = norm(m2.group(1)) if m2 else ""
 ok("group by athlete_id, gender" in bf,
@@ -90,6 +90,25 @@ for name, sql in (("engine lateral", lat), ("ranking temp", tmp),
 #    on the better-evidenced side; it does not separate two people. If
 #    something starts claiming otherwise, this test should be revisited.
 ok("#93" in BR, "the note pointing at the un-merge issue is still there")
+
+# 6. THE ROWS OUTRANK THE PROFILES (issue 164). All three readers prefer
+#    person_gender when it exists, and the pack and the boards take a split
+#    person's row by its own label.
+PG = io.open(os.path.join(ROOT, "engine", "person_gender.py"),
+             encoding="utf-8").read()
+ok("def packGenderExpr" in PG and "def boardGenderExpr" in PG,
+   "person_gender exposes the two gender expressions")
+ok(DB.count("_pg.packGenderExpr(") == 2,
+   "the pack's two queries take their gender from person_gender")
+ok(DB.count("{_personGenderJoin()}") == 2,
+   "and both join it")
+ok(BR.count("_pg.boardGenderExpr(") == 2,
+   "the boards' two queries take a split person's row by its label")
+ok("LEFT JOIN {pg_table} pg" in BR and "_PG_EMPTY" in BR,
+   "the boards' temp prefers person_gender and survives its absence")
+ok("FROM person_gender" in BF, "the backfill overlays person_gender")
+ok("split" in PG and "least(n_m, n_f) >= 5" in PG,
+   "the split rule: both genders 5+ rows and the minority a third")
 
 if failed:
     for f in failed:

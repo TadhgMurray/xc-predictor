@@ -42,6 +42,7 @@ from database import getConn
 # reimplement it in SQL. Reimplementing is how the site and the engine drift
 # into disagreeing about who is a college athlete.
 sys.path.insert(0, "engine")
+import person_gender as _pg      # gender by the rows (issue 164)
 # seasonYearFromIso comes from the same module the engine uses, for the same
 # reason poolFor is imported rather than reimplemented: if the site and the
 # engine disagree about which season a race is in, every board silently splits
@@ -176,20 +177,34 @@ _INDEX_JOBS = 3
 #     deterministic. This does NOT fix a merged person; it makes the merge
 #     land on the more-evidenced side instead of on an alphabetical accident.
 #     Separating them is #93.
+# ★ THE ROWS DECIDE WHEN person_gender EXISTS (issue 164): the majority of
+#   the divisions the person raced under, then the profile majority for
+#   anyone with no labelled race; `split` marks a person who raced both
+#   ways enough to be two athletes, and the board query then takes the
+#   ROW's own label for them (boardGenderExpr).
 _GENDER_TEMP_SQL = """
     DROP TABLE IF EXISTS tmp_person_gender;
     CREATE TEMP TABLE tmp_person_gender AS
-    SELECT DISTINCT ON (person_id) person_id, gender
+    SELECT p.person_id,
+           COALESCE(pg.gender, p.gender)      AS gender,
+           COALESCE(pg.split, false)          AS split
     FROM (
-        SELECT a.athlete_id AS person_id, a.gender, count(*) AS n
-        FROM   athletes a
-        WHERE  a.gender IN ('M', 'F')
-        GROUP  BY a.athlete_id, a.gender
-    ) s
-    ORDER BY person_id, n DESC, gender DESC;
+        SELECT DISTINCT ON (person_id) person_id, gender
+        FROM (
+            SELECT a.athlete_id AS person_id, a.gender, count(*) AS n
+            FROM   athletes a
+            WHERE  a.gender IN ('M', 'F')
+            GROUP  BY a.athlete_id, a.gender
+        ) s
+        ORDER BY person_id, n DESC, gender DESC
+    ) p
+    LEFT JOIN {pg_table} pg ON pg.person_id = p.person_id;
     CREATE UNIQUE INDEX ON tmp_person_gender (person_id);
     ANALYZE tmp_person_gender;
 """
+
+# without the table, an empty stand-in with the same shape
+_PG_EMPTY = "(SELECT NULL::bigint AS person_id, NULL::text AS gender, NULL::boolean AS split WHERE false)"
 
 _GENDER_JOIN = """
         LEFT JOIN tmp_person_gender a
@@ -204,7 +219,11 @@ def prepareGenderTemp(conn):
     to 'M' -- so every athlete resolves to the gender the engine gave them.
     """
     with conn.cursor() as cur:
-        cur.execute(_GENDER_TEMP_SQL)
+        cur.execute("SELECT to_regclass('public.person_gender')")
+        have_pg = cur.fetchone()[0] is not None
+        print(f"  person_gender: {'rows decide' if have_pg else 'absent -- profile majority'}")
+        cur.execute(_GENDER_TEMP_SQL.format(
+            pg_table='person_gender' if have_pg else _PG_EMPTY))
         cur.execute("SELECT count(*) FROM tmp_person_gender")
         n = cur.fetchone()[0]
     conn.commit()
@@ -562,7 +581,8 @@ _SQL = {
                --   matches no route and 404s. XC has no event dimension and
                --   emits NULL.
                {_EVENT_ID} AS event_id,
-               m.state, a.gender, COALESCE(asl_s.level, asl_a.level) AS season_level,
+               m.state, {_pg.boardGenderExpr('XC')} AS gender,
+               COALESCE(asl_s.level, asl_a.level) AS season_level,
                (gu.person_id IS NOT NULL)  AS grade_untrusted,
                    gu.grade                    AS fixed_grade,
                    gu.level                    AS fixed_level,
@@ -645,7 +665,8 @@ _SQL = {
                --   matches no route and 404s. XC has no event dimension and
                --   emits NULL.
                COALESCE(r.event_id, -1) AS event_id,
-               m.state, a.gender, COALESCE(asl_s.level, asl_a.level) AS season_level,
+               m.state, {_pg.boardGenderExpr('TF')} AS gender,
+               COALESCE(asl_s.level, asl_a.level) AS season_level,
                (gu.person_id IS NOT NULL)  AS grade_untrusted,
                    gu.grade                    AS fixed_grade,
                    gu.level                    AS fixed_level,

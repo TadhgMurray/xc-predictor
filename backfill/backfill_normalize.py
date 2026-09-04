@@ -630,7 +630,23 @@ def _loadGenders(cur):
         ) s
         ORDER BY athlete_id, n DESC, gender DESC
     """)
-    return {aid: g for aid, g in cur}
+    out = {aid: g for aid, g in cur}
+    # ★ THE ROWS OUTRANK THE PROFILES (issue 164): where person_gender has a
+    #   verdict from the divisions the person raced under, it replaces the
+    #   profile majority. Person level only here: the normalisation pool is
+    #   one per person, and a split person's second pool is the engine's
+    #   and the boards' business.
+    cur.execute("SELECT to_regclass('public.person_gender')")
+    if cur.fetchone()[0] is not None:
+        cur.execute("SELECT person_id, gender FROM person_gender")
+        n = 0
+        for pid, g in cur:
+            if g in ("M", "F"):
+                out[pid] = g
+                n += 1
+        print(f"  genders: {n:,} from person_gender (the rows), the rest "
+              f"from the profiles")
+    return out
 
 
 # ---- canon dedup pre-pass (uses the dedup layer's person_id + canon_meet_id) --

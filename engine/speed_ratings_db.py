@@ -72,6 +72,31 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 from database import getConn
 from merge_column import mergeColumn      # heap-rebuild write path (see below)
+import person_gender as _pg               # gender by the rows (issue 164)
+
+_PG_AVAILABLE = None
+
+
+def _personGenderAvailable():
+    """Once per process: does person_gender exist? Without it the pack
+    pools by the profile majority exactly as before."""
+    global _PG_AVAILABLE
+    if _PG_AVAILABLE is None:
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                _PG_AVAILABLE = _pg.available(cur)
+        except Exception:                                    # noqa: BLE001
+            _PG_AVAILABLE = False
+        print(f"[engine] person_gender: "
+              f"{'ON (rows decide, split people are two athletes)' if _PG_AVAILABLE else 'absent -- profile majority'}")
+    return _PG_AVAILABLE
+
+
+def _personGenderJoin():
+    if not _personGenderAvailable():
+        return ""
+    return ("\n        LEFT JOIN person_gender pg "
+            "ON pg.person_id = COALESCE(r.person_id, r.athlete_id)")
 
 
 # Column order every loader yields. The engine unpacks by these indices.
@@ -513,7 +538,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                                      / 100.0) * 100)::int::text,
                               'NA')
                END AS venue,
-               a.gender,
+               {_pg.packGenderExpr('XC', _personGenderAvailable())} AS gender,
                COALESCE(dov.distance,
                         m.distance,
                         (mt.division_distances -> r.div_id::text
@@ -561,7 +586,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                GROUP BY a.gender
                ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
-        ) a ON TRUE{_dedupJoin(tw, 'XC')}
+        ) a ON TRUE{_personGenderJoin()}{_dedupJoin(tw, 'XC')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
@@ -604,7 +629,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                          CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in'
                               ELSE ':out' END
                END AS venue,
-               a.gender,
+               {_pg.packGenderExpr('TF', _personGenderAvailable())} AS gender,
                m.distance_meters::real AS dist_m
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
@@ -635,7 +660,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                GROUP BY a.gender
                ORDER BY count(*) DESC, a.gender DESC
                LIMIT 1
-        ) a ON TRUE{_dedupJoin(tw, 'TF')}
+        ) a ON TRUE{_personGenderJoin()}{_dedupJoin(tw, 'TF')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL

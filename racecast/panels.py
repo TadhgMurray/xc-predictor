@@ -202,6 +202,28 @@ def _is_non_school(school):
     return any(frag in s for frag in _NON_SCHOOL_FRAGMENTS)
 
 
+# ★ NOT A TEAM (owner, 2026-09-04): "Unattached", "SW Individuals -6 (AZ)",
+#   "Independent". These runners RANK -- they are not pros or countries, so
+#   _is_non_school stays False for them -- but the string is not a team: no
+#   team page, no link to one, no league or area off it, and never the
+#   season's school when the person raced for a school at all.
+_NOT_A_TEAM_EXACT = frozenset({"unat", "none", "n/a", "na", "no team",
+                               "no school", "independent", "individual",
+                               "individuals", "club", "open"})
+_NOT_A_TEAM_FRAGMENTS = ("unattached", "individual", "independent",
+                         "no team", "no school")
+
+
+def isTeamName(school):
+    """True when the string names a team a page can be built for."""
+    if not school:
+        return False
+    s = school.strip().lower()
+    if _is_non_school(s) or s in _NOT_A_TEAM_EXACT:
+        return False
+    return not any(frag in s for frag in _NOT_A_TEAM_FRAGMENTS)
+
+
 # ===================================================================== #
 #  3. SMALL HELPERS
 # ===================================================================== #

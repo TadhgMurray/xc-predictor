@@ -218,6 +218,14 @@ import school_identity
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
+
+
+@app.template_filter("is_team")
+def _is_team_filter(school):
+    """Link a school name only when it names a team (panels.isTeamName):
+    "Unattached" and "SW Individuals -6 (AZ)" get their label, no link."""
+    from panels import isTeamName
+    return isTeamName(school)
 # ★ COURSE DIFFICULTY AS A PERCENTAGE AGAINST A TYPICAL COURSE OF ITS SPORT.
 #   The raw multiplier's zero sits between XC and track, so every XC course
 #   read ~2% harder than it is. See difficulty_view.py.
@@ -1133,6 +1141,10 @@ def athlete(person_id):
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     seasons = enrich_seasons(seasons)
+    # a split person (issue 164): seasons of both genders on one page, so
+    # each season block says which
+    gender_mixed = len({s["gender"] for s in seasons.values()
+                        if s.get("gender")}) > 1
     # AFTER enrich_seasons -- it rebuilds the values, so a note attached to
     # the raw grouping would be thrown away with the list it sat on.
     _attach_season_verdicts(seasons, verdicts)
@@ -1222,6 +1234,7 @@ def athlete(person_id):
 
     return render_template("athlete.html",
                            athlete=athlete,
+                           gender_mixed=gender_mixed,
                            units=units,
                            rank_line=rank_line,
                            training=training,
@@ -1712,6 +1725,7 @@ def enrich_seasons(seasons):
             "rating_hs": season_rating(races, key="hs_rating"),
             "grade":  _season_grade(races),
             "school": _season_school(races),
+            "gender": _season_gender(races),
         }
     return enriched
 
@@ -1766,10 +1780,30 @@ def _season_grade(races):
 
 
 def _season_school(races):
-    """The school for this season — same idea, first race that has one."""
+    """The school this season was mostly raced for (owner, 2026-09-04):
+    the majority over rows that name a team; an unattached string only
+    when no row names one. Same rule as athlete_season.school."""
+    from collections import Counter
+    from panels import isTeamName
+    named = Counter(r["school"] for r in races
+                    if r.get("school") and isTeamName(r["school"]))
+    if named:
+        return named.most_common(1)[0][0]
     for r in races:
         if r.get("school"):
             return r["school"]
+    return None
+
+
+def _season_gender(races):
+    """'m' / 'f' from the rows' pools, for a split person's season labels
+    (issue 164); None when the pools do not say."""
+    from collections import Counter
+    c = Counter(str(r.get("pool") or "").split("|", 1)[0].rsplit("_", 1)[-1]
+                for r in races if r.get("pool"))
+    for g, _n in c.most_common():
+        if g in ("m", "f"):
+            return g
     return None
 
 
@@ -3543,12 +3577,13 @@ def school_page(school_name):
                         schoolBest, schoolTopAthletes, currentSeason,
                         seasonLabel, storedYear)
     from school_identity import stateChips
-    from panels import _is_non_school
+    from panels import isTeamName
 
     # "Unattached" and its kin are not a team and get no page (owner,
     # 2026-09-04): the roster would be every unattached runner in the
-    # country, and the units line would hand it a league.
-    if _is_non_school(school_name):
+    # country, and the units line would hand it a league. Nothing links
+    # here for them (the is_team filter); a typed URL 404s.
+    if not isTeamName(school_name):
         abort(404)
 
     sport = (request.args.get("sport") or "XC").strip().upper()

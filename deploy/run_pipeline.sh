@@ -210,6 +210,9 @@ step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 # issue 94: one physical race stored twice is flagged once, by result_id,
 # and every reader (engine, pricer, boards, page) anti-joins result_twin
 step 04c_twins        "$PY" -u engine/twin_flag.py --write
+# gender by the divisions raced under; a person who raced both ways enough
+# is two athletes to the pack and the boards (issue 164)
+step 04d_gender       "$PY" -u engine/person_gender.py --write
 
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
