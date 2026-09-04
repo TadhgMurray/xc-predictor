@@ -39,6 +39,7 @@ def test_search_index_builds_both_meet_aggregates():
 def test_golive_takes_the_advisory_lock_first():
     s = _src("engine", "speed_ratings_db.py")
     body = s[s.index("def saveResultSpeedRatings("):]
-    body = body[:body.index("\ndef ", 1)]
+    nxt = body.find("\ndef ", 1)
+    body = body if nxt < 0 else body[:nxt]      # it is the file's last def
     assert body.index("_takeGoLiveLock(conn)") < body.index("_fillStaging(conn")
     assert "pg_try_advisory_lock" in s
