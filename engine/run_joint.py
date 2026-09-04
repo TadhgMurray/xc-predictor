@@ -342,11 +342,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
-                             link=not args.no_link)
+                             link=args.link and not args.no_link)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
-                             link=not args.no_link)
+                             link=args.link and not args.no_link)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
@@ -401,8 +401,18 @@ def main():
                     help="no per-(pool, track distance) offset (issue 148)")
     ap.add_argument("--no-slope", action="store_true",
                     help="no per-athlete endurance slope (issue 154)")
-    ap.add_argument("--no-link", action="store_true",
-                    help="no consecutive-season link (issue 154)")
+    # ★ OFF BY DEFAULT (2026-09-04). The one run with it on (run9) put the
+    #   Woodbridge 2025 day at u = -0.27 against a cell of +0.19 and took
+    #   7% off the elite ratings there, with the same pack and gain as the
+    #   run before. Mechanism: the link is zero-mean, the population
+    #   improves ~5% a year, and a thin season is most of any big field --
+    #   pulled toward last year, every young runner reads slower than they
+    #   ran, the day looks fast, u goes negative, and the ratings on that
+    #   day carry it. A smoothing prior on a drifting population is a bias.
+    ap.add_argument("--link", action="store_true",
+                    help="the consecutive-season link (issue 154); off by "
+                         "default, see the note above")
+    ap.add_argument("--no-link", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-sport-offset", action="store_true")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
@@ -435,7 +445,7 @@ def main():
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
-        link=not args.no_link)
+        link=args.link and not args.no_link)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
