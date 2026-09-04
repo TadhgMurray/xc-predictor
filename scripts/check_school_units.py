@@ -380,8 +380,14 @@ _UNIT_RULES = [
     #   Championships". The section rule still votes the section off the
     #   same name; the writer copies the area onto the school's other-sport
     #   row, because membership in an area is a fact about the school.
+    # ! NOT A SPORT WORD AS THE NAME: "NCS Cross Country Championships"
+    #   voted the area CROSS COUNTRY for every NCS school (owner,
+    #   2026-09-04). The filler below is optional, so the capture must
+    #   refuse to start on one.
     ("area",     re.compile(
         r"\b(?:NCS|CCS|CIF-?SS|SJS|SDS)\s+"
+        r"(?!(?i:cross|xc|x-country|track|t&f|outdoor|indoor|open|varsity|"
+        r"jv|frosh|division|meet|champ)\b)"
         r"([A-Z][\w'&.-]*(?:[ -][A-Z][\w'&.-]*){0,2})\s+"
         r"(?:(?i:cross[- ]?country|xc|track(?:\s*(?:&|and)\s*field)?|"
         r"t&f|outdoor|indoor|area)\s+)*"
@@ -407,7 +413,10 @@ _UNIT_RULES = [
 _NOT_A_COUNTY = {"TRI", "BI", "MULTI", "DUAL", "ALL", "INTER"}
 _NOT_AN_AREA = {"MOC", "TRACK", "CROSS", "XC", "OPEN", "VARSITY", "JV",
                 "FROSH", "STATE", "CIF", "NCS", "CCS", "SJS", "SDS", "AREA",
-                "TOP", "ALL", "QUALIFYING", "QUALIFIER", "MASTERS", "MASTER"}
+                "TOP", "ALL", "QUALIFYING", "QUALIFIER", "MASTERS", "MASTER",
+                "CROSS COUNTRY", "COUNTRY", "TRACK & FIELD", "TRACK AND FIELD",
+                "TRACK FIELD", "T&F", "OUTDOOR", "INDOOR", "OUTDOOR TRACK",
+                "INDOOR TRACK"}
 
 
 _YEAR_RX = re.compile(r"\b(?:19|20)\d\d\b")
