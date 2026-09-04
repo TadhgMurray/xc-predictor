@@ -2093,7 +2093,16 @@ SELECT person_id, pool, sport, year,
        min(race_date),
        max(race_date),
        mode() WITHIN GROUP (ORDER BY state),
-       mode() WITHIN GROUP (ORDER BY school),
+       -- ★ THE TEAM THEY RACED FOR, NOT "UNATTACHED" (owner, 2026-09-04):
+       --   a season mostly unattached with a few races for a school is that
+       --   school's; only a season with no school at all stays unattached.
+       COALESCE(mode() WITHIN GROUP (ORDER BY school)
+                    FILTER (WHERE school IS NOT NULL
+                              AND lower(school) NOT LIKE 'unattached%%'
+                              AND lower(school) NOT IN
+                                  ('unat', 'independent', 'individual',
+                                   'no team', 'none', 'n/a', '')),
+                mode() WITHIN GROUP (ORDER BY school)),
        mode() WITHIN GROUP (ORDER BY grade)
 FROM {{load_table}} base
 -- ⚠ RATED ROWS ONLY, SINCE #46. ranking_results now also carries time-only

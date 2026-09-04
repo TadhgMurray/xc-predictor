@@ -79,9 +79,13 @@ import psycopg2.errors
 # Purpose : run one statement, print how long. These take minutes; a silent
 #           terminal for twenty minutes is indistinguishable from a hang.
 def _timed(cur, sql, label):
+    # the line BEFORE as well as after: a constraint check or an ANALYZE on
+    # 121M rows is minutes of silence otherwise, and the owner read that as
+    # a hang (2026-09-04)
+    print(f"    ...        {label}", flush=True)
     t0 = time.time()
     cur.execute(sql)
-    print(f"    [{time.time() - t0:7.1f}s] {label}")
+    print(f"    [{time.time() - t0:7.1f}s] {label}", flush=True)
 
 
 # _columns

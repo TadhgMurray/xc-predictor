@@ -953,6 +953,28 @@ def athlete(person_id):
             athlete = cur.fetchone()
             if athlete is None:
                 abort(404)
+            # ★ THE HEADER'S TEAM IS THE MOST RECENT SEASON'S (owner,
+            #   2026-09-04): the season table already holds the school each
+            #   season was mostly raced for; the scraped `athletes.school`
+            #   is whatever the source last showed. Unattached seasons never
+            #   name the team; a career with no school at all keeps the
+            #   scraped value.
+            try:
+                cur.execute("""
+                    SELECT school FROM athlete_season
+                    WHERE  person_id = %s AND school IS NOT NULL
+                      AND  lower(school) NOT LIKE 'unattached%%'
+                      AND  lower(school) NOT IN ('unat', 'independent',
+                                                 'individual', 'no team',
+                                                 'none', 'n/a', '')
+                    ORDER  BY last_race DESC NULLS LAST
+                    LIMIT  1
+                """, (person_id,))
+                recent = cur.fetchone()
+                if recent and recent["school"]:
+                    athlete["school"] = recent["school"]
+            except Exception:                            # noqa: BLE001
+                conn.rollback()                          # mid-rebuild: keep scraped
 
             # League / section / division for the header line. Read
             # through school_units so every page phrases them alike.
@@ -3521,6 +3543,13 @@ def school_page(school_name):
                         schoolBest, schoolTopAthletes, currentSeason,
                         seasonLabel, storedYear)
     from school_identity import stateChips
+    from panels import _is_non_school
+
+    # "Unattached" and its kin are not a team and get no page (owner,
+    # 2026-09-04): the roster would be every unattached runner in the
+    # country, and the units line would hand it a league.
+    if _is_non_school(school_name):
+        abort(404)
 
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):

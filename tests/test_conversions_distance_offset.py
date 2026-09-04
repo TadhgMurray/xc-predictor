@@ -43,4 +43,6 @@ def test_recovery_and_result_paths_divide_it_out():
     res = _body("_norm_from_result")
     assert "math.exp(distance_offset(pool, \"TF\", dist))" in res
     sql = SRC[SRC.index("_RESULT_SQL = {"):SRC.index("def _norm_from_result")]
-    assert "NULL::real, NULL::text" in sql and "rr.pool" in sql
+    assert "NULL::real, rr.pool" in sql and "r.speed_rating" in sql
+    body = _body("_norm_from_result")
+    assert "return 100.0 * pm / float(rating)" in body

@@ -900,7 +900,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                design=None, athlete_pool=None, ridge=SPORT_RIDGE,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
-               ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT):
+               ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
+               tau_max=None):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -969,6 +970,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             m = D.group_of_cell == g
             if m.any():
                 tau2[g] = max(float(np.mean(b["d"][m] ** 2 + d_var[m])), 1e-9)
+                # an owner's cap on a group's cell spread (--tau-tf-max):
+                # more shrinkage toward the sport's level than the data ask
+                if tau_max and g in tau_max and tau_max[g]:
+                    tau2[g] = min(tau2[g], float(tau_max[g]) ** 2)
 
         # --- robust reweighting (replaces rowguard) ------------------ #
         if robust:
@@ -1004,7 +1009,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
-                  f"{np.sqrt(sigma_u2):.5f}, tau {np.sqrt(tau2).mean():.5f}, "
+                  f"{np.sqrt(sigma_u2):.5f}, tau {np.round(np.sqrt(tau2), 5)}, "
                   f"mean w {w.mean():.3f}{extra}")
 
     # --- posterior variance, and the shrinkage it licenses ----------- #

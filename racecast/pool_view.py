@@ -169,6 +169,8 @@ _CONST_FILE = None
 # every rebuild, so the TTL is only a backstop against a very
 # stale sidecar on a machine that stopped running pipelines.
 _CONST_FILE_TTL = 7 * 24 * 3600
+_NONE_UNTIL = {}               # (pool, sport) -> retry a failed sample after
+_NONE_RETRY_S = 600
 
 
 def _constFile():
@@ -186,7 +188,13 @@ def _loadConstFile():
         with open(path) as fh:
             for k, v in json.load(fh).items():
                 pool, _, sport = k.partition("|")
-                _CONST_CACHE[(pool, sport)] = v
+                # ! NEVER A NULL FROM DISK (issue 159). A sample that failed
+                #   while the pipeline was rebuilding ranking_results used
+                #   to be saved as unavailable and honoured for the file's
+                #   whole week: the HS-equivalent toggle went dead for every
+                #   non-HS pool until the TTL ran out.
+                if v is not None:
+                    _CONST_CACHE[(pool, sport)] = v
     except Exception:                    # noqa: BLE001 -- cache, not truth
         pass
 
@@ -196,7 +204,8 @@ def _saveConstFile():
     try:
         with open(_constFile(), "w") as fh:
             json.dump({f"{p}|{s}": v
-                       for (p, s), v in _CONST_CACHE.items()}, fh)
+                       for (p, s), v in _CONST_CACHE.items()
+                       if v is not None}, fh)
     except Exception:                    # noqa: BLE001
         pass
 
@@ -215,6 +224,11 @@ def _poolConstant(pool, sport):
     key = (pool, sport)
     if key in _CONST_CACHE:
         return _CONST_CACHE[key]
+    # a failed sample is retried after a few minutes, not remembered
+    import time as _time
+    until = _NONE_UNTIL.get(key)
+    if until is not None and _time.time() < until:
+        return None
     sql = _CONST_SQL.get(sport)
     vals = []
     if sql is not None:
@@ -238,6 +252,9 @@ def _poolConstant(pool, sport):
         _FAILED.add(key)
         print(f"pool_view: constant for {pool}/{sport} unavailable "
               f"({len(vals)} usable rows, need {_CONST_MIN_ROWS})", flush=True)
+    if value is None:
+        _NONE_UNTIL[key] = _time.time() + _NONE_RETRY_S
+        return None
     _CONST_CACHE[key] = value
     _saveConstFile()
     return value

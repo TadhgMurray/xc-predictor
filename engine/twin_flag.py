@@ -124,8 +124,51 @@ def dupSameFeedSql(table, sport):
     """
 
 
+def dupCrossDateSql(table, sport):
+    """One run stored under two meet entries (issue 158): the same person,
+    feed, meet NAME, finishing place and time to the tenth, within three
+    weeks -- a meet listed twice, once with the wrong date, or twice on
+    the same date under two ids. The copy inside the BIGGER meet entry
+    survives (the real listing has the whole field); ties go to the lower
+    result_id. XC reads the name from anet's meets; tfrrs XC twins are
+    the cross-feed rules' business."""
+    if sport == "XC":
+        name_join = ("JOIN meets m ON m.div_id = r.div_id "
+                     "AND r.source = 'anet'")
+    else:
+        name_join = ("JOIN meets_tf m ON m.div_id = r.div_id "
+                     "AND m.event_id = r.event_id")
+    return f"""
+        WITH sized AS (
+            SELECT meet_id, count(*) AS n FROM {table}
+            WHERE  meet_id IS NOT NULL GROUP BY meet_id),
+        cand AS (
+            SELECT r.result_id, r.person_id, r.source, s.n,
+                   CASE WHEN r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                        THEN substr(r.date, 1, 10)::date END          AS d,
+                   lower(regexp_replace(m.meet_name, '[^A-Za-z0-9]+', ' ', 'g'))
+                                                                      AS mname,
+                   r.place, round(r.time_seconds::numeric, 1)         AS rt
+            FROM   {table} r
+            {name_join}
+            JOIN   sized s ON s.meet_id = r.meet_id
+            WHERE  r.person_id IS NOT NULL AND r.place > 0
+              AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
+              AND  m.meet_name IS NOT NULL)
+        SELECT DISTINCT a.result_id
+        FROM   cand a
+        JOIN   cand b ON b.person_id = a.person_id AND b.source = a.source
+                     AND b.mname = a.mname AND b.place = a.place
+                     AND b.rt = a.rt AND b.result_id <> a.result_id
+                     AND a.d IS NOT NULL AND b.d IS NOT NULL
+                     AND abs(b.d - a.d) <= 21
+        WHERE  b.n > a.n OR (b.n = a.n AND b.result_id < a.result_id)
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
-         ("dup_same_feed", dupSameFeedSql))
+         ("dup_same_feed", dupSameFeedSql),
+         ("dup_cross_date", dupCrossDateSql))
 
 
 def build(conn, write=False):

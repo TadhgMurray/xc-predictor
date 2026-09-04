@@ -428,8 +428,11 @@ def _norm_from_rating(rating, pool, difficulty=0.0, sport=None):
 # their cells differently -- see venue_difficulty above.
 _RESULT_SQL = {
     "XC": """
-        SELECT r.normalized_time, cd.difficulty, NULL::real, NULL::text
+        SELECT r.normalized_time, cd.difficulty, NULL::real, rr.pool,
+               r.speed_rating
         FROM results r
+        LEFT JOIN ranking_results rr
+               ON rr.result_id = r.result_id AND rr.sport = 'XC'
         LEFT JOIN meets m
                ON m.div_id  = r.div_id
               AND m.meet_id = r.meet_id
@@ -444,7 +447,8 @@ _RESULT_SQL = {
         WHERE r.result_id = %(rid)s
     """,
     "TF": """
-        SELECT r.normalized_time, cd.difficulty, m.distance_meters, rr.pool
+        SELECT r.normalized_time, cd.difficulty, m.distance_meters, rr.pool,
+               r.speed_rating
         FROM results_tf r
         LEFT JOIN meets_tf m
                ON m.meet_id  = r.meet_id
@@ -495,7 +499,18 @@ def _norm_from_result(result_id, sport):
     if not row or not row[0]:
         return None
 
-    norm, difficulty, dist, pool = row[0], row[1], row[2], row[3]
+    norm, difficulty, dist, pool, rating = row[0], row[1], row[2], row[3], row[4]
+    # ★ A RATED ROW INVERTS ITS OWN RATING (issue 162). The engine's number
+    #   is 100 * pool_mean / adjusted, with the tilt, the day and the event
+    #   offset inside `adjusted`; re-deriving the neutral time from the
+    #   stored normalized_time and the CELL's difficulty alone missed the
+    #   day and the tilt, so a 132.3 at Mt. SAC converted 30 seconds slower
+    #   over 3200 than a 132.8 at Arcadia. Two equal ratings now convert to
+    #   equal times, by construction. The cell path stays for unrated rows.
+    if rating and float(rating) > 0 and pool:
+        pm = pool_mean(pool, sport)
+        if pm:
+            return 100.0 * pm / float(rating)
     if difficulty is None:
         difficulty = default_difficulty(sport)
     out = norm / (1.0 + difficulty)

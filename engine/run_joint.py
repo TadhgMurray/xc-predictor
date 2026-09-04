@@ -399,6 +399,10 @@ def main():
     ap.add_argument("--no-rust", action="store_true")
     ap.add_argument("--no-dist", action="store_true",
                     help="no per-(pool, track distance) offset (issue 148)")
+    ap.add_argument("--tau-tf-max", type=float, default=None,
+                    help="cap the track cells' prior sd (log time), e.g. 0.02: "
+                         "more shrinkage toward the track level than the "
+                         "data estimate (issue 161). Unset = the estimate.")
     ap.add_argument("--no-slope", action="store_true",
                     help="no per-athlete endurance slope (issue 154)")
     # ★ OFF BY DEFAULT (2026-09-04). The one run with it on (run9) put the
@@ -468,7 +472,8 @@ def main():
     out = js.solveJoint(y, design=D, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=args.probes,
-                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True)
+                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
+                        tau_max={1: args.tau_tf_max} if args.tau_tf_max else None)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
 
     delta = out["delta"]
