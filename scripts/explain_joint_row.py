@@ -155,6 +155,8 @@ def main():
                  f"({npz['delta'].size} cells vs {D.n_cell}, "
                  f"{npz['race_effect'].size} races vs {D.n_race}): the "
                  f"pack was rebuilt after the solve, or the other way round")
+    if getattr(D, "dist_banded", False) and "rating" in npz:
+        D.rebandDist(np.asarray(npz["rating"])[D.athlete])   # the solve's bands
     mu = np.asarray(npz["mu"], dtype=np.float64)
     print(f"[explain] level mu[TF] - mu[XC] = {mu[1] - mu[0]:+.5f}; pools "
           f"{list(pool_names)}")

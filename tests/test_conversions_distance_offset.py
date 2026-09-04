@@ -25,7 +25,16 @@ def test_lookup_degrades_to_zero_and_keys_like_the_engine():
     d = _body("distance_offset")
     assert 'if (sport or "").upper() != "TF":' in d
     assert "int(round(float(distance_meters) / 100.0)) * 100" in d
-    assert "m.get(key, 0.0)" in d
+    assert "_bandOf(rating)" in d and 'm.get((_bare(pool), "TF", dm, 1), 0.0)' in d
+
+
+def test_bands_match_the_solver():
+    import re
+    js_src = io.open(os.path.join(ROOT, "engine", "joint_solve.py"),
+                     encoding="utf-8").read()
+    a = re.search(r"DIST_BANDS = \(([^)]*)\)", js_src).group(1)
+    b = re.search(r"_DIST_BANDS = \(([^)]*)\)", SRC).group(1)
+    assert a == b, (a, b)
 
 
 def test_forward_divides_inverse_multiplies():
@@ -41,7 +50,7 @@ def test_recovery_and_result_paths_divide_it_out():
     assert "/ math.exp(off) / 100.0" in r
     assert "m.distance_meters" in SRC[SRC.index("_MEAN_SQL"):SRC.index("def _recover_pool_mean")]
     res = _body("_norm_from_result")
-    assert "math.exp(distance_offset(pool, \"TF\", dist))" in res
+    assert "math.exp(distance_offset(pool, \"TF\", dist, rating=rating))" in res
     sql = SRC[SRC.index("_RESULT_SQL = {"):SRC.index("def _norm_from_result")]
     assert "NULL::real, rr.pool" in sql and "r.speed_rating" in sql
     body = _body("_norm_from_result")

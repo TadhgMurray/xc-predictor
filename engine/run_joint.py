@@ -235,8 +235,14 @@ def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
     return per_cell[course], known, len(keys)
 
 
+def bandLabels(base_labels):
+    """'hs_m:3200' -> 'hs_m:3200:b0', ':b1', ':b2', in class order."""
+    return [f"{lab}:b{b}" for lab in base_labels for b in range(js.DIST_N_BAND)]
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
-                sizes=None, dist=True, slope=True, link=True, altitude=False):
+                sizes=None, dist=True, slope=True, link=True, altitude=False,
+                dist_bands=True):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
@@ -291,8 +297,10 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   day=day, first=first,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
-                  else None, lz=lz, link=links, alt=alt)
-    D.dist_labels = dist_labels
+                  else None, lz=lz, link=links, alt=alt,
+                  dist_banded=dist_bands)
+    D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
+                     else dist_labels)
     D.dist_refs = dist_refs
     D.alt_known, D.alt_cells = alt_known, alt_cells
     return D, athlete_pool, pool_names
@@ -369,17 +377,33 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
     rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
     by_pool = {}
     for i, lab in enumerate(labels):
-        p, d = lab.rsplit(":", 1)
-        by_pool.setdefault(p, []).append((int(d), float(e[i]), int(rows[i])))
+        parts = lab.split(":")
+        p, d = parts[0], int(parts[1])
+        band = int(parts[2][1:]) if len(parts) > 2 else 1
+        by_pool.setdefault(p, {}).setdefault(d, {})[band] = (float(e[i]), int(rows[i]))
+    banded = getattr(D, "dist_banded", False)
+    bands_txt = (f", by rating band (<{js.DIST_BANDS[0]:.0f} / mid / "
+                 f">={js.DIST_BANDS[1]:.0f})" if banded else "")
     print("[joint] track distance offsets, log-time vs the pool's reference "
-          "event (+ = that event was normalising slow):")
+          f"event (+ = that event was normalising slow){bands_txt}:")
     for p in list(pools) + sorted(k for k in by_pool if k not in pools):
         if p not in by_pool:
             continue
         ref = D.dist_refs.get(p, "?")
-        cells = "  ".join(f"{d}: {v:+.4f} ({n:,})"
-                          for d, v, n in sorted(by_pool[p]) if n >= 1000)
-        print(f"    {p:<10} ref {ref}   {cells}")
+        cells = []
+        for d in sorted(by_pool[p]):
+            bb = by_pool[p][d]
+            if sum(n for _v, n in bb.values()) < 1000:
+                continue
+            if banded:
+                cells.append(f"{d}: " + "/".join(
+                    f"{bb[b][0]:+.4f}" if b in bb and bb[b][1] >= 200 else "  --  "
+                    for b in range(js.DIST_N_BAND))
+                    + f" ({sum(n for _v, n in bb.values()):,})")
+            else:
+                v, n = bb.get(1, (0.0, 0))
+                cells.append(f"{d}: {v:+.4f} ({n:,})")
+        print(f"    {p:<10} ref {ref}   {'  '.join(cells)}")
 
 
 def holdout(cols, keep, args, athlete_pool, D_full):
@@ -392,11 +416,13 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
-                             link=args.link and not args.no_link)
+                             link=args.link and not args.no_link,
+                             dist_bands=not args.no_dist_bands)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
-                             link=args.link and not args.no_link)
+                             link=args.link and not args.no_link,
+                             dist_bands=not args.no_dist_bands)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
@@ -462,6 +488,9 @@ def main():
                     help="cap the track cells' prior sd (log time), e.g. 0.02: "
                          "more shrinkage toward the track level than the "
                          "data estimate (issue 161). Unset = the estimate.")
+    ap.add_argument("--no-dist-bands", action="store_true",
+                    help="one offset per (pool, event) instead of three by "
+                         "rating band (issue 167)")
     ap.add_argument("--no-slope", action="store_true",
                     help="no per-athlete endurance slope (issue 154)")
     # ★ OFF BY DEFAULT (2026-09-04). The one run with it on (run9) put the
@@ -509,7 +538,8 @@ def main():
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
-        link=args.link and not args.no_link, altitude=args.altitude)
+        link=args.link and not args.no_link, altitude=args.altitude,
+        dist_bands=not args.no_dist_bands)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -519,7 +549,7 @@ def main():
           f"{args.curve_smooth:g}, window gap weight {args.curve_gap:g}, "
           f"stated winter gain {args.winter_gain:g}), "
           f"rust {'ON' if D.n_r else 'off'}, "
-          f"track distance offsets {f'ON ({D.n_e} classes)' if D.n_e else 'off'}, "
+          f"track distance offsets {f'ON ({D.n_e} classes' + (', by rating band)' if D.dist_banded else ')') if D.n_e else 'off'}, "
           f"endurance slope {'ON' if D.n_g else 'off'}, "
           f"season link {'ON' if getattr(D, 'has_link', False) else 'off'}, "
           f"altitude {'ON' if getattr(D, 'n_k', 0) else 'off'}, "
@@ -593,6 +623,7 @@ def main():
     if out.get("dist_offset") is not None and D.n_e:
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)
+        save["dist_bands"] = np.array(js.DIST_BANDS if D.dist_banded else [])
         save["dist_rows"] = np.bincount(D.e_idx, weights=D.e_w,
                                         minlength=D.n_e).astype(np.int64)
     np.savez(args.out, **save)

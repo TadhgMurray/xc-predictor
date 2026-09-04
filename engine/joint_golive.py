@@ -44,6 +44,7 @@ import os
 import numpy as np
 
 import pair_ratings as pr
+import joint_solve as js
 from pair_write_results import poolMeanPerGroup, ratedMask
 
 
@@ -136,11 +137,13 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
         n_e_rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
         for i, lab in enumerate(getattr(D, "dist_labels", [])):
-            p, d = lab.rsplit(":", 1)
-            dist_rows.append((p, "TF", int(d), float(out["dist_offset"][i]),
-                              int(n_e_rows[i])))
+            parts = lab.split(":")
+            band = int(parts[2][1:]) if len(parts) > 2 else 1
+            dist_rows.append((parts[0], "TF", int(parts[1]), band,
+                              float(out["dist_offset"][i]), int(n_e_rows[i])))
         for p, d in getattr(D, "dist_refs", {}).items():
-            dist_rows.append((p, "TF", int(d), 0.0, 0))
+            for band in range(js.DIST_N_BAND if getattr(D, "dist_banded", False) else 1):
+                dist_rows.append((p, "TF", int(d), band if getattr(D, "dist_banded", False) else 1, 0.0, 0))
 
     u_pts = (130.0 * (np.exp(np.abs(out["race_effect"][D.race][rated])) - 1)
              if use_race_effect else np.zeros(1))
@@ -166,10 +169,11 @@ _DIST_DDL = """
         pool         text    NOT NULL,
         sport        text    NOT NULL,
         distance_m   integer NOT NULL,
+        band         integer NOT NULL DEFAULT 1,
         log_offset   real    NOT NULL,
         n_rows       bigint  NOT NULL,
         last_updated text,
-        PRIMARY KEY (pool, sport, distance_m)
+        PRIMARY KEY (pool, sport, distance_m, band)
     )
 """
 
@@ -182,12 +186,13 @@ def writeDistOffsets(rows):
         return
     today = date.today().isoformat()
     with getConn() as conn, conn.cursor() as cur:
+        # the table predates the band column (2026-09-04): rebuild it
+        cur.execute("DROP TABLE IF EXISTS distance_offset")
         cur.execute(_DIST_DDL)
-        cur.execute("DELETE FROM distance_offset")
         cur.executemany(
-            "INSERT INTO distance_offset (pool, sport, distance_m, log_offset,"
-            " n_rows, last_updated) VALUES (%s, %s, %s, %s, %s, %s)",
-            [(p, s, d, v, n, today) for p, s, d, v, n in rows])
+            "INSERT INTO distance_offset (pool, sport, distance_m, band,"
+            " log_offset, n_rows, last_updated) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [(p, s, d, b, v, n, today) for p, s, d, b, v, n in rows])
         conn.commit()
     print(f"[joint/live] distance_offset: {len(rows):,} rows written")
 

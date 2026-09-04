@@ -85,3 +85,26 @@ def test_without_the_block_nothing_changes():
     assert D0.n_total == D1.n_total == D0.o_r + D0.n_r
     a = js.solveJoint(y, design=D0, n_outer=2, tilt=False, n_probe=1)
     assert a["dist_offset"] is None
+
+
+def test_banded_offsets_follow_the_rating():
+    """Issue 167: three classes per (pool, event), the row's class moving
+    with its athlete-season's rating band; the pinned event stays pinned
+    in every band; unbanded is byte-for-byte the old design."""
+    y, ath, cel, rac, group, cols, pool_of_ath, e_true = _world()
+    classes, labels, _ = rj.distClasses(cols, pool_of_ath, ["p0", "p1"])
+    D = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                  n_e=len(labels), dist_banded=True)
+    assert D.n_e == len(labels) * js.DIST_N_BAND
+    free = classes >= 0
+    assert (D.e_idx[free] == classes[free] * js.DIST_N_BAND + 1).all()
+    assert (D.e_w[~free] == 0).all()
+    rating = np.where(np.arange(len(y)) % 3 == 0, 130.0, 100.0)
+    D.rebandDist(rating)
+    top = free & (rating >= 120)
+    assert (D.e_idx[top] == classes[top] * js.DIST_N_BAND + 2).all()
+    assert (D.e_w[~free] == 0).all(), "the pinned event is pinned in every band"
+    assert rj.bandLabels(["p0:800"]) == ["p0:800:b0", "p0:800:b1", "p0:800:b2"]
+    D0 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                   n_e=len(labels))
+    assert D0.n_e == len(labels) and not D0.dist_banded

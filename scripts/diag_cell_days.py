@@ -44,6 +44,8 @@ def main():
     D, athlete_pool, pool_names = rj.buildDesign(cols, keep)
     with np.load(args.npz, allow_pickle=False) as z:
         npz = {k: z[k] for k in z.files}
+    if getattr(D, "dist_banded", False) and "rating" in npz:
+        D.rebandDist(np.asarray(npz["rating"])[D.athlete])
     keys = [str(k) for k in cols["course_keys"]]
 
     if args.cell is None:

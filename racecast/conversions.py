@@ -139,25 +139,44 @@ def _bare(pool):
 _OFFSET_TTL = 3600.0
 _offsets = {"at": 0.0, "map": {}}
 _offset_lock = threading.Lock()
+# ! MUST MATCH engine/joint_solve.DIST_BANDS (tests/test_conversions_
+#   distance_offset.py pins it): the offsets are by the athlete's rating
+#   band since issue 167, three per (pool, event), the 1600 pinned in each.
+_DIST_BANDS = (105.0, 120.0)
+
+
+def _bandOf(rating):
+    if rating is None:
+        return 1                                   # the middle band
+    r = float(rating)
+    return sum(1 for t in _DIST_BANDS if r >= t)
 
 
 def _loadDistanceOffsets():
     out = {}
     try:
         with getConn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT pool, sport, distance_m, log_offset "
-                        "FROM distance_offset")
-            for pool, sport, dm, off in cur.fetchall():
-                out[(_bare(pool), (sport or "").upper(), int(dm))] = float(off or 0.0)
+            try:
+                cur.execute("SELECT pool, sport, distance_m, band, log_offset "
+                            "FROM distance_offset")
+                rows = cur.fetchall()
+            except Exception:                            # noqa: BLE001
+                conn.rollback()                          # a pre-band table
+                cur.execute("SELECT pool, sport, distance_m, 1, log_offset "
+                            "FROM distance_offset")
+                rows = cur.fetchall()
+            for pool, sport, dm, band, off in rows:
+                out[(_bare(pool), (sport or "").upper(), int(dm), int(band))] = \
+                    float(off or 0.0)
     except Exception:                                    # noqa: BLE001
         out = {}                                         # no table yet: 0
     _offsets["map"] = out
     _offsets["at"] = time.time()
 
 
-def distance_offset(pool, sport, distance_meters):
-    """log-time offset the engine applied to this (pool, sport, distance);
-    0.0 wherever it applied none."""
+def distance_offset(pool, sport, distance_meters, rating=None):
+    """log-time offset the engine applied to this (pool, sport, distance)
+    at this rating's band; 0.0 wherever it applied none."""
     if not pool or not sport or not distance_meters:
         return 0.0
     if (sport or "").upper() != "TF":
@@ -166,8 +185,11 @@ def distance_offset(pool, sport, distance_meters):
         if time.time() - _offsets["at"] > _OFFSET_TTL:
             _loadDistanceOffsets()
         m = _offsets["map"]
-    key = (_bare(pool), "TF", int(round(float(distance_meters) / 100.0)) * 100)
-    return m.get(key, 0.0)
+    dm = int(round(float(distance_meters) / 100.0)) * 100
+    key = (_bare(pool), "TF", dm, _bandOf(rating))
+    if key in m:
+        return m[key]
+    return m.get((_bare(pool), "TF", dm, 1), 0.0)
 
 
 def pool_mean(pool, sport=None):
@@ -236,7 +258,7 @@ def _recover_pool_mean(pool):
                 for rating, norm, dist in cur.fetchall():
                     if not rating or not norm:
                         continue
-                    off = distance_offset(pool, sport, dist)
+                    off = distance_offset(pool, sport, dist, rating=rating)
                     vals.append(float(rating) * float(norm) / (1.0 + d)
                                 / math.exp(off) / 100.0)
 
@@ -408,7 +430,11 @@ def _norm_from_time(time_seconds, distance_meters, pool, difficulty=0.0,
     if norm is not None and difficulty:
         norm = norm / (1.0 + difficulty)    # remove course difficulty
     if norm is not None:
-        off = distance_offset(pool, sport, distance_meters)
+        # the band from the rating this time implies (middle band first,
+        # then the band that rating sits in)
+        pm = pool_mean(pool, sport)
+        est = 100.0 * pm / norm if pm else None
+        off = distance_offset(pool, sport, distance_meters, rating=est)
         if off:
             norm = norm / math.exp(off)     # remove the event's own error
     return norm
@@ -515,7 +541,7 @@ def _norm_from_result(result_id, sport):
         difficulty = default_difficulty(sport)
     out = norm / (1.0 + difficulty)
     if sport == "TF" and pool and dist:
-        out = out / math.exp(distance_offset(pool, "TF", dist))
+        out = out / math.exp(distance_offset(pool, "TF", dist, rating=rating))
     return out
 
 
@@ -651,8 +677,10 @@ def normalized_to_time(norm, context):
     base = norm / factor * wmult
     # apply the course/venue difficulty (harder course -> slower time), and
     # the event's own normalisation error the ratings carry (issue 148)
+    pm = pool_mean(context["pool"], context.get("sport"))
     off = distance_offset(context["pool"], context.get("sport"),
-                          context["distance"])
+                          context["distance"],
+                          rating=(100.0 * pm / norm) if pm else None)
     return base * (1.0 + difficulty) * math.exp(off)
 
 

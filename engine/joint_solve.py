@@ -151,6 +151,15 @@ WINTER_GAIN = 0.0
 #   like difficulty. The prior sd is loose: the big classes are decided by
 #   their rows, the tiny ones fall to zero.
 DIST_PRIOR_SD = 0.03
+# ★ BY RATING BAND (issue 167, 2026-09-04, the owner's option 1). One
+#   number per pool and event was the AVERAGE runner's exchange rate; a
+#   4:13 1600 rated under a 15:40 at Mt. SAC because the top needs more
+#   credit for the 1600 than the average does (109's finding on season
+#   bests). Each (pool, event) class is now three: by the athlete-season's
+#   own rating, refreshed every outer iteration like the tilt, with the
+#   1600 pinned in every band. Middle band until the first ratings exist.
+DIST_BANDS = (105.0, 120.0)
+DIST_N_BAND = len(DIST_BANDS) + 1
 
 # ★ THE PER-ATHLETE ENDURANCE SLOPE (issue 154, 2026-09-03). One number per
 #   athlete-season, how steeply THEIR log time rises with log distance
@@ -266,7 +275,8 @@ class Design:
                  pool_row=None, day=None, first=None,
                  n_ath=None, n_cell=None, n_race=None, n_pool=None,
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
-                 dist=None, n_e=None, lz=None, link=None, alt=None):
+                 dist=None, n_e=None, lz=None, link=None, alt=None,
+                 dist_banded=False):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -333,12 +343,21 @@ class Design:
         # index, or -1 for no class -- an XC row, the pinned reference
         # event, or no distance. e_w zeroes the -1 rows in every product.
         self.n_e = 0
+        self.dist_banded = False
         if dist is not None:
             dist = np.asarray(dist, dtype=np.int64)
-            self.e_idx = np.maximum(dist, 0)
+            self.e_base = np.maximum(dist, 0)
             self.e_w = (dist >= 0).astype(np.float64)
-            self.n_e = int(n_e if n_e is not None
-                           else (int(dist.max()) + 1 if dist.size else 0))
+            n_base = int(n_e if n_e is not None
+                         else (int(dist.max()) + 1 if dist.size else 0))
+            self.n_e_base = max(n_base, 0)
+            self.dist_banded = bool(dist_banded) and self.n_e_base > 0
+            if self.dist_banded:
+                self.n_e = self.n_e_base * DIST_N_BAND
+                self.e_idx = self.e_base * DIST_N_BAND + 1     # middle band
+            else:
+                self.n_e = self.n_e_base
+                self.e_idx = self.e_base
             if self.n_e <= 0:
                 self.n_e = 0
 
@@ -376,6 +395,14 @@ class Design:
         self.o_g = self.o_e + self.n_e
         self.o_k = self.o_g + self.n_g
         self.n_total = self.o_k + self.n_k
+
+    def rebandDist(self, rating_row):
+        """Re-point every row's offset class at its athlete-season's
+        rating band (DIST_BANDS); a no-op for an unbanded design."""
+        if not self.dist_banded:
+            return
+        band = np.digitize(np.asarray(rating_row, dtype=np.float64), DIST_BANDS)
+        self.e_idx = self.e_base * DIST_N_BAND + band
 
     def unpack(self, theta):
         """Blocks as FULL arrays: mu over every group (0 for the reference),
@@ -1046,6 +1073,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 h = 1.0 + TILT_K * (r_clip - 100.0) / 10.0
             if D.has_curve:
                 amp = amplitudeFromRating(r_row)
+            D.rebandDist(r_row)                    # the event offsets' bands
         elif tilt and pool_mean_row is not None:
             h = tiltFromAbility(b["a"][D.athlete], np.asarray(pool_mean_row))
 
