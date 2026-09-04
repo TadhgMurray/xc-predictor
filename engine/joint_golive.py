@@ -76,7 +76,8 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                                   anchor=rat.get("anchor"))
     eff = out["h"] * out["delta"][D.cell]
     if use_race_effect:
-        eff = eff + out["race_effect"][D.race]
+        # tilted like the course (issue 156): the solve fitted h * u
+        eff = eff + out["h"] * out["race_effect"][D.race]
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects
     #   the course. Untilted. XC rows carry none (e_w = 0).

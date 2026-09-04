@@ -375,9 +375,19 @@ def academicDay(doy):
 def rowPrediction(b, D, h, amp, u_missing_zero=True):
     """The model's prediction for every row of design D from blocks b."""
     row = b["a"][D.athlete] + h * (b["mu"][D.group_row] + b["d"][D.cell])
+    # ★ THE RACE-DAY EFFECT IS TILTED LIKE THE COURSE (issue 156,
+    #   2026-09-04). Untilted, delta and u were separated within a race
+    #   only by h: the pair (delta = +c, u = -c) cost almost nothing under
+    #   the two priors and bought an ability-shaped spread, (h - 1) * c
+    #   per row, so the solve used it as a free spread parameter. Great
+    #   Park read delta +0.19 with u about -0.2 on EVERY one of its seven
+    #   days, net zero, and the elite rows there lost 7-9%. With h on both,
+    #   delta and u are exactly collinear inside a race and the split is
+    #   the priors' alone: delta is the shrunk mean of the cell's days and
+    #   u is each day's deviation, which is what the column claims.
     u = b["u"]
     if u.size == D.n_race:
-        row = row + u[D.race]
+        row = row + h * u[D.race]
     elif u_missing_zero:
         pass                          # a design whose races are not fitted
     if b.get("beta") is not None and D.sc is not None:
@@ -509,7 +519,7 @@ class _Operator:
         D, h, amp = self.D, self.h, self.amp
         jobs = [lambda: np.bincount(D.athlete, weights=wr, minlength=D.n_ath),
                 lambda: np.bincount(D.cell, weights=wr * h, minlength=D.n_cell),
-                lambda: np.bincount(D.race, weights=wr, minlength=D.n_race),
+                lambda: np.bincount(D.race, weights=wr * h, minlength=D.n_race),
                 lambda: np.bincount(D.mu_idx, weights=wr * h * D.mu_w,
                                     minlength=max(D.n_mu, 1))[:D.n_mu]]
         if D.n_beta:
@@ -571,7 +581,8 @@ class _Operator:
         jobs = [lambda: np.bincount(D.athlete, weights=w, minlength=D.n_ath),
                 lambda: np.bincount(D.cell, weights=w * h * h,
                                     minlength=D.n_cell) + self.pen_cell,
-                lambda: np.bincount(D.race, weights=w, minlength=D.n_race)
+                lambda: np.bincount(D.race, weights=w * h * h,
+                                    minlength=D.n_race)
                 + self.pen_race,
                 lambda: np.bincount(D.mu_idx, weights=w * h * h * D.mu_w,
                                     minlength=max(D.n_mu, 1))[:D.n_mu]]

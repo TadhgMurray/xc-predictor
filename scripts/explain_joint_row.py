@@ -79,7 +79,7 @@ def rowTerms(D, npz, j):
     out = {"cell": cell, "athlete": ath, "delta": delta,
            "delta_anchored": anchored, "rating_season": rating,
            "h": h, "amp": amp, "u": u, "dist": dist,
-           "effect": h * delta + u + dist,
+           "effect": h * (delta + u) + dist,        # u tilted too (156)
            "curve": 0.0, "rust": 0.0, "beta": 0.0}
     if D.has_curve and "curve" in npz:
         # the solver's own row basis: full grid, pinned knot at zero, its
