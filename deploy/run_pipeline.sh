@@ -36,6 +36,20 @@ done
 [ -x "$PY" ]   || { echo "FATAL: no python at $PY" >&2; exit 1; }
 cd "$ROOT" || exit 1
 
+# ★ ONE PIPELINE AT A TIME (2026-09-04). Two ran on top of each other on
+#   run9 (four tmux sessions, two launches): both solves took 5.5 h instead
+#   of 40 min, one go-live dropped the other's staging table, and every
+#   board after was a mixture. The lock is on a file, held by this shell
+#   for the whole run, released by the kernel however the run ends.
+if [ "$DRY" -eq 0 ]; then
+  exec 9>"$ROOT/.pipeline.lock"
+  if ! flock -n 9; then
+    echo "FATAL: another pipeline holds $ROOT/.pipeline.lock -- tmux ls, then" >&2
+    echo "       attach to it or kill it; never run two at once." >&2
+    exit 1
+  fi
+fi
+
 if [ -f "$ENV_FILE" ]; then
   set -a; . "$ENV_FILE"; set +a
   echo "  env loaded from $ENV_FILE"
@@ -93,6 +107,45 @@ step() {
   else
     echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
   fi
+}
+
+# steps2 <nameA> "<cmdA>" <nameB> "<cmdB>"  -- two INDEPENDENT steps at
+# once, one log each, one summary line each. For the pairs that read and
+# write nothing in common (the two rowguard diags: 10 minutes each,
+# sequential for no reason).
+steps2() {
+  nameA="$1"; cmdA="$2"; nameB="$3"; cmdB="$4"
+  num=$(echo "$nameA" | sed 's/^0*\([0-9]*\).*/\1/')
+  if [ "${num:-0}" -lt "$FROM" ]; then
+    echo "  $nameA + $nameB skipped (--from $FROM)"
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    echo "  $nameA : $cmdA   (with $nameB : $cmdB)"
+    return 0
+  fi
+  echo ""
+  echo "======================================================================"
+  echo "  $nameA + $nameB    $(date +%H:%M:%S)   (in parallel)"
+  echo "======================================================================"
+  t0=$(date +%s)
+  sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
+  pa=$!
+  sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
+  pb=$!
+  wait "$pa"; ra=$?
+  wait "$pb"; rb=$?
+  el=$(( $(date +%s) - t0 ))
+  tail -n 3 "$LOGDIR/$nameA.log" "$LOGDIR/$nameB.log"
+  for pair in "$nameA:$ra" "$nameB:$rb"; do
+    nm="${pair%%:*}"; rc="${pair##*:}"
+    if [ "$rc" -ne 0 ]; then
+      echo "  $nm FAILED after ${el}s" | tee -a "$SUMMARY"
+      FAILED="$FAILED $nm"
+    else
+      echo "  $nm ok (${el}s, in parallel)" | tee -a "$SUMMARY"
+    fi
+  done
 }
 
 # shards <name> <n> <command...>  -- run <command> --shard k/n for k in
@@ -265,8 +318,8 @@ step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.
-step 15_rowguard_diag_xc   "$PY" -u scripts/diag_suspects.py --sport XC
-step 15_rowguard_diag_tf   "$PY" -u scripts/diag_suspects.py --sport TF
+steps2 15_rowguard_diag_xc "$PY -u scripts/diag_suspects.py --sport XC" \
+       15_rowguard_diag_tf "$PY -u scripts/diag_suspects.py --sport TF"
 step 15_rowguard_triage_xc "$PY" -u scripts/triage_suspects.py --sport XC
 step 15_rowguard_triage_tf "$PY" -u scripts/triage_suspects.py --sport TF
 step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py

@@ -63,15 +63,22 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 #   unrated -- WHERE (rated OR sprint) -- so its inverse is "unrated AND NOT
 #   a sprint": a sprint has no rating on purpose and must never be priced
 #   here. The 2026-09-01 run failed this step on the old single mark.
+# ! ONLY ROWS THAT CAN BE PRICED (2026-09-04). The inverse used to take
+#   every unrated distance row, normalized_time or not, and stream it
+#   through the board query's joins and the Python pool resolver just
+#   to count it as "no normalized time": hurdles, steeple, relays,
+#   everything the backfill left NULL -- tens of millions of rows for
+#   a census line, 30-50 minutes a run. The count is SQL's now.
 _MARK = {
     "XC": ("WHERE r.speed_rating IS NOT NULL",
-           "WHERE r.speed_rating IS NULL"),
+           "WHERE r.speed_rating IS NULL AND r.normalized_time > 0"),
     # ! AND NOT A FIELD EVENT, since the marks board (owner, 2026-09-02): a
     #   field row is admitted for its mark and has no time to price.
     "TF": ("WHERE (r.speed_rating IS NOT NULL OR se.event_short IS NOT NULL\n"
            "               OR COALESCE(r.is_field, 0) = 1)",
            "WHERE r.speed_rating IS NULL AND se.event_short IS NULL\n"
-           "               AND COALESCE(r.is_field, 0) = 0"),
+           "               AND COALESCE(r.is_field, 0) = 0\n"
+           "               AND r.normalized_time > 0"),
 
 }
 

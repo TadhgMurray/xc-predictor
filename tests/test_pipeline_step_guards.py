@@ -43,3 +43,16 @@ def test_golive_takes_the_advisory_lock_first():
     body = body if nxt < 0 else body[:nxt]      # it is the file's last def
     assert body.index("_takeGoLiveLock(conn)") < body.index("_fillStaging(conn")
     assert "pg_try_advisory_lock" in s
+
+
+def test_pipeline_holds_a_lock_and_runs_the_diags_in_parallel():
+    s = _src("deploy", "run_pipeline.sh")
+    assert "flock -n 9" in s and ".pipeline.lock" in s
+    assert "steps2 15_rowguard_diag_xc" in s
+    assert 'step 15_rowguard_diag_xc' not in s
+
+
+def test_fill_streams_only_priceable_rows():
+    s = _src("engine", "fill_ratings.py")
+    mark = s[s.index("_MARK = {"):s.index("def _sqlFor(")]
+    assert mark.count("AND r.normalized_time > 0") == 2
