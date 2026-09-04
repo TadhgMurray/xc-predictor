@@ -263,8 +263,11 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   #   live run (each capped at 150 iterations now). 0 skips them.
   # XCP_WINTER_GAIN=0.03 states the average athlete's fall-to-spring gain
   # (issue 143); unset, the level carries the whole change.
+  # XCP_ALTITUDE=1 turns on the altitude term (issue 172; needs
+  # venue_elevation from scripts/build_venue_elevation.py).
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4 \
-      ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"}
+      ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
+      ${XCP_ALTITUDE:+--altitude}
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else
