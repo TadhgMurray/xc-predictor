@@ -35,3 +35,16 @@ def test_headers_noindex_and_the_board_season_number():
     assert "topbar-search.js" in v
     h = _src("racecast", "templates", "home.html")
     assert "static_exists(slot ~ '.webp')" in h
+
+
+def test_season_outlier_rule_is_one_number_in_two_places():
+    import re
+    b = _src("racecast", "build_ranking_results.py")
+    a = _src("racecast", "app.py")
+    x = float(re.search(r"^_SEASON_OUTLIER_PTS = ([0-9.]+)", b, re.M).group(1))
+    y = float(re.search(r"^SEASON_OUTLIER_PTS = ([0-9.]+)", a, re.M).group(1))
+    assert x == y == 20.0
+    assert "WITH season_med AS" in b and "speed_rating >= sm.med - {_SEASON_OUTLIER_PTS}" in b
+    assert 'r["season_outlier"] = (sr is not None' in a
+    t = _src("racecast", "templates", "athlete.html")
+    assert "race.season_outlier" in t

@@ -1773,6 +1773,17 @@ def enrich_seasons(seasons, board_seasons=None):
     board_seasons = board_seasons or {}
     for key, races in seasons.items():
         label_key = (int(key[0]) if str(key[0]).isdigit() else key[0], key[1])
+        # ★ THE SAME OUTLIER RULE AS athlete_season (build_ranking_results.
+        #   _SEASON_OUTLIER_PTS): a race twenty points under the season's
+        #   median is marked and left out of this page's averages.
+        rated = sorted(r["speed_rating"] for r in races
+                       if r.get("speed_rating") is not None)
+        if rated:
+            med = rated[len(rated) // 2]
+            for r in races:
+                sr = r.get("speed_rating")
+                r["season_outlier"] = (sr is not None
+                                       and sr < med - SEASON_OUTLIER_PTS)
         enriched[key] = {
             "races":  races,
             "rating": board_seasons.get(label_key, season_rating(races)),
@@ -1861,10 +1872,15 @@ def _season_gender(races):
     return None
 
 
+SEASON_OUTLIER_PTS = 20.0        # must match build_ranking_results (test)
+
+
 def season_rating(races, key="speed_rating"):
     """Average the per-race speed ratings for one season, ignoring unrated
-    races. key="hs_rating" averages the HS-equivalent view instead."""
-    rated = [r[key] for r in races if r.get(key) is not None]
+    races and season outliers. key="hs_rating" averages the HS-equivalent
+    view instead."""
+    rated = [r[key] for r in races
+             if r.get(key) is not None and not r.get("season_outlier")]
     if not rated:                      # a season with no rated races
         return None                    # -> template shows "—", not a crash
     return sum(rated) / len(rated)

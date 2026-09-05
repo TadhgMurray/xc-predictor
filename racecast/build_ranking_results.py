@@ -2101,7 +2101,24 @@ _SEASON_Q = 0.80
 
 # Reads and writes the SHADOW tables. No TRUNCATE: the live athlete_season is
 # untouched until swapIn renames it away.
+# ★ A RACE FIVE SIGMA UNDER THE SEASON IS NOT A RACE (owner, 2026-09-05).
+#   An athlete's own race-to-race spread is about 4 points; twenty points
+#   under the season's median is nothing a real run at the right distance
+#   produces, and one such row dragged the decayed rating and every plain
+#   average. Rows that far under their season's median leave the season's
+#   aggregates (all of them, so n_races and the percentile agree with the
+#   mean); never the fast side, a breakthrough is real and a wrong
+#   distance is the rowguard's. The athlete page marks the same rows with
+#   the same rule (app.enrich_seasons, pinned together by test).
+_SEASON_OUTLIER_PTS = 20.0
+
 _ATHLETE_SEASON_SQL = f"""
+WITH season_med AS (
+    SELECT base.person_id, base.pool, base.sport, base.year,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
+    FROM   {{load_table}}
+    WHERE  speed_rating IS NOT NULL
+    GROUP  BY person_id, pool, sport, year)
 INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
@@ -2126,13 +2143,16 @@ SELECT person_id, pool, sport, year,
                 mode() WITHIN GROUP (ORDER BY school)),
        mode() WITHIN GROUP (ORDER BY grade)
 FROM {{load_table}} base
+JOIN season_med sm ON sm.person_id = base.person_id AND sm.pool = base.pool
+                  AND sm.sport = base.sport AND sm.year = base.year
 -- ⚠ RATED ROWS ONLY, SINCE #46. ranking_results now also carries time-only
 --   sprint rows. Without this line count(*) would inflate n_races with races
 --   that have no rating, and -- worse -- decayed_rating's denominator
 --   sum(power(...)) counts every row while its numerator skips the NULLs, so
 --   every sprinter's decayed rating would be silently diluted toward zero.
 WHERE speed_rating IS NOT NULL
-GROUP BY person_id, pool, sport, year;
+  AND speed_rating >= sm.med - {_SEASON_OUTLIER_PTS}
+GROUP BY base.person_id, base.pool, base.sport, base.year;
 """
 
 
