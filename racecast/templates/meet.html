@@ -11,9 +11,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name %}
-    {% set meta_description = "Every race at this meet, with results and "
-       "speed ratings on one comparable scale." %}
+    {# the year in the title: people search a meet with its year (owner) #}
+    {% set meta_title = (header.meet_name|with_year(meet_date)) ~ " Results" %}
+    {% set meta_description = (header.meet_name|with_year(meet_date))
+       ~ " cross country results"
+       ~ ((" at " ~ header.course_name) if header.course_name else "")
+       ~ ": every race, team scores, speed ratings and PRs on one comparable scale." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

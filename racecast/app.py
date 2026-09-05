@@ -220,6 +220,20 @@ school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
 
 
+@app.template_filter("with_year")
+def _with_year(name, date_text):
+    """'Scary Dairy Invite' + '2025-10-03' -> 'Scary Dairy Invite 2025'; a
+    name that already carries the year is left alone. For titles: people
+    search a meet WITH its year (owner, 2026-09-05), and Google shows the
+    title, so the year has to be in it."""
+    import re as _re
+    m = _re.search(r"\b(19|20)\d\d\b", str(date_text or ""))
+    if not m or not name:
+        return name or ""
+    year = m.group(0)
+    return name if year in str(name) else f"{name} {year}"
+
+
 @app.template_filter("is_team")
 def _is_team_filter(school):
     """Link a school name only when it names a team (panels.isTeamName):

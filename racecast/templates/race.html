@@ -6,8 +6,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name %}
-    {% set meta_description = "Results and speed ratings for every finisher"
+    {% set meta_title = (header.meet_name|with_year(race_date))
+       ~ ((" – " ~ header.division) if header.division else "")
+       ~ " Results" %}
+    {% set meta_description = (header.meet_name|with_year(race_date))
+       ~ ((" " ~ header.division) if header.division else "")
+       ~ " results and speed ratings for every finisher"
        ~ ((" at " ~ header.course_name) if header.course_name else "")
        ~ ". Team scores, PRs and course difficulty on one comparable scale." %}
     {% include "_meta.html" %}

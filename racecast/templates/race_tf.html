@@ -6,10 +6,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name
-       ~ ((" — " ~ header.event_short) if header.event_short else "") %}
-    {% set meta_description = "Event results and speed ratings, on one "
-       "comparable scale across every track and season." %}
+    {% set meta_title = (header.meet_name|with_year(race_date))
+       ~ ((" – " ~ header.event_short) if header.event_short else "")
+       ~ " Results" %}
+    {% set meta_description = (header.meet_name|with_year(race_date))
+       ~ ((" " ~ header.event_short) if header.event_short else "")
+       ~ " results and speed ratings, on one comparable scale across every "
+         "track and season." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

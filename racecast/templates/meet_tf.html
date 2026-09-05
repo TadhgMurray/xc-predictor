@@ -4,9 +4,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name %}
-    {% set meta_description = "Every event at this meet, with results and "
-       "speed ratings on one comparable scale." %}
+    {% set meta_title = (header.meet_name|with_year(meet_date)) ~ " Results" %}
+    {% set meta_description = (header.meet_name|with_year(meet_date))
+       ~ " track & field results: every event, with speed ratings and PRs on "
+         "one comparable scale." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

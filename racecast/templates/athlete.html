@@ -7,11 +7,20 @@
        share-card metadata -- athlete links are the most-shared URLs on the
        site, and without og:* tags they unfurl as bare blue text in every
        chat app. #}
-    {% set meta_title = athlete.name %}
-    {% set meta_description = "Speed ratings, personal records and the full "
-       "cross country and track history for " ~ athlete.name
-       ~ ((" (" ~ athlete.school ~ ")") if athlete.school else "")
-       ~ ", on one comparable scale." %}
+    {# ★ THE TITLE SAYS WHAT THE PAGE IS (owner, 2026-09-05). Search Console:
+       athlete pages were 85% of impressions at position 5 with a 0.9%
+       click rate -- a bare name told a searcher nothing. Name, team, then
+       what they get; the description carries the numbers a runner
+       recognises. #}
+    {% set meta_title = athlete.name
+       ~ ((" – " ~ (athlete.school|school_label)) if athlete.school else "")
+       ~ " · XC & Track Results, Speed Rating, PRs" %}
+    {% set meta_description = athlete.name ~ "'s cross country and track results"
+       ~ ((" for " ~ (athlete.school|school_label)) if athlete.school else "")
+       ~ ((": speed rating " ~ ("%.1f"|format(athlete.rating))) if athlete.rating else "")
+       ~ ((" (" ~ athlete.percentile ~ " of " ~ athlete.pool_words ~ ")") if athlete.percentile and athlete.pool_words else "")
+       ~ ((", about a " ~ athlete.equiv_time ~ " 5K") if athlete.equiv_time else "")
+       ~ ". Every race, personal records and season ratings on one comparable scale." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
