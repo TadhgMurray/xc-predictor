@@ -14,7 +14,7 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
   sitemap-courses-N.xml          /course/<name>
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
-                                 every one with a rated result, race date as lastmod
+                                 every race with a result, race date as lastmod
   sitemap-athletes-N.xml         /athlete/<id>, every athlete with a rated
                                  race, newest
                                  season's last race as lastmod
@@ -128,8 +128,7 @@ def collect(conn):
             cur.execute("""
                 SELECT meet_id, div_id, max(date)
                 FROM   results
-                WHERE  speed_rating IS NOT NULL AND meet_id IS NOT NULL
-                  AND  div_id IS NOT NULL
+                WHERE  meet_id IS NOT NULL AND div_id IS NOT NULL
                 GROUP  BY meet_id, div_id
             """)
             races += [(f"/race/xc/{m}/{d}", _day(lm)) for m, d, lm in cur.fetchall()]
@@ -137,7 +136,7 @@ def collect(conn):
             cur.execute("""
                 SELECT meet_id, event_id, div_id, max(date)
                 FROM   results_tf
-                WHERE  speed_rating IS NOT NULL AND meet_id IS NOT NULL
+                WHERE  meet_id IS NOT NULL
                   AND  event_id IS NOT NULL AND div_id IS NOT NULL
                 GROUP  BY meet_id, event_id, div_id
             """)
