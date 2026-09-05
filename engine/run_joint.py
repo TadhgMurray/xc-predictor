@@ -178,6 +178,25 @@ def distClasses(cols, pool_of_athlete, pool_names, ref=DIST_REF):
     return out, labels, refs
 
 
+def distRefRows(cols, pool_of_athlete, refs, pool_names):
+    """Per row, is it the pool's pinned reference event (the other side
+    of every season-best pair, js.DIST_CAL_SHARE). False without dist_m."""
+    n = cols["norm"].shape[0]
+    out = np.zeros(n, dtype=bool)
+    if "dist_m" not in cols or not refs:
+        return out
+    dist = np.asarray(cols["dist_m"], dtype=np.float64)
+    sport = np.asarray(cols["sport"])
+    pool_row = pool_of_athlete[np.asarray(cols["athlete"])]
+    bucket = (np.round(dist / 100.0) * 100).astype(np.int64)
+    ref_of_pool = np.full(len(pool_names), -1, dtype=np.int64)
+    for p, name in enumerate(pool_names):
+        if name in refs:
+            ref_of_pool[p] = int(refs[name])
+    out = (sport == 1) & (dist > 0) & (bucket == ref_of_pool[pool_row])
+    return out
+
+
 def logDistCentered(cols, keep, athlete, n_ath):
     """The row's log distance minus its athlete-season's mean over the
     rows that have one; 0 where the row has none. Issue 154."""
@@ -274,12 +293,14 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
     day = cols["doy"][keep] if curve else None
     first = (openers(athlete_raw, year, sport, days) if rust else None)
 
-    dist_row, dist_labels, dist_refs = None, [], {}
+    dist_row, dist_labels, dist_refs, dist_ref_row = None, [], {}, None
     if dist and "dist_m" in cols:
         classes, dist_labels, dist_refs = distClasses(cols, pool_of_athlete,
                                                       pool_names)
         if dist_labels:
             dist_row = classes[keep]
+            dist_ref_row = distRefRows(cols, pool_of_athlete, dist_refs,
+                                       pool_names)[keep]
 
     lz = (logDistCentered(cols, keep, athlete, n_ath)
           if slope and "dist_m" in cols else None)
@@ -298,7 +319,7 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
                   else None, lz=lz, link=links, alt=alt,
-                  dist_banded=dist_bands)
+                  dist_banded=dist_bands, dist_ref=dist_ref_row)
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
                      else dist_labels)
     D.dist_refs = dist_refs
@@ -375,6 +396,8 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
               "--no-dist)")
         return
     rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
+    cal_mean = out.get("dist_cal_mean")
+    cal_n = out.get("dist_cal_n")
     by_pool = {}
     for i, lab in enumerate(labels):
         parts = lab.split(":")
@@ -386,6 +409,11 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                  f">={js.DIST_BANDS[1]:.0f})" if banded else "")
     print("[joint] track distance offsets, log-time vs the pool's reference "
           f"event (+ = that event was normalising slow){bands_txt}:")
+    if banded and cal_n is not None and int((cal_n > 0).sum()):
+        print(f"    ({int((cal_n > 0).sum())} of {len(labels)} classes carry a "
+              f"prior mean from season-best pairs, weight {js.DIST_CAL_SHARE}; "
+              f"the table below is the solved e, the pairs' median and "
+              f"the pairs follow per pool)")
     for p in list(pools) + sorted(k for k in by_pool if k not in pools):
         if p not in by_pool:
             continue
@@ -404,6 +432,20 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                 v, n = bb.get(1, (0.0, 0))
                 cells.append(f"{d}: {v:+.4f} ({n:,})")
         print(f"    {p:<10} ref {ref}   {'  '.join(cells)}")
+        if banded and cal_n is not None:
+            pairs = []
+            for d in sorted(by_pool[p]):
+                txt = []
+                for b in range(js.DIST_N_BAND):
+                    i = labels.index(f"{p}:{d}:b{b}") if f"{p}:{d}:b{b}" in labels else -1
+                    if i >= 0 and cal_n[i] > 0:
+                        txt.append(f"{cal_mean[i]:+.4f}({int(cal_n[i]):,})")
+                    else:
+                        txt.append("  --  ")
+                if any(t.strip() != "--" for t in txt):
+                    pairs.append(f"{d}: " + "/".join(txt))
+            if pairs:
+                print(f"    {'':<10} pairs      {'  '.join(pairs)}")
 
 
 def holdout(cols, keep, args, athlete_pool, D_full):
@@ -427,7 +469,8 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=4,
-                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=False)
+                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=False,
+                        dist_cal=not args.no_dist_cal)
     pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
                                   tilt=not args.no_tilt)
     y_te = y_all[keep_te]
@@ -488,6 +531,10 @@ def main():
                     help="cap the track cells' prior sd (log time), e.g. 0.02: "
                          "more shrinkage toward the track level than the "
                          "data estimate (issue 161). Unset = the estimate.")
+    ap.add_argument("--no-dist-cal", action="store_true",
+                    help="do not set the banded offsets' prior means from "
+                         "season-best pairs (js.DIST_CAL_SHARE); the rows "
+                         "alone decide, as before 2026-09-05")
     ap.add_argument("--no-dist-bands", action="store_true",
                     help="one offset per (pool, event) instead of three by "
                          "rating band (issue 167)")
@@ -566,7 +613,8 @@ def main():
                         curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
                         tau_max={1: args.tau_tf_max} if args.tau_tf_max else None,
                         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
-                                       else js.ALT_PRIOR_PEN_FIXED))
+                                       else js.ALT_PRIOR_PEN_FIXED),
+                        dist_cal=not args.no_dist_cal)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
 
     delta = out["delta"]
@@ -637,6 +685,9 @@ def main():
         save["dist_bands"] = np.array(js.DIST_BANDS if D.dist_banded else [])
         save["dist_rows"] = np.bincount(D.e_idx, weights=D.e_w,
                                         minlength=D.n_e).astype(np.int64)
+        if out.get("dist_cal_mean") is not None:
+            save["dist_cal_mean"] = out["dist_cal_mean"]
+            save["dist_cal_n"] = out["dist_cal_n"]
     np.savez(args.out, **save)
     print(f"[joint] wrote {args.out}")
 

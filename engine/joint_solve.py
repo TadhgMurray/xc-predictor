@@ -170,6 +170,33 @@ RACE_DAY_CAP = 0.10
 #   1600 pinned in every band. Middle band until the first ratings exist.
 DIST_BANDS = (105.0, 120.0)
 DIST_N_BAND = len(DIST_BANDS) + 1
+# ★ THE EVENT RELATION FROM SEASON-BEST PAIRS (issues 109, 189, 190,
+#   2026-09-05). Fitted from every row, the banded 3200 offset came out
+#   SMALLER at the top than in the middle: a 9:01 rated 132.1, a 4:13
+#   128.3, when the athletes who run 9:0x for a 3200 run 4:12-4:14 for a
+#   1600 in the same season (scripts/diag_event_pairs.py). The rows
+#   cannot see it: the top band is populated by the event people are
+#   good at, and the row-level fit weights every dual-meet 1600 a
+#   distance runner jogs. The relation people actually reason with is
+#   season best against season best. So each (pool, event, band) class
+#   with DIST_CAL_MIN_PAIRS athlete-seasons that ran both the event and
+#   the reference event gets a PRIOR MEAN: the median over those
+#   athlete-seasons of log(best at the event) - log(best at the
+#   reference), in normalized time, banded by the solve's own rating of
+#   the athlete-season (the average of everything they ran, so a miler
+#   and a distance runner of the same ability land in the same band);
+#   the class's penalty is then not a fixed sd (a fixed sd is nothing
+#   against fifty thousand rows) but DIST_CAL_SHARE of the class's own
+#   row information: the solved e is that share of the pairs' median and
+#   the rest the rows' answer. Classes with fewer pairs keep the loose
+#   zero prior. Refreshed every outer iteration with the bands. The
+#   bests are COUNT-MATCHED: the min of 6 draws sits lower than the min
+#   of 3, and the 1600 is raced twice as often as the 3200, so a plain
+#   best-vs-best would hand the 3200 about 1.3% MORE credit -- the wrong
+#   way. Each athlete-season's best at each side of a pair is taken over
+#   the same number of races, a random subset of the side with more.
+DIST_CAL_SHARE = 0.9
+DIST_CAL_MIN_PAIRS = 150
 
 # ★ THE PER-ATHLETE ENDURANCE SLOPE (issue 154, 2026-09-03). One number per
 #   athlete-season, how steeply THEIR log time rises with log distance
@@ -286,6 +313,7 @@ class Design:
                  n_ath=None, n_cell=None, n_race=None, n_pool=None,
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
                  dist=None, n_e=None, lz=None, link=None, alt=None,
+                 dist_ref=None,
                  dist_banded=False):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
@@ -370,6 +398,13 @@ class Design:
                 self.e_idx = self.e_base
             if self.n_e <= 0:
                 self.n_e = 0
+        # the pairs calibration (DIST_CAL_SHARE): per row, is this the
+        # pool's pinned reference event; per class, the prior mean and the
+        # number of pairs behind it (0 = not calibrated, loose zero prior)
+        self.e_ref = (np.asarray(dist_ref, dtype=bool)
+                      if dist_ref is not None and self.n_e else None)
+        self.e_mean = np.zeros(self.n_e)
+        self.e_cal_n = np.zeros(self.n_e, dtype=np.int64)
 
         # the endurance slope (SLOPE_RIDGE): per row the centred log distance
         self.has_slope = lz is not None
@@ -413,6 +448,71 @@ class Design:
             return
         band = np.digitize(np.asarray(rating_row, dtype=np.float64), DIST_BANDS)
         self.e_idx = self.e_base * DIST_N_BAND + band
+
+    def calibrateDist(self, y, rating_row, min_pairs=DIST_CAL_MIN_PAIRS,
+                      seed=0):
+        """Set each (class, band)'s prior mean from season-best pairs
+        (DIST_CAL_SHARE): the median over athlete-seasons in the band of
+        log(best at the event) - log(best at the pool's reference event),
+        where the class has at least `min_pairs` such athlete-seasons.
+        Count-matched: an athlete-season with 6 reference races and 3 at
+        the event has its best taken over a random 3 of each, so the
+        event raced more often does not read faster only by being the
+        min of more draws. Returns the number of calibrated classes. A
+        no-op without the reference rows or the bands."""
+        self.e_mean[:] = 0.0
+        self.e_cal_n[:] = 0
+        if not self.dist_banded or self.e_ref is None or not self.e_ref.any():
+            return 0
+        y = np.asarray(y, dtype=np.float64)
+        band = np.digitize(np.asarray(rating_row, dtype=np.float64), DIST_BANDS)
+        ath_band = np.zeros(self.n_ath, dtype=np.int64)
+        ath_band[self.athlete] = band
+        nb = self.n_e_base
+        rnd = np.random.default_rng(seed).random(self.n)
+
+        def _ranked(rows, key):
+            """Rows ordered by (key, random), each row's position within
+            its key group, and the group sizes by key."""
+            order = np.lexsort((rnd[rows], key))
+            rows, key = rows[order], key[order]
+            first = np.r_[True, key[1:] != key[:-1]]
+            start = np.maximum.accumulate(np.where(first, np.arange(key.size), 0))
+            return rows, key, np.arange(key.size) - start
+
+        free = np.flatnonzero(self.e_w > 0)
+        f_rows, f_key, f_pos = _ranked(free, self.athlete[free] * nb
+                                       + self.e_base[free])
+        n_y = np.bincount(f_key, minlength=self.n_ath * nb)
+        ref = np.flatnonzero(self.e_ref)
+        r_rows, r_ath, r_pos = _ranked(ref, self.athlete[ref])
+        n_ref = np.bincount(r_ath, minlength=self.n_ath)
+
+        n_cal = 0
+        for c in range(nb):
+            k = np.minimum(n_ref, n_y[c::nb])                # per athlete
+            if not (k > 0).any():
+                continue
+            m = (f_key % nb == c) & (f_pos < k[f_key // nb])
+            best = np.full(self.n_ath, np.inf)
+            np.minimum.at(best, f_key[m] // nb, y[f_rows[m]])
+            m = r_pos < k[r_ath]
+            best_ref = np.full(self.n_ath, np.inf)
+            np.minimum.at(best_ref, r_ath[m], y[r_rows[m]])
+            ath = np.flatnonzero(np.isfinite(best) & np.isfinite(best_ref))
+            if ath.size < min_pairs:
+                continue
+            d = best[ath] - best_ref[ath]
+            b = ath_band[ath]
+            for j in range(DIST_N_BAND):
+                mm = b == j
+                if int(mm.sum()) < min_pairs:
+                    continue
+                idx = c * DIST_N_BAND + j
+                self.e_mean[idx] = float(np.median(d[mm]))
+                self.e_cal_n[idx] = int(mm.sum())
+                n_cal += 1
+        return n_cal
 
     def unpack(self, theta):
         """Blocks as FULL arrays: mu over every group (0 for the reference),
@@ -570,7 +670,19 @@ class _Operator:
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
+        # the event offsets' prior: pen_dist per class; where the season-
+        # best pairs calibrated a class (Design.calibrateDist) the penalty
+        # is DIST_CAL_SHARE of its own row information instead, toward a
+        # prior mean that enters the right-hand side
         self.pen_dist = float(pen_dist)
+        if D.n_e:
+            self.pen_dist = np.full(D.n_e, float(pen_dist))
+            cal = getattr(D, "e_cal_n", None)
+            if cal is not None and (cal > 0).any():
+                rows_w = np.bincount(D.e_idx, weights=w * D.e_w,
+                                     minlength=D.n_e)
+                share = DIST_CAL_SHARE / (1.0 - DIST_CAL_SHARE)
+                self.pen_dist = np.where(cal > 0, rows_w * share, self.pen_dist)
         self.ridge_slope = float(ridge_slope)
         self.link_weight = float(link_weight)
         self.alt_prior_mean = float(alt_prior_mean)
@@ -661,6 +773,8 @@ class _Operator:
                 out[D.o_c:D.o_r] += lg * self.gap_target * g
         if D.n_k:
             out[D.o_k:D.n_total] += self.alt_prior_pen * self.alt_prior_mean
+        if D.n_e and getattr(D, "e_mean", None) is not None:
+            out[D.o_e:D.o_g] += self.pen_dist * D.e_mean
         return out
 
     def diag(self):
@@ -994,7 +1108,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
-               tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED):
+               tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
+               dist_cal=True):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1012,6 +1127,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     sigma_u2 = 0.01
     sigma2 = 1.0
     scale = None
+    n_cal = 0
     w = np.ones(n)
     h = np.ones(n)
     amp = np.ones(n)
@@ -1084,6 +1200,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             if D.has_curve:
                 amp = amplitudeFromRating(r_row)
             D.rebandDist(r_row)                    # the event offsets' bands
+            if dist_cal:
+                n_cal = D.calibrateDist(y, r_row)  # ... and their prior means
         elif tilt and pool_mean_row is not None:
             h = tiltFromAbility(b["a"][D.athlete], np.asarray(pool_mean_row))
 
@@ -1100,7 +1218,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 extra += f", curve TF-XC window gap {np.round(gaps, 4)}"
             if D.n_e:
                 extra += (f", track distance offsets |e| max "
-                          f"{np.abs(b['e']).max():.4f}")
+                          f"{np.abs(b['e']).max():.4f}, {n_cal} classes "
+                          f"calibrated from season-best pairs")
             if D.n_k:
                 extra += f", altitude k {np.round(b['k'], 4)} /km"
 
@@ -1130,6 +1249,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "beta": b["beta"],
         "rust": b["r"],
         "dist_offset": b["e"],
+        "dist_cal_mean": D.e_mean.copy() if D.n_e else None,
+        "dist_cal_n": D.e_cal_n.copy() if D.n_e else None,
         "slope": b["g"],
         "altitude_coef": b["k"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),

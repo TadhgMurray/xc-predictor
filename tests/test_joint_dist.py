@@ -108,3 +108,120 @@ def test_banded_offsets_follow_the_rating():
     D0 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
                    n_e=len(labels))
     assert D0.n_e == len(labels) and not D0.dist_banded
+
+
+def _pairs_world(seed=1, n_ath=600):
+    """Issue 189's trap: the top band is populated by distance runners
+    who jog half their 1600s (+5%); the season-best relation between the
+    events is the same for everyone. The rows say one thing, the pairs
+    another, and the calibration makes the pairs win."""
+    rng = np.random.default_rng(seed)
+    n_cell = 8
+    group = np.ones(n_cell, dtype=int)
+    d_true = rng.normal(0, 0.01, n_cell)
+    a_true = np.r_[rng.normal(-0.25, 0.03, n_ath // 2),   # the top band
+                   rng.normal(0.00, 0.03, n_ath - n_ath // 2)]
+    e_3200 = 0.030                                          # the truth
+    rows = []
+    for i in range(n_ath):
+        top = i < n_ath // 2
+        for k in range(4):
+            rows.append((i, rng.integers(0, n_cell), 1600,
+                         0.05 if (top and k % 2) else 0.0))
+        for k in range(4):
+            rows.append((i, rng.integers(0, n_cell), 3200, 0.0))
+    ath = np.array([r[0] for r in rows]); cel = np.array([r[1] for r in rows])
+    ev = np.array([r[2] for r in rows]); jog = np.array([r[3] for r in rows])
+    rac = np.arange(len(rows)) // 5
+    y = (a_true[ath] + d_true[cel] + np.where(ev == 3200, e_3200, 0.0) + jog
+         + rng.normal(0, 0.01, len(rows)))
+    cols = {"norm": np.exp(y), "sport": np.ones(len(rows), dtype=np.int8),
+            "athlete": ath, "dist_m": ev.astype(np.float32)}
+    pool_of_ath = np.zeros(n_ath, dtype=int)
+    return y, ath, cel, rac, group, cols, pool_of_ath, a_true, e_3200
+
+
+def test_pairs_calibration_sets_the_prior_mean_and_the_solve_follows():
+    y, ath, cel, rac, group, cols, pool_of_ath, a_true, e_3200 = _pairs_world()
+    classes, labels, refs = rj.distClasses(cols, pool_of_ath, ["p0"])
+    assert labels == ["p0:3200"] and refs == {"p0": 1600}
+    ref_rows = rj.distRefRows(cols, pool_of_ath, refs, ["p0"])
+    assert (ref_rows == (cols["dist_m"] == 1600)).all()
+    D = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                  n_e=len(labels), dist_banded=True, dist_ref=ref_rows)
+    # the top half rates 130, the rest 110: two populated bands
+    rating = np.where(ath < 300, 130.0, 110.0)
+    D.rebandDist(rating)
+    n_cal = D.calibrateDist(y, rating, min_pairs=50)
+    assert n_cal == 2, n_cal
+    top, mid = 2, 1                                    # band index
+    assert D.e_cal_n[top] == 300 and D.e_cal_n[mid] == 300
+    # the season-best pair says the same thing in both bands: the truth
+    # (the top band's honest 1600s are only two of four, so its best is
+    # the min of fewer real draws -- a residual under 0.01)
+    assert abs(D.e_mean[top] - e_3200) < 0.010, D.e_mean
+    assert abs(D.e_mean[mid] - e_3200) < 0.006, D.e_mean
+    assert D.e_cal_n[0] == 0 and D.e_mean[0] == 0.0, "uncalibrated"
+
+    # the rows alone: the top band's jogged 1600s make the 3200 look ~3%
+    # FASTER relative to the 1600 -- 189's wrong answer
+    D_rows = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                       n_e=len(labels), dist_banded=True, dist_ref=ref_rows)
+    D_rows.rebandDist(rating)
+    out0 = js.solveJoint(y, design=D_rows, n_outer=3, tilt=False, n_probe=1,
+                         dist_cal=False)
+    assert out0["dist_offset"][top] < e_3200 - 0.015, out0["dist_offset"]
+
+    # with the calibration the solve lands on the pairs
+    out1 = js.solveJoint(y, design=D, n_outer=3, tilt=False, n_probe=1)
+    assert abs(out1["dist_offset"][top] - e_3200) < 0.012, out1["dist_offset"]
+    assert abs(out1["dist_offset"][mid] - e_3200) < 0.006, out1["dist_offset"]
+    assert (out1["dist_cal_n"][[mid, top]] == 300).all()
+    print(f"  rows alone top-band 3200 {out0['dist_offset'][top]:+.4f}, "
+          f"pairs {D.e_mean[top]:+.4f}, calibrated solve "
+          f"{out1['dist_offset'][top]:+.4f} (truth {e_3200:+.4f}) ... OK")
+
+
+def test_calibration_is_a_no_op_without_reference_rows_or_bands():
+    y, ath, cel, rac, group, cols, pool_of_ath, _, _ = _pairs_world(n_ath=100)
+    classes, labels, refs = rj.distClasses(cols, pool_of_ath, ["p0"])
+    D = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                  n_e=len(labels), dist_banded=True)
+    assert D.calibrateDist(y, np.full(len(y), 100.0)) == 0
+    ref_rows = rj.distRefRows(cols, pool_of_ath, refs, ["p0"])
+    D1 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                   n_e=len(labels), dist_ref=ref_rows)          # unbanded
+    assert D1.calibrateDist(y, np.full(len(y), 100.0)) == 0
+    assert (D1.e_cal_n == 0).all() and (D1.e_mean == 0.0).all()
+
+
+def test_count_matched_bests_do_not_favour_the_event_raced_more():
+    """Six 1600s and two 3200s per athlete, no offset at all: a plain
+    best-vs-best would read the 3200 ~1% slow; count-matched it reads 0."""
+    rng = np.random.default_rng(3)
+    n_ath, n_cell = 800, 6
+    rows = []
+    for i in range(n_ath):
+        for _ in range(6):
+            rows.append((i, rng.integers(0, n_cell), 1600))
+        for _ in range(2):
+            rows.append((i, rng.integers(0, n_cell), 3200))
+    ath = np.array([r[0] for r in rows]); cel = np.array([r[1] for r in rows])
+    ev = np.array([r[2] for r in rows])
+    y = rng.normal(0, 0.1, n_ath)[ath] + rng.normal(0, 0.03, len(rows))
+    cols = {"norm": np.exp(y), "sport": np.ones(len(rows), dtype=np.int8),
+            "athlete": ath, "dist_m": ev.astype(np.float32)}
+    pool_of_ath = np.zeros(n_ath, dtype=int)
+    classes, labels, refs = rj.distClasses(cols, pool_of_ath, ["p0"])
+    ref_rows = rj.distRefRows(cols, pool_of_ath, refs, ["p0"])
+    D = js.Design(ath, cel, np.arange(len(rows)) // 4,
+                  group_of_cell=np.ones(n_cell, dtype=int), dist=classes,
+                  n_e=len(labels), dist_banded=True, dist_ref=ref_rows)
+    rating = np.full(len(y), 110.0)
+    D.rebandDist(rating)
+    assert D.calibrateDist(y, rating, min_pairs=50) == 1
+    assert abs(D.e_mean[1]) < 0.004, D.e_mean
+    # and the plain best-vs-best is what it would have been: biased
+    b16 = np.full(n_ath, np.inf); np.minimum.at(b16, ath[ev == 1600], y[ev == 1600])
+    b32 = np.full(n_ath, np.inf); np.minimum.at(b32, ath[ev == 3200], y[ev == 3200])
+    assert np.median(b32 - b16) > 0.008
