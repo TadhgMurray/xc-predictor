@@ -277,6 +277,40 @@ def staticV(filename):
 
 app.jinja_env.globals["static_v"] = staticV
 
+
+def staticExists(filename):
+    """For a template that prefers a lighter asset when it has been made
+    (home.html's WebP tiles): True when the file is in static/."""
+    return _os.path.exists(_os.path.join(app.static_folder, filename))
+
+
+app.jinja_env.globals["static_exists"] = staticExists
+
+
+@app.after_request
+def _headers(resp):
+    """Response headers Lighthouse and common sense ask for (2026-09-05).
+    Static files carry the mtime stamp in ?v= (staticV), so a stamped URL
+    can be cached for a year: a change makes a new URL. The security
+    headers are the ones that cost nothing: no framing, no sniffing, a
+    tight referrer. HSTS only when the request arrived over TLS (the proxy
+    says so), so a plain-http dev server is not pinned. A CSP is NOT set
+    here: the pages carry inline scripts and styles, and a wrong CSP is a
+    blank site."""
+    if request.path.startswith("/static/") and request.args.get("v"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.path.startswith("/static/"):
+        resp.headers.setdefault("Cache-Control", "public, max-age=86400")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy",
+                            "camera=(), microphone=(), geolocation=()")
+    if request.headers.get("X-Forwarded-Proto", request.scheme) == "https":
+        resp.headers.setdefault("Strict-Transport-Security",
+                                "max-age=31536000; includeSubDomains")
+    return resp
+
 # ★ THE SITE'S OWN ORIGIN, FOR CANONICAL AND SHARE URLS. Behind Cloudflare
 #   and nginx, request.url_root reads http://... (the proxy hop is plain),
 #   and a canonical tag pointing at http is worse than none: Google treats
@@ -1140,7 +1174,23 @@ def athlete(person_id):
 
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
-    seasons = enrich_seasons(seasons)
+    # ★ THE SEASON NUMBER IS THE BOARD'S (owner, 2026-09-05): athlete_season
+    #   holds the 80th percentile of the season's race ratings, the number
+    #   the rankings page shows; this page averaged them, so the two never
+    #   agreed. Keyed the way the blocks are, (label, sport): the season
+    #   table's year is the academic season and a track block's label is
+    #   that plus one.
+    board_seasons = {}
+    try:
+        cur.execute("""SELECT sport, year, mean_rating FROM athlete_season
+                       WHERE person_id = %s AND mean_rating IS NOT NULL
+                       ORDER BY n_races DESC""", (person_id,))
+        for r in cur.fetchall():
+            label = int(r["year"]) + (1 if r["sport"] == "TF" else 0)
+            board_seasons.setdefault((label, r["sport"]), float(r["mean_rating"]))
+    except Exception:                                # noqa: BLE001
+        conn.rollback()
+    seasons = enrich_seasons(seasons, board_seasons)
     # a split person (issue 164): seasons of both genders on one page, so
     # each season block says which
     gender_mixed = len({s["gender"] for s in seasons.values()
@@ -1714,14 +1764,18 @@ def group_into_seasons(races):
     return seasons
 
 
-def enrich_seasons(seasons):
+def enrich_seasons(seasons, board_seasons=None):
     """Turn {key: [races]} into {key: {races, rating, grade, school}} by
-    computing each season's header fields from its own races."""
+    computing each season's header fields from its own races. The rating
+    is the board's number for that (label, sport) when the season table
+    has one, else the mean of the races."""
     enriched = {}
+    board_seasons = board_seasons or {}
     for key, races in seasons.items():
+        label_key = (int(key[0]) if str(key[0]).isdigit() else key[0], key[1])
         enriched[key] = {
             "races":  races,
-            "rating": season_rating(races),
+            "rating": board_seasons.get(label_key, season_rating(races)),
             "rating_hs": season_rating(races, key="hs_rating"),
             "grade":  _season_grade(races),
             "school": _season_school(races),

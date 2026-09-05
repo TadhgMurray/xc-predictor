@@ -10,7 +10,11 @@
        "results and speed ratings on one comparable scale." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
 </head>
+{# the search box's script, missing here: the topbar rendered but did not
+   search on venue pages (owner, 2026-09-05) #}
+<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide">

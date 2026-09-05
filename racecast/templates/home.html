@@ -187,7 +187,7 @@
 <section class="hero-mosaic">
     {% for slot in ['m1','m2','m3','m4','m5','m6','m7','m8','m9'] %}
         <div class="mtile {{ slot }}"
-             style="background-image:url('{{ url_for('static', filename=slot ~ '.png') }}')"></div>
+             style="background-image:url('{{ url_for('static', filename=slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}')"></div>
     {% endfor %}
 
     <div class="mtitle">

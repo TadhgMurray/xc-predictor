@@ -1354,9 +1354,14 @@ async function load() {
 
   // Built ONCE and used for both the request and the address bar, so the two
   // cannot disagree about what is being shown.
-  const query = buildQuery();
+  /* ! INSIDE THE GUARD. buildQuery() ran before the try, so a throw in
+     it left state.busy true and Apply grey for the rest of the page's
+     life -- the owner saw exactly that after changing the area filter
+     (2026-09-05). Everything after the disable runs under the finally. */
+  let query;
 
   try {
+    query = buildQuery();
     /* Inside the try, so anything it throws still reaches the finally that
        clears `busy` -- see the guard in syncUrl for why that matters. */
     syncUrl(query);

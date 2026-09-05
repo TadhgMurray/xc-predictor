@@ -656,10 +656,19 @@ def _whereClauses(f, params, with_dates):
             #   school to be in both, which no school is.
             if _key == "area" and not _hasSchoolUnitArea():
                 continue                 # column not built yet: a no-op filter
-            _ors = " OR ".join(f'u."{c}" = ANY(%({_key})s)'
-                               for c in UNIT_COLUMNS[_key])
-            parts.append(f' AND school IN (SELECT u.school FROM school_unit u'
-                         f' WHERE {_ors})')
+            # ★ THE SCHOOL LIST FIRST, THEN THE BOARD (2026-09-05). The
+            #   correlated `school IN (SELECT ... FROM school_unit ...)` left
+            #   the planner guessing how many schools a division holds, and
+            #   the division / section boards took many seconds. The list is
+            #   a few hundred to a few thousand names, fetched once per
+            #   filter value and cached ten minutes; `= ANY(array)` lets the
+            #   planner use idx_rr_school or hash it, either way in one pass.
+            schools = _unitSchools(_key, f[_key])
+            if not schools:
+                parts.append(" AND FALSE")           # no school has that unit
+                continue
+            params[f"{_key}_schools"] = schools
+            parts.append(f" AND school = ANY(%({_key}_schools)s)")
 
     if f.get("distance") is not None:
         # ! A RANGE, so the planner can still use an index on distance. A
@@ -813,22 +822,56 @@ _EVENT_KIND_PRESENT = None
 _UNIT_AREA_PRESENT = None
 
 
+_UNIT_SCHOOL_CACHE = {}          # (key, values) -> (until, [schools])
+
+
+def _unitSchools(key, values):
+    """The schools whose school_unit row carries any of `values` for this
+    filter (issue 179); cached ten minutes per (key, values)."""
+    import time as _t
+    ck = (key, tuple(sorted(values)))
+    hit = _UNIT_SCHOOL_CACHE.get(ck)
+    if hit and _t.time() < hit[0]:
+        return hit[1]
+    ors = " OR ".join(f'u."{c}" = ANY(%(v)s)' for c in UNIT_COLUMNS[key])
+    try:
+        from database import getConn
+        with getConn() as conn, conn.cursor() as c:
+            c.execute(f"SELECT DISTINCT u.school FROM school_unit u WHERE {ors}",
+                      {"v": list(values)})
+            schools = [r[0] for r in c.fetchall() if r[0]]
+    except Exception:                                # noqa: BLE001
+        return []
+    _UNIT_SCHOOL_CACHE[ck] = (_t.time() + 600, schools)
+    return schools
+
+
 def _hasSchoolUnitArea():
     """Does school_unit carry `area` yet? Same posture as _hasEventKind: the
     column arrives with step 10d, and a filter on it before then is a
     no-op rather than a 500."""
     global _UNIT_AREA_PRESENT
-    if _UNIT_AREA_PRESENT is None:
-        try:
-            from database import getConn
-            with getConn() as conn, conn.cursor() as c:
-                c.execute("""SELECT 1 FROM information_schema.columns
-                             WHERE table_name = 'school_unit'
-                               AND column_name = 'area'""")
-                _UNIT_AREA_PRESENT = c.fetchone() is not None
-        except Exception:                            # noqa: BLE001
-            return False
-    return _UNIT_AREA_PRESENT
+    # ! A "NO" IS RE-ASKED. The probe used to cache False for the life of
+    #   the process, and a worker that probed while step 10d was rebuilding
+    #   school_unit answered "no area column" forever after: the area filter
+    #   silently did nothing (owner, 2026-09-05). True is cached; False is
+    #   retried every five minutes.
+    import time as _t
+    if _UNIT_AREA_PRESENT is True:
+        return True
+    if isinstance(_UNIT_AREA_PRESENT, float) and _t.time() < _UNIT_AREA_PRESENT:
+        return False
+    try:
+        from database import getConn
+        with getConn() as conn, conn.cursor() as c:
+            c.execute("""SELECT 1 FROM information_schema.columns
+                         WHERE table_name = 'school_unit'
+                           AND column_name = 'area'""")
+            present = c.fetchone() is not None
+    except Exception:                                # noqa: BLE001
+        present = False
+    _UNIT_AREA_PRESENT = True if present else _t.time() + 300
+    return present
 
 
 def _hasEventKind(cur=None):

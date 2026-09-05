@@ -57,6 +57,12 @@
    request's own root reads http. Without this Google indexes the
    variants as duplicates of each other. #}
 <link rel="canonical" href="{{ site_origin ~ (meta_path | default(request.path)) }}">
+{# ! A HIGHLIGHTED-RESULT VARIANT IS NOT A PAGE OF ITS OWN (owner,
+   2026-09-05): Google merged /race/...?r=<id> into the plain race page and
+   served whichever athlete's title it crawled, so "Name 9:01" landed on
+   the right meet and the wrong person. The variant is followed, not
+   indexed; the athlete page carries the name and is the target. #}
+{% if request.args.get('r') %}<meta name="robots" content="noindex,follow">{% endif %}
 <meta property="og:url" content="{{ site_origin ~ (meta_path | default(request.path)) }}">
 <meta property="og:image" content="{{ url_for('static', filename='og-image.png', _external=True) }}">
 {# Declared dimensions let a scraper lay out the card before the image
