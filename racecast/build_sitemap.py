@@ -13,6 +13,8 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
   sitemap-schools-N.xml          /school/<name>, primary state per school
   sitemap-courses-N.xml          /course/<name>
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
+  sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
+                                 every one with a rated result, race date as lastmod
   sitemap-athletes-N.xml         /athlete/<id>, athletes with a ranked
                                  season (three or more races), newest
                                  season's last race as lastmod
@@ -85,6 +87,12 @@ def writeSitemaps(by_kind, out_dir, origin):
     return files
 
 
+def _day(text):
+    """'2025-10-03' from whatever the date column holds, or None."""
+    s = str(text or "")[:10]
+    return s if len(s) == 10 and s[4] == "-" and s[7] == "-" else None
+
+
 def _exists(cur, name):
     cur.execute("SELECT to_regclass(%s)", (name,))
     return cur.fetchone()[0] is not None
@@ -110,6 +118,33 @@ def collect(conn):
                 meets += [(fmt.format(r[0]), None) for r in cur.fetchall()]
         if meets:
             by_kind["meets"] = meets
+        # ★ RACE PAGES TOO (owner, 2026-09-05): a race page is where a
+        #   person's result is found, and yesterday's Search Console had
+        #   race pages at the best click rate on the site. Every XC
+        #   division and every track event with a rated result, the race's
+        #   date as lastmod so Google fetches the recent ones first.
+        races = []
+        if _exists(cur, "results"):
+            cur.execute("""
+                SELECT meet_id, div_id, max(date)
+                FROM   results
+                WHERE  speed_rating IS NOT NULL AND meet_id IS NOT NULL
+                  AND  div_id IS NOT NULL
+                GROUP  BY meet_id, div_id
+            """)
+            races += [(f"/race/xc/{m}/{d}", _day(lm)) for m, d, lm in cur.fetchall()]
+        if _exists(cur, "results_tf"):
+            cur.execute("""
+                SELECT meet_id, event_id, div_id, max(date)
+                FROM   results_tf
+                WHERE  speed_rating IS NOT NULL AND meet_id IS NOT NULL
+                  AND  event_id IS NOT NULL AND div_id IS NOT NULL
+                GROUP  BY meet_id, event_id, div_id
+            """)
+            races += [(f"/race/tf/{m}/{e}/{d}", _day(lm))
+                      for m, e, d, lm in cur.fetchall()]
+        if races:
+            by_kind["races"] = races
         if _exists(cur, "athlete_season"):
             # ranked athletes only: a page Google should show is one with a
             # season on the boards. lastmod tells it which pages moved.
