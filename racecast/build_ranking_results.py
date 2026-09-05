@@ -2210,6 +2210,14 @@ def main():
         description="Fill ranking_results and athlete_season. "
                     "Run after every engine run.")
     parser.add_argument("--sport", choices=["XC", "TF", "both"], default="both")
+    # ★ THREE STAGES SO THE TWO SPORTS STREAM AT ONCE (2026-09-05). The
+    #   Python row walk is the whole cost of this step (30-80 min) and the
+    #   sports share nothing until the indexes: `prepare` makes the shadow
+    #   once, two `stream --sport` processes COPY into it side by side
+    #   (each builds its own session temps), and `finish` indexes, builds
+    #   athlete_season and swaps. No stage = the old one-process run.
+    parser.add_argument("--stage", choices=["prepare", "stream", "finish"],
+                        default=None)
     parser.add_argument("--since", default="1990-01-01",
                         help="earliest race date to include")
     # ! SO THE RAIL CAN BE MEASURED. audit_pool_ceilings --races can only see
@@ -2238,6 +2246,7 @@ def main():
     print(f"BUILD rankings tables -- {', '.join(sports)}, since {args.since}")
     print("=" * 68)
 
+    stage = args.stage
     with getConn() as conn:
         # ★ NOTHING DESTRUCTIVE HAPPENS UNTIL THE SWAP. The old TRUNCATE /
         #   DELETE left the site with an empty or half-loaded board for the
@@ -2250,22 +2259,35 @@ def main():
         #   workers; the streaming cursors cannot use workers at all, which is
         #   a property of cursors rather than of this query. See dbfast.
         tuneSession(conn)
-        with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
-            prepareGenderTemp(conn)
-            prepareXcTfrrsDistTemp(conn)
-            ensureResultTwin(conn)
-            ensureWheelchairPerson(conn)
-            prepareTfStateTemp(conn)
-            prepareSprintEvents(conn)
+        if stage in (None, "stream"):
+            with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
+                prepareGenderTemp(conn)
+                prepareXcTfrrsDistTemp(conn)
+                ensureResultTwin(conn)
+                ensureWheelchairPerson(conn)
+                prepareTfStateTemp(conn)
+                prepareSprintEvents(conn)
 
-        with phase("create shadow"):
-            createShadow(conn, _LOAD_TABLE, "ranking_results")
-            seedOtherSports(conn, sports)
+        if stage in (None, "prepare"):
+            with phase("create shadow"):
+                createShadow(conn, _LOAD_TABLE, "ranking_results")
+                seedOtherSports(conn, sports if stage is None else ("XC", "TF"))
+        if stage == "prepare":
+            conn.commit()
+            print("  shadow ready; stream the sports, then --stage finish")
+            return
 
-        for sport in sports:
-            with phase(f"stream + COPY {sport}"):
-                buildSport(conn, sport, args.since, stats)
-                conn.commit()
+        if stage in (None, "stream"):
+            for sport in sports:
+                with phase(f"stream + COPY {sport}"):
+                    buildSport(conn, sport, args.since, stats)
+                    conn.commit()
+        if stage == "stream":
+            total = sum(v for k, v in stats.items() if k.endswith("_written"))
+            print(f"\n  {total:,} rows COPYed for {', '.join(sports)}; "
+                  f"--stage finish indexes and swaps")
+            phaseReport()
+            return
 
         # ! AFTER THE LOAD, NOT BEFORE IT. createShadow deliberately leaves the
         #   indexes off so the 61.6M COPYed rows do not maintain them one row

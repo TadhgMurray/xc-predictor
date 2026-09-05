@@ -56,3 +56,12 @@ def test_fill_streams_only_priceable_rows():
     s = _src("engine", "fill_ratings.py")
     mark = s[s.index("_MARK = {"):s.index("def _sqlFor(")]
     assert mark.count("AND r.normalized_time > 0") == 2
+
+
+def test_board_build_streams_the_sports_in_parallel():
+    s = _src("deploy", "run_pipeline.sh")
+    assert "--stage prepare" in s and "--stage finish" in s
+    assert 'steps2 10_rankings_xc' in s and "--stage stream --sport TF" in s
+    b = _src("racecast", "build_ranking_results.py")
+    assert 'choices=["prepare", "stream", "finish"]' in b
+    assert 'if stage == "prepare":' in b and 'if stage == "stream":' in b

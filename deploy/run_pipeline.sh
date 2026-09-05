@@ -286,7 +286,12 @@ step 09b_fill         "$PY" -u engine/fill_ratings.py
 
 
 # ---- boards and pages ----------------------------------------------- #
-step 10_rankings      "$PY" -u racecast/build_ranking_results.py
+# the two sports stream side by side (each is a Python row walk of ~30M
+# rows); prepare makes the shadow once, finish indexes and swaps
+step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
+steps2 10_rankings_xc "$PY -u racecast/build_ranking_results.py --stage stream --sport XC" \
+       10_rankings_tf "$PY -u racecast/build_ranking_results.py --stage stream --sport TF"
+step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
 if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # measured for telemetry only: the joint level is not steered by the json

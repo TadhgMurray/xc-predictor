@@ -118,10 +118,54 @@ def _meteoBatch(points):
     return [None] * len(points)
 
 
+_CHECK_XC = ("Woodward Park", "Mt. San Antonio", "Great Park",
+             "Crystal Springs", "Brigham Young", "Lakeside Park",
+             "Toka Sticks", "Glendoveer", "Apalachee", "Detweiller")
+
+
+def _check():
+    """The venues whose heights a person knows, and the shape of the table:
+    Woodward Park (Fresno) is ~90 m, Mt. SAC ~150 m, Great Park (Irvine)
+    ~70 m, Crystal Springs ~90 m, BYU (Provo) ~1,400 m, Glendoveer
+    (Portland) ~80 m, Simplot / Holt Arena (Pocatello) ~1,360 m."""
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT source, count(*), round(avg(elevation_m)::numeric),
+                              count(*) FILTER (WHERE elevation_m > 1200)
+                       FROM venue_elevation GROUP BY source""")
+        for src, n, mean, high in cur.fetchall():
+            print(f"  {src:<14} {n:>8,} venues  mean {mean:>6} m  {high:>6,} above 1200 m")
+        cur.execute("SELECT elevation_m FROM venue_elevation WHERE key = 'TF:loc:113310'")
+        r = cur.fetchone()
+        print(f"  Simplot / Holt Arena (TF:loc:113310): "
+              f"{f'{r[0]:.0f} m' if r else 'MISSING'}   (expect ~1,360)")
+        for name in _CHECK_XC:
+            cur.execute("""SELECT cc.course_name, ve.elevation_m
+                           FROM course_canonical cc
+                           JOIN venue_elevation ve ON ve.key = 'XC:' || cc.canonical_id::text
+                           WHERE cc.course_name ILIKE %s
+                           ORDER BY cc.course_name LIMIT 2""", (f"%{name}%",))
+            rows = cur.fetchall()
+            if not rows:
+                print(f"  {name:<20} (no course with that name has an elevation)")
+            for cn, e in rows:
+                print(f"  {cn[:44]:<44} {e:>7.0f} m")
+        cur.execute("""SELECT key, elevation_m FROM venue_elevation
+                       ORDER BY elevation_m DESC LIMIT 5""")
+        print("  highest five:", ", ".join(f"{k} {e:.0f} m" for k, e in cur.fetchall()))
+        cur.execute("""SELECT count(*) FROM venue_elevation
+                       WHERE elevation_m < -50 OR elevation_m > 4500""")
+        print(f"  implausible (< -50 m or > 4,500 m): {cur.fetchone()[0]:,}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--check", action="store_true",
+                    help="spot-check known venues and the distribution")
     args = ap.parse_args()
+    if args.check:
+        _check()
+        return
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_DDL)
         conn.commit()
