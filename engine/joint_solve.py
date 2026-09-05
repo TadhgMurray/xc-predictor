@@ -151,6 +151,16 @@ WINTER_GAIN = 0.0
 #   like difficulty. The prior sd is loose: the big classes are decided by
 #   their rows, the tiny ones fall to zero.
 DIST_PRIOR_SD = 0.03
+
+# ★ A DAY TERM BEYOND THIS IS NOT A DAY, IT IS A BROKEN SHEET (issue 187,
+#   2026-09-05). A JV meet whose 3200 lost a lap ran "20-28% fast", the
+#   race-day term absorbed it (as it should: nothing else was polluted),
+#   and the go-live handed the same term back as a credit -- an 11:13
+#   rated 151.8. Real days after the tilt fix sit within a few percent
+#   (Simplot's 99 days all inside 0.03). The SOLVE keeps the full term;
+#   the RATING applies it clipped here, and the days beyond it go to the
+#   rowguard as race_day_suspect.
+RACE_DAY_CAP = 0.10
 # ★ BY RATING BAND (issue 167, 2026-09-04, the owner's option 1). One
 #   number per pool and event was the AVERAGE runner's exchange rate; a
 #   4:13 1600 rated under a 15:40 at Mt. SAC because the top needs more

@@ -76,9 +76,13 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     pm_c, pm_s = poolMeanPerGroup(rat["ability"], attrs, rat["valid"],
                                   anchor=rat.get("anchor"))
     eff = out["h"] * out["delta"][D.cell]
+    u_row = out["race_effect"][D.race]
+    capped = np.abs(u_row) > js.RACE_DAY_CAP
     if use_race_effect:
-        # tilted like the course (issue 156): the solve fitted h * u
-        eff = eff + out["h"] * out["race_effect"][D.race]
+        # tilted like the course (issue 156): the solve fitted h * u --
+        # and CLIPPED for the rating (issue 187): a day beyond the cap is
+        # a broken result sheet, not a credit
+        eff = eff + out["h"] * np.clip(u_row, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
     eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects
@@ -139,6 +143,21 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   per (pool, sport), and the shift between the raw cell scale and the
     #   displayed one. The conversions page converts on this scale; without
     #   it, a 9:01 converted to a 3200 came back as a 9:30.
+    # the days beyond the cap, for the rowguard (issue 187): cell key,
+    # the day (days ago from the pack), the term, the rows on it
+    suspect_days = []
+    if capped.any():
+        days_ago = np.asarray(cols["days"][keep])
+        for r_idx in np.unique(D.race[capped]):
+            m = D.race == r_idx
+            c = int(D.cell[m][0])
+            suspect_days.append((keys[c], int(np.median(days_ago[m])),
+                                 float(out["race_effect"][r_idx]), int(m.sum())))
+        suspect_days.sort(key=lambda t: -abs(t[2]))
+        print(f"[joint/live] race-day cap {js.RACE_DAY_CAP:+.2f}: "
+              f"{len(suspect_days):,} race days beyond it on {int(capped.sum()):,} "
+              f"rows; the worst: "
+              + "; ".join(f"{k} {u:+.3f} ({n} rows)" for k, _d, u, n in suspect_days[:5]))
     scale_rows = []
     shift = float(np.average(raw[solved], weights=w[solved]))
     pool_row = attrs["pool"][D.athlete]
@@ -179,7 +198,40 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     return {"diffs": diffs, "athletes": athletes, "per_sport": per_sport,
             "npz": npz, "summary": summary, "rated": rated, "chosen": chosen,
             "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
-            "dist_rows": dist_rows, "scale_rows": scale_rows}
+            "dist_rows": dist_rows, "scale_rows": scale_rows,
+            "suspect_days": suspect_days}
+
+
+_SUSPECT_DDL = """
+    CREATE TABLE IF NOT EXISTS race_day_suspect (
+        cell_key     text    NOT NULL,
+        race_date    date    NOT NULL,
+        day_effect   real    NOT NULL,
+        n_rows       integer NOT NULL,
+        last_updated text,
+        PRIMARY KEY (cell_key, race_date)
+    )
+"""
+
+
+def writeSuspectDays(rows):
+    """The race days whose term exceeded RACE_DAY_CAP: a list for the
+    rowguard and for a person -- the result sheet, not the course, is
+    what is wrong on those days."""
+    from datetime import date, timedelta
+    from database import getConn
+    today = date.today()
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(_SUSPECT_DDL)
+        cur.execute("DELETE FROM race_day_suspect")
+        cur.executemany(
+            "INSERT INTO race_day_suspect (cell_key, race_date, day_effect, "
+            "n_rows, last_updated) VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT DO NOTHING",
+            [(k, today - timedelta(days=d), u, n, today.isoformat())
+             for k, d, u, n in rows])
+        conn.commit()
+    print(f"[joint/live] race_day_suspect: {len(rows):,} days written")
 
 
 _SCALE_DDL = """
@@ -288,6 +340,7 @@ def writeLive(live):
         print(f"[joint/live] {name}: {rid.size:,} result ratings written")
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
+    writeSuspectDays(live.get("suspect_days", []))
     print("\n[joint/live] LIVE. To undo:\n" + pg.restoreSql())
     print("[joint/live] ⚠ do NOT run apply_tilt after this: the tilt is "
           "inside these ratings already.")
