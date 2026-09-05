@@ -15,8 +15,8 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
                                  every one with a rated result, race date as lastmod
-  sitemap-athletes-N.xml         /athlete/<id>, athletes with a ranked
-                                 season (three or more races), newest
+  sitemap-athletes-N.xml         /athlete/<id>, every athlete with a rated
+                                 race, newest
                                  season's last race as lastmod
 
 50,000 URLs per file is the protocol's cap; MAX_PER_FILE stays under it.
@@ -148,10 +148,12 @@ def collect(conn):
         if _exists(cur, "athlete_season"):
             # ranked athletes only: a page Google should show is one with a
             # season on the boards. lastmod tells it which pages moved.
+            # every athlete with a rated race (owner, 2026-09-05: "it
+            # should be all athletes"); the three-race floor is gone
             cur.execute("""
                 SELECT person_id, to_char(max(last_race), 'YYYY-MM-DD')
                 FROM   athlete_season
-                WHERE  n_races >= 3
+                WHERE  n_races >= 1
                 GROUP  BY person_id
             """)
             by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()]
