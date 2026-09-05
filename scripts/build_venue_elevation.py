@@ -151,7 +151,22 @@ def _check():
                 print(f"  {cn[:44]:<44} {e:>7.0f} m")
         cur.execute("""SELECT key, elevation_m FROM venue_elevation
                        ORDER BY elevation_m DESC LIMIT 5""")
-        print("  highest five:", ", ".join(f"{k} {e:.0f} m" for k, e in cur.fetchall()))
+        print("  highest five (a US track above ~3,100 m is a bad coordinate):")
+        for k, e in cur.fetchall():
+            name = None
+            try:
+                if k.startswith("TF:loc:"):
+                    cur.execute("""SELECT meet_name, state, count(*) FROM meets_tf
+                                   WHERE location_id = %s GROUP BY 1, 2
+                                   ORDER BY 3 DESC LIMIT 1""", (int(k.split(":")[2]),))
+                else:
+                    cur.execute("""SELECT course_name, NULL, 0 FROM course_canonical
+                                   WHERE canonical_id = %s LIMIT 1""", (int(k.split(":")[1]),))
+                r = cur.fetchone()
+                name = f"{r[0]} ({r[1]})" if r and r[1] else (r[0] if r else None)
+            except Exception:                                # noqa: BLE001
+                conn.rollback()
+            print(f"    {k:<16} {e:>6.0f} m   {name or '?'}")
         cur.execute("""SELECT count(*) FROM venue_elevation
                        WHERE elevation_m < -50 OR elevation_m > 4500""")
         print(f"  implausible (< -50 m or > 4,500 m): {cur.fetchone()[0]:,}")
