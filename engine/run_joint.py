@@ -586,6 +586,17 @@ def main():
         with np.load(old_path, allow_pickle=False) as old:
             if "difficulty_raw" in old.files:
                 old_delta = np.log1p(old["difficulty_raw"])
+                # ! A REPORT MUST NEVER KILL A SOLVE. The sequential
+                #   engine's file is keyed by the pack's cells as they were
+                #   when it ran; a repack with a different cell count (the
+                #   2026-09-05 run: 74,805 vs 74,834) makes the comparison
+                #   meaningless, and it cost two hours of solve by crashing
+                #   here before anything was written.
+                if old_delta.size != solved.size:
+                    print(f"[joint] vs pair_difficulty: skipped, {old_delta.size:,} "
+                          f"cells in the old file vs {solved.size:,} in this pack")
+                    old_delta = None
+            if old_delta is not None:
                 keys = [str(k) for k in cols["course_keys"]]
                 is_xc = np.array([k.startswith("XC:") for k in keys])
                 is_tf = np.array([k.startswith("TF:") for k in keys])
