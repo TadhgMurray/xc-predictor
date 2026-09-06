@@ -107,6 +107,18 @@ WHERE  n.name IS NOT NULL
 #  HELPERS
 # ===================================================================== #
 
+def _stateFor(identity, school, home_state, min_share=0.03):
+    clusters = identity.get(school) if school else None
+    if clusters:
+        for st, _n, share, _prim in clusters:
+            if home_state and st == home_state and share >= min_share:
+                return st
+        for st, _n, _share, prim in clusters:
+            if prim:
+                return st
+    return home_state
+
+
 def _identity(conn):
     """{school: [(state, n_athletes, share, is_primary)]} from
     school_identity (pipeline 10b), empty when it is not built yet --
@@ -169,6 +181,7 @@ def _strip_year(name):
 def _load_athletes(conn):
     """Stream the (now cheap) athlete query, insert in batches."""
     has_ph = _hasHomeStates(conn)
+    identity = _identity(conn)                   # the schools' own states (207)
     read = _stream_cursor(conn, "athlete_src")
     read.execute(_ATHLETE_SQL.format(
         ph_col=", ph.state AS home_state" if has_ph else ", NULL AS home_state",
@@ -180,9 +193,13 @@ def _load_athletes(conn):
     for row in read:
         name   = row["name"]
         school = row.get("school")
-        st     = row.get("home_state")
-        # the school qualifies with the athlete's own home state --
-        # "Highland (UT)" -- the site-wide label convention
+        # ★ THE SCHOOL'S STATE, NOT THE ATHLETE'S (owner, 2026-09-06): the
+        #   home state is where the athlete mostly RACED, and a college
+        #   athlete who races away, or a kid at a border school, was
+        #   labelled with the wrong state. The school's cluster in the
+        #   athlete's home state when it has one (the same-named schools),
+        #   else the school's primary state, else the home state.
+        st = _stateFor(identity, school, row.get("home_state"))
         if school and st:
             school = f"{school} ({st})"
         parts  = name.split()

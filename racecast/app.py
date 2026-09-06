@@ -219,6 +219,8 @@ import school_identity
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
+# the same label in a known context: a race or a meet in one state
+app.template_filter("school_label_in")(school_identity.schoolLabelIn)
 
 
 @app.template_filter("with_year")

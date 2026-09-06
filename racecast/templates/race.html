@@ -88,7 +88,7 @@
                 {# identity-split teams carry their OWN state (two Jesuits =
                    two schools); only unsplit ones fall back to the global
                    label filter #}
-                <td>{% if t.school|is_team %}<a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label }}{% endif %}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+                <td>{% if t.school|is_team %}<a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                 <td>{{ t.points if t.points is not none else "—" }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO
                    displace, and hiding them makes a deep team look like a
@@ -164,7 +164,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{% if row.school and row.school|is_team %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %}—{% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
+                <td>{% if row.school and row.school|is_team %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label_in(header.state) }}{% else %}—{% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 <td>{{ row.score_place if row.score_place else "—" }}</td>

@@ -61,6 +61,12 @@ def loadLabels(conn_factory, force=False):
                     WHERE  is_primary
                 """)
                 _LABELS["map"] = {r[0]: r[1] for r in cur.fetchall()}
+                # every cluster too, for a label in a known context
+                cur.execute("SELECT school, state, share FROM school_identity")
+                clusters = {}
+                for sc, st, share in cur.fetchall():
+                    clusters.setdefault(sc, {})[st] = float(share or 0.0)
+                _LABELS["clusters"] = clusters
     except Exception:                    # noqa: BLE001 -- labels are optional
         pass
     _LABELS["loaded"] = True
@@ -73,6 +79,39 @@ def schoolLabel(school):
         return school
     st = _LABELS["map"].get(school)
     return f"{school} ({st})" if st else school
+
+
+# a same-named school in the context's own state needs at least this share
+# of the name's athletes to be the one meant (a stray away meet is not a
+# cluster); below it the primary state stands
+CONTEXT_MIN_SHARE = 0.03
+
+
+def schoolLabelIn(school, state):
+    """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
+    Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
+    labelled three Missouri schools WA, MI and CA). The name's cluster in
+    the context's state wins when it exists; else the primary label."""
+    if not school:
+        return school
+    if state:
+        clusters = _LABELS.get("clusters") or {}
+        share = (clusters.get(school) or {}).get(state)
+        if share is not None and share >= CONTEXT_MIN_SHARE:
+            return f"{school} ({state})"
+    return schoolLabel(school)
+
+
+def stateFor(school, preferred=None):
+    """The state a school label should carry: the preferred one when the
+    school has a cluster there, else its primary, else the preferred."""
+    if not school:
+        return preferred
+    if preferred:
+        share = ((_LABELS.get("clusters") or {}).get(school) or {}).get(preferred)
+        if share is not None and share >= CONTEXT_MIN_SHARE:
+            return preferred
+    return _LABELS["map"].get(school) or preferred
 
 
 def primaryState(school):

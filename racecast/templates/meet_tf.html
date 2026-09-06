@@ -86,7 +86,7 @@
                 <td>{{ r.row_place }}</td>
                 <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or "—" }}</a>{% else %}{{ r.athlete_name or "—" }}{% endif %}</td>
                 <td>{{ r.grade or "—" }}</td>
-                <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label }}</a>{% else %}—{% endif %}</td>
+                <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label_in(header.state) }}</a>{% else %}—{% endif %}</td>
                 <td>{{ r.display_result }}</td>
                 <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else "—" }}</td>
             </tr>
