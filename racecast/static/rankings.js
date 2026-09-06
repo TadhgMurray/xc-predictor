@@ -1431,16 +1431,17 @@ async function load() {
 
     /* TWO NOTICES, TWO CONDITIONS, and neither is always on.
 
-       bias-notice  the API sets national_bias when no state filter is
-                    applied. Cross-state ratings carry an unresolved offset of
-                    up to ~9 points, so a national board is not yet a fair
-                    comparison.
+       bias-notice  retired. The API still sets national_bias when no state
+                    filter is applied, but the offset it warned about was
+                    measured at under a point (issue 191), so the banner
+                    said nothing worth a banner.
 
        notice       the international caveat, which only applies when the
                     scope is open. On a USA board there is nothing on the far
                     side of the linkage graph to warn about, and a warning
                     that is permanently up is one nobody reads. */
-    $("bias-notice").classList.toggle("show", Boolean(data.national_bias));
+    // bias-notice: retired 2026-09-06 (issue 191 measured the cross-state
+    // offset at under a point); the element stays so nothing here throws.
     $("notice").classList.toggle("show", $("scope").value === "all");
 
     /* ★ ADOPT THE SORT THAT WAS SERVED, before anything renders. The teams

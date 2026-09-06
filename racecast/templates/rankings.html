@@ -332,16 +332,18 @@
     {# ⚠ THE SIGN IS THE THING PEOPLE GET BACKWARDS, so the note leads with it
        rather than trusting a + to carry the meaning. #}
     <p class="board-note courses-only" id="courses-note">
-      <strong>Positive is harder.</strong> +0.050 means a field runs about 5%
-      slower here than the same field would on neutral ground &mdash; and
+      <strong>Positive is harder.</strong> +5% means a field runs about 5%
+      slower here than the same field would on a typical course &mdash; and
       because difficulty is applied <em>after</em> distance is normalised, a
       5k and an 8k belong in one list. Ratings already give the difference
       back, so a slow time on a hard course is not a slow performance.
     </p>
 
     <p class="board-note pr-only">
-      Raw times, uncorrected for course or conditions &mdash; a flat 5k beats
-      the same effort on a hill. For a fair comparison use Ability.
+      Raw times and marks as the meet recorded them, uncorrected for course,
+      conditions or altitude &mdash; a flat 5k beats the same effort on a
+      hill, and a sprint, hurdle or field event has no rating at all. For a
+      fair comparison of distance running use Ability or Performances.
     </p>
 
     {# No Sort/Order controls: the column headers are the sort control. Click
@@ -464,12 +466,12 @@
     Scope back to <em>USA only</em> to compare like with like.
   </div>
 
-  <div class="notice" id="bias-notice">
-    <strong>Cross-state note:</strong>
-    A national board carries a per-state offset of up to about 9 points.
-    Filtering to one state removes it entirely; individual races still carry
-    noise of about 3 points.
-  </div>
+  {# The cross-state banner that stood here said a national board carried a
+     per-state offset of up to 9 points. Measured 2026-09-06 (issue 191):
+     within 0.7 points everywhere, mostly within 0.3. A banner announcing
+     that nothing is wrong is one nobody should have to read past, so it is
+     gone; the API still sends national_bias for anything that wants it. #}
+  <div class="notice hidden" id="bias-notice"></div>
 
   {# HS-equivalent view. Hidden until rankings.js sees a board
      whose rows actually move (hs_movable from the API). #}
