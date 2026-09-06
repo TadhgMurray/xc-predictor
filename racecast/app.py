@@ -511,7 +511,6 @@ def home():
             rows = get_homepage_panels(cur)
             meta = get_homepage_meta(cur)
             recent = get_homepage_recent(cur)
-            kinds = unitKinds(cur)
 
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
@@ -606,6 +605,7 @@ def meets_page():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             recent = get_homepage_recent(cur)
+            kinds = unitKinds(cur)
 
     # rows arrive newest first; group into (month label, rows) runs. A
     # malformed date cannot happen here (panels.py regex-guards the window),
