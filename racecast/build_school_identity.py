@@ -40,6 +40,155 @@ _SWAP_ATTEMPTS = 20
 _SWAP_BACKOFF = 15
 
 
+# ★ ONE SCHOOL WEARING SEVERAL HOME STATES (owner, 2026-09-06). A home
+#   state is where an athlete races most, and a college team races away
+#   most weekends: BYU's athletes came out CA, UT and CO by their own
+#   modes, and the clustering made three schools of one, each with its
+#   own page and the biggest -- CA -- as the label. The tell is that the
+#   three "schools" ran the same races on the same days. So: two clusters
+#   of one name whose athletes appear in the same races are one school,
+#   merged; and the merged school's state is where it HOSTS (the meets
+#   named after it), else the state most of its rows were run in. Two
+#   Kingstons, WA and MO, never share a race and stay two schools.
+#   school_state_alias (school, home_state, state) says which resolved
+#   state each original cluster went to, for readers keyed on an
+#   athlete's home state.
+MERGE_MIN_SHARED = 3          # races two clusters ran together
+MERGE_MIN_FRACTION = 0.20     # ...as a share of the smaller cluster's races
+
+
+def mergeCoRacingClusters(cur):
+    from school_identity import MIN_ATHLETES, MIN_SHARE
+    t0 = time.time()
+    cur.execute("""
+        SELECT school FROM school_identity_new
+        WHERE  n_athletes >= %s AND share >= %s
+        GROUP  BY school HAVING count(*) >= 2
+    """, (MIN_ATHLETES, MIN_SHARE))
+    schools = [r[0] for r in cur.fetchall()]
+    cur.execute("DROP TABLE IF EXISTS school_state_alias_new")
+    cur.execute("""
+        CREATE TABLE school_state_alias_new (
+            school text NOT NULL, home_state text NOT NULL, state text NOT NULL,
+            PRIMARY KEY (school, home_state))
+    """)
+    if not schools:
+        return
+    # the races each cluster appeared in, and the races two clusters shared
+    cur.execute("DROP TABLE IF EXISTS si_races")
+    cur.execute("""
+        CREATE TEMP TABLE si_races AS
+        SELECT DISTINCT rr.school, ph.state, rr.sport, rr.meet_id, rr.race_date
+        FROM   ranking_results rr
+        JOIN   person_home_state_new ph USING (person_id)
+        WHERE  rr.school = ANY(%s) AND rr.meet_id IS NOT NULL
+    """, (schools,))
+    cur.execute("SELECT school, state, count(*) FROM si_races GROUP BY 1, 2")
+    n_races = {(sc, st): n for sc, st, n in cur.fetchall()}
+    cur.execute("""
+        SELECT a.school, a.state, b.state, count(*)
+        FROM   si_races a
+        JOIN   si_races b ON b.school = a.school AND b.sport = a.sport
+                         AND b.meet_id = a.meet_id AND b.race_date = a.race_date
+                         AND b.state > a.state
+        GROUP  BY 1, 2, 3
+    """)
+    parent = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    for sc, s1, s2, shared in cur.fetchall():
+        small = min(n_races.get((sc, s1), 0), n_races.get((sc, s2), 0))
+        if shared >= MERGE_MIN_SHARED and shared >= MERGE_MIN_FRACTION * small:
+            a, b = find((sc, s1)), find((sc, s2))
+            if a != b:
+                parent[b] = a
+    groups = {}
+    for key in list(parent) + [k for k in n_races if k not in parent]:
+        root = find(key)
+        if root != key or key in parent:
+            groups.setdefault(root, set()).add(key)
+    groups = {r: m | {r} for r, m in groups.items() if len(m | {r}) >= 2}
+    if not groups:
+        print("  school_identity: no co-racing clusters to merge", flush=True)
+        return
+    merged_schools = sorted({r[0] for r in groups})
+    # where a merged school hosts: the state of meets named after it
+    # the school's name as a whole word inside the meet name (ARE word
+    # boundaries), the name's regex metacharacters escaped
+    escape_sql = "regexp_replace(s.school, '([().*+?\\[\\]\\\\^$|])', '\\\\\\1', 'g')"
+    cur.execute(f"""
+        SELECT s.school, rr.state, count(DISTINCT rr.meet_id)
+        FROM   ranking_results rr
+        JOIN   (SELECT unnest(%s::text[]) AS school) s ON s.school = rr.school
+        LEFT   JOIN meets m ON m.div_id = rr.div_id AND rr.sport = 'XC'
+        LEFT   JOIN meets_tfrrs mt ON mt.meet_id = rr.meet_id AND rr.sport = 'XC'
+        WHERE  rr.state IS NOT NULL
+          AND  COALESCE(m.meet_name, mt.meet_name) ~* ('{chr(92)}m' || {escape_sql} || '{chr(92)}M')
+        GROUP  BY 1, 2
+    """, (merged_schools,))
+    hosted = {}
+    for sc, st, n in cur.fetchall():
+        if n > hosted.get(sc, (None, 0))[1]:
+            hosted[sc] = (st, n)
+    # else where most of its rows were run
+    cur.execute("""
+        SELECT school, state, count(*) FROM ranking_results
+        WHERE  school = ANY(%s) AND state IS NOT NULL GROUP BY 1, 2
+    """, (merged_schools,))
+    row_state = {}
+    for sc, st, n in cur.fetchall():
+        row_state.setdefault(sc, {})[st] = n
+    cur.execute("SELECT school, state, n_athletes FROM school_identity_new "
+                "WHERE school = ANY(%s)", (merged_schools,))
+    n_ath = {(sc, st): n for sc, st, n in cur.fetchall()}
+
+    rows, alias = [], []
+    for root, members in groups.items():
+        sc = root[0]
+        states = {st for _sc, st in members}
+        host = hosted.get(sc)
+        if host and host[1] >= 2 and host[0] in states:
+            state = host[0]
+        else:
+            counts = {st: row_state.get(sc, {}).get(st, 0) for st in states}
+            state = max(counts, key=lambda st: (counts[st], n_ath.get((sc, st), 0)))
+        total = sum(n_ath.get(m, 0) for m in members)
+        rows.append((sc, state, total))
+        alias.extend((sc, st, state) for st in states)
+    # rewrite the merged schools' rows: one per group, the others as they were
+    cur.execute("DROP TABLE IF EXISTS si_merged")
+    cur.execute("CREATE TEMP TABLE si_merged (school text, state text, n_athletes int)")
+    cur.executemany("INSERT INTO si_merged VALUES (%s, %s, %s)", rows)
+    cur.executemany("INSERT INTO school_state_alias_new VALUES (%s, %s, %s) "
+                    "ON CONFLICT DO NOTHING", alias)
+    cur.execute("""
+        DELETE FROM school_identity_new si
+        USING  school_state_alias_new a
+        WHERE  a.school = si.school AND a.home_state = si.state
+    """)
+    cur.execute("""
+        INSERT INTO school_identity_new (school, state, n_athletes, share, is_primary)
+        SELECT school, state, n_athletes, 0, false FROM si_merged
+    """)
+    cur.execute("""
+        UPDATE school_identity_new si SET
+            share = round(si.n_athletes::numeric / t.total, 4),
+            is_primary = (si.n_athletes = t.top AND si.state = t.top_state)
+        FROM (SELECT school, sum(n_athletes) AS total, max(n_athletes) AS top,
+                     (array_agg(state ORDER BY n_athletes DESC, state))[1] AS top_state
+              FROM school_identity_new WHERE school = ANY(%s) GROUP BY school) t
+        WHERE t.school = si.school
+    """, (merged_schools,))
+    print(f"  school_identity: {len(groups):,} co-racing groups merged over "
+          f"{len(merged_schools):,} names ({len(alias):,} home states folded; "
+          f"{sum(1 for g in groups if hosted.get(g[0], (None, 0))[1] >= 2):,} "
+          f"placed by the meets they host) in {time.time() - t0:.0f}s", flush=True)
+
+
 def main():
     t0 = time.time()
     with getConn() as conn:
@@ -105,6 +254,8 @@ def main():
         print(f"  school_identity: {ns:,} schools, {n:,} clusters, "
               f"{multi:,} names split across states", flush=True)
 
+        mergeCoRacingClusters(cur)
+
         # ---- the swap: old tables serve until the new ones are whole ----
         #
         # ⚠ THIS HAD NO RETRY AT ALL, AND IT DEADLOCKED (2026-09-01). The
@@ -129,7 +280,9 @@ def main():
                 cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
                 cur.execute("LOCK TABLE person_home_state, school_identity "
                             "IN ACCESS EXCLUSIVE MODE")
-                for t in ("person_home_state", "school_identity"):
+                cur.execute("DROP TABLE IF EXISTS school_state_alias")
+                for t in ("person_home_state", "school_identity",
+                          "school_state_alias"):
                     cur.execute(f"DROP TABLE IF EXISTS {t}")
                     cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
                 cur.execute("ALTER INDEX school_identity_new_school_idx "

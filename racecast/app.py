@@ -3848,6 +3848,19 @@ def school_page(school_name):
             # Computed AFTER the identity is settled, so the units belong
             # to the school on screen, not the biggest namesake.
             from school_units import unitsFor
+            # ★ THE HEADER IS THIS SCHOOL'S, NOT THE NAME'S (2026-09-06): the
+            #   state is the identity's (where it is, not the mode of where
+            #   it raced -- BYU read "CA"), and with chips the athlete count
+            #   is the chosen cluster's, not every namesake's ("678" on all
+            #   three BYU pages).
+            if header is not None:
+                ident_state = state or primary_state or school_identity.primaryState(school_name)
+                if ident_state:
+                    header["state"] = ident_state
+                if chips and state:
+                    for c in chips:
+                        if c["state"] == state:
+                            header["athletes"] = c["n"]
             units = unitsFor(cur, school_name, state or primary_state,
                              sport, long=True)
 
