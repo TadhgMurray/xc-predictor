@@ -1696,6 +1696,18 @@ _CANONICAL_INDEXES = {
 
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
         ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+        # ★ THE PAGE INDEXES, HERE AND NOT ONLY IN 11b (2026-09-06). These
+        #   three were add_page_indexes' (step 11b), built AFTER the swap;
+        #   run12's finish was re-run by hand after a crash, 11b never
+        #   followed, and every race, course, compare and school page
+        #   seq-scanned 61M rows for a fortnight-of-an-afternoon: 15.5 s
+        #   per race page, all of it in stampRowsHs' one lookup by
+        #   result_id. The swap must never go live without them. Same
+        #   names as 11b's, so its CREATE IF NOT EXISTS no-ops.
+        ("idx_rr_result", "(result_id)"),
+        ("idx_rr_school", "(school)"),
+        ("idx_rr_person_cover",
+         "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)"),
     ],
     "athlete_season": [
         # athlete pages and "where am I": WHERE person_id = %s
