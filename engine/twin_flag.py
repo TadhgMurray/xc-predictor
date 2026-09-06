@@ -40,6 +40,7 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
   stale flag behind.
 """
 import argparse
+import os
 import time
 import sys
 
@@ -342,9 +343,16 @@ def build(conn, write=False):
                 conn.rollback()
         if write:
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
+        # ! XCP_TWIN_SKIP=dup_cross_date,dup_race_copy skips named rules for
+        #   one run (2026-09-06): a rule that stalls should cost the run
+        #   that rule, not the whole pipeline. Says so in the log.
+        skip = {r.strip() for r in os.environ.get("XCP_TWIN_SKIP", "").split(",") if r.strip()}
         for sport, table in TABLES.items():
             for reason, fn in RULES:
                 t0 = time.time()
+                if reason in skip:
+                    print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP)", flush=True)
+                    continue
                 if reason == "dup_cross_date":
                     prepareCrossDate(cur, table, sport)
                 if write:
