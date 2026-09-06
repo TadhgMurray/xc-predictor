@@ -2073,8 +2073,29 @@ def enrich_seasons(seasons, board_seasons=None):
             "grade":  _season_grade(races),
             "school": _season_school(races),
             "gender": _season_gender(races),
+            # ★ THE POOL AND THE STATE, which the template already asked for
+            #   (season.pool for the grade spelling and the school label,
+            #   season.state for the label) and never got: an undefined pool
+            #   made every college season's "So" read "Grade 10" (owner,
+            #   2026-09-06: "college season rows being numeric").
+            "pool":   _season_pool(races),
+            "state":  _season_state(races),
         }
     return enriched
+
+
+def _season_pool(races):
+    """The pool most of this season's rows were rated in, bare (a row's
+    pool may carry a "|" suffix), or None."""
+    from collections import Counter
+    c = Counter(str(r.get("pool")).split("|", 1)[0] for r in races if r.get("pool"))
+    return c.most_common(1)[0][0] if c else None
+
+
+def _season_state(races):
+    from collections import Counter
+    c = Counter(r.get("state") for r in races if r.get("state"))
+    return c.most_common(1)[0][0] if c else None
 
 
 # The verdicts that mean grade_sanity looked and could not place the season.
