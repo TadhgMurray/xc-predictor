@@ -148,6 +148,46 @@ steps2() {
   done
 }
 
+# stepsN <nameA> <cmdA> <nameB> <cmdB> ...  -- any number of steps in
+# parallel, one log each, one summary line each. Same --from and --dry-run
+# rules as steps2; the --from test uses the FIRST name's number.
+stepsN() {
+  first="$1"
+  num=$(echo "$first" | sed 's/^0*\([0-9]*\).*/\1/')
+  if [ "${num:-0}" -lt "$FROM" ]; then
+    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--from $FROM)"
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    while [ $# -ge 2 ]; do echo "  $1 : $2"; shift 2; done
+    return 0
+  fi
+  echo ""
+  echo "======================================================================"
+  echo "  $first (+ $(( $# / 2 - 1 )) more)    $(date +%H:%M:%S)   (in parallel)"
+  echo "======================================================================"
+  t0=$(date +%s)
+  names=""; pids=""
+  while [ $# -ge 2 ]; do
+    sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
+    pids="$pids $!"; names="$names $1"; shift 2
+  done
+  rcs=""
+  for pid in $pids; do wait "$pid"; rcs="$rcs $?"; done
+  el=$(( $(date +%s) - t0 ))
+  set -- $names
+  for rc in $rcs; do
+    nm="$1"; shift
+    tail -n 2 "$LOGDIR/$nm.log"
+    if [ "$rc" -ne 0 ]; then
+      echo "  $nm FAILED after ${el}s" | tee -a "$SUMMARY"
+      FAILED="$FAILED $nm"
+    else
+      echo "  $nm ok (${el}s, in parallel)" | tee -a "$SUMMARY"
+    fi
+  done
+}
+
 # shards <name> <n> <command...>  -- run <command> --shard k/n for k in
 # 0..n-1 in parallel, one log each, one summary line. Same --from and
 # --dry-run rules as step.
@@ -299,8 +339,13 @@ step 09b_fill         "$PY" -u engine/fill_ratings.py
 # the two sports stream side by side (each is a Python row walk of ~30M
 # rows); prepare makes the shadow once, finish indexes and swaps
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
-steps2 10_rankings_xc "$PY -u racecast/build_ranking_results.py --stage stream --sport XC" \
-       10_rankings_tf "$PY -u racecast/build_ranking_results.py --stage stream --sport TF"
+# each sport in two halves on a date seam (XCP_RANK_SEAM), four streams
+# into one shadow: the row walk is Python per row and was 52 minutes
+# for two (2026-09-06)
+stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream --sport XC --until ${XCP_RANK_SEAM:-2018-01-01}" \
+       10_rankings_xc_b "$PY -u racecast/build_ranking_results.py --stage stream --sport XC --since ${XCP_RANK_SEAM:-2018-01-01}" \
+       10_rankings_tf_a "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --until ${XCP_RANK_SEAM:-2018-01-01}" \
+       10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
 if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
@@ -327,7 +372,10 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
 shards 12b_course_pages 3 "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
-step 13_panels        "$PY" -u racecast/panels.py
+# the two sports' full passes side by side (14 minutes for both in one
+# process on run12); each writes only its own sport's panels
+steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
+       13_panels_tf "$PY -u racecast/panels.py --sport TF"
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone

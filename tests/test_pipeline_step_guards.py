@@ -61,7 +61,8 @@ def test_fill_streams_only_priceable_rows():
 def test_board_build_streams_the_sports_in_parallel():
     s = _src("deploy", "run_pipeline.sh")
     assert "--stage prepare" in s and "--stage finish" in s
-    assert 'steps2 10_rankings_xc' in s and "--stage stream --sport TF" in s
+    assert 'stepsN 10_rankings_xc_a' in s and "--stage stream --sport TF --since" in s
+    assert "--until" in s, "each sport streams in two halves on a date seam (2026-09-06)"
     b = _src("racecast", "build_ranking_results.py")
     assert 'choices=["prepare", "stream", "finish"]' in b
     assert 'if stage == "prepare":' in b and 'if stage == "stream":' in b

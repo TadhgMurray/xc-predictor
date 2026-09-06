@@ -174,6 +174,11 @@ def main():
             for k, table in enumerate(re.findall(r"<table[^>]*wikitable[^>]*>(.*?)</table>", page, flags=re.S)):
                 trs = re.findall(r"<tr[^>]*>(.*?)</tr>", table, flags=re.S)
                 print(f"    {div} table {k}: {len(trs) - 1} rows, head {_cells(trs[0]) if trs else []}")
+                for tr in trs:
+                    if args.find.lower() in tr.lower():
+                        compact = re.sub(r"\s+", " ", tr)[:700]
+                        print(f"      raw row ({len(_cells(tr))} cells): {compact}")
+                        print(f"      cells: {_cells(tr)}")
         rows = parseList(page)
         print(f"  {div}: {len(rows):,} institutions parsed")
         for name, common, st in rows:

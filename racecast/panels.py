@@ -1412,7 +1412,7 @@ def _siteFacts(conn, sports):
     return facts
 
 
-def _writePanels(conn, buckets, meta, recent=()):
+def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
     """Swap in the new panels atomically.
 
     DELETE + INSERT inside ONE transaction: the site either sees the whole old
@@ -1430,7 +1430,11 @@ def _writePanels(conn, buckets, meta, recent=()):
 
     with conn.cursor() as cur:
         cur.execute(_DDL)
-        cur.execute("DELETE FROM homepage_panels")
+        # ★ ONLY THE SPORTS THIS PROCESS BUILT (2026-09-06): the two sports
+        #   run as two processes in the pipeline now, so each replaces its
+        #   own rows and leaves the other's; meta is site-wide and either
+        #   may write it (both compute the same numbers).
+        cur.execute("DELETE FROM homepage_panels WHERE sport = ANY(%s)", (list(sports),))
         psycopg2.extras.execute_values(cur, """
             INSERT INTO homepage_panels
                 (board, scope, sport, pool, rank, person_id, name,
@@ -1447,7 +1451,7 @@ def _writePanels(conn, buckets, meta, recent=()):
         # Same transaction, same all-or-nothing swap (and the same caveat a
         # --sport run already has for the panels: the other sport's rows go
         # too, so partial runs are partial pages).
-        cur.execute("DELETE FROM homepage_recent")
+        cur.execute("DELETE FROM homepage_recent WHERE sport = ANY(%s)", (list(sports),))
         if recent:
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO homepage_recent
@@ -1532,7 +1536,7 @@ def main():
                           for k, v in sorted(meta.items())
                           if k.startswith("fact_")) or "[panels] hero facts: none")
 
-        written = _writePanels(conn, buckets, meta, recent)
+        written = _writePanels(conn, buckets, meta, recent, sports=sports)
         print(f"wrote {written:,} panel rows across {len(buckets)} buckets "
               f"+ {len(recent)} recent-meet rows")
 

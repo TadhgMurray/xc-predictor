@@ -628,6 +628,7 @@ _SQL = {
                           WHERE wc.person_id = r.person_id)
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
+          AND r.date <  %(until)s
     """,
     "TF": f"""
         SELECT r.result_id, r.person_id, r.speed_rating, r.date,
@@ -723,6 +724,7 @@ _SQL = {
           AND COALESCE(r.is_relay, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
+          AND r.date <  %(until)s
     """,
 }
 
@@ -1414,7 +1416,7 @@ def copyRows(cur, rows):
         io.StringIO(payload))
 
 
-def buildSport(conn, sport, since, stats):
+def buildSport(conn, sport, since, stats, until="2100-01-01"):
     """Stream one sport's rated results and COPY the rankable ones.
 
     A NAMED cursor is server-side: Postgres holds the result set and ships it
@@ -1436,7 +1438,7 @@ def buildSport(conn, sport, since, stats):
     with conn.cursor(name=f"rank_src_{sport.lower()}",
                      cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
-        src.execute(_SQL[sport], {"since": since})
+        src.execute(_SQL[sport], {"since": since, "until": until})
 
         with conn.cursor() as dst:
             for row in src:
@@ -2240,6 +2242,13 @@ def main():
                         default=None)
     parser.add_argument("--since", default="1990-01-01",
                         help="earliest race date to include")
+    # ★ A SPORT IN TWO HALVES (2026-09-06, the owner: "speed up the
+    #   pipeline"). The row walk is Python per row, so two streams per
+    #   sport on a date seam run in parallel into the same shadow: four
+    #   processes where there were two. The seam is exclusive on --until.
+    parser.add_argument("--until", default="2100-01-01",
+                        help="stream rows dated BEFORE this (exclusive); pairs "
+                             "with --since to split a sport across processes")
     # ! SO THE RAIL CAN BE MEASURED. audit_pool_ceilings --races can only see
     #   what this build admitted, which is circular while the rail is on. One
     #   pass with a huge margin publishes everything, and then the
@@ -2300,7 +2309,7 @@ def main():
         if stage in (None, "stream"):
             for sport in sports:
                 with phase(f"stream + COPY {sport}"):
-                    buildSport(conn, sport, args.since, stats)
+                    buildSport(conn, sport, args.since, stats, until=args.until)
                     conn.commit()
         if stage == "stream":
             total = sum(v for k, v in stats.items() if k.endswith("_written"))
