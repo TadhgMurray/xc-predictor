@@ -1578,6 +1578,14 @@ def createShadow(conn, name, like):
         #   index build -- and the ADD COLUMNs would have grown athlete_season
         #   four board columns it never reads. Keyed on the table, not on
         #   column probing, so the intent is legible.
+        # ★ athlete_season CARRIES THE UNIT COLUMNS TOO (2026-09-06): the
+        #   ability board, the rank line and the counts filter this table,
+        #   and a unit filter on a table without the columns is a 400.
+        #   Stamped by _stampSeasonUnits after the group-by.
+        if like == "athlete_season":
+            for _u in _UNIT_COLS:
+                cur.execute(f'ALTER TABLE IF EXISTS {like} '
+                            f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         if like == "ranking_results":
             cur.execute(f"""
                 ALTER TABLE IF EXISTS {like}
@@ -2236,12 +2244,60 @@ def refreshAthleteSeason(conn):
         n = cur.fetchone()[0]
     conn.commit()
 
+    _stampSeasonUnits(conn, _LOAD_SEASON)
     analyze(conn, _LOAD_SEASON)
     print(f"  athlete_season: {n:,} person-seasons")
     # ! AND ITS INDEXES. createShadow copies structure without them by design,
     #   and this call was missing -- so every run since swapped in a
     #   12.9M-row table with no index on it at all.
     buildIndexes(conn, _LOAD_SEASON, "athlete_season")
+
+
+def _stampSeasonUnits(conn, season_table):
+    """The unit columns onto every season row, the same lookup the result
+    rows got (_unitsOf: school_unit by (school, state), then by school
+    alone), so the ability board's unit filter and the athlete page's
+    chips read one answer. An UPDATE after the group-by rather than
+    eleven more ordered-set aggregates inside it: the group-by's sort is
+    the step's cost and it carries nothing extra this way."""
+    with conn.cursor() as cur:
+        try:
+            cur.execute("SELECT to_regclass('public.school_unit')")
+            if cur.fetchone()[0] is None:
+                print("    school_unit not found -- season unit columns NULL")
+                return
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = 'school_unit'""")
+            have = {r[0] for r in cur.fetchall()}
+            cols = [c for c in _UNIT_COLS if c in have]
+            if not cols:
+                return
+            sets = ", ".join(f'"{c}" = u."{c}"' for c in cols)
+            t0 = time.time()
+            # the exact (school, state) first
+            cur.execute(f"""
+                UPDATE {season_table} s SET {sets}
+                FROM (SELECT DISTINCT ON (school, state) school, state, {", ".join(f'"{c}"' for c in cols)}
+                      FROM school_unit ORDER BY school, state, votes DESC) u
+                WHERE u.school = s.school AND u.state = s.state
+            """)
+            n1 = cur.rowcount
+            # then the best-attested row of the name for the rest
+            cur.execute(f"""
+                UPDATE {season_table} s SET {sets}
+                FROM (SELECT DISTINCT ON (school) school, {", ".join(f'"{c}"' for c in cols)}
+                      FROM school_unit ORDER BY school, votes DESC) u
+                WHERE u.school = s.school AND s."{cols[0]}" IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM school_unit x
+                                  WHERE x.school = s.school AND x.state = s.state)
+            """)
+            n2 = cur.rowcount
+            conn.commit()
+            print(f"    [{time.time() - t0:7.1f}s] season units: {n1:,} by (school, state), "
+                  f"{n2:,} by school")
+        except Exception as exc:                        # noqa: BLE001
+            conn.rollback()
+            print(f"    season units not stamped ({exc})")
 
 
 # ------------------------------------------------------------------ #

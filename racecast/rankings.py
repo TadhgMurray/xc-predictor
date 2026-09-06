@@ -671,7 +671,11 @@ def _whereClauses(f, params, with_dates):
             #   cannot disagree with the athlete page, which reads the same
             #   rows. The name semi-join stays for a column the rows do not
             #   have yet (section arrives with the next step 10).
-            row_cols = [c for c in UNIT_COLUMNS[_key] if _rowHasUnit(c)]
+            # with_dates says which table: True is ranking_results (the
+            # performance and PR boards, their ranks and counts), False is
+            # athlete_season (ability, rankOf, countOf)
+            _tbl = "ranking_results" if with_dates else "athlete_season"
+            row_cols = [c for c in UNIT_COLUMNS[_key] if _rowHasUnit(c, _tbl)]
             if row_cols:
                 params[f"{_key}_vals"] = list(f[_key])
                 ors = " OR ".join(f'"{c}" = ANY(%({_key}_vals)s)' for c in row_cols)
@@ -839,25 +843,32 @@ _UNIT_AREA_PRESENT = None
 _UNIT_SCHOOL_CACHE = {}          # (key, values) -> (until, [schools])
 
 
-_ROW_UNIT_COLS = {"at": 0.0, "cols": set()}
+_ROW_UNIT_COLS = {}      # table -> {at, cols}, see _rowHasUnit
 
 
-def _rowHasUnit(col):
-    """Does ranking_results carry this unit column? Probed every ten
-    minutes, so a column that arrives with a rebuild is used within
-    minutes and never raises before it exists."""
+def _rowHasUnit(col, table="ranking_results"):
+    """Does this table carry the unit column? Probed every ten minutes per
+    table, so a column that arrives with a rebuild is used within minutes
+    and never raises before it exists.
+
+    ⚠ PER TABLE (2026-09-06). The ability board, the rank line and the
+      counts read athlete_season, which had none of the unit columns; the
+      probe only asked ranking_results, so every ability query with a unit
+      filter raised UndefinedColumn: the board 400ed and the athlete's
+      "CA D2 #n" ranks vanished from the rank line."""
     import time as _t
-    if _t.time() - _ROW_UNIT_COLS["at"] > 600:
+    slot = _ROW_UNIT_COLS.setdefault(table, {"at": 0.0, "cols": set()})
+    if _t.time() - slot["at"] > 600:
         try:
             from database import getConn
             with getConn() as conn, conn.cursor() as c:
                 c.execute("""SELECT column_name FROM information_schema.columns
-                             WHERE table_name = 'ranking_results'""")
-                _ROW_UNIT_COLS["cols"] = {r[0] for r in c.fetchall()}
+                             WHERE table_name = %s""", (table,))
+                slot["cols"] = {r[0] for r in c.fetchall()}
         except Exception:                            # noqa: BLE001
-            _ROW_UNIT_COLS["cols"] = set()
-        _ROW_UNIT_COLS["at"] = _t.time()
-    return col in _ROW_UNIT_COLS["cols"]
+            slot["cols"] = set()
+        slot["at"] = _t.time()
+    return col in slot["cols"]
 
 
 def _unitSchools(key, values):
