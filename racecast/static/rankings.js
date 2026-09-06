@@ -892,8 +892,11 @@ function makeYearChips(host) {
   return api;
 }
 
-document.querySelectorAll(".combo").forEach((host) =>
-  host.dataset.field === "year" ? makeYearChips(host) : makeCombo(host));
+/* ! THE CHIPS ARE NOT USED (owner, 2026-09-06 evening: "it needs to go
+     back to being a click thing that has a dropdown, as previous"). Year
+     is the combo again, everywhere; its panel already ticks. makeYearChips
+     stays for the record. */
+document.querySelectorAll(".combo").forEach(makeCombo);
 
 
 /* ------------------------------------------------------------------ *

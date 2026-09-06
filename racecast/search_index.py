@@ -569,6 +569,7 @@ def main():
                 cur.execute("ALTER TABLE search_index_new RENAME TO search_index")
                 cur.execute("ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix")
                 cur.execute("ALTER INDEX idx_search_new_trgm RENAME TO idx_search_trgm")
+                cur.execute("ALTER INDEX idx_search_new_school_label RENAME TO idx_search_school_label")
                 cur.execute("ANALYZE search_index")
             conn.commit()
             print("search_index: swapped in")
