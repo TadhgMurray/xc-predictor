@@ -2122,7 +2122,7 @@ WITH season_med AS (
 INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
-SELECT person_id, pool, sport, year,
+SELECT base.person_id, base.pool, base.sport, base.year,
        (percentile_cont({_SEASON_Q}) WITHIN GROUP (ORDER BY speed_rating))::real,
        (sum(speed_rating * power({_DECAY_K}, {_ANCHOR} - race_date))
         / nullif(sum(power({_DECAY_K}, {_ANCHOR} - race_date)), 0))::real,
