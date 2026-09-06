@@ -847,26 +847,54 @@ _ROW_UNIT_COLS = {}      # table -> {at, cols}, see _rowHasUnit
 
 
 def _rowHasUnit(col, table="ranking_results"):
-    """Does this table carry the unit column? Probed every ten minutes per
-    table, so a column that arrives with a rebuild is used within minutes
-    and never raises before it exists.
+    """Does this table carry this unit column WITH VALUES IN IT? Probed
+    every ten minutes per table, so a column that arrives with a rebuild
+    is used within minutes and never raises before it exists.
 
     ⚠ PER TABLE (2026-09-06). The ability board, the rank line and the
-      counts read athlete_season, which had none of the unit columns; the
-      probe only asked ranking_results, so every ability query with a unit
-      filter raised UndefinedColumn: the board 400ed and the athlete's
-      "CA D2 #n" ranks vanished from the rank line."""
+      counts read athlete_season; the probe only asked ranking_results,
+      so every ability query with a unit filter raised UndefinedColumn.
+
+    ⚠ AND POPULATED, NOT MERELY PRESENT (2026-09-06, the same evening).
+      athlete_season on the server DOES carry the older unit columns: an
+      earlier createShadow migration added them before it was keyed to
+      ranking_results (2026-09-01), and nothing ever wrote them. All
+      NULL, so `"state_div" = ANY(...)` matched nobody, no error, and
+      every unit scope on every athlete page read "not on board" while
+      the semi-join it replaced would have answered. The column counts
+      only when pg_stats says it holds values (null_frac < 1); with no
+      statistics yet, one bounded probe for a non-NULL row decides."""
     import time as _t
     slot = _ROW_UNIT_COLS.setdefault(table, {"at": 0.0, "cols": set()})
     if _t.time() - slot["at"] > 600:
+        cols = set()
         try:
             from database import getConn
             with getConn() as conn, conn.cursor() as c:
                 c.execute("""SELECT column_name FROM information_schema.columns
-                             WHERE table_name = %s""", (table,))
-                slot["cols"] = {r[0] for r in c.fetchall()}
-        except Exception:                            # noqa: BLE001
-            slot["cols"] = set()
+                             WHERE table_schema = 'public' AND table_name = %s""",
+                          (table,))
+                present = {r[0] for r in c.fetchall()}
+                wanted = present & {c2 for cs in UNIT_COLUMNS.values() for c2 in cs}
+                if wanted:
+                    c.execute("""SELECT attname, null_frac FROM pg_stats
+                                 WHERE schemaname = 'public' AND tablename = %s
+                                   AND attname = ANY(%s)""", (table, list(wanted)))
+                    stats = dict(c.fetchall())
+                    for col2 in wanted:
+                        nf = stats.get(col2)
+                        if nf is not None:
+                            if nf < 1.0:
+                                cols.add(col2)
+                            continue
+                        # no statistics: ask the table, bounded to one row
+                        c.execute(f'SELECT 1 FROM "{table}" WHERE "{col2}" IS NOT NULL LIMIT 1')
+                        if c.fetchone():
+                            cols.add(col2)
+        except Exception as exc:                     # noqa: BLE001
+            print(f"row_units: probe of {table} failed ({exc})", flush=True)
+            cols = set()
+        slot["cols"] = cols
         slot["at"] = _t.time()
     return col in slot["cols"]
 
