@@ -143,39 +143,30 @@ def _nameNorm(col):
     return f"lower(regexp_replace({col}, '[^A-Za-z0-9]+', ' ', 'g'))"
 
 
-def dupCrossDateSql(table, sport):
-    """One run stored under two meet entries (issue 158): the same person,
-    feed, meet NAME, finishing place and time to the tenth, within three
-    weeks -- a meet listed twice, once with the wrong date, or twice on
-    the same date under two ids. The copy inside the BIGGER meet entry
-    survives (the real listing has the whole field); ties go to the lower
-    result_id. XC reads the name from anet's meets; tfrrs XC twins are
-    the cross-feed rules' business.
+def crossDateMeetsSql(table, sport):
+    """The meets that appear as a PAIR: same normalised name, another meet
+    id, first dates within 21 days. Materialised into a temp table by
+    prepareCrossDate before the row-level rule runs.
 
-    ★ THE PAIR OF MEETS IS FOUND FIRST, BY NAME AND DATE, BEFORE ANY RESULT
-      ROW IS READ (2026-09-06, second cut). The first cut kept every name
-      listed under two meet ids -- but yearly editions share a name, so
-      that was nearly every recurring meet and the candidate set was most
-      of the table; track stalled on it twice (run14, run15). The rule
-      only matches listings within 21 days, so `sized` reads each meet's
-      size and first date in one pass, `pairs` self-joins the ~800k meets
-      on the normalised name with |date difference| <= 21, and only the
-      meets in a pair reach `cand`. Same answer; the heavy joins see a
-      few thousand meets."""
+    ★ GENERIC NAMES ARE NOT PAIRS (2026-09-06, third cut). "Home Meet",
+      "Dual Meet", "Invitational", "Tri Meet" carry hundreds of meet ids
+      inside any three-week window, and a self-join on the name turns each
+      of them into tens of thousands of pairs; the row-level join then saw
+      most of the track table again, which is where run16 stalled. A real
+      double listing is one meet under two or three ids, so a meet paired
+      with more than MAX_PAIRS others is a generic name and is skipped."""
     if sport == "XC":
         names = f"""
             SELECT meet_id, min({_nameNorm('meet_name')}) AS mname
             FROM   meets
             WHERE  meet_name IS NOT NULL AND meet_id IS NOT NULL
             GROUP  BY meet_id"""
-        feed = "AND r.source = 'anet'"
     else:
         names = f"""
             SELECT meet_id, min({_nameNorm('meet_name')}) AS mname
             FROM   meets_tf
             WHERE  meet_name IS NOT NULL AND meet_id IS NOT NULL
             GROUP  BY meet_id"""
-        feed = ""
     return f"""
         WITH names AS ({names}),
         sized AS (
@@ -186,24 +177,60 @@ def dupCrossDateSql(table, sport):
             WHERE  meet_id IS NOT NULL
             GROUP  BY meet_id),
         pairs AS (
-            SELECT a.meet_id
+            SELECT a.meet_id, a.mname, count(*) AS n_pairs
             FROM   names a
             JOIN   sized sa ON sa.meet_id = a.meet_id
             JOIN   names b ON b.mname = a.mname AND b.meet_id <> a.meet_id
             JOIN   sized sb ON sb.meet_id = b.meet_id
             WHERE  sa.d0 IS NOT NULL AND sb.d0 IS NOT NULL
-              AND  abs(sb.d0 - sa.d0) <= 21),
-        twice AS (
-            SELECT DISTINCT n.meet_id, n.mname
-            FROM   names n JOIN pairs p ON p.meet_id = n.meet_id),
-        cand AS (
-            SELECT r.result_id, r.person_id, r.source, s.n,
+              AND  abs(sb.d0 - sa.d0) <= 21
+            GROUP  BY a.meet_id, a.mname)
+        SELECT p.meet_id, p.mname, s.n
+        FROM   pairs p JOIN sized s ON s.meet_id = p.meet_id
+        WHERE  p.n_pairs <= {MAX_PAIRS}
+    """
+
+
+MAX_PAIRS = 12
+
+
+def prepareCrossDate(cur, table, sport):
+    """Build tw_cross_meets (one temp table per sport, replaced each call)
+    and say how big it is, so a stall is at least visible."""
+    t0 = time.time()
+    cur.execute("DROP TABLE IF EXISTS tw_cross_meets")
+    cur.execute(f"CREATE TEMP TABLE tw_cross_meets AS {crossDateMeetsSql(table, sport)}")
+    cur.execute("CREATE INDEX ON tw_cross_meets (meet_id)")
+    cur.execute("ANALYZE tw_cross_meets")
+    cur.execute("SELECT count(*), count(DISTINCT mname) FROM tw_cross_meets")
+    n, names = cur.fetchone()
+    print(f"  [{sport}] dup_cross_date: {n:,} meets in {names:,} name pairs "
+          f"({time.time() - t0:.0f}s)", flush=True)
+
+
+def dupCrossDateSql(table, sport):
+    """One run stored under two meet entries (issue 158): the same person,
+    feed, meet NAME, finishing place and time to the tenth, within three
+    weeks -- a meet listed twice, once with the wrong date, or twice on
+    the same date under two ids. The copy inside the BIGGER meet entry
+    survives (the real listing has the whole field); ties go to the lower
+    result_id. XC reads the name from anet's meets; tfrrs XC twins are
+    the cross-feed rules' business.
+
+    ★ THE PAIR OF MEETS IS FOUND FIRST, BY NAME AND DATE, BEFORE ANY RESULT
+      ROW IS READ (second cut, 2026-09-06), and since the third cut it is
+      a temp table (tw_cross_meets, prepareCrossDate) with generic names
+      dropped, built and counted before this runs. Only rows of those
+      meets reach the row-level work, through an indexed join."""
+    feed = "AND r.source = 'anet'" if sport == "XC" else ""
+    return f"""
+        WITH cand AS (
+            SELECT r.result_id, r.person_id, r.source, t.n,
                    CASE WHEN r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
                         THEN substr(r.date, 1, 10)::date END          AS d,
                    t.mname, r.place, round(r.time_seconds::numeric, 1) AS rt
-            FROM   {table} r
-            JOIN   twice t ON t.meet_id = r.meet_id
-            JOIN   sized s ON s.meet_id = r.meet_id
+            FROM   tw_cross_meets t
+            JOIN   {table} r ON r.meet_id = t.meet_id
             WHERE  r.person_id IS NOT NULL AND r.place > 0
               AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
               {feed}),
@@ -318,6 +345,8 @@ def build(conn, write=False):
         for sport, table in TABLES.items():
             for reason, fn in RULES:
                 t0 = time.time()
+                if reason == "dup_cross_date":
+                    prepareCrossDate(cur, table, sport)
                 if write:
                     # earlier reasons win the primary key: a row that is a
                     # cross-feed twin is filed as one, not as a feed dup

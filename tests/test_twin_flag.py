@@ -102,6 +102,8 @@ def test_rules_on_fixtures():
                                   "twin_rules.sql"), encoding="utf-8").read())
     for sport, table in TF.TABLES.items():
         for reason, fn in TF.RULES:
+            if reason == "dup_cross_date":
+                TF.prepareCrossDate(cur, table, sport)   # the staged meet pairs (third cut)
             cur.execute(f"SELECT result_id FROM ({fn(table, sport)}) s ORDER BY 1")
             got = [r[0] for r in cur.fetchall()]
             assert got == _EXPECTED[(sport, reason)], (sport, reason, got)
