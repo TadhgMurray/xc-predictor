@@ -167,6 +167,14 @@
       </div>
       <p class="hint">Anyone, whether or not they ran this meet. Add several
         to compare them at the same race.</p>
+      {# ★ A WHOLE SQUAD IN ONE CLICK (owner, 2026-09-06: "predictions
+         add-all"). The school's current squad, from /api/predict/squad,
+         added to the list up to the twelve the individual API takes. #}
+      <div class="pick-wrap">
+        <input id="squad-input" type="search" autocomplete="off"
+               placeholder="Or add a school's whole squad">
+        <div id="squad-results" class="pick-results hidden"></div>
+      </div>
       <div class="chosen hidden" id="athlete-chosen"></div>
     </div>
   </section>
@@ -174,6 +182,9 @@
   <div class="actions hidden" id="actions">
     <button class="go" id="predict">Predict</button>
     <span class="predict-status" id="status"></span>
+    {# the conditions the target would be run in: the venue's normal and the
+       forecast, shown whether or not the model can predict yet #}
+    <div class="wx-target" id="wx-target"></div>
   </div>
 
   <div id="output"></div>

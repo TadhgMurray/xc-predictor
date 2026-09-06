@@ -511,6 +511,7 @@ def home():
             rows = get_homepage_panels(cur)
             meta = get_homepage_meta(cur)
             recent = get_homepage_recent(cur)
+            kinds = unitKinds(cur)
 
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
@@ -556,7 +557,7 @@ def meets_page():
     #   function-local rebinding of that name reads like a bug even where it
     #   is not one.
     from meets_filter import (parseFilters as parseMeetFilters, filteredMeets,
-                              groupByYear, describe, MAX_MEETS)
+                              groupByYear, describe, MAX_MEETS, unitKinds)
     from rankings import US_STATES
 
     course = (request.args.get("course") or "").strip()
@@ -591,12 +592,13 @@ def meets_page():
             with conn.cursor(
                     cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 rows = filteredMeets(cur, f)
+                kinds = unitKinds(cur)
         return render_template("meets.html", sport=f["sport"], filters=f,
                                months=groupByYear(rows), n_meets=len(rows),
                                filter_text=describe(f),
                                capped=(len(rows) >= MAX_MEETS),
                                max_meets=MAX_MEETS,
-                               states=US_STATES,
+                               states=US_STATES, kinds=kinds,
                                min_results=RECENT_MIN_RESULTS)
 
     sport = f["sport"]
@@ -621,8 +623,26 @@ def meets_page():
         current[1].append(m)
 
     return render_template("meets.html", sport=sport, months=months,
-                           filters=f, states=US_STATES,
+                           filters=f, states=US_STATES, kinds=kinds,
                            min_results=RECENT_MIN_RESULTS)
+
+
+@app.route("/api/meet-units")
+def api_meet_units():
+    """Distinct championship units of one kind, for the meets page's
+    picker: ?sport=XC&kind=section&state=CA&q=nc -> [{unit, n}], busiest
+    first. Reads meet_unit (build_meet_units, step 10e)."""
+    from meets_filter import unitValues
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        sport = "XC"
+    kind = (request.args.get("kind") or "").strip().lower()[:20]
+    state = (request.args.get("state") or "").strip().upper()[:2]
+    q = (request.args.get("q") or "").strip()[:40]
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            rows = unitValues(cur, sport, kind, state, q)
+    return jsonify([{"unit": u, "n": n} for u, n in rows])
 
 
 # ===================================================================== #
@@ -5858,6 +5878,35 @@ def api_predict_athletes():
          "school": r["school"], "year": r["year"],
          "rating": round(float(r["mean_rating"]), 1)}
         for r in rows[:25]]})
+
+
+@app.route("/api/predict/weather")
+def api_predict_weather():
+    """The weather a target race would be run in, without a prediction:
+    the venue's normal for that time of year and the forecast (16 days
+    out at most), as forecast.py rows plus words. So the page can show
+    conditions while the model is untrained (owner, 2026-09-06: "I don't
+    see it"). Same target parameters as the predictions themselves."""
+    import forecast as fc
+    from predict import _targetSpec
+    target, err = _target(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                spec = _targetSpec(cur, target)
+                hour = fc.raceHour(spec.get("sport"))
+                lat, lon, day = spec.get("gps_lat"), spec.get("gps_long"), spec.get("date")
+                normal = fc.normalAt(cur, lat, lon, day, hour)
+                forecast = fc.forecastAt(lat, lon, day, hour, cur=cur)
+    except Exception:                                # noqa: BLE001
+        app.logger.exception("/api/predict/weather failed")
+        return jsonify({"available": False, "reason": "Could not resolve the target race."})
+    return jsonify({"available": True, "date": str(day) if day else None,
+                    "hour_local": hour, "has_venue": lat is not None,
+                    "normal": normal, "normal_text": fc.describe(normal),
+                    "forecast": forecast, "forecast_text": fc.describe(forecast)})
 
 
 @app.route("/api/predict/individual")

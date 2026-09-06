@@ -1649,6 +1649,7 @@ async function predict() {
   $("predict").disabled = true;
   setStatus("Predicting\u2026", false);
   $("output").innerHTML = "";
+  loadWeather(state.meet && state.meet.div);
 
   const path = state.who === "individual"
     ? "/api/predict/individual" : "/api/predict/team";
@@ -1845,6 +1846,73 @@ bindPicker($("athlete-input"), $("athlete-results"), "athlete",
   renderAthletes();
   saveState();
 }, false, { rows: athleteRows });
+
+/* ★ A WHOLE SQUAD IN ONE CLICK (owner, 2026-09-06). Pick a school and its
+   current squad joins the list, strongest first, up to the twelve the
+   individual API takes; anyone already listed is left where they are. */
+const MAX_ATHLETES = 12;
+bindPicker($("squad-input"), $("squad-results"), "school", renderSimple,
+           async (d) => {
+  const school = d.school || d.label;
+  if (!school) return;
+  const p = new URLSearchParams({ school: school, sport: state.meet.sport });
+  const g = state.field && state.field.gender;
+  if (g) p.set("gender", g);
+  setStatus(`Adding ${school}\u2026`, false);
+  try {
+    const res = await fetch("/api/predict/squad?" + p.toString());
+    const data = await res.json();
+    const runners = (data.runners || []).filter((r) => r.person_id != null);
+    if (!runners.length) {
+      setStatus(data.error || `${school} has no current squad to add.`, true);
+      return;
+    }
+    let added = 0, room = MAX_ATHLETES - state.athletes.length;
+    for (const r of runners) {
+      const id = String(r.person_id);
+      if (state.athletes.some((a) => a.id === id)) continue;
+      if (room <= 0) break;
+      state.athletes.push({ id: id, name: r.name, school: r.school || school,
+                            year: data.season_year || null,
+                            rating: r.rating == null ? null : Number(r.rating) });
+      added += 1; room -= 1;
+    }
+    const left = runners.length - added;
+    setStatus(added
+      ? `Added ${added} from ${school}${left > 0 ? ` (${left} not added: ${MAX_ATHLETES} at most)` : ""}.`
+      : `${school}: everyone is already listed, or the list is full (${MAX_ATHLETES}).`,
+      !added);
+    renderAthletes();
+    saveState();
+  } catch (err) {
+    setStatus("Could not reach the server: " + err.message, true);
+  }
+});
+
+/* ★ THE CONDITIONS THE TARGET WOULD BE RUN IN, shown on every Predict
+   whether or not the model answers: the venue's normal weather for that
+   time of year at the race hour, and the forecast when the date is within
+   sixteen days. Same target parameters the prediction sends. */
+async function loadWeather(div) {
+  const el = $("wx-target");
+  if (!el) return;
+  try {
+    const res = await fetch("/api/predict/weather?" + buildQuery(div).toString());
+    const d = await res.json();
+    if (!d.available) { el.innerHTML = ""; return; }
+    const when = d.hour_local != null ? ` at ${d.hour_local}:00` : "";
+    const normal = d.normal_text
+      ? `<span class="wx-normal">normal weather${when}: ${esc(d.normal_text)}</span>`
+      : (d.has_venue ? `<span class="wx-normal">no weather history for this venue yet</span>`
+                     : `<span class="wx-normal">this venue has no coordinates, so no weather</span>`);
+    const fc = d.forecast_text
+      ? `<span class="wx-forecast" title="Open-Meteo, fetched ${esc((d.forecast && d.forecast.fetched_at) || "")}">forecast for ${esc(d.date || "")}${when}: ${esc(d.forecast_text)}</span>`
+      : (d.date ? `<span class="wx-forecast">no forecast yet for ${esc(d.date)} (forecasts reach 16 days out)</span>` : "");
+    el.innerHTML = `<div class="wx-line">${normal}${fc}</div>`;
+  } catch (err) {
+    el.innerHTML = "";
+  }
+}
 
 /*
  * ★ A TABLE, NOT CHIPS (owner, 2026-09-01: "update the specific athletes UI

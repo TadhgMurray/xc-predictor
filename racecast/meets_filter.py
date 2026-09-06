@@ -55,6 +55,11 @@ MAX_Q = 60
 
 _SPORTS = ("XC", "TF")
 _YEAR_RX = re.compile(r"^(19|20)[0-9]{2}$")
+# the meet levels the level filter knows, and the bit each feed's mask uses
+# (season_level._MASK_TO_LEVEL: 2 ms, 4 hs, 8 college)
+LEVELS = {"ms": 2, "hs": 4, "college": 8}
+_KIND_RX = re.compile(r"^[a-z_]{2,20}$")
+_DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # The date guard panels.py uses, for the same reason: the corpus holds junk
 # years (0023, 2223) that a text comparison would sort into the future.
@@ -101,12 +106,27 @@ def parseFilters(args):
     #   championships: the table only holds championship meets.
     champ = (args.get("champ") or "").strip().lower() in ("1", "on", "true")
     unit = (args.get("unit") or "").strip().upper()[:40]
+    # ★ THE UNIT'S KIND, THE MEET'S LEVEL, A DATE RANGE (owner, 2026-09-06:
+    #   "meets tab filters, including div/section and stuff"). kind narrows
+    #   the unit filter to one hierarchy (a section called NCS, not a league
+    #   that happens to share the letters); level is hs/ms/college off the
+    #   feeds' own level mask (tfrrs is college by construction); from/to
+    #   are ISO dates compared as the text the tables store.
+    kind = (args.get("kind") or "").strip().lower()[:20]
+    kind = kind if _KIND_RX.match(kind) else ""
+    level = (args.get("level") or "").strip().lower()
+    level = level if level in LEVELS else ""
+    d_from = (args.get("from") or "").strip()[:10]
+    d_to = (args.get("to") or "").strip()[:10]
+    d_from = d_from if _DATE_RX.match(d_from) else ""
+    d_to = d_to if _DATE_RX.match(d_to) else ""
 
     return {"sport": sport, "state": state, "school": school, "q": q,
             "year": storedYear(sport, label), "year_label": label,
-            "champ": champ or bool(unit), "unit": unit,
+            "champ": champ or bool(unit) or bool(kind), "unit": unit,
+            "kind": kind, "level": level, "from": d_from, "to": d_to,
             "active": bool(state or school or q or label is not None
-                           or champ or unit)}
+                           or champ or unit or kind or level or d_from or d_to)}
 
 
 # describe
@@ -124,8 +144,20 @@ def describe(f):
         bits.append(f"matching “{f['q']}”")
     if f["year_label"] is not None:
         bits.append(f"in the {f['year_label']} season")
+    if f.get("level"):
+        bits.append({"ms": "middle school", "hs": "high school",
+                     "college": "college"}[f["level"]])
+    if f.get("from") and f.get("to"):
+        bits.append(f"from {f['from']} to {f['to']}")
+    elif f.get("from"):
+        bits.append(f"since {f['from']}")
+    elif f.get("to"):
+        bits.append(f"up to {f['to']}")
     if f.get("unit"):
-        bits.insert(0, f"{f['unit']} championships")
+        what = f"{f['kind']} " if f.get("kind") else ""
+        bits.insert(0, f"{f['unit']} {what}championships")
+    elif f.get("kind"):
+        bits.insert(0, f"{f['kind']} championships")
     elif f.get("champ"):
         bits.insert(0, "championships only")
     return " ".join(bits)
@@ -247,9 +279,109 @@ def unitSql(f, alias, params, present=True):
     if f.get("unit"):
         params["unit"] = f["unit"]
         narrow = " AND u.unit = %(unit)s"
+    if f.get("kind"):
+        params["kind"] = f["kind"]
+        narrow += " AND u.kind = %(kind)s"
     clause = (f"AND EXISTS (SELECT 1 FROM meet_unit u WHERE u.sport = %(sport)s "
               f"AND u.meet_id = {alias}.meet_id{narrow})")
     return clause, cols
+
+
+_LEVEL_COL = {}
+_KINDS = {"at": 0.0, "kinds": []}
+
+
+def _hasLevelMask(cur, table):
+    """Does `table` carry level_mask? Probed once per table per process."""
+    if table not in _LEVEL_COL:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = %s AND column_name = 'level_mask'""",
+                        (table,))
+            _LEVEL_COL[table] = cur.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _LEVEL_COL[table] = False
+    return _LEVEL_COL[table]
+
+
+def levelClause(cur, sport, alias, params, level):
+    """'AND (...)' keeping meets of one level. anet's meet rows carry a
+    level mask (2 ms, 4 hs, 8 college; a meet can carry several); a tfrrs
+    meet is college by construction. Without a mask column the anet side
+    cannot be told apart and only the tfrrs rule applies."""
+    params["level_bit"] = LEVELS[level]
+    params["sport_lvl"] = sport
+    mask_table = "meets" if sport == "XC" else "meets_tf_meta"
+    masked = ""
+    if _hasLevelMask(cur, mask_table):
+        if sport == "XC":
+            masked = f"({alias}.level_mask & %(level_bit)s) <> 0"
+        else:
+            masked = (f"EXISTS (SELECT 1 FROM meets_tf_meta mm WHERE mm.meet_id = "
+                      f"{alias}.meet_id AND (mm.level_mask & %(level_bit)s) <> 0)")
+    tfrrs = (f"EXISTS (SELECT 1 FROM meets_tfrrs t WHERE t.meet_id = {alias}.meet_id "
+             f"AND t.sport = %(sport_lvl)s)")
+    if level == "college":
+        return "AND (" + " OR ".join(x for x in (masked, tfrrs) if x) + ")"
+    if not masked:
+        return ""                    # nothing can say a meet is hs or ms
+    return f"AND {masked} AND NOT {tfrrs}"
+
+
+def meetLevelSet(cur, sport, meet_ids, level):
+    """The subset of meet_ids at `level`, for the school path's post-filter."""
+    if not meet_ids:
+        return set()
+    params = {"ids": list(meet_ids)}
+    clause = levelClause(cur, sport, "m", params, level)
+    if not clause:
+        return set(meet_ids)
+    table = "meets" if sport == "XC" else "meets_tf"
+    cur.execute(f"SELECT DISTINCT m.meet_id FROM {table} m "
+                f"WHERE m.meet_id = ANY(%(ids)s) {clause}", params)
+    return {r["meet_id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()}
+
+
+def unitKinds(cur):
+    """The unit kinds meet_unit holds, for the picker. Cached ten minutes."""
+    import time
+    now = time.time()
+    if _KINDS["at"] > now - 600:
+        return _KINDS["kinds"]
+    kinds = []
+    if hasMeetUnits(cur):
+        try:
+            cur.execute("SELECT DISTINCT kind FROM meet_unit WHERE unit IS NOT NULL ORDER BY 1")
+            kinds = [r["kind"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+    _KINDS.update(at=now, kinds=kinds)
+    return kinds
+
+
+def unitValues(cur, sport, kind, state, q, limit=60):
+    """Distinct units of one kind (optionally one state), busiest first,
+    for the picker."""
+    if not hasMeetUnits(cur) or not kind:
+        return []
+    params = {"sport": sport, "kind": kind, "lim": limit}
+    where = "u.sport = %(sport)s AND u.kind = %(kind)s AND u.unit IS NOT NULL"
+    if state:
+        where += " AND (u.state = %(state)s OR u.state IS NULL)"
+        params["state"] = state
+    if q:
+        where += " AND u.unit ILIKE %(q)s"
+        params["q"] = f"%{q}%"
+    try:
+        cur.execute(f"""SELECT u.unit, count(DISTINCT u.meet_id) AS n
+                        FROM meet_unit u WHERE {where}
+                        GROUP BY u.unit ORDER BY n DESC, u.unit LIMIT %(lim)s""", params)
+        rows = cur.fetchall()
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        return []
+    return [(r["unit"], r["n"]) if isinstance(r, dict) else (r[0], r[1]) for r in rows]
 
 
 def filteredMeets(cur, f):
@@ -265,6 +397,13 @@ def filteredMeets(cur, f):
     if f["year"] is not None:
         year_clause = f"AND {seasonYearSqlInt(sport, 'r.date')} = %(year)s"
         params["year"] = f["year"]
+    # the tables store ISO text, so a text compare is a date compare
+    if f.get("from"):
+        year_clause += " AND r.date >= %(d_from)s"
+        params["d_from"] = f["from"]
+    if f.get("to"):
+        year_clause += " AND r.date <= %(d_to)s"
+        params["d_to"] = f["to"]
 
     if f["school"]:
         params["school"] = f["school"]
@@ -314,6 +453,9 @@ def filteredMeets(cur, f):
         # note above. Doing it in SQL would drop every tfrrs meet.
         if f["state"]:
             rows = [r for r in rows if (r["state"] or "") == f["state"]]
+        if f.get("level"):
+            keep = meetLevelSet(cur, sport, [r["meet_id"] for r in rows], f["level"])
+            rows = [r for r in rows if r["meet_id"] in keep]
         return [r for r in rows if r["meet_name"]]
 
     meets_table = "meets" if sport == "XC" else "meets_tf"
@@ -324,6 +466,8 @@ def filteredMeets(cur, f):
     if f["state"]:
         state_clause = "AND m.state = %(state)s"
         params["state"] = f["state"]
+    if f.get("level"):
+        state_clause += " " + levelClause(cur, sport, "m", params, f["level"])
     if f["q"]:
         q_clause = "AND m.meet_name ILIKE %(q)s"
         params["q"] = f"%{f['q']}%"

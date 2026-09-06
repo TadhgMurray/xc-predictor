@@ -102,7 +102,22 @@
        combos are multi-select against a live index; these are four single
        values and would gain nothing from it. #}
     <form class="meet-filters" method="get" action="/meets">
-        <input type="hidden" name="sport" value="{{ sport }}">
+        <div class="field">
+            <label for="mf-sport">Sport</label>
+            <select id="mf-sport" name="sport">
+                <option value="XC"{{ ' selected' if sport == 'XC' }}>Cross country</option>
+                <option value="TF"{{ ' selected' if sport == 'TF' }}>Track</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="mf-level">Level</label>
+            <select id="mf-level" name="level">
+                <option value="">Any level</option>
+                <option value="hs"{{ ' selected' if filters and filters.level == 'hs' }}>High school</option>
+                <option value="ms"{{ ' selected' if filters and filters.level == 'ms' }}>Middle school</option>
+                <option value="college"{{ ' selected' if filters and filters.level == 'college' }}>College</option>
+            </select>
+        </div>
         <div class="field">
             <label for="mf-school">School</label>
             <input id="mf-school" name="school" type="search"
@@ -124,12 +139,36 @@
                    value="{{ filters.q if filters else '' }}">
         </div>
         <div class="field">
-            <label for="mf-unit">Unit</label>
-            {# A league, section, area, conference ... (issue 34). Implies
+            <label for="mf-kind">Championship of</label>
+            {# The unit's KIND -- section, division, league, conference,
+               state ... -- then the unit itself from a picker fed by
+               /api/meet-units for that kind and state (owner, 2026-09-06:
+               "div/section and stuff"). Either alone implies
                championships: meet_unit holds nothing else. #}
+            <select id="mf-kind" name="kind">
+                <option value="">Any kind</option>
+                {% for k in kinds or [] %}
+                <option value="{{ k }}"{{ ' selected' if filters and filters.kind == k }}>{{ k|replace('_', ' ')|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="field">
+            <label for="mf-unit">Unit</label>
             <input id="mf-unit" name="unit" type="search" class="narrow"
+                   list="mf-unit-list" autocomplete="off"
                    placeholder="NCS, EBAL, SEC…"
                    value="{{ filters.unit if filters else '' }}">
+            <datalist id="mf-unit-list"></datalist>
+        </div>
+        <div class="field">
+            <label for="mf-from">From</label>
+            <input id="mf-from" name="from" type="date" class="narrow"
+                   value="{{ filters['from'] if filters else '' }}">
+        </div>
+        <div class="field">
+            <label for="mf-to">To</label>
+            <input id="mf-to" name="to" type="date" class="narrow"
+                   value="{{ filters['to'] if filters else '' }}">
         </div>
         <div class="field field-check">
             <label for="mf-champ"><input id="mf-champ" name="champ" type="checkbox" value="1"
@@ -150,6 +189,32 @@
         </div>
         {% endif %}
     </form>
+    <script>
+    (function () {
+      /* the unit picker: the datalist follows the kind, the state and what
+         is typed; /api/meet-units answers busiest first */
+      var kind = document.getElementById("mf-kind"), state = document.getElementById("mf-state"),
+          sport = document.getElementById("mf-sport"), box = document.getElementById("mf-unit"),
+          list = document.getElementById("mf-unit-list");
+      if (!kind || !box || !list) return;
+      var timer = null;
+      function fill() {
+        if (!kind.value) { list.innerHTML = ""; return; }
+        var p = new URLSearchParams({sport: sport ? sport.value : "XC", kind: kind.value,
+                                     state: state ? state.value : "", q: box.value});
+        fetch("/api/meet-units?" + p.toString()).then(function (r) { return r.json(); })
+          .then(function (rows) {
+            list.innerHTML = rows.map(function (r) {
+              return '<option value="' + r.unit.replace(/"/g, "&quot;") + '">' + r.n + ' meets</option>';
+            }).join("");
+          }).catch(function () {});
+      }
+      kind.addEventListener("change", fill);
+      if (state) state.addEventListener("change", fill);
+      box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(fill, 150); });
+      box.addEventListener("focus", fill);
+    })();
+    </script>
 
     {% if not months %}
       {% if filtering %}
