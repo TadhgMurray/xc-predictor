@@ -212,6 +212,51 @@ def _tilt(rating):
     return 1.0 + _TILT_K * (r - 100.0) / 10.0
 
 
+# ★ THE WINTER GAIN PER ABILITY (issue 194): the go-live shifts every track
+#   row by the pool's band shifts interpolated at the athlete's rating, so
+#   a dual-sport page shows the stated gain in each band. The same shift
+#   goes into a converted track time here, from sport_gain; an empty or
+#   missing table is 0, as the go-live applied none.
+_gain = {"at": 0.0, "map": {}}
+
+
+def _loadSportGain():
+    out = {}
+    try:
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pool, sport, anchor_rating, log_shift "
+                        "FROM sport_gain ORDER BY pool, sport, anchor_rating")
+            for pool, sport, anchor, shift in cur.fetchall():
+                out.setdefault((_bare(pool), (sport or "").upper()), []).append(
+                    (float(anchor), float(shift or 0.0)))
+    except Exception:                                    # noqa: BLE001
+        out = {}
+    _gain["map"] = out
+    _gain["at"] = time.time()
+
+
+def sport_gain(pool, sport, rating):
+    """The log-time shift the engine applied to a track row at this
+    rating (0 for XC, or without the table)."""
+    if not pool or (sport or "").upper() != "TF":
+        return 0.0
+    with _offset_lock:
+        if time.time() - _gain["at"] > _OFFSET_TTL:
+            _loadSportGain()
+        pts = _gain["map"].get((_bare(pool), "TF"))
+    if not pts:
+        return 0.0
+    r = float(rating if rating is not None else 100.0)
+    if r <= pts[0][0]:
+        return pts[0][1]
+    if r >= pts[-1][0]:
+        return pts[-1][1]
+    for (a0, s0), (a1, s1) in zip(pts, pts[1:]):
+        if a0 <= r <= a1:
+            return s0 + (s1 - s0) * (r - a0) / (a1 - a0) if a1 > a0 else s0
+    return pts[-1][1]
+
+
 def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
     """The applied effect (log) a race in this context carries on the
     engine's scale: a chosen venue's own, else the sport's median."""
@@ -223,7 +268,8 @@ def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
         base = med
     else:
         base = _tilt(rating) * (math.log1p(float(chosen_difficulty)) + shift)
-    return base + distance_offset(pool, sport, distance_meters, rating=rating)
+    return (base + distance_offset(pool, sport, distance_meters, rating=rating)
+            + sport_gain(pool, sport, rating))
 
 
 def chosen_difficulty(spec, sport):

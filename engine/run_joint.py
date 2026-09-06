@@ -514,6 +514,13 @@ def main():
                          "window sits this far below its XC window and the "
                          "level carries the rest. 0 books it all into the "
                          "level (issue 113). An assumption, not a measurement")
+    ap.add_argument("--winter-gain-bands", default=None,
+                    help="the stated fall-to-spring gain PER RATING BAND, "
+                         "low,middle,top (below 105 / 105-120 / 120+), e.g. "
+                         "0.03,0.02,0.03: the go-live shifts every track "
+                         "row so a dual-sport athlete's page shows exactly "
+                         "that gap in their band (issue 194). Unset: no "
+                         "shift, the curve pin alone")
     ap.add_argument("--no-curve", action="store_true")
     ap.add_argument("--no-rust", action="store_true")
     ap.add_argument("--no-dist", action="store_true",
@@ -693,9 +700,15 @@ def main():
 
     if args.golive or args.golive_dry:
         import joint_golive as jg
+        gain_bands = None
+        if args.winter_gain_bands:
+            gain_bands = tuple(float(v) for v in args.winter_gain_bands.split(","))
+            assert len(gain_bands) == len(js.SPORT_GAIN_ANCHORS), \
+                "--winter-gain-bands wants low,middle,top"
         live = jg.buildLive(out, D, cols, keep, collapse=args.collapse,
                             anchor=args.anchor,
-                            use_race_effect=not args.no_race_effect)
+                            use_race_effect=not args.no_race_effect,
+                            gain_bands=gain_bands)
         jg.report(live)
         jg.writeNpz(live, os.path.join(os.path.dirname(args.out),
                                        "pair_difficulty.npz"))

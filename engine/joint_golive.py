@@ -57,7 +57,7 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 #            saveAthleteRatings dict), per-sport (result_id, rating) pairs,
 #            the pair_difficulty-shaped arrays, and a summary.
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
-              use_race_effect=True):
+              use_race_effect=True, gain_bands=None):
     import pair_golive as pg
 
     keys = [str(k) for k in cols["course_keys"]]
@@ -92,6 +92,36 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     # the altitude term (issue 172): credit at altitude, for everyone there
     if out.get("altitude_coef") is not None and getattr(D, "n_k", 0):
         eff = eff + out["altitude_coef"][D.group_row] * D.alt
+    # ★ THE WINTER GAIN PER ABILITY (issue 194): the shift on every track
+    #   row that makes the dual-sport page gap in each band the stated one
+    gain_rows = []
+    if gain_bands is not None:
+        n_pool = len(attrs["pool_names"])
+        shift, gap, n_g = js.sportGainShift(
+            np.log(norm) - eff, sport, D.athlete, rat["career"],
+            attrs["pool"], n_pool, gain_bands)
+        pool_of_row = attrs["pool"][D.athlete]
+        eff = eff + np.where(sport == 1,
+                             js.sportGainRow(rat["career"][D.athlete],
+                                             pool_of_row, shift), 0.0)
+        print("[joint/live] winter gain per band (issue 194), track rows "
+              "shifted so the dual-sport page gap per band is the stated "
+              f"gain {tuple(float(g) for g in gain_bands)} at ratings "
+              f"{js.SPORT_GAIN_ANCHORS}:")
+        print(f"    {'pool':<10}{'band':>6}{'athletes':>10}{'gap read':>10}"
+              f"{'target':>9}{'shift':>9}")
+        for p in range(n_pool):
+            for b in range(len(gain_bands)):
+                if n_g[p, b] == 0:
+                    continue
+                gain_rows.append((attrs["pool_names"][p], "TF", b,
+                                  float(js.SPORT_GAIN_ANCHORS[b]),
+                                  float(gain_bands[b]),
+                                  float(gap[p, b]) if np.isfinite(gap[p, b]) else None,
+                                  float(shift[p, b]), int(n_g[p, b])))
+                print(f"    {attrs['pool_names'][p]:<10}{b:>6}{int(n_g[p, b]):>10,}"
+                      f"{gap[p, b]:>+10.4f}{-float(gain_bands[b]):>+9.4f}"
+                      f"{shift[p, b]:>+9.4f}")
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):
         rc = 100.0 * pm_c[D.athlete] / adjusted
@@ -199,7 +229,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             "npz": npz, "summary": summary, "rated": rated, "chosen": chosen,
             "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
             "dist_rows": dist_rows, "scale_rows": scale_rows,
-            "suspect_days": suspect_days}
+            "suspect_days": suspect_days, "gain_rows": gain_rows}
 
 
 _SUSPECT_DDL = """
@@ -302,6 +332,43 @@ def writeDistOffsets(rows):
     print(f"[joint/live] distance_offset: {len(rows):,} rows written")
 
 
+# The stated winter gain per band and the shift the track rows carry
+# (issue 194), for the conversions page: one row per (pool, band).
+_GAIN_DDL = """
+    CREATE TABLE IF NOT EXISTS sport_gain (
+        pool           text    NOT NULL,
+        sport          text    NOT NULL,
+        band           integer NOT NULL,
+        anchor_rating  real    NOT NULL,
+        target_gain    real    NOT NULL,
+        realised_gap   real,
+        log_shift      real    NOT NULL,
+        n_athletes     integer NOT NULL,
+        last_updated   text,
+        PRIMARY KEY (pool, sport, band)
+    )
+"""
+
+
+def writeSportGain(rows):
+    """Replace sport_gain. An empty list clears it: no shift is applied,
+    and the conversions page applies none."""
+    from datetime import date
+    from database import getConn
+    today = date.today().isoformat()
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(_GAIN_DDL)
+        cur.execute("DELETE FROM sport_gain")
+        if rows:
+            cur.executemany(
+                "INSERT INTO sport_gain (pool, sport, band, anchor_rating,"
+                " target_gain, realised_gap, log_shift, n_athletes,"
+                " last_updated) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                [tuple(r) + (today,) for r in rows])
+        conn.commit()
+    print(f"[joint/live] sport_gain: {len(rows):,} rows written")
+
+
 def report(live):
     s = live["summary"]
     print(f"[joint/live] {s['n_rated']:,}/{s['n_rows']:,} rows rated "
@@ -341,6 +408,7 @@ def writeLive(live):
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
     writeSuspectDays(live.get("suspect_days", []))
+    writeSportGain(live.get("gain_rows", []))
     print("\n[joint/live] LIVE. To undo:\n" + pg.restoreSql())
     print("[joint/live] ⚠ do NOT run apply_tilt after this: the tilt is "
           "inside these ratings already.")

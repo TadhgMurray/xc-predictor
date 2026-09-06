@@ -265,8 +265,12 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # (issue 143); unset, the level carries the whole change.
   # XCP_ALTITUDE=1 turns on the altitude term (issue 172; needs
   # venue_elevation from scripts/build_venue_elevation.py).
+  # XCP_WINTER_GAIN_BANDS=0.03,0.02,0.03 states it per rating band
+  # (low / middle / top) and the go-live shifts the track rows to it
+  # (issue 194); unset, no shift.
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4 \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
+      ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_ALTITUDE:+--altitude}
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"

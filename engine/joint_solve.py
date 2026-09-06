@@ -196,6 +196,79 @@ DIST_N_BAND = len(DIST_BANDS) + 1
 #   way. Each athlete-season's best at each side of a pair is taken over
 #   the same number of races, a random subset of the side with more.
 DIST_CAL_SHARE = 0.9
+
+# ★ THE WINTER GAIN, STATED PER ABILITY (issue 194, 2026-09-06). The curve
+#   pin (WINTER_GAIN) sets the fall-to-spring gain of the AVERAGE dual-
+#   sport athlete, and the amplitude tilt hands the top two thirds of it;
+#   with the count of races and the era on top, the same athlete's spring
+#   best rated 0.7 UNDER their fall best at every level (diag_cross_sport
+#   _pairs, 2024+), a 9:01 level with the 15:40 those athletes ran at Mt.
+#   SAC in October. How much fitter a runner is in May than at their
+#   November best is not in the data (it is the same person months apart)
+#   -- it is the owner's number, and it can differ by ability. So the
+#   go-live applies, to every track row, the shift that makes the dual-
+#   sport page gap in each rating band (DIST_BANDS: low / middle / top)
+#   equal the stated gain for that band, measured on the rows it is about
+#   to publish: per (pool, band), the mean over athlete-seasons raced in
+#   both sports of (mean log adjusted time over track rows - over XC
+#   rows); the shift is that mean plus the target, interpolated linearly
+#   between the band anchors so nothing jumps at 105 or 120. Written to
+#   sport_gain for the conversions page. Off (no shift) unless
+#   --winter-gain-bands is given.
+SPORT_GAIN_ANCHORS = (90.0, 112.0, 130.0)
+SPORT_GAIN_MIN_ATHLETES = 50
+
+
+def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
+                   gains, anchors=SPORT_GAIN_ANCHORS,
+                   min_athletes=SPORT_GAIN_MIN_ATHLETES):
+    """Per (pool, band): the realised dual-sport gap in log adjusted time
+    (track minus XC, negative = track rates higher), the athletes behind
+    it, and the shift that turns it into -gains[band]. Returns
+    (shift[n_pool, n_band], gap[n_pool, n_band], n[n_pool, n_band])."""
+    gains = np.asarray(gains, dtype=np.float64)
+    nb = len(anchors)
+    assert gains.size == nb, "one gain per band"
+    log_adj = np.asarray(log_adj, dtype=np.float64)
+    sport = np.asarray(sport)
+    athlete = np.asarray(athlete, dtype=np.int64)
+    n_ath = int(rating_ath.size)
+    tf = sport == 1
+    ok = np.isfinite(log_adj)
+    sum_tf = np.bincount(athlete[tf & ok], weights=log_adj[tf & ok], minlength=n_ath)
+    cnt_tf = np.bincount(athlete[tf & ok], minlength=n_ath)
+    sum_xc = np.bincount(athlete[~tf & ok], weights=log_adj[~tf & ok], minlength=n_ath)
+    cnt_xc = np.bincount(athlete[~tf & ok], minlength=n_ath)
+    both = (cnt_tf > 0) & (cnt_xc > 0) & np.isfinite(rating_ath) & (pool_ath >= 0)
+    gap_ath = np.where(both, sum_tf / np.maximum(cnt_tf, 1)
+                       - sum_xc / np.maximum(cnt_xc, 1), 0.0)
+    band = np.digitize(np.nan_to_num(rating_ath, nan=100.0), DIST_BANDS)
+    key = np.clip(pool_ath, 0, None) * nb + band
+    n = np.bincount(key[both], minlength=n_pool * nb).reshape(n_pool, nb)
+    tot = np.bincount(key[both], weights=gap_ath[both],
+                      minlength=n_pool * nb).reshape(n_pool, nb)
+    gap = np.where(n > 0, tot / np.maximum(n, 1), np.nan)
+    shift = np.where(n >= min_athletes, gap + gains[None, :], 0.0)
+    # a band too thin to measure borrows its pool's nearest measured band
+    for p in range(n_pool):
+        have = n[p] >= min_athletes
+        if have.any() and not have.all():
+            shift[p, ~have] = np.interp(np.asarray(anchors)[~have],
+                                        np.asarray(anchors)[have], shift[p, have])
+    return shift, gap, n
+
+
+def sportGainRow(rating_row, pool_row, shift, anchors=SPORT_GAIN_ANCHORS):
+    """The per-row shift: the pool's band shifts interpolated at the
+    row's athlete-season rating, flat beyond the outer anchors."""
+    r = np.nan_to_num(np.asarray(rating_row, dtype=np.float64), nan=100.0)
+    out = np.zeros(r.size)
+    for p in np.unique(pool_row):
+        if p < 0:
+            continue
+        m = pool_row == p
+        out[m] = np.interp(r[m], np.asarray(anchors), shift[p])
+    return out
 DIST_CAL_MIN_PAIRS = 150
 
 # ★ THE PER-ATHLETE ENDURANCE SLOPE (issue 154, 2026-09-03). One number per
