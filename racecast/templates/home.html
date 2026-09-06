@@ -341,7 +341,7 @@
                     <tbody>
                         {% for m in recent[sport][:15] %}
                         <tr>
-                            <td class="no-break">{{ m.date }}</td>
+                            <td class="no-break">{{ m.date|mdy }}</td>
                             <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
                             <td>
                                 {% if sport == 'XC' and m.course_name %}

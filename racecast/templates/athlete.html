@@ -190,7 +190,7 @@
             <tbody>
                 {% for race in season.races %}
                 <tr id="race-{{ race.result_id }}">
-                    <td>{{ race.date }}</td>
+                    <td class="no-break">{{ race.date|mdy }}</td>
                     <td class="meet-cell">
                         {# EVERY race with a meet_id links somewhere real:
                            the race page when the division ids exist, the

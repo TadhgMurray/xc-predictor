@@ -58,6 +58,12 @@ _YEAR_RX = re.compile(r"^(19|20)[0-9]{2}$")
 # the meet levels the level filter knows, and the bit each feed's mask uses
 # (season_level._MASK_TO_LEVEL: 2 ms, 4 hs, 8 college)
 LEVELS = {"ms": 2, "hs": 4, "college": 8}
+# the unit kinds a meet can be the championship OF, in the order the page
+# shows them; the rankings board's high-school and college groups, plus
+# the state itself. Only kinds meet_unit actually holds get a box.
+UNIT_KINDS = ("state", "state_div", "class", "section", "section_div",
+              "district", "county", "area", "league",
+              "division", "region", "conference")
 _KIND_RX = re.compile(r"^[a-z_]{2,20}$")
 _DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -114,6 +120,17 @@ def parseFilters(args):
     #   are ISO dates compared as the text the tables store.
     kind = (args.get("kind") or "").strip().lower()[:20]
     kind = kind if _KIND_RX.match(kind) else ""
+    # ★ ONE BOX PER KIND, LIKE THE RANKINGS BOARD (owner, 2026-09-06: "it
+    #   should just be a filter thing like in the rankings board"). Each
+    #   kind is its own parameter -- ?section=NCS&league=EBAL -- and they
+    #   AND together. The old kind+unit pair still parses for old links.
+    units = {}
+    for k in UNIT_KINDS:
+        v = (args.get(k) or "").strip().upper()[:40]
+        if v:
+            units[k] = v
+    if kind and unit and kind not in units:
+        units[kind] = unit
     level = (args.get("level") or "").strip().lower()
     level = level if level in LEVELS else ""
     d_from = (args.get("from") or "").strip()[:10]
@@ -123,10 +140,12 @@ def parseFilters(args):
 
     return {"sport": sport, "state": state, "school": school, "q": q,
             "year": storedYear(sport, label), "year_label": label,
-            "champ": champ or bool(unit) or bool(kind), "unit": unit,
-            "kind": kind, "level": level, "from": d_from, "to": d_to,
+            "champ": champ or bool(unit) or bool(kind) or bool(units),
+            "unit": unit, "kind": kind, "units": units,
+            "level": level, "from": d_from, "to": d_to,
             "active": bool(state or school or q or label is not None
-                           or champ or unit or kind or level or d_from or d_to)}
+                           or champ or unit or kind or units or level
+                           or d_from or d_to)}
 
 
 # describe
@@ -153,7 +172,11 @@ def describe(f):
         bits.append(f"since {f['from']}")
     elif f.get("to"):
         bits.append(f"up to {f['to']}")
-    if f.get("unit"):
+    units = f.get("units") or {}
+    if units:
+        bits.insert(0, ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in units.items())
+                    + " championships")
+    elif f.get("unit"):
         what = f"{f['kind']} " if f.get("kind") else ""
         bits.insert(0, f"{f['unit']} {what}championships")
     elif f.get("kind"):
@@ -275,6 +298,17 @@ def unitSql(f, alias, params, present=True):
             f"AND u.unit IS NOT NULL) AS units")
     if not f.get("champ"):
         return "", cols
+    units = f.get("units") or {}
+    if units:
+        # one EXISTS per kind: a meet that is the NCS section championship
+        # AND the EBAL league championship is both, in two rows
+        clauses = []
+        for i, (k, v) in enumerate(units.items()):
+            params[f"uk{i}"], params[f"uv{i}"] = k, v
+            clauses.append(f"AND EXISTS (SELECT 1 FROM meet_unit u WHERE u.sport = %(sport)s "
+                           f"AND u.meet_id = {alias}.meet_id AND u.kind = %(uk{i})s "
+                           f"AND u.unit = %(uv{i})s)")
+        return " ".join(clauses), cols
     narrow = ""
     if f.get("unit"):
         params["unit"] = f["unit"]

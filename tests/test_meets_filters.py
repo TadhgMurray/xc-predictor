@@ -47,6 +47,17 @@ def test_level_clause_shapes():
     assert "meets_tfrrs" in mf.levelClause(NoCol(), "XC", "m", {}, "college")
 
 
+def test_one_box_per_kind_ands_together():
+    f = mf.parseFilters({"sport": "XC", "section": "ncs", "league": "ebal"})
+    assert f["units"] == {"section": "NCS", "league": "EBAL"} and f["champ"] and f["active"]
+    params = {}
+    clause, _ = mf.unitSql(f, "m", params, present=True)
+    assert clause.count("AND EXISTS") == 2 and params["uv0"] == "NCS" and params["uk1"] == "league"
+    assert mf.describe(f).startswith("NCS section, EBAL league championships")
+    # the old kind+unit pair still parses into the same shape
+    assert mf.parseFilters({"sport": "XC", "kind": "section", "unit": "ncs"})["units"] == {"section": "NCS"}
+
+
 def test_unit_kind_narrows_the_exists():
     params = {}
     clause, _cols = mf.unitSql({"sport": "XC", "champ": True, "unit": "NCS", "kind": "section"},

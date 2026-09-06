@@ -231,7 +231,7 @@
         <tbody>
             {% for m in meets %}
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
-                <td>{{ m.date }}</td>
+                <td class="no-break">{{ m.date|mdy }}</td>
                 {# One row per meet (owner, 2026-09-02), linked to the MEET
                    page with this school pinned: the meet page marks the
                    races the school ran and the race pages highlight its

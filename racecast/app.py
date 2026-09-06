@@ -227,6 +227,23 @@ app.template_filter("school_label_in")(school_identity.schoolLabelIn)
 app.template_filter("school_label_for")(school_identity.schoolLabelFor)
 
 
+def _mdy(value):
+    """'2026-03-13' -> 'Mar 13, 2026' for table cells (owner, 2026-09-06).
+    Anything that is not an ISO date comes back untouched, and the ISO
+    text stays in the data and the URLs."""
+    s = str(value or "")
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
+    if not m:
+        return value
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not 1 <= mo <= 12:
+        return value
+    return f"{_MONTHS[mo - 1][:3]} {d}, {y}"
+
+
+app.template_filter("mdy")(_mdy)
+
+
 @app.template_filter("with_year")
 def _with_year(name, date_text):
     """'Scary Dairy Invite' + '2025-10-03' -> 'Scary Dairy Invite 2025'; a
@@ -556,7 +573,8 @@ def meets_page():
     #   function-local rebinding of that name reads like a bug even where it
     #   is not one.
     from meets_filter import (parseFilters as parseMeetFilters, filteredMeets,
-                              groupByYear, describe, MAX_MEETS, unitKinds)
+                              groupByYear, describe, MAX_MEETS, unitKinds,
+                              UNIT_KINDS)
     from rankings import US_STATES
 
     course = (request.args.get("course") or "").strip()
@@ -597,7 +615,7 @@ def meets_page():
                                filter_text=describe(f),
                                capped=(len(rows) >= MAX_MEETS),
                                max_meets=MAX_MEETS,
-                               states=US_STATES, kinds=kinds,
+                               states=US_STATES, kinds=kinds, unit_kinds=UNIT_KINDS,
                                min_results=RECENT_MIN_RESULTS)
 
     sport = f["sport"]
@@ -623,7 +641,7 @@ def meets_page():
         current[1].append(m)
 
     return render_template("meets.html", sport=sport, months=months,
-                           filters=f, states=US_STATES, kinds=kinds,
+                           filters=f, states=US_STATES, kinds=kinds, unit_kinds=UNIT_KINDS,
                            min_results=RECENT_MIN_RESULTS)
 
 

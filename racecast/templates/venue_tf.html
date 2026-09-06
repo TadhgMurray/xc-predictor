@@ -79,7 +79,7 @@
                 <td>{{ row.grade if row.grade else "—" }}</td>
                 <td>{{ row.school if row.school else "—" }}</td>
                 <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
-                <td>{{ row.date }}</td>
+                <td class="no-break">{{ row.date|mdy }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
             </tr>
             {% endfor %}

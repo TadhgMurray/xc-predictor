@@ -88,7 +88,7 @@
             {% if avg_margin > 0.05 %}<div class="note">avg margin {{ "%.1f"|format(avg_margin) }}s to {{ card_a.short }}</div>
             {% elif avg_margin < -0.05 %}<div class="note">avg margin {{ "%.1f"|format(-avg_margin) }}s to {{ card_b.short }}</div>
             {% endif %}
-            <div class="note">last met {{ meetings[0].date }}</div>
+            <div class="note">last met {{ meetings[0].date|mdy }}</div>
             {% endif %}
         </div>
         <div class="h2h-card b">
@@ -116,7 +116,7 @@
         <tbody>
             {% for m in meetings %}
             <tr{{ hid(loop.index0) }}>
-                <td class="no-break">{{ m.date }}</td>
+                <td class="no-break">{{ m.date|mdy }}</td>
                 <td><a href="/race/{{ 'xc' if m.sport == 'XC' else 'tf' }}/{{ m.meet_id }}/{{ m.div_id }}" title="{{ m.meet_name }}">{{ m.meet_name }}</a></td>
                 <td>{{ m.distance }}m{{ " · TF" if m.sport == "TF" }}</td>
                 <td{{ ' class="win"'|safe if m.winner == "a" }}>{{ m.time_a }}</td>

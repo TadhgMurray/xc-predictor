@@ -65,7 +65,7 @@
                     {% elif sec.kind == "running" %}
                     {% if r.event_id %}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.race_date }}</a>{% else %}{{ r.race_date }}{% endif %}
                     {% else %}
-                    <a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.date }}</a>
+                    <a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a>
                     {% endif %}
                 </td>
             </tr>

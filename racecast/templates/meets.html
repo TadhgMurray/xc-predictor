@@ -138,28 +138,29 @@
             <input id="mf-q" name="q" type="search" placeholder="Any name"
                    value="{{ filters.q if filters else '' }}">
         </div>
-        <div class="field">
-            <label for="mf-kind">Championship of</label>
-            {# The unit's KIND -- section, division, league, conference,
-               state ... -- then the unit itself from a picker fed by
-               /api/meet-units for that kind and state (owner, 2026-09-06:
-               "div/section and stuff"). Either alone implies
-               championships: meet_unit holds nothing else. #}
-            <select id="mf-kind" name="kind">
-                <option value="">Any kind</option>
-                {% for k in kinds or [] %}
-                <option value="{{ k }}"{{ ' selected' if filters and filters.kind == k }}>{{ k|replace('_', ' ')|capitalize }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="field">
-            <label for="mf-unit">Unit</label>
-            <input id="mf-unit" name="unit" type="search" class="narrow"
-                   list="mf-unit-list" autocomplete="off"
-                   placeholder="NCS, EBAL, SEC…"
-                   value="{{ filters.unit if filters else '' }}">
-            <datalist id="mf-unit-list"></datalist>
-        </div>
+        {# ★ ONE BOX PER KIND, LIKE THE RANKINGS BOARD (owner, 2026-09-06).
+           Only the kinds meet_unit holds get a box; each is fed by
+           /api/meet-units for that kind and state, busiest first. A box
+           filled means "the championship OF that unit". #}
+        {% set shown = [] %}
+        {% for k in unit_kinds or [] %}{% if k in (kinds or []) %}{% set _ = shown.append(k) %}{% endif %}{% endfor %}
+        {% if shown %}
+        <details class="units meet-units"{{ ' open' if filters and filters.units }}>
+            <summary>League &amp; division filters</summary>
+            <div class="unit-row">
+            {% for k in shown %}
+            <div class="field">
+                <label for="mf-u-{{ k }}">{{ k|replace('_', ' ')|capitalize }}</label>
+                <input id="mf-u-{{ k }}" name="{{ k }}" type="search" class="narrow unit-box"
+                       data-kind="{{ k }}" list="mf-ul-{{ k }}" autocomplete="off"
+                       placeholder="Any"
+                       value="{{ (filters.units or {}).get(k, '') if filters else '' }}">
+                <datalist id="mf-ul-{{ k }}"></datalist>
+            </div>
+            {% endfor %}
+            </div>
+        </details>
+        {% endif %}
         <div class="field">
             <label for="mf-from">From</label>
             <input id="mf-from" name="from" type="date" class="narrow"
@@ -187,28 +188,24 @@
     </form>
     <script>
     (function () {
-      /* the unit picker: the datalist follows the kind, the state and what
-         is typed; /api/meet-units answers busiest first */
-      var kind = document.getElementById("mf-kind"), state = document.getElementById("mf-state"),
-          sport = document.getElementById("mf-sport"), box = document.getElementById("mf-unit"),
-          list = document.getElementById("mf-unit-list");
-      if (!kind || !box || !list) return;
-      var timer = null;
-      function fill() {
-        if (!kind.value) { list.innerHTML = ""; return; }
-        var p = new URLSearchParams({sport: sport ? sport.value : "XC", kind: kind.value,
-                                     state: state ? state.value : "", q: box.value});
-        fetch("/api/meet-units?" + p.toString()).then(function (r) { return r.json(); })
-          .then(function (rows) {
-            list.innerHTML = rows.map(function (r) {
-              return '<option value="' + r.unit.replace(/"/g, "&quot;") + '">' + r.n + ' meets</option>';
-            }).join("");
-          }).catch(function () {});
-      }
-      kind.addEventListener("change", fill);
-      if (state) state.addEventListener("change", fill);
-      box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(fill, 150); });
-      box.addEventListener("focus", fill);
+      /* the unit pickers: each box's datalist follows its kind, the state
+         and what is typed; /api/meet-units answers busiest first */
+      var state = document.getElementById("mf-state"), sport = document.getElementById("mf-sport");
+      document.querySelectorAll(".unit-box").forEach(function (box) {
+        var list = document.getElementById("mf-ul-" + box.dataset.kind), timer = null;
+        function fill() {
+          var p = new URLSearchParams({sport: sport ? sport.value : "XC", kind: box.dataset.kind,
+                                       state: state ? state.value : "", q: box.value});
+          fetch("/api/meet-units?" + p.toString()).then(function (r) { return r.json(); })
+            .then(function (rows) {
+              list.innerHTML = rows.map(function (r) {
+                return '<option value="' + r.unit.replace(/"/g, "&quot;") + '">' + r.n + ' meets</option>';
+              }).join("");
+            }).catch(function () {});
+        }
+        box.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(fill, 150); });
+        box.addEventListener("focus", fill);
+      });
     })();
     </script>
 
@@ -240,7 +237,7 @@
         <tbody>
             {% for m in rows %}
             <tr>
-                <td class="no-break">{{ m.date }}</td>
+                <td class="no-break">{{ m.date|mdy }}</td>
                 <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
                 <td>
                     {% if sport == 'XC' and m.course_name %}
