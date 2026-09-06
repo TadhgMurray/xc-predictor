@@ -118,7 +118,7 @@
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
-                <td>{{ r.grade if r.grade else "" }}</td>
+                <td>{{ r.grade|grade_label(r.pool) if r.grade else "" }}</td>
                 <td>{% if r.mean_rating is not none %}{{ rv(r.mean_rating, r.hs_mean_rating) }}{% endif %}</td>
                 <td>{% if r.best_rating is not none %}{{ rv(r.best_rating, r.hs_best_rating) }}{% endif %}</td>
                 <td>{{ r.n_races }}</td>
@@ -183,7 +183,7 @@
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
-                <td>{{ b.grade if b.grade else "" }}</td>
+                <td>{{ b.grade|grade_label(b.pool) if b.grade else "" }}</td>
                 <td>{{ rv(b.rating, b.hs_rating) }}</td>
                 <td>{{ b.year }}</td>
                 <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a>

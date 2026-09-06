@@ -950,6 +950,35 @@ function renderHead(board) {
  * because alphabetical means A first. Mirrors the per-column defaults in
  * rankings.py so the arrow never contradicts the data.
  */
+/* One spelling for a grade (racecast/grade_label.py, mirrored): a school
+   pool reads the number 5-12, a college pool the eligibility spelling
+   FR-1..SR-4. The database keeps what the feed said. */
+const _WORD_HS = {fr: "9", so: "10", jr: "11", sr: "12"};
+const _WORD_COL = {fr: "FR-1", so: "SO-2", jr: "JR-3", sr: "SR-4"};
+const _NUM_COL = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4"};
+function poolNow() {
+  const el = document.getElementById("pool");
+  return el ? el.value : "";
+}
+function gradeLabel(grade, pool) {
+  if (grade === null || grade === undefined) return "";
+  const g = String(grade).trim();
+  if (!g) return g;
+  const level = String(pool || "").split("|")[0].split("_")[0].toLowerCase();
+  const college = level === "college" || level === "pro";
+  const m = /^(FR|SO|JR|SR)-?([1-6])$/i.exec(g);
+  if (m) return (college || level === "") ? `${m[1].toUpperCase()}-${m[2]}` : (_WORD_HS[m[1].toLowerCase()] || g);
+  const low = g.toLowerCase().replace(/\.$/, "");
+  if (college) {
+    if (_WORD_COL[low]) return _WORD_COL[low];
+    if (/^\d+$/.test(g)) return _NUM_COL[g] || g;
+    return g;
+  }
+  if (_WORD_HS[low]) return _WORD_HS[low];
+  if (/^\d+$/.test(g)) return String(parseInt(g, 10));
+  return g;
+}
+
 const NATURAL_ASC = new Set(["name", "school", "state", "grade", "time",
                              "first", "rank", "points"]);
 
@@ -995,7 +1024,7 @@ function renderAbility(rows) {
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
-      <td>${esc(r.grade)}</td>
+      <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       <td>${r.year}</td>
       <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
@@ -1029,7 +1058,7 @@ function renderPerformance(rows) {
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
-      <td>${esc(r.grade)}</td>
+      <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
       ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
@@ -1071,7 +1100,7 @@ function renderPr(rows) {
       <td class="rank">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
-      <td>${esc(r.grade)}</td>
+      <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
       ${r.mark !== null && r.mark !== undefined

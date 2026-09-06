@@ -219,6 +219,9 @@ import school_identity
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
+# one spelling for a grade, by the row's pool (owner, 2026-09-06)
+import grade_label as _grade_label
+app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
 app.template_filter("school_label_in")(school_identity.schoolLabelIn)
 

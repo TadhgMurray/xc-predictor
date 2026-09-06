@@ -143,7 +143,7 @@ p  { color: rgb(82, 82, 82); }
        ! THE SCROLL IS ON THE LAYOUT, NOT THE PAGE, which is the same choice
          the table rule at 700px already makes: "the page never scrolls
          horizontally, the table does". */
-    .page-layout { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .page-layout { overflow-x: visible; }
     .main-col    { min-width: 20rem; }
 
     /* ! THE INTERLEAVED ORDER WAS TRIED AND REVERTED (owner, 2026-09-01):
@@ -516,16 +516,11 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     padding: 0.4rem 0.9rem;
     border: 1px solid #ddd;
     border-top: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* never an ellipsis on content (owner, 2026-09-06): a long name wraps */
+    overflow-wrap: anywhere;
 }
 
-.c-school, .c-detail {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+.c-school, .c-detail { overflow-wrap: anywhere; }
 
 .grid-head {
     display: grid;
@@ -2130,8 +2125,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     background: #fafaf8;
 }
 .predict2 .mc-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.predict2 .mc-name { font-size: 1.05rem; font-weight: 700;
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .mc-name { font-size: 1.05rem; font-weight: 700; overflow-wrap: anywhere; }
 /* The year as its own token rather than part of the name -- thirty editions
    are one meet, not thirty names. */
 .predict2 .mc-year {
@@ -2286,8 +2280,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
      cards taller than others. Splitting the two gives each line its own
      rule: the name clips, the note does not. */
 .predict2 .t-label { flex: 1; min-width: 0; }
-.predict2 .t-name { display: block; overflow: hidden;
-                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .t-name { display: block; overflow-wrap: anywhere; }
 .predict2 .team-n { color: #6f6f6f; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2323,8 +2316,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    inherited grey and hard to read against the rating beside them. */
 .predict2 .runner-row { display: flex; align-items: center; gap: 6px;
                         font-size: 0.86rem; padding: 2px 0; color: #222; }
-.predict2 .r-name { flex: 1; min-width: 0; overflow: hidden;
-                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .r-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .predict2 .r-rating { color: #666; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
                  font-size: 0.95rem; line-height: 1; padding: 0 2px; }
@@ -2472,8 +2464,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     background: #fafaf8;
 }
 .predict2 .mc-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.predict2 .mc-name { font-size: 1.05rem; font-weight: 700;
-                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .mc-name { font-size: 1.05rem; font-weight: 700; overflow-wrap: anywhere; }
 /* The year as its own token rather than part of the name -- thirty editions
    are one meet, not thirty names. */
 .predict2 .mc-year {
@@ -2628,8 +2619,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
      cards taller than others. Splitting the two gives each line its own
      rule: the name clips, the note does not. */
 .predict2 .t-label { flex: 1; min-width: 0; }
-.predict2 .t-name { display: block; overflow: hidden;
-                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .t-name { display: block; overflow-wrap: anywhere; }
 .predict2 .team-n { color: #6f6f6f; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
@@ -2665,8 +2655,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    inherited grey and hard to read against the rating beside them. */
 .predict2 .runner-row { display: flex; align-items: center; gap: 6px;
                         font-size: 0.86rem; padding: 2px 0; color: #222; }
-.predict2 .r-name { flex: 1; min-width: 0; overflow: hidden;
-                    text-overflow: ellipsis; white-space: nowrap; }
+.predict2 .r-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .predict2 .r-rating { color: #666; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
                  font-size: 0.95rem; line-height: 1; padding: 0 2px; }
@@ -2788,9 +2777,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    school entered in two divisions of one race is exactly the case coalesce
    decides, and it was invisible until the prediction came back. */
 .predict2 .t-also { display: block; font-size: 0.72rem; color: #6b7280;
-                    font-style: italic; font-weight: 400;
-                    overflow: hidden; text-overflow: ellipsis;
-                    white-space: nowrap; }
+                    font-style: italic; font-weight: 400; overflow-wrap: anywhere; }
 /* A school entered once in a multi-division race. Quieter still: it is the
    ordinary case, and it is here for the row height and for the fact that
    its absence would otherwise have to be inferred. */
@@ -3060,7 +3047,7 @@ table th, table td { text-align: left; }
     padding: 2px 0;
     font-size: 0.88rem;
 }
-.sc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-name { overflow-wrap: anywhere; }
 .sc-bar { background: #eeeeea; border-radius: 2px; height: 13px; }
 .sc-fill {
     display: block; height: 100%; border-radius: 2px; background: #2e53e6;
@@ -3550,8 +3537,6 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .meets-table th, .meets-table td {
     box-sizing: border-box;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 /* The paired tables live in a half-width column, so the sitewide 0.9rem
    side padding would eat the narrow number columns whole. Tighter here. */
@@ -3853,7 +3838,7 @@ td.margin-b { color: #b45309; font-weight: 600; }
   .topnav { flex-wrap: wrap; row-gap: 0.25rem; }
   .search-wrap { flex: 1 1 100%; margin-left: 0; }
 
-  table { display: block; overflow-x: auto; font-size: 1rem; }
+  table { font-size: 1rem; }
   /* Five board tabs are ~550px in a row; on a phone they wrap rather than
      push the page sideways (issue 130). */
   .rankings-page .tabs { flex-wrap: wrap; }
@@ -4004,8 +3989,6 @@ td.pts { font-weight: 700; }
 .prs-tbl th, .prs-tbl td, .prs-course th, .prs-course td {
     box-sizing: border-box;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     /* the rec-pair padding: the widths below are sized to it */
     padding: 0.4rem 0.5rem;
 }
@@ -4288,20 +4271,16 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
     .rankings-page .filters #apply { flex: 1 1 100%; padding: 0.6rem; font-size: 1rem; }
     .rankings-page .combo-panel { left: 0; right: 0; width: auto; max-width: 100vw; }
 
-    /* result tables: one row per race, scrolled sideways, meet names on a
-       line, flags allowed to wrap */
-    .main-col table, .meet-page table, .race-page table {
-        display: block; overflow-x: auto; -webkit-overflow-scrolling: touch;
-    }
-    .main-col th, .main-col td { white-space: nowrap; }
-    .main-col td.flags { white-space: normal; min-width: 7rem; }
-    .main-col td .meet-course { display: block; max-width: 14rem;
-                                overflow: hidden; text-overflow: ellipsis; }
-    .main-col td a[title] { max-width: 14rem; display: inline-block;
-                            overflow: hidden; text-overflow: ellipsis;
-                            vertical-align: bottom; }
-    /* the bubble anchors to the right edge inside a scrolled table; give it
-       the row's width instead of running under the edge */
+    /* ★ TABLES ON A PHONE (owner, 2026-09-06): one line per row, never an
+       ellipsis, no per-table scroll box -- the PAGE scrolls sideways (or the
+       reader zooms out), and every table on a page is the same width
+       (tables-equal in topbar-search.js sets them to the widest). The
+       browser must not shrink text inside wide tables either. */
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body { overflow-x: auto; }
+    th, td { white-space: nowrap; }
+    td.flags { white-space: normal; min-width: 7rem; }
+    .main-col td .meet-course { display: block; }
     .main-col .dv-day::after { width: min(260px, 80vw); }
 }
 @media (max-width: 420px) {
