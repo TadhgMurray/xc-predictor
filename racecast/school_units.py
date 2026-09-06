@@ -50,7 +50,10 @@ def _pretty(value):
     """Acronyms stay shouting; real names stop shouting."""
     if " " not in value and len(value) <= 6 and value.isupper():
         return value
-    return " ".join(w if w.isdigit() else w.capitalize()
+    # each word, and each half of a hyphenated word: "Tri-Valley", not
+    # "Tri-valley" (owner saw the latter on his own page, 2026-09-06)
+    return " ".join(w if w.isdigit() else
+                    "-".join(p.capitalize() for p in w.split("-"))
                     for w in value.split())
 
 
@@ -297,7 +300,8 @@ def applyUnitFilters(cur, f, args):
     return None
 
 
-def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None):
+def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
+                   borrow=None):
     """The header chips from the athlete's OWN latest-season rows in
     ranking_results (owner, 2026-09-06: "the top one needs to always
     follow the bottom one"). Each unit column's mode over that season;
@@ -334,7 +338,7 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None):
     # ! A UNIT THE ROWS DO NOT CARRY YET (section arrives with the next
     #   step-10 rebuild) is borrowed from the school's own answer, so the
     #   chip and the "NCS D2" label keep their parent in the meantime.
-    for u in (fallback or []):
+    for u in (borrow if borrow is not None else (fallback or [])):
         if u.get("kind") in cols and u["kind"] not in use and u.get("raw"):
             row[u["kind"]] = u["raw"]
     # the rows store names shouting (TRI-VALLEY, EBAL); the chips do not

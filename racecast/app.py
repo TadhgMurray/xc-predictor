@@ -1145,13 +1145,19 @@ def athlete(person_id):
             # League / section / division for the header line. Read
             # through school_units so every page phrases them alike.
             from school_units import unitsFor, homeStateOf, unitsForPerson
-            units = (unitsFor(cur, athlete["school"],
-                              homeStateOf(cur, person_id))
+            _home = homeStateOf(cur, person_id)
+            units = (unitsFor(cur, athlete["school"], _home)
                      if athlete.get("school") else [])
+            # ! UNCOLLAPSED, for borrowing: unitsFor drops the section chip
+            #   when a section division exists ("NCS D2" says NCS), so the
+            #   collapsed list has no section to lend the row-based chips
+            #   while the rows lack the column; the label came out "D2".
+            _borrow = (unitsFor(cur, athlete["school"], _home, collapse=False)
+                       if athlete.get("school") else [])
             # ★ THE ROWS WIN (owner, 2026-09-06): the chips come from the
             #   athlete's own latest season, which is what the boards rank
             #   and filter; the school-name lookup is only the fallback.
-            units = unitsForPerson(cur, person_id, fallback=units)
+            units = unitsForPerson(cur, person_id, fallback=units, borrow=_borrow)
 
             # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
             #   boards rank -- so the number up top is one the athlete can go
