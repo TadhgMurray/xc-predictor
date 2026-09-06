@@ -3595,6 +3595,11 @@ def meet_tf(meet_id):
             # no linkable events at all -> list the results themselves
             loose = ([] if events else
                      get_tf_loose_results(cur, meet_id, source=src))
+            # rounds of one event together, prelims first (tf_points.eventSortKey)
+            from tf_points import eventSortKey
+            events.sort(key=lambda e: ((e.get("division") or ""),
+                                       eventSortKey(e.get("event_short"))))
+            loose.sort(key=lambda g: eventSortKey(g.get("name")))
             # ?r= (the profile row the reader clicked) also picks the
             # SCROLL TARGET: their exact row on a loose page, their
             # event's row on an events page.

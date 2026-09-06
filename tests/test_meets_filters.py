@@ -53,3 +53,12 @@ def test_unit_kind_narrows_the_exists():
                                "m", params, present=True)
     assert "u.unit = %(unit)s" in clause and "u.kind = %(kind)s" in clause
     assert params["kind"] == "section"
+
+
+def test_events_group_by_event_prelims_first():
+    from tf_points import eventSortKey
+    names = ["Men's 3000 Meters", "Men's 200 Meters Finals", "Men's 200 Meters Preliminaries",
+             "Men's Mile Finals", "Men's Mile Preliminaries", "Men's 800 Meters Semifinals"]
+    assert sorted(names, key=eventSortKey) == [
+        "Men's 200 Meters Preliminaries", "Men's 200 Meters Finals", "Men's 3000 Meters",
+        "Men's 800 Meters Semifinals", "Men's Mile Preliminaries", "Men's Mile Finals"]

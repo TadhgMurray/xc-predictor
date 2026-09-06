@@ -170,10 +170,6 @@
             <input id="mf-to" name="to" type="date" class="narrow"
                    value="{{ filters['to'] if filters else '' }}">
         </div>
-        <div class="field field-check">
-            <label for="mf-champ"><input id="mf-champ" name="champ" type="checkbox" value="1"
-                   {{ 'checked' if filters and filters.champ }}> Championships only</label>
-        </div>
         <div class="field">
             <label for="mf-year">Season</label>
             <input id="mf-year" name="year" type="number" class="narrow"

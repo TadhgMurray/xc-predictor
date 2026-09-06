@@ -859,3 +859,33 @@ def scoreMeet(rows):
 
     return {"divisions": out_divs, "points_by_result": points_by_result,
             "n_scored_events": n_scored}
+
+
+# ★ ONE EVENT, ITS ROUNDS TOGETHER, PRELIMS FIRST (owner, 2026-09-06). The
+#   meet page listed "200 Meters Finals", "200 Meters Preliminaries",
+#   "3000 Meters" in name order, so an event's rounds sat apart and the
+#   final came before its prelim. The key strips the round word to a base
+#   name and ranks the rounds in the order they were run.
+import re as _re
+_ROUND_RX = _re.compile(
+    r"\b(preliminaries|preliminary|prelims?|heats?|qualifying|qualifiers?|"
+    r"semi[- ]?finals?|semis?|finals?|final)\b\.?", _re.IGNORECASE)
+_ROUND_RANK = (("prelim", 0), ("heat", 0), ("qualif", 0), ("semi", 1), ("final", 2))
+
+
+def eventSortKey(name):
+    """(base event name, round rank, name): prelims before semis before
+    finals within one event; events in name order; gender stays in the
+    base so Men's and Women's group separately."""
+    s = " ".join((name or "").split())
+    rank = 1
+    m = _ROUND_RX.search(s)
+    if m:
+        w = m.group(1).lower()
+        for stem, r in _ROUND_RANK:
+            if w.startswith(stem):
+                rank = r
+                break
+    base = " ".join(_ROUND_RX.sub(" ", s).split()).lower()
+    return (base, rank, s.lower())
+
