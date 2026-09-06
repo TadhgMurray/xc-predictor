@@ -15,7 +15,11 @@ most of them ran (--meet, a name fragment; default the biggest one
 in the bucket).
 
 Read: spring - fall is what the ratings say these athletes gained over
-the winter. The engine pins it at XCP_WINTER_GAIN for the AVERAGE
+the winter (--leg winter) or lost over the summer (--leg summer, the
+same spring against the NEXT fall). The two legs add up to the annual
+gain diag_annual_gain measures, so a winter number is a choice of how
+to split a measured year: stating more than the year gained makes
+every summer read as a loss. The engine pins it at XCP_WINTER_GAIN for the AVERAGE
 dual-sport athlete (2% = about 2.6 points at 130); whatever it reads
 here at the top is the top's level, and the owner's number to state.
 """
@@ -43,7 +47,7 @@ _SQL = """
                x.person_id, x.year, x.speed_rating AS r, x.time_seconds AS t,
                x.meet_id
         FROM   ranking_results x
-        JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - 1
+        JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - %(lag)s
         WHERE  x.sport = 'XC' AND x.pool = %(pool)s
           AND  x.speed_rating IS NOT NULL
           AND  EXTRACT(month FROM x.race_date) >= 8
@@ -80,7 +84,7 @@ _MEET = """
                x.meet_id, round(x.distance) AS dist,
                floor((tf.t - %(lo)s) / %(step)s) AS bucket
         FROM   ranking_results x
-        JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - 1
+        JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - %(lag)s
         JOIN   meets m ON m.div_id = x.div_id
         WHERE  x.sport = 'XC' AND x.pool = %(pool)s
           AND  x.speed_rating IS NOT NULL AND x.time_seconds > 0
@@ -107,6 +111,10 @@ def main():
     ap.add_argument("--step", type=float, default=10)
     ap.add_argument("--meet", default="%Mt. SAC%",
                     help="ILIKE pattern of a fall meet to show their times at")
+    ap.add_argument("--leg", default="winter", choices=("winter", "summer"),
+                    help="winter: the fall XC best BEFORE the spring (default);"
+                         " summer: the fall XC best AFTER it, the other half"
+                         " of the year (winter + summer = the annual gain)")
     ap.add_argument("--since", type=int, default=2000,
                     help="first spring year to include (the fall before is "
                          "the XC side); Mt. SAC's 3-mile course is 2022+, "
@@ -114,7 +122,8 @@ def main():
     args = ap.parse_args()
     p = {"pool": args.pool, "lo": args.lo, "hi": args.hi, "step": args.step,
          "ev_lo": args.event * 0.99, "ev_hi": args.event * 1.01,
-         "meet": args.meet, "since": args.since}
+         "meet": args.meet, "since": args.since,
+         "lag": 1 if args.leg == "winter" else 0}
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_SQL, p)
         rows = cur.fetchall()
@@ -124,7 +133,7 @@ def main():
             at_meet.setdefault(int(b), []).append((int(dist or 0), n, t, r))
     print(f"{args.pool}: spring season-best {args.event:.0f} m (spring "
           f"{args.since}+), and the same athletes' best fall XC rating the "
-          f"season before")
+          f"{'fall before (winter leg)' if args.leg == 'winter' else 'fall after (summer leg)'}")
     print(f"  {'spring best':>13} {'n':>7} {'TF rtg':>7} {'XC rtg':>7} "
           f"{'TF-XC':>6} {'25%':>6} {'75%':>6}   at {args.meet.strip('%')}, "
           f"by distance label: n / median time / rating")
