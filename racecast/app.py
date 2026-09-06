@@ -1373,6 +1373,30 @@ def _hasResultTwin(cur):
 
 
 _RESULTS_STATUS = {"checked": False, "present": False}
+_RACE_DAY = {"until": 0.0, "present": False}
+
+
+def _hasRaceDayEffect(cur):
+    """Does race_day_effect exist (issue 197)? It arrives with the joint
+    go-live; before it the athlete page joins nothing. A LEFT JOIN on a
+    missing table is still an error, which 500ed every athlete page on
+    the first restart (2026-09-06). A "no" is re-asked every five
+    minutes, a "yes" is kept."""
+    if _RACE_DAY["present"]:
+        return True
+    if time.time() < _RACE_DAY["until"]:
+        return False
+    try:
+        cur.execute("SELECT to_regclass('race_day_effect')")
+        row = cur.fetchone()
+        v = row[0] if isinstance(row, (tuple, list)) else list(row.values())[0]
+        _RACE_DAY["present"] = v is not None
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        _RACE_DAY["present"] = False
+    if not _RACE_DAY["present"]:
+        _RACE_DAY["until"] = time.time() + 300
+    return _RACE_DAY["present"]
 
 
 def _hasResultsStatus(cur):
@@ -1408,6 +1432,18 @@ def get_races(cur, person_id):
         twin_xc = ("AND NOT EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = 'XC' "
                    "AND x.result_id = r.result_id)")
         twin_tf = twin_xc.replace("'XC'", "'TF'")
+    # the race-day term (197): joined only once the go-live has written it
+    if _hasRaceDayEffect(cur):
+        day_col = "rde.day_effect"
+        day_join_xc = ("""LEFT JOIN race_day_effect rde
+               ON rde.canonical_id = cc.canonical_id
+              AND rde.distance_m   = cd.distance_m
+              AND rde.race_date    = r.date""")
+        day_join_tf = ("""LEFT JOIN race_day_effect rde
+               ON rde.course_name = cd.course_name
+              AND rde.race_date   = r.date""")
+    else:
+        day_col, day_join_xc, day_join_tf = "NULL::real", "", ""
     cur.execute(f"""
         -- ================= XC half: results + meets =================
         SELECT r.date,
@@ -1456,7 +1492,7 @@ def get_races(cur, person_id):
                              - COALESCE(m.distance, {_blob('r')}::real)) >= 1
                     THEN NULL
                     ELSE cd.difficulty END   AS difficulty,
-               rde.day_effect                AS day_effect,
+               {day_col}                     AS day_effect,
                0                             AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id                      AS div_id,
@@ -1513,12 +1549,7 @@ def get_races(cur, person_id):
                ON cd.canonical_id = cc.canonical_id
               AND cd.distance_m   =
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
-        -- the race-day term of that cell on that date (the hover on the
-        -- difficulty; written by the joint go-live, absent before it)
-        LEFT JOIN race_day_effect rde
-               ON rde.canonical_id = cc.canonical_id
-              AND rde.distance_m   = cd.distance_m
-              AND rde.race_date    = r.date
+        {day_join_xc}
         WHERE r.person_id = %(pid)s
           AND r.time_seconds IS NOT NULL
           {twin_xc}
@@ -1541,7 +1572,7 @@ def get_races(cur, person_id):
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
                cd.difficulty                 AS difficulty,
-               rde.day_effect                AS day_effect,
+               {day_col}                     AS day_effect,
                COALESCE(r.is_field, 0)       AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id  AS div_id,
@@ -1595,9 +1626,7 @@ def get_races(cur, person_id):
         LEFT JOIN course_difficulties cd
                ON cd.course_name = 'TF:loc:' || m.location_id::text ||
                   CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
-        LEFT JOIN race_day_effect rde
-               ON rde.course_name = cd.course_name
-              AND rde.race_date   = r.date
+        {day_join_tf}
         WHERE r.person_id = %(pid)s
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
           {twin_tf}
