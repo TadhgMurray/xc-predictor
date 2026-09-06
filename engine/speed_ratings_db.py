@@ -625,6 +625,9 @@ def _eventMetersSql(alias: str) -> str:
     no mile (hurdles and relays never reach the pack: no normalized_time)."""
     num = f"NULLIF(regexp_replace({alias}.event_short, '[^0-9.]', '', 'g'), '')::real"
     return (f"CASE WHEN {alias}.event_short IS NULL THEN NULL "
+            # a steeplechase or a walk is not the flat event of its metres:
+            # no class (as before), rather than the 3000's offset
+            f"WHEN lower({alias}.event_short) ~ '(steeple|walk|hurdle)' THEN NULL "
             f"WHEN lower({alias}.event_short) LIKE '%mile%' "
             f"THEN COALESCE({num}, 1) * 1609.34 "
             f"WHEN {num} IS NULL THEN NULL "
