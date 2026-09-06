@@ -411,7 +411,9 @@ CG_MAX_ITER_PROBE = 150
 # bincount and fancy indexing release the GIL; the operator's independent
 # block reductions run on a small pool. Sized to the box, capped at four:
 # past that the scatter is memory-bound and more threads just contend.
-_N_THREADS = max(1, min(4, os.cpu_count() or 1))
+# the block reductions and the row gathers run on this many threads; the
+# cap was 4, the server has more cores than that (XCP_THREADS overrides)
+_N_THREADS = max(1, min(int(os.environ.get("XCP_THREADS", "8")), os.cpu_count() or 1))
 
 
 # ------------------------------------------------------------------ #
@@ -738,38 +740,72 @@ def academicDay(doy):
 # THE OPERATOR
 # ------------------------------------------------------------------ #
 
-def rowPrediction(b, D, h, amp, u_missing_zero=True):
-    """The model's prediction for every row of design D from blocks b."""
-    row = b["a"][D.athlete] + h * (b["mu"][D.group_row] + b["d"][D.cell])
-    # ★ THE RACE-DAY EFFECT IS TILTED LIKE THE COURSE (issue 156,
-    #   2026-09-04). Untilted, delta and u were separated within a race
-    #   only by h: the pair (delta = +c, u = -c) cost almost nothing under
-    #   the two priors and bought an ability-shaped spread, (h - 1) * c
-    #   per row, so the solve used it as a free spread parameter. Great
-    #   Park read delta +0.19 with u about -0.2 on EVERY one of its seven
-    #   days, net zero, and the elite rows there lost 7-9%. With h on both,
-    #   delta and u are exactly collinear inside a race and the split is
-    #   the priors' alone: delta is the shrunk mean of the cell's days and
-    #   u is each day's deviation, which is what the column claims.
+def _predictSlice(b, D, h, amp, sl, out):
+    """rowPrediction for the rows in slice `sl`, written into out[sl]."""
+    ath = D.athlete[sl]
+    grp = D.group_row[sl]
+    hs = h[sl] if h.shape else h
+    row = b["a"][ath] + hs * (b["mu"][grp] + b["d"][D.cell[sl]])
     u = b["u"]
     if u.size == D.n_race:
-        row = row + h * u[D.race]
-    elif u_missing_zero:
-        pass                          # a design whose races are not fitted
+        row += hs * u[D.race[sl]]
     if b.get("beta") is not None and D.sc is not None:
-        row = row + b["beta"][D.athlete] * D.sc
+        row += b["beta"][ath] * D.sc[sl]
     if b.get("c") is not None and D.has_curve:
         c = b["c"]
-        row = row + amp * (D.w0 * c[D.k0] + D.w1 * c[D.k1])
+        a_s = amp[sl] if amp.shape else amp
+        row += a_s * (D.w0[sl] * c[D.k0[sl]] + D.w1[sl] * c[D.k1[sl]])
     if b.get("r") is not None and D.has_rust:
-        row = row + D.first * b["r"][D.pool_row]
+        row += D.first[sl] * b["r"][D.pool_row[sl]]
     if b.get("e") is not None and getattr(D, "n_e", 0):
-        row = row + D.e_w * b["e"][D.e_idx]
+        row += D.e_w[sl] * b["e"][D.e_idx[sl]]
     if b.get("g") is not None and getattr(D, "n_g", 0):
-        row = row + b["g"][D.athlete] * D.lz
+        row += b["g"][ath] * D.lz[sl]
     if b.get("k") is not None and getattr(D, "n_k", 0):
-        row = row + b["k"][D.group_row] * D.alt
-    return row
+        row += b["k"][grp] * D.alt[sl]
+    out[sl] = row
+
+
+_PRED_POOL = None
+
+
+def rowPrediction(b, D, h, amp, u_missing_zero=True):
+    """The model's prediction for every row of design D from blocks b.
+
+    ★ THE RACE-DAY EFFECT IS TILTED LIKE THE COURSE (issue 156,
+      2026-09-04). Untilted, delta and u were separated within a race
+      only by h: the pair (delta = +c, u = -c) cost almost nothing under
+      the two priors and bought an ability-shaped spread, (h - 1) * c
+      per row, so the solve used it as a free spread parameter. Great
+      Park read delta +0.19 with u about -0.2 on EVERY one of its seven
+      days, net zero, and the elite rows there lost 7-9%. With h on both,
+      delta and u are exactly collinear inside a race and the split is
+      the priors' alone: delta is the shrunk mean of the cell's days and
+      u is each day's deviation, which is what the column claims.
+
+    ★ IN ROW CHUNKS, ON THREADS (2026-09-06, the owner: "make the engine
+      faster"). The gathers were the serial half of every CG iteration
+      (0.9 s of 1.2 s per 8M rows on four cores); numpy releases the GIL
+      in a gather, so _N_THREADS slices run side by side and each writes
+      its own part of one preallocated array. Same numbers to the bit:
+      every row's terms are computed in the same order."""
+    global _PRED_POOL
+    h = np.asarray(h, dtype=np.float64)
+    amp = np.asarray(amp, dtype=np.float64)
+    out = np.empty(D.n)
+    n_chunks = _N_THREADS if D.n >= 2_000_000 else 1
+    if n_chunks == 1:
+        _predictSlice(b, D, h, amp, slice(0, D.n), out)
+        return out
+    if _PRED_POOL is None:
+        _PRED_POOL = ThreadPoolExecutor(_N_THREADS)
+    edges = np.linspace(0, D.n, n_chunks + 1).astype(np.int64)
+    futs = [_PRED_POOL.submit(_predictSlice, b, D, h, amp,
+                              slice(int(edges[i]), int(edges[i + 1])), out)
+            for i in range(n_chunks)]
+    for f in futs:
+        f.result()
+    return out
 
 
 def _curvePenaltyApply(c_free, D, lam):

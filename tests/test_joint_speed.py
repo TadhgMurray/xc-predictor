@@ -91,5 +91,6 @@ def test_no_probes_gives_the_diagonal_bound():
                                sigma2=2.0, n_probe=0)
     assert np.allclose(var0, var16), "and the bound agrees where A is diagonal"
     sh = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"), encoding="utf-8").read()
-    assert "run_joint.py --golive --probes 4" in sh
+    assert 'run_joint.py --golive --probes "${XCP_PROBES:-0}"' in sh, \
+        "the live step runs no probes unless asked (2026-09-06)"
 

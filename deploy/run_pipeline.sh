@@ -220,7 +220,10 @@ step 04d_gender       "$PY" -u engine/person_gender.py --write
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else
-  step 05_backfill    "$PY" -u backfill/backfill_normalize.py --sport both --apply
+  # the two sports write two tables and share nothing: in parallel
+  # (2026-09-06, the owner: "make those steps faster")
+  steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply" \
+         05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
 fi
 
 # ---- pack and solve ------------------------------------------------- #
@@ -258,9 +261,9 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # ! NO --holdout ON THE LIVE STEP: it is a second full solve (three hours
   #   on 59M rows) that scores a split and publishes nothing. The shadow
   #   step keeps it; that is what the shadow is for.
-  # --probes 4: the probes size per-cell uncertainty for the report and
-  #   nothing the site reads; sixteen took most of a night on the first
-  #   live run (each capped at 150 iterations now). 0 skips them.
+  # --probes 0: the probes size per-cell uncertainty for the report and
+  #   nothing the site reads; four took 35 minutes on run12 and printed
+  #   a cell SE nobody could use. XCP_PROBES=4 puts them back.
   # XCP_WINTER_GAIN=0.03 states the average athlete's fall-to-spring gain
   # (issue 143); unset, the level carries the whole change.
   # XCP_ALTITUDE=1 turns on the altitude term (issue 172; needs
@@ -268,7 +271,10 @@ if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
   # XCP_WINTER_GAIN_BANDS=0.03,0.02,0.03 states it per rating band
   # (low / middle / top) and the go-live shifts the track rows to it
   # (issue 194); unset, no shift.
-  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes 4 \
+  # --outer 5: the sixth outer moved sigma by 0.00003 and the level by
+  #   nothing on run12; XCP_OUTER=6 puts it back.
+  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
+      --outer "${XCP_OUTER:-5}" \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_ALTITUDE:+--altitude}

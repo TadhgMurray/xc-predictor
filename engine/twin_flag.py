@@ -166,9 +166,41 @@ def dupCrossDateSql(table, sport):
     """
 
 
+def dupSameDaySql(table, sport):
+    """The same run under two meet NAMES on one day (2026-09-06): the
+    same person, feed and date, the time equal to the tenth -- "38th
+    Mariner-XC-Invitational" and "38th P. Wilder Mariner XC Invitational"
+    both carried the owner's 18:55.1, and a merged person kept three copies
+    of one race. Two different races by one person on one day with the
+    same time to 0.1 s do not happen. No name, no place: those are what
+    differ between the copies. The copy in the bigger meet entry
+    survives; ties to the lower result_id."""
+    return f"""
+        WITH sized AS (
+            SELECT meet_id, count(*) AS n FROM {table}
+            WHERE  meet_id IS NOT NULL GROUP BY meet_id),
+        cand AS (
+            SELECT r.result_id, r.person_id, r.source, s.n,
+                   substr(r.date, 1, 10)                          AS d,
+                   round(r.time_seconds::numeric, 1)              AS rt
+            FROM   {table} r
+            JOIN   sized s ON s.meet_id = r.meet_id
+            WHERE  r.person_id IS NOT NULL
+              AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
+              AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}')
+        SELECT DISTINCT a.result_id
+        FROM   cand a
+        JOIN   cand b ON b.person_id = a.person_id AND b.source = a.source
+                     AND b.d = a.d AND b.rt = a.rt
+                     AND b.result_id <> a.result_id
+        WHERE  b.n > a.n OR (b.n = a.n AND b.result_id < a.result_id)
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_same_feed", dupSameFeedSql),
-         ("dup_cross_date", dupCrossDateSql))
+         ("dup_cross_date", dupCrossDateSql),
+         ("dup_same_day", dupSameDaySql))
 
 
 def build(conn, write=False):

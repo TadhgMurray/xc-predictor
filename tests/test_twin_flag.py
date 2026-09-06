@@ -37,7 +37,8 @@ def test_rules_key_on_the_right_things():
     assert "PARTITION BY person_id, source, meet_id, div_id," in dup_xc
     assert "event_id" not in dup_xc and "div_id, event_id" in dup_tf, "track adds the event"
     assert "ORDER BY result_id" in dup_xc and "rn > 1" in dup_xc
-    assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "dup_same_feed"], \
+    assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "dup_same_feed",
+                                        "dup_cross_date", "dup_same_day"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
 
