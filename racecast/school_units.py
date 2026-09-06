@@ -304,7 +304,7 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None):
     the same values the boards filter on, so the chips and the ranks
     cannot disagree. `fallback` (unitsFor's answer) is returned when the
     rows have no units at all or the table is not there."""
-    cols = ["is_college", "division", "region", "conference", "league",
+    cols = ["is_college", "state", "division", "region", "conference", "league",
             "state_div", "section", "section_div", "district", "county",
             "class", "area"]
     try:
@@ -329,14 +329,27 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None):
     if row is None:
         return fallback or []
     row = dict(zip(use, row)) if isinstance(row, (tuple, list)) else dict(row)
-    if not any(row.get(c) for c in use if c != "is_college"):
+    if not any(row.get(c) for c in use if c not in ("is_college", "state")):
         return fallback or []
+    # ! A UNIT THE ROWS DO NOT CARRY YET (section arrives with the next
+    #   step-10 rebuild) is borrowed from the school's own answer, so the
+    #   chip and the "NCS D2" label keep their parent in the meantime.
+    for u in (fallback or []):
+        if u.get("kind") in cols and u["kind"] not in use and u.get("raw"):
+            row[u["kind"]] = u["raw"]
+    # the rows store names shouting (TRI-VALLEY, EBAL); the chips do not
+    for c in ("league", "area", "county", "region", "conference"):
+        if row.get(c) and isinstance(row[c], str):
+            row[c] = _pretty(row[c])
     is_college = bool(row.get("is_college")) or bool(row.get("division") or row.get("conference"))
     spec = _COLLEGE_CHIPS if is_college else _HS_CHIPS
     out = []
     for col in spec:
         value = row.get(col)
         if not value:
+            continue
+        # same collapse as unitsFor: "NCS D2" already says NCS
+        if col == "section" and row.get("section_div"):
             continue
         if (col == "class" and str(value).strip().isdigit()
                 and str(value).strip() in (str(row.get("section_div") or ""),

@@ -1640,7 +1640,6 @@ function buildQuery(div) {
     // One parameter, one or many values -- the endpoint splits it.
     q.set("person_id", state.athletes.map((a) => a.id).join(","));
   } else {
-    if ($("head_to_head").checked) q.set("head_to_head", "1");
     // Only the edits are sent. The server already knows the meet's own field,
     // so shipping the whole roster back would be a large request that says
     // the same thing.
@@ -2292,14 +2291,31 @@ async function addWholeSquad(school, div) {
 }
 
 /* Whole squads for every team of one race (div), or of every race. */
+/* ! THE CARDS STAY AS THEY WERE (owner, 2026-09-06: "should not expand
+     the roster view"): addRunner opens the card it edits, which is right
+     for one runner and wrong for thirty teams at once, so the open set
+     is put back afterwards. And every squad is fetched AT ONCE, not one
+     after another: thirty sequential round trips was the slowness. */
 async function wholeSquadsFor(divs) {
   let n = 0, teams = 0;
+  const jobs = [];
+  for (const div of divs) {
+    const ed = editsFor(div);
+    const wasOpen = new Set(ed.open);
+    for (const t of (ed.field?.teams || [])) {
+      teams += 1;
+      jobs.push(loadSquad(t.school, ed.field?.gender).catch(() => null));
+    }
+    ed._wasOpen = wasOpen;
+  }
+  await Promise.all(jobs);            // the cache is warm; the adds are instant
   for (const div of divs) {
     const ed = editsFor(div);
     for (const t of (ed.field?.teams || [])) {
-      teams += 1;
-      try { n += await addWholeSquad(t.school, div); } catch (err) { /* one fetch failing does not stop the rest */ }
+      try { n += await addWholeSquad(t.school, div); } catch (err) { /* one squad failing does not stop the rest */ }
     }
+    ed.open = ed._wasOpen || ed.open;
+    delete ed._wasOpen;
   }
   return { n, teams };
 }

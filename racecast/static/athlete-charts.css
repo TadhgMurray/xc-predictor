@@ -568,9 +568,17 @@
   .main-col:has(.season) { min-width: min-content; }
 }
 @media (max-width: 700px) {
-  /* The site-wide phone rule turns every table into its own scroller;
-     here the page is the scroller, so the table stays a table. */
-  .season table { display: table; overflow-x: visible; }
+  /* The page is the scroller, so the table stays a table -- and on a phone
+     it is sized by its CONTENT, not by the desktop percentages: 7% of the
+     720px floor was 50px for Event, and "5000m" ran into the result
+     beside it (owner, 2026-09-06: "event and result intersect, rating and
+     place"). The seasons no longer share one column grid on a phone; the
+     text not touching matters more there. */
+  .season table { display: table; overflow-x: visible;
+                  table-layout: auto; width: auto; min-width: 100%; }
+  .season table th { width: auto; }
+  .season table td:nth-child(2) { overflow: visible; text-overflow: clip; }
+  .season table td.meet-cell .meet-course { overflow: visible; text-overflow: clip; }
 }
 
 

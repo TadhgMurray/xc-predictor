@@ -4383,3 +4383,44 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
   border: 0; background: none; padding: 0 2px; font: inherit;
   font-size: 0.78rem; color: #2e53e6; text-decoration: underline; cursor: pointer;
 }
+
+/* ===== THE PHONE PASS (owner, 2026-09-06) ==================================
+   The owner's rules, in order: no ellipsis, no wrap, and NO TABLE SCROLLS
+   INSIDE ITSELF. A table is always its full width; when that is wider than
+   the phone, the PAGE scrolls sideways and pinch-zoom takes it in whole.
+   Every earlier rule that fenced a table into its own scroller or cut a
+   name short is undone here, last in the file so it wins. */
+@media (max-width: 900px) {
+  .page-layout { overflow-x: visible; }
+}
+@media (max-width: 700px) {
+  table, .main-col table, .meet-page table, .race-page table {
+    display: table; overflow-x: visible; width: auto; min-width: 100%;
+  }
+  .main-col td .meet-course { max-width: none; overflow: visible; text-overflow: clip; }
+  .main-col td a[title] { max-width: none; overflow: visible; text-overflow: clip; display: inline; }
+  .dist-table th, .dist-table td, .meets-table th, .meets-table td,
+  .prs-tbl th, .prs-tbl td, .prs-course th, .prs-course td {
+    overflow: visible; text-overflow: clip;
+  }
+  .rec-pair table, .dist-table, .meets-table, .prs-tbl, .prs-course { table-layout: auto; }
+  .sc-name { overflow: visible; text-overflow: clip; }
+
+  /* the home boards: every column as wide as its longest name, the grid as
+     wide as its columns, the page as wide as the grid */
+  :root { --cols: 2.5rem max-content max-content 4.25rem max-content; }
+  .board-grid, .grid-head { width: max-content; min-width: 100%; }
+  .cell, .c-school, .c-detail { overflow: visible; text-overflow: clip; }
+  .board-side { overflow: visible; }
+
+  /* the pool chips: one centred row that wraps evenly, under centred
+     sport and scope toggles, instead of buttons falling where they may */
+  .rank-controls { justify-content: center; }
+  .toggle-group { display: flex; justify-content: center; }
+  .pool-chips { flex: 1 1 100%; display: flex; flex-wrap: wrap;
+                justify-content: center; gap: 0.35rem; }
+
+  /* the rankings Year chips read exactly as on a desktop: their own row */
+  .rankings-page .field.year-field { flex-basis: 100%; }
+  .rankings-page .field .year-chips { width: auto; }
+}
