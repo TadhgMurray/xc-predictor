@@ -4424,3 +4424,22 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
   .rankings-page .field.year-field { flex-basis: 100%; }
   .rankings-page .field .year-chips { width: auto; }
 }
+
+/* ★ EVERY TABLE ON A PAGE IS THE SAME WIDTH (owner, 2026-09-06: "the one
+   issue is tables are not same width"). Content-sized tables came out one
+   width per table. The fix is the container: min-width: min-content lets it
+   grow to the widest table's natural width (paragraphs still wrap, a
+   paragraph's min-content is its longest word), and every table is then
+   100% of that one width. The home boards do the same with the grid's
+   name tracks allowed to grow from their longest name. */
+@media (max-width: 700px) {
+  .page-wide, .main-col { min-width: min-content; }
+  table, .main-col table, .meet-page table, .race-page table,
+  .season table, .rec-pair table, .dist-table, .meets-table, .prs-tbl, .prs-course {
+    width: 100%; min-width: 0;
+  }
+  .rankings, .board-pair, .board-pair-grid, .board-side, .pool-block { min-width: min-content; }
+  :root { --cols: 2.5rem minmax(max-content, 1fr) minmax(max-content, 1fr)
+                  4.25rem minmax(max-content, 1fr); }
+  .board-grid, .grid-head { width: 100%; min-width: 0; }
+}

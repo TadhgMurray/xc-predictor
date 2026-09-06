@@ -575,7 +575,7 @@
      place"). The seasons no longer share one column grid on a phone; the
      text not touching matters more there. */
   .season table { display: table; overflow-x: visible;
-                  table-layout: auto; width: auto; min-width: 100%; }
+                  table-layout: auto; width: 100%; min-width: 0; }
   .season table th { width: auto; }
   .season table td:nth-child(2) { overflow: visible; text-overflow: clip; }
   .season table td.meet-cell .meet-course { overflow: visible; text-overflow: clip; }
