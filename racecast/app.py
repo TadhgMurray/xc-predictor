@@ -1601,7 +1601,7 @@ def get_races(cur, person_id):
         -- ================= TF half: results_tf + meets_tf ===========
         SELECT r.date,
                'TF'                          AS sport,
-               COALESCE(m.meet_name, mt.meet_name) AS meet,
+               COALESCE(NULLIF(btrim(m.meet_name), ''), mt.meet_name) AS meet,
                r.event_short                 AS event,
                r.time_seconds                AS time_raw,     -- same slot as XC
                r.result_id                   AS result_id,    -- same slot as XC

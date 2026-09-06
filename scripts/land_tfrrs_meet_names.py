@@ -31,7 +31,7 @@ _FILL = """
     UPDATE meets_tf m
     SET    meet_name = mt.meet_name
     FROM   meets_tfrrs mt
-    WHERE  m.source = 'tfrrs' AND m.meet_name IS NULL
+    WHERE  m.source = 'tfrrs' AND NULLIF(btrim(m.meet_name), '') IS NULL
       AND  mt.meet_id = m.meet_id AND mt.sport = 'TF'
       AND  mt.meet_name IS NOT NULL
 """
@@ -76,7 +76,7 @@ def main():
     ap.add_argument("--apply", action="store_true", help="write (default: census)")
     a = ap.parse_args()
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND meet_name IS NULL")
+        cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND NULLIF(btrim(meet_name), '') IS NULL")
         nameless = cur.fetchone()[0]
         cur.execute(f"SELECT count(*) FROM ({_MISSING}) s")
         missing = cur.fetchone()[0]
@@ -99,7 +99,7 @@ def main():
         cur.execute(_INSERT)
         print(f"  inserted {cur.rowcount:,} tfrrs rows ({time.time() - t0:.0f}s)")
         conn.commit()
-        cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND meet_name IS NULL")
+        cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND NULLIF(btrim(meet_name), '') IS NULL")
         print(f"  still nameless (no meets_tfrrs name): {cur.fetchone()[0]:,}")
         cur.execute("ANALYZE meets_tf")
         conn.commit()
