@@ -30,7 +30,7 @@
     </p>
 
     <div class="placeholder-slot">
-        Team records — coming later
+        Team records - coming later
     </div>
 
     <h2>Meets held here</h2>
@@ -74,10 +74,10 @@
                         {{ row.name if row.name else "Unknown" }}
                     {% endif %}
                 </td>
-                <td>{{ row.event_short if row.event_short else "—" }}</td>
+                <td>{{ row.event_short if row.event_short else " - " }}</td>
                 <td>{{ row.display_result }}</td>
-                <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{{ row.school if row.school else "—" }}</td>
+                <td>{{ row.grade if row.grade else " - " }}</td>
+                <td>{{ row.school if row.school else " - " }}</td>
                 <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
                 <td class="no-break">{{ row.date|mdy }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>

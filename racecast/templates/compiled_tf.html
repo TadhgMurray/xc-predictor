@@ -18,7 +18,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name ~ " — Compiled" %}
+    {% set meta_title = header.meet_name ~ " - Compiled" %}
     {% set meta_description = "Every event at this meet with computed team "
        "points and each event's individual scores on one page." %}
     {% include "_meta.html" %}
@@ -87,7 +87,7 @@
                     {% endif %}
                 </td>
                 {% endif %}
-                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% else %}—{% endif %}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% else %} - {% endif %}</td>
                 <td class="no-break">{{ row.display_result }}</td>
                 {% if not ev.is_field and not ev.is_relay %}<td>{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
                 {% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}

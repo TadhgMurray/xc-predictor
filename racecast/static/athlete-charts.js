@@ -380,9 +380,9 @@ function drawChart(host, points, opts) {
        colour says that; two said the opposite. The sport is still in the
        tooltip for anyone who wants it. */
 
-    const label = `${fmtDate(p.d)} \u2014 ${opts.fmt(pointVal(p))}` +
-                  (opts.bySport && p.sp ? ` \u2014 ${p.sp}` : "") +
-                  (p.meet ? ` \u2014 ${p.meet}` : "") +
+    const label = `${fmtDate(p.d)} - ${opts.fmt(pointVal(p))}` +
+                  (opts.bySport && p.sp ? ` - ${p.sp}` : "") +
+                  (p.meet ? ` - ${p.meet}` : "") +
                   (p.result ? ` (${p.result})` : "");
 
     /* Fill set here rather than left to a class: athlete-charts.css still
@@ -399,7 +399,7 @@ function drawChart(host, points, opts) {
   /* Say which scale is drawn whenever the alternate one is in effect --
      a rescaled chart with an unchanged title looks like a data change. */
   const scaled = scaleMode() === "hs" && data.some((p) => p.vh != null);
-  const title = scaled ? `${opts.title} — HS scale` : opts.title;
+  const title = scaled ? `${opts.title} - HS scale` : opts.title;
 
   host.classList.remove("chart-empty");
   host.innerHTML =
@@ -602,10 +602,10 @@ function drawCompareChart(host, series, opts) {
     pts.forEach((p) => {
       const cx = xScale(slotOf[p.d]).toFixed(1);
       const cy = yScale(pointVal(p)).toFixed(1);
-      const label = `${s.name} — ${fmtDate(p.d)} — ` +
+      const label = `${s.name} - ${fmtDate(p.d)} - ` +
                     `${opts.fmt(pointVal(p))}` +
-                    (p.sp ? ` — ${p.sp}` : "") +
-                    (p.meet ? ` — ${p.meet}` : "") +
+                    (p.sp ? ` - ${p.sp}` : "") +
+                    (p.meet ? ` - ${p.meet}` : "") +
                     (p.result ? ` (${p.result})` : "");
       parts.push(`<circle class="dot" cx="${cx}" cy="${cy}" ` +
                  `r="${dotR}" fill="${s.colour}"/>`);
@@ -618,7 +618,7 @@ function drawCompareChart(host, series, opts) {
 
   const scaled = scaleMode() === "hs" &&
     series.some((s) => (s.points || []).some((p) => p.vh != null));
-  const title = scaled ? `${opts.title} — HS scale` : opts.title;
+  const title = scaled ? `${opts.title} - HS scale` : opts.title;
 
   host.classList.remove("chart-empty");
   host.innerHTML =

@@ -70,7 +70,7 @@
         <div class="h2h-card a">
             <div class="nm"><a href="/athlete/{{ card_a.person_id }}">{{ card_a.name }}</a></div>
             <div class="sub">
-                {% if card_a.school %}<a href="/school/{{ card_a.school|urlencode }}">{{ card_a.school|school_label }}</a>{% else %}—{% endif %}
+                {% if card_a.school %}<a href="/school/{{ card_a.school|urlencode }}">{{ card_a.school|school_label }}</a>{% else %} - {% endif %}
                 {% if card_a.grade %} · Grade {{ card_a.grade }}{% endif %}
             </div>
             {% if card_a.season_rating is not none %}
@@ -94,7 +94,7 @@
         <div class="h2h-card b">
             <div class="nm"><a href="/athlete/{{ card_b.person_id }}">{{ card_b.name }}</a></div>
             <div class="sub">
-                {% if card_b.school %}<a href="/school/{{ card_b.school|urlencode }}">{{ card_b.school|school_label }}</a>{% else %}—{% endif %}
+                {% if card_b.school %}<a href="/school/{{ card_b.school|urlencode }}">{{ card_b.school|school_label }}</a>{% else %} - {% endif %}
                 {% if card_b.grade %} · Grade {{ card_b.grade }}{% endif %}
             </div>
             {% if card_b.season_rating is not none %}
@@ -145,12 +145,12 @@
             <tr>
                 <td>{{ s.year }} {{ s.sport }}</td>
                 <td{{ ' class="win"'|safe if s.edge == "a" }}>
-                    {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %}—{% endif %}</td>
+                    {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if s.edge == "b" }}>
-                    {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){% else %}—{% endif %}</td>
+                    {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){% else %} - {% endif %}</td>
                 {% if s.edge == "a" %}<td class="margin-a">{{ card_a.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
                 {% elif s.edge == "b" %}<td class="margin-b">{{ card_b.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
-                {% else %}<td>—</td>{% endif %}
+                {% else %}<td> - </td>{% endif %}
             </tr>
             {% endfor %}
         </tbody>
@@ -167,8 +167,8 @@
             {% for r in bests %}
             <tr>
                 <td>{{ r.label }}</td>
-                <td{{ ' class="win"'|safe if r.edge == "a" }}>{{ r.a or "—" }}</td>
-                <td{{ ' class="win"'|safe if r.edge == "b" }}>{{ r.b or "—" }}</td>
+                <td{{ ' class="win"'|safe if r.edge == "a" }}>{{ r.a or " - " }}</td>
+                <td{{ ' class="win"'|safe if r.edge == "b" }}>{{ r.b or " - " }}</td>
             </tr>
             {% endfor %}
             {% if brate %}
@@ -176,9 +176,9 @@
                 <td>Best speed rating</td>
                 {% set ba = brate.get("a") %}{% set bb = brate.get("b") %}
                 <td{{ ' class="win"'|safe if ba and bb and ba.speed_rating > bb.speed_rating }}>
-                    {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{% else %}—{% endif %}</td>
+                    {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if ba and bb and bb.speed_rating > ba.speed_rating }}>
-                    {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{% else %}—{% endif %}</td>
+                    {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{% else %} - {% endif %}</td>
             </tr>
             {% endif %}
         </tbody>

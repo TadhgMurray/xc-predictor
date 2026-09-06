@@ -640,7 +640,7 @@ _ATH_TEMP_DDL = """
 
 # _buildAthleteTemp
 # Purpose : materialise `ath` once for the whole run.
-# Argument: conn — the panels connection. MUST be the same connection every
+# Argument: conn - the panels connection. MUST be the same connection every
 #           query uses: a TEMP table is session-scoped, so a pooled connection
 #           handing out a different session would make the queries fail with
 #           "relation ath does not exist" rather than silently return wrong

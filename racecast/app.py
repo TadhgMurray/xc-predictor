@@ -114,7 +114,7 @@ def _name_sql(r="r"):
 
 
 def _tfrrs_join(r="r"):
-    """LEFT JOIN fragment exposing `mt` — the tfrrs meet row for an XC result.
+    """LEFT JOIN fragment exposing `mt` - the tfrrs meet row for an XC result.
 
     Guarded by `{r}.source = 'tfrrs'` inside the ON clause rather than the
     WHERE, so an anet row simply never matches and keeps its own `meets` data.
@@ -1232,7 +1232,7 @@ def athlete(person_id):
                               or (race["result"] if race.get("result")
                                   and not str(race["result"]).replace(".", "", 1).isdigit()
                                   else None)
-                              or "—")
+                              or " - ")
 
     # (chart_data is built ONCE, below, after the record walk -- an earlier
     # copy of the call here was dead work thrown away by the second.)
@@ -1368,7 +1368,7 @@ def athlete(person_id):
     labels = sorted({label for label, _sport in seasons})
     athlete["n_races"] = len(races)
     athlete["n_seasons"] = len(labels)
-    athlete["season_span"] = (f"{labels[0]} — {labels[-1]}"
+    athlete["season_span"] = (f"{labels[0]} - {labels[-1]}"
                               if len(labels) > 1 else
                               labels[0] if labels else None)
 
@@ -1492,7 +1492,7 @@ def _hasResultsStatus(cur):
 def get_races(cur, person_id):
     """Return one athlete's FULL competition history, both sports, newest first.
 
-    Every event is kept — sprints, distance, field. No normalized_time filter,
+    Every event is kept - sprints, distance, field. No normalized_time filter,
     so this is the complete record, not just the distance races the engine rates.
     Both halves of the UNION produce the SAME columns in the SAME order.
     """
@@ -1844,7 +1844,7 @@ def format_time(seconds):
     """
     seconds = float(seconds)
     if seconds >= 100_000:
-        return "—"
+        return " - "
     whole   = int(seconds)                       # truncate, never round
     frac    = seconds - whole
 
@@ -2028,7 +2028,7 @@ def _attach_season_verdicts(seasons, verdicts):
 
 
 def _season_grade(races):
-    """The grade for this season — same across its races, so take the first
+    """The grade for this season - same across its races, so take the first
     one that actually has a grade."""
     for r in races:
         if r["grade"]:                 # skip None/empty
@@ -2074,7 +2074,7 @@ def season_rating(races, key="speed_rating"):
     rated = [r[key] for r in races
              if r.get(key) is not None and not r.get("season_outlier")]
     if not rated:                      # a season with no rated races
-        return None                    # -> template shows "—", not a crash
+        return None                    # -> template shows " - ", not a crash
     return sum(rated) / len(rated)
 
 
@@ -2097,7 +2097,7 @@ def find_current_records(races, key_fn, value_fn, better):
     """Return the set of race ids that CURRENTLY hold the record in their group.
 
     Unlike flag_records (which asks 'was this a record at the time'), this asks
-    'is this the best one, period' — so exactly one race per group wins.
+    'is this the best one, period' - so exactly one race per group wins.
     """
     best_race = {}                       # key -> the race dict currently winning
     for race in races:
@@ -2156,7 +2156,7 @@ def season_bests_by_year(races):
 
 
 def tf_distances(races):
-    """Distinct TF events this athlete ran — one time-chart per distance."""
+    """Distinct TF events this athlete ran - one time-chart per distance."""
     seen = []
     for r in races:
         if r["sport"] == "TF" and r["event"] and r["event"] not in seen:
@@ -2515,7 +2515,7 @@ def race_xc(meet_id, div_id):
         if row["time_seconds"] is not None:
             row["display_time"] = format_time(row["time_seconds"])
         else:
-            row["display_time"] = "—"
+            row["display_time"] = " - "
 
     # the race date comes from the results (meets has no date column)
     race_date = results[0]["date"] if results else None
@@ -2617,13 +2617,13 @@ def race_xc(meet_id, div_id):
 # ===================================================================== #
 
 def get_meet_header(cur, meet_id, source=None):
-    """Basic info for a meet — taken from any one of its divisions.
+    """Basic info for a meet - taken from any one of its divisions.
 
     ★ Driven from `results` for the same reason as get_race_header: a tfrrs
       meet has no `meets` row, so the old `FROM meets` returned None and the
       route 404'd.
 
-    ⚠ `source` picks WHICH meet when two share the id — the anet and tfrrs
+    ⚠ `source` picks WHICH meet when two share the id - the anet and tfrrs
       id spaces overlap, and without it a tfrrs meet's page could carry the
       colliding anet meet's name.
     """
@@ -3221,11 +3221,11 @@ def race_tf(meet_id, event_id, div_id):
 
     for row in results:
         if row["is_field"]:
-            row["display_result"] = row["mark"] if row["mark"] else "—"
+            row["display_result"] = row["mark"] if row["mark"] else " - "
         elif row["time_seconds"] is not None:
             row["display_result"] = format_time(row["time_seconds"])
         else:
-            row["display_result"] = "—"
+            row["display_result"] = " - "
         row["points"] = points_by_result.get(row["result_id"], "")
 
     race_date = results[0]["date"] if results else None
@@ -3276,7 +3276,7 @@ def get_tf_meet_header(cur, meet_id, source=None):
     """Basic info for a TF meet, from any one of its events.
 
     ⚠ `source` picks WHICH meet when the anet and tfrrs id spaces collide on
-      this id — LIMIT 1 without it could hand a tfrrs meet the colliding anet
+      this id - LIMIT 1 without it could hand a tfrrs meet the colliding anet
       meet's name.
     """
     cur.execute("""
@@ -3386,7 +3386,7 @@ def get_tf_loose_results(cur, meet_id, source=None):
     for r in cur.fetchall():
         r = dict(r)
         if r["is_field"]:
-            r["display_result"] = r["mark"] or "—"
+            r["display_result"] = r["mark"] or " - "
         elif r["time_seconds"] is not None and r["time_seconds"] < 999999:
             r["display_result"] = format_time(r["time_seconds"])
         else:
@@ -3593,11 +3593,11 @@ def _stamp_tf_display(rows):
     the same rule race_tf renders by."""
     for r in rows:
         if r.get("is_field") or r.get("result_kind") in ("field", "combined"):
-            r["display_result"] = r["mark"] if r.get("mark") else "—"
+            r["display_result"] = r["mark"] if r.get("mark") else " - "
         elif r.get("time_seconds") is not None:
             r["display_result"] = format_time(r["time_seconds"])
         else:
-            r["display_result"] = "—"
+            r["display_result"] = " - "
 
 
 @app.route("/meet/tf/<int:meet_id>")
@@ -4144,7 +4144,7 @@ def school_prs_page(school_name):
                     r["display_mark"] = (r.get("mark") or
                                          format_time(r["time_seconds"]))
                 else:
-                    r["display_mark"] = r.get("mark") or "—"
+                    r["display_mark"] = r.get("mark") or " - "
 
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
@@ -4446,7 +4446,7 @@ def course(course_name):
 # ===================================================================== #
 
 def get_tf_venue_label(cur, location_id, is_indoor):
-    """Most common meet name at this venue — our stand-in for a venue name."""
+    """Most common meet name at this venue - our stand-in for a venue name."""
     cur.execute("""
         SELECT m.meet_name
         FROM meets_tf m
@@ -4535,11 +4535,11 @@ def venue_tf(location_id, indoor):
 
     for row in bests:
         if row["is_field"]:
-            row["display_result"] = row["mark"] if row["mark"] else "—"
+            row["display_result"] = row["mark"] if row["mark"] else " - "
         elif row["time_seconds"] is not None:
             row["display_result"] = format_time(row["time_seconds"])
         else:
-            row["display_result"] = "—"
+            row["display_result"] = " - "
 
     return render_template("venue_tf.html",
                            has_hs_view=has_hs_view,
@@ -5086,7 +5086,7 @@ def search_page():
                            count_cap=SEARCH_COUNT_CAP)
 
 # ===================================================================== #
-#  CONVERSIONS  — paste these two routes into app.py
+#  CONVERSIONS  - paste these two routes into app.py
 # ===================================================================== #
 #
 # Depends on the validated math module:
@@ -5351,7 +5351,7 @@ def api_rankings():
                 conn.rollback()
                 detail = str(exc).strip().splitlines()[0]
                 return jsonify({"error": f"This board needs a rebuilt "
-                                         f"ranking_results \u2014 {detail}"}), 400
+                                         f"ranking_results - {detail}"}), 400
 
     # HS-equivalent view: rows carry their own pool (and, for single-race
     # boards, distance). Display-only -- the ORDER stays the server's, so on
@@ -5463,7 +5463,7 @@ def api_teams():
                 #   JSON parsing, which sends the reader entirely the wrong way.
                 conn.rollback()
                 return jsonify({"error": "Team rankings have not been built "
-                                         "yet \u2014 run "
+                                         "yet - run "
                                          "racecast/build_team_season.py after "
                                          "build_ranking_results.py."}), 400
             except Exception:
@@ -5524,7 +5524,7 @@ def api_courses():
                 #   JSON parsing, which sends the reader the wrong way.
                 conn.rollback()
                 return jsonify({"error": "Course rankings have not been built "
-                                         "yet \u2014 run "
+                                         "yet - run "
                                          "racecast/build_course_rank.py after "
                                          "the engine writes "
                                          "course_difficulties."}), 400
@@ -5594,13 +5594,13 @@ def api_rankings_rank():
         # Not an error -- they are genuinely absent under these filters, most
         # often because min_races excludes them. Say WHICH, so the user can
         # act on it instead of assuming the search is broken.
-        reason = ("Not on this board \u2014 no result at this distance under "
+        reason = ("Not on this board - no result at this distance under "
                   "the current filters."
                   if f["board"] == "pr" else
-                  "Not on this board \u2014 no rated race under the current "
+                  "Not on this board - no rated race under the current "
                   "filters."
                   if f["board"] == "performance" else
-                  f"Not on this board \u2014 they may have fewer than "
+                  f"Not on this board - they may have fewer than "
                   f"{f['min_races']} races, or be outside the current "
                   f"filters.")
         return jsonify({"found": False, "reason": reason})

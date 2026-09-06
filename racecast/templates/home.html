@@ -105,7 +105,7 @@
                             <div class="cell c-school">
                                 {% if r.school %}
                                     <a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label }}</a>
-                                {% else %}—{% endif %}
+                                {% else %} - {% endif %}
                             </div>
                             <div class="cell c-rating">{{ rv(r.rating, r.hs_rating) }}</div>
                             {# ! title CARRIES THE WHOLE STRING, because this
@@ -122,8 +122,8 @@
                             {% set _parts = (r.detail or '').split(' · ', 1) %}
                             <div class="cell c-detail" title="{{ r.detail }}">
                                 {% if board_type == 'performance' and r.link %}
-                                    <a href="{{ r.link }}"><span class="d-main">{{ _parts[0] or '—' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}</a>
-                                {% else %}<span class="d-main">{{ _parts[0] or '—' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}{% endif %}
+                                    <a href="{{ r.link }}"><span class="d-main">{{ _parts[0] or ' - ' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}</a>
+                                {% else %}<span class="d-main">{{ _parts[0] or ' - ' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}{% endif %}
                             </div>
                         {% endif %}
                     {% endfor %}
@@ -211,7 +211,7 @@
            that is easier to change in Python, wording belongs beside the
            markup it renders into.
 
-           meta.get(key, '—') so a key panels.py has not written yet degrades
+           meta.get(key, ' - ') so a key panels.py has not written yet degrades
            to the dash that was here before, rather than printing None or
            dropping the row and leaving a gap in the strip. Same reasoning as
            labels.get(pool, pool) in the board macro. #}
@@ -223,7 +223,7 @@
         <div class="facts">
             {% for key, label in FACTS %}
                 <div class="fact">
-                    <span class="fact-num">{{ meta.get(key, '—') }}</span> {{ label }}
+                    <span class="fact-num">{{ meta.get(key, ' - ') }}</span> {{ label }}
                 </div>
             {% endfor %}
         </div>
@@ -288,7 +288,7 @@
 
                 {# scope label, human-readable #}
                 <h2 class="board-scope-label">
-                    {{ sport }} —
+                    {{ sport }} -
                     {% if scope == 'season' %}
                         {{ meta.get('season_year_' ~ sport, '') }} Season
                     {% else %}
@@ -346,9 +346,9 @@
                             <td>
                                 {% if sport == 'XC' and m.course_name %}
                                     <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
-                                {% else %}{{ m.course_name or "—" }}{% endif %}
+                                {% else %}{{ m.course_name or " - " }}{% endif %}
                             </td>
-                            <td>{{ m.state or "—" }}</td>
+                            <td>{{ m.state or " - " }}</td>
                             <td>{{ m.n_results }}</td>
                         </tr>
                         {% endfor %}

@@ -50,7 +50,7 @@ def test_dv_with_and_without_a_day():
     tf = _render('{% from "_explain.html" import dv %}{{ dv(0.02, "TF", 0.03) }}')
     assert "ran 3.0% slow" in tf and "carry the venue only" in tf and "raised" not in tf
     none = _render('{% from "_explain.html" import dv %}{{ dv(None, "XC", 0.01) }}')
-    assert "&mdash;" in none and "dv-day" not in none
+    assert none.strip() == "-" and "dv-day" not in none   # the empty placeholder is a hyphen (no em dashes, owner 2026-09-06)
 
 
 def test_pages_still_parse():

@@ -23,10 +23,10 @@
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {{ header.event_short }} ·
-        {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "—" }} ·
-        {{ header.division if header.division else "—" }} ·
+        {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else " - " }} ·
+        {{ header.division if header.division else " - " }} ·
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} ·
-        {{ race_date if race_date else "—" }}
+        {{ race_date if race_date else " - " }}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
@@ -74,10 +74,10 @@
                         {{ row.athlete_name if row.athlete_name else "Unknown" }}
                     {% endif %}
                 </td>
-                <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else "—" }}</td>
-                <td>{{ row.school|school_label_for('college' if college else none, header.state) if row.school else "—" }}</td>
+                <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
+                <td>{{ row.school|school_label_for('college' if college else none, header.state) if row.school else " - " }}</td>
                 <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
-                {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else "—" }}</td>{% endif %}
+                {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 {% if has_pts %}{% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}{% endif %}
             </tr>

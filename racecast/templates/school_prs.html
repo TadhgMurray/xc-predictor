@@ -18,7 +18,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = school ~ " — School PRs" %}
+    {% set meta_title = school ~ " - School PRs" %}
     {% set meta_description = "Best mark per athlete in every event " ~ school
        ~ " has contested, by season and course." %}
     {% include "_meta.html" %}
@@ -55,9 +55,9 @@
                     {% else %}{{ r.name if r.name else "Unknown" }}{% endif %}</td>
                 <td class="no-break">{{ r.display_mark }}</td>
                 {% if sec.kind == "running" %}<td>{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{% endif %}
-                <td>{{ r.grade if r.grade else "—" }}</td>
+                <td>{{ r.grade if r.grade else " - " }}</td>
                 {% if with_course %}
-                <td>{% if r.course_name %}<a href="/course/{{ r.course_name|urlencode }}" title="{{ r.course_name }}">{{ r.course_name }}</a>{% else %}—{% endif %}</td>
+                <td>{% if r.course_name %}<a href="/course/{{ r.course_name|urlencode }}" title="{{ r.course_name }}">{{ r.course_name }}</a>{% else %} - {% endif %}</td>
                 {% endif %}
                 <td class="no-break">
                     {% if sec.kind == "running" and sport == 'XC' %}
@@ -103,7 +103,7 @@
     {% if state_chips %}
     {% set others = state_chips|rejectattr("state", "equalto", data.state)|list %}
     {% if others %}
-    <p class="meta">Different schools share this name &mdash;
+    <p class="meta">Different schools share this name -
         {% for c in others %}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
     </p>
     {% endif %}

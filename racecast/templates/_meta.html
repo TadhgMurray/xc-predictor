@@ -25,8 +25,8 @@
 
 {# Defaults. A page that sets nothing still gets a complete, correct card. #}
 {% set _title = meta_title | default(none) %}
-{% set _full_title = (_title ~ " — Racecast") if _title else
-                     "Racecast — every result on one comparable scale" %}
+{% set _full_title = (_title ~ " - Racecast") if _title else
+                     "Racecast - every result on one comparable scale" %}
 {# ⚠ DO NOT NAME THE DATA SOURCES HERE. This string is what Google caches and
    shows under the link, and what every scraper copies into a card. Wherever
    the results come from, this is the worst place to publish it -- it is
@@ -70,7 +70,7 @@
    with no picture and only fix themselves on a later re-scrape. #}
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Racecast — every result on one comparable scale">
+<meta property="og:image:alt" content="Racecast - every result on one comparable scale">
 
 {# ---- Twitter/X: reads og:* for everything except the card type ------ #}
 {# summary_large_image gives the full-width image. Without this tag the

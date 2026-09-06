@@ -30,7 +30,7 @@
            page; |urlencode because the name goes into the URL as data. #}
         {% if header.course_name %}
             <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a>
-        {% else %}—{% endif %}
+        {% else %} - {% endif %}
         {% if meet_date %} · {{ meet_date }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
@@ -62,7 +62,7 @@
         <tbody>
             {% for d in divisions %}
             <tr>
-                <td>{{ "Boys" if d.gender == 'M' else "Girls" if d.gender == 'F' else "—" }}</td>
+                <td>{{ "Boys" if d.gender == 'M' else "Girls" if d.gender == 'F' else " - " }}</td>
                 <td>
                     <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
                         {{ d.division if d.division else "Division " ~ d.div_id }}
@@ -70,7 +70,7 @@
                     {% if school and d.div_id in school_divs %}<span class="school-ran" title="{{ school }} raced this division">· {{ school|school_label }}</span>{% endif %}
                 </td>
 
-                <td>{{ d.distance|int if d.distance else "—" }}m</td>
+                <td>{{ d.distance|int if d.distance else " - " }}m</td>
                 <td>{{ d.n_results }}</td>
             </tr>
             {% endfor %}
@@ -81,7 +81,7 @@
     <h2>Compiled races</h2>
     <p class="meta">
         Every division at the same distance, merged and ordered by time. These
-        races were run separately — this is how they compare, not how they
+        races were run separately - this is how they compare, not how they
         finished.
     </p>
     <table>
@@ -97,7 +97,7 @@
         <tbody>
             {% for g in compiled %}
             <tr>
-                <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "—" }}</td>
+                <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else " - " }}</td>
                 <td>
                     <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}">
 
@@ -106,7 +106,7 @@
                 </td>
                 <td>{{ g.n_results }}</td>
                 <td>{{ g.n_divisions }}</td>
-                <td>{{ g.n_teams if g.n_teams else "—" }}</td>
+                <td>{{ g.n_teams if g.n_teams else " - " }}</td>
             </tr>
             {% endfor %}
         </tbody>

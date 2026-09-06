@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Conversions — Racecast</title>
+    <title>Conversions - Racecast</title>
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
@@ -18,8 +18,8 @@
 <section class="conv" data-prefill-athlete="{{ prefill_athlete or '' }}" data-prefill-pool="{{ prefill_pool or '' }}">
     <h1>Conversions</h1>
     <p class="conv-intro">
-        Enter one performance — a time, a rating, an athlete, or a specific
-        result — and see it projected across courses and distances.
+        Enter one performance - a time, a rating, an athlete, or a specific
+        result - and see it projected across courses and distances.
         <span class="req-key"><span class="req">*</span> required (or a source that implies it)</span>
     </p>
     {# One scale for the page: what a typed rating means and what the
@@ -69,7 +69,7 @@
         <!-- RESULT source: after an athlete is picked, choose one of their races -->
         <div data-for="result" class="src-field">
             <label class="field-label">Race <span class="req">*</span></label>
-            <select id="in-result-select"><option value="">— pick athlete first —</option></select>
+            <select id="in-result-select"><option value="">- pick athlete first -</option></select>
         </div>
 
         <!-- TIME source -->
@@ -120,7 +120,7 @@
 
         {# Optional input weather (adjust OUT of the source's conditions) #}
         <details class="conv-weather src-field" data-for="time">
-            <summary>Input weather (optional — the conditions the source was run in)</summary>
+            <summary>Input weather (optional - the conditions the source was run in)</summary>
             <!-- UNIT BUTTONS. Each unit-bearing field carries data-unit with
                  the unit currently DISPLAYED; the buttons convert the value in
                  place and flip it. readWeather() converts back to the model's
@@ -200,7 +200,7 @@
                         data-distance="{{ c.distance }}">
                         <td>{{ c.course_name }}</td>
                         <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
-                        <td class="cell-time">—</td>
+                        <td class="cell-time"> - </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -222,7 +222,7 @@
                     {% for dist, lbl in tf_distances %}
                     <tr data-distance="{{ dist }}">
                         <td>{{ lbl }}</td>
-                        <td class="cell-time">—</td>
+                        <td class="cell-time"> - </td>
                     </tr>
                     {% endfor %}
                 </tbody>

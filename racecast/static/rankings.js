@@ -105,9 +105,9 @@ function isFieldSelection() {
    (marks.parseMark); the feet-inches beside it is what most readers of a
    US board expect to see, and the conversion is exact. */
 function fmtMark(m) {
-  if (m === null || m === undefined) return "—";
+  if (m === null || m === undefined) return " - ";
   const metres = Number(m);
-  if (!isFinite(metres)) return "—";
+  if (!isFinite(metres)) return " - ";
   const totalInches = metres / 0.0254;
   const feet = Math.floor(totalInches / 12);
   const inches = totalInches - feet * 12;
@@ -141,7 +141,7 @@ function maybeLink(href, inner, cls) {
 
 function schoolCell(school, state) {
   const st = state ? ` <span class="state">${esc(state)}</span>` : "";
-  if (!school) return `<td>—${st}</td>`;
+  if (!school) return `<td> - ${st}</td>`;
   return `<td><a href="/school/${encodeURIComponent(school)}">`
        + `${esc(school)}</a>${st}</td>`;
 }
@@ -267,7 +267,7 @@ function buildQuery() {
       continue;
     }
     const vals = combos[k] ? combos[k].values() : [];
-    if (vals.length) query.set(k, vals.join(","));
+    if (vals.length) q.set(k, vals.join(","));   // q, not `query`: every unit filter threw "query is not defined" since 2026-09-02
   }
 
   /* The multi-value filters. Several chips become ONE comma-separated
@@ -908,7 +908,7 @@ function fmtTime(sec) {
   /* ! THE SENTINEL PRINTS AS DNF, NOT AS 277:46.6. See DNF_SENTINEL. */
   if (isNoTime(sec)) return "DNF";
   const s = Number(sec);
-  if (!isFinite(s)) return "—";
+  if (!isFinite(s)) return " - ";
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const rest = s - h * 3600 - m * 60;
@@ -1163,7 +1163,7 @@ function teamsNote(data) {
     note.innerHTML =
       "<strong>Showing each squad's place in its own season.</strong> "
       + "Racing seasons against each other needs the stored squad ratings, "
-      + "which this table was built without &mdash; rebuild with "
+      + "which this table was built without - rebuild with "
       + "<code>racecast/build_team_season.py</code> to turn it on.";
 
   } else if (data.raced && subset) {
@@ -1175,12 +1175,12 @@ function teamsNote(data) {
     note.innerHTML =
       `<strong>Showing ${data.shown_of_field.toLocaleString()} of ${n} teams</strong>`
       + " that raced each other in one meet. The # is their place in that "
-      + "full field, not among the rows shown &mdash; clear the filters to "
+      + "full field, not among the rows shown - clear the filters to "
       + "see everyone. Hover a rank for that squad's own season.";
 
   } else if (data.raced) {
     note.innerHTML =
-      `<strong>${n} teams raced against each other</strong> in one meet &mdash; `
+      `<strong>${n} teams raced against each other</strong> in one meet - `
       + "every squad's top seven entered, sorted by season rating and scored "
       + "the ordinary way. One first place, and the points are this field's. "
       + "Squads from different years are separate entries; hover a rank to "
@@ -1192,14 +1192,14 @@ function teamsNote(data) {
        filtered view of one has gaps, which is the honest answer rather than
        a renumbering that would invent a championship. */
     note.innerHTML =
-      `<strong>Every squad of every season in one field</strong> &mdash; `
+      `<strong>Every squad of every season in one field</strong> - `
       + `all ${n} of them, raced when the board was built and scored the `
       + "ordinary way. One first place. A squad's year is its own; filter "
       + "to a single Year to rank that season on its own instead.";
 
   } else {
     note.innerHTML =
-      "<strong>One season's own meet</strong> &mdash; every squad that raced "
+      "<strong>One season's own meet</strong> - every squad that raced "
       + `that year, all ${n} of them, scored against each other. Clear the `
       + "Year filter to put every season in one field instead.";
   }
@@ -1244,8 +1244,8 @@ function renderCourses(rows) {
             + `and meet count are left blank because they cannot be told apart `
             + `by name.">1 of ${r.n_same_name} by this name</span>`
           : ""}</td>
-      <td><span class="state">${esc(r.state || "—")}</span></td>
-      <td>${r.distance_m ? r.distance_m.toLocaleString() + "m" : "—"}</td>
+      <td><span class="state">${esc(r.state || " - ")}</span></td>
+      <td>${r.distance_m ? r.distance_m.toLocaleString() + "m" : " - "}</td>
       <td>${(r.n_results || 0).toLocaleString()}</td>
       <td>${(r.n_athletes || 0).toLocaleString()}</td>
       <td>${(r.n_meets || 0).toLocaleString()}</td>
@@ -1461,7 +1461,7 @@ async function load() {
       $("subtitle").textContent = data.course_mode
         ? "Team performances at " + (data.filters.course || []).join(", ")
           + " · top-5 average rating, one race."
-        : "Teams \u2014 every squad's top seven raced against each other, "
+        : "Teams - every squad's top seven raced against each other, "
           + "scored the ordinary way.";
       teamsNote(data);
     }
@@ -1619,14 +1619,14 @@ function syncBoard(board) {
 
   $("subtitle").textContent =
     board === "ability"
-      ? "Season ability \u2014 averaged across a season, so one lucky race cannot carry an athlete."
+      ? "Season ability - averaged across a season, so one lucky race cannot carry an athlete."
       : board === "pr"
-      ? "Best times and marks \u2014 each athlete's fastest time at one distance, or their longest or highest mark in a field event. Raw clock and tape, no course correction."
+      ? "Best times and marks - each athlete's fastest time at one distance, or their longest or highest mark in a field event. Raw clock and tape, no course correction."
       : board === "teams"
-      ? "Teams \u2014 every squad's top seven raced against each other, scored the ordinary way."
+      ? "Teams - every squad's top seven raced against each other, scored the ordinary way."
       : board === "courses"
-      ? "Courses \u2014 how much harder than average the ground is, measured from everyone who raced it."
-      : "Single performances \u2014 the best individual races, noise and all.";
+      ? "Courses - how much harder than average the ground is, measured from everyone who raced it."
+      : "Single performances - the best individual races, noise and all.";
 }
 
 
@@ -1702,7 +1702,7 @@ function syncUnitDeps() {
     const parentLabel = parent === "state" ? "State" : "Section";
     field.classList.toggle("is-locked", !ready);
     field.title = ready ? "" :
-      `Choose a ${parentLabel} first — every ${parentLabel.toLowerCase()} `
+      `Choose a ${parentLabel} first - every ${parentLabel.toLowerCase()} `
       + `has its own divisions, so this filter needs one to mean anything.`;
     /* ★ SAID ON THE LABEL, NOT ONLY IN A TOOLTIP. A greyed control with no
        visible reason reads as broken; a tooltip is only found by someone who

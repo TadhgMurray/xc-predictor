@@ -18,7 +18,7 @@
 {% macro rv(value, hs) -%}
     {%- if value is not none -%}
     <span class="rv"{% if hs is not none %} data-hs="{{ "%.1f"|format(hs) }}"{% endif %}>{{ "%.1f"|format(value) }}</span>
-    {%- else -%}—{%- endif -%}
+    {%- else -%} - {%- endif -%}
 {%- endmacro %}
 
 {# hidden=True starts the control display:none for pages whose boards load

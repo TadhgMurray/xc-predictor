@@ -32,7 +32,7 @@
 {%- endmacro %}
 
 {% macro dv(d, sport="XC", day=None) -%}
-    {%- if d is none -%}&mdash;
+    {%- if d is none -%}-
     {%- elif day is none -%}
     <span class="dv" title="raw difficulty {{ "%+.3f"|format(d) }}">{{ d|diffpct(sport) }}</span>
     {%- else -%}

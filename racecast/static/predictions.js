@@ -535,7 +535,7 @@ function esc(v) {
 
 /* Seconds -> 16:27.8. The model predicts seconds; a time is what people read. */
 function fmtTime(s) {
-  if (s === null || s === undefined) return "\u2014";
+  if (s === null || s === undefined) return " - ";
   const n = Number(s);
   const m = Math.floor(n / 60);
   return `${m}:${(n - m * 60).toFixed(1).padStart(4, "0")}`;
@@ -870,7 +870,7 @@ function renderChosenMeet(bare) {
        <label class="mc-coalesce hidden" id="mc-coalesce">
          <input type="checkbox" id="coalesce">
          <span class="co-lab">Coalesce a school in two divisions into one
-           squad<span class="co-note">Boys and girls are never merged \u2014
+           squad<span class="co-note">Boys and girls are never merged -
            they always score as two teams.</span></span>
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
@@ -1390,7 +1390,7 @@ function renderFieldRollup(blocks) {
   const loaded = blocks.filter((d) => editsFor(d).field);
   const n = (v) => `<strong>${v}</strong>`;
   if (!loaded.length) {
-    $("field-summary").innerHTML = `${n(blocks.length)} races \u2014 loading\u2026`;
+    $("field-summary").innerHTML = `${n(blocks.length)} races - loading\u2026`;
     return;
   }
   let teams = 0, runners = 0;
@@ -1403,7 +1403,7 @@ function renderFieldRollup(blocks) {
   $("field-summary").innerHTML =
     `${n(blocks.length)} races \u00b7 ${n(teams)} teams, ` +
     `${n(runners)} runners` +
-    (loaded.length < blocks.length ? ` \u2014 loading the rest\u2026` : "");
+    (loaded.length < blocks.length ? ` - loading the rest\u2026` : "");
 }
 
 
@@ -1473,7 +1473,7 @@ function renderFieldBlock(sumEl, gridEl) {
     `<span class="fs-n" title="${esc(gloss)}">` +
     `<strong>${teams.length}</strong> teams, ` +
     `<strong>${kept}</strong> runners` +
-    (f.when === "asran" ? ` \u2014 as raced` : ` \u2014 current squads`) +
+    (f.when === "asran" ? ` - as raced` : ` - current squads`) +
     `</span>` +
     (f.when === "asran" ? "" :
       ` <button class="linkish" data-squads-all="1"
@@ -1802,14 +1802,14 @@ function renderTeam(d) {
 
   const rows = (d.teams || []).map((t, i) => `
     <tr>
-      <td class="rank">${t.score === null ? "\u2014" : i + 1}</td>
+      <td class="rank">${t.score === null ? " - " : i + 1}</td>
       <td>${esc(schoolWithState(t.team, t.state))}${t.divs
           ? ` <span class="t-divs" title="Coalesced: one squad, drawn from `
             + `these divisions and capped at seven.">${
               esc(t.divs.join(" + "))}</span>`
           : ""}</td>
       <td>${t.score === null ? esc(t.note || "incomplete") : t.score}</td>
-      ${scored ? `<td class="actual">${t.actual_score ?? "\u2014"}</td>` : ""}
+      ${scored ? `<td class="actual">${t.actual_score ?? " - "}</td>` : ""}
       <td class="runners">${(t.runners || []).map((r) =>
         /* ! score_place, NOT place -- the number the points are summed from.
              A complete team's displayed places have to add up to its own
@@ -2188,7 +2188,7 @@ async function addTeam(school, div) {
   /* ⚠ THIS USED TO `return` WITH NOTHING SAID, which is the worst way for an
        action to fail: the row is clicked, and the page is identical. */
   if (!e.field) {
-    setStatus(`${divLabel(target)} has not finished loading \u2014 try again `
+    setStatus(`${divLabel(target)} has not finished loading - try again `
               + `in a moment.`, true);
     return;
   }
@@ -2202,7 +2202,7 @@ async function addTeam(school, div) {
            data. Carondelet was racing; it was just not racing here. */
       setStatus(squad.other_gender
         ? `${school} is a ${squad.gender === "M" ? "girls" : "boys"}-only `
-          + `school \u2014 it cannot run in this `
+          + `school - it cannot run in this `
           + `${squad.gender === "M" ? "boys" : "girls"} race.`
         : `No one from ${school} has raced this season.`, true);
       return;
@@ -2233,7 +2233,7 @@ async function addTeam(school, div) {
      *   no-op. */
     if (state.view === "none") state.view = "teams";
     renderField();
-    setStatus(`Added ${school} \u2014 `
+    setStatus(`Added ${school} - `
               + `${squad.runners.slice(0, 7).length} runners.`, false);
     /* ⚠ NO SCROLLING. This used to pull the new card into view, which moves
          the page away from the search box you are still typing in -- and

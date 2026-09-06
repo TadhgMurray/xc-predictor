@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', function () {
         else if (kind === 'school')  cells = [r.label, r.sort_count];
         else                         cells = [r.label, r.kind, r.sublabel];
         tr.innerHTML = cells.map(function (c) {
-            return '<td>' + esc(c == null || c === 0 ? '—' : c) + '</td>';
+            return '<td>' + esc(c == null || c === 0 ? ' - ' : c) + '</td>';
         }).join('');
         return tr;
     }

@@ -2,27 +2,27 @@
 <tr class="result-row" data-href="{{ r.link }}">
     {% if kind == 'athlete' %}
         <td>{{ r.label }}</td>
-        <td>{{ r.sublabel or '—' }}</td>
-        <td>{{ r.sort_year or '—' }}</td>
-        <td>{{ r.sort_count or '—' }}</td>
+        <td>{{ r.sublabel or ' - ' }}</td>
+        <td>{{ r.sort_year or ' - ' }}</td>
+        <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'meet' %}
         <td>{{ r.label }}</td>
-        <td>{{ r.sort_year or '—' }}</td>
-        <td>{{ r.sort_count or '—' }}</td>
+        <td>{{ r.sort_year or ' - ' }}</td>
+        <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'course' %}
         <td>{{ r.label }}</td>
-        <td>{{ r.sort_count or '—' }}</td>
+        <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'venue' %}
         <td>{{ r.label }}</td>
-        <td>{{ r.sublabel or '—' }}</td>
-        <td>{{ r.sort_count or '—' }}</td>
+        <td>{{ r.sublabel or ' - ' }}</td>
+        <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'school' %}
         <td>{{ r.label }}</td>
-        <td>{{ r.sort_count or '—' }}</td>
+        <td>{{ r.sort_count or ' - ' }}</td>
     {% else %}  {# all: mixed kinds, uniform columns #}
         <td>{{ r.label }}</td>
         <td>{{ r.kind }}</td>
-        <td>{{ r.sublabel or '—' }}</td>
+        <td>{{ r.sublabel or ' - ' }}</td>
     {% endif %}
 </tr>
 {% endmacro %}
@@ -31,7 +31,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Search: {{ q }} — Racecast</title>
+    <title>Search: {{ q }} - Racecast</title>
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}

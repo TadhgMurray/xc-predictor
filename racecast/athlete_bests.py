@@ -136,7 +136,7 @@ def _canonEvent(event):
     canon = _GENDER_LEAD.sub("", str(event))
     canon = _ROUND_NOISE.sub("", canon)
     canon = _METERS_WORD.sub(lambda m: m.group(1).replace(",", "") + "m", canon)
-    canon = canon.strip(" -–—·:")
+    canon = canon.strip(" -– - ·:")
     return canon or str(event).strip()
 
 

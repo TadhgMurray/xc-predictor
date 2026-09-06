@@ -43,7 +43,7 @@ _NO_MARK = {
     "FOUL", "F", "X", "XXX",       # fouled out
     "DQ", "FS",                    # disqualified, false start
     "PASS", "P",                   # passed every height
-    "-", "--", "—", "",       # dashes and blanks
+    "-", "--", " - ", "",       # dashes and blanks
 }
 
 

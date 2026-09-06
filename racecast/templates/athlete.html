@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {# _meta.html emits <title> (appending "— Racecast" itself) plus the
+    {# _meta.html emits <title> (appending "- Racecast" itself) plus the
        share-card metadata -- athlete links are the most-shared URLs on the
        site, and without og:* tags they unfurl as bare blue text in every
        chat app. #}
@@ -64,7 +64,7 @@
     'title': 'Rating Record',
     'title_current': 'Rating Record (Overall)',
     'blurb': 'Their highest speed rating at the time. Unlike a time, a rating is comparable across distances, courses and conditions.',
-    'blurb_current': 'Their highest speed rating across their whole career — their best race anywhere, at any distance.'
+    'blurb_current': 'Their highest speed rating across their whole career - their best race anywhere, at any distance.'
   },
   'sr': {
     'code': 'SR', 'css': 'sr',
@@ -84,8 +84,8 @@
     'code': 'RSR', 'css': 'rsr',
     'title': 'Rating Season Record',
     'title_current': 'Rating Season Record',
-    'blurb': 'Their highest speed rating in this season — their best race of the year once the course is accounted for.',
-    'blurb_current': 'Their highest speed rating in this season — their best race of the year once the course is accounted for.'
+    'blurb': 'Their highest speed rating in this season - their best race of the year once the course is accounted for.',
+    'blurb_current': 'Their highest speed rating in this season - their best race of the year once the course is accounted for.'
   }
 } %}
 
@@ -122,7 +122,7 @@
 {% set BOARD_NOTES = {
   'low_trust': {
     'title': 'Rated, not ranked',
-    'blurb': 'This athlete\'s grade for this season is unconfirmed — fewer than two races back it. We can\'t rank an unconfirmed season, but they are rated as normal against their believed pool.'
+    'blurb': 'This athlete\'s grade for this season is unconfirmed - fewer than two races back it. We can\'t rank an unconfirmed season, but they are rated as normal against their believed pool.'
   },
   'no_evidence': {
     'title': 'Not ranked',
@@ -138,11 +138,11 @@
   },
   'lone_word': {
     'title': 'Not ranked',
-    'blurb': 'The only grade evidence for this season is one class word from one race — not enough to confirm it — so we can\'t rank them. Their ratings are unaffected.'
+    'blurb': 'The only grade evidence for this season is one class word from one race - not enough to confirm it - so we can\'t rank them. Their ratings are unaffected.'
   }
 } %}
 
-{# The badge itself. Same tooltip machinery as flag() — data-title/data-blurb,
+{# The badge itself. Same tooltip machinery as flag() - data-title/data-blurb,
    tabindex for keyboards, aria-label for screen readers. An unknown kind
    renders nothing rather than raising: the note is an annotation, and a new
    verdict name in the database must not take the page down. #}
@@ -211,7 +211,7 @@
                             <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}{% if race.sport == 'TF' %}?r={{ race.result_id }}{% endif %}"
                                title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
                         {% else %}
-                            <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or "—" }}</span>
+                            <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or " - " }}</span>
                         {% endif %}
                         {# The course, under the meet, on XC rows whose
                            course is not already the name shown (issue
@@ -235,7 +235,7 @@
                             <span class="no-break">{{ race.place|ordinal }}</span>{% if race.team_place %}
                             <span class="muted no-break">· {{ race.team_place|ordinal }} on team</span>
                             {%- endif %}
-                        {%- else -%}—{%- endif -%}
+                        {%- else -%} - {%- endif -%}
                     </td>
                     <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
@@ -262,7 +262,7 @@
 {% endmacro %}
 
     <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label }}</a>{% elif athlete.school %}{{ athlete.school|school_label }}{% else %}—{% endif %} · {{ athlete.grade if athlete.grade else "—" }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label }}</a>{% elif athlete.school %}{{ athlete.school|school_label }}{% else %} - {% endif %} · {{ athlete.grade if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
@@ -389,10 +389,10 @@
        ! NO FLASH: a chart slot is EMPTY until the script fills it, so a
          collapsed fold never had a rendered chart to hide. #}
             <details class="chart-fold" open>
-              <summary>Speed rating — all races</summary>
+              <summary>Speed rating - all races</summary>
               <div class="chart-slot chart-wide"
                    data-chart="all_rating" data-kind="rating" data-bysport="1"
-                   data-title="Speed rating — all races"></div>
+                   data-title="Speed rating - all races"></div>
             </details>
 
             {% if xc_seasons %}

@@ -58,7 +58,7 @@
             <tr>
                 <td class="no-break">{{ m.last_date }}</td>
                 <td><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
-                <td>{{ m.distances|map("int")|join(", ") if m.distances else "—" }}</td>
+                <td>{{ m.distances|map("int")|join(", ") if m.distances else " - " }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
             </tr>
             {% endfor %}
@@ -78,7 +78,7 @@
        {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}
        {{ filter_text }}, newest first.
        {% if capped %}
-       <strong>Showing the newest {{ max_meets }}</strong> — narrow by season
+       <strong>Showing the newest {{ max_meets }}</strong> - narrow by season
        to see further back.
        {% endif %}
     </p>
@@ -226,7 +226,7 @@
     {% if not months %}
       {% if filtering %}
     <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
-       name has to match how the results spell it — the school page's own
+       name has to match how the results spell it - the school page's own
        title is the exact form.</p>
       {% else %}
     <p class="meta">Nothing here yet. The list is rebuilt with the
@@ -256,10 +256,10 @@
                 <td>
                     {% if sport == 'XC' and m.course_name %}
                         <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
-                    {% else %}{{ m.course_name or "—" }}{% endif %}
+                    {% else %}{{ m.course_name or " - " }}{% endif %}
                 </td>
-                <td>{{ m.state or "—" }}</td>
-                {% if filters and filters.champ %}<td>{{ m.units or "—" }}</td>{% endif %}
+                <td>{{ m.state or " - " }}</td>
+                {% if filters and filters.champ %}<td>{{ m.units or " - " }}</td>{% endif %}
                 <td>{{ m.n_results }}</td>
             </tr>
             {% endfor %}

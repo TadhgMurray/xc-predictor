@@ -20,8 +20,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name ~ " — Compiled" %}
-    {% set meta_description = "Every division merged into one field — who "
+    {% set meta_title = header.meet_name ~ " - Compiled" %}
+    {% set meta_description = "Every division merged into one field - who "
        "beats whom when the races at this meet are compiled together." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
@@ -30,7 +30,7 @@
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide">
-{% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else "—" %}
+{% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else " - " %}
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {% if header.course_name %}
@@ -50,7 +50,7 @@
        these runners were not on the line together. #}
     <p class="synthetic">
         These divisions were run separately. This is how their times compare,
-        not how they finished — the places and scores below were never contested.
+        not how they finished - the places and scores below were never contested.
     </p>
 
     <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
@@ -84,7 +84,7 @@
                     <td{{ ' class="displacer"'|safe if i >= 5 }}>
                         {% if r %}<a href="/athlete/{{ r.person_id }}"
                                      title="{{ r.name }}">{{ r.score_place }}</a>
-                        {% else %}—{% endif %}
+                        {% else %} - {% endif %}
                     </td>
                 {% endfor %}
             </tr>
@@ -127,11 +127,11 @@
                         {{ row.name if row.name else "Unknown" }}
                     {% endif %}
                 </td>
-                <td>{{ row.grade if row.grade else "—" }}</td>
-                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %}—{% endif %}</td>
+                <td>{{ row.grade if row.grade else " - " }}</td>
+                <td>{% if row.school %}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %} - {% endif %}</td>
                 <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
-                <td>{{ row.score_place if row.score_place else "—" }}</td>
+                <td>{{ row.score_place if row.score_place else " - " }}</td>
                 {# Where they actually finished, and in which race. The gap
                    between this and the compiled place is why compiling exists.
                    Derived in meet_compile, NOT read from results.place -- that

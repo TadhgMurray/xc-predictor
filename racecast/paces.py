@@ -146,7 +146,7 @@ def criticalSpeed(races):
         return None, "no positive critical speed fits these races"
     if not (DPRIME_MIN <= dprime <= DPRIME_MAX):
         return None, (f"implies a {dprime:.0f}m anaerobic reserve, outside the "
-                      f"{DPRIME_MIN:.0f}-{DPRIME_MAX:.0f}m runners show — "
+                      f"{DPRIME_MIN:.0f}-{DPRIME_MAX:.0f}m runners show - "
                       f"these two results may not be the same athlete at one "
                       f"fitness")
     return (cs, dprime), None
@@ -181,7 +181,7 @@ def trainingPaces(races):
         "key": "critical_speed", "label": "Critical speed",
         "per_mile": _fmt(cs_pace),
         "per_km": _fmt(cs_pace * 1000.0 / MILE_M),
-        "basis": "near 10K pace — the 25–40 min effort",
+        "basis": "near 10K pace - the 25–40 min effort",
         "source": "derived", "dprime_m": round(dprime),
     }]
     # ⚠ ONE ROW, BECAUSE THE TWO SOURCES DESCRIBE ONE ZONE AND DISAGREE.
@@ -240,7 +240,7 @@ def coachRuleTempo(mile_seconds):
     pm, pk = _pair(lo, hi)
     return {"key": "tempo", "label": "Tempo (rule of thumb)", "per_mile": pm,
             "per_km": pk, "basis": "mile race pace + 60–80 s/mi",
-            "source": "one coach's rule — enter a second race for your "
+            "source": "one coach's rule - enter a second race for your "
                       "actual critical speed"}
 
 

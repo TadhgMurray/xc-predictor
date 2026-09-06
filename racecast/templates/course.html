@@ -50,11 +50,11 @@
             {% if sel_difficulty is not none %}
                 {{ dv(sel_difficulty, "XC") }}
                 <span class="dist-note-quiet">({{ sel_dist }}m)</span>
-            {% else %}—{% endif %}
+            {% else %} - {% endif %}
         {% elif primary_difficulty is not none %}
             {{ dv(primary_difficulty, "XC") }}
             <span class="dist-note-quiet">({{ primary_dist }}m, the usual distance here)</span>
-        {% else %}—{% endif %}
+        {% else %} - {% endif %}
         {% if header %}
             · {{ "{:,}".format(header.n_results) }} results
             · {{ "{:,}".format(header.n_athletes) }} athletes
@@ -114,7 +114,7 @@
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %}—{% endif %}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
@@ -183,8 +183,8 @@
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
-                        <td>{{ r.grade if r.grade else "—" }}</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %}—{% endif %}</td>
+                        <td>{{ r.grade if r.grade else " - " }}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
@@ -250,8 +250,8 @@
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
-                        <td>{{ r.grade if r.grade else "—" }}</td>
-                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %}—{% endif %}</td>
+                        <td>{{ r.grade if r.grade else " - " }}</td>
+                        <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
@@ -275,7 +275,7 @@
             <tr{{ hid(loop.index0) }}>
                 <td><a href="/meet/xc/{{ m.meet_id }}" title="{{ m.meet_name }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
                 <td class="no-break">{{ m.last_date }}</td>
-                <td>{{ m.distances|map("int")|join(", ") if m.distances else "—" }}</td>
+                <td>{{ m.distances|map("int")|join(", ") if m.distances else " - " }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
             </tr>
             {% endfor %}

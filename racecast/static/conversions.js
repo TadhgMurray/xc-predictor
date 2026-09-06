@@ -334,7 +334,7 @@
     function paintBaseRating() {
         if (!lastBase) return;
         var v = hsMode() && lastBase.hs != null ? lastBase.hs : lastBase.pool;
-        showNorm('Speed rating: ' + (v != null ? v : '\u2014') +
+        showNorm('Speed rating: ' + (v != null ? v : ' - ') +
                  (hsMode() ? ' (HS-equivalent)' : ' (own pool)') + lastBase.tail);
     }
 
@@ -524,7 +524,7 @@
                       'races. Every other row applies a published ' +
                       'relationship to it.');
             if (from && from.dprime)
-                bits.push('D\u2032 ' + from.dprime + ' m \u2014 the distance ' +
+                bits.push('D\u2032 ' + from.dprime + ' m - the distance ' +
                           'this athlete can cover above critical speed before ' +
                           'slowing.');
         } else if (from && from.reason) {
@@ -545,7 +545,7 @@
         var rows = document.querySelectorAll(bodySel + ' tr');
         cells.forEach(function (c, i) {
             if (rows[i]) rows[i].querySelector('.cell-time').textContent =
-                c.time != null ? fmt(c.time) : '—';
+                c.time != null ? fmt(c.time) : ' - ';
         });
     }
 
@@ -592,7 +592,7 @@
         tr.innerHTML =
             '<td>' + esc(name) + '</td>' +
             '<td class="cell-dist">' + (dist/1000).toFixed(2) + 'k</td>' +
-            '<td class="cell-time">—</td>';
+            '<td class="cell-time"> - </td>';
         document.getElementById('xc-body').appendChild(tr);
         convert();
     }
@@ -711,7 +711,7 @@
         var tr = document.createElement('tr');
         tr.setAttribute('data-distance', item.getAttribute('data-m'));
         tr.innerHTML = '<td>' + item.getAttribute('data-label') +
-                       '</td><td class="cell-time">—</td>';
+                       '</td><td class="cell-time"> - </td>';
         document.getElementById('tf-body').appendChild(tr);
         distDrop.innerHTML = '';
         distInput.value = '';

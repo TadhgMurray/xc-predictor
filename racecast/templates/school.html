@@ -48,7 +48,7 @@
     {% if state_chips %}
     {% set others = state_chips|rejectattr("state", "equalto", state)|list %}
     {% if others %}
-    <p class="meta">Different schools share this name &mdash;
+    <p class="meta">Different schools share this name -
         {% for c in others %}<a href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
     </p>
     {% endif %}
@@ -237,7 +237,7 @@
                    races the school ran and the race pages highlight its
                    rows. #}
                 <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}?school={{ school|urlencode }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
-                <td>{{ m.distance_labels|join(", ") if m.distance_labels else "—" }}</td>
+                <td>{{ m.distance_labels|join(", ") if m.distance_labels else " - " }}</td>
                 <td>{{ m.runners }}</td>
 
                 <td>{{ m.avg_rating if m.avg_rating is not none else "" }}</td>

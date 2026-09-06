@@ -62,8 +62,8 @@
                     {% if school and (e.div_id, e.event_id) in school_events %}<span class="school-ran" title="{{ school }} entered this event">· {{ school|school_label }}</span>{% endif %}
 
                 </td>
-                <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else "—" }}</td>
-                <td>{{ e.division if e.division else "—" }}</td>
+                <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else " - " }}</td>
+                <td>{{ e.division if e.division else " - " }}</td>
                 <td>{{ e.n_results }}</td>
             </tr>
             {% endfor %}
@@ -84,11 +84,11 @@
             {% for r in ev.rows %}
             <tr id="r{{ r.result_id }}">
                 <td>{{ r.row_place }}</td>
-                <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or "—" }}</a>{% else %}{{ r.athlete_name or "—" }}{% endif %}</td>
-                <td>{{ r.grade or "—" }}</td>
-                <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% else %}—{% endif %}</td>
+                <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
+                <td>{{ r.grade or " - " }}</td>
+                <td>{% if r.school %}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% else %} - {% endif %}</td>
                 <td>{{ r.display_result }}</td>
-                <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else "—" }}</td>
+                <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else " - " }}</td>
             </tr>
             {% endfor %}
         </tbody>

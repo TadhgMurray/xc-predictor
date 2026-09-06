@@ -94,7 +94,7 @@ def diffPct(difficulty, sport="XC"):
     """The template filter: '+4.1%', '0.0%', '-2.3%', or an em dash."""
     pct = relativePct(difficulty, sport)
     if pct is None:
-        return "—"
+        return " - "
     if abs(pct) < 0.05:
         return "0.0%"
     return f"{pct:+.1f}%"
