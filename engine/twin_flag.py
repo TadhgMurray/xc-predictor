@@ -169,7 +169,18 @@ def crossDateMeetsSql(table, sport):
             WHERE  meet_name IS NOT NULL AND meet_id IS NOT NULL
             GROUP  BY meet_id"""
     return f"""
-        WITH names AS ({names}),
+        WITH names0 AS ({names}),
+        -- ⚠ THE CAP IS APPLIED BEFORE THE SELF-JOIN. A name on 20,000 meet
+        --   ids ("dual meet") joined to itself is 400 million rows before
+        --   the date test sees one of them; several such names is an hour.
+        --   A real recurring meet has one id a year, a few at most, so a
+        --   name on more than MAX_NAME_IDS ids is generic and never joins.
+        names AS (
+            SELECT meet_id, mname
+            FROM   (SELECT meet_id, mname,
+                           count(*) OVER (PARTITION BY mname) AS k
+                    FROM   names0) x
+            WHERE  k <= {MAX_NAME_IDS}),
         sized AS (
             SELECT meet_id, count(*) AS n,
                    min(CASE WHEN date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
@@ -192,7 +203,8 @@ def crossDateMeetsSql(table, sport):
     """
 
 
-MAX_PAIRS = 12
+MAX_PAIRS = 12        # a meet paired with more within 21 days is a generic name
+MAX_NAME_IDS = 80     # a name on more meet ids than this, ever, is a generic name
 
 
 def prepareCrossDate(cur, table, sport):
@@ -280,18 +292,27 @@ def dupRaceCopySql(table, sport):
     key_b = "b.meet_id, b.div_id" + (", b.event_id" if ev else "")
     sel_a = "a.meet_id AS ma, a.div_id AS da" + (", a.event_id AS ea" if ev else "")
     sel_b = "b.meet_id AS mb, b.div_id AS db" + (", b.event_id AS eb" if ev else "")
+    # ⚠ ON TRACK THE KEY CARRIES THE EVENT, AND A KEY SEEN MORE THAN 8
+    #   TIMES IS A COMMON TIME, NOT A COPY (2026-09-06). A sprinter runs
+    #   11.2 twenty times a season; keyed on (person, feed, tenth) alone
+    #   that is 190 pairs per athlete and the pair join was heading for
+    #   the hour cross-date took. A copied race is the same event, and
+    #   two or three listings of it, never twenty.
+    kev = ", event_id" if ev else ""
+    kev_eq = " AND k.event_id IS NOT DISTINCT FROM r.event_id" if ev else ""
+    pev_eq = " AND b.event_id IS NOT DISTINCT FROM a.event_id" if ev else ""
     return f"""
         WITH keys AS (
-            SELECT person_id, source, round(time_seconds::numeric, 1) AS rt
+            SELECT person_id, source{kev}, round(time_seconds::numeric, 1) AS rt
             FROM   {table}
             {base_where}
-            GROUP  BY 1, 2, 3 HAVING count(*) > 1),
+            GROUP  BY 1, 2, 3{', 4' if ev else ''} HAVING count(*) BETWEEN 2 AND 8),
         rows_ AS (
-            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{ev},
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{', r.event_id' if ev else ''},
                    substr(r.date, 1, 10)::date AS d, k.rt
             FROM   {table} r
             JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
-                         AND k.rt = round(r.time_seconds::numeric, 1)
+                         AND k.rt = round(r.time_seconds::numeric, 1){kev_eq}
             WHERE  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
               AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000),
         size AS (
@@ -304,7 +325,7 @@ def dupRaceCopySql(table, sport):
             SELECT a.source, {sel_a}, {sel_b}, count(*) AS shared
             FROM   rows_ a
             JOIN   rows_ b ON b.person_id = a.person_id AND b.source = a.source
-                          AND b.rt = a.rt
+                          AND b.rt = a.rt{pev_eq}
                           AND ({key_b}) <> ({key_a})
                           AND abs(b.d - a.d) <= 90
             GROUP  BY 1, 2, 3, 4, 5{', 6, 7' if ev else ''}),
