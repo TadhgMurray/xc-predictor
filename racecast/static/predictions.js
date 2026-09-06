@@ -1475,6 +1475,10 @@ function renderFieldBlock(sumEl, gridEl) {
     `<strong>${kept}</strong> runners` +
     (f.when === "asran" ? ` \u2014 as raced` : ` \u2014 current squads`) +
     `</span>` +
+    (f.when === "asran" ? "" :
+      ` <button class="linkish" data-squads-all="1"
+          title="Every current runner of every team here onto its card">` +
+      `whole squads for every team</button>`) +
     /* ⚠ THE Show: CONTROL IS NOT HERE ANY MORE -- see renderViewSel. It was
          rendered per block, so with several divisions on screen there were
          several copies of one global setting and you had to scroll to reach
@@ -1553,6 +1557,9 @@ function renderFieldBlock(sumEl, gridEl) {
           </div>`).join("")}
         <button class="squad-btn" data-squad="${esc(t.school)}">
           + Add from squad</button>
+        <button class="squad-btn" data-squad-all="${esc(t.school)}"
+                title="Every current runner of ${esc(t.school)} onto this card">
+          + Add whole squad</button>
         <div class="squad-list hidden" data-squad-for="${esc(t.school)}"></div>
         <button class="squad-btn" data-anyone="${esc(t.school)}">
           + Add anyone</button>
@@ -2244,6 +2251,37 @@ async function addTeam(school, div) {
    and the squad does not change while the page is open. */
 const squadCache = new Map();
 
+/* One runner onto one team's card, with their rating (the rating is how
+   you judge whether adding them was right; null stays blank on purpose).
+   Shared by the add button, "+ Add whole squad" and "every team". */
+function addRunner(school, pid, name, rating) {
+  pid = String(pid);
+  const team = (state.field?.teams || []).find((t) => t.school === school);
+  if (team && !team.runners.some((r) => String(r.person_id) === pid)) {
+    team.runners.push({ person_id: pid, name: name, rating: rating, added: true });
+    team.dropped = (team.dropped || []).filter((r) => String(r.person_id) !== pid);
+    team.runners.sort((a, b) => (b.rating ?? -Infinity) - (a.rating ?? -Infinity));
+  }
+  state.removed.delete(pid);
+  state.added.push({ person_id: pid, name: name, school: school });
+  state.open.add(school);          // keep the card you are editing open
+}
+
+/* ★ A WHOLE SQUAD IN ONE CLICK (owner, 2026-09-06): every current runner
+   of the school not yet on the card. Returns how many joined. */
+async function addWholeSquad(school) {
+  const squad = await loadSquad(school);
+  const team = (state.field?.teams || []).find((t) => t.school === school);
+  const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
+  let n = 0;
+  for (const r of squad.runners || []) {
+    if (have.has(String(r.person_id))) continue;
+    addRunner(school, r.person_id, r.name, r.rating == null ? null : Number(r.rating));
+    n += 1;
+  }
+  return n;
+}
+
 async function loadSquad(school, gender) {
   /* ! THE GENDER IS PART OF THE CACHE KEY. A school has a boys team and a
        girls team; keying on the name alone would serve one race's squad to
@@ -2398,6 +2436,30 @@ document.addEventListener("click", (e) => {
   /* "Add from squad": everyone racing for this school, minus whoever is
      already on the card. Fetched on demand -- thirty teams is thirty requests
      if this were eager, and most cards are never opened. */
+  const sqa = e.target.closest("[data-squad-all]");
+  if (sqa) {
+    const school = sqa.dataset.squadAll;
+    sqa.disabled = true;
+    addWholeSquad(school).then((n) => {
+      setStatus(n ? `Added ${n} from ${school}.` : `${school}: everyone is already on the card.`, false);
+      renderField(); saveState();
+    }).catch((err) => { setStatus("Could not load the squad: " + err.message, true); });
+    return;
+  }
+  const all = e.target.closest("[data-squads-all]");
+  if (all) {
+    all.disabled = true;
+    const teams = (state.field?.teams || []).map((t) => t.school);
+    (async () => {
+      let n = 0;
+      for (const school of teams) {
+        try { n += await addWholeSquad(school); } catch (err) { /* one failing fetch does not stop the rest */ }
+      }
+      setStatus(`Added ${n} across ${teams.length} teams.`, false);
+      renderField(); saveState();
+    })();
+    return;
+  }
   const sq = e.target.closest("[data-squad]");
   if (sq) {
     const school = sq.dataset.squad;
@@ -2467,32 +2529,9 @@ document.addEventListener("click", (e) => {
        The first version only greyed the button and pushed an id -- so the
        roster on screen still showed seven while the request would send eight,
        and there was no way to see or undo what you had added. */
-    const school = add.dataset.school;
-    const pid = add.dataset.add;
-    const team = (state.field?.teams || []).find((t) => t.school === school);
-    if (team && !team.runners.some((r) => String(r.person_id) === String(pid))) {
-      /* ★ THE RATING COMES WITH THEM. It was hardcoded null, so an added
-         runner showed a blank where every other row has a number -- and the
-         rating is how you judge whether adding them was right. Empty string
-         means genuinely unrated (someone who has not raced this season),
-         which stays blank on purpose. */
-      const rating = add.dataset.rating;
-      team.runners.push({
-        person_id: pid,
-        name: add.dataset.name,
-        rating: rating === "" || rating === undefined ? null : Number(rating),
-        added: true,
-      });
-      team.dropped = (team.dropped || [])
-        .filter((r) => String(r.person_id) !== String(pid));
-      // Sorted like every other card: best first, unrated last. Appending
-      // would drop a 138 below a 132 purely because it was added later.
-      team.runners.sort((a, b) =>
-        (b.rating ?? -Infinity) - (a.rating ?? -Infinity));
-    }
-    state.removed.delete(pid);
-    state.added.push({ person_id: pid, name: add.dataset.name, school: school });
-    state.open.add(school);          // keep the card you are editing open
+    const rating = add.dataset.rating;
+    addRunner(add.dataset.school, add.dataset.add, add.dataset.name,
+              rating === "" || rating === undefined ? null : Number(rating));
     renderField();
     return;
   }

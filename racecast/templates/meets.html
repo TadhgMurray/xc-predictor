@@ -152,7 +152,8 @@
             <div class="field">
                 <label for="mf-u-{{ k }}">{{ k|replace('_', ' ')|capitalize }}</label>
                 <input id="mf-u-{{ k }}" name="{{ k }}" type="search" class="narrow unit-box"
-                       data-kind="{{ k }}" list="mf-ul-{{ k }}" autocomplete="off"
+                       data-kind="{{ k }}" data-level="{{ 'college' if k in ('division', 'region', 'conference') else 'hs' }}"
+                       list="mf-ul-{{ k }}" autocomplete="off"
                        placeholder="Any"
                        value="{{ (filters.units or {}).get(k, '') if filters else '' }}">
                 <datalist id="mf-ul-{{ k }}"></datalist>
@@ -190,7 +191,20 @@
     (function () {
       /* the unit pickers: each box's datalist follows its kind, the state
          and what is typed; /api/meet-units answers busiest first */
-      var state = document.getElementById("mf-state"), sport = document.getElementById("mf-sport");
+      var state = document.getElementById("mf-state"), sport = document.getElementById("mf-sport"),
+          level = document.getElementById("mf-level");
+      /* the boxes follow the level, like the rankings board: college kinds
+         for college, the school kinds for high school and middle school,
+         all of them when the level is any */
+      function showByLevel() {
+        var lv = level ? level.value : "";
+        document.querySelectorAll(".unit-box").forEach(function (box) {
+          var on = !lv || (lv === "college") === (box.dataset.level === "college");
+          box.closest(".field").hidden = !on;
+          if (!on) box.value = "";
+        });
+      }
+      if (level) { level.addEventListener("change", showByLevel); showByLevel(); }
       document.querySelectorAll(".unit-box").forEach(function (box) {
         var list = document.getElementById("mf-ul-" + box.dataset.kind), timer = null;
         function fill() {

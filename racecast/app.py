@@ -6133,6 +6133,23 @@ def api_report():
     try:
         with getConn() as conn:
             with conn.cursor() as cur:
+                # ★ THE TABLE IS CREATED HERE, ONCE (2026-09-06). Its DDL sat
+                #   in a comment above as a migration nobody ran, so every
+                #   report ever sent got "Could not save that" and was lost.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS issue_reports (
+                        report_id   bigserial PRIMARY KEY,
+                        created_at  timestamptz NOT NULL DEFAULT now(),
+                        kind        text NOT NULL,
+                        page        text,
+                        detail      text NOT NULL,
+                        email       text,
+                        remote_ip   inet,
+                        user_agent  text,
+                        resolved    boolean NOT NULL DEFAULT false,
+                        note        text)""")
+                cur.execute("""CREATE INDEX IF NOT EXISTS idx_issue_reports_open
+                               ON issue_reports (created_at DESC) WHERE NOT resolved""")
                 cur.execute("""
                     INSERT INTO issue_reports
                         (kind, page, detail, email, remote_ip, user_agent)
