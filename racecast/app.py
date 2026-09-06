@@ -1144,6 +1144,61 @@ def athlete(person_id):
             athlete = cur.fetchone()
             if athlete is None:
                 abort(404)
+            # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
+            #   boards rank -- so the number up top is one the athlete can go
+            #   find on /rankings. The old source, athlete_ratings, holds one
+            #   row per POOL with no ORDER BY, so fetchone() could show a
+            #   middle-school number over a college career depending on
+            #   physical row order. Most recent season = current form, which
+            #   is what a header means; the note under it says which season.
+            try:
+                cur.execute("""
+                    SELECT mean_rating, sport, pool, year, n_races,
+                           state, school
+                    FROM   athlete_season
+                    WHERE  person_id = %s
+                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                              n_races DESC
+                    LIMIT  1
+                """, (person_id,))
+                season_rating = cur.fetchone()
+            except psycopg2.errors.UndefinedTable:
+                # A database that has never run build_ranking_results.
+                conn.rollback()
+                season_rating = None
+
+            # ★ THE HEADER'S TEAM IS THE SEASON THE HEADER RATES, from the same
+            #   row (owner, 2026-09-06: Liam Lucas headed "Loyola Blakefield"
+            #   over a Tufts season, Tufts' chips and Tufts' ranks; two
+            #   queries with the same ORDER BY can still disagree on a tie,
+            #   the same year in two pools). One row, one school. An
+            #   unattached season falls back to the latest season with a
+            #   team; a career with no team keeps the scraped value.
+            def _isTeam(name):
+                n = (name or "").strip().lower()
+                return bool(n) and not n.startswith("unattached") and n not in (
+                    "unat", "independent", "individual", "no team", "none", "n/a")
+            if season_rating and _isTeam(season_rating.get("school")):
+                athlete["school"] = season_rating["school"]
+            else:
+                try:
+                    cur.execute("""
+                        SELECT school FROM athlete_season
+                        WHERE  person_id = %s AND school IS NOT NULL
+                          AND  lower(school) NOT LIKE 'unattached%%'
+                          AND  lower(school) NOT IN ('unat', 'independent',
+                                                     'individual', 'no team',
+                                                     'none', 'n/a', '')
+                        ORDER  BY last_race DESC NULLS LAST, year DESC,
+                                  n_races DESC
+                        LIMIT  1
+                    """, (person_id,))
+                    recent = cur.fetchone()
+                    if recent and recent["school"]:
+                        athlete["school"] = recent["school"]
+                except Exception:                            # noqa: BLE001
+                    conn.rollback()                          # mid-rebuild: keep scraped
+
             # ★ THE HEADER'S TEAM IS THE MOST RECENT SEASON'S (owner,
             #   2026-09-04): the season table already holds the school each
             #   season was mostly raced for; the scraped `athletes.school`
@@ -1190,29 +1245,6 @@ def athlete(person_id):
             #   athlete's own latest season, which is what the boards rank
             #   and filter; the school-name lookup is only the fallback.
             units = unitsForPerson(cur, person_id, fallback=units, borrow=_borrow)
-
-            # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
-            #   boards rank -- so the number up top is one the athlete can go
-            #   find on /rankings. The old source, athlete_ratings, holds one
-            #   row per POOL with no ORDER BY, so fetchone() could show a
-            #   middle-school number over a college career depending on
-            #   physical row order. Most recent season = current form, which
-            #   is what a header means; the note under it says which season.
-            try:
-                cur.execute("""
-                    SELECT mean_rating, sport, pool, year, n_races,
-                           state, school
-                    FROM   athlete_season
-                    WHERE  person_id = %s
-                    ORDER  BY last_race DESC NULLS LAST, year DESC,
-                              n_races DESC
-                    LIMIT  1
-                """, (person_id,))
-                season_rating = cur.fetchone()
-            except psycopg2.errors.UndefinedTable:
-                # A database that has never run build_ranking_results.
-                conn.rollback()
-                season_rating = None
 
             # The season rank line under the stat strip -- see buildRankLine.
             rank_line = (buildRankLine(cur, person_id, season_rating)
