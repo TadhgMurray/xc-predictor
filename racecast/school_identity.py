@@ -67,6 +67,14 @@ def loadLabels(conn_factory, force=False):
                 for sc, st, share in cur.fetchall():
                     clusters.setdefault(sc, {})[st] = float(share or 0.0)
                 _LABELS["clusters"] = clusters
+                # ★ THE COLLEGE DIRECTORY (211), for a college season's label
+                #   (2026-09-06: an Amherst College runner's seasons read
+                #   "Amherst (WI)" -- the name's biggest cluster is a
+                #   Wisconsin high school). Keyed by the directory's own
+                #   normalised name.
+                if _tableExists(cur, "college_directory"):
+                    cur.execute("SELECT name_norm, state FROM college_directory")
+                    _LABELS["college"] = {r[0]: r[1] for r in cur.fetchall()}
     except Exception:                    # noqa: BLE001 -- labels are optional
         pass
     _LABELS["loaded"] = True
@@ -100,6 +108,32 @@ def schoolLabelIn(school, state):
         if share is not None and share >= CONTEXT_MIN_SHARE:
             return f"{school} ({state})"
     return schoolLabel(school)
+
+
+def _collegeState(school):
+    college = _LABELS.get("college")
+    if not college or not school:
+        return None
+    try:
+        from build_college_directory import normName
+    except ImportError:                  # scripts/ not on the path: no directory
+        return None
+    return college.get(normName(school))
+
+
+def schoolLabelFor(school, pool, state=None):
+    """The label for a SEASON: a college-pooled season of a name the
+    college directory knows gets the college's state ("Amherst (MA)"),
+    whatever the name's biggest cluster is; anything else is
+    schoolLabelIn(school, state). The template filter for season lines."""
+    if not school:
+        return school
+    p = (pool or "").lower()
+    if p.startswith("college") or p.startswith("pro"):
+        st = _collegeState(school)
+        if st:
+            return f"{school} ({st})"
+    return schoolLabelIn(school, state)
 
 
 def stateFor(school, preferred=None):

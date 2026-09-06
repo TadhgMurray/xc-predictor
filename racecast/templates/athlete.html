@@ -173,7 +173,7 @@
             {{ year }} {{ sport }}
             <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
-        <p class="season-meta">{% if season.school|is_team %}<a href="/school/{{ season.school|urlencode }}">{{ season.school|school_label }}</a>{% else %}{{ season.school|school_label }}{% endif %} · Grade {{ season.grade|grade_label(season.pool) }}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
+        <p class="season-meta">{% if season.school|is_team %}<a href="/school/{{ season.school|urlencode }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %} · Grade {{ season.grade|grade_label(season.pool) }}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
             <thead>
                 <tr>

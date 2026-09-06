@@ -224,6 +224,7 @@ import grade_label as _grade_label
 app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
 app.template_filter("school_label_in")(school_identity.schoolLabelIn)
+app.template_filter("school_label_for")(school_identity.schoolLabelFor)
 
 
 @app.template_filter("with_year")
