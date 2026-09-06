@@ -4311,8 +4311,8 @@ def debug_athlete(person_id):
                 out.append("\nresults_tf by feed and school (whole career):")
                 for r in cur.fetchall():
                     out.append(f"  n={r['n']:<5} {r['source']:<6} school={r['school']!r}")
-            cur.execute("SELECT school, state FROM athletes WHERE person_id = %s", (person_id,))
-            out.append("\nathletes rows: " + "; ".join(f"{r['school']!r} {r['state']}" for r in cur.fetchall()))
+            cur.execute("SELECT school FROM athletes WHERE person_id = %s", (person_id,))
+            out.append("\nathletes rows: " + "; ".join(f"{r['school']!r}" for r in cur.fetchall()))
     return Response("\n".join(out) + "\n", mimetype="text/plain")
 
 
