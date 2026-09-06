@@ -376,6 +376,16 @@ def isProTeam(school):
     return _normSchool(school) in _PRO_TEAMS
 
 
+def _gradeLevel(grade):
+    """'10' -> 'hs', '3' -> 'elem', 'JR-3' -> whatever the parser says,
+    None when unreadable. The same parser poolFor uses."""
+    try:
+        import normalize_distance as nd
+        return nd.GRADE_TO_LEVEL.get(nd.normalizeGrade(grade))
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def resolvePool(grade, gender, source, school, sport,
                 season_level=None, grade_untrusted=False, is_pro=False,
                 season=None,
@@ -483,8 +493,23 @@ def resolvePool(grade, gender, source, school, sport,
     if isProTeam(school) or isProPerson(person_id, sport, season):
         is_pro = True
 
+    # ★ A SEASON RACED AT COLLEGE OR PRO FIELDS IS A COLLEGE OR PRO SEASON,
+    #   WHATEVER THE GRADE SAYS (owner, 2026-09-06: "if a person is on a
+    #   college team, pool them as college"). season_level is the unanimous
+    #   level of every race the athlete ran that year (season_level.py; only
+    #   unanimous verdicts are loaded). Nobody spends a whole season in
+    #   college fields as a high schooler, so above hs the field outranks
+    #   the grade -- an Amherst College runner's "SO-2" read as grade 10
+    #   against a name the level map calls a Wisconsin high school, and
+    #   his "JR-3" season was 'contradicted' and unrated. Below college
+    #   nothing changes: the ms/hs call stays the grade's (Luke Morelli,
+    #   stage 1 below), because eighth graders do race varsity.
+    field = fixed_level or season_level
+    above_hs = field in ("college", "pro")
+    if field == "pro":
+        is_pro = True                     # repooled below, as pro_flag would
     if grade_verdict in ("no_evidence", "contradicted", "thin_field",
-                         "lone_word"):
+                         "lone_word") and not above_hs:
         return None
 
     if fixed_grade is not None:
@@ -511,8 +536,16 @@ def resolvePool(grade, gender, source, school, sport,
     #   varsity", and they do -- but the pool is meant to say what YEAR an
     #   athlete is in, not which race they entered. A grade 8 varsity runner
     #   is still a grade 8.
-    season_for_pool = None if (grade is not None and not grade_untrusted) \
-                      else season_level
+    # ! ONE STEP ONLY. A third grader's Junior Olympic season carries the
+    #   college bit (arbitrateLevel's guard 1: 1,315 of them were pooled
+    #   college once); the field outranks a HIGH SCHOOL grade or no grade,
+    #   never an elementary or middle school one.
+    college_season = (field == "college"
+                      and _gradeLevel(grade) in (None, "hs", "college"))
+    season_for_pool = None if (grade is not None and not grade_untrusted
+                               and not college_season) else season_level
+    if college_season and grade is not None and not grade_untrusted:
+        grade_untrusted = True            # the field decides; see above
     pool = poolfor(None if grade_untrusted else grade,
                    gender, source, school, season_level=season_for_pool)
     if pool is None:
@@ -558,7 +591,7 @@ def resolvePool(grade, gender, source, school, sport,
     #   grade, so this is pro" is a promotion by construction, and blocking it
     #   would leave the athlete in the middle school pool the fix exists to
     #   remove them from. Evidence outranks a safeguard against guessing.
-    if (grade_untrusted and grade is not None
+    if (grade_untrusted and grade is not None and not college_season
             and fixed_grade is None and fixed_level is None):
         trusted = poolfor(grade, gender, source, school, season_level=None)
         was = _LEVEL_RANK.get(_levelOf(trusted))

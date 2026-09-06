@@ -1601,7 +1601,7 @@ def get_races(cur, person_id):
         -- ================= TF half: results_tf + meets_tf ===========
         SELECT r.date,
                'TF'                          AS sport,
-               m.meet_name                   AS meet,
+               COALESCE(m.meet_name, mt.meet_name) AS meet,
                r.event_short                 AS event,
                r.time_seconds                AS time_raw,     -- same slot as XC
                r.result_id                   AS result_id,    -- same slot as XC
@@ -1666,9 +1666,23 @@ def get_races(cur, person_id):
               AND  m.source = r.source
             LIMIT  1
         ) m ON TRUE
+        -- ★ THE tfrrs MEET'S OWN NAME AND VENUE (owner, 2026-09-06: "we
+        --   have the data"). A tfrrs row whose feed has no meets_tf coverage
+        --   rendered as "Meet results ->" with no difficulty; meets_tfrrs
+        --   carries the name for 60k track meets and the geometry stamp the
+        --   venue id, which is the difficulty cell's key.
+        LEFT JOIN LATERAL (
+            SELECT mt.meet_name, g.location_id, g.is_indoor
+            FROM   meets_tfrrs mt
+            LEFT JOIN tfrrs_meet_geometry g
+                   ON g.meet_id = mt.meet_id AND g.sport = 'TF'
+            WHERE  r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+              AND  mt.sport = 'TF'
+            LIMIT  1
+        ) mt ON TRUE
         LEFT JOIN course_difficulties cd
-               ON cd.course_name = 'TF:loc:' || m.location_id::text ||
-                  CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
+               ON cd.course_name = 'TF:loc:' || COALESCE(m.location_id, mt.location_id)::text ||
+                  CASE WHEN COALESCE(m.is_indoor, mt.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
         {day_join_tf}
         WHERE r.person_id = %(pid)s
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
