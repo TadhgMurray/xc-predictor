@@ -40,6 +40,7 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
   stale flag behind.
 """
 import argparse
+import time
 import sys
 
 sys.path.insert(0, "scripts")
@@ -107,21 +108,39 @@ def twinPersonSql(table, sport):
 
 
 def dupSameFeedSql(table, sport):
-    """The later result_id of an exact duplicate inside one feed."""
+    """The later result_id of an exact duplicate inside one feed.
+
+    ! A GROUP, NOT A WINDOW (2026-09-06, "make it faster"). row_number()
+      over seven columns sorted the whole table; grouping the same seven
+      columns is one hash pass, and only keys that occur twice come out.
+      The row that survives is the lowest result_id, as before."""
     event = ", event_id" if sport == "TF" else ""
     return f"""
-        SELECT result_id FROM (
-            SELECT result_id,
-                   row_number() OVER (
-                       PARTITION BY person_id, source, meet_id, div_id{event},
-                                    date, round(time_seconds::numeric, 1)
-                       ORDER BY result_id) AS rn
+        WITH keys AS (
+            SELECT person_id, source, meet_id, div_id{event}, date,
+                   round(time_seconds::numeric, 1) AS rt,
+                   min(result_id) AS keep
             FROM   {table}
             WHERE  person_id IS NOT NULL AND time_seconds IS NOT NULL
               AND  time_seconds < 100000
-        ) s
-        WHERE rn > 1
+            GROUP  BY person_id, source, meet_id, div_id{event}, date,
+                      round(time_seconds::numeric, 1)
+            HAVING count(*) > 1)
+        SELECT r.result_id
+        FROM   {table} r
+        JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
+                     AND k.meet_id IS NOT DISTINCT FROM r.meet_id
+                     AND k.div_id IS NOT DISTINCT FROM r.div_id
+                     {'AND k.event_id IS NOT DISTINCT FROM r.event_id' if event else ''}
+                     AND k.date IS NOT DISTINCT FROM r.date
+                     AND k.rt = round(r.time_seconds::numeric, 1)
+        WHERE  r.result_id <> k.keep
+          AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
     """
+
+
+def _nameNorm(col):
+    return f"lower(regexp_replace({col}, '[^A-Za-z0-9]+', ' ', 'g'))"
 
 
 def dupCrossDateSql(table, sport):
@@ -131,37 +150,66 @@ def dupCrossDateSql(table, sport):
     the same date under two ids. The copy inside the BIGGER meet entry
     survives (the real listing has the whole field); ties go to the lower
     result_id. XC reads the name from anet's meets; tfrrs XC twins are
-    the cross-feed rules' business."""
+    the cross-feed rules' business.
+
+    ★ SMALL BEFORE IT IS JOINED (2026-09-06). The old shape normalised the
+      meet name on every result row, joined track rows to the 14M-row
+      meets_tf on (div, event), and self-joined the whole table on a text
+      key: hours, and run13 never got out of it. Now the name is
+      normalised once per MEET (658k, not 27M), only names listed under
+      two or more meet ids can hold a cross-date copy, and only rows whose
+      (person, feed, name, place, tenth) occurs twice reach the self-join.
+      Same answer; the self-join sees a few per cent of the rows."""
     if sport == "XC":
-        name_join = ("JOIN meets m ON m.div_id = r.div_id "
-                     "AND r.source = 'anet'")
+        names = f"""
+            SELECT meet_id, min({_nameNorm('meet_name')}) AS mname
+            FROM   meets
+            WHERE  meet_name IS NOT NULL AND meet_id IS NOT NULL
+            GROUP  BY meet_id"""
+        feed = "AND r.source = 'anet'"
     else:
-        name_join = ("JOIN meets_tf m ON m.div_id = r.div_id "
-                     "AND m.event_id = r.event_id")
+        names = f"""
+            SELECT meet_id, min({_nameNorm('meet_name')}) AS mname
+            FROM   meets_tf
+            WHERE  meet_name IS NOT NULL AND meet_id IS NOT NULL
+            GROUP  BY meet_id"""
+        feed = ""
     return f"""
-        WITH sized AS (
-            SELECT meet_id, count(*) AS n FROM {table}
-            WHERE  meet_id IS NOT NULL GROUP BY meet_id),
+        WITH names AS ({names}),
+        twice AS (
+            SELECT n.meet_id, n.mname
+            FROM   names n
+            JOIN  (SELECT mname FROM names GROUP BY mname HAVING count(*) > 1) t
+                   ON t.mname = n.mname),
+        sized AS (
+            SELECT r.meet_id, count(*) AS n
+            FROM   {table} r JOIN twice t ON t.meet_id = r.meet_id
+            GROUP  BY r.meet_id),
         cand AS (
             SELECT r.result_id, r.person_id, r.source, s.n,
                    CASE WHEN r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
                         THEN substr(r.date, 1, 10)::date END          AS d,
-                   lower(regexp_replace(m.meet_name, '[^A-Za-z0-9]+', ' ', 'g'))
-                                                                      AS mname,
-                   r.place, round(r.time_seconds::numeric, 1)         AS rt
+                   t.mname, r.place, round(r.time_seconds::numeric, 1) AS rt
             FROM   {table} r
-            {name_join}
+            JOIN   twice t ON t.meet_id = r.meet_id
             JOIN   sized s ON s.meet_id = r.meet_id
             WHERE  r.person_id IS NOT NULL AND r.place > 0
               AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
-              AND  m.meet_name IS NOT NULL)
+              {feed}),
+        keys AS (
+            SELECT person_id, source, mname, place, rt
+            FROM   cand GROUP BY 1, 2, 3, 4, 5 HAVING count(*) > 1),
+        c2 AS (
+            SELECT c.* FROM cand c
+            JOIN   keys k ON k.person_id = c.person_id AND k.source = c.source
+                         AND k.mname = c.mname AND k.place = c.place AND k.rt = c.rt)
         SELECT DISTINCT a.result_id
-        FROM   cand a
-        JOIN   cand b ON b.person_id = a.person_id AND b.source = a.source
-                     AND b.mname = a.mname AND b.place = a.place
-                     AND b.rt = a.rt AND b.result_id <> a.result_id
-                     AND a.d IS NOT NULL AND b.d IS NOT NULL
-                     AND abs(b.d - a.d) <= 21
+        FROM   c2 a
+        JOIN   c2 b ON b.person_id = a.person_id AND b.source = a.source
+                   AND b.mname = a.mname AND b.place = a.place
+                   AND b.rt = a.rt AND b.result_id <> a.result_id
+                   AND a.d IS NOT NULL AND b.d IS NOT NULL
+                   AND abs(b.d - a.d) <= 21
         WHERE  b.n > a.n OR (b.n = a.n AND b.result_id < a.result_id)
     """
 
@@ -176,26 +224,45 @@ def dupRaceCopySql(table, sport):
     the later date; on the same date the smaller division (the bigger has
     the whole field), then the higher (meet_id, div_id). EVERY row of the
     loser is flagged, matched or not. A prelim and its final share people
-    but not times, so they never reach 90%."""
+    but not times, so they never reach 90%.
+
+    ★ THE SELF-JOIN SEES ONLY REPEATED KEYS (2026-09-06). A (person, feed,
+      tenth) that occurs once in the whole table cannot pair with
+      anything, and that is nearly every row; one hash pass finds the
+      keys that occur twice, and only their rows are joined. The division
+      sizes and the final flagging still read every row, as they must."""
     ev = ", event_id" if sport == "TF" else ""
-    key_a = "a.meet_id, a.div_id" + (", a.event_id" if ev else "")
-    key_b = "b.meet_id, b.div_id" + (", b.event_id" if ev else "")
-    return f"""
-        WITH rows_ AS (
-            SELECT result_id, person_id, source, meet_id, div_id{ev},
-                   substr(date, 1, 10)::date AS d,
-                   round(time_seconds::numeric, 1) AS rt
-            FROM   {table}
+    ev_eq = " AND l.event_id = r.event_id" if ev else ""
+    base_where = f"""
             WHERE  person_id IS NOT NULL AND time_seconds IS NOT NULL
               AND  time_seconds < 100000
-              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'"""
+    key_a = "a.meet_id, a.div_id" + (", a.event_id" if ev else "")
+    key_b = "b.meet_id, b.div_id" + (", b.event_id" if ev else "")
+    sel_a = "a.meet_id AS ma, a.div_id AS da" + (", a.event_id AS ea" if ev else "")
+    sel_b = "b.meet_id AS mb, b.div_id AS db" + (", b.event_id AS eb" if ev else "")
+    return f"""
+        WITH keys AS (
+            SELECT person_id, source, round(time_seconds::numeric, 1) AS rt
+            FROM   {table}
+            {base_where}
+            GROUP  BY 1, 2, 3 HAVING count(*) > 1),
+        rows_ AS (
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{ev},
+                   substr(r.date, 1, 10)::date AS d, k.rt
+            FROM   {table} r
+            JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
+                         AND k.rt = round(r.time_seconds::numeric, 1)
+            WHERE  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+              AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000),
         size AS (
-            SELECT source, meet_id, div_id{ev}, count(*) AS n, min(d) AS d
-            FROM   rows_ GROUP BY source, meet_id, div_id{ev}),
+            SELECT source, meet_id, div_id{ev}, count(*) AS n,
+                   min(substr(date, 1, 10)::date) AS d
+            FROM   {table}
+            {base_where}
+            GROUP  BY source, meet_id, div_id{ev}),
         pair AS (
-            SELECT a.source, {key_a.replace('a.meet_id', 'a.meet_id AS ma').replace('a.div_id', 'a.div_id AS da').replace('a.event_id', 'a.event_id AS ea')},
-                   {key_b.replace('b.meet_id', 'b.meet_id AS mb').replace('b.div_id', 'b.div_id AS db').replace('b.event_id', 'b.event_id AS eb')},
-                   count(*) AS shared
+            SELECT a.source, {sel_a}, {sel_b}, count(*) AS shared
             FROM   rows_ a
             JOIN   rows_ b ON b.person_id = a.person_id AND b.source = a.source
                           AND b.rt = a.rt
@@ -212,9 +279,10 @@ def dupRaceCopySql(table, sport):
                     OR (sa.d = sb.d AND (sa.n < sb.n
                         OR (sa.n = sb.n AND (p.ma, p.da) > (p.mb, p.db))))))
         SELECT DISTINCT r.result_id
-        FROM   rows_ r
+        FROM   {table} r
         JOIN   loser l ON l.source = r.source AND l.meet_id = r.meet_id
-                      AND l.div_id = r.div_id{' AND l.event_id = r.event_id' if ev else ''}
+                      AND l.div_id = r.div_id{ev_eq}
+        {base_where}
     """
 
 
@@ -231,6 +299,7 @@ def build(conn, write=False):
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
         for sport, table in TABLES.items():
             for reason, fn in RULES:
+                t0 = time.time()
                 if write:
                     # earlier reasons win the primary key: a row that is a
                     # cross-feed twin is filed as one, not as a feed dup
@@ -243,7 +312,8 @@ def build(conn, write=False):
                 else:
                     cur.execute(f"SELECT count(*) FROM ({fn(table, sport)}) s")
                     n = cur.fetchone()[0]
-                print(f"  [{sport}] {reason:<14} {n:>12,}", flush=True)
+                print(f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)",
+                      flush=True)
         if write:
             cur.execute("DROP TABLE result_twin")
             cur.execute("ALTER TABLE result_twin_new RENAME TO result_twin")
