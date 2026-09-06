@@ -3196,6 +3196,7 @@ def race_tf(meet_id, event_id, div_id):
 
     return render_template("race_tf.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
+                           college=(race_src == "tfrrs"),
                            header=header,
                            results=results,
                            sections=sections,
@@ -3665,7 +3666,10 @@ def meet_tf(meet_id):
                            school=school, school_events=school_events,
                            loose=loose, anchor=anchor,
                            meet_date=meet_date, scored=scored,
-                           alt_idx=alt_idx, other_sources=other_sources)
+                           alt_idx=alt_idx, other_sources=other_sources,
+                           # a tfrrs meet is a college meet: its schools are
+                           # labelled by the college directory (235b)
+                           college=(src == "tfrrs"))
 
 
 @app.route("/meet/tf/<int:meet_id>/compiled")

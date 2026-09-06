@@ -44,5 +44,5 @@ def test_a_pro_field_is_a_pro_season():
 
 def test_the_athlete_page_names_a_tfrrs_track_meet():
     src = open(os.path.join(_ROOT, "racecast", "app.py"), encoding="utf-8").read()
-    assert "COALESCE(m.meet_name, mt.meet_name) AS meet" in src
+    assert "COALESCE(NULLIF(btrim(m.meet_name), ''), mt.meet_name) AS meet" in src
     assert "FROM   meets_tfrrs mt" in src and "tfrrs_meet_geometry g" in src

@@ -75,7 +75,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else "—" }}</td>
-                <td>{{ row.school|school_label_in(header.state) if row.school else "—" }}</td>
+                <td>{{ row.school|school_label_for('college' if college else none, header.state) if row.school else "—" }}</td>
                 <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
                 {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else "—" }}</td>{% endif %}
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>

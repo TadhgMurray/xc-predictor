@@ -36,10 +36,21 @@ _FILL = """
       AND  mt.meet_name IS NOT NULL
 """
 
-# ! PER SOURCE. The first census joined on the key alone and found nothing
-#   missing: an anet row on the same (div, meet, event) counted as present.
+# ★ THE DIVISION THAT WAS NEVER THERE (2026-09-06). Every tfrrs track row --
+#   32.9M, all 60,463 meets -- had div_id NULL: the scrape has no division
+#   concept and the insert never wrote one. meets_tf is keyed (div, meet,
+#   event), so no tfrrs row could ever join it: no name, no venue cell, no
+#   indoor flag, no banking, no altitude, for the whole college track corpus.
+#   Division 0 is "the meet's one division". The column's default becomes 0
+#   so future scrapes land there without a scraper change; the rows already
+#   stored are moved once (a seq scan finds none on later runs).
+_DEFAULT = "ALTER TABLE results_tf ALTER COLUMN div_id SET DEFAULT 0"
+_ANY_NULL = "SELECT 1 FROM results_tf WHERE source = 'tfrrs' AND div_id IS NULL LIMIT 1"
+_MOVE = "UPDATE results_tf SET div_id = 0 WHERE source = 'tfrrs' AND div_id IS NULL"
+
+# ! PER SOURCE. An anet row on the same (div, meet, event) is not "present":
 #   meets_tf's key has no source, so a tfrrs meet-event under a key an anet
-#   row holds can NEVER have its own row -- the pages fall back to
+#   row holds can never have its own row -- the pages fall back to
 #   _tfrrsMeetMeta for those (app.py); the rest are landed here.
 _MISSING = """
     SELECT DISTINCT r.div_id, r.meet_id, r.event_id
@@ -56,17 +67,23 @@ _COLLIDING = """
                      AND a.event_id = x.event_id AND a.source <> 'tfrrs'
 """
 
+# One pass over the tfrrs rows, grouped to the meet-event: the name from
+# meets_tfrrs, the venue from the stamp, the event's own label from its rows.
 _INSERT = """
     INSERT INTO meets_tf (div_id, meet_id, event_id, source, id_system, meet_name,
-                          track_type, track_length, is_indoor, location_id)
-    SELECT x.div_id, x.meet_id, x.event_id, 'tfrrs',
-           (SELECT min(id_system) FROM results_tf r
-             WHERE r.source = 'tfrrs' AND r.div_id = x.div_id
-               AND r.meet_id = x.meet_id AND r.event_id = x.event_id),
-           mt.meet_name, g.track_type, g.track_length, g.is_indoor, g.location_id
-    FROM  (""" + _MISSING + """) x
-    LEFT JOIN meets_tfrrs mt ON mt.meet_id = x.meet_id AND mt.sport = 'TF'
-    LEFT JOIN tfrrs_meet_geometry g ON g.meet_id = x.meet_id AND g.sport = 'TF'
+                          event_short, track_type, track_length, is_indoor, location_id)
+    SELECT r.div_id, r.meet_id, r.event_id, 'tfrrs', min(r.id_system),
+           mt.meet_name, min(r.event_short),
+           g.track_type, g.track_length, g.is_indoor, g.location_id
+    FROM   results_tf r
+    LEFT JOIN meets_tf m ON m.div_id = r.div_id AND m.meet_id = r.meet_id
+                        AND m.event_id = r.event_id AND m.source = 'tfrrs'
+    LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND mt.sport = 'TF'
+    LEFT JOIN tfrrs_meet_geometry g ON g.meet_id = r.meet_id AND g.sport = 'TF'
+    WHERE  r.source = 'tfrrs' AND r.div_id IS NOT NULL AND r.event_id IS NOT NULL
+      AND  m.div_id IS NULL
+    GROUP  BY r.div_id, r.meet_id, r.event_id, mt.meet_name,
+              g.track_type, g.track_length, g.is_indoor, g.location_id
     ON CONFLICT (div_id, meet_id, event_id) DO NOTHING
 """
 
@@ -76,6 +93,14 @@ def main():
     ap.add_argument("--apply", action="store_true", help="write (default: census)")
     a = ap.parse_args()
     with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*), count(DISTINCT meet_id) FROM results_tf "
+                    "WHERE source = 'tfrrs' AND div_id IS NULL")
+        null_rows, null_meets = cur.fetchone()
+        cur.execute("SELECT count(*) FROM meets_tf WHERE div_id = 0 AND source <> 'tfrrs'")
+        zero_anet = cur.fetchone()[0]
+        print(f"  tfrrs track rows with no division: {null_rows:,} in {null_meets:,} meets "
+              f"(moved to division 0 on --apply)")
+        print(f"  anet rows already holding division 0 in meets_tf: {zero_anet:,}")
         cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND NULLIF(btrim(meet_name), '') IS NULL")
         nameless = cur.fetchone()[0]
         cur.execute(f"SELECT count(*) FROM ({_MISSING}) s")
@@ -93,6 +118,13 @@ def main():
             print("  (census only; --apply writes)")
             return
         t0 = time.time()
+        cur.execute(_DEFAULT)
+        cur.execute(_ANY_NULL)
+        if cur.fetchone():
+            cur.execute(_MOVE)
+            print(f"  moved {cur.rowcount:,} tfrrs rows to division 0 ({time.time() - t0:.0f}s)")
+            conn.commit()
+            t0 = time.time()
         cur.execute(_FILL)
         print(f"  named {cur.rowcount:,} existing tfrrs rows ({time.time() - t0:.0f}s)")
         t0 = time.time()
