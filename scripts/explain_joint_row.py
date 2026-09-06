@@ -58,6 +58,34 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 #            curve_anchored (any may be absent); j -- row index in D.
 # Output:    dict of the terms; `effect` is what the rating divides the time
 #            by (in log), `left_out` the sum of what it does not.
+_gain_cache = {}
+
+
+def sportGainAt(D, j, rating):
+    """The sport_gain shift for this row's pool at this rating, 0 without
+    the table or the pool."""
+    if "map" not in _gain_cache:
+        _gain_cache["map"] = {}
+        try:
+            from database import getConn
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT pool, anchor_rating, log_shift FROM sport_gain "
+                            "WHERE sport = 'TF' ORDER BY pool, anchor_rating")
+                for pool, a, v in cur.fetchall():
+                    _gain_cache["map"].setdefault(pool, []).append((float(a), float(v)))
+        except Exception:                                    # noqa: BLE001
+            pass
+    names = getattr(D, "pool_names", None)
+    if names is None or D.pool_row is None:
+        return 0.0
+    pts = _gain_cache["map"].get(names[int(D.pool_row[j])])
+    if not pts:
+        return 0.0
+    xs = [a for a, _v in pts]
+    ys = [v for _a, v in pts]
+    return float(np.interp(rating, xs, ys))
+
+
 def rowTerms(D, npz, j):
     cell = int(D.cell[j])
     ath = int(D.athlete[j])
@@ -77,12 +105,20 @@ def rowTerms(D, npz, j):
     dist = 0.0
     if getattr(D, "n_e", 0) and "dist_offset" in npz:
         dist = float(D.e_w[j]) * float(npz["dist_offset"][int(D.e_idx[j])])
+    alt, alt_km = 0.0, 0.0
     if getattr(D, "n_k", 0) and "altitude_coef" in npz:
-        dist += float(npz["altitude_coef"][int(D.group_row[j])]) * float(D.alt[j])
+        alt_km = float(D.alt[j])
+        alt = float(npz["altitude_coef"][int(D.group_row[j])]) * alt_km
+    # the winter gain per band (194): the go-live's shift on track rows,
+    # from sport_gain, interpolated at the season rating
+    gain = 0.0
+    if int(D.group_row[j]) == 1 and np.isfinite(rating):
+        gain = sportGainAt(D, j, rating)
     out = {"cell": cell, "athlete": ath, "delta": delta,
            "delta_anchored": anchored, "rating_season": rating,
            "h": h, "amp": amp, "u": u, "u_full": u_full, "dist": dist,
-           "effect": h * (delta + u) + dist,        # u tilted too (156)
+           "alt": alt, "alt_km": alt_km, "gain": gain,
+           "effect": h * (delta + u) + dist + alt + gain,   # u tilted too (156)
            "curve": 0.0, "rust": 0.0, "beta": 0.0}
     if D.has_curve and "curve" in npz:
         # the solver's own row basis: full grid, pinned knot at zero, its
@@ -149,7 +185,8 @@ def main():
     cols = rj.sortRowsByAthlete(cols)
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
     print("[explain] rebuilding the design (the solve's own row order)")
-    D, _athlete_pool, pool_names = rj.buildDesign(cols, keep)
+    D, _athlete_pool, pool_names = rj.buildDesign(cols, keep, altitude=True)
+    D.pool_names = list(pool_names)
     npz = _loadNpz(args.npz)
     if npz["delta"].size != D.n_cell or npz["race_effect"].size != D.n_race:
         sys.exit(f"[explain] {args.npz} does not fit this pack "
@@ -216,8 +253,10 @@ def main():
         print(f"   h {t['h']:.3f} at season rating {t['rating_season']:.1f}   "
               f"race-day u {t['u']:+.4f}"
               f"{(' (solve: ' + format(t['u_full'], '+.4f') + ', CAPPED -- a broken sheet, issue 187)') if abs(t['u_full'] - t['u']) > 1e-9 else ''}"
-              f"   track distance offset "
-              f"{t['dist']:+.4f}   -> applied to the time: "
+              f"   track distance offset {t['dist']:+.4f}"
+              f"{('   altitude ' + format(t['alt'], '+.4f') + ' (' + format(t['alt_km'], '.2f') + ' km above ' + str(int(js.ALT_FLOOR_M)) + ' m)') if t['alt_km'] else ''}"
+              f"{('   winter gain shift ' + format(t['gain'], '+.4f')) if t['gain'] else ''}"
+              f"   -> applied to the time: "
               f"{t['effect']:+.4f} in log = x{np.exp(-t['effect']):.4f}, "
               f"i.e. {100.0 * np.expm1(t['effect']):+.1f}% against the "
               f"column's {disp:+.1f}%")
