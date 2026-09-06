@@ -1026,19 +1026,35 @@ def buildRankLine(cur, person_id, season):
         args = unitArgs(kind, raw)
         f, err = parseFilters(MultiDict(args))
         if err:
+            print(f"rank_line: {kind} filters refused ({err})", flush=True)
             return None
+        plain = cur.connection.cursor()
         try:
-            with cur.connection.cursor() as plain:
-                # parseFilters does not know about units; the fold turns
-                # the unit into the school list the board already speaks
-                if applyUnitFilters(plain, f, args):
-                    return None
-                return rankOf(plain, f, person_id)
+            # parseFilters does not know about units; the fold turns
+            # the unit into the school list the board already speaks
+            uerr = applyUnitFilters(plain, f, args)
+            if uerr:
+                print(f"rank_line: {kind} unit fold refused ({uerr}) args={args}", flush=True)
+                return None
+            r = rankOf(plain, f, person_id)
+            if r is None:
+                # ! SAID, NOT SWALLOWED (2026-09-06): a scope that comes back
+                #   empty is the athlete not being on that board, and the
+                #   log has to say which board so it can be checked.
+                print(f"rank_line: {kind} not on board args={args} "
+                      f"schools={len(f.get('school') or [])}", flush=True)
+            return r
         except Exception as exc:         # noqa: BLE001 -- a line, not a page
             cur.connection.rollback()
+            # the statement that failed, so the table it ran against is known
+            q = getattr(plain, "query", None)
+            q = (q.decode("utf-8", "replace") if isinstance(q, bytes) else str(q or ""))
+            q = " ".join(q.split())[:400]
             print(f"rank_line: {kind} rank failed "
-                  f"({type(exc).__name__}: {exc})", flush=True)
+                  f"({type(exc).__name__}: {str(exc).splitlines()[0]}) sql={q}", flush=True)
             return None
+        finally:
+            plain.close()
 
     entries = []
     for scope in scopes:
