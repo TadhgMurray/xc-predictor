@@ -619,6 +619,19 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
 # Output:    SQL string.
 # Detail:    distance_meters >= 800 keeps the distance law inside its fitted
 #            domain. is_relay / is_field excluded: not one runner's own race.
+def _eventMetersSql(alias: str) -> str:
+    """Metres from an event name, in SQL: '5000m' 5000, '10,000m' 10000,
+    '8k' 8000, 'Mile' 1609.34, '2 Mile' 3218.7; NULL where no number and
+    no mile (hurdles and relays never reach the pack: no normalized_time)."""
+    num = f"NULLIF(regexp_replace({alias}.event_short, '[^0-9.]', '', 'g'), '')::real"
+    return (f"CASE WHEN {alias}.event_short IS NULL THEN NULL "
+            f"WHEN lower({alias}.event_short) LIKE '%mile%' "
+            f"THEN COALESCE({num}, 1) * 1609.34 "
+            f"WHEN {num} IS NULL THEN NULL "
+            f"WHEN {num} < 100 THEN {num} * 1000 "
+            f"ELSE {num} END")
+
+
 def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
     return f"""
         SELECT r.result_id, r.person_id, r.normalized_time,
@@ -630,7 +643,14 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                               ELSE ':out' END
                END AS venue,
                {_pg.packGenderExpr('TF', _personGenderAvailable())} AS gender,
-               m.distance_meters::real AS dist_m
+               -- ★ THE EVENT'S METRES, FROM THE NAME WHEN meets_tf HAS NONE
+               --   (2026-09-06): the college 5000 and 10000 carried no
+               --   dist_m (no meets_tf distance for those events), so they
+               --   had no event offset, no endurance slope and no pairs --
+               --   the owner's "5k/10k too low" on the college boards.
+               --   Same parse the backfill uses, in SQL: digits, 'k' =
+               --   thousands, 'mile' = 1609.34 each.
+               COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id

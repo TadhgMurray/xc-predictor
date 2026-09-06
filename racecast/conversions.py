@@ -191,7 +191,11 @@ def _loadEngineScale():
     except Exception:                                    # noqa: BLE001
         out = {}
     _scale["map"] = out
-    _scale["at"] = time.time()
+    # ! AN EMPTY ANSWER IS RE-ASKED IN A MINUTE. The go-live writes these
+    #   tables while the site is up; a worker that loaded an empty one
+    #   cached it for the hour and converted without it (a 136.1 came back
+    #   as a 9:15 for an hour after run12, 2026-09-06).
+    _scale["at"] = time.time() if out else time.time() - _OFFSET_TTL + 60.0
 
 
 def engineScale(pool, sport):
@@ -232,7 +236,11 @@ def _loadSportGain():
     except Exception:                                    # noqa: BLE001
         out = {}
     _gain["map"] = out
-    _gain["at"] = time.time()
+    # ! AN EMPTY ANSWER IS RE-ASKED IN A MINUTE. The go-live writes these
+    #   tables while the site is up; a worker that loaded an empty one
+    #   cached it for the hour and converted without it (a 136.1 came back
+    #   as a 9:15 for an hour after run12, 2026-09-06).
+    _gain["at"] = time.time() if out else time.time() - _OFFSET_TTL + 60.0
 
 
 def sport_gain(pool, sport, rating):
@@ -304,7 +312,11 @@ def _loadDistanceOffsets():
     except Exception:                                    # noqa: BLE001
         out = {}                                         # no table yet: 0
     _offsets["map"] = out
-    _offsets["at"] = time.time()
+    # ! AN EMPTY ANSWER IS RE-ASKED IN A MINUTE. The go-live writes these
+    #   tables while the site is up; a worker that loaded an empty one
+    #   cached it for the hour and converted without it (a 136.1 came back
+    #   as a 9:15 for an hour after run12, 2026-09-06).
+    _offsets["at"] = time.time() if out else time.time() - _OFFSET_TTL + 60.0
 
 
 def distance_offset(pool, sport, distance_meters, rating=None):
