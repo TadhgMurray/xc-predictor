@@ -1224,36 +1224,6 @@ def athlete(person_id):
                 except Exception:                            # noqa: BLE001
                     conn.rollback()                          # mid-rebuild: keep scraped
 
-            # ★ THE HEADER'S TEAM IS THE MOST RECENT SEASON'S (owner,
-            #   2026-09-04): the season table already holds the school each
-            #   season was mostly raced for; the scraped `athletes.school`
-            #   is whatever the source last showed. Unattached seasons never
-            #   name the team; a career with no school at all keeps the
-            #   scraped value.
-            try:
-                cur.execute("""
-                    SELECT school FROM athlete_season
-                    WHERE  person_id = %s AND school IS NOT NULL
-                      AND  lower(school) NOT LIKE 'unattached%%'
-                      AND  lower(school) NOT IN ('unat', 'independent',
-                                                 'individual', 'no team',
-                                                 'none', 'n/a', '')
-                    -- ! THE SAME ORDER THE HEADER RATING USES, tiebreaks
-                    --   included (owner, 2026-09-06: Liam Lucas headed
-                    --   "Loyola Blakefield" over a Tufts season and Tufts'
-                    --   chips). Two seasons can end on one date -- the same
-                    --   year split across two pools -- and without the
-                    --   tiebreak this picked one and the rating the other.
-                    ORDER  BY last_race DESC NULLS LAST, year DESC,
-                              n_races DESC
-                    LIMIT  1
-                """, (person_id,))
-                recent = cur.fetchone()
-                if recent and recent["school"]:
-                    athlete["school"] = recent["school"]
-            except Exception:                            # noqa: BLE001
-                conn.rollback()                          # mid-rebuild: keep scraped
-
             # League / section / division for the header line. Read
             # through school_units so every page phrases them alike.
             from school_units import unitsFor, homeStateOf, unitsForPerson
@@ -1424,7 +1394,13 @@ def athlete(person_id):
     ordered = sorted(seasons.items(), reverse=True)
 
     athlete["grade"]  = _season_grade(races)
-    athlete["school"] = _season_school(races) or athlete["school"]
+    # ! NOT athlete["school"] = _season_school(races): `races` is the whole
+    #   career, so this line headed Liam Lucas "Loyola Blakefield" (31 high
+    #   school rows) over his Tufts season, whatever the header row said.
+    #   The header's school is the header season's row, set above, and
+    #   nothing after it may overwrite it (owner, 2026-09-06, third try).
+    if not athlete.get("school"):
+        athlete["school"] = _season_school(races)
     if season_rating:
         athlete["rating"] = season_rating["mean_rating"]
         # The season label, same rule as everywhere: TF displays year + 1.
