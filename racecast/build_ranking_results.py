@@ -2114,7 +2114,7 @@ _SEASON_OUTLIER_PTS = 20.0
 
 _ATHLETE_SEASON_SQL = f"""
 WITH season_med AS (
-    SELECT base.person_id, base.pool, base.sport, base.year,
+    SELECT person_id, pool, sport, year,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
     FROM   {{load_table}}
     WHERE  speed_rating IS NOT NULL

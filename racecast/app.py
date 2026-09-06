@@ -1432,16 +1432,19 @@ def get_races(cur, person_id):
         twin_xc = ("AND NOT EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = 'XC' "
                    "AND x.result_id = r.result_id)")
         twin_tf = twin_xc.replace("'XC'", "'TF'")
-    # the race-day term (197): joined only once the go-live has written it
+    # the race-day term (197): joined only once the go-live has written it.
+    # ! results.date is TEXT and race_day_effect.race_date is DATE: the
+    #   join compares as text (date = text has no operator; every athlete
+    #   page 500ed the moment the table existed, 2026-09-06).
     if _hasRaceDayEffect(cur):
         day_col = "rde.day_effect"
         day_join_xc = ("""LEFT JOIN race_day_effect rde
                ON rde.canonical_id = cc.canonical_id
               AND rde.distance_m   = cd.distance_m
-              AND rde.race_date    = r.date""")
+              AND rde.race_date::text = r.date""")
         day_join_tf = ("""LEFT JOIN race_day_effect rde
                ON rde.course_name = cd.course_name
-              AND rde.race_date   = r.date""")
+              AND rde.race_date::text = r.date""")
     else:
         day_col, day_join_xc, day_join_tf = "NULL::real", "", ""
     cur.execute(f"""
@@ -2358,7 +2361,7 @@ def raceDayEffect(cur, sport, header, race_date):
             cur.execute("""
                 SELECT day_effect FROM race_day_effect
                 WHERE canonical_id = %(cid)s AND distance_m = %(dm)s
-                  AND race_date = %(day)s
+                  AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1
             """, {"cid": header["canonical_id"], "dm": header["cell_distance_m"],
                   "day": race_date})
@@ -2369,7 +2372,7 @@ def raceDayEffect(cur, sport, header, race_date):
                    f"{'in' if header.get('is_indoor') == 1 else 'out'}")
             cur.execute("""
                 SELECT day_effect FROM race_day_effect
-                WHERE course_name = %(key)s AND race_date = %(day)s
+                WHERE course_name = %(key)s AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1
             """, {"key": key, "day": race_date})
         row = cur.fetchone()
