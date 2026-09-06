@@ -27,8 +27,8 @@
 #
 # WEATHER: apparent_temperature is aggregated as the daily MAX (peak heat is what
 # cooks a runner; the mean diluted it with cool mornings). NOTE: apparent_temp is
-# stored in FAHRENHEIT (values -12..100+), unlike temperature_2m which is Celsius
-# -- a known weather_grid inconsistency; betas/labels here are per-degF.
+# CELSIUS like temperature_2m. It read -12..100+ before 2026-09-06 because the
+# sun term was wrong, not because the unit was; see REFERENCE.
 #
 # OUTPUT IS THE GATE. --course prints a venue by eye; --shape reads the curve in
 # WITHIN-EVENT temperature deviation (the variation event-FE actually uses).
@@ -67,7 +67,7 @@ DEMEAN_ITERS = 25
 # WX_AGG: feature -> daytime aggregate. apparent_temp is modelled downstream by a
 # SPLINE. states use avg, accumulations sum. snow is depth+snowfall merged.
 WX_AGG = {
-    "apparent_temp": "avg(apparent_temperature)",     # race-window mean (deg F)
+    "apparent_temp": "avg(apparent_temperature)",     # race-window mean (deg C)
     "wind":          "avg(wind_speed_10m)",
     "precip":        "sum(precipitation)",
     "soil":          "avg(soil_moisture)",
@@ -100,9 +100,15 @@ LINEAR_FEATURES_BY_SPORT = {"XC": ("wind", "precip", "snow"),
                             "TF": ("wind", "precip")}
 FEATURES = QUERIED_FEATURES                           # (kept for counts/reference)
 
-# Reference = no-op point (multiplier 1.0). apparent_temp deg F (mild ~55);
+# Reference = no-op point (multiplier 1.0). apparent_temp deg C (mild ~13);
 # snow/soil neutral. The spline is centered on the temp reference at apply time.
-REFERENCE = {"apparent_temp": 55.0, "wind": 3.0, "precip": 0.0,
+# ★ CELSIUS (2026-09-06). The grid's apparent_temperature has always been
+#   the Steadman formula's output, degC; the old sun term made sunny hours
+#   read 45-100, which LOOKED like Fahrenheit and was labelled so here. With
+#   the sun term fixed (SITE_NOTES #4, scripts/recompute_apparent_temp) a
+#   mild day is 13 C, not 55. The reference is the no-op point for a venue
+#   without its own normal; at 55 it would sit off the end of the curve.
+REFERENCE = {"apparent_temp": 13.0, "wind": 3.0, "precip": 0.0,
              "soil": 0.20, "snow": 0.0}
 
 # Active per-sport config; main() overwrites these from the *_BY_SPORT tables
@@ -634,12 +640,14 @@ def reportGate(betas, splines, dist_betas, n_used, counts, coverage):
     print(f"[gate] reference (no-op point): {REFERENCE}")
     _DVIEW = (1500.0, 5000.0, 10000.0)          # distances to show the interaction
     tsp = splines["apparent_temp"]
-    print(f"    apparent_temp (SPLINE, deg F; ref {tsp['ref']:.0f}F) "
+    print(f"    apparent_temp (SPLINE, deg C; ref {tsp['ref']:.0f}C) "
           f"@ {'/'.join(str(int(d)) for d in _DVIEW)}m:")
-    for t in (35, 55, 75, 95):
+    for t in (0, 5, 13, 20, 27, 33):
         cells = "  ".join(f"{_curveDistPct(tsp, t, d):+6.2f}%"
                           for d in _DVIEW)
-        print(f"        {t:>3}F => {cells}")
+        print(f"        {t:>3}C => {cells}")
+    if tsp.get("optimum") is not None:
+        print(f"        optimum {tsp['optimum']:.1f}C: nothing colder moves a rating")
     ssp = splines["soil"]
     print(f"    soil / MUD (SPLINE; ref {ssp['ref']:.2f}) @ {'/'.join(str(int(d)) for d in _DVIEW)}m:")
     for sv in (0.10, 0.30, 0.50):
@@ -825,7 +833,7 @@ def saveArtifact(betas, splines, dist_betas, soil_map, venue_norms, sport):
                      "wx_agg": WX_AGG, "race_local_hours": RACE_LOCAL_HOURS,
                      "linear_features_used": list(LINEAR_FEATURES),
                      "soil_sensitivity": soil_map,   # {course:{"s","n"}}; apply beta_soil*s
-                     "note": "apparent_temp modelled by restricted cubic SPLINE (deg F); "
+                     "note": "apparent_temp modelled by restricted cubic SPLINE (deg C); "
                              "race-event FE; mud = beta_soil * s_c(course)"}, f)
     print(f"\n[save] wrote {path}  (+{len(soil_map):,} per-course soil s_c)")
 

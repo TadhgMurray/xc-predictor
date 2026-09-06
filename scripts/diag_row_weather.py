@@ -131,7 +131,7 @@ def report(cur, rows):
             continue
         print(f"    grid cell ({clat}, {clon}), local hours {hours[0]}-{hours[1]}, "
               f"{temp_agg.split('(')[0]} temperature: "
-              f"apparent {wx['apparent_temp']:.0f}F, wind {wx['wind']:.1f}, "
+              f"apparent {wx['apparent_temp']:.0f}C, wind {wx['wind']:.1f}, "
               f"precip {wx['precip']:.2f}, soil {wx['soil']:.2f}, snow {wx['snow']:.2f}")
         if not nd.isRaceWeatherPlausible(wx):
             print("    weather: implausible for a race (the cell, not the course) "
