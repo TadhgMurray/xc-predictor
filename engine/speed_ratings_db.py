@@ -1009,12 +1009,18 @@ _SR_STAGING = "sr_staging"
 #            iterator yields scalars, and str() of a np.float32 round-trips fine
 #            for COPY.
 def _asPairs(pairs):
-    if isinstance(pairs, tuple) and len(pairs) == 2 and hasattr(pairs[0], "size"):
-        rid, val = pairs
+    """(result_id, rating, pool) triples from arrays (rid, val) or (rid,
+    val, pool), or an iterable of pairs / triples. The pool is the one the
+    rating was computed in (issue 171: written on the row as rating_pool
+    so no page has to guess it); None where the caller has none."""
+    if isinstance(pairs, tuple) and hasattr(pairs[0], "size"):
+        rid, val = pairs[0], pairs[1]
+        pool = pairs[2] if len(pairs) > 2 else None
         for i in range(rid.size):
-            yield int(rid[i]), float(val[i])
+            yield int(rid[i]), float(val[i]), (None if pool is None else pool[i])
         return
-    yield from pairs
+    for row in pairs:
+        yield (row[0], row[1], row[2] if len(row) > 2 else None)
 
 
 # _stagingFor
@@ -1037,8 +1043,8 @@ def _fillStaging(conn, sport, pairs):
     with conn.cursor() as cur:
         cur.execute(f"DROP TABLE IF EXISTS {table}")
         cur.execute(f"CREATE UNLOGGED TABLE {table} "
-                    f"(result_id bigint NOT NULL, val real NOT NULL)")
-        n = _copyInto(cur, table, ("result_id", "val"), _asPairs(pairs))
+                    f"(result_id bigint NOT NULL, val real NOT NULL, pool text)")
+        n = _copyInto(cur, table, ("result_id", "val", "pool"), _asPairs(pairs))
     conn.commit()
     print(f"[db] {sport}: COPYed {n:,} ratings into {table}")
     return table, n
@@ -1108,7 +1114,8 @@ def _updateFromStaging(conn, sport, table, staging):
         print(f"[db] {sport}: staged; bulk UPDATE (this is the slow path)...")
         cur.execute(f"""
             UPDATE {table}
-               SET speed_rating = t.val
+               SET speed_rating = t.val,
+                   rating_pool  = COALESCE(t.pool, {table}.rating_pool)
               FROM {staging} t
              WHERE {table}.result_id = t.result_id
         """)
@@ -1193,9 +1200,16 @@ def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
             # no venue, pool with no mean). Those must read NULL, not a value an
             # older engine wrote. COALESCE left 4,216 fossils behind -- rows with
             # speed_rating 7528 on a normalized_time of 20.6 seconds.
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rating_pool text")
+            conn.commit()
             mergeColumn(conn, table, "speed_rating", staging,
+                        extra=(("rating_pool", "pool"),),
                         key="result_id", val="val", preserve_unmatched=False)
         else:
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rating_pool text")
+            conn.commit()
             _updateFromStaging(conn, sport, table, staging)
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {staging}")

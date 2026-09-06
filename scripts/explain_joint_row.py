@@ -105,7 +105,12 @@ def rowTerms(D, npz, j):
     u = max(-js.RACE_DAY_CAP, min(js.RACE_DAY_CAP, u_full))   # as the rating applied it (187)
     dist = 0.0
     if getattr(D, "n_e", 0) and "dist_offset" in npz:
-        dist = float(D.e_w[j]) * float(npz["dist_offset"][int(D.e_idx[j])])
+        if "dist_row" not in _alt_cache:
+            r_all = (np.asarray(npz["rating"], dtype=np.float64)[D.athlete]
+                     if "rating" in npz and npz["rating"] is not None
+                     else np.full(D.n, 100.0))
+            _alt_cache["dist_row"] = js.distOffsetRow(D, np.asarray(npz["dist_offset"]), r_all)
+        dist = float(_alt_cache["dist_row"][j])
     alt, alt_km = 0.0, 0.0
     if getattr(D, "n_k", 0) and "altitude_coef" in npz:
         if "credit" not in _alt_cache:

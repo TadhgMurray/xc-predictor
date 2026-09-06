@@ -101,7 +101,9 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   the normalisation the row arrived with, exactly as the cell corrects
     #   the course. Untilted. XC rows carry none (e_w = 0).
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
-        eff = eff + D.e_w * out["dist_offset"][D.e_idx]
+        # interpolated by rating between the band anchors, no step at a
+        # band edge (js.distOffsetRow); the solve's own bands stay hard
+        eff = eff + js.distOffsetRow(D, out["dist_offset"], rat["career"][D.athlete])
     # the altitude term (issue 172): credit at altitude, for everyone in
     # the race alike -- the venue's km less the field's acclimatisation
     # (issue 192, js.altitudeCredit)
@@ -177,7 +179,12 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     for code, name in ((0, "XC"), (1, "TF")):
         m = rated & (sport == code)
         if m.any():
-            per_sport[name] = (result_id[m], np.round(chosen[m], 2))
+            # ★ THE POOL THE RATING WAS COMPUTED IN RIDES WITH IT (issue 171,
+            #   2026-09-06): rating_pool on the row, so no page guesses it
+            names_arr = np.array(list(attrs["pool_names"]) + [""], dtype=object)
+            pool_row = names_arr[np.where(attrs["pool"] >= 0, attrs["pool"],
+                                          len(attrs["pool_names"]))[D.athlete]]
+            per_sport[name] = (result_id[m], np.round(chosen[m], 2), pool_row[m])
 
     # --- the diagnostics' file shape --------------------------------------- #
     degree = np.bincount(D.cell, minlength=D.n_cell)     # rows, not days

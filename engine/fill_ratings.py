@@ -197,7 +197,7 @@ def fillSport(conn, sport, dry_run=False):
                 census["filled"] += 1
                 if len(samples) < 5:
                     samples.append((row.result_id, pool, float(nt), rating))
-                yield (row.result_id, rating)
+                yield (row.result_id, rating, pool)
 
     if dry_run:
         for _ in pairs():

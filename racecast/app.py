@@ -1384,6 +1384,28 @@ def _hasResultTwin(cur):
 
 _RESULTS_STATUS = {"checked": False, "present": False}
 _RACE_DAY = {"until": 0.0, "present": False}
+_RATING_POOL = {}
+
+
+def _ratingPoolCol(cur, table, alias="r"):
+    """'r.rating_pool' once the go-live has written the column (issue
+    171), else a NULL of the same name; a 'no' is re-asked every five
+    minutes."""
+    st = _RATING_POOL.get(table)
+    if st is True:
+        return f"{alias}.rating_pool"
+    if isinstance(st, float) and time.time() < st:
+        return "NULL::text AS rating_pool"
+    try:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = %s AND column_name = 'rating_pool'""",
+                    (table,))
+        present = cur.fetchone() is not None
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        present = False
+    _RATING_POOL[table] = True if present else time.time() + 300
+    return f"{alias}.rating_pool" if present else "NULL::text AS rating_pool"
 
 
 def _hasRaceDayEffect(cur):
@@ -1442,6 +1464,8 @@ def get_races(cur, person_id):
         twin_xc = ("AND NOT EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = 'XC' "
                    "AND x.result_id = r.result_id)")
         twin_tf = twin_xc.replace("'XC'", "'TF'")
+    rp_xc = _ratingPoolCol(cur, "results")
+    rp_tf = _ratingPoolCol(cur, "results_tf")
     # the race-day term (197): joined only once the go-live has written it.
     # ! results.date is TEXT and race_day_effect.race_date is DATE: the
     #   join compares as text (date = text has no operator; every athlete
@@ -1506,6 +1530,7 @@ def get_races(cur, person_id):
                     THEN NULL
                     ELSE cd.difficulty END   AS difficulty,
                {day_col}                     AS day_effect,
+               {rp_xc},
                0                             AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id                      AS div_id,
@@ -1586,6 +1611,7 @@ def get_races(cur, person_id):
                r.speed_rating                AS speed_rating,
                cd.difficulty                 AS difficulty,
                {day_col}                     AS day_effect,
+               {rp_tf},
                COALESCE(r.is_field, 0)       AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id  AS div_id,
@@ -2280,6 +2306,7 @@ def get_race_results(cur, meet_id, div_id):
                r.grade,
                r.school,
                r.speed_rating,
+               {_ratingPoolCol(cur, 'results')},
                r.date,
                {_name_sql('r')} AS name
         FROM results r
@@ -2880,6 +2907,7 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
                r.grade,
                r.school,
                r.speed_rating,
+               {_ratingPoolCol(cur, 'results_tf')},
                r.date,
                {_name_sql('r')} AS athlete_name,
                a.gender         AS gender,

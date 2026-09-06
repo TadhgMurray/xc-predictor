@@ -143,6 +143,8 @@ _offset_lock = threading.Lock()
 #   distance_offset.py pins it): the offsets are by the athlete's rating
 #   band since issue 167, three per (pool, event), the 1600 pinned in each.
 _DIST_BANDS = (105.0, 120.0)
+# the band anchors the offsets interpolate between (joint_solve.SPORT_GAIN_ANCHORS)
+_BAND_ANCHORS = (90.0, 112.0, 130.0)
 
 
 def _bandOf(rating):
@@ -331,10 +333,20 @@ def distance_offset(pool, sport, distance_meters, rating=None):
             _loadDistanceOffsets()
         m = _offsets["map"]
     dm = int(round(float(distance_meters) / 100.0)) * 100
-    key = (_bare(pool), "TF", dm, _bandOf(rating))
-    if key in m:
-        return m[key]
-    return m.get((_bare(pool), "TF", dm, 1), 0.0)
+    bands = [m.get((_bare(pool), "TF", dm, b)) for b in range(len(_BAND_ANCHORS))]
+    if all(v is None for v in bands):
+        return 0.0
+    if any(v is None for v in bands):
+        key = (_bare(pool), "TF", dm, _bandOf(rating))
+        return m.get(key, m.get((_bare(pool), "TF", dm, 1), 0.0))
+    # interpolated by rating between the band anchors, as the go-live
+    # applies it (joint_solve.distOffsetRow): no step at 105 or 120
+    r = float(rating) if rating is not None else 100.0
+    r = min(max(r, _BAND_ANCHORS[0]), _BAND_ANCHORS[-1])
+    for (a0, v0), (a1, v1) in zip(zip(_BAND_ANCHORS, bands), zip(_BAND_ANCHORS[1:], bands[1:])):
+        if a0 <= r <= a1:
+            return v0 + (v1 - v0) * (r - a0) / (a1 - a0)
+    return bands[-1]
 
 
 def pool_mean(pool, sport=None):

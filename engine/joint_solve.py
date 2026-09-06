@@ -219,6 +219,29 @@ SPORT_GAIN_ANCHORS = (90.0, 112.0, 130.0)
 SPORT_GAIN_MIN_ATHLETES = 50
 
 
+def distOffsetRow(D, e, rating_row):
+    """The event offset each row's RATING applies: the class's three band
+    values interpolated at the athlete-season's rating between the band
+    anchors (SPORT_GAIN_ANCHORS), flat beyond -- no step at 105 or 120
+    (2026-09-06, the owner: "band edges"). The SOLVE keeps the hard bands
+    (a fit); an unbanded design gets its one value."""
+    if not getattr(D, "n_e", 0) or e is None:
+        return np.zeros(D.n)
+    if not getattr(D, "dist_banded", False):
+        return D.e_w * e[D.e_idx]
+    nb = D.n_e_base
+    table = np.asarray(e).reshape(nb, DIST_N_BAND)          # class x band
+    r = np.nan_to_num(np.asarray(rating_row, dtype=np.float64), nan=100.0)
+    anchors = np.asarray(SPORT_GAIN_ANCHORS)
+    x = np.clip(r, anchors[0], anchors[-1])
+    # piecewise-linear over the three anchors, vectorised per row
+    j = np.clip(np.searchsorted(anchors, x, side="right") - 1, 0, DIST_N_BAND - 2)
+    t = (x - anchors[j]) / (anchors[j + 1] - anchors[j])
+    lo = table[D.e_base, j]
+    hi = table[D.e_base, j + 1]
+    return D.e_w * (lo + t * (hi - lo))
+
+
 def altitudeCredit(D):
     """Per row, the km the RATING credits (ALT_ACCLIM): the venue's km
     above the floor less the acclimatisation share of the race's field's

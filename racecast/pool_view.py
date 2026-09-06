@@ -497,7 +497,9 @@ def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
         if rating is None:
             row["hs_rating"] = None
             continue
-        pool = pools.get(row.get("result_id")) or modal
+        # the pool the rating was computed in, when the row carries it
+        # (issue 171); else the boards' pool by result id; else the mode
+        pool = row.get("rating_pool") or pools.get(row.get("result_id")) or modal
         d = distance
         if d is None and distance_key is not None:
             d = row.get(distance_key)

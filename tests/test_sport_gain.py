@@ -108,3 +108,17 @@ def test_conversions_apply_the_same_shift():
     cv._gain["map"] = {}
     norm0 = cv._norm_from_time(541.1, 3200.0, "hs_m", sport="TF", chosen=None)
     assert norm < norm0
+
+
+def test_conversions_interpolate_the_offset_between_bands():
+    cv._offsets["map"] = {("hs_m", "TF", 3200, 0): 0.018, ("hs_m", "TF", 3200, 1): 0.009,
+                          ("hs_m", "TF", 3200, 2): 0.0, ("hs_m", "TF", 800, 1): 0.004}
+    cv._offsets["at"] = 1e18
+    assert abs(cv.distance_offset("hs_m", "TF", 3200, rating=101) - 0.0135) < 1e-9
+    assert abs(cv.distance_offset("hs_m", "TF", 3200, rating=130) - 0.0) < 1e-9
+    assert abs(cv.distance_offset("hs_m", "TF", 3200, rating=80) - 0.018) < 1e-9
+    a = cv.distance_offset("hs_m", "TF", 3200, rating=119.99)
+    b = cv.distance_offset("hs_m", "TF", 3200, rating=120.01)
+    assert abs(a - b) < 2e-5, "no step at the band edge"
+    # a class with only the middle band still answers by band
+    assert cv.distance_offset("hs_m", "TF", 800, rating=125) == 0.004

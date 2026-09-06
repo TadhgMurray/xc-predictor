@@ -267,3 +267,33 @@ def test_chain_calibrates_an_event_with_no_reference_pairs():
     assert D.e_cal_n[i50] == 300
     print(f"  chain: 3200 {D.e_mean[i32]:+.4f} (ref), 5000 {D.e_mean[i50]:+.4f} "
           f"via 3200 (truth +0.045) ... OK")
+
+
+def test_the_rating_interpolates_the_offset_between_band_anchors():
+    """Issue 219: no step at 105 or 120 -- the applied offset is the three
+    band values interpolated at the athlete-season's rating between the
+    anchors 90 / 112 / 130, flat beyond; unbanded designs are untouched."""
+    y, ath, cel, rac, group, cols, pool_of_ath, _ = _world()
+    classes, labels, _ = rj.distClasses(cols, pool_of_ath, ["p0", "p1"])
+    D = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
+                  n_e=len(labels), dist_banded=True)
+    nb = len(labels)
+    e = np.zeros(nb * js.DIST_N_BAND)
+    c = labels.index("p0:3200")
+    e[c * js.DIST_N_BAND:(c + 1) * js.DIST_N_BAND] = [0.018, 0.009, 0.000]
+    rows = np.flatnonzero((classes == c))
+    for r_in, want in ((80.0, 0.018), (90.0, 0.018), (101.0, 0.0135),
+                       (112.0, 0.009), (119.9, 0.009 - 0.009 * 7.9 / 18),
+                       (120.1, 0.009 - 0.009 * 8.1 / 18), (130.0, 0.0), (140.0, 0.0)):
+        got = js.distOffsetRow(D, e, np.full(len(y), r_in))
+        assert abs(float(got[rows[0]]) - want) < 1e-9, (r_in, got[rows[0]], want)
+    # continuous across 120: a hair apart, not a point
+    a = js.distOffsetRow(D, e, np.full(len(y), 119.99))[rows[0]]
+    b = js.distOffsetRow(D, e, np.full(len(y), 120.01))[rows[0]]
+    assert abs(a - b) < 2e-5
+    # rows with no class carry nothing; an unbanded design gets its value
+    assert (js.distOffsetRow(D, e, np.full(len(y), 110.0))[classes < 0] == 0).all()
+    D0 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes, n_e=nb)
+    e0 = np.arange(nb, dtype=float) * 0.01
+    assert np.allclose(js.distOffsetRow(D0, e0, np.full(len(y), 110.0)),
+                       D0.e_w * e0[D0.e_idx])

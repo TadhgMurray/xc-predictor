@@ -269,12 +269,20 @@ def _capture(cur, table):
 #
 # A stale value is worse than a missing one. NULL says "we do not know". 7528
 # says "this athlete ran a 20-second 5K".
-def _selectList(columns, column, val, preserve_unmatched=True):
+def _selectList(columns, column, val, preserve_unmatched=True, extra=()):
+    # extra: ((table_column, staging_column), ...) merged in the same
+    # rebuild, the same COALESCE rule as the main column (2026-09-06:
+    # rating_pool rides with speed_rating)
+    extra_map = dict(extra)
     parts = []
     for c in columns:
         if c == column:
             parts.append(f"COALESCE(s.{val}, r.{c}) AS {c}"
                          if preserve_unmatched else f"s.{val} AS {c}")
+        elif c in extra_map:
+            sv = extra_map[c]
+            parts.append(f"COALESCE(s.{sv}, r.{c}) AS {c}"
+                         if preserve_unmatched else f"s.{sv} AS {c}")
         else:
             parts.append(f"r.{c}")
     return ",\n               ".join(parts)
@@ -290,7 +298,7 @@ def _selectList(columns, column, val, preserve_unmatched=True):
 # work_mem sizes the hash table for the join; at the 4MB default a 30M-row hash
 #   spills to disk in hundreds of batches.
 def _buildNewTable(cur, table, staging, cap, column, key, val,
-                   preserve_unmatched=True):
+                   preserve_unmatched=True, extra=()):
     # SET LOCAL, not SET. A plain SET survives COMMIT and rides back into the
     # connection POOL, so the next caller silently inherits a 2GB-per-sort-node
     # budget. SET LOCAL is scoped to the transaction and evaporates at commit.
@@ -299,7 +307,7 @@ def _buildNewTable(cur, table, staging, cap, column, key, val,
     cur.execute("SET LOCAL max_parallel_workers_per_gather = 4")
     _timed(cur, f"""
         CREATE TABLE {table}_new AS
-        SELECT {_selectList(cap['columns'], column, val, preserve_unmatched)}
+        SELECT {_selectList(cap['columns'], column, val, preserve_unmatched, extra)}
         FROM {table} r
         LEFT JOIN {staging} s ON s.{key} = r.{key}
     """, f"CREATE TABLE {table}_new AS SELECT ... (heap rebuild)")
@@ -529,7 +537,7 @@ def _clearLeftovers(cur, table):
 # Output   : None. Prints one timed line per step.
 # Safety   : the old heap survives as <table>_old. Verify, then drop it by hand.
 def mergeColumn(conn, table, column, staging, key="result_id", val="val",
-                preserve_unmatched=True):
+                preserve_unmatched=True, extra=()):
     print("-" * 70)
     print(f"MERGE: rebuilding {table}.{column} from {staging}")
     with conn.cursor() as cur:
@@ -581,7 +589,7 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
             else "FULL RECOMPUTE (unmatched -> NULL)"
         print(f"    {column}: {mode}")
         _buildNewTable(cur, table, staging, cap, column, key, val,
-                       preserve_unmatched)
+                       preserve_unmatched, extra)
         _restoreShape(cur, table, cap)
         _restoreIndexes(cur, table, cap)
         _restoreConstraints(cur, table, cap)
