@@ -1040,9 +1040,18 @@ def buildRankLine(cur, person_id, season):
             if r is None:
                 # ! SAID, NOT SWALLOWED (2026-09-06): a scope that comes back
                 #   empty is the athlete not being on that board, and the
-                #   log has to say which board so it can be checked.
+                #   log has to say which board so it can be checked: the
+                #   athlete's own season row, and the size of every school
+                #   list the clause narrows by, so a mismatch is visible.
+                from rankings import _unitSchools, UNIT_FILTERS
+                sizes = {k: len(_unitSchools(k, f[k])) for k in UNIT_FILTERS if f.get(k)}
+                plain.execute("""SELECT school, state, year, n_races, pool, sport
+                                 FROM athlete_season WHERE person_id = %s
+                                 ORDER BY last_race DESC NULLS LAST LIMIT 3""", (person_id,))
+                own = plain.fetchall()
                 print(f"rank_line: {kind} not on board args={args} "
-                      f"schools={len(f.get('school') or [])}", flush=True)
+                      f"fold_schools={len(f.get('school') or [])} unit_schools={sizes} "
+                      f"own_rows={own}", flush=True)
             return r
         except Exception as exc:         # noqa: BLE001 -- a line, not a page
             cur.connection.rollback()

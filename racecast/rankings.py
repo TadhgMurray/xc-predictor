@@ -886,7 +886,10 @@ def _unitSchools(key, values):
             c.execute(f"SELECT DISTINCT u.school FROM school_unit u WHERE {ors}",
                       {"v": list(values)})
             schools = [r[0] for r in c.fetchall() if r[0]]
-    except Exception:                                # noqa: BLE001
+    except Exception as exc:                         # noqa: BLE001
+        # said in the log: an empty list here is "AND FALSE" on the board
+        print(f"unit_schools: {key}={list(values)} failed "
+              f"({type(exc).__name__}: {str(exc).splitlines()[0]})", flush=True)
         return []
     _UNIT_SCHOOL_CACHE[ck] = (_t.time() + 600, schools)
     return schools
