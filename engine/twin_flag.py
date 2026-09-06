@@ -166,48 +166,20 @@ def dupCrossDateSql(table, sport):
     """
 
 
-def dupSameDaySql(table, sport):
-    """The same run under two meet NAMES on one day (2026-09-06): the
-    same person, feed and date, the time equal to the tenth -- "38th
-    Mariner-XC-Invitational" and "38th P. Wilder Mariner XC Invitational"
-    both carried the owner's 18:55.1, and a merged person kept three copies
-    of one race. Two different races by one person on one day with the
-    same time to 0.1 s do not happen. No name, no place: those are what
-    differ between the copies. The copy in the bigger meet entry
-    survives; ties to the lower result_id."""
-    return f"""
-        WITH sized AS (
-            SELECT meet_id, count(*) AS n FROM {table}
-            WHERE  meet_id IS NOT NULL GROUP BY meet_id),
-        cand AS (
-            SELECT r.result_id, r.person_id, r.source, s.n,
-                   substr(r.date, 1, 10)                          AS d,
-                   round(r.time_seconds::numeric, 1)              AS rt
-            FROM   {table} r
-            JOIN   sized s ON s.meet_id = r.meet_id
-            WHERE  r.person_id IS NOT NULL
-              AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
-              AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}')
-        SELECT DISTINCT a.result_id
-        FROM   cand a
-        JOIN   cand b ON b.person_id = a.person_id AND b.source = a.source
-                     AND b.d = a.d AND b.rt = a.rt
-                     AND b.result_id <> a.result_id
-        WHERE  b.n > a.n OR (b.n = a.n AND b.result_id < a.result_id)
-    """
-
-
 def dupRaceCopySql(table, sport):
-    """A whole race listed twice, weeks apart (owner, 2026-09-06: "find
-    races where exactly the same people ran with the same times"). Two
-    divisions of the same feed within 90 days whose finishers coincide:
-    at least 5 (person, time to the tenth) pairs in common and at least
-    80% of the smaller division. The division with FEWER rows is the
-    copy (a re-listing carries a subset or the same field); ties to the
-    later date, then the higher div_id. Its matched rows are flagged;
-    an unmatched row in it is left (a different race that happens to
-    share a few runners is not this)."""
+    """A whole race listed twice (owner, 2026-09-06): "if a race is exactly
+    the same, remove the later race", and "the entire race, not individual
+    rows -- individual rows lead to noise (prelims and finals), an entire
+    race doesn't". Two divisions of one feed within 90 days whose fields
+    coincide: at least 5 finishers with the same (person, time to the
+    tenth) and at least 90% of the smaller division matched. The LOSER is
+    the later date; on the same date the smaller division (the bigger has
+    the whole field), then the higher (meet_id, div_id). EVERY row of the
+    loser is flagged, matched or not. A prelim and its final share people
+    but not times, so they never reach 90%."""
     ev = ", event_id" if sport == "TF" else ""
+    key_a = "a.meet_id, a.div_id" + (", a.event_id" if ev else "")
+    key_b = "b.meet_id, b.div_id" + (", b.event_id" if ev else "")
     return f"""
         WITH rows_ AS (
             SELECT result_id, person_id, source, meet_id, div_id{ev},
@@ -221,37 +193,34 @@ def dupRaceCopySql(table, sport):
             SELECT source, meet_id, div_id{ev}, count(*) AS n, min(d) AS d
             FROM   rows_ GROUP BY source, meet_id, div_id{ev}),
         pair AS (
-            SELECT a.source, a.meet_id AS ma, a.div_id AS da{(', a.event_id AS ea' if ev else '')},
-                   b.meet_id AS mb, b.div_id AS db{(', b.event_id AS eb' if ev else '')},
+            SELECT a.source, {key_a.replace('a.meet_id', 'a.meet_id AS ma').replace('a.div_id', 'a.div_id AS da').replace('a.event_id', 'a.event_id AS ea')},
+                   {key_b.replace('b.meet_id', 'b.meet_id AS mb').replace('b.div_id', 'b.div_id AS db').replace('b.event_id', 'b.event_id AS eb')},
                    count(*) AS shared
             FROM   rows_ a
             JOIN   rows_ b ON b.person_id = a.person_id AND b.source = a.source
                           AND b.rt = a.rt
-                          AND (b.meet_id, b.div_id{(', b.event_id' if ev else '')})
-                              <> (a.meet_id, a.div_id{(', a.event_id' if ev else '')})
+                          AND ({key_b}) <> ({key_a})
                           AND abs(b.d - a.d) <= 90
             GROUP  BY 1, 2, 3, 4, 5{', 6, 7' if ev else ''}),
-        copies AS (
-            SELECT p.source, p.ma, p.da{(', p.ea' if ev else '')},
-                   p.mb, p.db{(', p.eb' if ev else '')}
+        loser AS (
+            SELECT p.source, p.ma AS meet_id, p.da AS div_id{', p.ea AS event_id' if ev else ''}
             FROM   pair p
-            JOIN   size sa ON sa.source = p.source AND sa.meet_id = p.ma AND sa.div_id = p.da{(' AND sa.event_id = p.ea' if ev else '')}
-            JOIN   size sb ON sb.source = p.source AND sb.meet_id = p.mb AND sb.div_id = p.db{(' AND sb.event_id = p.eb' if ev else '')}
-            WHERE  p.shared >= 5 AND p.shared * 5 >= least(sa.n, sb.n) * 4
-              AND  (sa.n < sb.n OR (sa.n = sb.n AND (sa.d > sb.d
-                    OR (sa.d = sb.d AND (p.ma, p.da) > (p.mb, p.db))))))
-        SELECT DISTINCT a.result_id
-        FROM   rows_ a
-        JOIN   copies c ON c.source = a.source AND c.ma = a.meet_id AND c.da = a.div_id{(' AND c.ea = a.event_id' if ev else '')}
-        JOIN   rows_ b ON b.source = c.source AND b.meet_id = c.mb AND b.div_id = c.db{(' AND b.event_id = c.eb' if ev else '')}
-                      AND b.person_id = a.person_id AND b.rt = a.rt
+            JOIN   size sa ON sa.source = p.source AND sa.meet_id = p.ma AND sa.div_id = p.da{' AND sa.event_id = p.ea' if ev else ''}
+            JOIN   size sb ON sb.source = p.source AND sb.meet_id = p.mb AND sb.div_id = p.db{' AND sb.event_id = p.eb' if ev else ''}
+            WHERE  p.shared >= 5 AND p.shared * 10 >= least(sa.n, sb.n) * 9
+              AND  (sa.d > sb.d
+                    OR (sa.d = sb.d AND (sa.n < sb.n
+                        OR (sa.n = sb.n AND (p.ma, p.da) > (p.mb, p.db))))))
+        SELECT DISTINCT r.result_id
+        FROM   rows_ r
+        JOIN   loser l ON l.source = r.source AND l.meet_id = r.meet_id
+                      AND l.div_id = r.div_id{' AND l.event_id = r.event_id' if ev else ''}
     """
 
 
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),
-         ("dup_same_day", dupSameDaySql),
          ("dup_race_copy", dupRaceCopySql))
 
 

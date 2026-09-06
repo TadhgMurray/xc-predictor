@@ -66,9 +66,15 @@ DISTANCE_EXPONENT_BY_POOL = {
     "ms_unknown_gender":      1.06,
 }
 
-# athletic.net eventShort -> distance in meters. 800m+ only (shorter extrapolates
-# badly under the power law). Events not here keep normalized_time NULL.
+# athletic.net eventShort -> distance in meters. Events not here keep
+# normalized_time NULL. The 600 joined 2026-09-06 (the owner: "get on it"):
+# the tfrrs 600s ("Men's 600 Meters", 28k rows) were already rated through
+# event_parse (its floor is 600), so the law's edge was being extrapolated
+# one step for them all along, and the event offsets by band (148 / 190)
+# now correct what the extrapolation gets wrong, against the 1600 or
+# through the 800.
 EVENT_DISTANCES_TF = {
+    "600m":     600,
     "800m":     800,
     "1500m":    1500,
     "1600m":    1600,
