@@ -35,6 +35,7 @@ _SQL = """
           AND  time_seconds > 0 AND speed_rating IS NOT NULL
           AND  EXTRACT(month FROM race_date) <= 6
           AND  time_seconds >= %(lo)s AND time_seconds < %(hi)s
+          AND  year >= %(since)s
         ORDER  BY person_id, year, time_seconds
     ),
     xc AS (
@@ -71,11 +72,13 @@ _MEET = """
           AND  time_seconds > 0 AND speed_rating IS NOT NULL
           AND  EXTRACT(month FROM race_date) <= 6
           AND  time_seconds >= %(lo)s AND time_seconds < %(hi)s
+          AND  year >= %(since)s
         ORDER  BY person_id, year, time_seconds
     ),
     x AS (
         SELECT x.person_id, x.year, x.time_seconds AS xt, x.speed_rating AS xr,
-               x.meet_id, floor((tf.t - %(lo)s) / %(step)s) AS bucket
+               x.meet_id, round(x.distance) AS dist,
+               floor((tf.t - %(lo)s) / %(step)s) AS bucket
         FROM   ranking_results x
         JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - 1
         JOIN   meets m ON m.div_id = x.div_id
@@ -84,10 +87,10 @@ _MEET = """
           AND  EXTRACT(month FROM x.race_date) >= 8
           AND  (m.meet_name ILIKE %(meet)s OR m.course_name ILIKE %(meet)s)
     )
-    SELECT bucket, count(*),
+    SELECT bucket, dist, count(*),
            percentile_cont(0.5) WITHIN GROUP (ORDER BY xt),
            percentile_cont(0.5) WITHIN GROUP (ORDER BY xr)
-    FROM   x GROUP BY 1 ORDER BY 1
+    FROM   x GROUP BY 1, 2 ORDER BY 1, 3 DESC
 """
 
 
@@ -104,24 +107,31 @@ def main():
     ap.add_argument("--step", type=float, default=10)
     ap.add_argument("--meet", default="%Mt. SAC%",
                     help="ILIKE pattern of a fall meet to show their times at")
+    ap.add_argument("--since", type=int, default=2000,
+                    help="first spring year to include (the fall before is "
+                         "the XC side); Mt. SAC's 3-mile course is 2022+, "
+                         "so --since 2023 keeps it off the 2.93-mile one")
     args = ap.parse_args()
     p = {"pool": args.pool, "lo": args.lo, "hi": args.hi, "step": args.step,
          "ev_lo": args.event * 0.99, "ev_hi": args.event * 1.01,
-         "meet": args.meet}
+         "meet": args.meet, "since": args.since}
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(_SQL, p)
         rows = cur.fetchall()
         cur.execute(_MEET, p)
-        at_meet = {int(b): (n, t, r) for b, n, t, r in cur.fetchall()}
-    print(f"{args.pool}: spring season-best {args.event:.0f} m, and the same "
-          f"athletes' best fall XC rating the season before")
+        at_meet = {}
+        for b, dist, n, t, r in cur.fetchall():
+            at_meet.setdefault(int(b), []).append((int(dist or 0), n, t, r))
+    print(f"{args.pool}: spring season-best {args.event:.0f} m (spring "
+          f"{args.since}+), and the same athletes' best fall XC rating the "
+          f"season before")
     print(f"  {'spring best':>13} {'n':>7} {'TF rtg':>7} {'XC rtg':>7} "
-          f"{'TF-XC':>6} {'25%':>6} {'75%':>6}   at {args.meet.strip('%')}: "
-          f"n / median time / rating")
+          f"{'TF-XC':>6} {'25%':>6} {'75%':>6}   at {args.meet.strip('%')}, "
+          f"by distance label: n / median time / rating")
     for bucket, n, tr, xr, d, q1, q3 in rows:
         lo = args.lo + float(bucket) * args.step
-        m = at_meet.get(int(bucket))
-        meet = (f"{m[0]:>5,} {_clock(m[1]):>8} {m[2]:>6.1f}" if m else "")
+        meet = "  ".join(f"{dist}m {mn:,}/{_clock(t)}/{r:.1f}"
+                         for dist, mn, t, r in at_meet.get(int(bucket), [])[:2])
         print(f"  {_clock(lo):>6}-{_clock(lo + args.step):<6} {n:>7,} "
               f"{tr:>7.1f} {xr:>7.1f} {d:>+6.1f} {q1:>+6.1f} {q3:>+6.1f}   "
               f"{meet}")
