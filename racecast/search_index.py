@@ -112,7 +112,35 @@ WHERE  n.name IS NOT NULL
 #  HELPERS
 # ===================================================================== #
 
-def _stateFor(identity, school, home_state, min_share=0.03):
+def _colleges(conn):
+    """{name_norm: state} from college_directory (211), or {}."""
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.college_directory')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cur.execute("SELECT name_norm, state FROM college_directory")
+    return {r[0]: r[1] for r in cur.fetchall()}
+
+
+def _collegeStateOf(colleges, school):
+    if not colleges or not school:
+        return None
+    try:
+        from build_college_directory import normName
+    except ImportError:
+        return None
+    return colleges.get(normName(school))
+
+
+def _stateFor(identity, school, home_state, min_share=0.03, colleges=None):
+    # ★ A COLLEGE IS WHERE ITS CAMPUS IS (owner, 2026-09-06: "it's not
+    #   Tufts Maryland"). school_identity clusters a name by its athletes'
+    #   HOME states, which is right for a high school and wrong for a
+    #   college: Tufts has a Maryland cluster because Maryland kids go
+    #   there. The directory's state wins for any name it knows.
+    cst = _collegeStateOf(colleges, school)
+    if cst:
+        return cst
     clusters = identity.get(school) if school else None
     if clusters:
         for st, _n, share, _prim in clusters:
@@ -187,6 +215,7 @@ def _load_athletes(conn):
     """Stream the (now cheap) athlete query, insert in batches."""
     has_ph = _hasHomeStates(conn)
     identity = _identity(conn)                   # the schools' own states (207)
+    colleges = _colleges(conn)                   # the campuses' states (211)
     read = _stream_cursor(conn, "athlete_src")
     read.execute(_ATHLETE_SQL.format(
         ph_col=", ph.state AS home_state" if has_ph else ", NULL AS home_state",
@@ -204,7 +233,7 @@ def _load_athletes(conn):
         #   labelled with the wrong state. The school's cluster in the
         #   athlete's home state when it has one (the same-named schools),
         #   else the school's primary state, else the home state.
-        st = _stateFor(identity, school, row.get("home_state"))
+        st = _stateFor(identity, school, row.get("home_state"), colleges=colleges)
         if school and st:
             school = f"{school} ({st})"
         parts  = name.split()

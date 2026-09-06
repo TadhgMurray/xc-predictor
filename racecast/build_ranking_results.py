@@ -2166,7 +2166,18 @@ SELECT base.person_id, base.pool, base.sport, base.year,
        -- ★ THE TEAM THEY RACED FOR, NOT "UNATTACHED" (owner, 2026-09-04):
        --   a season mostly unattached with a few races for a school is that
        --   school's; only a season with no school at all stays unattached.
+       -- ★ A COLLEGE SEASON'S TEAM IS THE COLLEGE (owner, 2026-09-06:
+       --   Liam Lucas headed "Loyola Blakefield" over a Tufts season). A
+       --   college athlete's rows come from two feeds, and the one that
+       --   still names the high school can outnumber the one that names
+       --   the college. The school that carries a college division on
+       --   its rows is the college; only when no row does is the plain
+       --   majority used.
        COALESCE(mode() WITHIN GROUP (ORDER BY school)
+                    FILTER (WHERE base.pool LIKE 'college%%'
+                              AND division IS NOT NULL
+                              AND school IS NOT NULL),
+                mode() WITHIN GROUP (ORDER BY school)
                     FILTER (WHERE school IS NOT NULL
                               AND lower(school) NOT LIKE 'unattached%%'
                               AND lower(school) NOT IN

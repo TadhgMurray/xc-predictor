@@ -1180,6 +1180,31 @@ def athlete(person_id):
                     "unat", "independent", "individual", "no team", "none", "n/a")
             if season_rating and _isTeam(season_rating.get("school")):
                 athlete["school"] = season_rating["school"]
+                # ★ A COLLEGE SEASON'S TEAM IS THE COLLEGE (owner, 2026-09-06).
+                #   The stored season school is the row majority, and a feed
+                #   still naming the high school can be the majority; the
+                #   build applies this rule from run16's step 10, and until
+                #   then the page asks the season's own rows for the school
+                #   that carries a college division.
+                from school_identity import _collegeState
+                if ((season_rating.get("pool") or "").startswith("college")
+                        and not _collegeState(season_rating["school"])):
+                    try:
+                        cur.execute("""
+                            SELECT school, count(*) AS n
+                            FROM   ranking_results
+                            WHERE  person_id = %s AND pool = %s AND sport = %s
+                              AND  year = %s AND division IS NOT NULL
+                              AND  school IS NOT NULL
+                            GROUP  BY school ORDER BY n DESC LIMIT 1
+                        """, (person_id, season_rating["pool"],
+                              season_rating["sport"], season_rating["year"]))
+                        _col = cur.fetchone()
+                        if _col and _col["school"]:
+                            athlete["school"] = _col["school"]
+                            season_rating["school"] = _col["school"]
+                    except Exception:                    # noqa: BLE001
+                        conn.rollback()
             else:
                 try:
                     cur.execute("""
