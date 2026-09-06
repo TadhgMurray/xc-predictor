@@ -99,12 +99,19 @@ def normName(name):
     return ALIASES.get(s, s)
 
 
+# a tag, with its attribute values allowed to contain '>' -- Wikipedia's
+# state cells are <abbr data-mw='{...&lt;/span>...}'>UT</abbr>, and a
+# naive <[^>]+> stopped inside the attribute and left half of it as text
+# (the BYU row read as Utah</span>... and never matched a state, 215)
+_TAG = re.compile(r"<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", re.S)
+_CELL = re.compile(r"<t[hd](?:[^>\"']|\"[^\"]*\"|'[^']*')*>(.*?)</t[hd]>", re.S)
+
+
 def _cells(row_html):
-    cells = re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row_html, flags=re.S)
     out = []
-    for c in cells:
+    for c in _CELL.findall(row_html):
         c = re.sub(r"<sup.*?</sup>", "", c, flags=re.S)
-        c = re.sub(r"<[^>]+>", "", c)
+        c = _TAG.sub("", c)
         out.append(html.unescape(c).strip())
     return out
 
