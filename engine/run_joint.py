@@ -384,6 +384,10 @@ def args_altitude_fit():
     return _ALT_FIT["on"]
 
 
+def banded_labels(labels):
+    return bool(labels) and labels[0].count(":") == 2
+
+
 def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                                      "college_m", "college_f")):
     """The fitted track distance offsets, per pool: log-time against the
@@ -398,6 +402,9 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
     rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
     cal_mean = out.get("dist_cal_mean")
     cal_n = out.get("dist_cal_n")
+    cal_via = out.get("dist_cal_via")
+    base_labels = [lab.rsplit(":", 1)[0] for lab in labels[::js.DIST_N_BAND]] \
+        if banded_labels(labels) else labels
     by_pool = {}
     for i, lab in enumerate(labels):
         parts = lab.split(":")
@@ -439,7 +446,10 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                 for b in range(js.DIST_N_BAND):
                     i = labels.index(f"{p}:{d}:b{b}") if f"{p}:{d}:b{b}" in labels else -1
                     if i >= 0 and cal_n[i] > 0:
-                        txt.append(f"{cal_mean[i]:+.4f}({int(cal_n[i]):,})")
+                        via = ""
+                        if cal_via is not None and cal_via[i] >= 0:
+                            via = "<" + base_labels[int(cal_via[i])].split(":")[-1]
+                        txt.append(f"{cal_mean[i]:+.4f}({int(cal_n[i]):,}{via})")
                     else:
                         txt.append("  --  ")
                 if any(t.strip() != "--" for t in txt):
@@ -695,6 +705,7 @@ def main():
         if out.get("dist_cal_mean") is not None:
             save["dist_cal_mean"] = out["dist_cal_mean"]
             save["dist_cal_n"] = out["dist_cal_n"]
+            save["dist_cal_via"] = out["dist_cal_via"]
     np.savez(args.out, **save)
     print(f"[joint] wrote {args.out}")
 

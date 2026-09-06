@@ -225,3 +225,45 @@ def test_count_matched_bests_do_not_favour_the_event_raced_more():
     b16 = np.full(n_ath, np.inf); np.minimum.at(b16, ath[ev == 1600], y[ev == 1600])
     b32 = np.full(n_ath, np.inf); np.minimum.at(b32, ath[ev == 3200], y[ev == 3200])
     assert np.median(b32 - b16) > 0.008
+
+
+def test_chain_calibrates_an_event_with_no_reference_pairs():
+    """Issue 195: 5000 runners never race the 1600 but race the 3200;
+    the 5000's prior mean comes through the 3200's."""
+    rng = np.random.default_rng(5)
+    n_ath, n_cell = 600, 6
+    e_true = {3200: 0.020, 5000: 0.045}
+    rows = []
+    for i in range(n_ath):
+        if i < 300:                                    # milers: 1600 + 3200
+            evs = [1600] * 4 + [3200] * 4
+        else:                                          # distance: 3200 + 5000
+            evs = [3200] * 4 + [5000] * 4
+        for ev in evs:
+            rows.append((i, rng.integers(0, n_cell), ev))
+    ath = np.array([r[0] for r in rows]); cel = np.array([r[1] for r in rows])
+    ev = np.array([r[2] for r in rows])
+    y = (rng.normal(0, 0.1, n_ath)[ath] + rng.normal(0, 0.01, n_cell)[cel]
+         + np.array([e_true.get(e, 0.0) for e in ev]) + rng.normal(0, 0.015, len(rows)))
+    cols = {"norm": np.exp(y), "sport": np.ones(len(rows), dtype=np.int8),
+            "athlete": ath, "dist_m": ev.astype(np.float32)}
+    pool_of_ath = np.zeros(n_ath, dtype=int)
+    classes, labels, refs = rj.distClasses(cols, pool_of_ath, ["p0"])
+    assert labels == ["p0:3200", "p0:5000"]
+    ref_rows = rj.distRefRows(cols, pool_of_ath, refs, ["p0"])
+    D = js.Design(ath, cel, np.arange(len(rows)) // 4,
+                  group_of_cell=np.ones(n_cell, dtype=int), dist=classes,
+                  n_e=len(labels), dist_banded=True, dist_ref=ref_rows,
+                  pool_row=np.zeros(len(rows), dtype=int))
+    rating = np.full(len(y), 110.0)
+    D.rebandDist(rating)
+    n_cal = D.calibrateDist(y, rating, min_pairs=50)
+    mid = 1
+    i32, i50 = 0 * js.DIST_N_BAND + mid, 1 * js.DIST_N_BAND + mid
+    assert n_cal == 2, n_cal
+    assert D.e_cal_via[i32] == -1 and D.e_cal_via[i50] == 0, D.e_cal_via
+    assert abs(D.e_mean[i32] - 0.020) < 0.006, D.e_mean
+    assert abs(D.e_mean[i50] - 0.045) < 0.008, D.e_mean
+    assert D.e_cal_n[i50] == 300
+    print(f"  chain: 3200 {D.e_mean[i32]:+.4f} (ref), 5000 {D.e_mean[i50]:+.4f} "
+          f"via 3200 (truth +0.045) ... OK")

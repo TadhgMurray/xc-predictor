@@ -10,7 +10,8 @@ the level at every ability, on real people, no model argument.
 Buckets athletes by their spring season-best TIME at --event (Jan-Jun
 of year Y), and for each bucket prints: the median rating that best
 carries, the median of their fall XC season-best rating (Aug-Dec of
-Y-1), the difference, and the median fall XC time at the fall meet
+Y-1), the difference (--stat median compares each athlete's MEDIAN
+rating on both sides instead, which no race count can bias), and the median fall XC time at the fall meet
 most of them ran (--meet, a name fragment; default the biggest one
 in the bucket).
 
@@ -30,33 +31,37 @@ sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
 
 _SQL = """
-    WITH tf AS (
-        SELECT DISTINCT ON (person_id, year)
-               person_id, year, time_seconds AS t, speed_rating AS r
+    WITH tf0 AS (
+        SELECT person_id, year, time_seconds, speed_rating
         FROM   ranking_results
         WHERE  sport = 'TF' AND pool = %(pool)s
           AND  distance BETWEEN %(ev_lo)s AND %(ev_hi)s
           AND  time_seconds > 0 AND speed_rating IS NOT NULL
           AND  EXTRACT(month FROM race_date) <= 6
-          AND  time_seconds >= %(lo)s AND time_seconds < %(hi)s
           AND  year >= %(since)s
-        ORDER  BY person_id, year, time_seconds
+    ),
+    tf AS (
+        SELECT person_id, year, min(time_seconds) AS t,
+               (array_agg(speed_rating ORDER BY time_seconds))[1] AS r_best,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS r_med
+        FROM   tf0 GROUP BY person_id, year
+        HAVING min(time_seconds) >= %(lo)s AND min(time_seconds) < %(hi)s
     ),
     xc AS (
-        SELECT DISTINCT ON (x.person_id, x.year)
-               x.person_id, x.year, x.speed_rating AS r, x.time_seconds AS t,
-               x.meet_id
+        SELECT x.person_id, x.year, max(x.speed_rating) AS r_best,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY x.speed_rating) AS r_med
         FROM   ranking_results x
         JOIN   tf ON tf.person_id = x.person_id AND x.year = tf.year - %(lag)s
         WHERE  x.sport = 'XC' AND x.pool = %(pool)s
           AND  x.speed_rating IS NOT NULL
           AND  EXTRACT(month FROM x.race_date) >= 8
-        ORDER  BY x.person_id, x.year, x.speed_rating DESC
+        GROUP  BY x.person_id, x.year
     ),
     pair AS (
-        SELECT tf.person_id, tf.year, tf.t AS tt, tf.r AS tr, xc.r AS xr,
+        SELECT tf.person_id, tf.year, tf.t AS tt, tf.{rcol} AS tr, xc.{rcol} AS xr,
                floor((tf.t - %(lo)s) / %(step)s) AS bucket
-        FROM   tf JOIN xc USING (person_id, year)
+        FROM   tf JOIN xc ON xc.person_id = tf.person_id
+                         AND xc.year = tf.year - %(lag)s
     )
     SELECT bucket, count(*),
            percentile_cont(0.5) WITHIN GROUP (ORDER BY tr),
@@ -115,6 +120,11 @@ def main():
                     help="winter: the fall XC best BEFORE the spring (default);"
                          " summer: the fall XC best AFTER it, the other half"
                          " of the year (winter + summer = the annual gain)")
+    ap.add_argument("--stat", default="best", choices=("best", "median"),
+                    help="best: the rating of the spring best time against "
+                         "the best fall rating (the fall best is the max of "
+                         "more races, worth about a point); median: the "
+                         "athlete's median rating on each side, count-free")
     ap.add_argument("--since", type=int, default=2000,
                     help="first spring year to include (the fall before is "
                          "the XC side); Mt. SAC's 3-mile course is 2022+, "
@@ -125,14 +135,15 @@ def main():
          "meet": args.meet, "since": args.since,
          "lag": 1 if args.leg == "winter" else 0}
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute(_SQL, p)
+        cur.execute(_SQL.format(rcol="r_best" if args.stat == "best" else "r_med"), p)
         rows = cur.fetchall()
         cur.execute(_MEET, p)
         at_meet = {}
         for b, dist, n, t, r in cur.fetchall():
             at_meet.setdefault(int(b), []).append((int(dist or 0), n, t, r))
     print(f"{args.pool}: spring season-best {args.event:.0f} m (spring "
-          f"{args.since}+), and the same athletes' best fall XC rating the "
+          f"{args.since}+), {args.stat} ratings, and the same athletes' "
+          f"{args.stat} fall XC rating the "
           f"{'fall before (winter leg)' if args.leg == 'winter' else 'fall after (summer leg)'}")
     print(f"  {'spring best':>13} {'n':>7} {'TF rtg':>7} {'XC rtg':>7} "
           f"{'TF-XC':>6} {'25%':>6} {'75%':>6}   at {args.meet.strip('%')}, "

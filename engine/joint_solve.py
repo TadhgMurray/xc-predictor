@@ -478,6 +478,7 @@ class Design:
                       if dist_ref is not None and self.n_e else None)
         self.e_mean = np.zeros(self.n_e)
         self.e_cal_n = np.zeros(self.n_e, dtype=np.int64)
+        self.e_cal_via = np.full(self.n_e, -1, dtype=np.int64)   # the chain
 
         # the endurance slope (SLOPE_RIDGE): per row the centred log distance
         self.has_slope = lz is not None
@@ -535,6 +536,7 @@ class Design:
         no-op without the reference rows or the bands."""
         self.e_mean[:] = 0.0
         self.e_cal_n[:] = 0
+        self.e_cal_via[:] = -1
         if not self.dist_banded or self.e_ref is None or not self.e_ref.any():
             return 0
         y = np.asarray(y, dtype=np.float64)
@@ -560,22 +562,41 @@ class Design:
         ref = np.flatnonzero(self.e_ref)
         r_rows, r_ath, r_pos = _ranked(ref, self.athlete[ref])
         n_ref = np.bincount(r_ath, minlength=self.n_ath)
+        # the pool of each class, from its rows (a class never spans pools)
+        class_pool = np.zeros(nb, dtype=np.int64)
+        if self.pool_row is not None and free.size:
+            class_pool[self.e_base[free]] = self.pool_row[free]
+
+        def _side(c):
+            """(rows, athlete, position-in-group, count per athlete) of one
+            side of a pair: the reference event (c < 0) or free class c."""
+            if c < 0:
+                return r_rows, r_ath, r_pos, n_ref
+            sel = f_key % nb == c
+            return f_rows[sel], f_key[sel] // nb, f_pos[sel], n_y[c::nb]
+
+        def _pairs(c, z):
+            """Per athlete-season with both sides: log(best at c) - log(best
+            at z), count-matched; and the athletes."""
+            rc, ac, pc, ncnt = _side(c)
+            rz, az, pz, nz = _side(z)
+            k = np.minimum(ncnt, nz)
+            if not (k > 0).any():
+                return None, None
+            best_c = np.full(self.n_ath, np.inf)
+            m = pc < k[ac]
+            np.minimum.at(best_c, ac[m], y[rc[m]])
+            best_z = np.full(self.n_ath, np.inf)
+            m = pz < k[az]
+            np.minimum.at(best_z, az[m], y[rz[m]])
+            ath = np.flatnonzero(np.isfinite(best_c) & np.isfinite(best_z))
+            return best_c[ath] - best_z[ath], ath
 
         n_cal = 0
         for c in range(nb):
-            k = np.minimum(n_ref, n_y[c::nb])                # per athlete
-            if not (k > 0).any():
+            d, ath = _pairs(c, -1)
+            if d is None or ath.size < min_pairs:
                 continue
-            m = (f_key % nb == c) & (f_pos < k[f_key // nb])
-            best = np.full(self.n_ath, np.inf)
-            np.minimum.at(best, f_key[m] // nb, y[f_rows[m]])
-            m = r_pos < k[r_ath]
-            best_ref = np.full(self.n_ath, np.inf)
-            np.minimum.at(best_ref, r_ath[m], y[r_rows[m]])
-            ath = np.flatnonzero(np.isfinite(best) & np.isfinite(best_ref))
-            if ath.size < min_pairs:
-                continue
-            d = best[ath] - best_ref[ath]
             b = ath_band[ath]
             for j in range(DIST_N_BAND):
                 mm = b == j
@@ -585,6 +606,49 @@ class Design:
                 self.e_mean[idx] = float(np.median(d[mm]))
                 self.e_cal_n[idx] = int(mm.sum())
                 n_cal += 1
+
+        # ★ THE CHAIN (issue 195): an event with too few pairs against the
+        #   reference -- the college 10k against the mile -- is calibrated
+        #   against the calibrated event of its pool and band it shares the
+        #   most athlete-seasons with (the 5k), its offset plus that one's.
+        #   Up to three links; a class that stays uncalibrated keeps the
+        #   loose zero prior. e_cal_n counts the link's pairs, e_cal_via
+        #   names the class it hangs on (-1 = the reference).
+        for _round in range(3):
+            linked = 0
+            for c in range(nb):
+                want = [j for j in range(DIST_N_BAND)
+                        if self.e_cal_n[c * DIST_N_BAND + j] == 0]
+                if not want:
+                    continue
+                cands = [z for z in range(nb) if z != c
+                         and class_pool[z] == class_pool[c]
+                         and any(self.e_cal_n[z * DIST_N_BAND + j] > 0
+                                 and self.e_cal_via[z * DIST_N_BAND + j] != c
+                                 for j in want)]
+                best = {}
+                for z in cands:
+                    d, ath = _pairs(c, z)
+                    if d is None or ath.size < min_pairs:
+                        continue
+                    b = ath_band[ath]
+                    for j in want:
+                        zidx = z * DIST_N_BAND + j
+                        if self.e_cal_n[zidx] == 0 or self.e_cal_via[zidx] == c:
+                            continue
+                        mm = b == j
+                        n_j = int(mm.sum())
+                        if n_j >= min_pairs and n_j > best.get(j, (0,))[0]:
+                            best[j] = (n_j, z, float(np.median(d[mm])))
+                for j, (n_j, z, med) in best.items():
+                    idx = c * DIST_N_BAND + j
+                    self.e_mean[idx] = med + self.e_mean[z * DIST_N_BAND + j]
+                    self.e_cal_n[idx] = n_j
+                    self.e_cal_via[idx] = z
+                    n_cal += 1
+                    linked += 1
+            if not linked:
+                break
         return n_cal
 
     def unpack(self, theta):
@@ -1324,6 +1388,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "dist_offset": b["e"],
         "dist_cal_mean": D.e_mean.copy() if D.n_e else None,
         "dist_cal_n": D.e_cal_n.copy() if D.n_e else None,
+        "dist_cal_via": D.e_cal_via.copy() if D.n_e else None,
         "slope": b["g"],
         "altitude_coef": b["k"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),
