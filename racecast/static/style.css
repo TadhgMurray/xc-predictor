@@ -4348,10 +4348,38 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .meets-page .meet-filters details.meet-units .unit-row { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; }
 
 /* the team card's Add menu and the whole-squad boxes (2026-09-06) */
-.predict2 .add-menu { display: inline-block; margin: 0.3rem 0.4rem 0 0; }
+/* The Add menu on a team card (owner, 2026-09-06: the summary looked like
+   the items and was narrower). The summary is the one solid, centred,
+   full-width button on the card; the three choices open under it as a
+   column of the quieter dashed ones. */
+.predict2 .add-menu { display: block; margin: 0.3rem 0 0; }
 .predict2 .add-menu > summary { list-style: none; cursor: pointer; }
 .predict2 .add-menu > summary::-webkit-details-marker { display: none; }
-.predict2 .add-menu-body { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.3rem; }
-.predict2 .squad-boxes { margin-left: 0.8rem; font-size: 0.85rem; }
-.predict2 .squad-boxes label { margin-right: 0.8rem; white-space: nowrap; }
+.predict2 .add-menu > summary.squad-btn {
+    border: 1px solid #bbb; text-align: center; color: #222;
+    font-weight: 600; margin-top: 4px; }
+.predict2 .add-menu[open] > summary.squad-btn { border-radius: 3px 3px 0 0;
+    border-bottom-color: #eee; }
+.predict2 .add-menu-body { display: flex; flex-direction: column; gap: 0;
+    margin: 0; padding: 0 0 0 0.6rem; }
+.predict2 .add-menu-body .squad-btn { margin-top: 3px; }
+.predict2 .squad-boxes .viewsel { margin-left: 0; }
+.predict2 .squad-boxes .vbtn:first-of-type { margin-left: 6px; }
 
+
+/* Rankings: the Year filter as tick chips in the open (owner, 2026-09-06). */
+.rankings-page .year-chips { display: flex; flex-wrap: wrap; gap: 4px;
+                             align-items: center; min-height: 30px; }
+.rankings-page .year-chips .ychip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid #ccc; border-radius: 3px; background: #fff;
+  padding: 2px 6px; font-size: 0.8rem; color: #333; cursor: pointer;
+  white-space: nowrap; user-select: none;
+}
+.rankings-page .year-chips .ychip input { margin: 0; width: 12px; height: 12px; }
+.rankings-page .year-chips .ychip:hover { border-color: #888; }
+.rankings-page .year-chips .ychip.is-on { border-color: #111; color: #111; font-weight: 600; }
+.rankings-page .year-chips .ymore {
+  border: 0; background: none; padding: 0 2px; font: inherit;
+  font-size: 0.78rem; color: #2e53e6; text-decoration: underline; cursor: pointer;
+}

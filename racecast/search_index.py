@@ -70,6 +70,11 @@ CREATE INDEX IF NOT EXISTS {prefix}_prefix
     ON {table} (search_text text_pattern_ops);
 CREATE INDEX IF NOT EXISTS {prefix}_trgm
     ON {table} USING gin (search_text gin_trgm_ops);
+-- the rankings School picker lists a state's schools without a query
+-- (/api/schools): the label ends in "(ST)", and a partial index over the
+-- school rows alone keeps that off the 15M-row table
+CREATE INDEX IF NOT EXISTS {prefix}_school_label
+    ON {table} (label, sort_count) WHERE kind = 'school';
 """
 
 

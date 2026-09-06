@@ -4585,6 +4585,61 @@ def pad_pool_pairs(panels):
 
 from flask import request, jsonify
 
+_SCHOOL_IDX = {"at": 0.0, "ok": False}
+
+
+def _schoolListIndexed(cur):
+    """Is idx_search_school_label there yet? Probed every ten minutes.
+    Without it the state listing would seq-scan search_index, so the
+    picker falls back to search-by-typing until the next index build
+    (or CREATE INDEX CONCURRENTLY idx_search_school_label ON search_index
+    (label, sort_count) WHERE kind = 'school')."""
+    import time as _t
+    if _t.time() - _SCHOOL_IDX["at"] > 600:
+        try:
+            cur.execute("""SELECT 1 FROM pg_indexes
+                           WHERE tablename = 'search_index'
+                             AND indexname = 'idx_search_school_label'""")
+            _SCHOOL_IDX["ok"] = cur.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            _SCHOOL_IDX["ok"] = False
+        _SCHOOL_IDX["at"] = _t.time()
+    return _SCHOOL_IDX["ok"]
+
+
+@app.route("/api/schools")
+def api_schools():
+    """The schools of one or more states, biggest programme first, for the
+    rankings School picker (owner, 2026-09-06: "a dropdown so you can
+    press for sure"). Same row shape as /search/api so the combobox
+    renders it unchanged. q narrows on the start of the name. Returns
+    {"rows": [], "typed": true} when it cannot list (no state, or the
+    partial index is not built yet), which tells the picker to ask for
+    typing instead of showing an empty list."""
+    states = [t.strip().upper() for t in (request.args.get("state") or "").split(",")
+              if t.strip()][:12]
+    q = (request.args.get("q") or "").strip()
+    if not states:
+        return jsonify({"rows": [], "typed": True})
+    with getConn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if not _schoolListIndexed(cur):
+            return jsonify({"rows": [], "typed": True})
+        pats = [f"%({st})" for st in states]
+        cur.execute("""
+            SELECT label, sort_count
+            FROM   search_index
+            WHERE  kind = 'school'
+              AND  label LIKE ANY(%(pats)s)
+              AND  (%(q)s = '' OR label ILIKE %(qlike)s)
+            ORDER  BY sort_count DESC, label
+            LIMIT  400
+        """, {"pats": pats, "q": q, "qlike": q + "%"})
+        rows = cur.fetchall()
+    out = [{"kind": "school", "label": r["label"],
+            "value": search_index.bareSchool(r["label"])} for r in rows]
+    return jsonify({"rows": out, "typed": False})
+
+
 @app.route("/api/units")
 def api_units():
     """Distinct unit values for one filter, for the pickers. Issue #55.

@@ -202,9 +202,12 @@
          do not. */
       function showByLevel() {
         var lv = level ? level.value : "", st = state ? state.value : "";
+        /* middle school has no leagues or sections here: no boxes at all */
+        var units = document.querySelector(".meet-units");
+        if (units) units.style.display = lv === "ms" ? "none" : "";
         document.querySelectorAll(".unit-box").forEach(function (box) {
           var college = box.dataset.level === "college";
-          var on = !lv || (lv === "college") === college;
+          var on = lv !== "ms" && (!lv || (lv === "college") === college);
           box.closest(".field").style.display = on ? "" : "none";
           if (!on) box.value = "";
           var needsState = !college && !st;

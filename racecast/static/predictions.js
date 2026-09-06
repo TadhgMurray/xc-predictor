@@ -2318,21 +2318,29 @@ function removeWholeSquads(div) {
   return n;
 }
 
-/* The checkboxes beside Show: this race, and every race (a grouped meet). */
+/* ★ ONE SEGMENTED CONTROL BESIDE Show, IN ITS STYLE (owner, 2026-09-06:
+   the checkboxes added height and their text did not explain). "Squads:"
+   then Fielded (the rosters as the results list them) | Whole (every
+   current runner of every team in this race) and, on a grouped meet, Whole
+   in every race. Lit like Show: the one that is true, or Fielded. */
 function renderSquadBoxes() {
   const el = $("squad-boxes");
   if (!el) return;
   const divs = activeBlocks();
   const on = (d) => (editsFor(d).wholeAdded || new Set()).size > 0;
-  const allOn = divs.length > 0 && divs.every(on);
+  const allOn = divs.length > 1 && divs.every(on);
   const thisOn = on(state.meet.div);
-  el.innerHTML = divs.length > 1
-    ? `<label title="Every current runner of every team in this race onto its card">
-         <input type="checkbox" data-whole="race" ${thisOn ? "checked" : ""}> whole squads, this race</label>
-       <label title="Every current runner of every team in every race here onto its card">
-         <input type="checkbox" data-whole="all" ${allOn ? "checked" : ""}> whole squads, every race</label>`
-    : `<label title="Every current runner of every team onto its card">
-         <input type="checkbox" data-whole="race" ${thisOn ? "checked" : ""}> whole squads for every team</label>`;
+  const lit = allOn ? "all" : thisOn ? "race" : "fielded";
+  const btn = (v, label, title) =>
+    `<button class="vbtn${lit === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
+  el.innerHTML = `<span class="viewsel">Squads:` +
+    btn("fielded", "Fielded", "The rosters as the results list them") +
+    btn("race", divs.length > 1 ? "Whole, this race" : "Whole",
+        "Every current runner of every team in this race onto its card") +
+    (divs.length > 1
+      ? btn("all", "Whole, every race",
+            "Every current runner of every team in every race here onto its card")
+      : "") + `</span>`;
 }
 
 async function loadSquad(school, gender) {
@@ -2504,19 +2512,26 @@ document.addEventListener("click", (e) => {
   }
   const whole = e.target.closest("[data-whole]");
   if (whole) {
-    const divs = whole.dataset.whole === "all" ? activeBlocks() : [state.meet.div];
-    if (whole.checked) {
-      whole.disabled = true;
-      wholeSquadsFor(divs).then(({ n, teams }) => {
-        setStatus(`Added ${n} across ${teams} teams.`, false);
-        renderField(); renderSquadBoxes(); saveState();
-      });
-    } else {
+    const want = whole.dataset.whole;
+    if (whole.classList.contains("is-on")) return;
+    if (want === "fielded") {
+      /* Back to the rosters: every whole-squad addition off, every race. */
       let n = 0;
-      for (const d of divs) n += removeWholeSquads(d);
+      for (const d of activeBlocks()) n += removeWholeSquads(d);
       setStatus(n ? `Took ${n} whole-squad additions off again.` : "", false);
       renderField(); renderSquadBoxes(); saveState();
+      return;
     }
+    const divs = want === "all" ? activeBlocks() : [state.meet.div];
+    if (want === "race") {
+      // narrowing from every race to this one: the other races go back
+      for (const d of activeBlocks()) if (d !== state.meet.div) removeWholeSquads(d);
+    }
+    whole.disabled = true;
+    wholeSquadsFor(divs).then(({ n, teams }) => {
+      setStatus(n ? `Added ${n} across ${teams} teams.` : "Every squad is already whole.", false);
+      renderField(); renderSquadBoxes(); saveState();
+    });
     return;
   }
   const sq = e.target.closest("[data-squad]");

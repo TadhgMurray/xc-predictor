@@ -516,8 +516,12 @@ const PANEL = {
        cols: 1, width: 320, searched: true, kind: k,
        endpoint: "/api/units", hint: "Search\u2026",
      }])),
+  /* ★ LISTED WHEN A STATE IS PICKED (owner, 2026-09-06: "a dropdown so
+     you can press for sure"). Opening the panel lists that state's schools
+     from /api/schools, biggest programme first, and typing narrows the
+     list; with no state it is search-by-typing as before. */
   school: { cols: 1, width: 340, searched: true, kind: "school",
-            hint: "Search schools\u2026" },
+            listed: "/api/schools", hint: "Search schools\u2026" },
   /* The course specifier (Performances + Best times). Same searched shape
      as school, against the site index's course kind. */
   course: { cols: 1, width: 340, searched: true, kind: "course",
@@ -556,6 +560,8 @@ function makeCombo(host) {
   let dirty = false;
   let searchTimer = null;
   let found = [];              // last search results, for searched fields
+  let listRows = null;         // the state's schools when listed (cfg.listed)
+  let listNote = "";           // why there is no list, when there is none
 
   host.innerHTML =
     `<button type="button" class="combo-btn" aria-expanded="false">` +
@@ -625,10 +631,26 @@ function makeCombo(host) {
          search returned. Without the chosen rows, a school you added would
          vanish from the panel the moment you cleared the box. */
       const picked = [...chosen].map((v) => row(v, labelFor(v), null));
-      const hits = found.filter((f) => !chosen.has(f.v))
-                        .map((f) => row(f.v, f.label, null));
+      /* The listed rows first, narrowed by whatever is typed, then the
+         search hits the list did not already carry. */
+      const q = input.value.trim().toLowerCase();
+      const seenV = new Set(chosen);
+      const hits = [];
+      for (const f of (listRows || [])) {
+        const l = f.label.toLowerCase();
+        if (q && !(l.startsWith(q) || l.includes(" " + q))) continue;
+        if (seenV.has(f.v)) continue;
+        seenV.add(f.v); hits.push(row(f.v, f.label, null));
+      }
+      for (const f of found) {
+        if (seenV.has(f.v)) continue;
+        seenV.add(f.v); hits.push(row(f.v, f.label, null));
+      }
+      const why = hits.length ? "" : q.length >= 2 ? "No matches"
+        : listRows ? (q ? "No matches" : "No schools listed")
+        : (listNote || "Type at least two letters");
       opts.innerHTML = picked.concat(hits).join("") ||
-        `<div class="combo-none">Type at least two letters</div>`;
+        `<div class="combo-none">${esc(why)}</div>`;
       return;
     }
 
@@ -657,6 +679,8 @@ function makeCombo(host) {
     const kind = cfg.kind || "school";
     const q = input.value.trim();
     if (q.length < 2) { found = []; renderOptions(); return; }
+    /* A listed field narrows its own list on every keystroke (renderOptions
+       does that); the site search is only asked once two letters are in. */
     try {
       const res = await fetch((cfg.endpoint || "/search/api")
         + "?kind=" + kind + "&q=" + encodeURIComponent(q));
@@ -681,6 +705,34 @@ function makeCombo(host) {
     renderOptions();
   }
 
+  /* The state's schools, fetched on every open because the State filter
+     may have changed since. {"typed": true} means the server cannot list
+     (no state, or its index is not built yet) and typing is the way. */
+  async function runList() {
+    if (!cfg.listed) return;
+    const st = combos.state ? combos.state.values() : [];
+    if (!st.length) {
+      listRows = null;
+      listNote = "Pick a state to list its schools, or type a name";
+      renderOptions(); return;
+    }
+    try {
+      const res = await fetch(cfg.listed + "?state=" + encodeURIComponent(st.join(",")));
+      const d = await res.json();
+      if (d.typed) { listRows = null; listNote = "Type at least two letters"; }
+      else {
+        listRows = (d.rows || []).map((r) => {
+          seen.set(r.value, r.label);
+          return { v: r.value, label: r.label };
+        });
+        listNote = "";
+      }
+    } catch (err) {
+      listRows = null; listNote = "Type at least two letters";
+    }
+    renderOptions();
+  }
+
   function open() {
     /* One panel at a time -- two overlapping menus is a layout bug waiting to
        happen and there is never a reason to have both. */
@@ -691,6 +743,7 @@ function makeCombo(host) {
     input.value = "";
     found = [];
     renderOptions();
+    runList();
 
     /* ⚠ A 520px PANEL UNDER A RIGHT-HAND FILTER RUNS OFF THE PAGE. Measured
        on open rather than guessed from column order, because the filter row
@@ -720,6 +773,7 @@ function makeCombo(host) {
 
   input.addEventListener("input", () => {
     if (searched) {
+      if (listRows) renderOptions();        // the list narrows at once
       clearTimeout(searchTimer);
       searchTimer = setTimeout(runSearch, 200);
     } else {
@@ -786,7 +840,60 @@ function makeCombo(host) {
   return api;
 }
 
-document.querySelectorAll(".combo").forEach(makeCombo);
+/* ★ YEAR IS CHECKBOXES IN THE OPEN, NOT A MENU (owner, 2026-09-06:
+   "Season should be a checkbox"). The five newest seasons sit in the
+   filter bar as tick chips; "earlier" unfolds the rest in place. Same
+   api as a combo (values / set, combochange on change) so buildQuery and
+   the URL restore do not know the difference. Applies on tick: with the
+   chips in the open there is no panel to close. */
+const YEAR_INLINE = 5;
+
+function makeYearChips(host) {
+  const chosen = new Set();
+  let expanded = false;
+  host.classList.add("year-chips");
+
+  function render() {
+    const rows = expanded ? YEARS : YEARS.slice(0, YEAR_INLINE);
+    host.innerHTML = rows.map(([v]) =>
+      `<label class="ychip${chosen.has(v) ? " is-on" : ""}">` +
+      `<input type="checkbox" data-v="${v}"${chosen.has(v) ? " checked" : ""}>` +
+      `<span>${v}</span></label>`).join("") +
+      `<button type="button" class="ymore">${expanded ? "fewer" : "earlier"}</button>`;
+  }
+
+  host.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[type=checkbox]");
+    if (!cb) return;
+    if (cb.checked) chosen.add(cb.dataset.v); else chosen.delete(cb.dataset.v);
+    render();
+    host.dispatchEvent(new CustomEvent("combochange",
+                                       { bubbles: true, detail: { field: "year" } }));
+    state.offset = 0;
+    load();
+  });
+  host.addEventListener("click", (e) => {
+    if (!e.target.closest(".ymore")) return;
+    expanded = !expanded;
+    render();
+  });
+
+  render();
+  const api = {
+    values: () => [...chosen],
+    set: (vals) => {
+      chosen.clear(); (vals || []).forEach((v) => chosen.add(v));
+      const inline = new Set(YEARS.slice(0, YEAR_INLINE).map((y) => y[0]));
+      if ([...chosen].some((v) => !inline.has(v))) expanded = true;
+      render();
+    }
+  };
+  combos.year = api;
+  return api;
+}
+
+document.querySelectorAll(".combo").forEach((host) =>
+  host.dataset.field === "year" ? makeYearChips(host) : makeCombo(host));
 
 
 /* ------------------------------------------------------------------ *
