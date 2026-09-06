@@ -1129,10 +1129,14 @@ def athlete(person_id):
 
             # League / section / division for the header line. Read
             # through school_units so every page phrases them alike.
-            from school_units import unitsFor, homeStateOf
+            from school_units import unitsFor, homeStateOf, unitsForPerson
             units = (unitsFor(cur, athlete["school"],
                               homeStateOf(cur, person_id))
                      if athlete.get("school") else [])
+            # ★ THE ROWS WIN (owner, 2026-09-06): the chips come from the
+            #   athlete's own latest season, which is what the boards rank
+            #   and filter; the school-name lookup is only the fallback.
+            units = unitsForPerson(cur, person_id, fallback=units)
 
             # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
             #   boards rank -- so the number up top is one the athlete can go

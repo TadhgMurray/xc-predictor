@@ -295,3 +295,55 @@ def applyUnitFilters(cur, f, args):
         f["school"] = schools
     f["unit_filter"] = wanted
     return None
+
+
+def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None):
+    """The header chips from the athlete's OWN latest-season rows in
+    ranking_results (owner, 2026-09-06: "the top one needs to always
+    follow the bottom one"). Each unit column's mode over that season;
+    the same values the boards filter on, so the chips and the ranks
+    cannot disagree. `fallback` (unitsFor's answer) is returned when the
+    rows have no units at all or the table is not there."""
+    cols = ["is_college", "division", "region", "conference", "league",
+            "state_div", "section", "section_div", "district", "county",
+            "class", "area"]
+    try:
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_name = 'ranking_results'""")
+        have = {r[0] if not isinstance(r, dict) else r["column_name"] for r in cur.fetchall()}
+        use = [c for c in cols if c in have]
+        if not use or "is_college" not in have and not any(c in have for c in cols[1:]):
+            return fallback or []
+        modes = ", ".join(f'mode() WITHIN GROUP (ORDER BY "{c}") AS "{c}"' for c in use)
+        cur.execute(f"""
+            SELECT {modes}
+            FROM   ranking_results
+            WHERE  person_id = %s AND sport = %s
+              AND  year = (SELECT max(year) FROM ranking_results
+                           WHERE person_id = %s AND sport = %s)
+        """, (person_id, sport, person_id, sport))
+        row = cur.fetchone()
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        return fallback or []
+    if row is None:
+        return fallback or []
+    row = dict(zip(use, row)) if isinstance(row, (tuple, list)) else dict(row)
+    if not any(row.get(c) for c in use if c != "is_college"):
+        return fallback or []
+    is_college = bool(row.get("is_college")) or bool(row.get("division") or row.get("conference"))
+    spec = _COLLEGE_CHIPS if is_college else _HS_CHIPS
+    out = []
+    for col in spec:
+        value = row.get(col)
+        if not value:
+            continue
+        if (col == "class" and str(value).strip().isdigit()
+                and str(value).strip() in (str(row.get("section_div") or ""),
+                                           str(row.get("state_div") or ""))):
+            continue
+        out.append({"kind": col, "raw": value,
+                    "label": _label(col, value, long, row),
+                    "conflict": False, "asof": None})
+    return out
+

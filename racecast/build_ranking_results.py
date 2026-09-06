@@ -754,7 +754,7 @@ _COLUMNS = ("sport", "result_id", "person_id", "pool", "speed_rating",
             #   what school_unit already stores.
             "division", "region", "conference", "league",
             "state_div", "section_div", "district", "county", "class",
-            "area",
+            "area", "section",
             # ★ THE EVENT AXIS OF THE TIMES/MARKS BOARD (owner, 2026-09-02).
 
             #   event_kind: NULL for a flat race; 'hurdles' / 'steeple' for
@@ -810,7 +810,7 @@ _TF_DISTANCE = {}
 #   empty -- never an error, exactly as school_identity behaves.
 _UNIT_COLS = ("division", "region", "conference", "league",
               "state_div", "section_div", "district", "county", "class",
-              "area")
+              "area", "section")
 
 _UNITS = {"loaded": False, "by_key": {}, "by_school": {}}
 
@@ -1610,7 +1610,7 @@ def createShadow(conn, name, like):
             # league is a name and a division is "DI" -- neither is a number.
             for _u in ("division", "region", "conference", "league",
                        "state_div", "section_div", "district", "county",
-                       "class", "area"):
+                       "class", "area", "section"):
 
                 cur.execute(f'ALTER TABLE IF EXISTS {like} '
                             f'ADD COLUMN IF NOT EXISTS "{_u}" text')

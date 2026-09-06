@@ -663,6 +663,20 @@ def _whereClauses(f, params, with_dates):
             #   a few hundred to a few thousand names, fetched once per
             #   filter value and cached ten minutes; `= ANY(array)` lets the
             #   planner use idx_rr_school or hash it, either way in one pass.
+            # ★ THE ROW'S OWN UNIT, WHEN IT CARRIES ONE (owner, 2026-09-06:
+            #   a Nevada runner under NCS because his school's NAME has a
+            #   California row in school_unit; "the top one needs to always
+            #   follow the bottom one"). Every row carries the unit columns
+            #   stamped per (school, state) at build time; filtering on them
+            #   cannot disagree with the athlete page, which reads the same
+            #   rows. The name semi-join stays for a column the rows do not
+            #   have yet (section arrives with the next step 10).
+            row_cols = [c for c in UNIT_COLUMNS[_key] if _rowHasUnit(c)]
+            if row_cols:
+                params[f"{_key}_vals"] = list(f[_key])
+                ors = " OR ".join(f'"{c}" = ANY(%({_key}_vals)s)' for c in row_cols)
+                parts.append(f" AND ({ors})")
+                continue
             schools = _unitSchools(_key, f[_key])
             if not schools:
                 parts.append(" AND FALSE")           # no school has that unit
@@ -823,6 +837,27 @@ _UNIT_AREA_PRESENT = None
 
 
 _UNIT_SCHOOL_CACHE = {}          # (key, values) -> (until, [schools])
+
+
+_ROW_UNIT_COLS = {"at": 0.0, "cols": set()}
+
+
+def _rowHasUnit(col):
+    """Does ranking_results carry this unit column? Probed every ten
+    minutes, so a column that arrives with a rebuild is used within
+    minutes and never raises before it exists."""
+    import time as _t
+    if _t.time() - _ROW_UNIT_COLS["at"] > 600:
+        try:
+            from database import getConn
+            with getConn() as conn, conn.cursor() as c:
+                c.execute("""SELECT column_name FROM information_schema.columns
+                             WHERE table_name = 'ranking_results'""")
+                _ROW_UNIT_COLS["cols"] = {r[0] for r in c.fetchall()}
+        except Exception:                            # noqa: BLE001
+            _ROW_UNIT_COLS["cols"] = set()
+        _ROW_UNIT_COLS["at"] = _t.time()
+    return col in _ROW_UNIT_COLS["cols"]
 
 
 def _unitSchools(key, values):

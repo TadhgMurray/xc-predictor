@@ -82,7 +82,7 @@ ok("area" in SU._FILTERABLE, "the area is a board filter")
 ok(RK.HS_UNITS.index("section_div") < RK.HS_UNITS.index("area")
    < RK.HS_UNITS.index("league") and RK.UNIT_COLUMNS["area"] == ("area",),
    "rankings knows the area as a high-school unit")
-ok(BR._UNIT_COLS[-1] == "area" and
+ok("area" in BR._UNIT_COLS and
    BR._COLUMNS[BR._COLUMNS.index("class") + 1] == "area",
    "ranking_results denormalises the area right after class")
 app = read("racecast", "app.py")
@@ -95,10 +95,9 @@ ok('data-field="area"' in html and '"area", "league"' in js
    and 'area: "section"' in js, "the filter UI offers the area under the section")
 
 # 4. every unit list agrees
-# (section itself is filtered through the semi-join and never
-#  denormalised onto ranking_results, which is why it is excepted)
+# (253: section is denormalised too, so every filter column is a row column)
 ok(set(RK.HS_UNITS) <= set(SU._FILTERABLE) | {"state_div"}
-   and set(RK.UNIT_COLUMNS) - {"section"} <= set(BR._UNIT_COLS),
+   and set(RK.UNIT_COLUMNS) <= set(BR._UNIT_COLS),
    "the filter lists agree across files")
 ok(kinds("NCS Bay Shore Area Championships").get("area") == "BAY SHORE"
    and [k for k, _ in C.parseUnits("NCS Bay Shore Area Championships", "",
