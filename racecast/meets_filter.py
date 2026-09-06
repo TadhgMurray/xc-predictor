@@ -61,7 +61,9 @@ LEVELS = {"ms": 2, "hs": 4, "college": 8}
 # the unit kinds a meet can be the championship OF, in the order the page
 # shows them; the rankings board's high-school and college groups, plus
 # the state itself. Only kinds meet_unit actually holds get a box.
-UNIT_KINDS = ("state", "state_div", "class", "section", "section_div",
+# ! NOT "state": that parameter is the page's State filter. The state
+#   championship kind is reachable as the kind+unit pair (kind=state).
+UNIT_KINDS = ("state_div", "class", "section", "section_div",
               "district", "county", "area", "league",
               "division", "region", "conference")
 _KIND_RX = re.compile(r"^[a-z_]{2,20}$")
