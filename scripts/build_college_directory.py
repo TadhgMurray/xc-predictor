@@ -158,22 +158,37 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--find", default=None,
+                    help="print every parsed row whose name contains this "
+                         "(case-insensitive), and every table head")
     args = ap.parse_args()
     entries = {}
+    dropped = {}
     for div, url in LISTS.items():
         try:
             page = fetch(url)
         except Exception as exc:                          # noqa: BLE001
             print(f"  {div}: fetch failed: {exc}")
             continue
+        if args.find:
+            for k, table in enumerate(re.findall(r"<table[^>]*wikitable[^>]*>(.*?)</table>", page, flags=re.S)):
+                trs = re.findall(r"<tr[^>]*>(.*?)</tr>", table, flags=re.S)
+                print(f"    {div} table {k}: {len(trs) - 1} rows, head {_cells(trs[0]) if trs else []}")
         rows = parseList(page)
         print(f"  {div}: {len(rows):,} institutions parsed")
         for name, common, st in rows:
+            if args.find and args.find.lower() in (name + " " + common).lower():
+                print(f"    {div}: {name!r} / {common!r} -> {st}  (norm {normName(name)!r}, {normName(common)!r})")
             for key in {normName(name), normName(common)} - {""}:
                 if key in entries and entries[key][1] != st:
+                    dropped[key] = (entries[key], (name, st, div))
                     entries[key] = (name, None, div)      # ambiguous: two states
                 elif key not in entries:
                     entries[key] = (name, st, div)
+    if args.find:
+        for key, (a, b) in dropped.items():
+            if args.find.lower() in key:
+                print(f"    ambiguous {key!r}: {a} vs {b}")
     ambiguous = sum(1 for v in entries.values() if v[1] is None)
     usable = {k: v for k, v in entries.items() if v[1]}
     print(f"  directory: {len(usable):,} names with a state ({ambiguous} ambiguous dropped)")
