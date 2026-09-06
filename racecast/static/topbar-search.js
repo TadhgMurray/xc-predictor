@@ -111,35 +111,3 @@
         init();
     }
 })();
-
-
-/* ---- tables-equal (owner, 2026-09-06) ----------------------------------
-   On a phone every table on the page takes the width of the widest one,
-   so the page scrolls sideways once and the columns of one table do not
-   sit at a different scale from the next. Above 700px nothing happens. */
-(function () {
-  function equalise() {
-    var tables = document.querySelectorAll("table");
-    if (!tables.length) return;
-    if (window.innerWidth > 700) {
-      tables.forEach(function (t) { t.style.minWidth = ""; });
-      return;
-    }
-    var widest = 0;
-    tables.forEach(function (t) {
-      t.style.minWidth = "";
-      widest = Math.max(widest, t.scrollWidth);
-    });
-    tables.forEach(function (t) { t.style.minWidth = widest + "px"; });
-  }
-  var timer = null;
-  window.addEventListener("resize", function () {
-    clearTimeout(timer); timer = setTimeout(equalise, 120);
-  });
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", equalise);
-  } else {
-    equalise();
-  }
-  document.addEventListener("click", function () { setTimeout(equalise, 50); });
-})();
