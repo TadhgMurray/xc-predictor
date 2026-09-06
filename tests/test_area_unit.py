@@ -74,8 +74,10 @@ B.crossFillAreas([tf, xc2])
 ok(xc2[i] == "BAY SHORE", "a row's own vote is never overwritten")
 
 # 3. shown between league and section, ranked inside its section, filterable
-ok(SU._HS_CHIPS.index("league") < SU._HS_CHIPS.index("area")
-   < SU._HS_CHIPS.index("section_div"), "chip order: league, area, section")
+# fbddb2e turned the chips biggest-first; the area still sits between the
+# section and the league, whichever way the line reads.
+_a, _l, _s = (SU._HS_CHIPS.index(k) for k in ("area", "league", "section_div"))
+ok(min(_l, _s) < _a < max(_l, _s), "chip order: area between section and league")
 ok("area" in SU._FILTERABLE, "the area is a board filter")
 ok(RK.HS_UNITS.index("section_div") < RK.HS_UNITS.index("area")
    < RK.HS_UNITS.index("league") and RK.UNIT_COLUMNS["area"] == ("area",),

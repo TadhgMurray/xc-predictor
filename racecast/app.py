@@ -5441,6 +5441,16 @@ def api_courses():
                 return jsonify({"error": "Course rankings failed to load. The "
                                          "server log has the traceback."}), 500
 
+    # ★ THE PERCENT THE REST OF THE SITE PRINTS (owner, 2026-09-06: "the
+    #   difficulty board still shows the decimal not percentage"). Every
+    #   course page and hover goes through difficulty_view, which reads
+    #   +0.041 as "+4.1% slower than a typical course"; this board was the
+    #   last place still printing the raw multiplier. Computed here rather
+    #   than in the browser because the zero is the corpus mean, which only
+    #   the server knows.
+    for r in rows:
+        r["difficulty_pct"] = difficulty_view.relativePct(r.get("difficulty"))
+        r["difficulty_words"] = difficulty_view.diffWords(r.get("difficulty"))
     return jsonify({"filters": f, "count": len(rows), "total": total,
                     "rows": rows})
 

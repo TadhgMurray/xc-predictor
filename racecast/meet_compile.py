@@ -349,7 +349,19 @@ def compiledIndex(cur, meet_id, source=None):
 
 
 def _finished(r):
-    """A row with a real time. 999999 is the DNS/DNF sentinel, not a time."""
+    """A row with a real time. 999999 is the DNS/DNF sentinel, not a time.
+
+    ⚠ A ROW WITH NO TIME COLUMN AT ALL HAS FINISHED. The team boards race a
+      meet that never happened -- entrants ordered by season rating, with no
+      time on any row -- and the day this check first asked for one every
+      squad in that meet lost all seven runners and 14,317 boards came out
+      empty (2026-09-06). Only a row that CARRIES a time can say it did not
+      finish; a row from a field that has no times is a finisher by
+      construction. A present-but-null time is still a non-finish: the
+      compiled race pages write None for a DNS the scraper left blank.
+    """
+    if "time_seconds" not in r:
+        return True
     t = r.get("time_seconds")
     try:
         return t is not None and float(t) < 999999

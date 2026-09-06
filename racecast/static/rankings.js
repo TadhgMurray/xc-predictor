@@ -1209,19 +1209,33 @@ function teamsNote(data) {
 /*
  * The courses board.
  *
- * ⚠ THE SIGN IS SPELLED OUT ON EVERY ROW, not left to a + to carry. "+0.050
- *   harder" and "-0.050 easier" cost four characters and remove the one
+ * ⚠ THE SIGN IS SPELLED OUT ON EVERY ROW, not left to a + to carry. "+4.1%
+ *   harder" and "-5.0% easier" cost four characters and remove the one
  *   misreading this board invites: that a big number is a fast course.
+ *
+ * ★ A PERCENT, THE SAME ONE THE COURSE PAGES PRINT. The server sends
+ *   difficulty_pct -- percent slower than a typical course, against the
+ *   corpus-mean zero difficulty_view keeps -- beside the raw multiplier,
+ *   which only the title keeps. Printing the raw +0.041 here while the
+ *   course page said +4.1% was the last decimal on the site (2026-09-06).
  */
 function renderCourses(rows) {
   const body = rows.map((r) => {
-    const d = Number(r.difficulty);
-    const sense = d > 0 ? "harder" : d < 0 ? "easier" : "neutral";
+    const raw = Number(r.difficulty);
+    const pct = r.difficulty_pct == null ? null : Number(r.difficulty_pct);
+    const d = pct == null ? raw : pct;
+    const sense = d > 0.05 ? "harder" : d < -0.05 ? "easier" : "neutral";
+    const shown = pct == null
+      ? `${raw >= 0 ? "+" : ""}${raw.toFixed(3)}`
+      : Math.abs(pct) < 0.05 ? "0.0%" : `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+    const words = r.difficulty_words
+      ? `${esc(r.difficulty_words)} (raw ${raw >= 0 ? "+" : ""}${raw.toFixed(3)})`
+      : `${sense} than an average course`;
     return `
     <tr>
       <td class="rank">${r.rank}</td>
       <td class="rating ${d > 0 ? "hard" : "easy"}"
-          title="${sense} than an average course">${d >= 0 ? "+" : ""}${d.toFixed(3)}
+          title="${words}">${shown}
         <span class="sense">${sense}</span></td>
       <td><a href="/course/${encodeURIComponent(r.course_name)}">${esc(r.course_name)}</a>${
         r.n_same_name > 1

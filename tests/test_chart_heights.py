@@ -171,7 +171,14 @@ def test_the_layout_scrolls_instead_of_crushing():
     css = open(STYLE, encoding="utf-8").read()
     b = _blocks(css)
     assert 900 in b, "no <=900px block for the page layout"
-    assert re.search(r'\.page-layout\s*\{[^}]*overflow-x:\s*auto', b[900]), \
+    # ★ EITHER THE LAYOUT SCROLLS OR THE PAGE DOES (221, 2026-09-06: the
+    #   owner asked for page scroll and zoom on phones, so the layout's own
+    #   scroll box became a plain flow, `overflow-x: visible`, and the page
+    #   scrolls sideways instead). What must never come back is the third
+    #   state: a nowrap flex row with nothing to overflow into, which crushes
+    #   the main column. Any explicit overflow-x on the layout rules that out.
+    assert re.search(r'\.page-layout\s*\{[^}]*overflow-x:\s*(auto|visible|scroll)',
+                     b[900]), \
         "the layout neither stacks nor scrolls: the main column is crushed"
     # ! A REAL MINIMUM, not min-width:0. That zero is the standard flex fix
     #   for letting a child shrink, and it is exactly what let the main column
