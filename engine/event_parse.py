@@ -240,6 +240,32 @@ def _toMeters(s, n):
 #   8. apply the unit
 #   9. gate on [MIN_DISTANCE, MAX_DISTANCE]
 def distanceFromEventShort(ev):
+    return _distanceFromEventShort(ev, _MIN_DISTANCE, _MAX_DISTANCE)
+
+
+# ★ THE SPRINTS, FOR THE BOARDS THAT RANK A CLOCK (2026-09-06, owner: "60m
+#   isn't in there yet"). distanceFromEventShort floors at 600 m on purpose:
+#   below it nothing is RATED. But the PR boards list 55, 60, 100, 200 and
+#   400 m as time-only rows, and build_ranking_results asked the rated parser
+#   for their distance -- which answered None for every one, so every flat
+#   sprint under 600 m was dropped before it reached ranking_results and the
+#   sprint boards had been empty since they were written. Same pipeline,
+#   same rejects (relays, hurdles, field events), a lower floor; the answer
+#   is only ever used where a rating is absent.
+_SPRINT_MIN_DISTANCE = 50.0
+
+
+def sprintDistanceFromEventShort(ev):
+    """(metres, gender) for a FLAT sprint name under the rated floor, else
+    (None, gender). '60m' -> 60, '100 Meter Dash' -> 100, '4x100' -> None."""
+    got = _distanceFromEventShort(ev, _SPRINT_MIN_DISTANCE, _MIN_DISTANCE)
+    metres, gender = got
+    if metres is not None and metres >= _MIN_DISTANCE:
+        return None, gender
+    return got
+
+
+def _distanceFromEventShort(ev, lo, hi):
     if not ev:
         return None, None
 
@@ -274,7 +300,7 @@ def distanceFromEventShort(ev):
         return None, gender
 
     meters = _toMeters(s, n)
-    if not (_MIN_DISTANCE <= meters <= _MAX_DISTANCE):
+    if not (lo <= meters <= hi):
         return None, gender                         # sprints below, corruption above
     return meters, gender
 

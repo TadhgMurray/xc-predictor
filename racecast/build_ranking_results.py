@@ -55,7 +55,7 @@ try:
     # ★ THE SAME READER THE ENGINE AND anchor_check USE. Track keeps its
     #   distance in the event name and event_parse is where that is read; a
     #   second copy of that logic here would be a third way to get it wrong.
-    from event_parse import distanceFromEventShort
+    from event_parse import distanceFromEventShort, sprintDistanceFromEventShort
     # the field-event mark parser, beside this file (racecast/marks.py)
     from marks import parseMark, normalizeFieldEvent, saneMark
     from dbfast import tuneSession
@@ -880,6 +880,16 @@ def _tfDistance(event_short):
         got = distanceFromEventShort(event_short)
         # ! (distance, gender) -- only the first is wanted here.
         metres = got[0] if isinstance(got, (tuple, list)) else got
+        # ★ THE SPRINT PARSER SECOND (2026-09-06). The rated parser floors
+        #   at 600 m, right for a rating and fatal for the boards: '60m',
+        #   '100m', '200m', '400m' all came back None here, so
+        #   prepareSprintEvents never whitelisted them and prepareRow
+        #   dropped every one -- the sprint PR boards were empty from the
+        #   day they were written. A sprint distance only ever lands on a
+        #   row with no rating (the anchor gate needs a normalised time and
+        #   skips those), so nothing rated changes.
+        if metres is None:
+            metres = sprintDistanceFromEventShort(event_short)[0]
     _TF_DISTANCE[event_short] = metres
     return metres
 

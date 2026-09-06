@@ -84,7 +84,7 @@ ok("ALTER COLUMN speed_rating DROP NOT NULL" in BR,
 
 # ---- 4. athlete_season stays rating-only -------------------------------- #
 _i = BR.index("_ATHLETE_SEASON_SQL = f\"\"\"")
-seas = BR[_i:BR.index('GROUP BY person_id, pool, sport, year;', _i)]
+seas = BR[_i:BR.index('GROUP BY base.person_id, base.pool, base.sport, base.year;', _i)]
 ok("WHERE speed_rating IS NOT NULL" in seas,
    "the season aggregate excludes unrated rows -- count(*) would inflate "
    "n_races, and decayed_rating's denominator counts rows its numerator "
