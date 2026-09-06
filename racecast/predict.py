@@ -359,19 +359,34 @@ def _predictTimes(cur, person_ids, target):
     by_person = _historyRows(cur, person_ids)
     spec = _targetSpec(cur, target)
 
+    # ★ THE WEATHER THE RACE WOULD BE RUN IN (owner, 2026-09-06). The
+    #   context vector carries the target's weather, so each variant is
+    #   one more pass of the network on the same history. The headline
+    #   is the venue's NORMAL weather for that time of year at the race
+    #   hour when the grid knows it, else the model's no-weather row (the
+    #   number the page showed before today; ?weather=none still asks for
+    #   it). The forecast rides beside it, 16 days out at most.
+    variants = _weatherVariants(cur, spec, target.get("weather") or "both")
+    headline = "normal" if "normal" in variants else "none"
+
     entries = [None] * len(person_ids)
-    batch = []                        # (slot, sequence, context, venue)
+    batch = []                        # (slot, sequence, {variant: context}, venue)
     for slot, pid in enumerate(person_ids):
         hist = by_person.get(pid)
         if not hist:
             entries[slot] = {"seconds": None,
                              "reason": "No rated races in the corpus."}
             continue
-        target_row = _targetRow(spec, hist[-1])
-        seq, ctx = _forecastExample(fx, hist, target_row, encoders)
-        batch.append((slot, seq, ctx, fx.venueIndex(target_row, vocab)))
-        # rerun: the athlete's ACTUAL normalized time at the original
-        # running, for the "vs what happened" readout
+        ctxs_by = {}
+        venue = None
+        seq = None
+        for name, wx_row in variants.items():
+            target_row = _targetRow(spec, hist[-1], weather=wx_row)
+            seq, ctx = _forecastExample(fx, hist, target_row, encoders)
+            ctxs_by[name] = ctx
+            if venue is None:
+                venue = fx.venueIndex(target_row, vocab)
+        batch.append((slot, seq, ctxs_by, venue))
         if target.get("mode") in ("rerun", "rerun_exact"):
             orig = [r for r in hist if r.get("meet_id") == spec.get("meet_id")]
             if orig:
@@ -382,41 +397,85 @@ def _predictTimes(cur, person_ids, target):
         width = fx.SEQUENCE_FEATURES
         seqs = torch.zeros(len(batch), longest, width)
         masks = torch.zeros(len(batch), longest, dtype=torch.bool)
-        ctxs = torch.zeros(len(batch), len(batch[0][2]))
         vens = torch.zeros(len(batch), dtype=torch.long)
-        for i, (_slot, s, c, v) in enumerate(batch):
+        for i, (_slot, s, _c, v) in enumerate(batch):
             seqs[i, :len(s)] = torch.tensor(s, dtype=torch.float32)
             masks[i, :len(s)] = True
-            ctxs[i] = torch.tensor(c, dtype=torch.float32)
             vens[i] = v
-        with torch.no_grad():
-            # ★ THE MODEL INVERTS ITS OWN TARGET. A log-ratio model carries
-            #   its baseline rule and its stats in its buffers, so the only
-            #   correct way back to seconds is its own predictSeconds. The
-            #   legacy z * std + mean is kept for a checkpoint written before
-            #   that existed.
-            if art.get("kind") == "log_ratio" and hasattr(model,
-                                                          "predictInterval"):
-                secs, lo, hi, sig = model.predictInterval(seqs, masks, ctxs,
-                                                          vens)
-            else:
-                secs = model(seqs, masks, ctxs, vens) * art["std"] + art["mean"]
-                lo = hi = sig = None
+        by_variant = {}
+        for name in variants:
+            ctxs = torch.zeros(len(batch), len(batch[0][2][name]))
+            for i, (_slot, _s, c, _v) in enumerate(batch):
+                ctxs[i] = torch.tensor(c[name], dtype=torch.float32)
+            with torch.no_grad():
+                if art.get("kind") == "log_ratio" and hasattr(model,
+                                                              "predictInterval"):
+                    secs, lo, hi, sig = model.predictInterval(seqs, masks, ctxs,
+                                                              vens)
+                else:
+                    secs = model(seqs, masks, ctxs, vens) * art["std"] + art["mean"]
+                    lo = hi = sig = None
+            by_variant[name] = (secs, lo, hi, sig)
+        secs, lo, hi, sig = by_variant[headline]
         for i, ((slot, s, _c, _v), si) in enumerate(zip(batch, secs)):
             entry = entries[slot] or {}
             entry.update({
                 "seconds": round(float(si), 1),
-                "n_races": len(s)})
+                "n_races": len(s),
+                "weather_basis": headline})
             if sig is not None:
-                # ★ THE MODEL'S OWN BAND: one sigma in log time, so
-                #   sigma_pct 2.0 means "about 2% either way", and lo/hi are
-                #   the 68% interval in seconds.
                 entry.update({
                     "lo": round(float(lo[i]), 1),
                     "hi": round(float(hi[i]), 1),
                     "sigma_pct": round(100.0 * float(sig[i]), 2)})
+            if "normal" in variants:
+                entry["normal_weather"] = _fc().describe(variants["normal"])
+            if "forecast" in variants:
+                fsecs = float(by_variant["forecast"][0][i])
+                fc_row = variants["forecast"]
+                entry["forecast"] = {
+                    "seconds": round(fsecs, 1),
+                    "delta": round(fsecs - float(si), 1),
+                    "conditions": _fc().describe(fc_row),
+                    "hour_local": fc_row.get("hour_local"),
+                    "fetched_at": fc_row.get("fetched_at"),
+                    "source": fc_row.get("source")}
             entries[slot] = entry
     return entries
+
+
+def _fc():
+    import forecast
+    return forecast
+
+
+def _weatherVariants(cur, spec, want):
+    """{name: weather row | None} for the passes to run. 'none' is the
+    model's no-weather row; 'normal' and 'forecast' come from forecast.py
+    and are dropped when they have no answer (no coordinates, no grid
+    rows, a date out of the forecast's reach, no network)."""
+    want = (want or "both").lower()
+    names = {"none": ("none",), "normal": ("normal",), "forecast": ("forecast",),
+             "both": ("normal", "forecast"), "all": ("none", "normal", "forecast")
+             }.get(want, ("normal", "forecast"))
+    out = {}
+    fc = _fc()
+    hour = fc.raceHour(spec.get("sport"))
+    lat, lon, day = spec.get("gps_lat"), spec.get("gps_long"), spec.get("date")
+    for name in names:
+        if name == "none":
+            out["none"] = None
+        elif name == "normal":
+            row = fc.normalAt(cur, lat, lon, day, hour)
+            if row:
+                out["normal"] = row
+        elif name == "forecast":
+            row = fc.forecastAt(lat, lon, day, hour, cur=cur)
+            if row:
+                out["forecast"] = row
+    if not out:
+        out["none"] = None
+    return out
 
 
 def _forecastExample(fx, hist, target_row, encoders):
@@ -611,9 +670,11 @@ _WEATHER_FIELDS = ("temp_c", "dew_point_c", "humidity", "apparent_temp_c",
                    "wind_speed_km", "wind_dir")
 
 
-def _targetRow(spec, last_row):
+def _targetRow(spec, last_row, weather=None):
     """The hypothetical race as a corpus-shaped row: the athlete as they
-    last raced, at the target's venue on the target's date."""
+    last raced, at the target's venue on the target's date. `weather`,
+    a forecast.py row, fills the weather fields; None leaves them as
+    the model's no-weather shape."""
     row = dict(last_row)
     row["is_xc"] = spec["is_xc"]
     row["is_indoor"] = None if spec["is_xc"] else bool(spec.get("is_indoor"))
@@ -626,6 +687,11 @@ def _targetRow(spec, last_row):
                                    (5000.0 if spec["is_xc"] else 1600.0))
     for f in _WEATHER_FIELDS:
         row[f] = None
+    if weather:
+        # the model's column is wind_speed_km; forecast.py's row says kmh
+        for f in _WEATHER_FIELDS:
+            row[f] = weather.get(f, weather.get("wind_speed_kmh")
+                                 if f == "wind_speed_km" else None)
     row["place"] = None            # leakage guard: unknown by definition
     row["normalized_time"] = 0.0   # dummy; nothing reads a target's target
     row["time_seconds"] = None

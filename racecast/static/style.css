@@ -4314,3 +4314,10 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 
 /* the school roster split by level (2026-09-06) */
 .roster-level { margin: 1.1rem 0 0.3rem; font-size: 1rem; }
+
+/* the two weathers on a prediction (forecast.py, 2026-09-06) */
+.predict2 .wx-line { font-size: 0.82rem; color: #555; margin: 0.35rem 0 0; line-height: 1.5; }
+.predict2 .wx-line .wx-forecast { display: block; }
+.predict2 .wx-line b { font-weight: 700; color: #222; }
+.predict2 .wx-line em { font-style: normal; color: #8a5a00; margin-left: 0.3rem; }
+

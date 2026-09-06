@@ -5554,6 +5554,8 @@ def _target(args):
         t["meet_id"] = int(raw)
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
+        # none | normal | forecast | both (default) | all -- see predict._weatherVariants
+        t["weather"] = (args.get("weather") or "both").strip().lower()
         # ★ THE COURSE IS OVERRIDABLE WITHOUT CHANGING THE MEET (owner,
         #   2026-09-01). "What would these teams run at the state course"
         #   used to require `manual`, which throws away the meet -- its
@@ -5581,6 +5583,8 @@ def _target(args):
         t["distance"] = args.get("distance")
         t["course"] = args.get("course")
         t["sport"] = args.get("sport") or "XC"
+        # none | normal | forecast | both (default) | all -- see predict._weatherVariants
+        t["weather"] = (args.get("weather") or "both").strip().lower()
         if not t["date"]:
             return None, "date is required for a manual target"
     return t, None

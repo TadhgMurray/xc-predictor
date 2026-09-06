@@ -1719,9 +1719,31 @@ function setStatus(msg, isError) {
  *   with the error between them. A prediction you cannot check is not
  *   evidence of anything.
  */
+/* ★ TWO WEATHERS (owner, 2026-09-06). The headline time is the race at the
+   venue's NORMAL weather for that time of year; when a forecast exists
+   (16 days out at most) the same race at the forecast weather sits beside
+   it with the difference. Both come from the API in one call. */
+function weatherLine(d) {
+  const f = d.forecast;
+  const normal = d.normal_weather
+    ? `<span class="wx-normal" title="the venue's usual weather at this time of year, at the race hour">normal weather: ${esc(d.normal_weather)}</span>`
+    : (d.weather_basis === "none"
+       ? `<span class="wx-normal">weather not known for this venue</span>` : "");
+  if (!f || f.seconds === undefined) {
+    return normal ? `<div class="wx-line">${normal}</div>` : "";
+  }
+  const sign = f.delta > 0 ? "+" : "";
+  const when = f.hour_local !== undefined ? ` at ${f.hour_local}:00` : "";
+  return `<div class="wx-line">${normal}
+    <span class="wx-forecast" title="Open-Meteo forecast fetched ${esc(f.fetched_at || "")}">
+      forecast${when}: ${esc(f.conditions || "")} \u2192 <b>${fmtTime(f.seconds)}</b>
+      <em>${sign}${f.delta.toFixed(1)}s</em></span></div>`;
+}
+
 function renderAthleteSet(d) {
   /* Several athletes at one race: a table, sorted fastest first, because the
      question people ask with two names is "who wins". */
+  const anyFc = (d.athletes || []).some((a) => a.forecast && a.forecast.seconds !== undefined);
   const rows = [...(d.athletes || [])]
     .filter((a) => a.seconds !== undefined)
     .sort((a, b) => a.seconds - b.seconds)
@@ -1729,11 +1751,19 @@ function renderAthleteSet(d) {
       <td>${esc(a.name || "")}</td>
       <td>${fmtTime(a.seconds)}</td>
       <td>${a.low !== undefined
-            ? `${fmtTime(a.low)} \u2013 ${fmtTime(a.high)}` : ""}</td></tr>`)
+            ? `${fmtTime(a.low)} \u2013 ${fmtTime(a.high)}` : ""}</td>${
+      anyFc ? `<td>${a.forecast && a.forecast.seconds !== undefined
+                ? `${fmtTime(a.forecast.seconds)} <em>${a.forecast.delta > 0 ? "+" : ""}${a.forecast.delta.toFixed(1)}s</em>`
+                : ""}</td>` : ""}</tr>`)
     .join("");
+  const first = (d.athletes || []).find((a) => a.forecast && a.forecast.conditions);
+  const note = first
+    ? `<p class="wx-line">Predicted is the race at normal weather; Forecast is the same race at the forecast
+       (${esc(first.forecast.conditions)}${first.forecast.hour_local !== undefined ? ` at ${first.forecast.hour_local}:00` : ""}).</p>`
+    : "";
   return `<table class="rk"><thead><tr>
-      <th>#</th><th>Athlete</th><th>Predicted</th><th>Range</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+      <th>#</th><th>Athlete</th><th>Predicted</th><th>Range</th>${anyFc ? "<th>Forecast</th>" : ""}
+    </tr></thead><tbody>${rows}</tbody></table>${note}`;
 }
 
 
@@ -1747,6 +1777,7 @@ function renderIndividual(d) {
     <div class="result-big">${fmtTime(d.seconds)}</div>
     ${d.low !== undefined
       ? `<div class="result-band">likely ${fmtTime(d.low)} \u2013 ${fmtTime(d.high)}</div>` : ""}
+    ${weatherLine(d)}
     ${err}
   </div>`;
 }
