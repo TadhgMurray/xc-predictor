@@ -1158,7 +1158,14 @@ def athlete(person_id):
                       AND  lower(school) NOT IN ('unat', 'independent',
                                                  'individual', 'no team',
                                                  'none', 'n/a', '')
-                    ORDER  BY last_race DESC NULLS LAST
+                    -- ! THE SAME ORDER THE HEADER RATING USES, tiebreaks
+                    --   included (owner, 2026-09-06: Liam Lucas headed
+                    --   "Loyola Blakefield" over a Tufts season and Tufts'
+                    --   chips). Two seasons can end on one date -- the same
+                    --   year split across two pools -- and without the
+                    --   tiebreak this picked one and the rating the other.
+                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                              n_races DESC
                     LIMIT  1
                 """, (person_id,))
                 recent = cur.fetchone()
