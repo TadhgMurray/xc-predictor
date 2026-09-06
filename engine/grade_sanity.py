@@ -285,6 +285,56 @@ def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES):
     return n_low, n_vouched
 
 
+def splitStatements(sql):
+    """Top-level statements of a SQL script: split on ';' outside
+    $$-quoted bodies, single quotes and -- comments. The function bodies
+    in _BUILD carry semicolons of their own."""
+    out, buf, i, n = [], [], 0, len(sql)
+    in_dollar = in_quote = False
+    while i < n:
+        c = sql[i]
+        if in_dollar:
+            if sql.startswith("$$", i):
+                buf.append("$$"); i += 2; in_dollar = False; continue
+        elif in_quote:
+            if c == "'":
+                in_quote = False
+        elif sql.startswith("--", i):
+            j = sql.find("\n", i)
+            j = n if j < 0 else j
+            buf.append(sql[i:j]); i = j; continue
+        elif sql.startswith("$$", i):
+            buf.append("$$"); i += 2; in_dollar = True; continue
+        elif c == "'":
+            in_quote = True
+        elif c == ";":
+            stmt = "".join(buf).strip()
+            if stmt:
+                out.append(stmt)
+            buf = []; i += 1; continue
+        buf.append(c); i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def runTimed(cur, sql, label="", slow=1.0):
+    """Execute a script statement by statement, printing the ones that
+    take longer than `slow` seconds with their first meaningful line."""
+    import time as _t
+    t_all = _t.time()
+    for stmt in splitStatements(sql):
+        t0 = _t.time()
+        cur.execute(stmt)
+        dt = _t.time() - t0
+        if dt >= slow:
+            head = next((ln.strip() for ln in stmt.splitlines()
+                         if ln.strip() and not ln.strip().startswith("--")), "?")
+            print(f"    [{dt:7.1f}s] {head[:90]}", flush=True)
+    print(f"    [{_t.time() - t_all:7.1f}s] {label} total", flush=True)
+
+
 _UNCERTAIN_METHODS = ("field", "bare_class", "bare_field", "no_evidence")
 
 # * THREE SEASONS TO OVERRULE ONE, NOT TWO. With two disagreeing seasons
@@ -679,15 +729,20 @@ _BUILD = f"""
                --   race-kind collapse -- each a per-row function call under a
                --   DISTINCT over 225M rows. Storing it makes those four into
                --   plain column reads.
-               raceIdent(time_seconds, date, meet_id, (-1)::bigint) AS race,
-               -- carried so raceIdent can be computed without re-reading
-               date                                               AS race_date,
-               time_seconds
+               raceIdent(time_seconds, date, meet_id, (-1)::bigint) AS race
         FROM   results r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
         /*AGEBAND_XC*/
+        -- ! A ROW THE TWIN RULES FLAGGED IS NOT EVIDENCE (2026-09-06): the
+        --   same race scraped twice would vote twice in every field count.
+        --   result_twin is the previous run's (04c runs after this step),
+        --   the same dedup the boards showed last time. race_date and
+        --   time_seconds are no longer carried: nothing after the build
+        --   read them, and 230M rows of them were written and indexed.
+        LEFT   JOIN result_twin tw ON tw.sport = 'XC' AND tw.result_id = r.result_id
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035
+          AND  tw.result_id IS NULL
         UNION ALL
         SELECT person_id,
                substring(date, 1, 4)::int,
@@ -697,13 +752,14 @@ _BUILD = f"""
                CASE WHEN ab.result_id IS NULL THEN r.grade END,
                meet_id, div_id, source, COALESCE(event_id, -1),
                raceIdent(time_seconds, date, meet_id,
-                         COALESCE(event_id, -1)),
-               date, time_seconds
+                         COALESCE(event_id, -1))
         FROM   results_tf r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
         /*AGEBAND_TF*/
+        LEFT   JOIN result_twin tw ON tw.sport = 'TF' AND tw.result_id = r.result_id
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
-          AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035;
+          AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035
+          AND  tw.result_id IS NULL;
 
     -- ! (person_id, acad, race) COVERS THE COUNTS. Rules 2 and 4 both do
     --   count(DISTINCT race) grouped by person and season; a plain
@@ -1365,11 +1421,20 @@ def resolve(cur, audit=False):
     #   would have to escape every brace in the file. A plain replace of two
     #   comment-shaped tokens touches nothing else.
     xc_join, tf_join = _ageBandJoins(cur)
+    # the build anti-joins result_twin, which 04c writes AFTER this step:
+    # on a database that has never run 04c the table is created empty here
+    from twin_flag import ensureTable as _ensureTwin
+    _ensureTwin(cur)
     build = (_BUILD.replace(_AGE_BAND_TOKENS[0], xc_join)
                    .replace(_AGE_BAND_TOKENS[1], tf_join))
     for _tok in _AGE_BAND_TOKENS:
         assert _tok not in build, f"age-band token {_tok} was not substituted"
-    cur.execute(build)
+    # ★ ONE STATEMENT AT A TIME, EACH TIMED (2026-09-06). The build ran as
+    #   one 300-line execute and the step took four to five hours with no
+    #   line saying where; the log could not tell the 230M-row table from
+    #   its indexes from the self-joins after it. Now every statement that
+    #   takes over a second prints its first line and its seconds.
+    runTimed(cur, build, label="build")
 
     # Reports only. reportRejected scans both results tables in full, so it
     # is opt-in; reportUngraded reads the temp table and is cheap.
