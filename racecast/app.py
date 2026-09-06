@@ -3884,6 +3884,13 @@ def school_page(school_name):
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
+            # ★ THE ROSTER BY LEVEL (owner, 2026-09-06: "did we ever split
+            #   schools by pool?"). A K-12 school or a college with a club
+            #   side mixed middle schoolers with varsity in one list, and
+            #   the ratings beside them are on different pools' scales.
+            #   One table per level, HS first, only when more than one
+            #   level has anyone; a single-level school reads as before.
+            roster_levels = rosterByLevel(roster)
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
                                  state=state, primary=primary_state)
             # deeper than the old 25: the tables reveal in place now, and
@@ -3935,8 +3942,29 @@ def school_page(school_name):
                            years=years, year=seasonLabel(sport, year),
                            sport=sport, pools=pools,
                            season_rebuilding=season_rebuilding,
-                           roster=roster, meets=meets, best=best, top=top,
+                           roster=roster, roster_levels=roster_levels,
+                           meets=meets, best=best, top=top,
                            picked=picked)
+
+
+_LEVEL_LABEL = (("hs", "High school"), ("college", "College"),
+                ("ms", "Middle school"), ("elem", "Elementary"), ("pro", "Pro"))
+
+
+def rosterByLevel(roster):
+    """[(label, rows)] in level order, or [] when the roster has one level
+    (the template then renders the plain table)."""
+    groups = {}
+    for r in roster or []:
+        pool = (r.get("pool") or "").split("|")[0]
+        level = pool.split("_")[0] if pool else "hs"
+        groups.setdefault(level, []).append(r)
+    if len(groups) < 2:
+        return []
+    out = [(label, groups[key]) for key, label in _LEVEL_LABEL if key in groups]
+    out += [(key, rows) for key, rows in groups.items()
+            if key not in dict(_LEVEL_LABEL)]
+    return out
 
 
 @app.route("/school/<path:school_name>/prs")

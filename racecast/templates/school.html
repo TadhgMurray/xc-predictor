@@ -102,6 +102,10 @@
        it is that season's, and the year is the useful label. #}
     <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
         <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
+    {# one table per level when the school has more than one (K-12, a
+       college with a club side); the ratings beside each are that pool's #}
+    {% for level_label, rows in (roster_levels if roster_levels else [(None, roster)]) %}
+    {% if level_label %}<h3 class="roster-level">{{ level_label }} <span class="h2-note">{{ rows|length }}</span></h3>{% endif %}
     <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
             <tr>
@@ -110,7 +114,7 @@
             </tr>
         </thead>
         <tbody>
-            {% for r in roster %}
+            {% for r in rows %}
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
@@ -121,15 +125,16 @@
                 <td>{{ r.last_race if r.last_race else "" }}</td>
             </tr>
             {% endfor %}
-            {% if roster|length > 15 %}
+            {% if rows|length > 15 %}
             <tr class="more-row"><td colspan="7">
                 <button type="button" class="more-btn">
-                    Show 20 more <span class="more-left">({{ roster|length - 15 }} left)</span>
+                    Show 20 more <span class="more-left">({{ rows|length - 15 }} left)</span>
                 </button>
             </td></tr>
             {% endif %}
         </tbody>
     </table>
+    {% endfor %}
     {{ view_all("ability") }}
 {% endif %}
 

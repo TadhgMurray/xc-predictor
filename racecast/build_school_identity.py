@@ -189,6 +189,92 @@ def mergeCoRacingClusters(cur):
           f"placed by the meets they host) in {time.time() - t0:.0f}s", flush=True)
 
 
+# ★ THE DIRECTORY OUTRANKS THE DATA FOR A COLLEGE (owner, 2026-09-06: "add
+#   directory"). college_directory (scripts/build_college_directory.py,
+#   NCAA D1-D3 and NAIA from Wikipedia, ~2,000 names) says where a college
+#   IS. A name in it has its college-pool clusters (half or more of the
+#   cluster's athletes in a college pool) collapsed into one row in the
+#   directory's state; a high-school cluster wearing the same name
+#   ("Washington") is left alone. Without the table, nothing changes.
+COLLEGE_SHARE = 0.5
+
+
+def applyCollegeDirectory(cur):
+    cur.execute("SELECT to_regclass('public.college_directory')")
+    if cur.fetchone()[0] is None:
+        print("  school_identity: no college_directory (scripts/"
+              "build_college_directory.py --write); the data rule stands", flush=True)
+        return
+    from build_college_directory import normName
+    cur.execute("SELECT name_norm, state FROM college_directory")
+    directory = {k: v for k, v in cur.fetchall()}
+    cur.execute("SELECT DISTINCT school FROM school_identity_new")
+    hits = {}
+    for (school,) in cur.fetchall():
+        st = directory.get(normName(school))
+        if st:
+            hits[school] = st
+    if not hits:
+        print("  school_identity: college_directory matched no school name", flush=True)
+        return
+    names = sorted(hits)
+    # which of each name's clusters are college clusters
+    cur.execute("""
+        WITH v AS (
+            SELECT DISTINCT rr.school, rr.person_id,
+                   bool_or(rr.pool LIKE 'college%%') OVER (PARTITION BY rr.school, rr.person_id) AS college
+            FROM   ranking_results rr WHERE rr.school = ANY(%s) AND rr.person_id IS NOT NULL)
+        SELECT v.school, ph.state, count(*) FILTER (WHERE v.college), count(*)
+        FROM   v JOIN person_home_state_new ph USING (person_id)
+        GROUP  BY 1, 2
+    """, (names,))
+    college_clusters = {}
+    for school, st, n_col, n in cur.fetchall():
+        if n and n_col >= COLLEGE_SHARE * n:
+            college_clusters.setdefault(school, []).append(st)
+    # the alias table may already fold some of these (the co-racing merge):
+    # follow it, so every original home state lands on the directory state
+    cur.execute("SELECT school, home_state, state FROM school_state_alias_new "
+                "WHERE school = ANY(%s)", (names,))
+    folded = {}
+    for school, home, st in cur.fetchall():
+        folded.setdefault((school, st), set()).add(home)
+    n_rows = n_alias = 0
+    for school, states in college_clusters.items():
+        target = hits[school]
+        cur.execute("SELECT state, n_athletes FROM school_identity_new "
+                    "WHERE school = %s AND state = ANY(%s)", (school, states))
+        got = cur.fetchall()
+        if not got:
+            continue
+        total = sum(n for _st, n in got)
+        homes = set()
+        for st, _n in got:
+            homes.add(st)
+            homes |= folded.get((school, st), set())
+        cur.execute("DELETE FROM school_identity_new WHERE school = %s AND state = ANY(%s)",
+                    (school, states))
+        cur.execute("INSERT INTO school_identity_new (school, state, n_athletes, share, is_primary) "
+                    "VALUES (%s, %s, %s, 0, false)", (school, target, total))
+        cur.execute("DELETE FROM school_state_alias_new WHERE school = %s AND home_state = ANY(%s)",
+                    (school, sorted(homes)))
+        cur.executemany("INSERT INTO school_state_alias_new VALUES (%s, %s, %s)",
+                        [(school, h, target) for h in sorted(homes) if h != target])
+        n_rows += 1
+        n_alias += len(homes)
+    cur.execute("""
+        UPDATE school_identity_new si SET
+            share = round(si.n_athletes::numeric / t.total, 4),
+            is_primary = (si.n_athletes = t.top AND si.state = t.top_state)
+        FROM (SELECT school, sum(n_athletes) AS total, max(n_athletes) AS top,
+                     (array_agg(state ORDER BY n_athletes DESC, state))[1] AS top_state
+              FROM school_identity_new WHERE school = ANY(%s) GROUP BY school) t
+        WHERE t.school = si.school
+    """, (names,))
+    print(f"  school_identity: college_directory placed {n_rows:,} of {len(hits):,} "
+          f"matched names ({n_alias:,} home states folded)", flush=True)
+
+
 def main():
     t0 = time.time()
     with getConn() as conn:
@@ -255,6 +341,7 @@ def main():
               f"{multi:,} names split across states", flush=True)
 
         mergeCoRacingClusters(cur)
+        applyCollegeDirectory(cur)
 
         # ---- the swap: old tables serve until the new ones are whole ----
         #

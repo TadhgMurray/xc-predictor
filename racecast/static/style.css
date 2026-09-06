@@ -4308,3 +4308,6 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
     .rankings-page .field { flex-basis: 100%; }
     .rankings-page .tabs .tab { padding: 0.4rem 0.6rem; font-size: 0.85rem; }
 }
+
+/* the school roster split by level (2026-09-06) */
+.roster-level { margin: 1.1rem 0 0.3rem; font-size: 1rem; }
