@@ -4265,6 +4265,57 @@ def school_prs_page(school_name):
                            has_hs_view=has_hs_view)
 
 
+@app.route("/debug/athlete/<int:person_id>")
+def debug_athlete(person_id):
+    """Everything the athlete header decides from, plain text: the season
+    rows in the order the header reads them, the result rows of the
+    latest season grouped by feed, school, pool and division, and the
+    college directory's answer for each school name. For the owner, when
+    a header names the wrong team (267). Robots are kept out of /debug/."""
+    from flask import Response
+    from school_identity import _collegeState
+    out = []
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT pool, sport, year, school, state, grade, n_races,
+                                  last_race, mean_rating
+                           FROM athlete_season WHERE person_id = %s
+                           ORDER BY last_race DESC NULLS LAST, year DESC, n_races DESC""",
+                        (person_id,))
+            seasons = cur.fetchall()
+            out.append("athlete_season, header order first:")
+            for r in seasons:
+                out.append(f"  {r['pool']:<10} {r['sport']} {r['year']} school={r['school']!r} "
+                           f"state={r['state']} grade={r['grade']} n={r['n_races']} "
+                           f"last={r['last_race']} rating={r['mean_rating']} "
+                           f"college_dir={_collegeState(r['school'])}")
+            if seasons:
+                top = seasons[0]
+                cur.execute("""SELECT pool, sport, year, school, division, conference,
+                                      state_div, league, count(*) AS n,
+                                      min(race_date) AS d0, max(race_date) AS d1
+                               FROM ranking_results
+                               WHERE person_id = %s AND sport = %s AND year = %s
+                               GROUP BY 1,2,3,4,5,6,7,8 ORDER BY n DESC""",
+                            (person_id, top["sport"], top["year"]))
+                out.append(f"\nranking_results rows of the header season "
+                           f"({top['sport']} {top['year']}), grouped:")
+                for r in cur.fetchall():
+                    out.append(f"  n={r['n']:<4} pool={r['pool']:<10} school={r['school']!r} "
+                               f"division={r['division']} conf={r['conference']} "
+                               f"state_div={r['state_div']} league={r['league']} "
+                               f"{r['d0']}..{r['d1']}")
+                cur.execute("""SELECT r.source, r.school, count(*) AS n
+                               FROM results_tf r WHERE r.person_id = %s
+                               GROUP BY 1,2 ORDER BY 3 DESC LIMIT 12""", (person_id,))
+                out.append("\nresults_tf by feed and school (whole career):")
+                for r in cur.fetchall():
+                    out.append(f"  n={r['n']:<5} {r['source']:<6} school={r['school']!r}")
+            cur.execute("SELECT school, state FROM athletes WHERE person_id = %s", (person_id,))
+            out.append("\nathletes rows: " + "; ".join(f"{r['school']!r} {r['state']}" for r in cur.fetchall()))
+    return Response("\n".join(out) + "\n", mimetype="text/plain")
+
+
 @app.route("/debug/queries")
 def debug_queries():
     """The site's own query log: slowest recent statements and the
