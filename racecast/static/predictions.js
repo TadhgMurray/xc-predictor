@@ -1489,7 +1489,7 @@ function renderFieldBlock(sumEl, gridEl) {
      *   overall one that writes to every block; this sets one race, which is
      *   what lets you read D2's teams with D3 still shut. */
     viewButtons(state.view) +
-    squadButtons(wholeOn(state.meet.div) ? "whole" : "fielded") +
+    squadButtons(wholeOn(state.meet.div) ? "whole" : "fielded", f.when === "asran") +
     (state.droppedTeams.length
       ? ` <button class="linkish undo" id="undo-team">` +
         `Undo removing ${esc(state.droppedTeams.at(-1).school)}</button>`
@@ -2330,12 +2330,19 @@ function wholeOn(d) {
   return (editsFor(d).wholeAdded || new Set()).size > 0;
 }
 
-function squadButtons(on) {
+/* Said in the words the field header uses (owner, 2026-09-06: "it
+   doesn't explain very well"): a future race fields each team's top 7
+   by prediction, a past one the runners who raced; the other setting
+   puts every current runner of every team on its card. */
+function squadButtons(on, asran) {
   const btn = (v, label, title) =>
     `<button class="vbtn${on === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
   return ` <span class="viewsel">Squads:` +
-    btn("fielded", "Fielded", "The rosters as the results list them") +
-    btn("whole", "Whole", "Every current runner of every team in this race onto its card") +
+    btn("fielded", asran ? "As raced" : "Top 7",
+        asran ? "Each team's runners as the results list them"
+              : "Each team's seven best by predicted time, the squad it would field") +
+    btn("whole", "Everyone",
+        "Every current runner of every team onto its card, not only the top 7") +
     `</span>`;
 }
 
@@ -2346,7 +2353,8 @@ function renderSquadBoxes() {
   if (divs.length < 2) { el.innerHTML = ""; return; }   // one race: its own block has it
   const states = divs.map(wholeOn);
   const all = states.every((v) => v === states[0]) ? (states[0] ? "whole" : "fielded") : null;
-  el.innerHTML = squadButtons(all);
+  const asran = divs.every((d) => (editsFor(d).field || {}).when === "asran");
+  el.innerHTML = squadButtons(all, asran);
 }
 
 async function loadSquad(school, gender) {
