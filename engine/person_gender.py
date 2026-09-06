@@ -34,6 +34,7 @@ import sys
 sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
 
+PROFILE_VOTES = 3            # a scraped profile's weight against labelled rows
 M_RX = r"\m(boys?|men|mens|male|males)\M"
 F_RX = r"\m(girls?|women|womens|female|females)\M"
 
@@ -88,21 +89,51 @@ WITH ev AS (
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  r.event_short ~* '{M_RX}|{F_RX}'
-)
-SELECT person_id,
-       CASE WHEN n_f > n_m THEN 'F' ELSE 'M' END           AS gender,
-       n_m, n_f,
-       (least(n_m, n_f) >= 5
-        AND least(n_m, n_f) * 3 >= n_m + n_f)               AS split
-FROM (
+),
+-- ★ THE PROFILES VOTE TOO, AT {PROFILE_VOTES} EACH (2026-09-06). A boy
+--   whose every division read "Varsity" had ONE row labelled the other
+--   way and was pooled as a girl (a 17:54 5k at 144.8). One profile
+--   outvotes a stray label; a handful of labelled rows still outvote a
+--   wrong profile (the Cam Kuss case this table exists for). One vote
+--   per profile id, however many school rows it has.
+prof AS (
+    SELECT DISTINCT person_id, athlete_id, gender FROM (
+        SELECT r.person_id, a.athlete_id, a.gender
+        FROM   results r JOIN athletes a ON a.athlete_id = r.athlete_id
+        WHERE  r.person_id IS NOT NULL AND a.gender IN ('M', 'F')
+        UNION ALL
+        SELECT r.person_id, a.athlete_id, a.gender
+        FROM   results_tf r JOIN athletes a ON a.athlete_id = r.athlete_id
+        WHERE  r.person_id IS NOT NULL AND a.gender IN ('M', 'F')
+    ) p
+),
+rows_ AS (
     SELECT person_id,
            count(*) FILTER (WHERE g = 'M') AS n_m,
            count(*) FILTER (WHERE g = 'F') AS n_f
-    FROM   ev
-    WHERE  g IS NOT NULL
-    GROUP  BY person_id
+    FROM   ev WHERE g IS NOT NULL GROUP BY person_id
+),
+profs AS (
+    SELECT person_id,
+           count(*) FILTER (WHERE gender = 'M') AS p_m,
+           count(*) FILTER (WHERE gender = 'F') AS p_f
+    FROM   prof GROUP BY person_id
+)
+SELECT person_id,
+       CASE WHEN n_f + {PROFILE_VOTES} * p_f > n_m + {PROFILE_VOTES} * p_m
+            THEN 'F' ELSE 'M' END                        AS gender,
+       n_m, n_f,
+       -- split is decided by the ROWS alone: a profile is one letter, not
+       -- evidence of a second person
+       (least(n_m, n_f) >= 5
+        AND least(n_m, n_f) * 3 >= n_m + n_f)               AS split
+FROM (
+    SELECT COALESCE(r.person_id, p.person_id) AS person_id,
+           COALESCE(r.n_m, 0) AS n_m, COALESCE(r.n_f, 0) AS n_f,
+           COALESCE(p.p_m, 0) AS p_m, COALESCE(p.p_f, 0) AS p_f
+    FROM   rows_ r FULL OUTER JOIN profs p USING (person_id)
 ) s
-WHERE n_m + n_f > 0;
+WHERE n_m + n_f + p_m + p_f > 0;
 ALTER TABLE person_gender_new ADD PRIMARY KEY (person_id);
 DROP TABLE IF EXISTS person_gender;
 ALTER TABLE person_gender_new RENAME TO person_gender;
