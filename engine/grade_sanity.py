@@ -226,6 +226,65 @@ MIN_TRUSTED_RACES = 2
 # Verdicts that rest on the field rather than on the athlete's own grades.
 # A corroborated grade never depended on the company they kept, so 5d leaves
 # it alone; so does a pro verdict, which is a claim about eligibility.
+_CLASS_ORDER = {"FR": 1, "SO": 2, "JR": 3, "SR": 4}
+
+
+def _gradeStep(grade):
+    """('n', 10) for a school grade, ('c', 2) for SO / SO-2 / Sophomore,
+    None for anything else. What "one year on" can be tested against."""
+    g = str(grade or "").strip().upper()
+    if g.isdigit():
+        return ("n", int(g))
+    for word, n in _CLASS_ORDER.items():
+        if g.startswith(word):
+            return ("c", n)
+    return None
+
+
+def _advances(prev, cur):
+    """Is `cur` the season after `prev` for one athlete: the grade one
+    year on (10 after 9, JR after SO, FR after 12), or the same college
+    or pro level again (a Senior-5 is still college)."""
+    a, b = _gradeStep(prev.get("grade")), _gradeStep(cur.get("grade"))
+    if a and b:
+        # two readable grades: only the step forward counts; a repeat or
+        # a step back is the very disagreement trust exists to catch
+        if a[0] == b[0] and b[1] == a[1] + 1:
+            return True
+        return a == ("n", 12) and b == ("c", 1)
+    lp, lc = prev.get("level"), cur.get("level")
+    return bool(lp) and lp == lc and lp in ("college", "pro")
+
+
+def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES):
+    """Stamp v['trust'] on every academic-year verdict, in year order.
+
+    high  when the season has min_races or more, OR when the previous
+          academic year of the same athlete is trusted and this season
+          advances it (_advances). A vouched season can vouch for the
+          next, so a career of one-race seasons that step 9, 10, 11, 12
+          is trusted throughout, and a run of single field verdicts that
+          jump levels (Dominic Colussi, above) is not.
+    low   otherwise: rated and shown, off the boards.
+    Returns (n_low, n_vouched)."""
+    n_low = n_vouched = 0
+    for key in sorted(acad):
+        v = acad[key]
+        pid, ay = key
+        if race_count.get(key, 0) >= min_races:
+            v["trust"] = "high"
+            continue
+        prev = acad.get((pid, ay - 1))
+        if prev is not None and prev.get("trust") == "high" and _advances(prev, v):
+            v["trust"] = "high"
+            v["trust_by"] = "progression"
+            n_vouched += 1
+        else:
+            v["trust"] = "low"
+            n_low += 1
+    return n_low, n_vouched
+
+
 _UNCERTAIN_METHODS = ("field", "bare_class", "bare_field", "no_evidence")
 
 # * THREE SEASONS TO OVERRULE ONE, NOT TWO. With two disagreeing seasons
@@ -1645,16 +1704,20 @@ def resolve(cur, audit=False):
     """)
     race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
 
-    n_untrusted = 0
-    for key, v in acad.items():
-        v["trust"] = ("low" if race_count.get(key, 0) < MIN_TRUSTED_RACES
-                      else "high")
-        n_untrusted += v["trust"] == "low"
+    #  ★ OR WHEN THE PREVIOUS SEASON VOUCHES FOR IT (owner, 2026-09-06:
+    #    "this fails for the current season -- not enough races yet"). The
+    #    season in progress is one race deep for weeks, and under the rule
+    #    above every athlete in it was off the boards until their second
+    #    race. An athlete who was a trusted grade 10 in May and races as a
+    #    grade 11 in September is corroborated by the calendar, not by a
+    #    second race: see trustByProgression.
+    n_untrusted, n_vouched = trustByProgression(acad, race_count)
 
     out = dict(acad)
 
     print("\n[grade] academic-year verdicts")
     print(f"    corroborated grade       {n_corr:>10,}")
+    print(f"    one race, vouched for by the season before {n_vouched:>8,}")
     print(f"    bare word, own grades    {n_bare:>10,}")
     print(f"    bare word, field's grades{n_bare_field:>10,}")
     print(f"    level of the field       {n_field:>10,}")

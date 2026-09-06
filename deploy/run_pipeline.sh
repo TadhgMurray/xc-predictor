@@ -347,6 +347,11 @@ fi
 #   that runs with the block OFF (08 prints "track distance offsets: OFF"),
 #   so the first run after the change is --from 6, which clears the cache
 #   above and rebuilds here. --from 8 keeps whatever pack is on disk.
+# ★ EVERY tfrrs TRACK ROW GETS ITS MEET'S NAME AND VENUE IN meets_tf
+#   (2026-09-06): the pages, the pack's venue keys and the boards all read
+#   meets_tf on the row's own keys, and tfrrs rows had rows there only
+#   where a geometry stamp existed, unnamed. Idempotent, seconds.
+step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 
 # ★ TWO SOLVERS, ONE SWITCH.
