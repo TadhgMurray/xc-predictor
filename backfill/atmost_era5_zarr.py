@@ -431,6 +431,12 @@ def _deriveWindDirection(u, v):
     return (deg + 180.0) % 360.0
 
 
+# Share of downward shortwave a standing, clothed body absorbs: ~0.25 of
+# its surface faces the sun, ~0.7 absorptivity. Steadman's Q wants exactly
+# this quantity; the raw irradiance is four to six times too much.
+SUN_ABSORBED_FRACTION = 0.175
+
+
 def _deriveApparentTemperature(tempC, rh, windKmh, solarWm2):
     """
     Purpose: a "feels like" temperature folding in humidity, wind, and sun.
@@ -452,8 +458,18 @@ def _deriveApparentTemperature(tempC, rh, windKmh, solarWm2):
     ws = windKmh / 3.6                                # km/h -> m/s (formula wants m/s)
     # e = water-vapour pressure (hPa), from RH times the saturation curve.
     e = (rh / 100.0) * 6.105 * np.exp((17.27 * tempC) / (237.7 + tempC))
-    # Steadman AT: base temp, +humidity load, -wind cooling, +sun load, -offset.
-    at = tempC + 0.348 * e - 0.70 * ws + 0.70 * (solarWm2 / (ws + 10.0)) - 4.25
+    # ★ Q IS THE RADIATION A BODY ABSORBS, NOT THE SUNLIGHT THAT FALLS
+    #   (2026-09-06, SITE_NOTES #4). This line used the raw downward
+    #   shortwave -- 800-1000 W/m2 in full sun -- where Steadman's Q is the
+    #   net radiation absorbed per unit BODY surface, and every sunny hour
+    #   read 20-35 C hotter than it felt. A standing body presents about a
+    #   quarter of its surface to the sun and absorbs about 70% of what
+    #   lands, so Q ~ 0.175 x downward shortwave: full sun is ~150 W/m2 and
+    #   about +5 C in a light breeze, which is what the formula's authors
+    #   describe. The stored raw inputs let scripts/recompute_apparent_temp
+    #   rewrite every existing row to the same rule.
+    at = (tempC + 0.348 * e - 0.70 * ws
+          + 0.70 * (SUN_ABSORBED_FRACTION * solarWm2 / (ws + 10.0)) - 4.25)
     # Shade version (no sun proxy):  at = tempC + 0.33*e - 0.70*ws - 4.00
     return at
 

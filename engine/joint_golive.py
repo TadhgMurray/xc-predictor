@@ -58,7 +58,7 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 #            the pair_difficulty-shaped arrays, and a summary.
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               use_race_effect=True, gain_bands=None, pack_date=None,
-              race_effect_sports=("XC", "TF")):
+              race_effect_sports=()):
     import pair_golive as pg
 
     keys = [str(k) for k in cols["course_keys"]]

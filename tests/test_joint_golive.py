@@ -86,10 +86,12 @@ def main():
     print(f"  per-race vs season rating: median gap {np.median(gap):+.2f}, "
           f"p90 |gap| {np.percentile(np.abs(gap), 90):.2f} pts ... OK")
 
-    # the race-day effect is in the rating by default and out on request,
-    # and the difference is exactly the effect
+    # the race-day effect is out of the rating by default (owner, 2026-09-06)
+    # and in on request, and the difference is exactly the effect
+    live_u = jg.buildLive(out, D, cols, keep, race_effect_sports=("XC", "TF"))
     live0 = jg.buildLive(out, D, cols, keep, use_race_effect=False)
-    ratio = live["chosen"] / live0["chosen"]
+    assert np.allclose(live["chosen"], live0["chosen"])
+    ratio = live_u["chosen"] / live0["chosen"]
     # tilted like the course (156) and clipped at the cap (187)
     u = np.clip(out["race_effect"][raw["rac"]], -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
     expect = np.exp(out["h"] * u)
@@ -142,7 +144,12 @@ def per_sport_day_term():
     assert np.allclose(r_xc[sport == 1], r_none[sport == 1])
     assert not np.allclose(r_both[sport == 1], r_none[sport == 1])
     assert list(xc["npz"]["race_effect_sports"]) == ["XC"]
-    print("  race-day term per sport: XC keeps it, TF drops it ......... OK")
+    # ★ THE DEFAULT IS NONE (owner, 2026-09-06): a rating is how fast the
+    #   run was; the solve keeps the term and the hover shows it.
+    default = jg.buildLive(out, D, cols, keep)
+    assert np.allclose(default["chosen"], r_none)
+    assert list(default["npz"]["race_effect_sports"]) == []
+    print("  race-day term per sport: XC keeps it, TF drops it, default none  OK")
 
 
 if __name__ == "__main__":

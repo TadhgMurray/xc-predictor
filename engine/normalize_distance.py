@@ -1765,6 +1765,23 @@ def _weatherReference(art, course, doy):
     return art["reference"]
 
 
+# The temperature aggregate an artifact was FITTED on (avg over XC's morning
+# window, max over track's all-day one, 2026-09-06). Whoever reads the grid
+# for the correction -- backfill_normalize, diag_row_weather -- aggregates
+# the same way, and an expression this module does not know is refused
+# rather than interpolated into SQL from a pickle.
+WEATHER_TEMP_AGGS = ("avg(apparent_temperature)", "max(apparent_temperature)")
+
+
+def weatherTempAgg(art):
+    expr = ((art or {}).get("wx_agg") or {}).get("apparent_temp",
+                                                  WEATHER_TEMP_AGGS[0])
+    if expr not in WEATHER_TEMP_AGGS:
+        raise ValueError(f"weather artifact aggregates apparent_temp as {expr!r}; "
+                         f"known: {WEATHER_TEMP_AGGS}")
+    return expr
+
+
 def _applyWeather(normalized, weather, course, sport, distance_m=None):
     art = _weatherArtifactFor(sport)
     if art is None or not weather:
@@ -1788,6 +1805,13 @@ def _applyWeather(normalized, weather, course, sport, distance_m=None):
         # The spline's own "ref" is replaced by the venue normal for the same
         # reason: it is the x the curve is measured FROM.
         base = ref.get("apparent_temp", tsp["ref"])
+        # ★ NOTHING COLDER THAN THE OPTIMUM MOVES A RATING (2026-09-06): the
+        #   fitter stores the curve's minimum; the day and its baseline are
+        #   both held at it, so a cold day is neither docked nor credited.
+        opt = tsp.get("optimum")
+        if opt is not None:
+            t = max(float(t), float(opt))
+            base = max(float(base), float(opt))
         total += _rcsValue(tsp, t, dc) - _rcsValue(tsp, base, dc)
 
     # mud: soil spline (distance-adjusted shape), scaled by course s_c.

@@ -16,6 +16,12 @@ set -u -o pipefail
 
 ROOT="${XCP_ROOT:-/srv/xc-predictor}"
 PY="${XCP_PYTHON:-/srv/venv/bin/python}"
+# ★ THE WEATHER FETCHER'S OWN VENV (2026-09-06). backfill/atmost_era5_zarr.py
+#   reads ERA5 from a public cloud store and needs xarray, zarr, icechunk and
+#   pandas, whose pins can move numpy under the engine -- so they live in
+#   /srv/wxvenv, not in $PY's venv. Absent, step 04e says so and the run
+#   goes on without new weather (as every run before it did).
+WXPY="${XCP_WXPYTHON:-/srv/wxvenv/bin/python}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -274,6 +280,31 @@ step 04c_twins        "$PY" -u engine/twin_flag.py --write
 # gender by the divisions raced under; a person who raced both ways enough
 # is two athletes to the pack and the boards (issue 164)
 step 04d_gender       "$PY" -u engine/person_gender.py --write
+# ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
+#   2025-12-31 because nothing in the pipeline ever extended it, so the
+#   whole 2026 season was rated with no weather. The fetcher is resumable:
+#   it lists every venue-day the meets need, skips what the grid has, and
+#   pulls the rest (27,212 cell-days for 2026 on 2026-09-06). ERA5 lags real
+#   time by weeks, so the last few weeks are always missing and are picked
+#   up by a later run.
+if [ -x "$WXPY" ]; then
+  step 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+else
+  echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
+fi
+# ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
+#   and its answer only changes when the grid's numbers do -- after
+#   scripts/recompute_apparent_temp.py, or a new season's worth of rows.
+#   XCP_WEATHER_FIT=1 runs both sports side by side; the artifacts it
+#   writes are what 05_backfill applies.
+if [ "${XCP_WEATHER_FIT:-0}" = "1" ]; then
+  # --refresh: the fitter caches its corpus by SQL text, and the recompute
+  # changes the numbers without changing the SQL
+  steps2 04f_weather_fit_xc "$PY -u engine/fit_weather_correction.py --sport XC --refresh" \
+         04f_weather_fit_tf "$PY -u engine/fit_weather_correction.py --sport TF --refresh"
+else
+  echo "  04f_weather_fit skipped (XCP_WEATHER_FIT=1 to refit)" | tee -a "$SUMMARY"
+fi
 
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE

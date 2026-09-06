@@ -54,6 +54,7 @@ from database import getConn, initPool
 # can name WHY a row is skipped (unknown pool vs no distance) WITHOUT re-deriving
 # any of that logic here — it just calls the same functions the library uses.
 from normalize_distance import (
+    weatherTempAgg,
     normalizeResult, EVENT_DISTANCES_TF, poolFor, metersFromDistance,
 )
 # results_tf.event_short is FREE TEXT: 64,079 distinct values across two scraper
@@ -467,13 +468,13 @@ def _snapCell(lat, lon):
 #           local hour = UTC + round(signed_lon/15)). `hours` is the (lo, hi)
 #           LOCAL window read from the artifact, so it equals the fit window.
 # Output  : { (cell_lat, cell_lon, "YYYY-MM-DD") : (temp, wind, precip, soil, snow) }.
-def _loadWxDict(cur, hours):
+def _loadWxDict(cur, hours, temp_agg="avg(apparent_temperature)"):
     lo, hi = hours
     signed = "(CASE WHEN cell_lon > 180 THEN cell_lon - 360 ELSE cell_lon END)"
     local = f"mod(mod(hour + round({signed} / 15.0)::int, 24) + 24, 24)"
     cur.execute(f"""
         SELECT cell_lat, cell_lon, date,
-               avg(apparent_temperature), avg(wind_speed_10m),
+               {temp_agg}, avg(wind_speed_10m),
                sum(precipitation), avg(soil_moisture),
                avg(snow_depth) + coalesce(sum(snowfall), 0)
         FROM   weather_grid
@@ -560,7 +561,9 @@ class WeatherIndex:
             tfrrs = {}                                 # tfrrs TF: no reliable indoor
             #                                            flag -> no-op (never risk
             #                                            correcting an indoor race)
-        wx = _loadWxDict(cur, hours)
+        # the temperature aggregate the artifact was fitted on (avg for XC,
+        # max for track); normalize_distance refuses one it does not know
+        wx = _loadWxDict(cur, hours, weatherTempAgg(art))
         return cls(anet, tfrrs, wx)
 
     # lookup: (source, meet_id, race_date) -> (weather dict | None, course | None).

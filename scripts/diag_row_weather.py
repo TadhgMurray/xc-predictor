@@ -41,19 +41,21 @@ def snapCell(lat, lon):
 
 
 def raceHours(sport):
+    """(local hour window, temperature aggregate) the sport was fitted on."""
     try:
         with open(_ART.format(sport=sport), "rb") as f:
-            return tuple(pickle.load(f).get("race_local_hours", (8, 12)))
+            art = pickle.load(f)
     except OSError:
         return None
+    return tuple(art.get("race_local_hours", (8, 12))), nd.weatherTempAgg(art)
 
 
-def cellWeather(cur, clat, clon, day, hours):
+def cellWeather(cur, clat, clon, day, hours, temp_agg="avg(apparent_temperature)"):
     lo, hi = hours
     signed = "(CASE WHEN cell_lon > 180 THEN cell_lon - 360 ELSE cell_lon END)"
     local = f"mod(mod(hour + round({signed} / 15.0)::int, 24) + 24, 24)"
     cur.execute(f"""
-        SELECT avg(apparent_temperature), avg(wind_speed_10m),
+        SELECT {temp_agg}, avg(wind_speed_10m),
                sum(precipitation), avg(soil_moisture),
                avg(snow_depth) + coalesce(sum(snowfall), 0), count(*)
         FROM   weather_grid
@@ -116,17 +118,19 @@ def report(cur, rows):
         if r["note"]:
             print(f"    weather: none -- {r['note']}")
             continue
-        hours = raceHours(r["sport"])
-        if hours is None:
+        got = raceHours(r["sport"])
+        if got is None:
             print("    weather: no artifact for this sport -- a no-op")
             continue
+        hours, temp_agg = got
         clat, clon = snapCell(r["lat"], r["lon"])
-        wx = cellWeather(cur, clat, clon, r["day"], hours)
+        wx = cellWeather(cur, clat, clon, r["day"], hours, temp_agg)
         if wx is None:
             print(f"    weather: cell ({clat}, {clon}) has no rows for {r['day']} "
                   f"in hours {hours} -- a no-op")
             continue
-        print(f"    grid cell ({clat}, {clon}), local hours {hours[0]}-{hours[1]}: "
+        print(f"    grid cell ({clat}, {clon}), local hours {hours[0]}-{hours[1]}, "
+              f"{temp_agg.split('(')[0]} temperature: "
               f"apparent {wx['apparent_temp']:.0f}F, wind {wx['wind']:.1f}, "
               f"precip {wx['precip']:.2f}, soil {wx['soil']:.2f}, snow {wx['snow']:.2f}")
         if not nd.isRaceWeatherPlausible(wx):

@@ -599,11 +599,14 @@ def main():
                     help="season -> athlete_ratings row")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
-    ap.add_argument("--race-effect-sports", default="XC",
+    ap.add_argument("--race-effect-sports", default="",
                     help="the sports whose per-result ratings carry the "
-                         "race-day term (comma list; default XC: a track "
-                         "day is wind, an XC day is mud -- owner, "
-                         "2026-09-06). The solve keeps it for both")
+                         "race-day term (comma list; default NONE, owner "
+                         "2026-09-06: a slow race is a slow race, and the "
+                         "model cannot tell mud from a jog -- measured "
+                         "weather is credited in the normalisation instead). "
+                         "The solve keeps the term for both sports, the "
+                         "hover shows it")
     args = ap.parse_args()
 
 

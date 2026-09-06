@@ -73,6 +73,15 @@ WX_AGG = {
     "soil":          "avg(soil_moisture)",
     "snow":          "avg(snow_depth) + coalesce(sum(snowfall), 0)",  # merged, metres
 }
+# ★ TRACK READS PEAK HEAT (2026-09-06). The track window is 9am-8pm local,
+#   and the mean over eleven hours put a 3pm race at 90F down as 76F. The
+#   header above always said peak heat is what cooks a runner; the config
+#   never did. XC's window is the morning and its mean stays. The artifact
+#   carries the expression so backfill_normalize aggregates the same way.
+WX_AGG_BY_SPORT = {
+    "XC": dict(WX_AGG),
+    "TF": dict(WX_AGG, apparent_temp="max(apparent_temperature)"),
+}
 KNOT_Q = (0.05, 0.275, 0.5, 0.725, 0.95)   # quantiles where spline knots sit
 
 # Shrinkage for the per-(venue, fortnight) weather normals. A group with one
@@ -499,6 +508,14 @@ def fitWeather(cols):
                    "coef": [float(coef[j]) for j in layout[f + "_spline"]],
                    "coef_dist": [float(coef[j]) for j in layout[f + "_spline_dist"]],
                    "ref": REFERENCE[f]} for f in SPLINE_FEATURES}
+    # ★ THE OPTIMUM, SO COLD IS NEVER DOCKED (2026-09-06). The fitted
+    #   temperature curve fell through the cold end -- a 40F 1500 read 1.3%
+    #   easier than a 55F one and lost it -- which is backwards for a race
+    #   and is most likely a leak. The apply side treats every temperature
+    #   below the curve's minimum as the minimum, on both the day and its
+    #   baseline, so nothing colder than the optimum moves a rating.
+    if "apparent_temp" in splines:
+        splines["apparent_temp"]["optimum"] = splineOptimum(splines["apparent_temp"])
     # linear features: scalar distance slope (effect grows by this * dc).
     dist_betas = {f: float(coef[layout[f + "_dist"]]) for f in LINEAR_FEATURES}
     return (betas, splines, dist_betas, coef, cols["nt"].size,
@@ -753,6 +770,14 @@ def buildVenueNormals(cols):
     return {"by_event": by_event, "global": global_means}
 
 
+def splineOptimum(spline, n=400):
+    """The x at which the fitted curve is lowest, over the knot range."""
+    knots = sorted(set(spline["knots"]))
+    xs = np.linspace(knots[0], knots[-1], n)
+    vals = [_curvePct(spline, float(x)) for x in xs]
+    return float(xs[int(np.argmin(vals))])
+
+
 def saveArtifact(betas, splines, dist_betas, soil_map, venue_norms, sport):
     path = ARTIFACT_TMPL.format(sport=sport)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -799,11 +824,13 @@ def _parseArgs():
 
 def main():
     args = _parseArgs()
-    global RACE_LOCAL_HOURS, LINEAR_FEATURES
+    global RACE_LOCAL_HOURS, LINEAR_FEATURES, WX_AGG
     RACE_LOCAL_HOURS = RACE_LOCAL_HOURS_BY_SPORT[args.sport]
     LINEAR_FEATURES = LINEAR_FEATURES_BY_SPORT[args.sport]
+    WX_AGG = WX_AGG_BY_SPORT[args.sport]
     print(f"[config] {args.sport}: window {RACE_LOCAL_HOURS} local, "
-          f"linear features {LINEAR_FEATURES}")
+          f"linear features {LINEAR_FEATURES}, "
+          f"temperature {WX_AGG['apparent_temp']}")
     sql = xcQuery() if args.sport == "XC" else tfQuery()
     cols = getColumns(args.sport, sql, args.limit, args.refresh)
     if cols["nt"].size == 0:
