@@ -238,7 +238,7 @@
                         {%- else -%}—{%- endif -%}
                     </td>
                     <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
-                    <td>{{ dv(race.difficulty, race.sport) }}</td>
+                    <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
                     {# Same nine conditions as before -- only the rendering moved
                        into the flag() macro, so each badge now carries its own
                        explanation. #}

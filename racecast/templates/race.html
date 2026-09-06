@@ -35,7 +35,7 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
-        Course difficulty: {{ dv(header.difficulty, "XC") }}{{ difficulty_i("XC") }}
+        Course difficulty: {{ dv(header.difficulty, "XC", day_effect) }}{{ difficulty_i("XC") }}
     </p>
     {% if extras and extras.weather %}
     <p class="meta wx">

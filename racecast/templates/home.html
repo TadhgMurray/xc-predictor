@@ -184,6 +184,7 @@
 {#    m4  TALL 1:2                 m5  TALL 1:2                        #}
 {#    m6  m7  m8  m9   four squares along the bottom                   #}
 {# ================================================================= #}
+<main id="main">
 <section class="hero-mosaic">
     {% for slot in ['m1','m2','m3','m4','m5','m6','m7','m8','m9'] %}
         <div class="mtile {{ slot }}"
@@ -194,7 +195,7 @@
         {# The wordmark is an image, so the site name has to live in alt --
            an empty alt here would leave a link with no accessible text. #}
         <a class="brand brand-logo" href="/">
-            <img src="{{ static_v('logo.svg') }}" alt="Racecast">
+            <img src="{{ static_v('logo.svg') }}" alt="Racecast" width="460" height="167">
         </a>
         <p class="tagline">Every result on one comparable scale.</p>
 
@@ -355,6 +356,7 @@
     {% endif %}
 
 </section>
+</main>
 
 <script src="{{ static_v('home.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>

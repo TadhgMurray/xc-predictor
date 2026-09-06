@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import re
@@ -245,6 +246,48 @@ def _is_team_filter(school):
 #   read ~2% harder than it is. See difficulty_view.py.
 import difficulty_view
 app.template_filter("diffpct")(difficulty_view.diffPct)
+
+
+# The race-day term as the page says it (the hover on a difficulty): the
+# term the RATING applied, clipped at the cap (issue 187), as a percent of
+# time; the sign as the course's: + = the field ran slow that day.
+_RACE_DAY_CAP = 0.10                      # joint_solve.RACE_DAY_CAP
+
+
+def dayPct(u):
+    if u is None:
+        return None
+    u = max(-_RACE_DAY_CAP, min(_RACE_DAY_CAP, float(u)))
+    return 100.0 * math.expm1(u)
+
+
+@app.template_filter("daypct")
+def _daypct(u):
+    pct = dayPct(u)
+    if pct is None:
+        return ""
+    return "0.0%" if abs(pct) < 0.05 else f"{pct:+.1f}%"
+
+
+@app.template_filter("daycapped")
+def _daycapped(u):
+    return u is not None and abs(float(u)) > _RACE_DAY_CAP + 1e-9
+
+
+@app.template_filter("dayabs")
+def _dayabs(u):
+    """'1.2%' -- the size of the day term, for a sentence that carries
+    the direction in words."""
+    pct = dayPct(u)
+    return "" if pct is None else f"{abs(pct):.1f}%"
+
+
+@app.template_filter("dayword")
+def _dayword(u):
+    pct = dayPct(u)
+    if pct is None or abs(pct) < 0.05:
+        return "level"
+    return "slow" if pct > 0 else "fast"
 app.jinja_env.globals["difficulty_words"] = difficulty_view.diffWords
 
 # ! FOR bareSchool ONLY -- the inverse of the "(ST)" label convention, which
@@ -1413,6 +1456,7 @@ def get_races(cur, person_id):
                              - COALESCE(m.distance, {_blob('r')}::real)) >= 1
                     THEN NULL
                     ELSE cd.difficulty END   AS difficulty,
+               rde.day_effect                AS day_effect,
                0                             AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id                      AS div_id,
@@ -1469,6 +1513,12 @@ def get_races(cur, person_id):
                ON cd.canonical_id = cc.canonical_id
               AND cd.distance_m   =
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        -- the race-day term of that cell on that date (the hover on the
+        -- difficulty; written by the joint go-live, absent before it)
+        LEFT JOIN race_day_effect rde
+               ON rde.canonical_id = cc.canonical_id
+              AND rde.distance_m   = cd.distance_m
+              AND rde.race_date    = r.date
         WHERE r.person_id = %(pid)s
           AND r.time_seconds IS NOT NULL
           {twin_xc}
@@ -1491,6 +1541,7 @@ def get_races(cur, person_id):
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
                cd.difficulty                 AS difficulty,
+               rde.day_effect                AS day_effect,
                COALESCE(r.is_field, 0)       AS is_field,
                r.meet_id                     AS meet_id,
                r.div_id  AS div_id,
@@ -1544,6 +1595,9 @@ def get_races(cur, person_id):
         LEFT JOIN course_difficulties cd
                ON cd.course_name = 'TF:loc:' || m.location_id::text ||
                   CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
+        LEFT JOIN race_day_effect rde
+               ON rde.course_name = cd.course_name
+              AND rde.race_date   = r.date
         WHERE r.person_id = %(pid)s
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
           {twin_tf}
@@ -2094,6 +2148,8 @@ def get_race_header(cur, meet_id, div_id):
                r.div_id                                      AS div_id,
                r.source                                      AS source,
                cd.difficulty                                 AS difficulty,
+               cc.canonical_id                               AS canonical_id,
+               cd.distance_m                                 AS cell_distance_m,
                -- FILTER because the lateral no longer restricts gender to M/F
                -- (it sorts by it instead), so junk values could reach mode().
                (SELECT mode() WITHIN GROUP (ORDER BY a.gender)
@@ -2260,6 +2316,42 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
                         and (season is None or float(t) < float(season)))
 
 
+def raceDayEffect(cur, sport, header, race_date):
+    """The solve's race-day term for this race (the hover on the
+    difficulty), or None: no table yet, no date, or the cell was not in
+    the solve."""
+    if not header or not race_date:
+        return None
+    try:
+        if sport == "XC":
+            if header.get("canonical_id") is None or header.get("cell_distance_m") is None:
+                return None
+            cur.execute("""
+                SELECT day_effect FROM race_day_effect
+                WHERE canonical_id = %(cid)s AND distance_m = %(dm)s
+                  AND race_date = %(day)s
+                ORDER BY n_rows DESC LIMIT 1
+            """, {"cid": header["canonical_id"], "dm": header["cell_distance_m"],
+                  "day": race_date})
+        else:
+            if header.get("location_id") is None:
+                return None
+            key = (f"TF:loc:{header['location_id']}:"
+                   f"{'in' if header.get('is_indoor') == 1 else 'out'}")
+            cur.execute("""
+                SELECT day_effect FROM race_day_effect
+                WHERE course_name = %(key)s AND race_date = %(day)s
+                ORDER BY n_rows DESC LIMIT 1
+            """, {"key": key, "day": race_date})
+        row = cur.fetchone()
+    except Exception:                                    # noqa: BLE001
+        cur.connection.rollback()                        # no table yet
+        return None
+    if not row:
+        return None
+    return row["day_effect"] if isinstance(row, dict) else row[0]
+
+
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
 def race_xc(meet_id, div_id):
     from meet_compile import (scoreRows, publishedScores, annotateScoring,
@@ -2282,6 +2374,8 @@ def race_xc(meet_id, div_id):
                 stampRecordFlags(cur, "XC", results,
                                  header.get("distance"),
                                  results[0].get("date"))
+            day_effect = raceDayEffect(cur, "XC", header,
+                                       results[0].get("date") if results else None)
 
     # Stamp score_place / team_place on the rendered rows themselves --
     # scoreRows below runs on `ranked` COPIES, so its stamps never reach
@@ -2387,6 +2481,7 @@ def race_xc(meet_id, div_id):
                            header=header,
                            results=results,
                            race_date=race_date,
+                           day_effect=day_effect,
                            scores=scores,
                            corrected=corrected,
                            extras=extras)
@@ -2971,6 +3066,8 @@ def race_tf(meet_id, event_id, div_id):
                     dist = parseEventShort(header.get("event_short")).get("meters")
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
+            day_effect = raceDayEffect(cur, "TF", header,
+                                       results[0].get("date") if results else None)
             # Points come from scoring the WHOLE meet, not this page's rows:
             # a prelim page's athletes score in the final, and a sectioned
             # final scores across its sections. Scope to this race's own
@@ -3011,7 +3108,8 @@ def race_tf(meet_id, event_id, div_id):
                            header=header,
                            results=results,
                            sections=sections,
-                           race_date=race_date)
+                           race_date=race_date,
+                           day_effect=day_effect)
 
 
 # ===================================================================== #

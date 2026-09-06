@@ -57,7 +57,7 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 #            saveAthleteRatings dict), per-sport (result_id, rating) pairs,
 #            the pair_difficulty-shaped arrays, and a summary.
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
-              use_race_effect=True, gain_bands=None):
+              use_race_effect=True, gain_bands=None, pack_date=None):
     import pair_golive as pg
 
     keys = [str(k) for k in cols["course_keys"]]
@@ -198,6 +198,21 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               f"{len(suspect_days):,} race days beyond it on {int(capped.sum()):,} "
               f"rows; the worst: "
               + "; ".join(f"{k} {u:+.3f} ({n} rows)" for k, _d, u, n in suspect_days[:5]))
+    # ★ EVERY RACE DAY'S TERM, FOR THE PAGE (2026-09-06, the owner's hover):
+    #   per race (a cell on a day) the solve's day term and its rows; the
+    #   writer turns days-ago into a date from the pack's own date.
+    day_rows = None
+    if "days" in cols:
+        days_all = np.asarray(cols["days"][keep])
+        race_cell = np.zeros(D.n_race, dtype=np.int64)
+        race_cell[D.race] = D.cell
+        race_days = np.zeros(D.n_race, dtype=np.int64)
+        race_days[D.race] = days_all
+        race_n = np.bincount(D.race, minlength=D.n_race)
+        seen_r = np.flatnonzero(race_n > 0)
+        day_rows = (keys, race_cell[seen_r], race_days[seen_r],
+                    out["race_effect"][seen_r].astype(np.float32),
+                    race_n[seen_r], pack_date)
     scale_rows = []
     shift = float(np.average(raw[solved], weights=w[solved]))
     pool_row = attrs["pool"][D.athlete]
@@ -239,7 +254,8 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             "npz": npz, "summary": summary, "rated": rated, "chosen": chosen,
             "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
             "dist_rows": dist_rows, "scale_rows": scale_rows,
-            "suspect_days": suspect_days, "gain_rows": gain_rows}
+            "suspect_days": suspect_days, "gain_rows": gain_rows,
+            "day_rows": day_rows}
 
 
 _SUSPECT_DDL = """
@@ -272,6 +288,54 @@ def writeSuspectDays(rows):
              for k, d, u, n in rows])
         conn.commit()
     print(f"[joint/live] race_day_suspect: {len(rows):,} days written")
+
+
+# The race-day term of every race the solve saw, keyed the way the site
+# resolves a cell (course_difficulties' columns) plus the date, so an
+# athlete's row or a race page can show "course +4.6%, that day -1.2%".
+_DAY_DDL = """
+    CREATE TABLE race_day_effect (
+        course_name   text    NOT NULL,
+        canonical_id  bigint,
+        distance_m    integer,
+        race_date     date    NOT NULL,
+        day_effect    real    NOT NULL,
+        n_rows        integer NOT NULL
+    )
+"""
+
+
+def writeRaceDays(day_rows):
+    """Replace race_day_effect from buildLive's day_rows: (cell keys, the
+    cell per race, days ago per race, the term, rows, the pack's date)."""
+    from datetime import date, timedelta
+    from database import getConn
+    from speed_ratings_db import (_splitVenueKey, _escape, _copyInto,
+                                  loadCanonicalNames)
+    keys, cell, days, u, n, pack_date = day_rows
+    pack_date = pack_date or date.today()
+    names = loadCanonicalNames()
+    split = {}
+    rows = []
+    for c, d, uu, nn in zip(cell.tolist(), days.tolist(), u.tolist(), n.tolist()):
+        if c not in split:
+            split[c] = _splitVenueKey(keys[c], names)
+        name, cid, dist = split[c]
+        rows.append((_escape(name), cid, dist, (pack_date - timedelta(days=int(d))).isoformat(),
+                     round(float(uu), 5), int(nn)))
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS race_day_effect_new")
+        cur.execute(_DAY_DDL.replace("race_day_effect", "race_day_effect_new"))
+        total = _copyInto(cur, "race_day_effect_new",
+                          ("course_name", "canonical_id", "distance_m",
+                           "race_date", "day_effect", "n_rows"), rows)
+        cur.execute("CREATE INDEX ON race_day_effect_new (canonical_id, distance_m, race_date)")
+        cur.execute("CREATE INDEX ON race_day_effect_new (course_name, race_date)")
+        cur.execute("DROP TABLE IF EXISTS race_day_effect")
+        cur.execute("ALTER TABLE race_day_effect_new RENAME TO race_day_effect")
+        conn.commit()
+    print(f"[joint/live] race_day_effect: {total:,} race days written "
+          f"(dates from the pack of {pack_date})")
 
 
 _SCALE_DDL = """
@@ -419,6 +483,8 @@ def writeLive(live):
     writeEngineScale(live.get("scale_rows", []))
     writeSuspectDays(live.get("suspect_days", []))
     writeSportGain(live.get("gain_rows", []))
+    if live.get("day_rows") is not None:
+        writeRaceDays(live["day_rows"])
     print("\n[joint/live] LIVE. To undo:\n" + pg.restoreSql())
     print("[joint/live] ⚠ do NOT run apply_tilt after this: the tilt is "
           "inside these ratings already.")

@@ -7,7 +7,7 @@ p  { color: rgb(82, 82, 82); }
   gap: 1px;
 }
 .meta {
-  color: gray;
+  color: var(--muted, #6b7280);
   font-size: 14px;
 }
 
@@ -610,7 +610,7 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .sr-kind {
     font-size: 0.7rem;
     text-transform: uppercase;
-    color: #999;
+    color: #6f6f6f;
     min-width: 3.5rem;
 }
 .sr-label { font-weight: 500; }
@@ -712,7 +712,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .conv-drop:empty { display: none; }      /* invisible when no results */
 .drop-item { padding:0.4rem 0.7rem; cursor:pointer; }
 .drop-item:hover { background:#f0f0f0; }
-.drop-meta { color:#999; font-size:0.8rem; }
+.drop-meta { color: #6f6f6f; font-size:0.8rem; }
 
 .src-field { position: relative; }
 
@@ -737,7 +737,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 
 /* red-asterisk required marker + the key line */
 .req { color: #c0392b; font-weight: 700; }
-.req-key { color: #999; font-size: 0.8rem; margin-left: 0.5rem; }
+.req-key { color: #6f6f6f; font-size: 0.8rem; margin-left: 0.5rem; }
 
 /* ---- source panel: a bordered card, like a form ---- */
 .conv-source {
@@ -792,7 +792,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .conv-drop:empty { display: none; }
 .drop-item { padding: 0.4rem 0.7rem; cursor: pointer; font-size: 0.9rem; }
 .drop-item:hover { background: #f0f0f0; }
-.drop-meta { color: #999; font-size: 0.8rem; margin-left: 0.4rem; }
+.drop-meta { color: #6f6f6f; font-size: 0.8rem; margin-left: 0.4rem; }
 
 /* ---- optional weather, collapsed ---- */
 .conv-weather { margin: 0.5rem 0; }
@@ -1302,7 +1302,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     font: inherit;
     font-size: 0.7rem;
     line-height: 1.15;
-    color: #aaa;
+    color: #767676;
     cursor: pointer;
     vertical-align: baseline;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -1739,7 +1739,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     background: #fff;
     font: inherit;
     font-size: 0.9rem;
-    color: #999;                 /* "Any" is a placeholder, not a value */
+    color: #6f6f6f;                 /* "Any" is a placeholder, not a value */
     cursor: pointer;
     text-align: left;
 }
@@ -1750,7 +1750,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.rankings-page .combo-caret { color: #999; font-size: 0.7rem; }
+.rankings-page .combo-caret { color: #6f6f6f; font-size: 0.7rem; }
 
 /* The panel. Wide and scrollable rather than tall and pushy -- it floats over
    the toolbar instead of moving it. */
@@ -1877,13 +1877,13 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     padding: 0;
 }
 .rankings-page .combo-panel .combo-opts .combo-code {
-    color: #999;
+    color: #6f6f6f;
     font-size: 0.78rem;
     font-weight: 400;
     letter-spacing: normal;
     flex: none;
 }
-.rankings-page .combo-none { padding: 10px; color: #999; font-size: 0.86rem; }
+.rankings-page .combo-none { padding: 10px; color: #6f6f6f; font-size: 0.86rem; }
 
 .rankings-page .combo-add {
     display: block;
@@ -1963,7 +1963,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     border: 1px dashed #ccc;
     border-radius: 4px;
     background: #fafaf8;
-    color: #aaa;
+    color: #767676;
     font: inherit;
     font-size: 0.85rem;
     width: 130px;
@@ -2288,7 +2288,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .t-label { flex: 1; min-width: 0; }
 .predict2 .t-name { display: block; overflow: hidden;
                     text-overflow: ellipsis; white-space: nowrap; }
-.predict2 .team-n { color: #999; font-weight: 400; }
+.predict2 .team-n { color: #6f6f6f; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
     font-size: 1rem; line-height: 1; padding: 0 2px;
@@ -2329,7 +2329,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
                  font-size: 0.95rem; line-height: 1; padding: 0 2px; }
 .predict2 .r-x:hover { color: #a32d2d; }
-.predict2 .runner-row.is-out { color: #aaa; }
+.predict2 .runner-row.is-out { color: #767676; }
 .predict2 .runner-row.is-back { color: #222; }
 .predict2 .r-add { border: 1px solid #ccc; background: #fff; border-radius: 3px;
                    font: inherit; font-size: 0.72rem; cursor: pointer;
@@ -2342,13 +2342,13 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     padding: 2px 6px; font: inherit; font-size: 0.74rem; color: #666;
     cursor: pointer; text-align: left;
 }
-.predict2 .squad-btn:hover { border-color: #999; color: #222; }
+.predict2 .squad-btn:hover { border-color: #6f6f6f; color: #222; }
 .predict2 .squad-list { margin-top: 4px; max-height: 190px; overflow-y: auto; }
 .predict2 .squad-list.hidden { display: none; }
-.predict2 .squad-loading { color: #999; font-size: 0.76rem; padding: 3px 0; }
+.predict2 .squad-loading { color: #6f6f6f; font-size: 0.76rem; padding: 3px 0; }
 
 .predict2 .dropped { margin-top: 5px; }
-.predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
+.predict2 .dropped summary { color: #6f6f6f; font-size: 0.76rem; cursor: pointer; }
 
 /* ★ THE STATUS SITS UNDER THE BUTTON, NOT BESIDE IT (owner, 2026-09-01:
    "don't put text next to predict"). A message beside a button reads as a
@@ -2630,7 +2630,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .t-label { flex: 1; min-width: 0; }
 .predict2 .t-name { display: block; overflow: hidden;
                     text-overflow: ellipsis; white-space: nowrap; }
-.predict2 .team-n { color: #999; font-weight: 400; }
+.predict2 .team-n { color: #6f6f6f; font-weight: 400; }
 .predict2 .team-x {
     flex: none; border: 0; background: none; color: #ccc; cursor: pointer;
     font-size: 1rem; line-height: 1; padding: 0 2px;
@@ -2671,7 +2671,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
                  font-size: 0.95rem; line-height: 1; padding: 0 2px; }
 .predict2 .r-x:hover { color: #a32d2d; }
-.predict2 .runner-row.is-out { color: #aaa; }
+.predict2 .runner-row.is-out { color: #767676; }
 .predict2 .runner-row.is-back { color: #222; }
 .predict2 .r-add { border: 1px solid #ccc; background: #fff; border-radius: 3px;
                    font: inherit; font-size: 0.72rem; cursor: pointer;
@@ -2684,10 +2684,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     padding: 2px 6px; font: inherit; font-size: 0.74rem; color: #666;
     cursor: pointer; text-align: left;
 }
-.predict2 .squad-btn:hover { border-color: #999; color: #222; }
+.predict2 .squad-btn:hover { border-color: #6f6f6f; color: #222; }
 .predict2 .squad-list { margin-top: 4px; max-height: 190px; overflow-y: auto; }
 .predict2 .squad-list.hidden { display: none; }
-.predict2 .squad-loading { color: #999; font-size: 0.76rem; padding: 3px 0; }
+.predict2 .squad-loading { color: #6f6f6f; font-size: 0.76rem; padding: 3px 0; }
 
 /* ★ ISSUE #81: THE NAME IS A LINK. It carries person_id already; a dense
    lineup should not shout, so it inherits its colour and only underlines on
@@ -2697,7 +2697,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    (owner, 2026-09-01). These are the people you are deciding whether to add
    back, so "how good were they" is the whole question -- and a 2019 number
    and a 2025 one mean very different things about who would be on the line. */
-.predict2 .r-year { color: #aaa; font-size: 0.68rem; }
+.predict2 .r-year { color: #767676; font-size: 0.68rem; }
 
 /* ★ ONE SECTION PER DIVISION (issue #85). Several divisions are several
    SEPARATE races, so each result gets its own heading and its own rule --
@@ -2724,7 +2724,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .ar-rating { grid-column: 2; color: #666; font-size: 0.8rem;
                        font-variant-numeric: tabular-nums; }
 .predict2 .anyone-row .r-add { grid-column: 3; }
-.predict2 .ar-school { grid-column: 1 / -1; color: #999; font-size: 0.72rem; }
+.predict2 .ar-school { grid-column: 1 / -1; color: #6f6f6f; font-size: 0.72rem; }
 
 /* ★ THE MODE CONTROL IS ITS OWN ROW (owner, 2026-09-01: "with the new
    options with a meet UI is really bad"). Two radios, a checkbox and a
@@ -2940,7 +2940,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .squad-find:focus { outline: 2px solid #7aa7d8; outline-offset: -1px; }
 
 .predict2 .dropped { margin-top: 5px; }
-.predict2 .dropped summary { color: #999; font-size: 0.76rem; cursor: pointer; }
+.predict2 .dropped summary { color: #6f6f6f; font-size: 0.76rem; cursor: pointer; }
 
 /* ★ THE STATUS SITS UNDER THE BUTTON, NOT BESIDE IT (owner, 2026-09-01:
    "don't put text next to predict"). A message beside a button reads as a
@@ -2979,7 +2979,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
                 display: flex; align-items: baseline; gap: 10px; }
 .meet-page .meta { color: #777; font-size: 0.9rem; margin: 0 0 1rem; }
 .meet-page .hint { color: #888; font-size: 0.84rem; margin: 0.3rem 0 0.8rem; }
-.meet-page .muted { color: #999; }
+.meet-page .muted { color: #6f6f6f; }
 
 /* The compiled table is long -- a full invitational is several hundred rows --
    so it is tighter than the division summary above it. */
@@ -2990,7 +2990,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 .meet-page .rank { color: #888; width: 3rem; }
 
-.meet-page .cg-note { color: #999; font-size: 0.82rem; font-weight: 400; }
+.meet-page .cg-note { color: #6f6f6f; font-size: 0.82rem; font-weight: 400; }
 .meet-page .crumb { font-size: 0.85rem; margin: 0 0 0.3rem; }
 /* The "this never happened" notice. Bordered rather than grey italics: someone
    arriving from a link has no other way to know these runners were not on the
@@ -3028,7 +3028,7 @@ table th, table td { text-align: left; }
 
 /* Runners 6 and 7 score nothing but displace everyone behind them -- shown,
    and marked as not counting. */
-.displacer, .displacer a { color: #aaa; }
+.displacer, .displacer a { color: #767676; }
 
 /* The "this race did not happen" notice on a compiled page. Bordered rather
    than italic grey: someone arriving from a shared link has no other way to
@@ -3069,7 +3069,7 @@ table th, table td { text-align: left; }
     min-width: 3px;
 }
 .sc-val { font-variant-numeric: tabular-nums; font-weight: 600; }
-.sc-yrs { color: #999; font-size: 0.8rem; }
+.sc-yrs { color: #6f6f6f; font-size: 0.8rem; }
 
 @media (max-width: 640px) {
     /* The year span is the first thing to go: it is context, not the point. */
@@ -3128,8 +3128,8 @@ tr.more-row td { padding: 0; }
     text-align: left;
 }
 .more-btn:hover { background: #f0f0ec; }
-.more-left { color: #999; }
-.h2-note { color: #999; font-weight: 400; font-size: 0.8em; }
+.more-left { color: #6f6f6f; }
+.h2-note { color: #6f6f6f; font-weight: 400; font-size: 0.8em; }
 
 /* ======================================================================= *
  *  SITE FOUNDATION
@@ -4238,3 +4238,73 @@ tr.hl-school td { background: #fef9c3; }
 /* the pager's one-line status: counting, or why Last could not */
 .pager .page-note { font-size: 0.8rem; color: var(--muted); margin-left: 0.6rem; }
 
+
+
+/* ---- the race-day term on a difficulty (2026-09-06) --------------------- *
+ * The number is the course, unchanged; the dotted underline and the tick say
+ * there is more, and the .flag bubble (hover / focus / tap) shows the day the
+ * rating also carried. The .flag badge look is undone here: this is text. */
+.dv-day {
+    --tip: #374151;
+    display: inline;
+    padding: 0;
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+    background: none;
+    border-radius: 0;
+    border-bottom: 1px dotted #8a8a8a;
+    cursor: help;
+}
+.dv-day::after { width: 260px; text-transform: none; }
+.dv-day .dv-tick {
+    display: inline-block;
+    width: 0.4em;
+    height: 0.4em;
+    margin-left: 0.25em;
+    vertical-align: middle;
+    border-right: 1.5px solid #8a8a8a;
+    border-bottom: 1.5px solid #8a8a8a;
+    transform: translateY(-0.1em) rotate(45deg);
+}
+p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
+
+/* ---- phones: the rankings filters and the result tables ----------------- *
+ * Looked at on a 390px screen (2026-09-06). The filter row wrapped into a
+ * ragged column of half-width boxes with the Apply button lost among them;
+ * an athlete's eight-column table wrapped meet names over four lines and
+ * still ran off the edge. */
+@media (max-width: 700px) {
+    .rankings-page .filters { padding: 0.6rem; gap: 0.5rem; }
+    .rankings-page .field { flex: 1 1 calc(50% - 0.5rem); min-width: 0; }
+    .rankings-page .field.wide { flex-basis: 100%; }
+    .rankings-page .field select,
+    .rankings-page .field .combo,
+    .rankings-page .field .combo-btn { width: 100%; box-sizing: border-box; }
+    .rankings-page .field input[type="number"],
+    .rankings-page .field input[type="text"] { width: 100%; box-sizing: border-box; }
+    .rankings-page .filters .go,
+    .rankings-page .filters #apply { flex: 1 1 100%; padding: 0.6rem; font-size: 1rem; }
+    .rankings-page .combo-panel { left: 0; right: 0; width: auto; max-width: 100vw; }
+
+    /* result tables: one row per race, scrolled sideways, meet names on a
+       line, flags allowed to wrap */
+    .main-col table, .meet-page table, .race-page table {
+        display: block; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    }
+    .main-col th, .main-col td { white-space: nowrap; }
+    .main-col td.flags { white-space: normal; min-width: 7rem; }
+    .main-col td .meet-course { display: block; max-width: 14rem;
+                                overflow: hidden; text-overflow: ellipsis; }
+    .main-col td a[title] { max-width: 14rem; display: inline-block;
+                            overflow: hidden; text-overflow: ellipsis;
+                            vertical-align: bottom; }
+    /* the bubble anchors to the right edge inside a scrolled table; give it
+       the row's width instead of running under the edge */
+    .main-col .dv-day::after { width: min(260px, 80vw); }
+}
+@media (max-width: 420px) {
+    .rankings-page .field { flex-basis: 100%; }
+    .rankings-page .tabs .tab { padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+}

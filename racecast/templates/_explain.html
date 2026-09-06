@@ -31,8 +31,17 @@
       aria-label="What course difficulty means. How much slower times run here than on an average course; ratings already account for it.">i</span>
 {%- endmacro %}
 
-{% macro dv(d, sport="XC") -%}
-    {%- if d is none -%}&mdash;{%- else -%}
+{% macro dv(d, sport="XC", day=None) -%}
+    {%- if d is none -%}&mdash;
+    {%- elif day is none -%}
     <span class="dv" title="raw difficulty {{ "%+.3f"|format(d) }}">{{ d|diffpct(sport) }}</span>
+    {%- else -%}
+    {#- The race-day term rides on the difficulty as a hover (owner,
+        2026-09-06): the course is the column, the day is what the RATING
+        also carried, and the two only show together on request. -#}
+    <span class="dv dv-day flag" tabindex="0"
+          data-title="Course {{ d|diffpct(sport) }} · Race Day {{ day|daypct }}"
+          data-blurb="The course runs {{ d|diffpct(sport) }} against a typical one.{% if (day|dayword) == 'level' %} That day the field ran level for this course, so the ratings carry only the course.{% else %} That day the field ran {{ day|dayabs }} {{ day|dayword }} for this course (weather, conditions, or the sheet), so every rating from it is {{ 'raised' if (day|dayword) == 'slow' else 'lowered' }} by {{ day|dayabs }}.{% endif %}{% if day|daycapped %} Capped at 10%: beyond that the result sheet, not the day, is suspect.{% endif %}"
+          aria-label="Course difficulty {{ d|diffpct(sport) }}; race day {{ day|daypct }}.">{{ d|diffpct(sport) }}<span class="dv-tick" aria-hidden="true"></span></span>
     {%- endif -%}
 {%- endmacro %}

@@ -30,7 +30,7 @@
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">
-        Venue difficulty: {{ dv(header.difficulty, "TF") }}{{ difficulty_i("TF") }}
+        Venue difficulty: {{ dv(header.difficulty, "TF", day_effect) }}{{ difficulty_i("TF") }}
     </p>
     <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}">View full meet →</a></p>
     <p>

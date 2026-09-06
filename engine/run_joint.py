@@ -729,10 +729,14 @@ def main():
             gain_bands = tuple(float(v) for v in args.winter_gain_bands.split(","))
             assert len(gain_bands) == len(js.SPORT_GAIN_ANCHORS), \
                 "--winter-gain-bands wants low,middle,top"
+        # the pack's own date: its days-ago are relative to the day it was
+        # packed, which with a cached pack is not today
+        from datetime import date as _date
+        pack_date = _date.fromtimestamp(os.path.getmtime(args.pack))
         live = jg.buildLive(out, D, cols, keep, collapse=args.collapse,
                             anchor=args.anchor,
                             use_race_effect=not args.no_race_effect,
-                            gain_bands=gain_bands)
+                            gain_bands=gain_bands, pack_date=pack_date)
         jg.report(live)
         jg.writeNpz(live, os.path.join(os.path.dirname(args.out),
                                        "pair_difficulty.npz"))

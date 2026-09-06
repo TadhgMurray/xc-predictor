@@ -90,7 +90,9 @@ def main():
     # and the difference is exactly the effect
     live0 = jg.buildLive(out, D, cols, keep, use_race_effect=False)
     ratio = live["chosen"] / live0["chosen"]
-    expect = np.exp(out["race_effect"][raw["rac"]])
+    # tilted like the course (156) and clipped at the cap (187)
+    u = np.clip(out["race_effect"][raw["rac"]], -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+    expect = np.exp(out["h"] * u)
     assert np.allclose(ratio, expect, rtol=1e-9)
     print("  race-day effect enters the rating multiplicatively ...... OK")
 
