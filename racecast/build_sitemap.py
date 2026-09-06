@@ -103,8 +103,11 @@ def collect(conn):
     # and one per state, sport and pool; they change with every run
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from landing import allLandingPaths
+    from landing import STATE_NAMES
     by_kind = {"pages": [(p, None) for p in FIXED_PAGES]
-                        + [(p, None) for p in allLandingPaths()]}
+                        + [(p, None) for p in allLandingPaths()]
+                        + [("/schools", None)]
+                        + [(f"/schools/{c.lower()}", None) for c in STATE_NAMES]}
     with conn.cursor() as cur:
         if _exists(cur, "school_identity"):
             cur.execute("""SELECT DISTINCT school FROM school_identity

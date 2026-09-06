@@ -21,9 +21,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = school %}
-    {% set meta_description = "Current roster, all-time best athletes and "
-       "performances, and the full meet history for " ~ school ~ "." %}
+    {# the title says what the page is, as the athlete page's does (SEO,
+       2026-09-06): a bare name did not win "<school> cross country" #}
+    {% set meta_title = school ~ ((" (" ~ state ~ ")") if state else "")
+       ~ " · XC & Track Results, Roster, Best Athletes" %}
+    {% set meta_description = school ~ ((" (" ~ state ~ ")") if state else "")
+       ~ " cross country and track: the current roster with speed ratings, "
+       ~ "all-time best athletes and performances, school records and every meet raced." %}
     {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsOrganization",
                       "name": school, "sport": "Running",
                       "url": site_origin ~ "/school/" ~ (school|urlencode),

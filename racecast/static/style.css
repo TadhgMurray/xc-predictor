@@ -4453,3 +4453,12 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .landing-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .by-state { font-size: 0.85rem; color: #4b5563; margin: 1.6rem 0 0; line-height: 1.8; }
 .rankings-page .by-state { padding: 0 1.5rem 1rem; }
+
+/* the school directory (schools.html, 2026-09-06) */
+.schools-page .dir-h2 { margin: 1.6rem 0 0.4rem; font-size: 1.05rem; }
+.schools-page .dir-list { columns: 4 14rem; column-gap: 1.5rem; padding: 0; margin: 0; list-style: none;
+                          font-size: 0.9rem; line-height: 1.7; }
+.schools-page .dir-list li { break-inside: avoid; }
+.schools-page .dir-n { color: #6b7280; font-size: 0.8rem; }
+.schools-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
+.schools-page .landing-states .is-on { font-weight: 700; color: #111; }

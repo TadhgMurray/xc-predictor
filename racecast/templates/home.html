@@ -139,6 +139,11 @@
        Emits <title>, so the hardcoded one that used to sit here is gone --
        two <title> elements is worse than a wrong one, because browsers take
        the first and some scrapers take the last. #}
+    {# the home title in the words people search (SEO, 2026-09-06) #}
+    {% set meta_title = "Cross Country & Track Rankings, Results and Speed Ratings" %}
+    {% set meta_description = "High school and college cross country and track rankings, "
+       "meet results and athlete speed ratings on one comparable scale: compare any race, "
+       "any course, any season, and predict the next one." %}
     {% include "_meta.html" %}
     {# Favicon comes from _meta.html now, same as every other page. #}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
@@ -370,7 +375,8 @@
       <a href="/rankings/xc/college-men">College men XC</a> ·
       <a href="/rankings/xc/college-women">College women XC</a> ·
       <a href="/rankings/tf/college-men">College men track</a> ·
-      <a href="/rankings/tf/college-women">College women track</a>
+      <a href="/rankings/tf/college-women">College women track</a> ·
+      <a href="/schools">Teams by state</a>
     </p>
 </section>
 </main>

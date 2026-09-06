@@ -1,0 +1,54 @@
+{# schools.html -- the school directory, one page per state (app.schools_directory). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+{% set meta_title = title %}
+{% set meta_description = description %}
+{% set meta_path = "/schools" ~ ("/" ~ state|lower if state else "") %}
+{% set meta_crumbs = [("Schools", "/schools")] + ([(state_name, none)] if state else []) %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page-wide schools-page">
+  <h1>{{ title }}</h1>
+  {% if state %}
+  <p class="meta">Every team with three or more athletes in the results, biggest programme first.
+     A team's page has its roster by season, its best athletes and performances, and every meet it raced.
+     Rankings: <a href="/rankings/xc/hs-boys/{{ state|lower }}">HS boys XC</a> ·
+     <a href="/rankings/xc/hs-girls/{{ state|lower }}">HS girls XC</a> ·
+     <a href="/rankings/tf/hs-boys/{{ state|lower }}">HS boys track</a> ·
+     <a href="/rankings/tf/hs-girls/{{ state|lower }}">HS girls track</a>.</p>
+
+  {% if colleges %}
+  <h2 class="dir-h2">Colleges</h2>
+  <ul class="dir-list">
+    {% for r in colleges %}<li><a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
+  </ul>
+  {% endif %}
+  <h2 class="dir-h2">High schools, middle schools and clubs</h2>
+  {% if others %}
+  <ul class="dir-list">
+    {% for r in others %}<li><a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="meta">None yet.</p>
+  {% endif %}
+
+  <h2 class="dir-h2">Other states</h2>
+  <p class="landing-states">{% for c, n in state_links %}<a href="/schools/{{ c|lower }}"{% if c == state %} class="is-on"{% endif %}>{{ n }}</a>{{ " · " if not loop.last }}{% endfor %}</p>
+  {% else %}
+  <p class="meta">Pick a state. Each page lists every college, high school, middle school and club
+     there with results on Racecast, and links to its rosters, best athletes and meets.</p>
+  <ul class="dir-list dir-states">
+    {% for c, n, k in counts %}<li><a href="/schools/{{ c|lower }}">{{ n }}</a> <span class="dir-n">{{ k }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+</main>
+</body>
+</html>

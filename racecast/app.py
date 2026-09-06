@@ -6084,6 +6084,57 @@ def rankings_page():
     return render_template("rankings.html")
 
 
+@app.route("/schools")
+@app.route("/schools/<state>")
+def schools_directory(state=None):
+    """The school directory, one page per state (SEO, 2026-09-06): every
+    school whose primary cluster is in the state, colleges first, then
+    high schools, middle schools and clubs, biggest programme first.
+    A school page three clicks deep with a bare-name title did not win
+    "<school> cross country"; a state page that links every one of
+    them is the crawl path in, and a real page for "<state> high school
+    cross country teams"."""
+    import landing as L
+    from school_identity import _collegeState
+    state = (state or "").upper() or None
+    if state and state not in L.STATE_NAMES:
+        abort(404)
+    if state and request.path != f"/schools/{state.lower()}":
+        return redirect(f"/schools/{state.lower()}", code=301)
+    counts, colleges, others = [], [], []
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                if state is None:
+                    cur.execute("""SELECT state, count(*) AS n FROM school_identity
+                                   WHERE is_primary AND n_athletes >= 3
+                                   GROUP BY state""")
+                    by = {r["state"]: r["n"] for r in cur.fetchall()}
+                    counts = [(c, L.STATE_NAMES[c], by.get(c, 0))
+                              for c in L.US_STATES if c in L.STATE_NAMES]
+                else:
+                    cur.execute("""SELECT school, n_athletes FROM school_identity
+                                   WHERE is_primary AND state = %s AND n_athletes >= 3
+                                   ORDER BY n_athletes DESC, school""", (state,))
+                    for r in cur.fetchall():
+                        (colleges if _collegeState(r["school"]) else others).append(r)
+            except psycopg2.Error:
+                conn.rollback()
+    name = L.STATE_NAMES.get(state or "", "")
+    return render_template(
+        "schools.html", state=state, state_name=name,
+        counts=counts, colleges=colleges, others=others,
+        state_links=[(c, L.STATE_NAMES[c]) for c in L.US_STATES if c in L.STATE_NAMES],
+        title=(f"{name} Cross Country and Track Teams" if state
+               else "Cross Country and Track Teams by State"),
+        description=((f"Every {name} high school, college and club with cross country "
+                      f"or track results on Racecast: rosters, best athletes, meet "
+                      f"history and speed ratings for each team.") if state else
+                     "Every school and club with cross country or track results on "
+                     "Racecast, by state: rosters, best athletes and meet history."),
+    )
+
+
 @app.route("/rankings/<sport>/<pool>")
 @app.route("/rankings/<sport>/<pool>/<state>")
 def rankings_landing(sport, pool, state=None):
