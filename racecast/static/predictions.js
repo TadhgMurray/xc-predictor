@@ -784,8 +784,11 @@ function renderAthleteRows(rows) {
  * ------------------------------------------------------------------ */
 
 function showStep(name, on) {
-  document.querySelector(`.step[data-step="${name}"]`)
-          .classList.toggle("hidden", !on);
+  /* a step that is not yet reachable stays on the page, greyed (pending),
+     so the reader sees the whole road from the start */
+  const el = document.querySelector(`.step[data-step="${name}"]`);
+  el.classList.remove("hidden");
+  el.classList.toggle("pending", !on);
 }
 
 async function chooseMeet(data) {

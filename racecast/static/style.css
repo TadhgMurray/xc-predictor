@@ -505,6 +505,18 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     align-items: flex-start;
 }
 .board-side { flex: 1 1 0; min-width: 0; }
+/* ★ THE PERFORMANCES BOARD NEEDS THE ROOM (owner, 2026-09-06): its result
+   column carries a time and a meet name, the athletes board a race count.
+   Equal halves crushed the right one; three-to-two does not. The meet name
+   sits under the time in small type, one line each, no ellipsis. */
+.board-side + .board-side { flex: 1.5 1 0; }
+.board-grid .c-detail .d-main { display: block; }
+.board-grid .c-detail .d-meet { display: block; font-size: 0.82em; color: #666; font-weight: 400; }
+.board-grid .c-detail a { color: inherit; text-decoration: none; }
+.board-grid .c-detail a:hover .d-meet { text-decoration: underline; }
+/* one thing bold per row: the rating; the name reads as text until hovered */
+.board-grid .c-name a { color: #111; text-decoration: none; }
+.board-grid .c-name a:hover { text-decoration: underline; }
 
 .board-grid {
     min-width: 0;
@@ -2049,6 +2061,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .step { margin: 0 0 1.8rem; padding-top: 1.4rem;
                   border-top: 1px solid #eee; }
 .predict2 .step.hidden { display: none; }
+/* ★ THE ROAD IS VISIBLE FROM THE START (owner, 2026-09-06): steps 2 and 3
+   stand greyed until step 1 is done, instead of appearing from nowhere. */
+.predict2 .step.pending { opacity: 0.45; pointer-events: none; }
+.predict2 .step.pending .step-head::after { content: " \2014 after step 1"; font-weight: 400; color: #888; font-size: 0.85em; }
 .predict2 .step-head { display: flex; align-items: center; gap: 8px;
                        font-size: 0.95rem; font-weight: 700; margin-bottom: 0.8rem; }
 .predict2 .step-n {
@@ -2391,6 +2407,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .step { margin: 0 0 1.8rem; padding-top: 1.4rem;
                   border-top: 1px solid #eee; }
 .predict2 .step.hidden { display: none; }
+/* ★ THE ROAD IS VISIBLE FROM THE START (owner, 2026-09-06): steps 2 and 3
+   stand greyed until step 1 is done, instead of appearing from nowhere. */
+.predict2 .step.pending { opacity: 0.45; pointer-events: none; }
+.predict2 .step.pending .step-head::after { content: " \2014 after step 1"; font-weight: 400; color: #888; font-size: 0.85em; }
 .predict2 .step-head { display: flex; align-items: center; gap: 8px;
                        font-size: 0.95rem; font-weight: 700; margin-bottom: 0.8rem; }
 .predict2 .step-n {

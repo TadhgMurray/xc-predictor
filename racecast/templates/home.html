@@ -113,10 +113,17 @@
                                meet name runs out of room, and hovering is
                                then the only way to read it. Costs nothing --
                                the text is already in the row. #}
+                            {# ★ THE TIME ON ITS OWN LINE, THE MEET UNDER IT
+                               (owner, 2026-09-06). One string crushed into
+                               a shared column made "2:02.22 · NCHSAA 6A/8A
+                               Outdoor State Championship" a three-line
+                               cell; the time is the number, the meet is
+                               the caption. #}
+                            {% set _parts = (r.detail or '').split(' · ', 1) %}
                             <div class="cell c-detail" title="{{ r.detail }}">
                                 {% if board_type == 'performance' and r.link %}
-                                    <a href="{{ r.link }}">{{ r.detail or '—' }}</a>
-                                {% else %}{{ r.detail or '—' }}{% endif %}
+                                    <a href="{{ r.link }}"><span class="d-main">{{ _parts[0] or '—' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}</a>
+                                {% else %}<span class="d-main">{{ _parts[0] or '—' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}{% endif %}
                             </div>
                         {% endif %}
                     {% endfor %}
