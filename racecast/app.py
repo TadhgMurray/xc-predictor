@@ -2904,12 +2904,15 @@ def get_tf_race_header(cur, meet_id, div_id, event_id, source=None):
         LIMIT 1
     """, {"meet": meet_id, "src": source})
     m = cur.fetchone() or {}
-    return {"meet_name": m.get("meet_name") or "Track meet",
+    t = _tfrrsMeetMeta(cur, meet_id) if source == "tfrrs" and not m else {}
+    return {"meet_name": m.get("meet_name") or t.get("meet_name") or "Track meet",
             "event_short": r2["event_short"],
             "distance_meters": None, "division": None,
-            "state": m.get("state"), "is_indoor": m.get("is_indoor"),
+            "state": m.get("state"),
+            "is_indoor": m.get("is_indoor", t.get("is_indoor")),
             "meet_id": meet_id, "div_id": div_id, "event_id": event_id,
-            "difficulty": None, "location_id": m.get("location_id")}
+            "difficulty": t.get("difficulty"),
+            "location_id": m.get("location_id") or t.get("location_id")}
 
 
 def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
@@ -3204,6 +3207,32 @@ def race_tf(meet_id, event_id, div_id):
 #  TF MEET
 # ===================================================================== #
 
+def _tfrrsMeetMeta(cur, meet_id):
+    """What the tfrrs feed knows about one of its track meets: the name
+    (meets_tfrrs) and the venue and indoor flag (the geometry stamp).
+    The fallback for a tfrrs meet-event whose (div, meet, event) key is
+    already taken by an anet row in meets_tf -- the key has no source, so
+    such a meet can never have a row there (238). Empty dict when unknown."""
+    try:
+        cur.execute("""
+            SELECT mt.meet_name, g.location_id, g.is_indoor,
+                   cd.difficulty
+            FROM   meets_tfrrs mt
+            LEFT JOIN tfrrs_meet_geometry g
+                   ON g.meet_id = mt.meet_id AND g.sport = 'TF'
+            LEFT JOIN course_difficulties cd
+                   ON cd.course_name = 'TF:loc:' || g.location_id::text ||
+                      CASE WHEN COALESCE(g.is_indoor, 0) = 1 THEN ':in' ELSE ':out' END
+            WHERE  mt.meet_id = %s AND mt.sport = 'TF'
+            LIMIT  1
+        """, (meet_id,))
+        row = cur.fetchone()
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        return {}
+    return dict(row) if row else {}
+
+
 def get_tf_meet_header(cur, meet_id, source=None):
     """Basic info for a TF meet, from any one of its events.
 
@@ -3230,8 +3259,10 @@ def get_tf_meet_header(cur, meet_id, source=None):
           AND (%(src)s::text IS NULL OR source = %(src)s)
     """, {"meet": meet_id, "src": source})
     if cur.fetchone()["n"]:
-        return {"meet_name": "Track meet", "state": None, "is_indoor": None,
-                "meet_id": meet_id, "location_id": None}
+        t = _tfrrsMeetMeta(cur, meet_id) if source == "tfrrs" else {}
+        return {"meet_name": t.get("meet_name") or "Track meet", "state": None,
+                "is_indoor": t.get("is_indoor"),
+                "meet_id": meet_id, "location_id": t.get("location_id")}
     return None
 
 

@@ -36,13 +36,24 @@ _FILL = """
       AND  mt.meet_name IS NOT NULL
 """
 
+# ! PER SOURCE. The first census joined on the key alone and found nothing
+#   missing: an anet row on the same (div, meet, event) counted as present.
+#   meets_tf's key has no source, so a tfrrs meet-event under a key an anet
+#   row holds can NEVER have its own row -- the pages fall back to
+#   _tfrrsMeetMeta for those (app.py); the rest are landed here.
 _MISSING = """
     SELECT DISTINCT r.div_id, r.meet_id, r.event_id
     FROM   results_tf r
     LEFT JOIN meets_tf m ON m.div_id = r.div_id AND m.meet_id = r.meet_id
-                        AND m.event_id = r.event_id
+                        AND m.event_id = r.event_id AND m.source = 'tfrrs'
     WHERE  r.source = 'tfrrs' AND r.div_id IS NOT NULL AND r.event_id IS NOT NULL
       AND  m.div_id IS NULL
+"""
+
+_COLLIDING = """
+    SELECT count(*) FROM (""" + _MISSING + """) x
+    JOIN   meets_tf a ON a.div_id = x.div_id AND a.meet_id = x.meet_id
+                     AND a.event_id = x.event_id AND a.source <> 'tfrrs'
 """
 
 _INSERT = """
@@ -72,7 +83,11 @@ def main():
         cur.execute("SELECT count(*) FROM meets_tfrrs WHERE sport = 'TF' AND meet_name IS NOT NULL")
         named = cur.fetchone()[0]
         print(f"  tfrrs rows in meets_tf without a name: {nameless:,}")
-        print(f"  tfrrs (div, meet, event) in results_tf with no meets_tf row: {missing:,}")
+        cur.execute(_COLLIDING)
+        colliding = cur.fetchone()[0]
+        print(f"  tfrrs (div, meet, event) in results_tf with no tfrrs row in meets_tf: {missing:,}")
+        print(f"    of which the key is held by an anet row (cannot be landed; "
+              f"the pages fall back to meets_tfrrs): {colliding:,}")
         print(f"  meets_tfrrs track meets carrying a name: {named:,}")
         if not a.apply:
             print("  (census only; --apply writes)")
