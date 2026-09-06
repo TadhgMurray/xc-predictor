@@ -18,10 +18,15 @@ ROOT="${XCP_ROOT:-/srv/xc-predictor}"
 PY="${XCP_PYTHON:-/srv/venv/bin/python}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
-FROM=0; SKIP_BACKFILL=0; DRY=0
+FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --from) FROM="$2"; shift 2 ;;
+    # --skip 04_grade_sanity,04b_wheelchair : named steps to leave out of
+    # this run (2026-09-06, the owner: "you're gonna need to make step 4
+    # 100 times faster if we're starting there" -- nothing in 04 changed,
+    # so it need not run for 04c/04d/05 to)
+    --skip) SKIP=",$2,"; shift 2 ;;
     --skip-backfill) SKIP_BACKFILL=1; shift ;;
     --dry-run) DRY=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -81,11 +86,19 @@ FAILED=""
 T_START=$(date +%s)
 
 # step <name> <command...>
+skipped() {                      # is step $1 on the --skip list?
+  case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
   if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
     echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$name"; then
+    echo "  $name skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -118,6 +131,10 @@ steps2() {
   num=$(echo "$nameA" | sed 's/^0*\([0-9]*\).*/\1/')
   if [ "${num:-0}" -lt "$FROM" ]; then
     echo "  $nameA + $nameB skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$nameA"; then
+    echo "  $nameA + $nameB skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -156,6 +173,10 @@ stepsN() {
   num=$(echo "$first" | sed 's/^0*\([0-9]*\).*/\1/')
   if [ "${num:-0}" -lt "$FROM" ]; then
     echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$first"; then
+    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -262,8 +283,17 @@ if [ "$SKIP_BACKFILL" -eq 1 ]; then
 else
   # the two sports write two tables and share nothing: in parallel
   # (2026-09-06, the owner: "make those steps faster")
-  steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply" \
-         05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
+  # XCP_BACKFILL_XC=changed re-normalises only the XC rows of the people
+  # 04d moved (nothing else on the XC side changed since the last full
+  # pass); unset, the full XC pass. TF is always full here (geometry off,
+  # the 600, the event names: every track row).
+  if [ "${XCP_BACKFILL_XC:-full}" = "changed" ]; then
+    steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply --only-changed" \
+           05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
+  else
+    steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply" \
+           05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
+  fi
 fi
 
 # ---- pack and solve ------------------------------------------------- #

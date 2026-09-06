@@ -135,6 +135,17 @@ FROM (
 ) s
 WHERE n_m + n_f + p_m + p_f > 0;
 ALTER TABLE person_gender_new ADD PRIMARY KEY (person_id);
+-- who moved: the people whose verdict (gender or split) differs from the
+-- table this replaces, so a backfill can re-normalise just them
+-- (2026-09-06); an absent previous table means everyone with a row
+DROP TABLE IF EXISTS person_gender_changed;
+CREATE TABLE person_gender_changed AS
+SELECT n.person_id, o.gender AS was, n.gender AS now
+FROM   person_gender_new n
+LEFT   JOIN person_gender o USING (person_id)
+WHERE  o.person_id IS NULL OR o.gender IS DISTINCT FROM n.gender
+   OR  o.split IS DISTINCT FROM n.split;
+ALTER TABLE person_gender_changed ADD PRIMARY KEY (person_id);
 DROP TABLE IF EXISTS person_gender;
 ALTER TABLE person_gender_new RENAME TO person_gender;
 ANALYZE person_gender;
@@ -166,6 +177,13 @@ def main():
         if not available(cur):
             print("  person_gender: not built (run with --write)")
             return
+        cur.execute("SELECT to_regclass('public.person_gender_changed')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("SELECT count(*), count(*) FILTER (WHERE was IS NOT NULL) "
+                        "FROM person_gender_changed")
+            n_ch, n_flip = cur.fetchone()
+            print(f"  person_gender_changed: {n_ch:,} people differ from the "
+                  f"previous table ({n_flip:,} flipped, the rest new)")
         cur.execute(_REPORT)
         n, n_split, n_f, n_m = cur.fetchone()
         print(f"  person_gender: {n:,} people with a labelled race "

@@ -1013,6 +1013,9 @@ def _loadTfrrsBlobDistances(cur):
 # ⚠ IT NULLS ONLY grade. The row keeps its time, its meet and its person, and
 #   is still rated -- #47 removes a false claim about level, it does not
 #   discard a race.
+_ONLY_CHANGED = {"on": False}
+
+
 def _streamSQL(cfg, age_band=False):
     # Per-sport literal-NULL for the TF-only columns, so both sports yield the
     # SAME 10 columns in the SAME order.
@@ -1041,12 +1044,20 @@ def _streamSQL(cfg, age_band=False):
                      f"\n              AND ab.result_id = r.result_id")
     else:
         grade_col, band_join = "r.grade AS grade", ""
+    # ★ ONLY THE PEOPLE WHOSE POOL MOVED (2026-09-06, --only-changed): a
+    #   row's normalised time depends on its pool, and the pool on the
+    #   person's gender verdict; when nothing else about a sport changed
+    #   since the last full pass, the rows worth re-normalising are those
+    #   of the people 04d moved (person_gender_changed). Pair with
+    #   --write-mode update: the staging set is a sliver of the table.
+    only = (f"\n        JOIN person_gender_changed pgc ON pgc.person_id = r.person_id"
+            if _ONLY_CHANGED["on"] else "")
     return f"""
         SELECT r.result_id, r.source, r.meet_id, r.div_id, {event_id_col},
                {event_short_col}, r.time_seconds, {grade_col},
                r.athlete_id, r.date,
                r.person_id, r.canon_meet_id, {school_col}
-        FROM {cfg.table} r{band_join}
+        FROM {cfg.table} r{band_join}{only}
     """
 
 
@@ -3067,6 +3078,9 @@ def main():
     # back to back is safe and saves a full re-import of the splines.
     ap.add_argument("--sport", choices=["XC", "TF", "both"], required=True)
     ap.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    ap.add_argument("--only-changed", action="store_true",
+                    help="only rows of people in person_gender_changed (04d's "
+                         "list of moved verdicts); implies --write-mode update")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N rows PER SPORT (0 = whole table). Use a "
                          "small value to sanity-check the `skipped` count in "
@@ -3089,6 +3103,9 @@ def main():
         ap.error("--limit with --apply requires --write-mode update "
                  "(a rebuild over a partial staging set rebuilds the WHOLE table)")
 
+    if args.only_changed:
+        _ONLY_CHANGED["on"] = True
+        args.write_mode = "update"
     initPool()
     sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
 
