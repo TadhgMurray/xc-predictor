@@ -240,6 +240,7 @@ def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
         cur.execute("SELECT key, elevation_m FROM venue_elevation")
         elev = {k: float(v) for k, v in cur.fetchall()}
     per_cell = np.zeros(len(keys))
+    cell_known = np.zeros(len(keys), dtype=bool)
     known = 0
     for i, k in enumerate(keys):
         if k.startswith("XC:"):
@@ -249,8 +250,10 @@ def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
         e = elev.get(venue)
         if e is not None:
             per_cell[i] = max(e - floor_m, 0.0) / 1000.0
+            cell_known[i] = True
             known += 1
     course = cols["course"][keep].astype(np.int64)
+    venueAltitude.known_row = cell_known[course]        # for homeAltitude
     return per_cell[course], known, len(keys)
 
 
@@ -306,12 +309,21 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
           if slope and "dist_m" in cols else None)
     links = (seasonLinks(athlete_raw, year, athlete, n_ath)
              if link else None)
-    alt, alt_known, alt_cells = None, 0, 0
+    alt, alt_known, alt_cells, alt_home = None, 0, 0, None
     if altitude:
         alt, alt_known, alt_cells = venueAltitude(cols, keep)
         if alt is None:
             print("[joint] altitude: venue_elevation is absent -- run "
                   "scripts/build_venue_elevation.py; the term is OFF")
+        else:
+            # where each athlete-season lives, by the venues it raced (192)
+            home = js.homeAltitude(alt, venueAltitude.known_row, athlete, n_ath)
+            alt_home = home[athlete]
+            n_res = int((home > 0).sum())
+            print(f"[joint] altitude: {n_res:,} athlete-seasons live above "
+                  f"{js.ALT_FLOOR_M:.0f} m (median home {np.median(home[home > 0]) if n_res else 0:.2f} km "
+                  f"above it); a resident's exposure is venue km - "
+                  f"{js.ALT_ACCLIM:g} x home km (issue 192)")
 
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
@@ -319,7 +331,8 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
                   else None, lz=lz, link=links, alt=alt,
-                  dist_banded=dist_bands, dist_ref=dist_ref_row)
+                  dist_banded=dist_bands, dist_ref=dist_ref_row,
+                  alt_home=alt_home)
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
                      else dist_labels)
     D.dist_refs = dist_refs

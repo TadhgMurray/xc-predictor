@@ -219,6 +219,41 @@ SPORT_GAIN_ANCHORS = (90.0, 112.0, 130.0)
 SPORT_GAIN_MIN_ATHLETES = 50
 
 
+def altitudeCredit(D):
+    """Per row, the km the RATING credits (ALT_ACCLIM): the venue's km
+    above the floor less the acclimatisation share of the race's field's
+    mean home km -- one number per race, so everyone in it gets the
+    same. The solve's own exposure where no home is known."""
+    if not getattr(D, "n_k", 0):
+        return None
+    home = getattr(D, "alt_home", None)
+    if home is None or not np.any(home):
+        return D.alt
+    field = (np.bincount(D.race, weights=home, minlength=D.n_race)
+             / np.maximum(np.bincount(D.race, minlength=D.n_race), 1))
+    return np.maximum(D.alt_venue - ALT_ACCLIM * field[D.race], 0.0)
+
+
+def homeAltitude(alt_row, known_row, athlete, n_ath):
+    """Per athlete-season, the median venue km over its rows with a known
+    elevation (0 where none is known): where they live, as far as the
+    races say."""
+    alt_row = np.asarray(alt_row, dtype=np.float64)
+    known = np.asarray(known_row, dtype=bool)
+    athlete = np.asarray(athlete, dtype=np.int64)
+    home = np.zeros(n_ath)
+    idx = np.flatnonzero(known)
+    if idx.size == 0:
+        return home
+    order = np.lexsort((alt_row[idx], athlete[idx]))
+    a_s, v_s = athlete[idx][order], alt_row[idx][order]
+    first = np.flatnonzero(np.r_[True, a_s[1:] != a_s[:-1]])
+    cnt = np.diff(np.r_[first, a_s.size])
+    mid = first + (cnt - 1) // 2
+    home[a_s[mid]] = v_s[mid]
+    return home
+
+
 def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
                    gains, anchors=SPORT_GAIN_ANCHORS,
                    min_athletes=SPORT_GAIN_MIN_ATHLETES):
@@ -323,6 +358,20 @@ ALT_RIDGE = 1e-6
 ALT_PRIOR_MEAN = 0.035          # log-time per km above ALT_FLOOR_M
 ALT_PRIOR_PEN_FIXED = 1e9       # row units: physiology decides
 ALT_PRIOR_PEN_FIT = 20.0        # row units: about sd 0.01 around it
+# ★ ACCLIMATISATION (issue 192, 2026-09-06). A Flagstaff resident's 15:31
+#   at Buffalo Park (2,100 m) out-rated a 14:10 course record at Mt. SAC
+#   because every row at altitude got the full 5% credit whoever ran it.
+#   An acclimatised resident recovers about half the acute loss (the
+#   literature's 3-4% at 2,000 m against 6-7% acute), so in the SOLVE the
+#   row's exposure is venue km minus ALT_ACCLIM x the athlete-season's
+#   HOME km (the median elevation of the venues they raced that season):
+#   a resident's ability is their sea-level speed with the right credit,
+#   a visitor's is unchanged. In the RATING a race must give everyone in
+#   it the same credit (finish order is sacred), so the credit at a race
+#   is venue km minus ALT_ACCLIM x the FIELD's mean home km: a resident
+#   field at Flagstaff earns half, a sea-level field at a national meet
+#   at altitude earns all of it. altitudeCredit() is that number.
+ALT_ACCLIM = 0.5
 
 
 # Amplitude tilt: the season-form swing shrinks with ability
@@ -386,7 +435,7 @@ class Design:
                  n_ath=None, n_cell=None, n_race=None, n_pool=None,
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
                  dist=None, n_e=None, lz=None, link=None, alt=None,
-                 dist_ref=None,
+                 dist_ref=None, alt_home=None,
                  dist_banded=False):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
@@ -497,7 +546,12 @@ class Design:
         # above the floor, 0 where unknown; one coefficient per group
         self.n_k = 0
         if alt is not None:
-            self.alt = np.asarray(alt, dtype=np.float64)
+            self.alt_venue = np.asarray(alt, dtype=np.float64)
+            self.alt_home = (np.zeros(self.n) if alt_home is None
+                             else np.asarray(alt_home, dtype=np.float64))
+            # the solve's exposure (ALT_ACCLIM): the venue's km less the
+            # share of home km an acclimatised athlete has recovered
+            self.alt = self.alt_venue - ALT_ACCLIM * self.alt_home
             self.n_k = self.n_group
 
         # packing

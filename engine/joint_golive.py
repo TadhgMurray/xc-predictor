@@ -89,9 +89,19 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   the course. Untilted. XC rows carry none (e_w = 0).
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
         eff = eff + D.e_w * out["dist_offset"][D.e_idx]
-    # the altitude term (issue 172): credit at altitude, for everyone there
+    # the altitude term (issue 172): credit at altitude, for everyone in
+    # the race alike -- the venue's km less the field's acclimatisation
+    # (issue 192, js.altitudeCredit)
     if out.get("altitude_coef") is not None and getattr(D, "n_k", 0):
-        eff = eff + out["altitude_coef"][D.group_row] * D.alt
+        credit = js.altitudeCredit(D)
+        eff = eff + out["altitude_coef"][D.group_row] * credit
+        at_alt = getattr(D, "alt_venue", D.alt) > 0
+        if at_alt.any():
+            share = credit[at_alt] / np.maximum(getattr(D, "alt_venue", D.alt)[at_alt], 1e-9)
+            print(f"[joint/live] altitude: {int(at_alt.sum()):,} rows at venues "
+                  f"above the floor; the field's acclimatisation leaves them "
+                  f"a median {100 * float(np.median(share)):.0f}% of the full "
+                  f"credit (issue 192)")
     # ★ THE WINTER GAIN PER ABILITY (issue 194): the shift on every track
     #   row that makes the dual-sport page gap in each band the stated one
     gain_rows = []

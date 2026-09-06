@@ -59,6 +59,7 @@ _TABLE = {"XC": "results", "TF": "results_tf"}
 # Output:    dict of the terms; `effect` is what the rating divides the time
 #            by (in log), `left_out` the sum of what it does not.
 _gain_cache = {}
+_alt_cache = {}
 
 
 def sportGainAt(D, j, rating):
@@ -107,7 +108,9 @@ def rowTerms(D, npz, j):
         dist = float(D.e_w[j]) * float(npz["dist_offset"][int(D.e_idx[j])])
     alt, alt_km = 0.0, 0.0
     if getattr(D, "n_k", 0) and "altitude_coef" in npz:
-        alt_km = float(D.alt[j])
+        if "credit" not in _alt_cache:
+            _alt_cache["credit"] = js.altitudeCredit(D)
+        alt_km = float(_alt_cache["credit"][j])
         alt = float(npz["altitude_coef"][int(D.group_row[j])]) * alt_km
     # the winter gain per band (194): the go-live's shift on track rows,
     # from sport_gain, interpolated at the season rating
@@ -118,6 +121,8 @@ def rowTerms(D, npz, j):
            "delta_anchored": anchored, "rating_season": rating,
            "h": h, "amp": amp, "u": u, "u_full": u_full, "dist": dist,
            "alt": alt, "alt_km": alt_km, "gain": gain,
+           "alt_venue_km": float(getattr(D, "alt_venue", D.alt)[j]) if getattr(D, "n_k", 0) else 0.0,
+           "alt_home_km": float(getattr(D, "alt_home", np.zeros(D.n))[j]) if getattr(D, "n_k", 0) else 0.0,
            "effect": h * (delta + u) + dist + alt + gain,   # u tilted too (156)
            "curve": 0.0, "rust": 0.0, "beta": 0.0}
     if D.has_curve and "curve" in npz:
@@ -254,7 +259,7 @@ def main():
               f"race-day u {t['u']:+.4f}"
               f"{(' (solve: ' + format(t['u_full'], '+.4f') + ', CAPPED -- a broken sheet, issue 187)') if abs(t['u_full'] - t['u']) > 1e-9 else ''}"
               f"   track distance offset {t['dist']:+.4f}"
-              f"{('   altitude ' + format(t['alt'], '+.4f') + ' (' + format(t['alt_km'], '.2f') + ' km above ' + str(int(js.ALT_FLOOR_M)) + ' m)') if t['alt_km'] else ''}"
+              f"{('   altitude ' + format(t['alt'], '+.4f') + ' (credited ' + format(t['alt_km'], '.2f') + ' km: venue ' + format(t['alt_venue_km'], '.2f') + ' km above ' + str(int(js.ALT_FLOOR_M)) + ' m, this athlete lives at ' + format(t['alt_home_km'], '.2f') + ' km, the field acclimatised for the rest)') if t['alt_venue_km'] else ''}"
               f"{('   winter gain shift ' + format(t['gain'], '+.4f')) if t['gain'] else ''}"
               f"   -> applied to the time: "
               f"{t['effect']:+.4f} in log = x{np.exp(-t['effect']):.4f}, "
