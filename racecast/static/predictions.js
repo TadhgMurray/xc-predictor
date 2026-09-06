@@ -1489,6 +1489,7 @@ function renderFieldBlock(sumEl, gridEl) {
      *   overall one that writes to every block; this sets one race, which is
      *   what lets you read D2's teams with D3 still shut. */
     viewButtons(state.view) +
+    squadButtons(wholeOn(state.meet.div) ? "whole" : "fielded") +
     (state.droppedTeams.length
       ? ` <button class="linkish undo" id="undo-team">` +
         `Undo removing ${esc(state.droppedTeams.at(-1).school)}</button>`
@@ -2318,29 +2319,34 @@ function removeWholeSquads(div) {
   return n;
 }
 
-/* ★ ONE SEGMENTED CONTROL BESIDE Show, IN ITS STYLE (owner, 2026-09-06:
-   the checkboxes added height and their text did not explain). "Squads:"
-   then Fielded (the rosters as the results list them) | Whole (every
-   current runner of every team in this race) and, on a grouped meet, Whole
-   in every race. Lit like Show: the one that is true, or Fielded. */
+/* ★ SQUADS: FIELDED | WHOLE, ONE PER RACE AND ONE OVERALL, EXACTLY LIKE
+   Show (owner, 2026-09-06: "there should be a thing to flip for each
+   division, and one for overall. These should be separate"). Each race
+   block carries its own beside its counts and flips that race only; the
+   header's writes to every race, and is lit only when every race agrees.
+   Fielded is the roster as the results list it; Whole is every current
+   runner of every team in the race. */
+function wholeOn(d) {
+  return (editsFor(d).wholeAdded || new Set()).size > 0;
+}
+
+function squadButtons(on) {
+  const btn = (v, label, title) =>
+    `<button class="vbtn${on === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
+  return ` <span class="viewsel">Squads:` +
+    btn("fielded", "Fielded", "The rosters as the results list them") +
+    btn("whole", "Whole", "Every current runner of every team in this race onto its card") +
+    `</span>`;
+}
+
 function renderSquadBoxes() {
   const el = $("squad-boxes");
   if (!el) return;
   const divs = activeBlocks();
-  const on = (d) => (editsFor(d).wholeAdded || new Set()).size > 0;
-  const allOn = divs.length > 1 && divs.every(on);
-  const thisOn = on(state.meet.div);
-  const lit = allOn ? "all" : thisOn ? "race" : "fielded";
-  const btn = (v, label, title) =>
-    `<button class="vbtn${lit === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
-  el.innerHTML = `<span class="viewsel">Squads:` +
-    btn("fielded", "Fielded", "The rosters as the results list them") +
-    btn("race", divs.length > 1 ? "Whole, this race" : "Whole",
-        "Every current runner of every team in this race onto its card") +
-    (divs.length > 1
-      ? btn("all", "Whole, every race",
-            "Every current runner of every team in every race here onto its card")
-      : "") + `</span>`;
+  if (divs.length < 2) { el.innerHTML = ""; return; }   // one race: its own block has it
+  const states = divs.map(wholeOn);
+  const all = states.every((v) => v === states[0]) ? (states[0] ? "whole" : "fielded") : null;
+  el.innerHTML = squadButtons(all);
 }
 
 async function loadSquad(school, gender) {
@@ -2512,23 +2518,22 @@ document.addEventListener("click", (e) => {
   }
   const whole = e.target.closest("[data-whole]");
   if (whole) {
-    const want = whole.dataset.whole;
-    if (whole.classList.contains("is-on")) return;
-    if (want === "fielded") {
-      /* Back to the rosters: every whole-squad addition off, every race. */
+    /* Which races: the header's control is the overall one and writes to
+       every race; a block's writes to that block (focusBlock has already
+       set state.meet.div from it). */
+    const overall = !!whole.closest("#squad-boxes");
+    const targets = overall ? activeBlocks() : [state.meet.div ?? null];
+    if (whole.dataset.whole === "fielded") {
       let n = 0;
-      for (const d of activeBlocks()) n += removeWholeSquads(d);
+      for (const d of targets) n += removeWholeSquads(d);
       setStatus(n ? `Took ${n} whole-squad additions off again.` : "", false);
       renderField(); renderSquadBoxes(); saveState();
       return;
     }
-    const divs = want === "all" ? activeBlocks() : [state.meet.div];
-    if (want === "race") {
-      // narrowing from every race to this one: the other races go back
-      for (const d of activeBlocks()) if (d !== state.meet.div) removeWholeSquads(d);
-    }
+    const todo = targets.filter((d) => !wholeOn(d));
+    if (!todo.length) { renderField(); renderSquadBoxes(); return; }
     whole.disabled = true;
-    wholeSquadsFor(divs).then(({ n, teams }) => {
+    wholeSquadsFor(todo).then(({ n, teams }) => {
       setStatus(n ? `Added ${n} across ${teams} teams.` : "Every squad is already whole.", false);
       renderField(); renderSquadBoxes(); saveState();
     });
