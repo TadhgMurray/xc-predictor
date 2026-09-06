@@ -4443,3 +4443,13 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
                   4.25rem minmax(max-content, 1fr); }
   .board-grid, .grid-head { width: 100%; min-width: 0; }
 }
+
+/* the state ranking landing pages (landing.py, 2026-09-06) */
+.landing-page .landing-nav { font-size: 0.9rem; color: #374151; line-height: 1.8; }
+.landing-page .landing-nav .is-on, .landing-page .landing-states .is-on { font-weight: 700; color: #111; }
+.landing-page .landing-tbl { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
+.landing-page .landing-tbl td.num, .landing-page .landing-tbl th:first-child { text-align: right; font-variant-numeric: tabular-nums; }
+.landing-page .landing-h2 { margin-top: 2rem; font-size: 1.05rem; }
+.landing-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
+.by-state { font-size: 0.85rem; color: #4b5563; margin: 1.6rem 0 0; line-height: 1.8; }
+.rankings-page .by-state { padding: 0 1.5rem 1rem; }

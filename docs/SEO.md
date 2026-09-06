@@ -37,3 +37,29 @@ What the site does for search, and the two things only the owner can do.
   is being ignored somewhere. Report it with the URL.
 - Performance: sort by impressions to see what people search for; the
   long tail is athletes' own names.
+
+
+## Added 2026-09-06
+
+- **State ranking pages.** `/rankings/<xc|tf>/<pool>/<st>` (and the
+  national `/rankings/<xc|tf>/<pool>`): one server-rendered top 100 per
+  sport, pool and state, with its own title ("2026 California High
+  School Boys Cross Country Rankings"), description, breadcrumbs and
+  canonical, every athlete and school linked, and links to every sibling
+  page. The board itself is JavaScript with the filters in the query
+  string, so before this there was no page for the search people
+  actually type. All 624 are in the sitemap and linked from the home
+  page and the board's foot. `racecast/landing.py`.
+- **Entity JSON-LD.** Athlete pages carry a Person, school pages a
+  SportsOrganization, meet and race pages a SportsEvent with the date and
+  the course. `meta_ld` in `_meta.html`.
+- **IndexNow.** Step 13e (`scripts/indexnow_submit.py`) posts every URL
+  whose lastmod is within three days, plus the fixed and landing pages,
+  to api.indexnow.org after each sitemap build. Bing, Yandex, Seznam and
+  Naver act on it within hours (DuckDuckGo rides on Bing). Google
+  ignores it. Owner's side, once: pick a key (32 hex characters, for
+  example `openssl rand -hex 16`), put `XCP_INDEXNOW_KEY=<key>` in
+  /etc/xc-predictor.env, restart the site; the app serves it at
+  `/<key>.txt`, which is how the engines verify it. Then add the site in
+  Bing Webmaster Tools (it can import the Search Console property) and
+  submit the sitemap there too.

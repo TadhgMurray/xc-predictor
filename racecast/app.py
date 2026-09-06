@@ -24,7 +24,7 @@ import psycopg2.extras
 #   import side effect for an exception class in an except clause is a
 #   NameError at the worst possible moment.
 import psycopg2.errors
-from flask import Flask, render_template, abort
+from flask import Flask, render_template, abort, redirect
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
@@ -437,6 +437,21 @@ def google_verify(token):
         abort(404)
     return app.response_class(f"google-site-verification: google{token}.html\n",
                               mimetype="text/html")
+
+
+# ★ INDEXNOW (Bing, Yandex, DuckDuckGo via Bing, 2026-09-06). The engine
+#   verifies the key by fetching /<key>.txt; scripts/indexnow_submit.py
+#   posts the URLs that changed after every sitemap build. The key lives in
+#   XCP_INDEXNOW_KEY (/etc/xc-predictor.env); unset means the route 404s
+#   and the submit script skips, so nothing runs half-configured.
+INDEXNOW_KEY = os.environ.get("XCP_INDEXNOW_KEY", "").strip()
+
+
+@app.route("/<key>.txt")
+def indexnow_key(key):
+    if not INDEXNOW_KEY or key != INDEXNOW_KEY:
+        abort(404)
+    return app.response_class(INDEXNOW_KEY + "\n", mimetype="text/plain")
 
 
 @app.route("/sitemap.xml")
@@ -6067,6 +6082,69 @@ def api_predict_team():
 @app.route("/rankings")
 def rankings_page():
     return render_template("rankings.html")
+
+
+@app.route("/rankings/<sport>/<pool>")
+@app.route("/rankings/<sport>/<pool>/<state>")
+def rankings_landing(sport, pool, state=None):
+    """One server-rendered ranking page per sport, pool and state, with a
+    real URL and title, for search (landing.py says why). The board's
+    own rows, the current season, top 100."""
+    import landing as L
+    sport = (sport or "").lower()
+    pool = (pool or "").lower()
+    state = (state or "").upper() or None
+    if sport not in L.SPORTS or pool not in L.POOLS \
+            or (state and state not in L.STATE_NAMES):
+        abort(404)
+    if state and request.path != L.landingPath(sport, pool, state):
+        # one spelling per page: /ca, never /CA
+        return redirect(L.landingPath(sport, pool, state), code=301)
+    year, rows = None, []
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # ! NEVER A 500: a box without the panels or the season table
+            #   renders the page with no rows rather than a stack trace.
+            try:
+                meta = get_homepage_meta(cur)
+                year = int(meta.get(f"season_year_{L.SPORTS[sport]}") or "")
+            except (psycopg2.Error, ValueError):
+                conn.rollback()
+                year = None
+            try:
+                rows, _f = L.landingRows(cur, sport, pool, state, year)
+                if rows is None:
+                    abort(404)
+            except psycopg2.Error:
+                conn.rollback()
+                rows = []
+    pool_key, pool_words = L.POOLS[pool]
+    other_sport = "tf" if sport == "xc" else "xc"
+    board = {"board": "ability", "sport": L.SPORTS[sport], "pool": pool_key}
+    if state:
+        board["state"] = state
+    if year:
+        board["year"] = str(year)
+    from urllib.parse import urlencode
+    return render_template(
+        "landing.html",
+        title=L.landingTitle(sport, pool, state, year),
+        description=L.landingDescription(sport, pool, state, year, len(rows)),
+        path=L.landingPath(sport, pool, state),
+        national_path=L.landingPath(sport, pool),
+        sport=sport, sport_words=L.SPORT_WORDS[sport],
+        pool=pool, pool_words=pool_words,
+        pool_level="college" if pool_key.startswith("college") else "hs",
+        state=state, state_name=L.STATE_NAMES.get(state or "", ""),
+        year=year, rows=rows,
+        board_url="/rankings?" + urlencode(board),
+        pool_links=[(slug, words, L.landingPath(sport, slug, state))
+                    for slug, (_k, words) in L.POOLS.items()],
+        other_sport_href=L.landingPath(other_sport, pool, state),
+        other_sport_words=L.SPORT_WORDS[other_sport],
+        state_links=[(c, L.STATE_NAMES[c], L.landingPath(sport, pool, c))
+                     for c in L.US_STATES if c in L.STATE_NAMES],
+    )
 
 
 # ------------------------------------------------------------------ #

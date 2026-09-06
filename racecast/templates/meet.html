@@ -17,6 +17,13 @@
        ~ " cross country results"
        ~ ((" at " ~ header.course_name) if header.course_name else "")
        ~ ": every race, team scores, speed ratings and PRs on one comparable scale." %}
+    {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsEvent",
+                      "name": meta_title, "sport": "Running",
+                      "url": site_origin ~ request.path,
+                      "startDate": ((meet_date|string)[:10] if meet_date else none),
+                      "eventStatus": "https://schema.org/EventScheduled",
+                      "location": ({"@type": "Place", "name": header.course_name}
+                                   if header.course_name else none)} %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

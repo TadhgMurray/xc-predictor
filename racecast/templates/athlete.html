@@ -21,6 +21,11 @@
        ~ ((" (" ~ athlete.percentile ~ " of " ~ athlete.pool_words ~ ")") if athlete.percentile and athlete.pool_words else "")
        ~ ((", about a " ~ athlete.equiv_time ~ " 5K") if athlete.equiv_time else "")
        ~ ". Every race, personal records and season ratings on one comparable scale." %}
+    {% set meta_ld = {"@context": "https://schema.org", "@type": "Person",
+                      "name": athlete.name,
+                      "url": site_origin ~ "/athlete/" ~ athlete.person_id,
+                      "affiliation": ({"@type": "Organization",
+                                       "name": athlete.school|school_label} if athlete.school else none)} %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">

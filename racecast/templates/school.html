@@ -24,6 +24,11 @@
     {% set meta_title = school %}
     {% set meta_description = "Current roster, all-time best athletes and "
        "performances, and the full meet history for " ~ school ~ "." %}
+    {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsOrganization",
+                      "name": school, "sport": "Running",
+                      "url": site_origin ~ "/school/" ~ (school|urlencode),
+                      "address": ({"@type": "PostalAddress", "addressRegion": state,
+                                   "addressCountry": "US"} if state else none)} %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

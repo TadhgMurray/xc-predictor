@@ -150,3 +150,10 @@
 }
 </script>
 {% endif %}
+{# ---- The page's own entity (2026-09-06): a Person for an athlete, a
+   SportsEvent for a meet or race, an Organization for a school. Set as a
+   dict before the include; tojson escapes it. Google uses these to know
+   WHAT the page is about, which is most of what a name search needs. #}
+{% if meta_ld %}
+<script type="application/ld+json">{{ meta_ld | tojson }}</script>
+{% endif %}
