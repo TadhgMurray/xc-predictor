@@ -4384,16 +4384,22 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
   font-size: 0.78rem; color: #2e53e6; text-decoration: underline; cursor: pointer;
 }
 
+/* ⚠ TOUCH DEVICES ONLY (owner, 2026-09-06: "revert the mobile change so
+   PC is the same as before; can we do separate for mobile and PC?"). The
+   phone pass was gated on width alone, so a desktop window narrower than
+   700px, or a laptop zoomed past 150%, got the phone rules. `hover: none`
+   is true on phones and tablets and false on any machine with a mouse,
+   so every rule below is now phone-only and a PC reads exactly as before. */
 /* ===== THE PHONE PASS (owner, 2026-09-06) ==================================
    The owner's rules, in order: no ellipsis, no wrap, and NO TABLE SCROLLS
    INSIDE ITSELF. A table is always its full width; when that is wider than
    the phone, the PAGE scrolls sideways and pinch-zoom takes it in whole.
    Every earlier rule that fenced a table into its own scroller or cut a
    name short is undone here, last in the file so it wins. */
-@media (max-width: 900px) {
+@media (max-width: 900px) and (hover: none) {
   .page-layout { overflow-x: visible; }
 }
-@media (max-width: 700px) {
+@media (max-width: 700px) and (hover: none) {
   table, .main-col table, .meet-page table, .race-page table {
     display: table; overflow-x: visible; width: auto; min-width: 100%;
   }
@@ -4432,7 +4438,7 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
    paragraph's min-content is its longest word), and every table is then
    100% of that one width. The home boards do the same with the grid's
    name tracks allowed to grow from their longest name. */
-@media (max-width: 700px) {
+@media (max-width: 700px) and (hover: none) {
   .page-wide, .main-col { min-width: min-content; }
   table, .main-col table, .meet-page table, .race-page table,
   .season table, .rec-pair table, .dist-table, .meets-table, .prs-tbl, .prs-course {
