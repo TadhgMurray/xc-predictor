@@ -247,6 +247,14 @@ def _is_team_filter(school):
 import difficulty_view
 app.template_filter("diffpct")(difficulty_view.diffPct)
 
+# The sports whose ratings carry the race-day term (run_joint
+# --race-effect-sports, default XC since 2026-09-06). The hover on a
+# track difficulty still shows the day, and says it is not applied.
+RACE_DAY_SPORTS = tuple(
+    x.strip().upper() for x in os.environ.get("XCP_RACE_DAY_SPORTS", "XC").split(",")
+    if x.strip())
+app.jinja_env.globals["RACE_DAY_SPORTS"] = RACE_DAY_SPORTS
+
 
 # The race-day term as the page says it (the hover on a difficulty): the
 # term the RATING applied, clipped at the cap (issue 187), as a percent of

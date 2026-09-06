@@ -57,7 +57,8 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 #            saveAthleteRatings dict), per-sport (result_id, rating) pairs,
 #            the pair_difficulty-shaped arrays, and a summary.
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
-              use_race_effect=True, gain_bands=None, pack_date=None):
+              use_race_effect=True, gain_bands=None, pack_date=None,
+              race_effect_sports=("XC", "TF")):
     import pair_golive as pg
 
     keys = [str(k) for k in cols["course_keys"]]
@@ -78,11 +79,23 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     eff = out["h"] * out["delta"][D.cell]
     u_row = out["race_effect"][D.race]
     capped = np.abs(u_row) > js.RACE_DAY_CAP
+    # ★ PER SPORT (owner, 2026-09-06): an XC day is mud and can be five
+    #   percent; a track day is wind, a percent at most, and on a small
+    #   meet the term is mostly who showed up. The solve keeps the term
+    #   for both (it protects the venue from the weather); the RATING
+    #   applies it for the sports named. `race_effect_in_rating` in the
+    #   npz and the site's hover both say which.
+    day_on = np.zeros(sport.size, dtype=bool)
     if use_race_effect:
+        for code, name in ((0, "XC"), (1, "TF")):
+            if name in race_effect_sports:
+                day_on |= sport == code
+    if day_on.any():
         # tilted like the course (issue 156): the solve fitted h * u --
         # and CLIPPED for the rating (issue 187): a day beyond the cap is
         # a broken result sheet, not a credit
-        eff = eff + out["h"] * np.clip(u_row, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+        eff = eff + np.where(day_on, out["h"] * np.clip(u_row, -js.RACE_DAY_CAP,
+                                                        js.RACE_DAY_CAP), 0.0)
     eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects
@@ -176,7 +189,9 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                                   + out["cell_var"]), 0.0),
                cell_var=out["cell_var"], course_keys=np.array(keys),
                joint=np.array([1]), mu=out["mu"],
-               race_effect_in_rating=np.array([int(use_race_effect)]))
+               race_effect_in_rating=np.array([int(use_race_effect)]),
+               race_effect_sports=np.array(list(race_effect_sports)
+                                           if use_race_effect else []))
 
     # ★ THE ENGINE'S SCALE, WRITTEN DOWN (issue 177): the pool mean the
     #   ratings hang on, the median venue effect the rated rows carried
@@ -241,8 +256,17 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             for band in range(js.DIST_N_BAND if getattr(D, "dist_banded", False) else 1):
                 dist_rows.append((p, "TF", int(d), band if getattr(D, "dist_banded", False) else 1, 0.0, 0))
 
-    u_pts = (130.0 * (np.exp(np.abs(out["race_effect"][D.race][rated])) - 1)
-             if use_race_effect else np.zeros(1))
+    u_pts = (130.0 * (np.exp(np.abs(out["race_effect"][D.race][rated & day_on])) - 1)
+             if day_on.any() else np.zeros(1))
+    # the day term's size per sport, applied or not, for the log
+    for code, name in ((0, "XC"), (1, "TF")):
+        m = rated & (sport == code)
+        if m.any():
+            pts = 130.0 * (np.exp(np.abs(out["race_effect"][D.race][m])) - 1)
+            print(f"[joint/live] race-day term, {name}: median {np.median(pts):.2f} "
+                  f"points at 130, p90 {np.percentile(pts, 90):.2f}, "
+                  f"{'IN' if name in race_effect_sports and use_race_effect else 'OUT OF'} "
+                  f"the rating")
     summary = {
         "n_rated": int(rated.sum()), "n_rows": int(rated.size),
         "n_cells": int(solved.sum()), "n_athletes": len(athletes),

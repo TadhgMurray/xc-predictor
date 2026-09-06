@@ -43,8 +43,12 @@ def test_dv_with_and_without_a_day():
     assert "Race Day -1.2%" in fast
     assert "ran 1.2% fast" in fast and "lowered by 1.2%" in fast
     assert "Capped" not in fast
-    slow = _render('{% from "_explain.html" import dv %}{{ dv(0.02, "TF", 0.14) }}')
+    slow = _render('{% from "_explain.html" import dv %}{{ dv(0.02, "XC", 0.14) }}')
     assert "ran 10.5% slow" in slow and "raised by 10.5%" in slow and "Capped at 10%" in slow
+    # track: the day is shown but not applied (RACE_DAY_SPORTS = XC)
+    assert site.RACE_DAY_SPORTS == ("XC",)
+    tf = _render('{% from "_explain.html" import dv %}{{ dv(0.02, "TF", 0.03) }}')
+    assert "ran 3.0% slow" in tf and "carry the venue only" in tf and "raised" not in tf
     none = _render('{% from "_explain.html" import dv %}{{ dv(None, "XC", 0.01) }}')
     assert "&mdash;" in none and "dv-day" not in none
 

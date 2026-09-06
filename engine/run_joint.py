@@ -599,6 +599,11 @@ def main():
                     help="season -> athlete_ratings row")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
+    ap.add_argument("--race-effect-sports", default="XC",
+                    help="the sports whose per-result ratings carry the "
+                         "race-day term (comma list; default XC: a track "
+                         "day is wind, an XC day is mud -- owner, "
+                         "2026-09-06). The solve keeps it for both")
     args = ap.parse_args()
 
 
@@ -736,7 +741,10 @@ def main():
         live = jg.buildLive(out, D, cols, keep, collapse=args.collapse,
                             anchor=args.anchor,
                             use_race_effect=not args.no_race_effect,
-                            gain_bands=gain_bands, pack_date=pack_date)
+                            gain_bands=gain_bands, pack_date=pack_date,
+                            race_effect_sports=tuple(
+                                x.strip().upper() for x in
+                                args.race_effect_sports.split(",") if x.strip()))
         jg.report(live)
         jg.writeNpz(live, os.path.join(os.path.dirname(args.out),
                                        "pair_difficulty.npz"))

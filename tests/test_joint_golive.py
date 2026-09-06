@@ -129,5 +129,22 @@ def main():
     print("\nall joint_golive tests passed")
 
 
+def per_sport_day_term():
+    """The race-day term applies per sport (owner, 2026-09-06): XC only
+    by default in run_joint; here both, XC only, and none."""
+    out, D, cols, keep, truth, raw = synthetic_pack()
+    sport = np.asarray(cols["sport"][keep])
+    both = jg.buildLive(out, D, cols, keep, race_effect_sports=("XC", "TF"))
+    xc = jg.buildLive(out, D, cols, keep, race_effect_sports=("XC",))
+    none = jg.buildLive(out, D, cols, keep, use_race_effect=False)
+    r_both, r_xc, r_none = both["chosen"], xc["chosen"], none["chosen"]
+    assert np.allclose(r_xc[sport == 0], r_both[sport == 0])
+    assert np.allclose(r_xc[sport == 1], r_none[sport == 1])
+    assert not np.allclose(r_both[sport == 1], r_none[sport == 1])
+    assert list(xc["npz"]["race_effect_sports"]) == ["XC"]
+    print("  race-day term per sport: XC keeps it, TF drops it ......... OK")
+
+
 if __name__ == "__main__":
     main()
+    per_sport_day_term()
