@@ -196,15 +196,26 @@
       /* the boxes follow the level, like the rankings board: college kinds
          for college, the school kinds for high school and middle school,
          all of them when the level is any */
+      /* ! display, not the hidden attribute: .meet-filters .field sets
+         display:flex, which beats [hidden]. And the school kinds need a
+         state first (a section is a state's section), the college kinds
+         do not. */
       function showByLevel() {
-        var lv = level ? level.value : "";
+        var lv = level ? level.value : "", st = state ? state.value : "";
         document.querySelectorAll(".unit-box").forEach(function (box) {
-          var on = !lv || (lv === "college") === (box.dataset.level === "college");
-          box.closest(".field").hidden = !on;
+          var college = box.dataset.level === "college";
+          var on = !lv || (lv === "college") === college;
+          box.closest(".field").style.display = on ? "" : "none";
           if (!on) box.value = "";
+          var needsState = !college && !st;
+          box.disabled = needsState;
+          box.placeholder = needsState ? "Pick a state first" : "Any";
+          if (needsState) box.value = "";
         });
       }
-      if (level) { level.addEventListener("change", showByLevel); showByLevel(); }
+      if (level) level.addEventListener("change", showByLevel);
+      if (state) state.addEventListener("change", showByLevel);
+      showByLevel();
       document.querySelectorAll(".unit-box").forEach(function (box) {
         var list = document.getElementById("mf-ul-" + box.dataset.kind), timer = null;
         function fill() {

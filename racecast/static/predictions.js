@@ -1380,6 +1380,7 @@ function renderViewSel() {
   // not, so nothing is lit rather than one button lying about the others.
   const all = views.every((v) => v === views[0]) ? views[0] : null;
   el.innerHTML = viewButtons(all);
+  renderSquadBoxes();
 }
 
 
@@ -1475,10 +1476,7 @@ function renderFieldBlock(sumEl, gridEl) {
     `<strong>${kept}</strong> runners` +
     (f.when === "asran" ? ` - as raced` : ` - current squads`) +
     `</span>` +
-    (f.when === "asran" ? "" :
-      ` <button class="linkish" data-squads-all="1"
-          title="Every current runner of every team here onto its card">` +
-      `whole squads for every team</button>`) +
+
     /* ⚠ THE Show: CONTROL IS NOT HERE ANY MORE -- see renderViewSel. It was
          rendered per block, so with several divisions on screen there were
          several copies of one global setting and you had to scroll to reach
@@ -1511,7 +1509,7 @@ function renderFieldBlock(sumEl, gridEl) {
   if (state.view === "none") { gridEl.innerHTML = ""; return; }
 
   gridEl.innerHTML = teams.map((t, i) => `
-    <details class="team-card" data-team="${esc(t.school)}"
+    <details class="team-card" data-team="${esc(t.school)}" data-div="${esc(state.meet.div || "")}"
              ${state.open.has(t.school) ? "open" : ""}>
       <summary class="team-name">
         <span class="t-label">
@@ -1555,14 +1553,16 @@ function renderFieldBlock(sumEl, gridEl) {
             <button class="r-x" data-remove="${r.person_id}"
                     title="Remove">&times;</button>
           </div>`).join("")}
-        <button class="squad-btn" data-squad="${esc(t.school)}">
-          + Add from squad</button>
-        <button class="squad-btn" data-squad-all="${esc(t.school)}"
-                title="Every current runner of ${esc(t.school)} onto this card">
-          + Add whole squad</button>
+        <details class="add-menu">
+          <summary class="squad-btn">+ Add</summary>
+          <div class="add-menu-body">
+            <button class="squad-btn" data-squad="${esc(t.school)}">from the squad</button>
+            <button class="squad-btn" data-squad-all="${esc(t.school)}"
+                    title="Every current runner of ${esc(t.school)} onto this card">the whole squad</button>
+            <button class="squad-btn" data-anyone="${esc(t.school)}">anyone</button>
+          </div>
+        </details>
         <div class="squad-list hidden" data-squad-for="${esc(t.school)}"></div>
-        <button class="squad-btn" data-anyone="${esc(t.school)}">
-          + Add anyone</button>
         <div class="squad-list hidden" data-anyone-for="${esc(t.school)}"></div>
         ${t.dropped.length ? `
           <details class="dropped">
@@ -2254,32 +2254,85 @@ const squadCache = new Map();
 /* One runner onto one team's card, with their rating (the rating is how
    you judge whether adding them was right; null stays blank on purpose).
    Shared by the add button, "+ Add whole squad" and "every team". */
-function addRunner(school, pid, name, rating) {
+function addRunner(school, pid, name, rating, div) {
+  /* `div` names the race; undefined means the focused one. Writes through
+     editsFor, the per-division record, so a grouped race edits the right
+     block. */
+  const ed = editsFor(div === undefined ? state.meet.div : div);
   pid = String(pid);
-  const team = (state.field?.teams || []).find((t) => t.school === school);
+  const team = (ed.field?.teams || []).find((t) => t.school === school);
   if (team && !team.runners.some((r) => String(r.person_id) === pid)) {
     team.runners.push({ person_id: pid, name: name, rating: rating, added: true });
     team.dropped = (team.dropped || []).filter((r) => String(r.person_id) !== pid);
     team.runners.sort((a, b) => (b.rating ?? -Infinity) - (a.rating ?? -Infinity));
   }
-  state.removed.delete(pid);
-  state.added.push({ person_id: pid, name: name, school: school });
-  state.open.add(school);          // keep the card you are editing open
+  ed.removed.delete(pid);
+  ed.added.push({ person_id: pid, name: name, school: school });
+  ed.open.add(school);          // keep the card you are editing open
 }
 
 /* ★ A WHOLE SQUAD IN ONE CLICK (owner, 2026-09-06): every current runner
-   of the school not yet on the card. Returns how many joined. */
-async function addWholeSquad(school) {
-  const squad = await loadSquad(school);
-  const team = (state.field?.teams || []).find((t) => t.school === school);
+   of the school not yet on the card. Returns how many joined; the ids
+   are remembered on the race so the checkbox can take them out again. */
+async function addWholeSquad(school, div) {
+  const ed = editsFor(div === undefined ? state.meet.div : div);
+  const squad = await loadSquad(school, ed.field?.gender);
+  const team = (ed.field?.teams || []).find((t) => t.school === school);
   const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
+  ed.wholeAdded = ed.wholeAdded || new Set();
   let n = 0;
   for (const r of squad.runners || []) {
     if (have.has(String(r.person_id))) continue;
-    addRunner(school, r.person_id, r.name, r.rating == null ? null : Number(r.rating));
+    addRunner(school, r.person_id, r.name, r.rating == null ? null : Number(r.rating), div);
+    ed.wholeAdded.add(String(r.person_id));
     n += 1;
   }
   return n;
+}
+
+/* Whole squads for every team of one race (div), or of every race. */
+async function wholeSquadsFor(divs) {
+  let n = 0, teams = 0;
+  for (const div of divs) {
+    const ed = editsFor(div);
+    for (const t of (ed.field?.teams || [])) {
+      teams += 1;
+      try { n += await addWholeSquad(t.school, div); } catch (err) { /* one fetch failing does not stop the rest */ }
+    }
+  }
+  return { n, teams };
+}
+
+/* The checkbox unticked: the runners the whole-squad action put on this
+   race's cards come off again; hand-added ones stay. */
+function removeWholeSquads(div) {
+  const ed = editsFor(div);
+  const gone = ed.wholeAdded || new Set();
+  if (!gone.size) return 0;
+  for (const t of (ed.field?.teams || [])) {
+    t.runners = t.runners.filter((r) => !gone.has(String(r.person_id)));
+  }
+  ed.added = ed.added.filter((a) => !gone.has(String(a.person_id)));
+  const n = gone.size;
+  ed.wholeAdded = new Set();
+  return n;
+}
+
+/* The checkboxes beside Show: this race, and every race (a grouped meet). */
+function renderSquadBoxes() {
+  const el = $("squad-boxes");
+  if (!el) return;
+  const divs = activeBlocks();
+  const on = (d) => (editsFor(d).wholeAdded || new Set()).size > 0;
+  const allOn = divs.length > 0 && divs.every(on);
+  const thisOn = on(state.meet.div);
+  el.innerHTML = divs.length > 1
+    ? `<label title="Every current runner of every team in this race onto its card">
+         <input type="checkbox" data-whole="race" ${thisOn ? "checked" : ""}> whole squads, this race</label>
+       <label title="Every current runner of every team in every race here onto its card">
+         <input type="checkbox" data-whole="all" ${allOn ? "checked" : ""}> whole squads, every race</label>`
+    : `<label title="Every current runner of every team onto its card">
+         <input type="checkbox" data-whole="race" ${thisOn ? "checked" : ""}> whole squads for every team</label>`;
 }
 
 async function loadSquad(school, gender) {
@@ -2436,28 +2489,34 @@ document.addEventListener("click", (e) => {
   /* "Add from squad": everyone racing for this school, minus whoever is
      already on the card. Fetched on demand -- thirty teams is thirty requests
      if this were eager, and most cards are never opened. */
+  /* a card action addresses the card's own race, whichever block is focused */
+  const card = e.target.closest("[data-div]");
+  const cardDiv = card && card.classList.contains("team-card") ? (card.dataset.div || null) : undefined;
   const sqa = e.target.closest("[data-squad-all]");
   if (sqa) {
     const school = sqa.dataset.squadAll;
     sqa.disabled = true;
-    addWholeSquad(school).then((n) => {
+    addWholeSquad(school, cardDiv).then((n) => {
       setStatus(n ? `Added ${n} from ${school}.` : `${school}: everyone is already on the card.`, false);
-      renderField(); saveState();
+      renderField(); renderSquadBoxes(); saveState();
     }).catch((err) => { setStatus("Could not load the squad: " + err.message, true); });
     return;
   }
-  const all = e.target.closest("[data-squads-all]");
-  if (all) {
-    all.disabled = true;
-    const teams = (state.field?.teams || []).map((t) => t.school);
-    (async () => {
+  const whole = e.target.closest("[data-whole]");
+  if (whole) {
+    const divs = whole.dataset.whole === "all" ? activeBlocks() : [state.meet.div];
+    if (whole.checked) {
+      whole.disabled = true;
+      wholeSquadsFor(divs).then(({ n, teams }) => {
+        setStatus(`Added ${n} across ${teams} teams.`, false);
+        renderField(); renderSquadBoxes(); saveState();
+      });
+    } else {
       let n = 0;
-      for (const school of teams) {
-        try { n += await addWholeSquad(school); } catch (err) { /* one failing fetch does not stop the rest */ }
-      }
-      setStatus(`Added ${n} across ${teams.length} teams.`, false);
-      renderField(); saveState();
-    })();
+      for (const d of divs) n += removeWholeSquads(d);
+      setStatus(n ? `Took ${n} whole-squad additions off again.` : "", false);
+      renderField(); renderSquadBoxes(); saveState();
+    }
     return;
   }
   const sq = e.target.closest("[data-squad]");

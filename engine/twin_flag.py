@@ -152,14 +152,16 @@ def dupCrossDateSql(table, sport):
     result_id. XC reads the name from anet's meets; tfrrs XC twins are
     the cross-feed rules' business.
 
-    ★ SMALL BEFORE IT IS JOINED (2026-09-06). The old shape normalised the
-      meet name on every result row, joined track rows to the 14M-row
-      meets_tf on (div, event), and self-joined the whole table on a text
-      key: hours, and run13 never got out of it. Now the name is
-      normalised once per MEET (658k, not 27M), only names listed under
-      two or more meet ids can hold a cross-date copy, and only rows whose
-      (person, feed, name, place, tenth) occurs twice reach the self-join.
-      Same answer; the self-join sees a few per cent of the rows."""
+    ★ THE PAIR OF MEETS IS FOUND FIRST, BY NAME AND DATE, BEFORE ANY RESULT
+      ROW IS READ (2026-09-06, second cut). The first cut kept every name
+      listed under two meet ids -- but yearly editions share a name, so
+      that was nearly every recurring meet and the candidate set was most
+      of the table; track stalled on it twice (run14, run15). The rule
+      only matches listings within 21 days, so `sized` reads each meet's
+      size and first date in one pass, `pairs` self-joins the ~800k meets
+      on the normalised name with |date difference| <= 21, and only the
+      meets in a pair reach `cand`. Same answer; the heavy joins see a
+      few thousand meets."""
     if sport == "XC":
         names = f"""
             SELECT meet_id, min({_nameNorm('meet_name')}) AS mname
@@ -176,15 +178,24 @@ def dupCrossDateSql(table, sport):
         feed = ""
     return f"""
         WITH names AS ({names}),
-        twice AS (
-            SELECT n.meet_id, n.mname
-            FROM   names n
-            JOIN  (SELECT mname FROM names GROUP BY mname HAVING count(*) > 1) t
-                   ON t.mname = n.mname),
         sized AS (
-            SELECT r.meet_id, count(*) AS n
-            FROM   {table} r JOIN twice t ON t.meet_id = r.meet_id
-            GROUP  BY r.meet_id),
+            SELECT meet_id, count(*) AS n,
+                   min(CASE WHEN date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                            THEN substr(date, 1, 10)::date END) AS d0
+            FROM   {table}
+            WHERE  meet_id IS NOT NULL
+            GROUP  BY meet_id),
+        pairs AS (
+            SELECT a.meet_id
+            FROM   names a
+            JOIN   sized sa ON sa.meet_id = a.meet_id
+            JOIN   names b ON b.mname = a.mname AND b.meet_id <> a.meet_id
+            JOIN   sized sb ON sb.meet_id = b.meet_id
+            WHERE  sa.d0 IS NOT NULL AND sb.d0 IS NOT NULL
+              AND  abs(sb.d0 - sa.d0) <= 21),
+        twice AS (
+            SELECT DISTINCT n.meet_id, n.mname
+            FROM   names n JOIN pairs p ON p.meet_id = n.meet_id),
         cand AS (
             SELECT r.result_id, r.person_id, r.source, s.n,
                    CASE WHEN r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
@@ -295,6 +306,13 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
 def build(conn, write=False):
     with conn.cursor() as cur:
         ensureTable(cur)
+        # the rules are hash passes over the whole table; give them memory
+        # so they do not spill, for this session only
+        for stmt in ("SET work_mem = '2GB'", "SET max_parallel_workers_per_gather = 4"):
+            try:
+                cur.execute(stmt)
+            except Exception:                        # noqa: BLE001
+                conn.rollback()
         if write:
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
         for sport, table in TABLES.items():

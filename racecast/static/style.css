@@ -4347,3 +4347,11 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .meets-page .meet-filters details.meet-units summary { cursor: pointer; font-size: 0.9rem; color: #444; margin: 0.2rem 0 0.4rem; }
 .meets-page .meet-filters details.meet-units .unit-row { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; }
 
+/* the team card's Add menu and the whole-squad boxes (2026-09-06) */
+.predict2 .add-menu { display: inline-block; margin: 0.3rem 0.4rem 0 0; }
+.predict2 .add-menu > summary { list-style: none; cursor: pointer; }
+.predict2 .add-menu > summary::-webkit-details-marker { display: none; }
+.predict2 .add-menu-body { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.3rem; }
+.predict2 .squad-boxes { margin-left: 0.8rem; font-size: 0.85rem; }
+.predict2 .squad-boxes label { margin-right: 0.8rem; white-space: nowrap; }
+
