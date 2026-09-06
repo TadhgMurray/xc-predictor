@@ -198,28 +198,57 @@ def xcQuery():
     """
 
 
+# ★ BOTH TRACK FEEDS (2026-09-06). anet's meets carry their coordinates
+#   in meets_tf_meta; tfrrs's carry them in meets_tfrrs (sport 'TF',
+#   55,846 of 60,462 geocoded) with the indoor flag and the venue id on the
+#   geometry stamp. The fit and the backfill read the same union, so a
+#   college row is corrected the way it was fitted. A tfrrs meet with no
+#   stamp has no venue key and stays out of the fit (a NULL event would
+#   pool every such row into one fixed effect); the backfill still
+#   corrects it against the global reference.
+_TF_META = """
+        tfmeta AS (
+            SELECT meet_id, 'anet' AS source, gps_lat, gps_long, location_id,
+                   COALESCE(is_indoor, 0) AS is_indoor,
+                   substr(meet_date::text, 1, 10)::date AS d
+            FROM   meets_tf_meta
+            WHERE  gps_lat IS NOT NULL AND gps_long IS NOT NULL
+              AND  meet_date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+            UNION ALL
+            SELECT mt.meet_id, 'tfrrs', mt.gps_lat, mt.gps_long, g.location_id,
+                   COALESCE(g.is_indoor, 0),
+                   substr(mt.date::text, 1, 10)::date
+            FROM   meets_tfrrs mt
+            LEFT JOIN tfrrs_meet_geometry g
+                   ON g.meet_id = mt.meet_id AND g.sport = 'TF'
+            WHERE  mt.sport = 'TF'
+              AND  mt.gps_lat IS NOT NULL AND mt.gps_long IS NOT NULL
+              AND  mt.date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}')"""
+
+
 def tfQuery():
     clat, clon = _snapSql("mm.gps_lat", "mm.gps_long")
     venue = ("'TF:loc:' || mm.location_id || "
              "CASE WHEN mm.is_indoor = 1 THEN ':in' ELSE ':out' END")
-    event = _eventKey(venue, "mm.meet_date::date")
+    event = _eventKey(venue, "mm.d")
     return f"""
-        WITH {_weatherCte()}
+        WITH {_weatherCte()},
+        {_TF_META}
         SELECT COALESCE(r.person_id, r.athlete_id) AS ath,
                {venue}                             AS course,
                {event}                             AS event,
-               mm.meet_date::date                  AS date,
+               mm.d                                AS date,
                r.normalized_time                   AS nt,
                r.event_short                       AS dist,
                {_wxSelect()}
         FROM   results_tf r
-        JOIN   meets_tf_meta mm ON mm.meet_id = r.meet_id
+        JOIN   tfmeta mm ON mm.meet_id = r.meet_id AND mm.source = r.source
         JOIN   wx ON wx.cell_lat = {clat} AND wx.cell_lon = {clon}
-                 AND wx.date = mm.meet_date::date
-        WHERE  COALESCE(mm.is_indoor, 0) = 0
+                 AND wx.date = mm.d
+        WHERE  mm.is_indoor = 0
+          AND  mm.location_id IS NOT NULL
           AND  r.normalized_time IS NOT NULL
           AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
-          AND  mm.gps_lat IS NOT NULL AND mm.gps_long IS NOT NULL
     """
 
 

@@ -541,6 +541,32 @@ def _loadMeetCellsAnetTF(cur):
 # (weather_dict, course_key) for a row by (source, meet_id, date). Mirrors
 # GeometryIndex. A miss at any step -> (None, None) -> weather is a clean no-op.
 # The race window is pulled from the artifact so apply == fit.
+def _loadMeetCellsTfrrsTF(cur):
+    """tfrrs track meets: coordinates in meets_tfrrs (sport 'TF'), the
+    indoor flag and the venue id on the geometry stamp (2026-09-06: 33M
+    college rows had no weather because this loader did not exist and
+    lookup() sent every tfrrs row to an empty dict). Indoor meets are
+    left out, as anet's are; a meet with no stamp is taken as outdoor
+    and corrected against the global reference (no venue key)."""
+    cur.execute("""
+        SELECT mt.meet_id, mt.gps_lat, mt.gps_long, g.location_id, g.is_indoor
+        FROM   meets_tfrrs mt
+        LEFT JOIN tfrrs_meet_geometry g
+               ON g.meet_id = mt.meet_id AND g.sport = 'TF'
+        WHERE  mt.sport = 'TF'
+          AND  mt.gps_lat IS NOT NULL AND mt.gps_long IS NOT NULL
+    """)
+    out = {}
+    for m, lat, lon, loc, indoor in cur:
+        if indoor == 1:
+            continue
+        cell = _snapCell(lat, lon)
+        if cell is not None:
+            out[m] = (cell[0], cell[1],
+                      f"TF:loc:{loc}:out" if loc is not None else None)
+    return out
+
+
 class WeatherIndex:
 
     def __init__(self, anet_cells, tfrrs_cells, wx):
@@ -558,7 +584,7 @@ class WeatherIndex:
             tfrrs = _loadMeetCellsTfrrsXC(cur)
         else:
             anet = _loadMeetCellsAnetTF(cur)           # outdoor anet TF
-            tfrrs = {}                                 # tfrrs TF: no reliable indoor
+            tfrrs = _loadMeetCellsTfrrsTF(cur)         # outdoor tfrrs TF (stamped)
             #                                            flag -> no-op (never risk
             #                                            correcting an indoor race)
         # the temperature aggregate the artifact was fitted on (avg for XC,

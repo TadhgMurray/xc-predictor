@@ -96,3 +96,14 @@ def test_an_unknown_aggregate_is_refused():
 def test_day_credit_defaults_to_no_sport():
     src = open(os.path.join(_ROOT, "engine", "run_joint.py"), encoding="utf-8").read()
     assert re.search(r'"--race-effect-sports",\s*default=""', src)
+
+
+def test_tfrrs_track_meets_reach_the_weather_lookup():
+    # 33M college rows had no weather: the backfill sent every tfrrs track
+    # row to an empty dict and the fitter read anet's meta table only
+    q = fw.tfQuery()
+    assert "meets_tfrrs" in q and "tfrrs_meet_geometry" in q and "mm.source = r.source" in q
+    assert "mm.location_id IS NOT NULL" in q, "a meet with no venue key stays out of the fit"
+    src = open(os.path.join(_ROOT, "backfill", "backfill_normalize.py"), encoding="utf-8").read()
+    assert "tfrrs = _loadMeetCellsTfrrsTF(cur)" in src
+    assert "if indoor == 1:" in src
