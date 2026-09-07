@@ -872,10 +872,8 @@ def _loadUnits(conn):
             #   (Tufts, CT) missed and fell back to the name, which is wrong
             #   for every shared name (Loyola, St. Thomas, Trinity). The
             #   directory says where the campus is.
-            cur.execute("SELECT to_regclass('public.college_directory')")
-            if cur.fetchone()[0] is not None:
-                cur.execute("SELECT name_norm, state FROM college_directory")
-                _UNITS["campus"] = {r[0]: r[1] for r in cur.fetchall()}
+            from build_college_directory import loadDirectory
+            _UNITS["campus"] = loadDirectory(cur, "state")
     except Exception as exc:                        # noqa: BLE001
         print(f"    school_unit unreadable ({exc}) -- unit columns NULL")
         # ! THE TRANSACTION IS ABORTED BY THE FAILED STATEMENT, and every
@@ -2358,14 +2356,12 @@ def _stampSeasonUnits(conn, season_table):
             #   where it raced. The directory's state for every season
             #   school it knows goes into a temp table and keys the lookup.
             n0 = 0
-            cur.execute("SELECT to_regclass('public.college_directory')")
-            if cur.fetchone()[0] is not None:
-                cur.execute("SELECT name_norm, state FROM college_directory")
-                campus = {r[0]: r[1] for r in cur.fetchall()}
-                try:
-                    from build_college_directory import lookup
-                except ImportError:
-                    lookup = None
+            try:
+                from build_college_directory import lookup, loadDirectory
+                campus = loadDirectory(cur, "state")
+            except ImportError:
+                lookup, campus = None, {}
+            if campus:
                 if lookup and campus:
                     cur.execute(f"SELECT DISTINCT school FROM {season_table} WHERE school IS NOT NULL")
                     pairs = []

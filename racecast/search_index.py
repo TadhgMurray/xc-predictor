@@ -114,12 +114,8 @@ WHERE  n.name IS NOT NULL
 
 def _colleges(conn):
     """{name_norm: state} from college_directory (211), or {}."""
-    cur = conn.cursor()
-    cur.execute("SELECT to_regclass('public.college_directory')")
-    if cur.fetchone()[0] is None:
-        return {}
-    cur.execute("SELECT name_norm, state FROM college_directory")
-    return {r[0]: r[1] for r in cur.fetchall()}
+    from build_college_directory import loadDirectory
+    return loadDirectory(conn.cursor(), "state")
 
 
 def _collegeStateOf(colleges, school):

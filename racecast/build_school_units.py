@@ -29,6 +29,7 @@
 #   list of them.
 
 import argparse
+import re
 import sys
 
 sys.path.insert(0, "scripts")
@@ -155,21 +156,41 @@ def crossFillAreas(rows):
 _DIR_DIV = {"D1": "NCAA DI", "D2": "NCAA DII", "D3": "NCAA DIII", "NAIA": "NAIA"}
 
 
+_CLUB = re.compile(r"\bclub\b", re.I)
+_JC = re.compile(r"\b(cc|jc|community college|city college|junior college|college of the \w+)\b", re.I)
+
+
+def _outsideNcaa(name):
+    """A division for a name the directory cannot know: a club team ("Ohio
+    State University Club", "Club Northwest") and a junior college ("Iowa
+    Central CC", "Riverside City") race in college pools without being
+    NCAA or NAIA members, and their votes used to land them in DIII
+    (304). They get their own labels instead of a division they are not
+    in."""
+    n = name or ""
+    if _CLUB.search(n):
+        return "Club"
+    if _JC.search(n):
+        return "JC"
+    return None
+
+
 def directoryDivisions(cur, rows):
     cur.execute("SELECT to_regclass('public.college_directory')")
     if cur.fetchone()[0] is None:
         return 0
     try:
-        from build_college_directory import lookup
+        from build_college_directory import lookup, loadDirectory
     except ImportError:
         return 0
-    cur.execute("SELECT name_norm, division FROM college_directory")
-    known = {r[0]: _DIR_DIV.get(r[1], r[1]) for r in cur.fetchall() if r[1]}
+    known = {k: [(st, _DIR_DIV.get(v, v)) for st, v in pairs if v]
+             for k, pairs in loadDirectory(cur, "division").items()}
+    known = {k: v for k, v in known.items() if v}
     i_div = 3 + _COLS.index("division")
     i_college = 3 + len(_COLS)
     n = 0
     for row in rows:
-        d = lookup(known, row[0])
+        d = lookup(known, row[0], state=row[1]) or _outsideNcaa(row[0])
         if d and row[i_div] != d:
             row[i_div] = d
             row[i_college] = True

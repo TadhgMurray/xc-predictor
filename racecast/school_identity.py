@@ -73,8 +73,8 @@ def loadLabels(conn_factory, force=False):
                 #   Wisconsin high school). Keyed by the directory's own
                 #   normalised name.
                 if _tableExists(cur, "college_directory"):
-                    cur.execute("SELECT name_norm, state FROM college_directory")
-                    _LABELS["college"] = {r[0]: r[1] for r in cur.fetchall()}
+                    from build_college_directory import loadDirectory
+                    _LABELS["college"] = loadDirectory(cur, "state")
     except Exception:                    # noqa: BLE001 -- labels are optional
         pass
     _LABELS["loaded"] = True

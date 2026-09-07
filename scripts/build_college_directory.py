@@ -104,36 +104,108 @@ ALIASES = {
 _STRIP = re.compile(r"\b(the|university|college|of|at|in|and|state university)\b")
 
 
-def lookup(known, name):
-    """The directory entry for a feed's spelling of a school, or None.
+# AP-style state abbreviations the feeds put in parentheses: "Central
+# (Iowa)", "Washington (Mo.)", "Augustana (S.D.)", "Trinity (Conn.)".
+_PAREN_STATES = {
+    "ala": "AL", "alaska": "AK", "ariz": "AZ", "ark": "AR", "calif": "CA", "cal": "CA",
+    "colo": "CO", "conn": "CT", "del": "DE", "dc": "DC", "fla": "FL", "ga": "GA",
+    "hawaii": "HI", "idaho": "ID", "ill": "IL", "ind": "IN", "iowa": "IA", "kan": "KS",
+    "ky": "KY", "la": "LA", "maine": "ME", "md": "MD", "mass": "MA", "mich": "MI",
+    "minn": "MN", "miss": "MS", "mo": "MO", "mont": "MT", "neb": "NE", "nev": "NV",
+    "nh": "NH", "nj": "NJ", "nm": "NM", "ny": "NY", "nc": "NC", "nd": "ND", "ohio": "OH",
+    "okla": "OK", "ore": "OR", "pa": "PA", "ri": "RI", "sc": "SC", "sd": "SD",
+    "tenn": "TN", "texas": "TX", "tex": "TX", "utah": "UT", "vt": "VT", "va": "VA",
+    "wash": "WA", "wva": "WV", "wis": "WI", "wyo": "WY", "ont": "ON", "bc": "BC",
+}
 
-    ★ THREE STEPS, IN ORDER (issue 304, owner: "D3 filter is better but
-      not perfect"): the normalised name exactly; then the feed's short
-      form with its punctuation collapsed ("Wis.-La Crosse" -> the tokens
-      wis, la, crosse); then the ONE directory entry whose tokens contain
-      every token of the feed's name, with a common abbreviation expanded
-      (wis -> wisconsin, st -> saint, cal -> california). Ambiguity is a
-      miss: "Wesleyan" alone matches five schools and gets none.
-    `known` maps name_norm -> anything; the value is returned."""
-    if not name:
+
+def parenState(name):
+    """The state a feed spelled in parentheses, or None: 'Central (Iowa)'
+    -> IA, 'Washington (Mo.)' -> MO, 'St. John's (N.Y.)' -> NY."""
+    m = re.search(r"\(([^)]*)\)", name or "")
+    if not m:
         return None
-    key = normName(name)
-    if key in known:
-        return known[key]
-    toks = [_ABBR.get(t, t) for t in key.split() if t]
-    if not toks:
+    key = re.sub(r"[^a-z]", "", m.group(1).lower())
+    if key in _PAREN_STATES:
+        return _PAREN_STATES[key]
+    full = m.group(1).strip().lower()
+    return STATES.get(full)
+
+
+def loadDirectory(cur, *fields):
+    """{name_norm: [(state, value), ...]} from college_directory, value
+    being the one field asked for or a tuple of several. Works on the old
+    one-row-per-name table and the new one-row-per-(name, state)."""
+    cur.execute("SELECT to_regclass('public.college_directory')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cols = ", ".join(fields) if fields else "state"
+    cur.execute(f"SELECT name_norm, state, {cols} FROM college_directory")
+    out = {}
+    for row in cur.fetchall():
+        value = row[2] if len(fields) <= 1 else tuple(row[2:])
+        out.setdefault(row[0], []).append((row[1], value))
+    return out
+
+
+def _candidates(entries, key):
+    v = entries.get(key)
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [(None, v)]
+
+
+def _pick(cands, strong, weak):
+    """One value from the candidates. A state the feed wrote in the name
+    is a filter: nothing else counts. A state passed in only breaks a tie
+    (it is where the rows raced, which for a college is often not home).
+    Several with no way to choose is a miss."""
+    if strong:
+        cands = [c for c in cands if c[0] == strong]
+    if not cands:
         return None
-    hits = []
-    for k in known:
-        kt = set(k.split())
-        if all(t in kt for t in toks):
-            hits.append(k)
-    if len(hits) == 1:
-        return known[hits[0]]
+    if len(cands) == 1:
+        return cands[0][1]
+    if weak:
+        here = [c for c in cands if c[0] == weak]
+        if len(here) == 1:
+            return here[0][1]
     return None
 
 
-_ABBR = {"wis": "wisconsin", "st": "saint", "cal": "california", "mt": "mount",
+def lookup(entries, name, state=None):
+    """The directory's value for a feed's spelling of a school, or None.
+
+    ★ THREE STEPS (issue 304, owner: "D3 filter is better but not
+      perfect"): the normalised name exactly; then the feed's form with
+      its punctuation collapsed and abbreviations expanded ("Wis.-La
+      Crosse" -> wisconsin, la, crosse; "SUNY Geneseo" -> geneseo); then
+      the directory entries whose tokens contain every token of the
+      name. A name several schools share (Cornell, Trinity, Augustana)
+      is settled by the state the feed wrote in parentheses, or the
+      state passed in; unsettled, it is a miss, never a guess.
+    `entries` is loadDirectory's map, or a plain {name_norm: value}."""
+    if not name:
+        return None
+    strong, weak = parenState(name), state
+    key = normName(name)
+    hit = _pick(_candidates(entries, key), strong, weak)
+    if hit is not None:
+        return hit
+    toks = [_ABBR.get(t, t) for t in key.split() if t]
+    toks = [t for t in toks if t and t not in _NOISE]
+    if not toks:
+        return None
+    cands = []
+    for k in entries:
+        kt = set(k.split())
+        if all(t in kt for t in toks):
+            cands.extend(_candidates(entries, k))
+    return _pick(cands, strong, weak)
+
+
+_NOISE = {"state", "st", "univ", "u", "suny", "cuny", "club"}
+_ABBR = {"wis": "wisconsin", "cal": "california", "mt": "mount",
          "ft": "fort", "no": "north", "so": "south", "univ": "", "u": "",
          "tech": "technology", "poly": "polytechnic", "penn": "pennsylvania",
          "ill": "illinois", "mich": "michigan", "minn": "minnesota", "wash": "washington",
@@ -224,7 +296,6 @@ def main():
                          "(case-insensitive), and every table head")
     args = ap.parse_args()
     entries = {}
-    dropped = {}
     for div, url in LISTS.items():
         try:
             page = fetch(url)
@@ -246,20 +317,21 @@ def main():
             if args.find and args.find.lower() in (name + " " + common).lower():
                 print(f"    {div}: {name!r} / {common!r} -> {st}  (norm {normName(name)!r}, {normName(common)!r})")
             for key in {normName(name), normName(common)} - {""}:
-                if key in entries and entries[key][1] != st:
-                    dropped[key] = (entries[key], (name, st, div))
-                    entries[key] = (name, None, div)      # ambiguous: two states
-                elif key not in entries:
-                    entries[key] = (name, st, div)
-    if args.find:
-        for key, (a, b) in dropped.items():
-            if args.find.lower() in key:
-                print(f"    ambiguous {key!r}: {a} vs {b}")
-    ambiguous = sum(1 for v in entries.values() if v[1] is None)
-    usable = {k: v for k, v in entries.items() if v[1]}
-    print(f"  directory: {len(usable):,} names with a state ({ambiguous} ambiguous dropped)")
-    for probe in ("byu", "tufts", "stanford", "kingston", "washington", "colorado mesa"):
-        print(f"    {probe:<16} -> {usable.get(normName(probe), ('-', '-', '-'))[1]}")
+                # ★ EVERY (name, state) IS KEPT (304). A name two schools
+                #   share used to be dropped as ambiguous, so Cornell,
+                #   Trinity, Augustana and forty others had no division
+                #   at all; lookup settles them by the state the feed
+                #   writes in parentheses.
+                if not st:
+                    continue
+                entries.setdefault(key, {})
+                if st not in entries[key]:
+                    entries[key][st] = (name, st, div)
+    rows_out = [(k, v[0], v[1], v[2]) for k, by_state in entries.items() for v in by_state.values()]
+    shared = sum(1 for by_state in entries.values() if len(by_state) > 1)
+    print(f"  directory: {len(rows_out):,} (name, state) rows, {len(entries):,} names, {shared} names shared by several states")
+    for probe in ("byu", "tufts", "stanford", "cornell", "trinity", "colorado mesa"):
+        print(f"    {probe:<16} -> {sorted(entries.get(normName(probe), {}).keys())}")
     if args.check and not args.write:
         return
     if not args.write:
@@ -270,16 +342,17 @@ def main():
         cur.execute("DROP TABLE IF EXISTS college_directory_new")
         cur.execute("""
             CREATE TABLE college_directory_new (
-                name_norm text PRIMARY KEY, name text NOT NULL,
-                state text NOT NULL, division text, source text)
+                name_norm text NOT NULL, name text NOT NULL,
+                state text NOT NULL, division text, source text,
+                PRIMARY KEY (name_norm, state))
         """)
         cur.executemany(
             "INSERT INTO college_directory_new VALUES (%s, %s, %s, %s, 'wikipedia')",
-            [(k, v[0], v[1], v[2]) for k, v in usable.items()])
+            rows_out)
         cur.execute("DROP TABLE IF EXISTS college_directory")
         cur.execute("ALTER TABLE college_directory_new RENAME TO college_directory")
         conn.commit()
-    print(f"  college_directory: {len(usable):,} rows written")
+    print(f"  college_directory: {len(rows_out):,} rows written")
 
 
 if __name__ == "__main__":

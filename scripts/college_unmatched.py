@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "racecast")
 from database import getConn                        # noqa: E402
-from build_college_directory import normName, lookup  # noqa: E402
+from build_college_directory import normName, lookup, loadDirectory  # noqa: E402
 
 
 def main():
@@ -23,8 +23,7 @@ def main():
     ap.add_argument("--limit", type=int, default=80)
     args = ap.parse_args()
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT name_norm, name, division, state FROM college_directory")
-        known = {r[0]: r[1:] for r in cur.fetchall()}
+        known = loadDirectory(cur, "name", "division", "state")
         cur.execute("""
             SELECT school, count(DISTINCT person_id) AS n, mode() WITHIN GROUP (ORDER BY state)
             FROM   athlete_season
@@ -36,10 +35,10 @@ def main():
     exact = fuzzy = miss = 0
     out = []
     for school, n, st in rows:
-        if normName(school) in known:
+        if normName(school) in known and len(known[normName(school)]) == 1:
             exact += 1
             continue
-        hit = lookup(known, school)
+        hit = lookup(known, school, state=st)
         if hit:
             fuzzy += 1
             out.append((n, school, st, f"fuzzy -> {hit[0]} ({hit[1]}, {hit[2]})"))

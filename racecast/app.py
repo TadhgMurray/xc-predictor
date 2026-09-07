@@ -1450,6 +1450,14 @@ def athlete(person_id):
     #   oldest; the season row the header rates carries its own grade.
     athlete["grade"]  = ((season_rating.get("grade") if season_rating else None)
                          or _season_grade(races))
+    # ★ A COLLEGE CLASS IS THE ACADEMIC YEAR'S HIGHEST ELIGIBILITY (owner,
+    #   2026-09-07, Joey Sullivan: "he's actually a senior, but all his
+    #   races say junior"). tfrrs counts eligibility PER SPORT, so a runner
+    #   in his fourth cross country season and third track season is SR-4
+    #   in the fall and JR-3 in the spring of one year. The class he is in
+    #   is the higher of the two.
+    if season_rating and (season_rating.get("pool") or "").startswith("college"):
+        athlete["grade"] = _classGrade(seasons, season_rating) or athlete["grade"]
     athlete["header_pool"] = (season_rating.get("pool") if season_rating else None)
     athlete["header_state"] = (season_rating.get("state") if season_rating else None)
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
@@ -2102,6 +2110,27 @@ def group_into_seasons(races):
         key = (race["season_label"], race["sport"])
         seasons.setdefault(key, []).append(race)
     return seasons
+
+
+def _classGrade(seasons, season_rating):
+    """The highest eligibility among the header season's academic year:
+    the XC season stored in year Y and the track season labelled Y + 1."""
+    import re as _re
+    year = season_rating.get("year")
+    if year is None:
+        return None
+    keys = [(int(year), "XC"), (int(year) + 1, "TF")]
+    best = None
+    for k in keys:
+        s = seasons.get(k) or seasons.get((str(k[0]), k[1]))
+        g = (s or {}).get("grade")
+        if not g:
+            continue
+        lab = _grade_label.gradeLabel(g, season_rating.get("pool")) or ""
+        m = _re.search(r"([1-6])$", lab)
+        if m and (best is None or int(m.group(1)) > best[0]):
+            best = (int(m.group(1)), g)
+    return best[1] if best else None
 
 
 def enrich_seasons(seasons, board_seasons=None):
