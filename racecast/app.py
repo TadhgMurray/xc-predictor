@@ -4372,6 +4372,27 @@ def card_board(sport, pool, state=None):
                       lambda cur: cards.cachedBoardCard(cur, sport.lower(), pool.lower(), st, year))
 
 
+@app.route("/card/board.png")
+def card_board_query():
+    """The rankings page's card: the board on screen, whatever its filters,
+    from the same query the page sends. A board that draws nothing (the
+    JavaScript-only teams and courses boards, an empty filter) previews
+    with the site image rather than a 404, since this is an og:image."""
+    import cards
+    from flask import redirect as _redirect
+    args = {k: v for k, v in request.args.items() if v}
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                path = cards.cachedFilteredBoardCard(cur, args)
+        if path:
+            from flask import send_file
+            return send_file(path, mimetype="image/png", max_age=3600)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"card: board query failed ({type(exc).__name__}: {exc})", flush=True)
+    return _redirect(url_for("static", filename="og-image.png"))
+
+
 @app.route("/card/meet/tf/<int:meet_id>.png")
 def card_meet_tf(meet_id):
     import cards
@@ -6398,7 +6419,9 @@ def api_predict_team():
 
 @app.route("/rankings")
 def rankings_page():
-    return render_template("rankings.html")
+    # the preview is the board the query names (the default board when bare)
+    return render_template("rankings.html",
+                           card_query=request.query_string.decode("utf-8", "replace"))
 
 
 @app.route("/schools")

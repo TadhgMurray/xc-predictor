@@ -257,25 +257,7 @@ def renderAthleteCard(d, photo_path=None):
         x += 300 if i == 0 else 210
 
     # every rank as a pill, Nation filled gold, up to two rows
-    y = M + 388
-    x = M
-    fp = _font(True, 24)
-    rows_used = 0
-    for i, r in enumerate(d["ranks"]):
-        w = dr.textlength(r, font=fp) + 32
-        if x + w > CARD_W - M:
-            x = M
-            y += 54
-            rows_used += 1
-            if rows_used >= 2:
-                break
-        if i == 0:
-            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, fill=GOLD)
-            dr.text((x + 16, y + 9), r, font=fp, fill=DARK)
-        else:
-            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=DARK_LINE, width=2, fill=DARK_PILL)
-            dr.text((x + 16, y + 9), r, font=fp, fill="#f2f2ee")
-        x += w + 12
+    _pills(dr, M, M + 388, d["ranks"], CARD_W - 2 * M, 2)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
@@ -314,6 +296,31 @@ def _clock(seconds):
         return f"{int(s // 3600)}:{int(s % 3600 // 60):02d}:{s % 60:05.2f}"
     m = int(s // 60)
     return f"{m}:{s - 60 * m:05.2f}" if s < 600 else f"{m}:{int(round(s - 60 * m)):02d}"
+
+
+def _pills(dr, x0, y, items, width, max_rows, h=44):
+    """Rank pills, the first filled gold, the rest outlined, wrapping to
+    at most max_rows rows within width. One shape for the athlete and
+    school cards. Returns the y under the last row."""
+    fp = _font(True, 24 if h >= 44 else 22)
+    pad, gap, step = (16, 12, h + 10)
+    x, rows_used = x0, 0
+    for i, text in enumerate(items):
+        w = dr.textlength(text, font=fp) + 2 * pad
+        if x + w > x0 + width and x > x0:
+            x = x0
+            y += step
+            rows_used += 1
+            if rows_used >= max_rows:
+                break
+        if i == 0:
+            dr.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, fill=GOLD)
+            dr.text((x + pad, y + (h - fp.size) // 2 - 2), text, font=fp, fill=DARK)
+        else:
+            dr.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, outline=DARK_LINE, width=2, fill=DARK_PILL)
+            dr.text((x + pad, y + (h - fp.size) // 2 - 2), text, font=fp, fill="#f2f2ee")
+        x += w + gap
+    return y + h
 
 
 def _frame(title, sub, dr, img):
@@ -568,36 +575,14 @@ def renderSchoolCard(d):
     dr.text((M, y + 26), big, font=_font(True, 96), fill=GOLD)
     dr.text((M, y + 150), f"mean of the top five · {d['athletes']} rated", font=_font(False, 22), fill=DARK_MUTED)
     # the team's ranks as pills, the athlete card's shape, under the number
-    py_, px_ = y + 196, M
-    fp = _font(True, 22)
-    rows_used = 0
-    for i, (lab, rk) in enumerate(d.get("ranks") or []):
-        text = f"{lab} #{rk:,}"
-        w = dr.textlength(text, font=fp) + 28
-        if px_ + w > 440:
-            px_ = M
-            py_ += 48
-            rows_used += 1
-            if rows_used >= 4:
-                break
-        if i == 0:
-            dr.rounded_rectangle((px_, py_, px_ + w, py_ + 40), radius=20, fill=GOLD)
-            dr.text((px_ + 14, py_ + 8), text, font=fp, fill=DARK)
-        else:
-            dr.rounded_rectangle((px_, py_, px_ + w, py_ + 40), radius=20, outline=DARK_LINE, width=2, fill=DARK_PILL)
-            dr.text((px_ + 14, py_ + 8), text, font=fp, fill="#f2f2ee")
-        px_ += w + 10
+    _pills(dr, M, y + 196, [f"{lab} #{rk:,}" for lab, rk in d.get("ranks") or []], 380, 3, h=40)
     lx = 470
-    fs, fr = _font(False, 20), _font(True, 26)
-    row_h = 50
-    for i, r in enumerate(d["top"]):
-        yy = y + i * row_h - 4
-        dr.text((lx, yy), f"{i + 1}", font=_font(True, 22), fill=DARK_MUTED)
-        f, name = _fit(dr, r["name"], True, 26, 360, 18)
-        dr.text((lx + 36, yy), name, font=f, fill="#ffffff")
-        dr.text((lx + 420, yy + 4), r["grade"], font=fs, fill=DARK_MUTED)
-        rt = f"{r['rating']:.1f}"
-        dr.text((CARD_W - M - dr.textlength(rt, font=fr), yy), rt, font=fr, fill=GOLD if i < 5 else "#f2f2ee")
+    cols = [{"key": "name", "x": lx + 52, "bold": True, "w": 360},
+            {"key": "grade", "x": lx + 430, "dsize": -6, "fill": DARK_MUTED, "w": 60},
+            {"key": "rating", "x": CARD_W - M, "bold": True, "align": "r", "w": 120,
+             "fill": lambda i: GOLD if i < 5 else "#f2f2ee"}]
+    rows = [{"name": r["name"], "grade": r.get("grade") or "", "rating": f"{r['rating']:.1f}"} for r in d["top"]]
+    _tableAt(dr, lx, y - 4, rows, cols, CARD_H - 40, max_row=50)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
@@ -726,11 +711,15 @@ def cachedMeetCard(cur, meet_id):
 # one table drawer so the rows look like the race and meet cards.
 
 def _table(dr, y, rows, cols, bottom, max_row=50, pill_w=None):
-    """Rows between y and bottom: the row height and the type follow the
-    room. cols: dicts with key, x (left edge, or right edge when align is
-    'r'), bold, fill (a colour or a callable of the row index), dsize (a
-    size delta), and w for the fit width. The first column is the rank."""
-    M = 64
+    """Rows between y and bottom from the left margin: see _tableAt."""
+    return _tableAt(dr, 64, y, rows, cols, bottom, max_row, pill_w)
+
+
+def _tableAt(dr, M, y, rows, cols, bottom, max_row=50, pill_w=None):
+    """Rows between y and bottom, the rank column at M: the row height and
+    the type follow the room. cols: dicts with key, x (left edge, or right
+    edge when align is 'r'), bold, fill (a colour or a callable of the row
+    index), dsize (a size delta), and w for the fit width."""
     n = max(1, len(rows))
     row_h = max(34, min(max_row, (bottom - y) // n))
     size = max(21, min(28, row_h - 14))
@@ -738,7 +727,9 @@ def _table(dr, y, rows, cols, bottom, max_row=50, pill_w=None):
     for i, r in enumerate(rows):
         yy = y + i * row_h
         if i == 0:
-            dr.rounded_rectangle((M - 16, yy - 7, (pill_w or CARD_W - M) + 16, yy + row_h - 9),
+            # the pill runs to the right margin unless told where to stop (M
+            # here is the table's left edge, not the card margin)
+            dr.rounded_rectangle((M - 16, yy - 7, (pill_w or CARD_W - 64) + 16, yy + row_h - 9),
                                  radius=12, fill=DARK_PILL)
         _rank(dr, M, yy, i, fp)
         for c in cols:
@@ -773,7 +764,7 @@ def renderBoardCard(d):
     dr = ImageDraw.Draw(img)
     M = 64
     y = _frame(d["title"], d["sub"], dr, img)
-    _colLabel(dr, CARD_W - M, y - 30, "RATING", "r")
+    _colLabel(dr, CARD_W - M, y - 30, d.get("value_label") or "RATING", "r")
     cols = [{"key": "name", "x": M + 52, "bold": True, "w": 400},
             {"key": "school", "x": M + 480, "dsize": -4, "fill": DARK_MUTED, "w": 380},
             {"key": "grade", "x": CARD_W - M - 150, "dsize": -4, "fill": DARK_MUTED, "w": 60, "align": "r"},
@@ -783,13 +774,29 @@ def renderBoardCard(d):
 
 
 def renderMeetTfCard(d):
-    """A track meet: the best marks of the day by rating, one row each, the
-    event beside the name (there is no team score to lead with)."""
+    """A track meet: the team standings, boys left and girls right, when
+    the meet has them (owner: "maybe a tf meet card"); otherwise the best
+    marks of the day by rating, one row each, the event beside the name."""
     from PIL import Image, ImageDraw
     img = Image.new("RGB", (CARD_W, CARD_H), DARK)
     dr = ImageDraw.Draw(img)
     M = 64
     y = _frame(d["title"], d["sub"], dr, img)
+    if d.get("boys") or d.get("girls"):
+        tag = f" · {d['division'].upper()}" if d.get("division") else ""
+        half = (CARD_W - 2 * M - 60) // 2
+        y += 14
+        for i, (lab, rows) in enumerate((("BOYS", d.get("boys") or []), ("GIRLS", d.get("girls") or []))):
+            x0 = M + i * (half + 60)
+            _colLabel(dr, x0, y - 36, f"TEAM POINTS · {lab}{tag if i == 0 else ''}")
+            if not rows:
+                dr.text((x0, y + 4), "no team scores", font=_font(False, 22), fill=DARK_MUTED)
+                continue
+            cols = [{"key": "school", "x": x0 + 52, "bold": True, "w": half - 150},
+                    {"key": "points", "x": x0 + half, "bold": True, "align": "r", "w": 90,
+                     "fill": lambda j: _medal(j) if j < 3 else "#f2f2ee"}]
+            _tableAt(dr, x0, y, rows, cols, CARD_H - 40, max_row=50, pill_w=x0 + half)
+        return _png(img)
     _colLabel(dr, M, y - 22, "BEST MARKS OF THE MEET")
     _colLabel(dr, CARD_W - M, y - 22, "RATING", "r")
     y += 14
@@ -964,6 +971,11 @@ def meetTfCardData(cur, meet_id, src=None):
     if not header:
         return None
     date = get_meet_date(cur, "results_tf", meet_id, source=src)
+    try:
+        teams = meetTfTeams(cur, meet_id, src)
+    except Exception:                                 # noqa: BLE001
+        cur.connection.rollback()
+        teams = None
     cur.execute("""SELECT count(DISTINCT (div_id, event_id)) AS n FROM results_tf
                    WHERE meet_id = %(m)s AND (%(src)s::text IS NULL OR source = %(src)s)""",
                 {"m": meet_id, "src": src})
@@ -989,12 +1001,12 @@ def meetTfCardData(cur, meet_id, src=None):
                      "mark": mark, "rating": f"{float(r['speed_rating']):.1f}"})
         if len(rows) == 7:
             break
-    if not rows:
+    if not rows and not teams:
         return None
     kind = "Indoor" if header.get("is_indoor") == 1 else "Outdoor"
     sub = " · ".join(x for x in [kind, header.get("state") or "", _when(date) if date else "",
                                  f"{n_events} events" if n_events else ""] if x)
-    return {"title": header.get("meet_name") or "Track meet", "sub": sub, "rows": rows}
+    return {"title": header.get("meet_name") or "Track meet", "sub": sub, "rows": rows, **(teams or {})}
 
 
 def cachedMeetTfCard(cur, meet_id, src=None):
@@ -1124,3 +1136,107 @@ def cachedVenueCard(cur, location_id, is_indoor):
         d = venueCardData(cur, location_id, is_indoor)
         return renderVenueCard(d) if d else None
     return _cached(f"venue-tf-{int(location_id)}-{'in' if is_indoor else 'out'}.png", build)
+
+
+_POOL_KEY_SHORT = {"hs_m": "HS Boys", "hs_f": "HS Girls", "ms_m": "MS Boys", "ms_f": "MS Girls",
+                   "college_m": "College Men", "college_f": "College Women", "all": "Everyone"}
+
+
+def filteredBoardCardData(cur, args):
+    """The rankings page's own board, whatever its filters, top ten: the
+    same parseFilters and board query the page uses (owner: "card for
+    filtered rankings board")."""
+    from rankings import (parseFilters, getAbilityRankings, getPerformanceRankings,
+                          getPrRankings, UNIT_FILTERS)
+    from landing import STATE_NAMES
+    from school_identity import schoolLabelFor
+    from app import format_time
+    a = {k: v for k, v in dict(args).items() if v}
+    a["limit"], a["offset"] = "10", "0"
+    a.pop("count", None)
+    f, err = parseFilters(a)
+    if err:
+        return None
+    board = f["board"]
+    rows = {"ability": getAbilityRankings, "performance": getPerformanceRankings,
+            "pr": getPrRankings}[board](cur, f)
+    if not rows:
+        return None
+    sport = {"XC": "XC", "TF": "Track", "both": "XC & Track"}.get(f["sport"], f["sport"])
+    pool = _POOL_KEY_SHORT.get(f["pool"], f["pool"])
+    if f["pool"] == "all" and f.get("gender"):
+        pool = "Men" if f["gender"] == "m" else "Women"
+    states = f.get("state") or []
+    where = STATE_NAMES.get(states[0], states[0]) if len(states) == 1 else (", ".join(states) if states else "USA")
+    title = f"{pool} {sport} · {where}"
+    bits = []
+    years = f.get("year") or []
+    if years:
+        bits.append(f"{years[0]} season" if len(years) == 1 else ", ".join(str(y) for y in years))
+    bits.append({"ability": "season rating", "performance": "single races",
+                 "pr": "best times" if not f.get("event") else f"best {f['event']}"}[board])
+    if board == "pr" and f.get("distance"):
+        bits.append(f"{int(f['distance']):,}m")
+    for k in UNIT_FILTERS:
+        if f.get(k):
+            bits.append(", ".join(str(v) for v in f[k]))
+    if f.get("school"):
+        bits.append(", ".join(f["school"]))
+    if f.get("grade"):
+        bits.append("grade " + ", ".join(str(g) for g in f["grade"]))
+    if f.get("course"):
+        bits.append(f["course"])
+    if f.get("date_from") or f.get("date_to"):
+        bits.append(f"{f.get('date_from') or ''} to {f.get('date_to') or ''}".strip())
+    out = []
+    for r in rows[:10]:
+        if board == "pr":
+            val = (str(r.get("mark") or "-") if r.get("mark") is not None
+                   else (format_time(r["time_seconds"]) if r.get("time_seconds") is not None else "-"))
+        else:
+            v = r.get("rating") if r.get("rating") is not None else r.get("speed_rating")
+            val = f"{float(v):.1f}" if v is not None else "-"
+        out.append({"name": (r.get("name") or "Unknown").strip(),
+                    "school": schoolLabelFor(r["school"], r.get("pool") or f["pool"], r.get("state")) if r.get("school") else "",
+                    "grade": r.get("grade") or "", "rating": val})
+    return {"title": title, "sub": " · ".join(b for b in bits if b), "rows": out,
+            "value_label": "TIME / MARK" if board == "pr" else "RATING"}
+
+
+def cachedFilteredBoardCard(cur, args):
+    import hashlib
+    keep = {k: v for k, v in dict(args).items() if v and k not in ("limit", "offset", "count")}
+    key = hashlib.sha1("&".join(f"{k}={v}" for k, v in sorted(keep.items())).encode("utf-8")).hexdigest()[:20]
+    def build():
+        d = filteredBoardCardData(cur, args)
+        return renderBoardCard(d) if d else None
+    return _cached(f"board-q-{key}.png", build)
+
+
+def meetTfTeams(cur, meet_id, src=None):
+    """The team standings of a track meet's biggest division, boys and
+    girls, through tf_points the way the meet page scores it (the feed's
+    official points where it published a full set, ours otherwise)."""
+    from app import get_tf_meet_scoring_rows, stamp_tf_meet_extras, stamp_home_states
+    from tf_points import scoreMeet
+    from school_identity import schoolLabel
+    rows = get_tf_meet_scoring_rows(cur, meet_id, source=src)
+    if not rows:
+        return None
+    stamp_tf_meet_extras(cur, meet_id, rows)
+    stamp_home_states(cur, rows)
+    scored = scoreMeet(rows)
+    best = None
+    for div in scored.get("divisions") or []:
+        teams = {}
+        for g in ("M", "F"):
+            off = (div.get("official") or {}).get(g)
+            teams[g] = off if off else (div.get("teams") or {}).get(g) or []
+        n = len(teams["M"]) + len(teams["F"])
+        if n and (best is None or n > best[0]):
+            best = (n, div.get("name") or "", teams)
+    if not best:
+        return None
+    _n, name, teams = best
+    pack = lambda ts: [{"school": schoolLabel(t["school"]), "points": t.get("display") or t.get("points")} for t in ts[:7]]
+    return {"division": name if name != "All divisions" else "", "boys": pack(teams["M"]), "girls": pack(teams["F"])}

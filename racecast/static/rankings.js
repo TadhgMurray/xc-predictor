@@ -1445,19 +1445,14 @@ function renderTeamsCourse(rows) {
  * parameter the page ignores on load would make a copied URL lie about which
  * page it lands on.
  */
-/* The Share box shares the state ranking page for the board on screen
-   (landing.py): sport, pool and state are all that page has, and it is the
-   page with a card. */
-const SHARE_POOLS = { hs_m: "hs-boys", hs_f: "hs-girls", college_m: "college-men",
-                      college_f: "college-women", ms_m: "ms-boys", ms_f: "ms-girls" };
+/* The Share box shares this page with the board's own query (limit and
+   offset stripped, like the address bar): the link opens the same board and
+   previews with its card, drawn from the same query. */
 function syncShare(shown) {
   const b = document.querySelector(".share-btn");
   if (!b) return;
-  const sport = (shown.get("sport") || "XC").toLowerCase() === "tf" ? "tf" : "xc";
-  const pool = SHARE_POOLS[shown.get("pool") || "hs_m"] || "hs-boys";
-  const st = (shown.get("state") || "").trim();
-  const one = st && !st.includes(",") ? "/" + st.toLowerCase() : "";
-  b.dataset.shareUrl = location.origin + "/rankings/" + sport + "/" + pool + one;
+  const q = shown.toString();
+  b.dataset.shareUrl = location.origin + location.pathname + (q ? "?" + q : "");
 }
 
 function syncUrl(query) {

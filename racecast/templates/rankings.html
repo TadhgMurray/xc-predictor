@@ -45,6 +45,8 @@
    "Cross country and track rankings on one comparable scale. Filter by
     state, grade, year and school; sort by rating, races or date." %}
 {% set meta_crumbs = [("Rankings", none)] %}
+{% set meta_image = site_origin ~ "/card/board.png" ~ ("?" ~ card_query if card_query else "") %}
+{% set meta_image_alt = "Rankings on Racecast: the top ten of this board" %}
 {% include "_meta.html" %}
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
@@ -58,8 +60,8 @@
 
   <div class="hdr-row">
     <h1>Rankings</h1>
-    {# the link shared is the state ranking page for the board on screen; rankings.js keeps it current #}
-    {% with share_title="Rankings on Racecast", share_url=site_origin ~ "/rankings/xc/hs-boys" %}{% include "_share.html" %}{% endwith %}
+    {# the link shared is this page with the board's own query; rankings.js keeps it current #}
+    {% with share_title="Rankings on Racecast", share_url=site_origin ~ "/rankings" %}{% include "_share.html" %}{% endwith %}
   </div>
   <p class="sub" id="subtitle">
     Season ability - averaged across a season.{{ rating_i() }}
