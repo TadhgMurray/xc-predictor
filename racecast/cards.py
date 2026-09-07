@@ -130,12 +130,43 @@ def athleteCardData(cur, person_id):
     }
 
 
-def renderAthleteCard(d):
-    """The PNG bytes for one athlete's card."""
-    from PIL import Image, ImageDraw
+PHOTO = 300          # the photo slot, a rounded square on the right (owner: "space for a photo")
+
+
+def _initials(name):
+    parts = [p for p in (name or "").replace("-", " ").split() if p]
+    return "".join(p[0] for p in parts[:2]).upper() or "?"
+
+
+def renderAthleteCard(d, photo_path=None):
+    """The PNG bytes for one athlete's card. `photo_path`: a picture for
+    the slot when accounts exist (283); until then the slot carries the
+    initials, so the layout is the one the photo will land in."""
+    from PIL import Image, ImageDraw, ImageOps
     img = Image.new("RGB", (CARD_W, CARD_H), PAPER)
     dr = ImageDraw.Draw(img)
     M = 72
+    TEXT_W = CARD_W - 2 * M - PHOTO - 48      # the text column stops short of the slot
+
+    # the photo slot: top right, under the header rule
+    px, py = CARD_W - M - PHOTO, 118
+    mask = Image.new("L", (PHOTO, PHOTO), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, PHOTO - 1, PHOTO - 1), radius=28, fill=255)
+    if photo_path and os.path.exists(photo_path):
+        try:
+            ph = Image.open(photo_path).convert("RGB")
+            ph = ImageOps.fit(ph, (PHOTO, PHOTO), method=Image.LANCZOS)
+            img.paste(ph, (px, py), mask)
+        except Exception:                          # noqa: BLE001
+            photo_path = None
+    if not (photo_path and os.path.exists(photo_path)):
+        slot = Image.new("RGB", (PHOTO, PHOTO), "#e9e9e3")
+        sd = ImageDraw.Draw(slot)
+        ini = _initials(d["name"])
+        fi = _font(True, 120)
+        w = sd.textlength(ini, font=fi)
+        sd.text(((PHOTO - w) / 2, PHOTO / 2 - 78), ini, font=fi, fill="#b5b5ae")
+        img.paste(slot, (px, py), mask)
     # a thin rule under a small header line, the site's own quiet idiom
     dr.text((M, 46), "racecast.co", font=_font(True, 26), fill=MUTED)
     lab = "SPEED RATING"
@@ -143,10 +174,10 @@ def renderAthleteCard(d):
     dr.text((CARD_W - M - dr.textlength(lab, font=f), 50), lab, font=f, fill=MUTED)
     dr.line((M, 92, CARD_W - M, 92), fill=LINE, width=2)
 
-    f, name = _fit(dr, d["name"], True, 78, CARD_W - 2 * M, 40)
+    f, name = _fit(dr, d["name"], True, 78, TEXT_W, 40)
     dr.text((M, 118), name, font=f, fill=INK)
     sub = " · ".join(x for x in [d["school"], d["grade"]] + d["units"] if x)
-    f, sub = _fit(dr, sub, False, 34, CARD_W - 2 * M, 24)
+    f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
     dr.text((M, 218), sub, font=f, fill=MUTED)
 
     # the three numbers
@@ -157,10 +188,10 @@ def renderAthleteCard(d):
     x = M
     for i, (lab, val, note) in enumerate(cols):
         dr.text((x, y), lab, font=_font(False, 22), fill=MUTED)
-        big = _font(True, 112 if i == 0 else 72)
-        dr.text((x, y + 30 if i == 0 else y + 58), val, font=big, fill=INK)
-        dr.text((x, y + 160), note, font=_font(False, 24), fill=MUTED)
-        x += 420 if i == 0 else 300
+        big = _font(True, 104 if i == 0 else 64)
+        dr.text((x, y + 30 if i == 0 else y + 60), val, font=big, fill=INK)
+        dr.text((x, y + 156), note, font=_font(False, 24), fill=MUTED)
+        x += 380 if i == 0 else 230
 
     # the rank line as pills
     y = 508
@@ -168,7 +199,7 @@ def renderAthleteCard(d):
     fp = _font(True, 26)
     for r in d["ranks"]:
         w = dr.textlength(r, font=fp) + 36
-        if x + w > CARD_W - M:
+        if x + w > CARD_W - M:              # the slot ends above this row
             break
         dr.rounded_rectangle((x, y, x + w, y + 50), radius=25, outline=LINE, width=2, fill="#ffffff")
         dr.text((x + 18, y + 10), r, font=fp, fill=INK)

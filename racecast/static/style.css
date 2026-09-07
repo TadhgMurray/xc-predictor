@@ -4483,6 +4483,12 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .schools-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .schools-page .landing-states .is-on { font-weight: 700; color: #111; }
 
-/* the Share button on the athlete header (281): reads as the links beside it */
-.share-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit;
-             text-decoration: underline; cursor: pointer; }
+/* the Share button (281): a real button at the header's right, the site's
+   segmented-control idiom, level with the name */
+.hdr-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.hdr-row h1 { margin-bottom: 0; }
+.share-btn { border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #222;
+             padding: 0.35rem 0.9rem; font: inherit; font-size: 0.88rem; cursor: pointer;
+             white-space: nowrap; }
+.share-btn:hover { border-color: #888; }
+.share-btn::before { content: "\2197  "; color: #666; }

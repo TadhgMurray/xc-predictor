@@ -268,8 +268,13 @@
     </div>
 {% endmacro %}
 
-    <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a> · <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast" data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}">Share</button></p>
+    <div class="hdr-row">
+      <h1>{{ athlete.name }}</h1>
+      <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast"
+              data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
+              title="Share this page; the preview is the athlete's card">Share</button>
+    </div>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
