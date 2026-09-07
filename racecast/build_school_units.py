@@ -140,6 +140,43 @@ def crossFillAreas(rows):
     return filled
 
 
+# directoryDivisions
+# Purpose:   A COLLEGE'S DIVISION IS A FACT, NOT A VOTE (owner, 2026-09-07:
+#            "D3 rankings include people from all five; they cannot exist
+#            in more than one division"). The census infers a division
+#            from the championship meets a school attends, and a DI school
+#            at a DIII invitational, or a meet whose name says "Division
+#            III" for other reasons, put DI schools on the DIII board.
+#            college_directory (Wikipedia's NCAA and NAIA lists, 211) knows
+#            every member's division; for any name it knows, that wins,
+#            whatever the meets said. Unknown names keep the vote.
+# Arguments: rows -- the writer's row lists, mutated in place.
+# Output:    the number of rows whose division the directory set.
+_DIR_DIV = {"D1": "NCAA DI", "D2": "NCAA DII", "D3": "NCAA DIII", "NAIA": "NAIA"}
+
+
+def directoryDivisions(cur, rows):
+    cur.execute("SELECT to_regclass('public.college_directory')")
+    if cur.fetchone()[0] is None:
+        return 0
+    try:
+        from build_college_directory import normName
+    except ImportError:
+        return 0
+    cur.execute("SELECT name_norm, division FROM college_directory")
+    known = {r[0]: _DIR_DIV.get(r[1], r[1]) for r in cur.fetchall() if r[1]}
+    i_div = 3 + _COLS.index("division")
+    i_college = 3 + len(_COLS)
+    n = 0
+    for row in rows:
+        d = known.get(normName(row[0]))
+        if d and row[i_div] != d:
+            row[i_div] = d
+            row[i_college] = True
+            n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -167,6 +204,9 @@ def main():
         n_area = crossFillAreas(rows)
         if n_area:
             print(f"  areas copied across sports: {n_area:,} rows")
+        n_dir = directoryDivisions(cur, rows)
+        if n_dir:
+            print(f"  divisions from the college directory: {n_dir:,} rows")
         if args.dry_run:
             print("  DRY RUN -- nothing written.")
             return

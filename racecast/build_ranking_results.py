@@ -2184,7 +2184,16 @@ SELECT base.person_id, base.pool, base.sport, base.year,
                                   ('unat', 'independent', 'individual',
                                    'no team', 'none', 'n/a', '')),
                 mode() WITHIN GROUP (ORDER BY school)),
-       mode() WITHIN GROUP (ORDER BY grade)
+       -- ★ A COLLEGE SEASON'S GRADE IS ITS ELIGIBILITY (owner, 2026-09-07,
+       --   Joey Sullivan: "wrong eligibility"). Two feeds grade a college
+       --   athlete: tfrrs with the eligibility year ("JR-3"), athletic.net
+       --   with a class word that runs a year off it, and the majority of
+       --   rows was the wrong feed's. The eligibility spelling wins when
+       --   any row carries it; otherwise the plain majority.
+       COALESCE(mode() WITHIN GROUP (ORDER BY grade)
+                    FILTER (WHERE base.pool LIKE 'college%%'
+                              AND grade ~* '^(FR|SO|JR|SR)-?[1-6]$'),
+                mode() WITHIN GROUP (ORDER BY grade))
 FROM {{load_table}} base
 JOIN season_med sm ON sm.person_id = base.person_id AND sm.pool = base.pool
                   AND sm.sport = base.sport AND sm.year = base.year

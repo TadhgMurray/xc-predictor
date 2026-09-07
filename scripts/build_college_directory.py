@@ -52,6 +52,22 @@ STATES = {
 
 # the short names the feeds use -> the directory's normalised name
 ALIASES = {
+    # the Wisconsin system as the feeds spell it (owner, 2026-09-07, Joey
+    # Sullivan: 'UW-La Crosse' and 'Wis.-La Crosse' were unknown to the
+    # directory, so the college rules never fired for him)
+    "uw la crosse": "wisconsin la crosse", "wis la crosse": "wisconsin la crosse",
+    "uw eau claire": "wisconsin eau claire", "wis eau claire": "wisconsin eau claire",
+    "uw oshkosh": "wisconsin oshkosh", "wis oshkosh": "wisconsin oshkosh",
+    "uw stevens point": "wisconsin stevens point", "wis stevens point": "wisconsin stevens point",
+    "uw whitewater": "wisconsin whitewater", "wis whitewater": "wisconsin whitewater",
+    "uw platteville": "wisconsin platteville", "wis platteville": "wisconsin platteville",
+    "uw river falls": "wisconsin river falls", "wis river falls": "wisconsin river falls",
+    "uw stout": "wisconsin stout", "wis stout": "wisconsin stout",
+    "uw superior": "wisconsin superior", "wis superior": "wisconsin superior",
+    "uw milwaukee": "wisconsin milwaukee", "wis milwaukee": "wisconsin milwaukee",
+    "uw parkside": "wisconsin parkside", "wis parkside": "wisconsin parkside",
+    "uw green bay": "wisconsin green bay", "wis green bay": "wisconsin green bay",
+    "uw madison": "wisconsin", "wisconsin madison": "wisconsin",
     "byu": "brigham young", "ucla": "california los angeles",
     "usc": "southern california", "unc": "north carolina",
     "lsu": "louisiana state", "tcu": "texas christian", "smu": "southern methodist",
