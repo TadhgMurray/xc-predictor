@@ -152,6 +152,21 @@ def _medal(i):
     """Gold, silver and bronze for the first three rows, dim after, so the
     medals read against the rest."""
     return (GOLD, SILVER, BRONZE)[i] if i < 3 else DARK_RANK
+
+
+def _rank(dr, x, y, i, font):
+    """The rank number at (x, y): the first three sit on a gold, silver or
+    bronze disc with a dark digit, the rest are a dim digit."""
+    txt = f"{i + 1}"
+    if i < 3:
+        r = int(font.size * 0.72)
+        cx, cy = x + r, y + int(font.size * 0.62)
+        dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill=_medal(i))
+        f = _font(True, int(font.size * 0.8))
+        tw = dr.textlength(txt, font=f)
+        dr.text((cx - tw / 2, cy - f.size * 0.6), txt, font=f, fill=DARK)
+    else:
+        dr.text((x, y), txt, font=font, fill=DARK_RANK)
 BAND = 14               # the gold band across the top
 
 
@@ -403,7 +418,7 @@ def renderRaceCard(d):
         yy = y + i * row_h
         if i == 0:
             dr.rounded_rectangle((M - 16, yy - 7, CARD_W - M + 16, yy + row_h - 9), radius=12, fill=DARK_PILL)
-        dr.text((M, yy), f"{i + 1}", font=fp, fill=_medal(i))
+        _rank(dr, M, yy, i, fp)
         f, name = _fit(dr, r["name"], True, 28, 360, 20)
         dr.text((M + 52, yy), name, font=f, fill="#ffffff")
         f, school = _fit(dr, r["school"], False, 22, 330, 16)
@@ -668,7 +683,7 @@ def renderMeetCard(d):
         yy = top + i * row_h
         if i == 0:
             dr.rounded_rectangle((M - 16, yy - 5, 700, yy + row_h - 7), radius=10, fill=DARK_PILL)
-        dr.text((M, yy), f"{i + 1}", font=fp, fill=_medal(i))
+        _rank(dr, M, yy, i, fp)
         f, sch = _fit(dr, t["school"], True, size, 440, 17)
         dr.text((M + 52, yy), sch, font=f, fill="#ffffff")
         pts = f"{t['points']}" if t.get("points") is not None else "-"
