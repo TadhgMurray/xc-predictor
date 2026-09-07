@@ -371,7 +371,7 @@ def _frame(title, sub, dr, img):
 
 
 def raceCardData(cur, sport, meet_id, div_id, event_id=None):
-    """The race card's fields: the meet's name and where, and the top five
+    """The race card's fields: the meet's name and where, and the top seven
     with time and rating. None when the race has no rows."""
     from app import get_race_header, get_race_results, get_tf_race_header, get_tf_race_results
     from school_identity import schoolLabel
@@ -398,7 +398,7 @@ def raceCardData(cur, sport, meet_id, div_id, event_id=None):
         where = header.get("venue_name") or header.get("state") or ""
     sub = " · ".join(x for x in [what, header.get("division") or "", where, date] if x)
     top = []
-    for r in rows[:6]:
+    for r in rows[:7]:
         top.append({
             "name": (r.get("name") or r.get("athlete_name") or "Unknown").strip(),
             "school": schoolLabel(r.get("school")) if r.get("school") else "",
@@ -415,17 +415,21 @@ def renderRaceCard(d):
     dr = ImageDraw.Draw(img)
     M = 64
     y = _frame(d["title"], d["sub"], dr, img)
-    # the top five as rows: place, name, school, time, rating in gold
-    fp, ft = _font(True, 28), _font(True, 28)
-    row_h = 50
+    # the top seven as rows: place, name, school, time, rating in gold.
+    # The rows share the room above the footer with a title that may take
+    # two lines, so the row height and the type follow what is left.
+    n = max(1, len(d["top"]))
+    row_h = max(36, min(50, (CARD_H - 100 - y) // n))
+    size = max(22, min(28, row_h - 20))
+    fp, ft = _font(True, size), _font(True, size)
     for i, r in enumerate(d["top"]):
         yy = y + i * row_h
         if i == 0:
             dr.rounded_rectangle((M - 16, yy - 7, CARD_W - M + 16, yy + row_h - 9), radius=12, fill=DARK_PILL)
         _rank(dr, M, yy, i, fp)
-        f, name = _fit(dr, r["name"], True, 28, 360, 20)
+        f, name = _fit(dr, r["name"], True, size, 360, 20)
         dr.text((M + 52, yy), name, font=f, fill="#ffffff")
-        f, school = _fit(dr, r["school"], False, 22, 330, 16)
+        f, school = _fit(dr, r["school"], False, size - 6, 330, 16)
         dr.text((M + 430, yy + 4), school, font=f, fill=DARK_MUTED)
         tw = dr.textlength(r["time"], font=ft)
         dr.text((CARD_W - M - 150 - tw, yy), r["time"], font=ft, fill="#ffffff")
