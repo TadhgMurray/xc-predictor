@@ -155,18 +155,22 @@ def _medal(i):
 
 
 def _rank(dr, x, y, i, font):
-    """The rank number at (x, y): the first three sit on a gold, silver or
-    bronze disc with a dark digit, the rest are a dim digit."""
+    """The rank number at (x, y) in the row's font. The first three sit on
+    a gold, silver or bronze disc, the rest are a dim digit; the disc is
+    centred on where a plain digit's glyph sits so the column lines up."""
     txt = f"{i + 1}"
     if i < 3:
-        r = int(font.size * 0.72)
-        cx, cy = x + r, y + int(font.size * 0.62)
+        # the glyph box of a plain digit at this spot: the disc goes there
+        l, t, r_, b = dr.textbbox((x, y), "8", font=font)
+        cx, cy = (l + r_) / 2, (t + b) / 2
+        r = int((b - t) * 0.86)
         dr.ellipse((cx - r, cy - r, cx + r, cy + r), fill=_medal(i))
-        f = _font(True, int(font.size * 0.8))
-        tw = dr.textlength(txt, font=f)
-        dr.text((cx - tw / 2, cy - f.size * 0.6), txt, font=f, fill=DARK)
+        l, t, r_, b = dr.textbbox((0, 0), txt, font=font)
+        dr.text((cx - (l + r_) / 2, cy - (t + b) / 2), txt, font=font, fill=DARK)
     else:
         dr.text((x, y), txt, font=font, fill=DARK_RANK)
+
+
 BAND = 14               # the gold band across the top
 
 
