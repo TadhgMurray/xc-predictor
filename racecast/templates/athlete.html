@@ -268,15 +268,19 @@
     </div>
 {% endmacro %}
 
-    <h1>{{ athlete.name }}</h1>
-    <p class="meta hdr-meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>
-      {# Share (281), the iOS idiom: the square-with-arrow icon alone, at the
-         line's right, no border; the card is the link's preview #}
-      <button type="button" class="share-icon share-btn" data-share-title="{{ athlete.name }} on Racecast"
+    {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
+       at the right end of the name row, the one place a header action lives
+       on every profile page people know #}
+    <div class="hdr-row">
+      <h1>{{ athlete.name }}</h1>
+      <button type="button" class="share-box share-btn" data-share-title="{{ athlete.name }} on Racecast"
               data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
-              title="Share" aria-label="Share this page">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></svg>
-      </button></p>
+              title="Share this page; the preview is the athlete's card">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+        <span>Share</span>
+      </button>
+    </div>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
@@ -611,7 +615,7 @@ document.querySelectorAll(".share-btn").forEach(function (b) {
   b.addEventListener("click", function () {
     var url = b.dataset.shareUrl, title = b.dataset.shareTitle;
     if (navigator.share) { navigator.share({title: title, url: url}).catch(function () {}); return; }
-    var done = function () { b.classList.add("is-done"); b.title = "Link copied"; setTimeout(function () { b.classList.remove("is-done"); b.title = "Share"; }, 1600); };
+    var done = function () { var sp = b.querySelector("span"), was = sp ? sp.textContent : ""; if (sp) sp.textContent = "Link copied"; b.classList.add("is-done"); setTimeout(function () { if (sp) sp.textContent = was; b.classList.remove("is-done"); }, 1600); };
     if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function () { window.prompt("Copy this link", url); });
     else window.prompt("Copy this link", url);
   });

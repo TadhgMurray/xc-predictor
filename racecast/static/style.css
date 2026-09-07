@@ -4483,16 +4483,18 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .schools-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .schools-page .landing-states .is-on { font-weight: 700; color: #111; }
 
-/* Share (281), the iOS idiom: the square-with-arrow icon alone at the meta
-   line's right, a quiet circle on hover; the "Link copied" state is the
-   icon's tooltip text swapped, so it takes no room */
-.hdr-meta { position: relative; padding-right: 44px; }
-.share-icon { position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-              width: 36px; height: 36px; border: 0; border-radius: 50%; background: none;
-              color: #444; display: inline-flex; align-items: center; justify-content: center;
-              cursor: pointer; padding: 0; }
-.share-icon:hover { background: #ececea; color: #111; }
-.share-icon.is-done { color: #14477d; }
+/* Share (281): a box with the curved-arrow icon and the word, at the right
+   end of the name row; on a narrow screen it wraps under the name */
+.hdr-row { display: flex; align-items: center; justify-content: space-between;
+           gap: 0.75rem 1rem; flex-wrap: wrap; }
+.hdr-row h1 { margin-bottom: 0; }
+.share-box { display: inline-flex; align-items: center; gap: 0.45rem;
+             border: 1px solid #c8c8c4; border-radius: 6px; background: #fff;
+             color: #222; padding: 0.4rem 0.85rem 0.4rem 0.7rem; font: inherit;
+             font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.share-box:hover { border-color: #111; }
+.share-box.is-done { border-color: #14477d; color: #14477d; }
+.share-box svg { flex: 0 0 auto; }
 
 /* the best race's sport beside its number (owner, 2026-09-07) */
 .bests-panel .rating-head .value-sport { font-size: 0.72rem; font-weight: 400; color: #9ca3af; margin-left: 0.3rem; vertical-align: 0.15rem; }
