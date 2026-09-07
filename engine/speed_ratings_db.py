@@ -623,7 +623,12 @@ def _eventMetersSql(alias: str) -> str:
     """Metres from an event name, in SQL: '5000m' 5000, '10,000m' 10000,
     '8k' 8000, 'Mile' 1609.34, '2 Mile' 3218.7; NULL where no number and
     no mile (hurdles and relays never reach the pack: no normalized_time)."""
-    num = f"NULLIF(regexp_replace({alias}.event_short, '[^0-9.]', '', 'g'), '')::real"
+    # ! THE FIRST NUMBER, NOT EVERY DIGIT AND DOT (run16c, 2026-09-07): an
+    #   event_short of "3000.." left "3000.." after the strip, and the cast
+    #   killed the pack. Commas go first ("10,000m"), then one number token;
+    #   (?:...) so substring returns the whole match, not the group.
+    num = (f"substring(regexp_replace({alias}.event_short, ',', '', 'g') "
+           f"from '[0-9]+(?:\\.[0-9]+)?')::real")
     return (f"CASE WHEN {alias}.event_short IS NULL THEN NULL "
             # a steeplechase or a walk is not the flat event of its metres:
             # no class (as before), rather than the 3000's offset
