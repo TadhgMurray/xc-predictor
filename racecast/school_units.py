@@ -89,6 +89,12 @@ def _label(kind, value, long, row=None):
     if kind == "division":
         return value
     if not long:
+        # a league, an area or a county is a NAME, and school_unit stores it
+        # shouting: "TRI-VALLEY #4" on the rank line beside "Tri-Valley" in
+        # the header (owner, 2026-09-07). Conferences and regions are codes
+        # as often as names (SEC, WEST) and stay as stored.
+        if kind in ("league", "area", "county") and isinstance(value, str):
+            return _pretty(value)
         return value
     if kind == "section" and value in _SHORT_TO_LONG:
         return _SHORT_TO_LONG[value]

@@ -2081,10 +2081,25 @@ def enrich_seasons(seasons, board_seasons=None):
                 sr = r.get("speed_rating")
                 r["season_outlier"] = (sr is not None
                                        and sr < med - SEASON_OUTLIER_PTS)
+        # ★ THE HS-EQUIVALENT NUMBER IS THE BOARD'S TOO (owner, 2026-09-07:
+        #   "the source of truth got f'd again": header 130.3, block 127.7
+        #   with the HS view on). The own-pool block took the board's 80th
+        #   percentile; the HS view still averaged the rows. Now it is the
+        #   board number times the season's median per-row factor, the same
+        #   rule the header uses (seasonFactor).
+        rating = board_seasons.get(label_key, season_rating(races))
+        rating_hs = season_rating(races, key="hs_rating")
+        if label_key in board_seasons and rating is not None:
+            ratios = sorted(float(r["hs_rating"]) / float(r["speed_rating"])
+                            for r in races
+                            if r.get("hs_rating") is not None
+                            and r.get("speed_rating") not in (None, 0))
+            if ratios:
+                rating_hs = rating * ratios[len(ratios) // 2]
         enriched[key] = {
             "races":  races,
-            "rating": board_seasons.get(label_key, season_rating(races)),
-            "rating_hs": season_rating(races, key="hs_rating"),
+            "rating": rating,
+            "rating_hs": rating_hs,
             "grade":  _season_grade(races),
             "school": _season_school(races),
             "gender": _season_gender(races),
