@@ -269,7 +269,21 @@
 {% endmacro %}
 
     <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %}</p>
+    {# ★ THE ACTION ROW (281, owner: "copy a famous share placement"): YouTube's,
+       a row of grey pills under the title line, an icon and a word each. #}
+    <div class="actions">
+      <button type="button" class="act share-btn" data-share-title="{{ athlete.name }} on Racecast"
+              data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
+              title="Share this page; the preview is the athlete's card">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 5.63 20.66 12 15 18.37V14.5h-1c-3.96 0-7.14 1-9.75 3.09 1.84-4.6 5.26-7.4 9.75-7.4h1V5.63M14 3v6C6.22 9 3.11 14.33 2 21c2.78-3.89 6.44-5.5 12-5.5V21l8-9-8-9z"/></svg>
+        <span>Share</span>
+      </button>
+      <a class="act" href="/compare?a={{ athlete.person_id }}" title="Compare head to head">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.01 14H2v2h7.01v3L13 15l-3.99-4v3zm5.98-1v-3H22V8h-7.01V5L11 9l3.99 4z"/></svg>
+        <span>Compare</span>
+      </a>
+    </div>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
@@ -325,11 +339,6 @@
         {# The floor the line is held to. Empty for open seasons, which have
            none (season_floor). #}
         {%- if athlete.rank_floor %} <span class="rl-floor">{{ athlete.rank_floor }}</span>{% endif %}
-        {# Share (281): a pill at the end of the line, since the ranks are
-           what gets shared; the card is the link's preview #}
-        <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast"
-                data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
-                title="Share this page; the preview is the athlete's card">Share</button>
         <span class="flag rank-note" tabindex="0"
               data-title="Season rankings"
               data-blurb="Where this athlete stands for their latest season: nationally, in their state, and their place on their own team's roster. National ranks carry a small unresolved state-to-state offset, so treat close national placings as approximate. Greyed scopes are coming soon."
@@ -482,7 +491,10 @@
                            from athlete_season. Without the note, a number
                            that changes when a new season starts looks like
                            drift rather than an update. #}
-                        {% if athlete.rating_note or athlete.percentile %}<span class="note">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
+                        {% if athlete.rating_note %}<span class="note">{{ athlete.rating_note }}</span>{% endif %}
+                        {# its own line (owner's screenshot, 2026-09-07): on one line
+                           with the season it pushed the panel past its edge #}
+                        {% if athlete.percentile %}<span class="note">{{ athlete.percentile }} of {{ athlete.pool_words }}</span>{% endif %}
                     </div>
                     {% if alltime.rating %}
                     <div class="stat">

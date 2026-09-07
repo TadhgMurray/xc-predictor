@@ -349,7 +349,8 @@
   gap: 1.25rem;
 }
 
-.bests-panel .rating-head .stat { flex: 1; }
+.bests-panel .rating-head .stat { flex: 1; min-width: 0; }
+.bests-panel .rating-head .note { display: block; }
 
 .bests-panel .rating-head .value {
   font-size: 1.5rem;
