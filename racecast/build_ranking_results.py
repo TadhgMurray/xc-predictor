@@ -812,7 +812,24 @@ _UNIT_COLS = ("division", "region", "conference", "league",
               "state_div", "section_div", "district", "county", "class",
               "area", "section")
 
-_UNITS = {"loaded": False, "by_key": {}, "by_school": {}}
+_UNITS = {"loaded": False, "by_key": {}, "by_school": {}, "campus": {}}
+
+
+def _campusState(school):
+    """The college directory's state for a name it knows, else None.
+    Cached per name: normName runs regexes."""
+    if not school or not _UNITS["campus"]:
+        return None
+    hit = _UNITS.setdefault("campus_cache", {}).get(school, "")
+    if hit != "":
+        return hit
+    try:
+        from build_college_directory import normName
+        st = _UNITS["campus"].get(normName(school))
+    except Exception:                               # noqa: BLE001
+        st = None
+    _UNITS["campus_cache"][school] = st
+    return st
 
 
 def _loadUnits(conn):
@@ -849,6 +866,16 @@ def _loadUnits(conn):
                 _UNITS["by_school"][school] = vals
                 if state:
                     _UNITS["by_key"][(school, state)] = vals
+            # ★ A COLLEGE IS LOOKED UP BY ITS CAMPUS STATE (owner, 2026-09-07:
+            #   "aren't they already separated by state?"). They are, in
+            #   school_unit; a row's state is where the RACE was, so
+            #   (Tufts, CT) missed and fell back to the name, which is wrong
+            #   for every shared name (Loyola, St. Thomas, Trinity). The
+            #   directory says where the campus is.
+            cur.execute("SELECT to_regclass('public.college_directory')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("SELECT name_norm, state FROM college_directory")
+                _UNITS["campus"] = {r[0]: r[1] for r in cur.fetchall()}
     except Exception as exc:                        # noqa: BLE001
         print(f"    school_unit unreadable ({exc}) -- unit columns NULL")
         # ! THE TRANSACTION IS ABORTED BY THE FAILED STATEMENT, and every
@@ -865,7 +892,10 @@ def _unitsOf(school, state):
     """The nine unit values for a row, or nine Nones."""
     if not school:
         return (None,) * len(_UNIT_COLS)
-    got = _UNITS["by_key"].get((school, state))
+    campus = _campusState(school)
+    got = _UNITS["by_key"].get((school, campus)) if campus else None
+    if got is None:
+        got = _UNITS["by_key"].get((school, state))
     if got is None:
         got = _UNITS["by_school"].get(school)
     return got if got is not None else (None,) * len(_UNIT_COLS)
@@ -2293,11 +2323,50 @@ def _stampSeasonUnits(conn, season_table):
             if not cols:
                 return
             sets = ", ".join(f'"{c}" = u."{c}"' for c in cols)
+            collist = ", ".join(f'"{c}"' for c in cols)
             t0 = time.time()
-            # the exact (school, state) first
+            # ★ COLLEGES FIRST, BY CAMPUS STATE: a college season's state is
+            #   where it raced. The directory's state for every season
+            #   school it knows goes into a temp table and keys the lookup.
+            n0 = 0
+            cur.execute("SELECT to_regclass('public.college_directory')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("SELECT name_norm, state FROM college_directory")
+                campus = {r[0]: r[1] for r in cur.fetchall()}
+                try:
+                    from build_college_directory import normName
+                except ImportError:
+                    normName = None
+                if normName and campus:
+                    cur.execute(f"SELECT DISTINCT school FROM {season_table} WHERE school IS NOT NULL")
+                    pairs = []
+                    for (sch,) in cur.fetchall():
+                        st = campus.get(normName(sch))
+                        if st:
+                            pairs.append((sch, st))
+                    cur.execute("DROP TABLE IF EXISTS tmp_campus")
+                    cur.execute("CREATE TEMP TABLE tmp_campus (school text PRIMARY KEY, state text)")
+                    psycopg2.extras.execute_values(
+                        cur, "INSERT INTO tmp_campus (school, state) VALUES %s", pairs)
+                    cur.execute(f"""
+                        UPDATE {season_table} s SET {sets}
+                        FROM tmp_campus c
+                        JOIN (SELECT DISTINCT ON (school, state) school, state, {collist}
+                              FROM school_unit ORDER BY school, state, votes DESC) u
+                          ON u.school = c.school AND u.state = c.state
+                        WHERE s.school = c.school
+                    """)
+                    n0 = cur.rowcount
+            # then the exact (school, state) for the rest
             cur.execute(f"""
                 UPDATE {season_table} s SET {sets}
-                FROM (SELECT DISTINCT ON (school, state) school, state, {", ".join(f'"{c}"' for c in cols)}
+                FROM (SELECT DISTINCT ON (school, state) school, state, {collist}
+                      FROM school_unit ORDER BY school, state, votes DESC) u
+                WHERE u.school = s.school AND u.state = s.state
+                  AND s."{cols[0]}" IS NULL AND s.school NOT IN (SELECT school FROM tmp_campus)
+            """) if n0 else cur.execute(f"""
+                UPDATE {season_table} s SET {sets}
+                FROM (SELECT DISTINCT ON (school, state) school, state, {collist}
                       FROM school_unit ORDER BY school, state, votes DESC) u
                 WHERE u.school = s.school AND u.state = s.state
             """)
@@ -2313,8 +2382,8 @@ def _stampSeasonUnits(conn, season_table):
             """)
             n2 = cur.rowcount
             conn.commit()
-            print(f"    [{time.time() - t0:7.1f}s] season units: {n1:,} by (school, state), "
-                  f"{n2:,} by school")
+            print(f"    [{time.time() - t0:7.1f}s] season units: {n0:,} colleges by campus, "
+                  f"{n1:,} by (school, state), {n2:,} by school")
         except Exception as exc:                        # noqa: BLE001
             conn.rollback()
             print(f"    season units not stamped ({exc})")
