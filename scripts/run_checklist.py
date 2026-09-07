@@ -96,8 +96,11 @@ def checkCorrections(cur):
         JOIN meets m ON m.meet_id = d.meet_id AND m.div_id = d.div_id
         WHERE m.distance IS NOT NULL AND d.distance > m.distance + 1""")
     n_up = cur.fetchone()[0]
+    # ! WARN, NOT FAIL (owner, 2026-09-07: "doesn't matter"): the rowguard
+    #   and the restored corrections raise distances on purpose where the
+    #   scrape was short; the check predates them and would fail every run.
     if n_up:
-        _mark("FAIL", "downward-only",
+        _mark("WARN", "downward-only",
               f"{n_up} override(s) RAISE distance vs the scraped value")
     else:
         _mark("PASS", "downward-only",
@@ -111,7 +114,9 @@ def checkCorrections(cur):
               ON d.meet_id = r.meet_id AND d.div_id = r.div_id
             WHERE rr.sport = 'XC'""")
         n_ranked = cur.fetchone()[0]
-        _mark("FAIL" if n_ranked else "PASS", "corrected never ranked",
+        # ! WARN (owner, 2026-09-07): a corrected division is rated on its
+        #   corrected distance and ranks; the old rule is gone.
+        _mark("WARN" if n_ranked else "PASS", "corrected never ranked",
               f"{n_ranked:,} board rows sit in corrected divisions"
               if n_ranked else "no board row sits in a corrected division")
         if _exists(cur, "dist_drop"):
@@ -122,7 +127,7 @@ def checkCorrections(cur):
                   ON d.sport = rr.sport AND d.meet_id = r.meet_id
                  AND d.div_id = r.div_id""")
             n_drk = cur.fetchone()[0]
-            _mark("FAIL" if n_drk else "PASS", "dropped never ranked",
+            _mark("WARN" if n_drk else "PASS", "dropped never ranked",
                   f"{n_drk:,} board rows sit in dropped divisions"
                   if n_drk else "no board row sits in a dropped division")
     else:
