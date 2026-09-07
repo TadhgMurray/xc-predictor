@@ -118,7 +118,27 @@ def main():
             print("  (census only; --apply writes)")
             return
         t0 = time.time()
-        cur.execute(_DEFAULT)
+        # ⚠ THE ALTER TAKES AN ACCESS EXCLUSIVE LOCK ON results_tf, AND IT WAS
+        #   HELD UNTIL THE COMMIT AFTER _FILL AND _INSERT (run16b, 2026-09-07):
+        #   those read results_tf for many minutes, every site query on the
+        #   table queued behind the lock, and the site hung with the
+        #   restart. Now: skipped when the default is already 0 (every run
+        #   after the first), committed on its own when it is needed, and
+        #   never waited for more than five seconds.
+        cur.execute("""SELECT column_default FROM information_schema.columns
+                       WHERE table_name = 'results_tf' AND column_name = 'div_id'""")
+        _d = cur.fetchone()
+        if not (_d and str(_d[0] or "").strip() in ("0", "'0'::bigint", "'0'::integer")):
+            cur.execute("SET lock_timeout = '5s'")
+            try:
+                cur.execute(_DEFAULT)
+                conn.commit()
+                print("  default 0 set on results_tf.div_id")
+            except Exception as exc:                        # noqa: BLE001
+                conn.rollback()
+                print(f"  default not set (the table is busy: {str(exc).splitlines()[0]}); "
+                      f"the UPDATE below covers the rows, the default waits for a quiet run")
+            cur.execute("SET lock_timeout = 0")
         cur.execute(_ANY_NULL)
         if cur.fetchone():
             cur.execute(_MOVE)
