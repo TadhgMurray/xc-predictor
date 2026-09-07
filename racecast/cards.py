@@ -122,14 +122,14 @@ def athleteCardData(cur, person_id):
         "name": a.get("name") or "Unknown",
         "school": schoolLabelFor(school, pool, (season or {}).get("state")) if school else "",
         "grade": gradeLabel((season or {}).get("grade"), pool) or "",
-        "units": [u["label"] for u in units][:4],
+        "units": [u["label"] for u in units][:4],   # kept for a later use; not drawn
         "rating": (season or {}).get("mean_rating"),
         "season": (f"{label_year} {season['sport']} season" if season else ""),
         "best": agg.get("best"),
         "best_sport": best_sport,
         "races": agg.get("races") or 0,
         "seasons": agg.get("seasons") or 0,
-        "ranks": ranks[:5],
+        "ranks": ranks[:9],
     }
 
 
@@ -141,19 +141,23 @@ def _initials(name):
     return "".join(p[0] for p in parts[:2]).upper() or "?"
 
 
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo-card.png")
+
+
 def renderAthleteCard(d, photo_path=None):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
     initials, so the layout is the one the photo will land in.
 
-    Layout (owner, 2026-09-07): the photo top LEFT, the name and team
-    beside it, the three numbers under, the rank pills, and the wordmark
-    WITH its tagline bottom left."""
+    Layout (owner, 2026-09-07): the photo top left, the name and the team
+    beside it (no unit chips up here), the three numbers under, then EVERY
+    rank as a pill, wrapping (nation, state, state division, section,
+    section division, area, league, team), and the real logo with its
+    tagline beside it at the foot."""
     from PIL import Image, ImageDraw, ImageOps
     img = Image.new("RGB", (CARD_W, CARD_H), PAPER)
     dr = ImageDraw.Draw(img)
     M = 64
-    # the photo slot, top left
     px, py = M, M
     mask = Image.new("L", (PHOTO, PHOTO), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, PHOTO - 1, PHOTO - 1), radius=28, fill=255)
@@ -175,21 +179,18 @@ def renderAthleteCard(d, photo_path=None):
         sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#b5b5ae")
         img.paste(slot, (px, py), mask)
 
-    # the label top right
     lab = "SPEED RATING"
     f = _font(False, 22)
     dr.text((CARD_W - M - dr.textlength(lab, font=f), M - 4), lab, font=f, fill=MUTED)
 
-    # name and team beside the photo
     tx = M + PHOTO + 40
     TEXT_W = CARD_W - M - tx
     f, name = _fit(dr, d["name"], True, 76, TEXT_W, 40)
-    dr.text((tx, M + 40), name, font=f, fill=INK)
-    sub = " · ".join(x for x in [d["school"], d["grade"]] + d["units"] if x)
-    f, sub = _fit(dr, sub, False, 30, TEXT_W, 22)
-    dr.text((tx, M + 140), sub, font=f, fill=MUTED)
-    # the numbers, beside the photo too, under the team line
-    y = M + 196
+    dr.text((tx, M + 36), name, font=f, fill=INK)
+    sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
+    f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
+    dr.text((tx, M + 134), sub, font=f, fill=MUTED)
+    y = M + 190
     cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"]),
             ("BEST RACE", f"{d['best']:.1f}" if d["best"] is not None else "-", d["best_sport"]),
             ("RACES", f"{d['races']:,}", f"{d['seasons']} seasons")]
@@ -201,24 +202,36 @@ def renderAthleteCard(d, photo_path=None):
         dr.text((x, y + 124), note, font=_font(False, 22), fill=MUTED)
         x += 300 if i == 0 else 210
 
-    # the rank line as pills, full width, clear of the notes above
-    y = M + 376
+    # every rank as a pill, wrapping onto a second row
+    y = M + 356
     x = M
-    fp = _font(True, 26)
+    fp = _font(True, 24)
+    rows_used = 0
     for r in d["ranks"]:
-        w = dr.textlength(r, font=fp) + 36
+        w = dr.textlength(r, font=fp) + 32
         if x + w > CARD_W - M:
-            break
-        dr.rounded_rectangle((x, y, x + w, y + 50), radius=25, outline=LINE, width=2, fill="#ffffff")
-        dr.text((x + 18, y + 10), r, font=fp, fill=INK)
-        x += w + 14
+            x = M
+            y += 54
+            rows_used += 1
+            if rows_used >= 2:
+                break
+        dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=LINE, width=2, fill="#ffffff")
+        dr.text((x + 16, y + 9), r, font=fp, fill=INK)
+        x += w + 12
 
-    # the wordmark with its tagline, bottom left
-    fw = _font(True, 28)
-    dr.text((M, CARD_H - 74), "racecast.co", font=fw, fill=INK)
-    ft = _font(False, 22)
-    dr.text((M + dr.textlength("racecast.co", font=fw) + 18, CARD_H - 69),
-            "Every result on one comparable scale", font=ft, fill=MUTED)
+    # the logo, with the tagline beside it, at the foot
+    ly = CARD_H - 78
+    try:
+        logo = Image.open(LOGO).convert("RGBA")
+        lh = 40
+        lw = int(logo.width * lh / logo.height)
+        logo = logo.resize((lw, lh), Image.LANCZOS)
+        img.paste(logo, (M, ly), logo)
+        tx2 = M + lw + 20
+    except Exception:                              # noqa: BLE001
+        dr.text((M, ly + 4), "racecast.co", font=_font(True, 30), fill=INK)
+        tx2 = M + 220
+    dr.text((tx2, ly + 9), "Every result on one comparable scale", font=_font(False, 22), fill=MUTED)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
