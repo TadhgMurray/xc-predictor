@@ -65,12 +65,14 @@ def poolWords(pool):
 
 
 def percentileWords(rank, total):
-    """'top 2%' for rank 41 of 8123; None when there is no board to stand in.
-    Rounded UP so nobody is called top 0%, and never better than top 1%."""
+    """'top 0.5%' for rank 41 of 8123; None when there is no board to stand
+    in. One decimal (owner, 2026-09-07), rounded UP to the tenth so nobody
+    is called top 0.0%, and never better than top 0.1%."""
     if not rank or not total or total < 1:
         return None
-    pct = -(-100 * int(rank) // int(total))       # ceiling
-    return f"top {max(1, min(100, pct))}%"
+    tenths = -(-1000 * int(rank) // int(total))   # ceiling, in tenths of a percent
+    tenths = max(1, min(1000, tenths))
+    return f"top {tenths / 10:.1f}%"
 
 
 def clockFor(seconds):

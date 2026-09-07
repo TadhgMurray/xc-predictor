@@ -284,7 +284,9 @@
         <div>
             <span class="s-lab">Athlete rating{{ rating_i() }}</span>
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
-            {% if athlete.rating_note %}<span class="s-sub">{{ athlete.rating_note }}</span>{% endif %}
+            {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
+               season · top 1.3% of HS boys"; the 5K equivalent is off the page #}
+            {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
         </div>
         {% if alltime.rating %}
         <div>
@@ -497,13 +499,7 @@
                    header strip (owner, 2026-09-02); inside the rating stat
                    it pushed Best race out of the panel. Either half may be
                    missing; the line drops what it cannot say. #}
-                {% if athlete.equiv_time or athlete.percentile %}
-                <p class="s-equiv">
-                    {%- if athlete.equiv_time %}&asymp; {{ athlete.equiv_time }} 5K{% endif -%}
-                    {%- if athlete.equiv_time and athlete.percentile %} &middot; {% endif -%}
-                    {%- if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif -%}
-                </p>
-                {% endif %}
+
 
                 {#
                   One block per sport. Rendered only when that sport has

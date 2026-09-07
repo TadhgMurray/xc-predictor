@@ -21,7 +21,10 @@ import time
 
 CARD_W, CARD_H = 1200, 630
 CARD_TTL = 6 * 3600
-CARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "cards")
+# ! NOT UNDER static/: the site runs as a user that cannot write the repo
+#   (PermissionError on the first card, 2026-09-07). A world-writable
+#   temp location, overridable; the route serves the file itself.
+CARD_DIR = os.environ.get("XCP_CARD_DIR", "/var/tmp/racecast-cards")
 
 _FONT_DIRS = ("/usr/share/fonts/truetype/dejavu",
               "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF")
@@ -130,7 +133,7 @@ def athleteCardData(cur, person_id):
     }
 
 
-PHOTO = 300          # the photo slot, a rounded square on the right (owner: "space for a photo")
+PHOTO = 280          # the photo slot, a rounded square, top left (owner: "space for a photo")
 
 
 def _initials(name):
@@ -141,73 +144,81 @@ def _initials(name):
 def renderAthleteCard(d, photo_path=None):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
-    initials, so the layout is the one the photo will land in."""
+    initials, so the layout is the one the photo will land in.
+
+    Layout (owner, 2026-09-07): the photo top LEFT, the name and team
+    beside it, the three numbers under, the rank pills, and the wordmark
+    WITH its tagline bottom left."""
     from PIL import Image, ImageDraw, ImageOps
     img = Image.new("RGB", (CARD_W, CARD_H), PAPER)
     dr = ImageDraw.Draw(img)
-    M = 72
-    TEXT_W = CARD_W - 2 * M - PHOTO - 48      # the text column stops short of the slot
-
-    # the photo slot: top right, under the header rule
-    px, py = CARD_W - M - PHOTO, 118
+    M = 64
+    # the photo slot, top left
+    px, py = M, M
     mask = Image.new("L", (PHOTO, PHOTO), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, PHOTO - 1, PHOTO - 1), radius=28, fill=255)
+    placed = False
     if photo_path and os.path.exists(photo_path):
         try:
             ph = Image.open(photo_path).convert("RGB")
             ph = ImageOps.fit(ph, (PHOTO, PHOTO), method=Image.LANCZOS)
             img.paste(ph, (px, py), mask)
+            placed = True
         except Exception:                          # noqa: BLE001
-            photo_path = None
-    if not (photo_path and os.path.exists(photo_path)):
+            placed = False
+    if not placed:
         slot = Image.new("RGB", (PHOTO, PHOTO), "#e9e9e3")
         sd = ImageDraw.Draw(slot)
         ini = _initials(d["name"])
-        fi = _font(True, 120)
+        fi = _font(True, 110)
         w = sd.textlength(ini, font=fi)
-        sd.text(((PHOTO - w) / 2, PHOTO / 2 - 78), ini, font=fi, fill="#b5b5ae")
+        sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#b5b5ae")
         img.paste(slot, (px, py), mask)
-    # a thin rule under a small header line, the site's own quiet idiom
-    dr.text((M, 46), "racecast.co", font=_font(True, 26), fill=MUTED)
+
+    # the label top right
     lab = "SPEED RATING"
     f = _font(False, 22)
-    dr.text((CARD_W - M - dr.textlength(lab, font=f), 50), lab, font=f, fill=MUTED)
-    dr.line((M, 92, CARD_W - M, 92), fill=LINE, width=2)
+    dr.text((CARD_W - M - dr.textlength(lab, font=f), M - 4), lab, font=f, fill=MUTED)
 
-    f, name = _fit(dr, d["name"], True, 78, TEXT_W, 40)
-    dr.text((M, 118), name, font=f, fill=INK)
+    # name and team beside the photo
+    tx = M + PHOTO + 40
+    TEXT_W = CARD_W - M - tx
+    f, name = _fit(dr, d["name"], True, 76, TEXT_W, 40)
+    dr.text((tx, M + 40), name, font=f, fill=INK)
     sub = " · ".join(x for x in [d["school"], d["grade"]] + d["units"] if x)
-    f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
-    dr.text((M, 218), sub, font=f, fill=MUTED)
-
-    # the three numbers
-    y = 300
+    f, sub = _fit(dr, sub, False, 30, TEXT_W, 22)
+    dr.text((tx, M + 140), sub, font=f, fill=MUTED)
+    # the numbers, beside the photo too, under the team line
+    y = M + 196
     cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"]),
             ("BEST RACE", f"{d['best']:.1f}" if d["best"] is not None else "-", d["best_sport"]),
             ("RACES", f"{d['races']:,}", f"{d['seasons']} seasons")]
-    x = M
+    x = tx
     for i, (lab, val, note) in enumerate(cols):
-        dr.text((x, y), lab, font=_font(False, 22), fill=MUTED)
-        big = _font(True, 104 if i == 0 else 64)
-        dr.text((x, y + 30 if i == 0 else y + 60), val, font=big, fill=INK)
-        dr.text((x, y + 156), note, font=_font(False, 24), fill=MUTED)
-        x += 380 if i == 0 else 230
+        dr.text((x, y), lab, font=_font(False, 20), fill=MUTED)
+        big = _font(True, 84 if i == 0 else 56)
+        dr.text((x, y + 26 if i == 0 else y + 50), val, font=big, fill=INK)
+        dr.text((x, y + 124), note, font=_font(False, 22), fill=MUTED)
+        x += 300 if i == 0 else 210
 
-    # the rank line as pills
-    y = 508
+    # the rank line as pills, full width, clear of the notes above
+    y = M + 376
     x = M
     fp = _font(True, 26)
     for r in d["ranks"]:
         w = dr.textlength(r, font=fp) + 36
-        if x + w > CARD_W - M:              # the slot ends above this row
+        if x + w > CARD_W - M:
             break
         dr.rounded_rectangle((x, y, x + w, y + 50), radius=25, outline=LINE, width=2, fill="#ffffff")
         dr.text((x + 18, y + 10), r, font=fp, fill=INK)
         x += w + 14
 
-    tag = "Every result on one comparable scale"
-    f = _font(False, 22)
-    dr.text((CARD_W - M - dr.textlength(tag, font=f), CARD_H - 52), tag, font=f, fill=MUTED)
+    # the wordmark with its tagline, bottom left
+    fw = _font(True, 28)
+    dr.text((M, CARD_H - 74), "racecast.co", font=fw, fill=INK)
+    ft = _font(False, 22)
+    dr.text((M + dr.textlength("racecast.co", font=fw) + 18, CARD_H - 69),
+            "Every result on one comparable scale", font=ft, fill=MUTED)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()

@@ -38,9 +38,10 @@ ok(SF.floorSql(explicit=True) == "s.n_races >= %(min_races)s",
    "a typed minimum applies to every row")
 ok("p.n_races" in SF.floorSql(False, alias="p"), "alias is honoured")
 
-ok(SF.percentileWords(41, 8123) == "top 1%", "41 of 8123 rounds up to 1")
-ok(SF.percentileWords(163, 8123) == "top 3%", "163 of 8123 is 2.0..% -> 3")
-ok(SF.percentileWords(5000, 8000) == "top 63%", "past the median still reads")
+ok(SF.percentileWords(41, 8123) == "top 0.6%", "41 of 8123 is 0.50..% -> 0.6")
+ok(SF.percentileWords(163, 8123) == "top 2.1%", "163 of 8123 is 2.00..% -> 2.1")
+ok(SF.percentileWords(5000, 8000) == "top 62.5%", "past the median still reads")
+ok(SF.percentileWords(1, 100000) == "top 0.1%", "never better than a tenth")
 ok(SF.percentileWords(None, 10) is None and SF.percentileWords(3, 0) is None,
    "no rank or no board -> nothing")
 ok(SF.clockFor(947.4) == "15:47" and SF.clockFor(3605) == "1:00:05",
@@ -63,8 +64,11 @@ ok('dataset.touched' in js.split("min_races", 1)[1][:3000]
    and 'q.set("min_races", $("min_races").value || defaultMinRaces())' not in js,
    "an untouched box sends no min_races")
 tpl = read("racecast", "templates", "athlete.html")
+# the 5K-equivalent line left the page on 2026-09-07 (owner); the
+# percentile rides with the season note under the rating instead
 ok('class="flag-legend"' in tpl and 'class="rl-floor"' in tpl
-   and 's-equiv' in tpl, "athlete page carries legend, floor label, equiv line")
+   and 's-equiv' not in tpl and 'athlete.percentile }} of {{ athlete.pool_words' in tpl,
+   "athlete page carries legend, floor label, percentile beside the season")
 ab = read("racecast", "templates", "about.html")
 ok('id="glossary"' in ab and "<dt>Difficulty</dt>" in ab, "about glossary")
 css = read("racecast", "static", "style.css")
