@@ -287,6 +287,11 @@ step 04d_gender       "$PY" -u engine/person_gender.py --write
 #   pulls the rest (27,212 cell-days for 2026 on 2026-09-06). ERA5 lags real
 #   time by weeks, so the last few weeks are always missing and are picked
 #   up by a later run.
+# ⚠ THE STORE IS PCODEC-COMPRESSED (run16, 2026-09-07): every tile failed
+#   with "codec not available: 'pcodec'" and the step still exited 0, so
+#   the run went on with no 2026 weather. The venv needs the codec:
+#       /srv/wxvenv/bin/pip install pcodec
+#   and the fetcher now fails the step when every tile failed.
 if [ -x "$WXPY" ]; then
   step 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
 else

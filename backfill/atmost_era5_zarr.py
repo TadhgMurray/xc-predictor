@@ -658,6 +658,15 @@ def _runBackfill(ds, tiles, conn, debug=False):
             _printProgress(done, total, t0)
     writeWeatherRows(conn, buffer)                     # final partial batch
     conn.commit()
+    # ! A STEP THAT FETCHED NOTHING IS A FAILED STEP (run16, 2026-09-07):
+    #   every tile failed on a missing codec and the pipeline carried on,
+    #   refitting and re-normalising with no 2026 weather. Some tiles
+    #   failing is transient and resumable; all of them is a broken venv.
+    if total and failed == total:
+        print(f"  !! every tile failed ({failed}/{total}); the store's codec is "
+              f"missing from this venv? (pip install pcodec) -- step failed",
+              flush=True)
+        raise SystemExit(2)
     print(f"done: {total} tiles in {time.time() - t0:.0f}s"
           f"{f' ({failed} failed -- rerun to retry)' if failed else ''}.", flush=True)
 
