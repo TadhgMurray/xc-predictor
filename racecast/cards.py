@@ -144,20 +144,25 @@ def _initials(name):
 LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo-card.png")
 
 
-def renderAthleteCard(d, photo_path=None):
+ACCENT = "#14477d"      # the site's accent blue (athlete-charts' derived row)
+
+
+def renderAthleteCard(d, photo_path=None, look="gold"):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
-    initials, so the layout is the one the photo will land in.
+    initials. `look`: "gold" (the rating in gold, the nation pill filled
+    dark) or "blue" (an accent band down the left edge, the rating in the
+    accent), two renders for the owner to choose between (2026-09-07).
 
-    Layout (owner, 2026-09-07): the photo top left, the name and the team
-    beside it (no unit chips up here), the three numbers under, then EVERY
-    rank as a pill, wrapping (nation, state, state division, section,
-    section division, area, league, team), and the real logo with its
-    tagline beside it at the foot."""
+    Layout: the photo top left, the name and team beside it, the three
+    numbers under, every rank as a pill on up to two rows, and the
+    wordmark with its tagline under it at the TOP RIGHT."""
     from PIL import Image, ImageDraw, ImageOps
     img = Image.new("RGB", (CARD_W, CARD_H), PAPER)
     dr = ImageDraw.Draw(img)
     M = 64
+    if look == "blue":
+        dr.rectangle((0, 0, 14, CARD_H), fill=ACCENT)
     px, py = M, M
     mask = Image.new("L", (PHOTO, PHOTO), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, PHOTO - 1, PHOTO - 1), radius=28, fill=255)
@@ -179,35 +184,47 @@ def renderAthleteCard(d, photo_path=None):
         sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#b5b5ae")
         img.paste(slot, (px, py), mask)
 
-    lab = "SPEED RATING"
-    f = _font(False, 22)
-    dr.text((CARD_W - M - dr.textlength(lab, font=f), M - 4), lab, font=f, fill=MUTED)
+    # the wordmark top right, the tagline under it
+    tag = "Every result on one comparable scale"
+    ft = _font(False, 20)
+    tag_w = dr.textlength(tag, font=ft)
+    try:
+        logo = Image.open(LOGO).convert("RGBA")
+        lh = 40
+        lw = int(logo.width * lh / logo.height)
+        logo = logo.resize((lw, lh), Image.LANCZOS)
+        img.paste(logo, (CARD_W - M - lw, M - 8), logo)
+    except Exception:                              # noqa: BLE001
+        fw = _font(True, 30)
+        dr.text((CARD_W - M - dr.textlength("racecast.co", font=fw), M - 6), "racecast.co", font=fw, fill=INK)
+    dr.text((CARD_W - M - tag_w, M + 40), tag, font=ft, fill=MUTED)
 
     tx = M + PHOTO + 40
     TEXT_W = CARD_W - M - tx
-    f, name = _fit(dr, d["name"], True, 76, TEXT_W, 40)
-    dr.text((tx, M + 36), name, font=f, fill=INK)
+    f, name = _fit(dr, d["name"], True, 76, TEXT_W - 40, 40)
+    dr.text((tx, M + 76), name, font=f, fill=INK)
     sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
     f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
-    dr.text((tx, M + 134), sub, font=f, fill=MUTED)
-    y = M + 190
+    dr.text((tx, M + 172), sub, font=f, fill=MUTED)
+    y = M + 224
     cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"]),
             ("BEST RACE", f"{d['best']:.1f}" if d["best"] is not None else "-", d["best_sport"]),
             ("RACES", f"{d['races']:,}", f"{d['seasons']} seasons")]
     x = tx
     for i, (lab, val, note) in enumerate(cols):
         dr.text((x, y), lab, font=_font(False, 20), fill=MUTED)
-        big = _font(True, 84 if i == 0 else 56)
-        dr.text((x, y + 26 if i == 0 else y + 50), val, font=big, fill=INK)
-        dr.text((x, y + 124), note, font=_font(False, 22), fill=MUTED)
+        big = _font(True, 80 if i == 0 else 54)
+        colour = (GOLD if look == "gold" else ACCENT) if i == 0 else INK
+        dr.text((x, y + 24 if i == 0 else y + 48), val, font=big, fill=colour)
+        dr.text((x, y + 116), note, font=_font(False, 22), fill=MUTED)
         x += 300 if i == 0 else 210
 
-    # every rank as a pill, wrapping onto a second row
-    y = M + 356
+    # every rank as a pill; the first (Nation) filled dark
+    y = M + 388
     x = M
     fp = _font(True, 24)
     rows_used = 0
-    for r in d["ranks"]:
+    for i, r in enumerate(d["ranks"]):
         w = dr.textlength(r, font=fp) + 32
         if x + w > CARD_W - M:
             x = M
@@ -215,23 +232,14 @@ def renderAthleteCard(d, photo_path=None):
             rows_used += 1
             if rows_used >= 2:
                 break
-        dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=LINE, width=2, fill="#ffffff")
-        dr.text((x + 16, y + 9), r, font=fp, fill=INK)
+        if i == 0:
+            fill = INK if look == "gold" else ACCENT
+            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, fill=fill)
+            dr.text((x + 16, y + 9), r, font=fp, fill="#ffffff")
+        else:
+            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=LINE, width=2, fill="#ffffff")
+            dr.text((x + 16, y + 9), r, font=fp, fill=INK)
         x += w + 12
-
-    # the logo, with the tagline beside it, at the foot
-    ly = CARD_H - 78
-    try:
-        logo = Image.open(LOGO).convert("RGBA")
-        lh = 40
-        lw = int(logo.width * lh / logo.height)
-        logo = logo.resize((lw, lh), Image.LANCZOS)
-        img.paste(logo, (M, ly), logo)
-        tx2 = M + lw + 20
-    except Exception:                              # noqa: BLE001
-        dr.text((M, ly + 4), "racecast.co", font=_font(True, 30), fill=INK)
-        tx2 = M + 220
-    dr.text((tx2, ly + 9), "Every result on one comparable scale", font=_font(False, 22), fill=MUTED)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
