@@ -3367,7 +3367,10 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 
 /* The rating is what the board ranks, so it leads the row. */
 .rankings-page table.rk td.rating { font-weight: 700; font-size: 1.02rem; }
-.rankings-page table.rk tbody tr:nth-child(-n+3) td.rank {
+/* ! THE GOLD IS FOR RANKS 1-3, NOT ROWS 1-3 (owner, 2026-09-07: "on page
+     3, place 100 gets gold"). nth-child counted rows on every page; the
+     board stamps .top3 on the cell from the real rank. */
+.rankings-page table.rk td.rank.top3 {
     color: var(--gold);
     font-weight: 700;
 }

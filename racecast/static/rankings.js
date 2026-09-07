@@ -1131,7 +1131,7 @@ function onHeaderClick(key) {
 function renderAbility(rows) {
   const body = rows.map((r, i) => `
     <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
-      <td class="rank">${state.offset + i + 1}</td>
+      <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
@@ -1165,7 +1165,7 @@ function renderPerformance(rows) {
 
     return `
     <tr>
-      <td class="rank">${state.offset + i + 1}</td>
+      <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
@@ -1207,7 +1207,7 @@ function renderPr(rows) {
        table and it rendered as junk text above the whole board. */
     return `
     <tr>
-      <td class="rank">${state.offset + i + 1}</td>
+      <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
@@ -1343,7 +1343,7 @@ function renderCourses(rows) {
       : `${sense} than an average course`;
     return `
     <tr>
-      <td class="rank">${r.rank}</td>
+      <td class="rank${r.rank <= 3 ? " top3" : ""}">${r.rank}</td>
       <td class="rating ${d > 0 ? "hard" : "easy"}"
           title="${words}">${shown}
         <span class="sense">${sense}</span></td>
@@ -1383,7 +1383,7 @@ function renderTeams(rows, span) {
     ? `in the ${r.year} season` : "all-time";
   const body = rows.map((r) => `
     <tr>
-      <td class="rank"${r.board_rank
+      <td class="rank${r.rank <= 3 ? " top3" : ""}"${r.board_rank
         ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
           `on ${r.board_points} points"` : ""}>${r.rank}</td>
       <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
@@ -1409,7 +1409,7 @@ function renderTeams(rows, span) {
 function renderTeamsCourse(rows) {
   const body = rows.map((r, i) => `
     <tr>
-      <td class="rank">${state.offset + i + 1}</td>
+      <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${r.distance}m</td>

@@ -1154,10 +1154,18 @@ def athlete(person_id):
             try:
                 cur.execute("""
                     SELECT mean_rating, sport, pool, year, n_races,
-                           state, school
+                           state, school, grade
                     FROM   athlete_season
                     WHERE  person_id = %s
-                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                    -- ★ THE LATEST SEASON WITH ENOUGH RACES, ANY SPORT (owner,
+                    --   2026-09-07, Seth Clevenger: "take the last season, no
+                    --   matter the sport, as long as he runs enough"). A
+                    --   one-race season on top would head the page with a
+                    --   team and a grade one race attests; three races is
+                    --   the boards' own floor. With no season that deep, the
+                    --   latest season stands.
+                    ORDER  BY (n_races >= 3) DESC,
+                              last_race DESC NULLS LAST, year DESC,
                               n_races DESC
                     LIMIT  1
                 """, (person_id,))
@@ -1393,7 +1401,14 @@ def athlete(person_id):
     _attach_season_verdicts(seasons, verdicts)
     ordered = sorted(seasons.items(), reverse=True)
 
-    athlete["grade"]  = _season_grade(races)
+    # ★ THE HEADER GRADE IS THE HEADER SEASON'S (owner, 2026-09-07: "wrong
+    #   overall grade by currency"). _season_grade(races) over the whole
+    #   career answered with the first race that had a grade, which is the
+    #   oldest; the season row the header rates carries its own grade.
+    athlete["grade"]  = ((season_rating.get("grade") if season_rating else None)
+                         or _season_grade(races))
+    athlete["header_pool"] = (season_rating.get("pool") if season_rating else None)
+    athlete["header_state"] = (season_rating.get("state") if season_rating else None)
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
     #   career, so this line headed Liam Lucas "Loyola Blakefield" (31 high
     #   school rows) over his Tufts season, whatever the header row said.
