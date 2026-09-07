@@ -66,6 +66,7 @@ from datetime import date
 from itertools import islice     # lazy chunking; never materialises the source
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
@@ -1167,6 +1168,35 @@ def _takeGoLiveLock(conn):
             "now. Let it finish, or kill it, then rerun this step.")
 
 
+def _ensureRatingPool(conn, table):
+    """rating_pool on the results table, added only when missing.
+
+    ! ADD COLUMN IF NOT EXISTS STILL TAKES ACCESS EXCLUSIVE, even when the
+      column exists, and that lock queues behind every open read and puts
+      every later read behind itself (the site's SELECTs, which gunicorn
+      then kills at 60 s, leaving orphaned backends: 2026-09-07). So: look
+      first, and when the column really is missing, wait at most five
+      seconds for the lock, a few times, rather than forever."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = %s AND column_name = 'rating_pool'""", (table,))
+        if cur.fetchone():
+            conn.rollback()
+            return
+    for attempt in range(6):
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rating_pool text")
+            conn.commit()
+            return
+        except psycopg2.errors.LockNotAvailable:
+            conn.rollback()
+            print(f"[db] {table}: ADD COLUMN rating_pool waited on a lock (try {attempt + 1}/6)", flush=True)
+            time.sleep(10)
+    raise RuntimeError(f"{table}: could not add rating_pool (lock held by another session)")
+
+
 def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
     table = {"XC": "results", "TF": "results_tf"}[sport]
     with getConn() as conn:
@@ -1205,16 +1235,12 @@ def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
             # no venue, pool with no mean). Those must read NULL, not a value an
             # older engine wrote. COALESCE left 4,216 fossils behind -- rows with
             # speed_rating 7528 on a normalized_time of 20.6 seconds.
-            with conn.cursor() as cur:
-                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rating_pool text")
-            conn.commit()
+            _ensureRatingPool(conn, table)
             mergeColumn(conn, table, "speed_rating", staging,
                         extra=(("rating_pool", "pool"),),
                         key="result_id", val="val", preserve_unmatched=False)
         else:
-            with conn.cursor() as cur:
-                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS rating_pool text")
-            conn.commit()
+            _ensureRatingPool(conn, table)
             _updateFromStaging(conn, sport, table, staging)
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {staging}")

@@ -173,6 +173,16 @@ def fillSport(conn, sport, dry_run=False):
     census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0}
     samples = []
 
+    # ! COMMIT BEFORE THE WRITER RUNS. poolConstants left this connection
+    #   in a transaction holding ACCESS SHARE on results; the writer, on a
+    #   second pooled connection, opens with ALTER TABLE ... ADD COLUMN IF
+    #   NOT EXISTS, which wants ACCESS EXCLUSIVE and waited on this one
+    #   forever (run16e, 2026-09-07: the fill sat 4.5 hours doing nothing
+    #   while every site SELECT on results queued behind the ALTER, gunicorn
+    #   killed each worker at 60 s, and ninety orphaned backends filled
+    #   max_connections: the site was a 500 for hours).
+    conn.commit()
+
     def pairs():
         # Its own server-side cursor: saveResultSpeedRatings streams these
         # into COPY on a second connection while this one is still reading.
@@ -202,6 +212,9 @@ def fillSport(conn, sport, dry_run=False):
                 if len(samples) < 5:
                     samples.append((row.result_id, pool, float(nt), rating))
                 yield (row.result_id, rating, pool)
+        # the named cursor is closed: release the read transaction too, so
+        # the writer's DDL never waits on this connection
+        conn.commit()
 
     if dry_run:
         for _ in pairs():

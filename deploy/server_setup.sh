@@ -123,6 +123,13 @@ User=xcp
 #   dev server from the repo root, which is why it only fails here.
 WorkingDirectory=/srv/xc-predictor
 EnvironmentFile=/etc/xc-predictor.env
+# ! THE SITE'S DATABASE SETTINGS, NOT THE PIPELINE'S (scripts/database.py):
+#   a small pool per worker (8 workers x 6 = 48 of Postgres's 100), a
+#   lock_timeout so a page never queues behind a pipeline lock, and a
+#   statement_timeout under gunicorn's --timeout so a killed worker's query
+#   dies with it instead of living on as an orphan (2026-09-07).
+Environment=XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=6
+Environment=XCP_DB_LOCK_TIMEOUT_MS=5000 XCP_DB_STATEMENT_TIMEOUT_MS=55000
 ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 \
     --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
     -b 127.0.0.1:8000 app:app

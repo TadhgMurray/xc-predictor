@@ -31,14 +31,39 @@ import datetime
 #           requested, psycopg2 raises PoolError instead of hanging forever.
 #           Sized for 25 VM sessions + overhead. Easy to bump when scaling.
  
-MIN_CONN = 5
-MAX_CONN = 250
+# ★ SIZED PER PROCESS, FROM THE ENVIRONMENT WHERE IT MATTERS. The site runs
+#   eight gunicorn workers, each with its own pool; 8 x 250 against a
+#   Postgres max_connections of 100 is how "sorry, too many clients" happens
+#   (2026-09-07). The service unit sets XCP_DB_MAX_CONN small; the pipeline
+#   keeps the default.
+import os
+MIN_CONN = int(os.environ.get("XCP_DB_MIN_CONN") or 5)
+MAX_CONN = int(os.environ.get("XCP_DB_MAX_CONN") or 250)
 
 # We add connect_timeout to PG_CONFIG here so it applies to every connection
 # the pool opens. Without it, if Cloud SQL is slow to accept, psycopg2
 # waits forever and the session hangs silently.
 # We build a new dict so the original PG_CONFIG in config.py isn't mutated.
 _PG_CONFIG_WITH_TIMEOUT = {**PG_CONFIG, "connect_timeout": 10}
+
+# ★ THE SITE'S CONNECTIONS FAIL FAST; THE PIPELINE'S DO NOT. A page request
+#   that queues behind a pipeline lock used to wait until gunicorn killed
+#   the worker at 60 s, and the Postgres side of that request lived on as
+#   an orphan still waiting; ninety of those filled max_connections
+#   (2026-09-07). With lock_timeout a site query gives up in seconds, and
+#   with statement_timeout under gunicorn's timeout the backend dies with
+#   the worker. Both come from the environment, set only in the service
+#   unit, because a pipeline statement legitimately runs for minutes.
+#   application_name labels the site's rows in pg_stat_activity.
+_opts = []
+for _setting, _env in (("lock_timeout", "XCP_DB_LOCK_TIMEOUT_MS"),
+                       ("statement_timeout", "XCP_DB_STATEMENT_TIMEOUT_MS")):
+    _v = os.environ.get(_env)
+    if _v and _v.isdigit():
+        _opts.append(f"-c {_setting}={int(_v)}")
+if _opts:
+    _PG_CONFIG_WITH_TIMEOUT["options"] = " ".join(_opts)
+_PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "xcp"
 
 # Module-level pool — created once when database.py is first imported.
 # Every script that does `from database import ...` shares this same pool.
