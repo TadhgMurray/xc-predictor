@@ -11,6 +11,8 @@
 {% set meta_path = path %}
 {% set meta_crumbs = [("Rankings", "/rankings"), (sport_words, national_path)]
                      + ([(state_name, none)] if state else [(pool_words, none)]) %}
+{% set meta_image = site_origin ~ "/card/board/" ~ sport ~ "/" ~ pool ~ ("/" ~ state|lower if state else "") ~ ".png" %}
+{% set meta_image_alt = title ~ ": the top ten" %}
 {% include "_meta.html" %}
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
@@ -18,7 +20,10 @@
 {% include "_topbar.html" %}
 
 <main class="page-wide landing-page">
-  <h1>{{ title }}</h1>
+  <div class="hdr-row">
+    <h1>{{ title }}</h1>
+    {% with share_title=title ~ " on Racecast", share_url=site_origin ~ path %}{% include "_share.html" %}{% endwith %}
+  </div>
   <p class="meta">
     {{ pool_words }} ranked by season speed rating{% if year %}, {{ year }} season{% endif %}.
     A rating puts every result on one scale across courses, distances and weather;
@@ -63,5 +68,6 @@
     {% for code, name, href in state_links %} · <a href="{{ href }}"{% if code == state %} class="is-on"{% endif %}>{{ name }}</a>{% endfor %}
   </p>
 </main>
+<script src="{{ static_v('share.js') }}"></script>
 </body>
 </html>

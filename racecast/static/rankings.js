@@ -1445,10 +1445,26 @@ function renderTeamsCourse(rows) {
  * parameter the page ignores on load would make a copied URL lie about which
  * page it lands on.
  */
+/* The Share box shares the state ranking page for the board on screen
+   (landing.py): sport, pool and state are all that page has, and it is the
+   page with a card. */
+const SHARE_POOLS = { hs_m: "hs-boys", hs_f: "hs-girls", college_m: "college-men",
+                      college_f: "college-women", ms_m: "ms-boys", ms_f: "ms-girls" };
+function syncShare(shown) {
+  const b = document.querySelector(".share-btn");
+  if (!b) return;
+  const sport = (shown.get("sport") || "XC").toLowerCase() === "tf" ? "tf" : "xc";
+  const pool = SHARE_POOLS[shown.get("pool") || "hs_m"] || "hs-boys";
+  const st = (shown.get("state") || "").trim();
+  const one = st && !st.includes(",") ? "/" + st.toLowerCase() : "";
+  b.dataset.shareUrl = location.origin + "/rankings/" + sport + "/" + pool + one;
+}
+
 function syncUrl(query) {
   const shown = new URLSearchParams(query);
   shown.delete("limit");
   shown.delete("offset");
+  syncShare(shown);
   try {
     history.replaceState(null, "", location.pathname + "?" + shown.toString());
   } catch (err) {

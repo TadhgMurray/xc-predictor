@@ -38,6 +38,8 @@
     would run today on the same course, or check the model against the real
     result." %}
 {% set meta_crumbs = [("Predictions", none)] %}
+{% if card_query %}{% set meta_image = site_origin ~ "/card/predict.png?" ~ card_query %}
+{% set meta_image_alt = "A predicted race on Racecast: team scores and the top five" %}{% endif %}
 {% include "_meta.html" %}
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
@@ -188,5 +190,6 @@
 </div>
 
 <script src="{{ static_v('predictions.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
 </body>
 </html>

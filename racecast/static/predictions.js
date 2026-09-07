@@ -441,12 +441,41 @@ function writeState() {
   } catch (err) { /* nothing here is worth breaking the page for */ }
 }
 
+/* A shared prediction link (/predictions?meet_id=...&div_id=...&sport=...)
+   picks that meet, and its race, as if it had been chosen from the search:
+   the person it was sent to sees the same field and presses Predict. */
+async function restoreFromLink() {
+  const p = new URLSearchParams(location.search);
+  const id = (p.get("meet_id") || "").trim();
+  if (!/^\d+$/.test(id)) return false;
+  const sport = (p.get("sport") || "XC").toUpperCase() === "TF" ? "tf" : "xc";
+  const div = (p.get("div_id") || "").trim();
+  let name = "", date = null;
+  try {
+    const res = await fetch("/api/predict/races?" + new URLSearchParams({ meet_id: id, sport: sport.toUpperCase() }));
+    const data = await res.json();
+    name = data.meet_name || "";
+    date = data.date || null;
+  } catch (err) { /* the meet still opens, unnamed */ }
+  await chooseMeet({ link: div ? `/race/${sport}/${id}/${div}` : `/meet/${sport}/${id}`,
+                     label: name || `Meet ${id}`, sub: date || "" });
+  if (div) {
+    state.divs = [div];
+    state.groups = normalizeGroups(state.divs, groupsForMode(state.divs, "separate"));
+    loadRaces();
+  }
+  return true;
+}
+
 function restoreState() {
   let saved = null;
   try {
     saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
   } catch (err) { return; }
-  if (!saved || !saved.meet) return;
+  if (!saved || !saved.meet) {
+    if (/[?&]meet_id=/.test(location.search)) restoreFromLink();
+    return;
+  }
 
   state.meet = saved.meet;
   state.when = saved.when || "thisyear";
@@ -1700,13 +1729,28 @@ async function predict() {
         : body);
     }
     setStatus("", false);
-    $("output").innerHTML = parts.join("");
+    /* ★ SHARE, ABOVE A TEAM RESULT (281). The link carries the first race's
+         request: the page restores the meet from it and its preview is the
+         prediction card drawn from the same request. */
+    const share = state.who === "team" ? shareBox(buildQuery(targets[0])) : "";
+    $("output").innerHTML = share + parts.join("");
   } catch (err) {
     setStatus("Could not reach the server: " + err.message, true);
   } finally {
     state.busy = false;
     $("predict").disabled = false;
   }
+}
+
+function shareBox(q) {
+  const url = location.origin + "/predictions?" + q.toString();
+  const label = state.meet && state.meet.label ? state.meet.label : "A race";
+  return `<div class="hdr-row share-row">
+    <button type="button" class="share-box share-btn" data-share-title="${esc(label)} predicted on Racecast"
+            data-share-url="${esc(url)}" title="Share this prediction; the preview is its card">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button></div>`;
 }
 
 function setStatus(msg, isError) {

@@ -384,7 +384,7 @@ def raceCardData(cur, sport, meet_id, div_id, event_id=None):
     if not header or not rows:
         return None
     header = dict(header)
-    date = str(rows[0].get("date") or "")[:10]
+    date = _when(rows[0].get("date")) if rows[0].get("date") else ""
     if sport == "XC":
         where = header.get("course_name") or ""
         dist = header.get("distance")
@@ -439,7 +439,7 @@ def renderRaceCard(d):
     dr.text((M, CARD_H - 50), f"{d['n']} finishers", font=_font(False, 22), fill=DARK_MUTED)
     # the course difficulty, labelled (owner: "not just 'course'")
     if d.get("difficulty") is not None:
-        val = f"{float(d['difficulty']) * 100:+.1f}%"
+        val = _pct(d["difficulty"], "XC") or "-"
         lab = "COURSE DIFFICULTY"
         fv, fl = _font(True, 30), _font(False, 18)
         vw, lw = dr.textlength(val, font=fv), dr.textlength(lab, font=fl)
@@ -658,7 +658,7 @@ def meetCardData(cur, meet_id):
     if not rows:
         return None
     teams = scoreRows([dict(r) for r in rows])
-    date = str(rows[0].get("date") or "")[:10]
+    date = _when(rows[0].get("date")) if rows[0].get("date") else ""
     sub = " · ".join(x for x in [header.get("course_name") or "", date,
                                  f"{len(divs)} races" if len(divs) > 1 else ""] if x)
     winner = rows[0]
@@ -888,3 +888,239 @@ def renderVenueCard(d):
             {"key": "rating", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 120}]
     _table(dr, y, d["rows"], cols, CARD_H - 36, max_row=44)
     return _png(img)
+
+
+# ------------------------------------------------------- their data + cache
+
+def _when(s):
+    """'2023-10-21' -> 'Oct 21, 2023' (the site's date form); anything
+    else comes back as it was, cut to ten characters."""
+    from datetime import date as _date
+    s = str(s or "")[:10]
+    try:
+        d = _date.fromisoformat(s)
+    except ValueError:
+        return s
+    return f"{d.strftime('%b')} {d.day}, {d.year}"
+
+
+def _pct(difficulty, sport):
+    """The page's difficulty number ('+4.2%'), through the same view the
+    templates use, so the card never disagrees with the page."""
+    from difficulty_view import diffPct
+    s = diffPct(difficulty, sport)
+    return s.strip() if s and s.strip() != "-" else None
+
+
+_POOL_SHORT = {"hs-boys": "HS Boys", "hs-girls": "HS Girls",
+               "college-men": "College Men", "college-women": "College Women",
+               "ms-boys": "MS Boys", "ms-girls": "MS Girls"}
+
+
+def boardCardData(cur, sport, pool, state, year=None):
+    """The rankings board's top ten for one sport, pool and state, from the
+    landing page's own query so the card and the page agree."""
+    import landing as L
+    from school_identity import schoolLabelFor
+    if sport not in L.SPORTS or pool not in L.POOLS:
+        return None
+    if year is None:
+        from app import get_homepage_meta
+        try:
+            year = int(get_homepage_meta(cur).get(f"season_year_{L.SPORTS[sport]}") or "")
+        except (TypeError, ValueError):
+            year = None
+    rows, _f = L.landingRows(cur, sport, pool, state, year)
+    if not rows:
+        return None
+    pool_key, _words = L.POOLS[pool]
+    where = L.STATE_NAMES.get((state or "").upper(), "") if state else "USA"
+    sport_word = "XC" if sport == "xc" else "Track"
+    out = []
+    for r in rows[:10]:
+        out.append({"name": (r.get("name") or "Unknown").strip(),
+                    "school": schoolLabelFor(r["school"], pool_key, r.get("state")) if r.get("school") else "",
+                    "grade": r.get("grade") or "",
+                    "rating": f"{float(r['rating']):.1f}" if r.get("rating") is not None else "-"})
+    return {"title": f"{_POOL_SHORT.get(pool, pool)} {sport_word} · {where}",
+            "sub": (f"{year} season · " if year else "") + "top ten by season rating",
+            "rows": out}
+
+
+def cachedBoardCard(cur, sport, pool, state, year=None):
+    def build():
+        d = boardCardData(cur, sport, pool, state, year)
+        return renderBoardCard(d) if d else None
+    return _cached(f"board-{sport}-{pool}-{(state or 'us').lower()}-{year or 'now'}.png", build)
+
+
+def meetTfCardData(cur, meet_id, src=None):
+    """A track meet: name, indoor or outdoor, state, date, event count, and
+    the seven best marks by rating, one per athlete."""
+    from app import get_tf_meet_header, get_meet_date, format_time, _name_sql, _athlete_lateral
+    from school_identity import schoolLabel
+    from tf_points import prettyEventName
+    header = get_tf_meet_header(cur, meet_id, source=src)
+    if not header:
+        return None
+    date = get_meet_date(cur, "results_tf", meet_id, source=src)
+    cur.execute("""SELECT count(DISTINCT (div_id, event_id)) AS n FROM results_tf
+                   WHERE meet_id = %(m)s AND (%(src)s::text IS NULL OR source = %(src)s)""",
+                {"m": meet_id, "src": src})
+    n_events = (cur.fetchone() or {}).get("n") or 0
+    cur.execute(f"""SELECT r.person_id, r.school, r.event_short, r.mark, r.is_field,
+                           r.time_seconds, r.speed_rating, {_name_sql('r')} AS name
+                    FROM results_tf r
+                    {_athlete_lateral('r')}
+                    WHERE r.meet_id = %(m)s AND (%(src)s::text IS NULL OR r.source = %(src)s)
+                      AND r.speed_rating IS NOT NULL
+                    ORDER BY r.speed_rating DESC LIMIT 60""", {"m": meet_id, "src": src})
+    rows, seen = [], set()
+    for r in cur.fetchall():
+        key = r.get("person_id") or (r.get("name"), r.get("school"))
+        if key in seen:
+            continue
+        seen.add(key)
+        mark = (format_time(r["time_seconds"]) if r.get("time_seconds") is not None and not r.get("is_field")
+                else str(r.get("mark") or "-"))
+        rows.append({"name": (r.get("name") or "Unknown").strip(),
+                     "school": schoolLabel(r["school"]) if r.get("school") else "",
+                     "event": prettyEventName(r.get("event_short") or "") or "",
+                     "mark": mark, "rating": f"{float(r['speed_rating']):.1f}"})
+        if len(rows) == 7:
+            break
+    if not rows:
+        return None
+    kind = "Indoor" if header.get("is_indoor") == 1 else "Outdoor"
+    sub = " · ".join(x for x in [kind, header.get("state") or "", _when(date) if date else "",
+                                 f"{n_events} events" if n_events else ""] if x)
+    return {"title": header.get("meet_name") or "Track meet", "sub": sub, "rows": rows}
+
+
+def cachedMeetTfCard(cur, meet_id, src=None):
+    def build():
+        d = meetTfCardData(cur, meet_id, src)
+        return renderMeetTfCard(d) if d else None
+    return _cached(f"meet-tf-{int(meet_id)}-{src or 'any'}.png", build)
+
+
+def predictionCardData(cur, args):
+    """A team prediction from the same request the page sends to
+    /api/predict/team: the predicted scores and the predicted top five."""
+    from app import _target, predictMeetName
+    from predict import predictTeam
+    from school_identity import schoolLabel
+    target, err = _target(args)
+    if err or not target.get("meet_id"):
+        return None
+    remove = {s for s in (args.get("remove") or "").split(",") if s}
+    add = {s for s in (args.get("add") or "").split(",") if s}
+    out = predictTeam(cur, [], target, remove=remove, add=add)
+    if not out.get("available"):
+        return None
+    teams = [{"school": schoolLabel(t["team"]), "points": t["score"]}
+             for t in out.get("teams") or [] if t.get("score") is not None][:7]
+    runners = [dict(r, school=t["team"]) for t in out.get("teams") or [] for r in t.get("runners") or []]
+    runners.sort(key=lambda r: (r.get("place") or 10 ** 6))
+    athletes = [{"name": (r.get("name") or "Unknown").strip(), "school": schoolLabel(r["school"]),
+                 "time": _clock(r.get("seconds"))} for r in runners[:5]]
+    if not teams and not athletes:
+        return None
+    meta = predictMeetName(cur, target["meet_id"], target.get("sport") or "XC", target.get("div_id"))
+    when = target.get("date") or meta.get("date")
+    bits = ["Predicted", meta.get("division") or "",
+            target.get("course") or meta.get("course") or "", _when(when) if when else ""]
+    return {"title": meta.get("meet_name") or "Predicted race",
+            "sub": " · ".join(b for b in bits if b), "teams": teams, "athletes": athletes,
+            "note": "From season ratings and the course, before the gun"}
+
+
+def cachedPredictionCard(cur, args):
+    import hashlib
+    key = hashlib.sha1("&".join(f"{k}={v}" for k, v in sorted(args.items())).encode("utf-8")).hexdigest()[:20]
+    def build():
+        d = predictionCardData(cur, args)
+        return renderPredictionCard(d) if d else None
+    return _cached(f"predict-{key}.png", build)
+
+
+def courseCardData(cur, course_name):
+    """A course: difficulty at its usual distance, race and athlete counts,
+    and the seven best ratings ever run there, one per athlete."""
+    from app import (get_course_header, get_course_distances, get_course_cell_difficulties,
+                     get_course_rating_bests, format_time)
+    from school_identity import schoolLabel
+    header = get_course_header(cur, course_name)
+    if not header:
+        return None
+    distances = get_course_distances(cur, course_name)
+    primary = int(round(float(distances[0]["distance"]))) if distances else None
+    cells = get_course_cell_difficulties(cur, course_name)
+    diff = cells.get(int(round(primary / 100.0) * 100)) if primary else None
+    cur.execute("""SELECT count(*) AS n, mode() WITHIN GROUP (ORDER BY state) AS state
+                   FROM meets WHERE course_name = %s""", (course_name,))
+    m = cur.fetchone() or {}
+    bests = sorted(get_course_rating_bests(cur, course_name, None, limit=10),
+                   key=lambda r: -(r.get("speed_rating") or 0))
+    rows = [{"name": (r.get("name") or "Unknown").strip(),
+             "school": schoolLabel(r["school"]) if r.get("school") else "",
+             "when": str(r.get("date") or "")[:4],
+             "time": format_time(r["time_seconds"]) if r.get("time_seconds") is not None else "-",
+             "rating": f"{float(r['speed_rating']):.1f}"} for r in bests[:7]]
+    stats = [("COURSE DIFFICULTY", _pct(diff, "XC") or "-"),
+             ("RACES", f"{m.get('n') or 0:,}"),
+             ("ATHLETES", f"{header.get('n_athletes') or 0:,}")]
+    sub = " · ".join(x for x in [m.get("state") or "", f"{primary:,}m usual distance" if primary else ""] if x)
+    return {"title": course_name, "sub": sub, "stats": stats, "rows": rows}
+
+
+def cachedCourseCard(cur, course_name):
+    import hashlib
+    key = hashlib.sha1(course_name.encode("utf-8")).hexdigest()[:16]
+    def build():
+        d = courseCardData(cur, course_name)
+        return renderCourseCard(d) if d else None
+    return _cached(f"course-{key}.png", build)
+
+
+def venueCardData(cur, location_id, is_indoor):
+    """A track venue: difficulty, meet and athlete counts, the seven best
+    marks there by rating, one per athlete."""
+    from app import get_tf_venue_label, get_tf_venue_difficulty, get_tf_venue_bests, format_time
+    from school_identity import schoolLabel
+    from tf_points import prettyEventName
+    label = get_tf_venue_label(cur, location_id, is_indoor)
+    diff = get_tf_venue_difficulty(cur, location_id, is_indoor) or {}
+    bests = get_tf_venue_bests(cur, location_id, is_indoor, limit=40)
+    if not bests:
+        return None
+    cur.execute("""SELECT count(DISTINCT meet_id) AS n, mode() WITHIN GROUP (ORDER BY state) AS state
+                   FROM meets_tf WHERE location_id = %s AND COALESCE(is_indoor, 0) = %s""",
+                (location_id, 1 if is_indoor else 0))
+    m = cur.fetchone() or {}
+    rows, seen = [], set()
+    for r in bests:
+        key = r.get("person_id") or (r.get("name"), r.get("school"))
+        if key in seen:
+            continue
+        seen.add(key)
+        mark = (format_time(r["time_seconds"]) if r.get("time_seconds") is not None and not r.get("is_field")
+                else str(r.get("mark") or "-"))
+        rows.append({"name": (r.get("name") or "Unknown").strip(),
+                     "school": schoolLabel(r["school"]) if r.get("school") else "",
+                     "event": prettyEventName(r.get("event_short") or "") or "",
+                     "mark": mark, "rating": f"{float(r['speed_rating']):.1f}"})
+        if len(rows) == 7:
+            break
+    stats = [("TRACK DIFFICULTY", _pct(diff.get("difficulty"), "TF") or "-"),
+             ("MEETS", f"{m.get('n') or 0:,}"),
+             ("ATHLETES", f"{diff.get('n_athletes') or 0:,}")]
+    sub = " · ".join(x for x in [m.get("state") or "", "Indoor" if is_indoor else "Outdoor"] if x)
+    return {"title": label or f"Venue {location_id}", "sub": sub, "stats": stats, "rows": rows}
+
+
+def cachedVenueCard(cur, location_id, is_indoor):
+    def build():
+        d = venueCardData(cur, location_id, is_indoor)
+        return renderVenueCard(d) if d else None
+    return _cached(f"venue-tf-{int(location_id)}-{'in' if is_indoor else 'out'}.png", build)

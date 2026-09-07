@@ -56,7 +56,11 @@
    visibility itself. #}
 <div class="rankings-page" id="rankings" data-board="ability">
 
-  <h1>Rankings</h1>
+  <div class="hdr-row">
+    <h1>Rankings</h1>
+    {# the link shared is the state ranking page for the board on screen; rankings.js keeps it current #}
+    {% with share_title="Rankings on Racecast", share_url=site_origin ~ "/rankings/xc/hs-boys" %}{% include "_share.html" %}{% endwith %}
+  </div>
   <p class="sub" id="subtitle">
     Season ability - averaged across a season.{{ rating_i() }}
   </p>
@@ -510,6 +514,7 @@
 </div>
 
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('rankings.js') }}"></script>
 </body>
 </html>

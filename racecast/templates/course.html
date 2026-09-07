@@ -10,6 +10,8 @@
     {% set meta_description = "Course records, team records and course "
        "difficulty for " ~ course_name ~ ": how much the course gives or "
        "takes, solved from athletes who raced both here and elsewhere." %}
+    {% set meta_image = site_origin ~ "/card/course/" ~ (course_name|urlencode) ~ ".png" %}
+    {% set meta_image_alt = course_name ~ ": course difficulty and the fastest ever here" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
@@ -38,7 +40,10 @@
 {% macro hid(i) %}{{ ' class="row-hidden"'|safe if i >= 15 }}{% endmacro %}
 
 <main class="page-wide">
-    <h1>{{ course_name }}</h1>
+    <div class="hdr-row">
+      <h1>{{ course_name }}</h1>
+      {% with share_title=course_name ~ " on Racecast", share_url=site_origin ~ "/course/" ~ (course_name|urlencode) %}{% include "_share.html" %}{% endwith %}
+    </div>
     {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
        the usual distance's, and says which -- a course is a different
        course at 2 miles and at 5K, and one bare number silently
@@ -288,6 +293,7 @@
     {% else %}<p class="meta">No meets on record.</p>{% endif %}
 
 </main>
+<script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
 </body>

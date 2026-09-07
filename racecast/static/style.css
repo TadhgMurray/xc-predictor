@@ -4495,6 +4495,7 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .share-box:hover { border-color: #111; }
 .share-box.is-done { border-color: #14477d; color: #14477d; }
 .share-box svg { flex: 0 0 auto; }
+.share-row { justify-content: flex-end; margin: 0.25rem 0 0.75rem; }
 
 /* the best race's sport beside its number (owner, 2026-09-07) */
 .bests-panel .rating-head .value-sport { font-size: 0.72rem; font-weight: 400; color: #9ca3af; margin-left: 0.3rem; vertical-align: 0.15rem; }

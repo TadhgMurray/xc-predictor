@@ -4362,6 +4362,75 @@ def card_school(school_name):
                       lambda cur: cards.cachedSchoolCard(cur, school_name, state))
 
 
+@app.route("/card/board/<sport>/<pool>.png")
+@app.route("/card/board/<sport>/<pool>/<state>.png")
+def card_board(sport, pool, state=None):
+    import cards
+    year = request.args.get("year", type=int)
+    st = (state or "").upper() or None
+    return _serveCard(f"board {sport}/{pool}/{st}",
+                      lambda cur: cards.cachedBoardCard(cur, sport.lower(), pool.lower(), st, year))
+
+
+@app.route("/card/meet/tf/<int:meet_id>.png")
+def card_meet_tf(meet_id):
+    import cards
+
+    def build(cur):
+        src, _alt, _others = _tf_meet_sources(cur, meet_id, request.args)
+        return cards.cachedMeetTfCard(cur, meet_id, src)
+    return _serveCard(f"meet tf {meet_id}", build)
+
+
+@app.route("/card/predict.png")
+def card_predict():
+    """The prediction card takes the same query the page sends to
+    /api/predict/team, so the page can share what it just showed."""
+    import cards
+    args = {k: v for k, v in request.args.items() if v}
+    return _serveCard("predict", lambda cur: cards.cachedPredictionCard(cur, args))
+
+
+@app.route("/card/course/<path:course_name>.png")
+def card_course(course_name):
+    import cards
+    return _serveCard(f"course {course_name}", lambda cur: cards.cachedCourseCard(cur, course_name))
+
+
+@app.route("/card/venue/tf/<int:location_id>/<indoor>.png")
+def card_venue_tf(location_id, indoor):
+    import cards
+    return _serveCard(f"venue tf {location_id}/{indoor}",
+                      lambda cur: cards.cachedVenueCard(cur, location_id, indoor == "in"))
+
+
+def predictMeetName(cur, meet_id, sport, div_id=None):
+    """The meet's name, division, course and date for a prediction's
+    title: what the page's chosen-meet block shows, in one row."""
+    out = {}
+    if sport == "TF":
+        cur.execute("""SELECT meet_name, division FROM meets_tf
+                       WHERE meet_id = %(m)s AND (%(d)s::int IS NULL OR div_id = %(d)s)
+                       ORDER BY (div_id = %(d)s) DESC NULLS LAST LIMIT 1""",
+                    {"m": meet_id, "d": int(div_id) if str(div_id or "").isdigit() else None})
+        row = cur.fetchone() or {}
+        out = {"meet_name": row.get("meet_name"), "division": row.get("division") if div_id else None}
+        cur.execute("SELECT min(date) AS d FROM results_tf WHERE meet_id = %s", (meet_id,))
+    else:
+        cur.execute("""SELECT meet_name, division, course_name FROM meets
+                       WHERE meet_id = %(m)s AND (%(d)s::int IS NULL OR div_id = %(d)s)
+                       ORDER BY (div_id = %(d)s) DESC NULLS LAST,
+                                (course_name IS NOT NULL) DESC LIMIT 1""",
+                    {"m": meet_id, "d": int(div_id) if str(div_id or "").isdigit() else None})
+        row = cur.fetchone() or {}
+        out = {"meet_name": row.get("meet_name"), "course": row.get("course_name"),
+               "division": row.get("division") if div_id else None}
+        cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s", (meet_id,))
+    d = cur.fetchone() or {}
+    out["date"] = d.get("d")
+    return out
+
+
 @app.route("/debug/athlete/<int:person_id>")
 def debug_athlete(person_id):
     """Everything the athlete header decides from, plain text: the season
@@ -5930,7 +5999,10 @@ def api_rankings_rank():
 
 @app.route("/predictions")
 def predictions_page():
-    return render_template("predictions.html")
+    # a shared prediction link carries the request in its query; the page
+    # previews with that prediction's card and restores the meet from it
+    q = request.query_string.decode("utf-8", "replace") if request.args.get("meet_id") else ""
+    return render_template("predictions.html", card_query=q)
 
 
 @app.route("/api/predict/status")
@@ -6093,7 +6165,9 @@ def api_predict_races():
                 crow = cur.fetchone()
                 meet_course = (crow or {}).get("course_name") or None
 
-    return jsonify({"races": races, "date": meet_date, "course": meet_course})
+            meta = predictMeetName(cur, int(meet), sport)
+    return jsonify({"races": races, "date": meet_date, "course": meet_course,
+                    "meet_name": meta.get("meet_name")})
 
 
 @app.route("/api/predict/squad")
