@@ -406,10 +406,15 @@ def renderRaceCard(d):
         rt = f"{r['rating']:.1f}" if r["rating"] is not None else "-"
         rw = dr.textlength(rt, font=ft)
         dr.text((CARD_W - M - rw, yy), rt, font=ft, fill=GOLD)
-    foot = f"{d['n']} finishers"
+    dr.text((M, CARD_H - 50), f"{d['n']} finishers", font=_font(False, 22), fill=DARK_MUTED)
+    # the course difficulty, labelled (owner: "not just 'course'")
     if d.get("difficulty") is not None:
-        foot += f" · course {float(d['difficulty']) * 100:+.1f}%"
-    dr.text((M, CARD_H - 50), foot, font=_font(False, 22), fill=DARK_MUTED)
+        val = f"{float(d['difficulty']) * 100:+.1f}%"
+        lab = "COURSE DIFFICULTY"
+        fv, fl = _font(True, 30), _font(False, 18)
+        vw, lw = dr.textlength(val, font=fv), dr.textlength(lab, font=fl)
+        dr.text((CARD_W - M - lw, CARD_H - 84), lab, font=fl, fill=DARK_MUTED)
+        dr.text((CARD_W - M - vw, CARD_H - 62), val, font=fv, fill=GOLD)
     lab = "RATING"
     dr.text((CARD_W - M - dr.textlength(lab, font=_font(False, 18)), y - 30), lab, font=_font(False, 18), fill=DARK_MUTED)
     out = io.BytesIO()
@@ -443,13 +448,82 @@ def schoolCardData(cur, school, state=None):
     team = sum(five) / len(five) if len(five) == 5 else None
     label = year + 1 if sport == "TF" else year
     from grade_label import gradeLabel
-    return {"title": schoolLabel(school) if not state else f"{school} ({state})",
+    ranks = teamRanks(cur, school, state, sport, year, top[0]["pool"] if top else None)
+    return {"ranks": ranks,
+            "title": schoolLabel(school) if not state else f"{school} ({state})",
             "sub": f"{label} {'cross country' if sport == 'XC' else 'track'} · top seven by season rating",
             "team": team, "athletes": len(rows),
             "top": [{"name": (r.get("name") or "").strip() or "Unknown",
                      "grade": gradeLabel(r.get("grade"), r.get("pool")) or "",
-                     "rating": float(r["mean_rating"]), "races": r.get("n_races") or 0}
+                     "rating": float(r["mean_rating"]), "races": r.get("n_races") or 0,
+                     "pool": r.get("pool")}
                     for r in top]}
+
+
+def teamRanks(cur, school, state, sport, year, pool):
+    """[("Nation", 12), ("CA", 3), ("NCS D2", 1), ...] for the team's season:
+    nation and state from team_season's own boards, every unit of the
+    school by racing the unit's stored squads against each other
+    (team_rank.raceStored), the athlete rank line's shape for a team
+    (owner, 2026-09-07)."""
+    from team_rank import raceStored
+    from school_units import unitsFor, schoolsInUnits
+    out = []
+    if not pool:
+        return out
+    try:
+        cur.execute("SELECT to_regclass('public.team_season')")
+        if cur.fetchone()[0] is None:
+            return out
+        cur.execute("""SELECT state FROM team_season WHERE span = 'season' AND scope = 'usa'
+                       AND school = %s AND pool = %s AND sport = %s AND year = %s
+                       ORDER BY rank LIMIT 1""", (school, pool, sport, year))
+        r = cur.fetchone()
+        home = (r["state"] if isinstance(r, dict) else r[0]) if r else state
+        home = state or home
+        for scope, lab in (("usa", "Nation"), (home, home)):
+            if not scope:
+                continue
+            cur.execute("""SELECT rank FROM team_season WHERE span = 'season' AND scope = %s
+                           AND school = %s AND pool = %s AND sport = %s AND year = %s
+                           ORDER BY rank LIMIT 1""", (scope, school, pool, sport, year))
+            r = cur.fetchone()
+            if r:
+                out.append((lab, int(r["rank"] if isinstance(r, dict) else r[0])))
+        if not home:
+            return out
+        units = unitsFor(cur, school, home, sport=sport, collapse=False)
+        for u in units:
+            kind = u["kind"]
+            if kind not in ("state_div", "section", "section_div", "area", "league",
+                            "division", "conference", "region"):
+                continue
+            wanted = {kind: [u["raw"]]}
+            # a division inside its section, a state division inside its state
+            if kind == "section_div":
+                sec = next((x["raw"] for x in units if x["kind"] == "section"), None)
+                if sec:
+                    wanted["section"] = [sec]
+            hs = kind in ("state_div", "section", "section_div", "area", "league")
+            schools = schoolsInUnits(cur, wanted, [home] if hs else None)
+            if not schools or school not in schools:
+                continue
+            cur.execute("""SELECT school, state, ratings, n_athletes, rank, points
+                           FROM team_season WHERE span = 'season' AND scope = %s
+                           AND pool = %s AND sport = %s AND year = %s
+                           AND school = ANY(%s)""",
+                        (home if hs else "usa", pool, sport, year, schools))
+            rows = [dict(x) for x in cur.fetchall()]
+            raced = raceStored(rows) if rows else None
+            if not raced:
+                continue
+            mine = next((t for t in raced if t.get("school") == school), None)
+            if mine and mine.get("rank"):
+                out.append((u["label"], int(mine["rank"])))
+    except Exception as exc:                          # noqa: BLE001
+        cur.connection.rollback()
+        print(f"card: team ranks failed ({type(exc).__name__}: {exc})", flush=True)
+    return out
 
 
 def renderSchoolCard(d):
@@ -462,8 +536,27 @@ def renderSchoolCard(d):
     dr.text((M, y), "TEAM RATING", font=_font(False, 20), fill=DARK_MUTED)
     big = f"{d['team']:.1f}" if d["team"] is not None else "-"
     dr.text((M, y + 26), big, font=_font(True, 96), fill=GOLD)
-    dr.text((M, y + 150), "mean of the top five", font=_font(False, 22), fill=DARK_MUTED)
-    dr.text((M, y + 182), f"{d['athletes']} rated this season", font=_font(False, 22), fill=DARK_MUTED)
+    dr.text((M, y + 150), f"mean of the top five · {d['athletes']} rated", font=_font(False, 22), fill=DARK_MUTED)
+    # the team's ranks as pills, the athlete card's shape, under the number
+    py_, px_ = y + 196, M
+    fp = _font(True, 22)
+    rows_used = 0
+    for i, (lab, rk) in enumerate(d.get("ranks") or []):
+        text = f"{lab} #{rk:,}"
+        w = dr.textlength(text, font=fp) + 28
+        if px_ + w > 440:
+            px_ = M
+            py_ += 48
+            rows_used += 1
+            if rows_used >= 4:
+                break
+        if i == 0:
+            dr.rounded_rectangle((px_, py_, px_ + w, py_ + 40), radius=20, fill=GOLD)
+            dr.text((px_ + 14, py_ + 8), text, font=fp, fill=DARK)
+        else:
+            dr.rounded_rectangle((px_, py_, px_ + w, py_ + 40), radius=20, outline=DARK_LINE, width=2, fill=DARK_PILL)
+            dr.text((px_ + 14, py_ + 8), text, font=fp, fill="#f2f2ee")
+        px_ += w + 10
     lx = 470
     fs, fr = _font(False, 20), _font(True, 26)
     row_h = 50
@@ -515,3 +608,78 @@ def cachedSchoolCard(cur, school, state=None):
         d = schoolCardData(cur, school, state)
         return renderSchoolCard(d) if d else None
     return _cached(f"school-{key}.png", build)
+
+
+def meetCardData(cur, meet_id):
+    """The meet card: the meet's name, course and date, and the team scores
+    of its biggest division (the varsity race, in practice), top six."""
+    from app import get_meet_header, get_meet_divisions, get_race_results
+    from meet_compile import scoreRows
+    from school_identity import schoolLabel
+    header = get_meet_header(cur, meet_id)
+    if not header:
+        return None
+    divs = [dict(d) for d in get_meet_divisions(cur, meet_id)]
+    if not divs:
+        return None
+    divs.sort(key=lambda d: -(d.get("n_results") or 0))
+    div = divs[0]
+    rows = get_race_results(cur, meet_id, div["div_id"])
+    if not rows:
+        return None
+    teams = scoreRows([dict(r) for r in rows])
+    date = str(rows[0].get("date") or "")[:10]
+    sub = " · ".join(x for x in [header.get("course_name") or "", date,
+                                 f"{len(divs)} races" if len(divs) > 1 else ""] if x)
+    winner = rows[0]
+    return {"title": header.get("meet_name") or "Meet", "sub": sub,
+            "division": div.get("division") or "",
+            "teams": [{"school": schoolLabel(t["school"]) if t.get("school") else "",
+                       "points": t.get("points")} for t in teams[:6]],
+            "winner": {"name": (winner.get("name") or "Unknown").strip(),
+                       "school": schoolLabel(winner.get("school")) if winner.get("school") else "",
+                       "time": _clock(winner.get("time_seconds")),
+                       "rating": winner.get("speed_rating")}}
+
+
+def renderMeetCard(d):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    lab = f"TEAM SCORES · {d['division'].upper()}" if d["division"] else "TEAM SCORES"
+    dr.text((M, y - 26), lab, font=_font(False, 18), fill=DARK_MUTED)
+    fp, ft = _font(True, 28), _font(True, 28)
+    row_h = 48
+    for i, t in enumerate(d["teams"]):
+        yy = y + 4 + i * row_h
+        if i == 0:
+            dr.rounded_rectangle((M - 16, yy - 6, 700, yy + row_h - 10), radius=12, fill=DARK_PILL)
+        dr.text((M, yy), f"{i + 1}", font=fp, fill=GOLD if i == 0 else DARK_MUTED)
+        f, sch = _fit(dr, t["school"], True, 28, 440, 18)
+        dr.text((M + 52, yy), sch, font=f, fill="#ffffff")
+        pts = f"{t['points']}" if t.get("points") is not None else "-"
+        dr.text((680 - 16 - dr.textlength(pts, font=ft), yy), pts, font=ft, fill=GOLD if i == 0 else "#f2f2ee")
+    # the individual winner, right
+    wx = 760
+    dr.text((wx, y - 26), "WON BY", font=_font(False, 18), fill=DARK_MUTED)
+    w = d["winner"]
+    f, nm = _fit(dr, w["name"], True, 34, CARD_W - M - wx, 20)
+    dr.text((wx, y + 4), nm, font=f, fill="#ffffff")
+    f, sc = _fit(dr, w["school"], False, 22, CARD_W - M - wx, 16)
+    dr.text((wx, y + 50), sc, font=f, fill=DARK_MUTED)
+    dr.text((wx, y + 92), w["time"], font=_font(True, 40), fill="#ffffff")
+    if w.get("rating") is not None:
+        dr.text((wx, y + 146), f"{float(w['rating']):.1f}", font=_font(True, 40), fill=GOLD)
+        dr.text((wx, y + 196), "speed rating", font=_font(False, 20), fill=DARK_MUTED)
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def cachedMeetCard(cur, meet_id):
+    def build():
+        d = meetCardData(cur, meet_id)
+        return renderMeetCard(d) if d else None
+    return _cached(f"meet-xc-{int(meet_id)}.png", build)

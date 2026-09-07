@@ -4348,6 +4348,12 @@ def card_race_tf(meet_id, event_id, div_id):
                       lambda cur: cards.cachedRaceCard(cur, "TF", meet_id, div_id, event_id))
 
 
+@app.route("/card/meet/xc/<int:meet_id>.png")
+def card_meet_xc(meet_id):
+    import cards
+    return _serveCard(f"meet xc {meet_id}", lambda cur: cards.cachedMeetCard(cur, meet_id))
+
+
 @app.route("/card/school/<path:school_name>.png")
 def card_school(school_name):
     import cards
