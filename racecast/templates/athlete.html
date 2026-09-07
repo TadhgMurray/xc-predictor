@@ -268,12 +268,7 @@
     </div>
 {% endmacro %}
 
-    <div class="hdr-row">
-      <h1>{{ athlete.name }}</h1>
-      <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast"
-              data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
-              title="Share this page; the preview is the athlete's card">Share</button>
-    </div>
+    <h1>{{ athlete.name }}</h1>
     <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
@@ -330,6 +325,11 @@
         {# The floor the line is held to. Empty for open seasons, which have
            none (season_floor). #}
         {%- if athlete.rank_floor %} <span class="rl-floor">{{ athlete.rank_floor }}</span>{% endif %}
+        {# Share (281): a pill at the end of the line, since the ranks are
+           what gets shared; the card is the link's preview #}
+        <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast"
+                data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
+                title="Share this page; the preview is the athlete's card">Share</button>
         <span class="flag rank-note" tabindex="0"
               data-title="Season rankings"
               data-blurb="Where this athlete stands for their latest season: nationally, in their state, and their place on their own team's roster. National ranks carry a small unresolved state-to-state offset, so treat close national placings as approximate. Greyed scopes are coming soon."

@@ -4483,12 +4483,11 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .schools-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .schools-page .landing-states .is-on { font-weight: 700; color: #111; }
 
-/* the Share button (281): a real button at the header's right, the site's
-   segmented-control idiom, level with the name */
-.hdr-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.hdr-row h1 { margin-bottom: 0; }
-.share-btn { border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #222;
-             padding: 0.35rem 0.9rem; font: inherit; font-size: 0.88rem; cursor: pointer;
-             white-space: nowrap; }
-.share-btn:hover { border-color: #888; }
-.share-btn::before { content: "\2197  "; color: #666; }
+/* the Share button (281): a pill at the end of the rank line, in the
+   rank entries' own weight, the share arrow before the word */
+.rank-line .share-btn { display: inline-block; vertical-align: 1px; margin-left: 0.5rem;
+             border: 1px solid #ccc; border-radius: 999px; background: #fff; color: #222;
+             padding: 0.12rem 0.7rem; font: inherit; font-size: 0.8rem; font-weight: 600;
+             cursor: pointer; white-space: nowrap; line-height: 1.5; }
+.rank-line .share-btn:hover { border-color: #111; }
+.rank-line .share-btn::before { content: "\2197 "; color: #666; font-weight: 400; }

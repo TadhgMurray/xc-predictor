@@ -144,25 +144,35 @@ def _initials(name):
 LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "logo-card.png")
 
 
-ACCENT = "#14477d"      # the site's accent blue (athlete-charts' derived row)
+DARK, DARK_SLOT, DARK_MUTED, DARK_LINE, DARK_PILL = "#111111", "#2a2a2a", "#c9ced4", "#444444", "#1c1c1c"
+BAND = 14               # the gold band across the top
 
 
-def renderAthleteCard(d, photo_path=None, look="gold"):
+def _logoLight(logo):
+    """The wordmark in white, for the dark card."""
+    from PIL import Image
+    a = logo.split()[3]
+    white = Image.new("L", logo.size, 255)
+    return Image.merge("RGBA", (white, white, white, a))
+
+
+def renderAthleteCard(d, photo_path=None):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
-    initials. `look`: "gold" (the rating in gold, the nation pill filled
-    dark) or "blue" (an accent band down the left edge, the rating in the
-    accent), two renders for the owner to choose between (2026-09-07).
+    initials, so the layout is the one the photo will land in.
 
-    Layout: the photo top left, the name and team beside it, the three
-    numbers under, every rank as a pill on up to two rows, and the
-    wordmark with its tagline under it at the TOP RIGHT."""
+    The look the owner chose (2026-09-07, after nine renders): dark, a
+    gold band across the top, the photo top left, the name and team
+    beside it, the rating in gold under, the best race and race count
+    beside it, every rank as a pill on up to two rows with Nation filled
+    gold, and the white wordmark with its tagline under it top right."""
     from PIL import Image, ImageDraw, ImageOps
-    img = Image.new("RGB", (CARD_W, CARD_H), PAPER)
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
     dr = ImageDraw.Draw(img)
     M = 64
-    if look == "blue":
-        dr.rectangle((0, 0, 14, CARD_H), fill=ACCENT)
+    dr.rectangle((0, 0, CARD_W, BAND), fill=GOLD)
+
+    # the photo slot
     px, py = M, M
     mask = Image.new("L", (PHOTO, PHOTO), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, PHOTO - 1, PHOTO - 1), radius=28, fill=255)
@@ -176,50 +186,51 @@ def renderAthleteCard(d, photo_path=None, look="gold"):
         except Exception:                          # noqa: BLE001
             placed = False
     if not placed:
-        slot = Image.new("RGB", (PHOTO, PHOTO), "#e9e9e3")
+        slot = Image.new("RGB", (PHOTO, PHOTO), DARK_SLOT)
         sd = ImageDraw.Draw(slot)
         ini = _initials(d["name"])
         fi = _font(True, 110)
         w = sd.textlength(ini, font=fi)
-        sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#b5b5ae")
+        sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#6b6b66")
         img.paste(slot, (px, py), mask)
 
     # the wordmark top right, the tagline under it
     tag = "Every result on one comparable scale"
     ft = _font(False, 20)
-    tag_w = dr.textlength(tag, font=ft)
     try:
-        logo = Image.open(LOGO).convert("RGBA")
+        logo = _logoLight(Image.open(LOGO).convert("RGBA"))
         lh = 40
         lw = int(logo.width * lh / logo.height)
         logo = logo.resize((lw, lh), Image.LANCZOS)
         img.paste(logo, (CARD_W - M - lw, M - 8), logo)
     except Exception:                              # noqa: BLE001
         fw = _font(True, 30)
-        dr.text((CARD_W - M - dr.textlength("racecast.co", font=fw), M - 6), "racecast.co", font=fw, fill=INK)
-    dr.text((CARD_W - M - tag_w, M + 40), tag, font=ft, fill=MUTED)
+        dr.text((CARD_W - M - dr.textlength("racecast.co", font=fw), M - 6), "racecast.co", font=fw, fill="#ffffff")
+    dr.text((CARD_W - M - dr.textlength(tag, font=ft), M + 40), tag, font=ft, fill=DARK_MUTED)
 
+    # name and team
     tx = M + PHOTO + 40
     TEXT_W = CARD_W - M - tx
     f, name = _fit(dr, d["name"], True, 76, TEXT_W - 40, 40)
-    dr.text((tx, M + 76), name, font=f, fill=INK)
+    dr.text((tx, M + 76), name, font=f, fill="#ffffff")
     sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
     f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
-    dr.text((tx, M + 172), sub, font=f, fill=MUTED)
+    dr.text((tx, M + 172), sub, font=f, fill=DARK_MUTED)
+
+    # the three numbers, the rating in gold
     y = M + 224
     cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"]),
             ("BEST RACE", f"{d['best']:.1f}" if d["best"] is not None else "-", d["best_sport"]),
             ("RACES", f"{d['races']:,}", f"{d['seasons']} seasons")]
     x = tx
     for i, (lab, val, note) in enumerate(cols):
-        dr.text((x, y), lab, font=_font(False, 20), fill=MUTED)
+        dr.text((x, y), lab, font=_font(False, 20), fill=DARK_MUTED)
         big = _font(True, 80 if i == 0 else 54)
-        colour = (GOLD if look == "gold" else ACCENT) if i == 0 else INK
-        dr.text((x, y + 24 if i == 0 else y + 48), val, font=big, fill=colour)
-        dr.text((x, y + 116), note, font=_font(False, 22), fill=MUTED)
+        dr.text((x, y + 24 if i == 0 else y + 48), val, font=big, fill=GOLD if i == 0 else "#ffffff")
+        dr.text((x, y + 116), note, font=_font(False, 22), fill=DARK_MUTED)
         x += 300 if i == 0 else 210
 
-    # every rank as a pill; the first (Nation) filled dark
+    # every rank as a pill, Nation filled gold, up to two rows
     y = M + 388
     x = M
     fp = _font(True, 24)
@@ -233,12 +244,11 @@ def renderAthleteCard(d, photo_path=None, look="gold"):
             if rows_used >= 2:
                 break
         if i == 0:
-            fill = INK if look == "gold" else ACCENT
-            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, fill=fill)
-            dr.text((x + 16, y + 9), r, font=fp, fill="#ffffff")
+            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, fill=GOLD)
+            dr.text((x + 16, y + 9), r, font=fp, fill=DARK)
         else:
-            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=LINE, width=2, fill="#ffffff")
-            dr.text((x + 16, y + 9), r, font=fp, fill=INK)
+            dr.rounded_rectangle((x, y, x + w, y + 44), radius=22, outline=DARK_LINE, width=2, fill=DARK_PILL)
+            dr.text((x + 16, y + 9), r, font=fp, fill="#f2f2ee")
         x += w + 12
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
