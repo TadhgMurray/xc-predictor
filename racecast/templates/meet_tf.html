@@ -15,8 +15,13 @@
                       "eventStatus": "https://schema.org/EventScheduled",
                       "location": ({"@type": "Place", "name": header.course_name}
                                    if header.course_name else none)} %}
-    {% set meta_image = site_origin ~ "/card/meet/tf/" ~ header.meet_id ~ ".png" ~ ("?alt=" ~ request.args.alt if request.args.alt else "") %}
-    {% set meta_image_alt = (header.meet_name|with_year(meet_date)) ~ ": the best marks of the meet" %}
+    {# two cards: the standings (the page's own link) and the best marks
+       (the link with ?card=marks); each Share box shares the link whose
+       preview is its card #}
+    {% set alt_q = ("alt=" ~ request.args.alt) if request.args.alt else "" %}
+    {% set marks = request.args.get("card") == "marks" %}
+    {% set meta_image = site_origin ~ "/card/meet/tf/" ~ header.meet_id ~ ("/marks" if marks else "") ~ ".png" ~ ("?" ~ alt_q if alt_q else "") %}
+    {% set meta_image_alt = (header.meet_name|with_year(meet_date)) ~ (": the best marks of the meet" if marks else ": the team standings") %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
@@ -26,7 +31,10 @@
 <main class="page-wide">
     <div class="hdr-row">
       <h1>{{ header.meet_name }}</h1>
-      {% with share_title=(header.meet_name|with_year(meet_date)) ~ " on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ ("?alt=" ~ request.args.alt if request.args.alt else "") %}{% include "_share.html" %}{% endwith %}
+      <span class="share-pair">
+      {% with share_title=(header.meet_name|with_year(meet_date)) ~ " on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ ("?" ~ alt_q if alt_q else "") %}{% include "_share.html" %}{% endwith %}
+      {% with share_title=(header.meet_name|with_year(meet_date)) ~ " best marks on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ "?card=marks" ~ ("&" ~ alt_q if alt_q else ""), share_label="Share best marks" %}{% include "_share.html" %}{% endwith %}
+      </span>
     </div>
     <p class="meta">
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}

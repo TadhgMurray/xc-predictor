@@ -4409,6 +4409,10 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
   .page-layout { overflow-x: visible; }
 }
 @media (max-width: 700px) and (hover: none) {
+  /* the Share box drops under the title on a phone, where the two cannot
+     share a line (touch only: PC keeps the box beside the title) */
+  .hdr-row { flex-wrap: wrap; }
+  .hdr-row h1 { flex-basis: 100%; }
   table, .main-col table, .meet-page table, .race-page table {
     display: table; overflow-x: visible; width: auto; min-width: 100%;
   }
@@ -4486,8 +4490,10 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 /* Share (281): a box with the curved-arrow icon and the word, at the right
    end of the name row; on a narrow screen it wraps under the name */
 .hdr-row { display: flex; align-items: center; justify-content: space-between;
-           gap: 0.75rem 1rem; flex-wrap: wrap; }
-.hdr-row h1 { margin-bottom: 0; }
+           gap: 0.75rem 1rem; }
+/* the title wraps, the Share box stays on the right: a long landing-page
+   title used to push the box onto a line of its own */
+.hdr-row h1 { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
 .share-box { display: inline-flex; align-items: center; gap: 0.45rem;
              border: 1px solid #c8c8c4; border-radius: 6px; background: #fff;
              color: #222; padding: 0.4rem 0.85rem 0.4rem 0.7rem; font: inherit;
@@ -4496,6 +4502,7 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .share-box.is-done { border-color: #14477d; color: #14477d; }
 .share-box svg { flex: 0 0 auto; }
 .share-row { justify-content: flex-end; margin: 0.25rem 0 0.75rem; }
+.share-pair { display: inline-flex; gap: 0.5rem; flex-wrap: wrap; }
 
 /* the best race's sport beside its number (owner, 2026-09-07) */
 .bests-panel .rating-head .value-sport { font-size: 0.72rem; font-weight: 400; color: #9ca3af; margin-left: 0.3rem; vertical-align: 0.15rem; }

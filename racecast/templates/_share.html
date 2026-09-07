@@ -1,7 +1,7 @@
 {# The Share box (281): a box, the curved arrow, "Share". The link it shares
-   previews with the page's card. Callers set share_title and share_url. #}
+   previews with the page's card. Callers set share_title and share_url, and share_label for a second box. #}
 <button type="button" class="share-box share-btn" data-share-title="{{ share_title }}"
         data-share-url="{{ share_url }}" title="Share this page; the preview is its card">
   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-  <span>Share</span>
+  <span>{{ share_label or "Share" }}</span>
 </button>

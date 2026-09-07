@@ -961,7 +961,7 @@ def cachedBoardCard(cur, sport, pool, state, year=None):
     return _cached(f"board-{sport}-{pool}-{(state or 'us').lower()}-{year or 'now'}.png", build)
 
 
-def meetTfCardData(cur, meet_id, src=None):
+def meetTfCardData(cur, meet_id, src=None, kind="teams"):
     """A track meet: name, indoor or outdoor, state, date, event count, and
     the seven best marks by rating, one per athlete."""
     from app import get_tf_meet_header, get_meet_date, format_time, _name_sql, _athlete_lateral
@@ -971,11 +971,14 @@ def meetTfCardData(cur, meet_id, src=None):
     if not header:
         return None
     date = get_meet_date(cur, "results_tf", meet_id, source=src)
-    try:
-        teams = meetTfTeams(cur, meet_id, src)
-    except Exception:                                 # noqa: BLE001
-        cur.connection.rollback()
-        teams = None
+    # kind "teams": the standings, falling back to the marks when the meet
+    # has none; kind "marks": the best marks, always (owner: both reachable)
+    teams = None
+    if kind == "teams":
+        try:
+            teams = meetTfTeams(cur, meet_id, src)
+        except Exception:                             # noqa: BLE001
+            cur.connection.rollback()
     cur.execute("""SELECT count(DISTINCT (div_id, event_id)) AS n FROM results_tf
                    WHERE meet_id = %(m)s AND (%(src)s::text IS NULL OR source = %(src)s)""",
                 {"m": meet_id, "src": src})
@@ -1009,11 +1012,11 @@ def meetTfCardData(cur, meet_id, src=None):
     return {"title": header.get("meet_name") or "Track meet", "sub": sub, "rows": rows, **(teams or {})}
 
 
-def cachedMeetTfCard(cur, meet_id, src=None):
+def cachedMeetTfCard(cur, meet_id, src=None, kind="teams"):
     def build():
-        d = meetTfCardData(cur, meet_id, src)
+        d = meetTfCardData(cur, meet_id, src, kind)
         return renderMeetTfCard(d) if d else None
-    return _cached(f"meet-tf-{int(meet_id)}-{src or 'any'}.png", build)
+    return _cached(f"meet-tf-{int(meet_id)}-{src or 'any'}-{kind}.png", build)
 
 
 def predictionCardData(cur, args):

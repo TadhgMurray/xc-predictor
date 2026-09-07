@@ -4394,13 +4394,17 @@ def card_board_query():
 
 
 @app.route("/card/meet/tf/<int:meet_id>.png")
-def card_meet_tf(meet_id):
+@app.route("/card/meet/tf/<int:meet_id>/<kind>.png")
+def card_meet_tf(meet_id, kind="teams"):
+    """The team standings (falling back to the best marks), or at
+    /<id>/marks.png the best marks always: two cards, both reachable."""
     import cards
+    kind = "marks" if kind == "marks" else "teams"
 
     def build(cur):
         src, _alt, _others = _tf_meet_sources(cur, meet_id, request.args)
-        return cards.cachedMeetTfCard(cur, meet_id, src)
-    return _serveCard(f"meet tf {meet_id}", build)
+        return cards.cachedMeetTfCard(cur, meet_id, src, kind)
+    return _serveCard(f"meet tf {meet_id} {kind}", build)
 
 
 @app.route("/card/predict.png")
