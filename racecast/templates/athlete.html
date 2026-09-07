@@ -482,7 +482,7 @@
                            from athlete_season. Without the note, a number
                            that changes when a new season starts looks like
                            drift rather than an update. #}
-                        {% if athlete.rating_note %}<span class="note">{{ athlete.rating_note }}</span>{% endif %}
+                        {% if athlete.rating_note or athlete.percentile %}<span class="note">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
                     </div>
                     {% if alltime.rating %}
                     <div class="stat">
