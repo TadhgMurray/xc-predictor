@@ -4483,12 +4483,16 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .schools-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .schools-page .landing-states .is-on { font-weight: 700; color: #111; }
 
-/* the action row (281): YouTube's grey pills under the title line, an icon
-   and a word each; Share first, Compare beside it */
-.actions { display: flex; gap: 0.5rem; margin: 0.55rem 0 0.2rem; flex-wrap: wrap; }
-.act { display: inline-flex; align-items: center; gap: 0.45rem; height: 36px;
-       padding: 0 16px 0 12px; border-radius: 18px; border: 0; background: #f2f2f2;
-       color: #0f0f0f; font: inherit; font-size: 0.9rem; font-weight: 500;
-       text-decoration: none; cursor: pointer; white-space: nowrap; }
-.act:hover { background: #e5e5e5; text-decoration: none; }
-.act svg { flex: 0 0 auto; }
+/* Share (281), the iOS idiom: the square-with-arrow icon alone at the meta
+   line's right, a quiet circle on hover; the "Link copied" state is the
+   icon's tooltip text swapped, so it takes no room */
+.athlete-head .meta, p.meta { position: relative; }
+.share-icon { position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+              width: 36px; height: 36px; border: 0; border-radius: 50%; background: none;
+              color: #444; display: inline-flex; align-items: center; justify-content: center;
+              cursor: pointer; padding: 0; }
+.share-icon:hover { background: #ececea; color: #111; }
+.share-icon.is-done { color: #14477d; }
+
+/* the best race's sport beside its number (owner, 2026-09-07) */
+.bests-panel .rating-head .value-sport { font-size: 0.72rem; font-weight: 400; color: #9ca3af; margin-left: 0.3rem; vertical-align: 0.15rem; }

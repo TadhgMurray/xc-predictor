@@ -269,21 +269,14 @@
 {% endmacro %}
 
     <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %}</p>
-    {# ★ THE ACTION ROW (281, owner: "copy a famous share placement"): YouTube's,
-       a row of grey pills under the title line, an icon and a word each. #}
-    <div class="actions">
-      <button type="button" class="act share-btn" data-share-title="{{ athlete.name }} on Racecast"
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>
+      {# Share (281), the iOS idiom: the square-with-arrow icon alone, at the
+         line's right, no border; the card is the link's preview #}
+      <button type="button" class="share-icon share-btn" data-share-title="{{ athlete.name }} on Racecast"
               data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
-              title="Share this page; the preview is the athlete's card">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 5.63 20.66 12 15 18.37V14.5h-1c-3.96 0-7.14 1-9.75 3.09 1.84-4.6 5.26-7.4 9.75-7.4h1V5.63M14 3v6C6.22 9 3.11 14.33 2 21c2.78-3.89 6.44-5.5 12-5.5V21l8-9-8-9z"/></svg>
-        <span>Share</span>
-      </button>
-      <a class="act" href="/compare?a={{ athlete.person_id }}" title="Compare head to head">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.01 14H2v2h7.01v3L13 15l-3.99-4v3zm5.98-1v-3H22V8h-7.01V5L11 9l3.99 4z"/></svg>
-        <span>Compare</span>
-      </a>
-    </div>
+              title="Share" aria-label="Share this page">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></svg>
+      </button></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
@@ -491,18 +484,19 @@
                            from athlete_season. Without the note, a number
                            that changes when a new season starts looks like
                            drift rather than an update. #}
-                        {% if athlete.rating_note %}<span class="note">{{ athlete.rating_note }}</span>{% endif %}
-                        {# its own line (owner's screenshot, 2026-09-07): on one line
-                           with the season it pushed the panel past its edge #}
-                        {% if athlete.percentile %}<span class="note">{{ athlete.percentile }} of {{ athlete.pool_words }}</span>{% endif %}
+                        {# the season, a dot, the percentile (owner, 2026-09-07); the
+                           column may shrink and the note may wrap, so it never
+                           pushes the panel past its edge #}
+                        {% if athlete.rating_note or athlete.percentile %}<span class="note">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
                     </div>
                     {% if alltime.rating %}
                     <div class="stat">
                         <span class="label">Best race</span>
+                        {# the sport beside the number, on its line (owner, 2026-09-07) #}
                         <span class="value">
                             <a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a>
+                            <span class="value-sport">{{ alltime.rating.sport }}</span>
                         </span>
-                        <span class="note">{{ alltime.rating.sport }}</span>
                     </div>
                     {% endif %}
                 </div>
@@ -617,7 +611,7 @@ document.querySelectorAll(".share-btn").forEach(function (b) {
   b.addEventListener("click", function () {
     var url = b.dataset.shareUrl, title = b.dataset.shareTitle;
     if (navigator.share) { navigator.share({title: title, url: url}).catch(function () {}); return; }
-    var done = function () { var was = b.textContent; b.textContent = "Link copied"; setTimeout(function () { b.textContent = was; }, 1600); };
+    var done = function () { b.classList.add("is-done"); b.title = "Link copied"; setTimeout(function () { b.classList.remove("is-done"); b.title = "Share"; }, 1600); };
     if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function () { window.prompt("Copy this link", url); });
     else window.prompt("Copy this link", url);
   });
