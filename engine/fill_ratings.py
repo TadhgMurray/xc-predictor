@@ -179,7 +179,11 @@ def fillSport(conn, sport, dry_run=False):
         with conn.cursor(f"fill_{sport.lower()}_src",
                          cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
             src.itersize = 50_000
-            src.execute(_sqlFor(sport), {"since": "1990-01-01"})
+            # ! `until` too: build_ranking_results._SQL took a date seam for
+            #   its two-half streams (216) and the fill, which reuses that
+            #   SQL, bound only `since`; KeyError 'until' failed 09b on
+            #   run16d (2026-09-07). Open-ended here: the fill wants every row.
+            src.execute(_sqlFor(sport), {"since": "1990-01-01", "until": "2100-01-01"})
             for row in src:
                 nt = row.normalized_time
                 if nt is None or float(nt) <= 0:
