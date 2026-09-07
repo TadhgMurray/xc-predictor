@@ -883,13 +883,16 @@ def _rowHasUnit(col, table="ranking_results"):
                     stats = dict(c.fetchall())
                     for col2 in wanted:
                         nf = stats.get(col2)
-                        if nf is not None:
-                            if nf < 1.0:
-                                cols.add(col2)
-                            continue
-                        # no statistics: ask the table, bounded to one row
-                        c.execute(f'SELECT 1 FROM "{table}" WHERE "{col2}" IS NOT NULL LIMIT 1')
-                        if c.fetchone():
+                        # ⚠ NO STATISTICS MEANS NOT USED. The first cut asked the
+                        #   table (`WHERE col IS NOT NULL LIMIT 1`), and on a
+                        #   column that is all NULL that is a full scan of 13M
+                        #   rows, nine columns, every worker, every ten
+                        #   minutes: the athlete page went slow and the restart
+                        #   hung behind the scans (owner, 2026-09-07). The build
+                        #   analyses the table after stamping, so a populated
+                        #   column always has statistics; a column without them
+                        #   falls back to the school semi-join, which is safe.
+                        if nf is not None and nf < 1.0:
                             cols.add(col2)
         except Exception as exc:                     # noqa: BLE001
             print(f"row_units: probe of {table} failed ({exc})", flush=True)
