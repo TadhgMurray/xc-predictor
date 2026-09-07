@@ -600,6 +600,39 @@ def parseFilters(args):
     return f, None
 
 
+# The stored grade -> one comparable key, in SQL. Numbers keep their
+# number (9th -> 9), except 13..16 in a college pool, which are the class
+# words; a class word is fr/so/jr/sr in a college pool and 9..12 in a
+# school pool. Anything else compares as itself, lower-cased.
+_G = "lower(trim(grade))"
+_GN = f"left(regexp_replace({_G}, '[^0-9]', '', 'g'), 3)::int"
+# the class word from any spelling: fr, freshman, so, soph, jr, junior,
+# sr, sr-4, senior
+_GW = (f"(CASE WHEN {_G} LIKE 'fr%%' THEN 'fr' WHEN {_G} LIKE 'so%%' THEN 'so' "
+       f"WHEN {_G} LIKE 'j%%' THEN 'jr' WHEN {_G} LIKE 'sr%%' OR {_G} LIKE 'se%%' THEN 'sr' END)")
+GRADE_KEY_SQL = f"""(CASE
+    WHEN {_G} ~ '^[0-9]' THEN
+        CASE WHEN pool LIKE 'college%%' AND {_GN} BETWEEN 13 AND 16
+             THEN (ARRAY['fr','so','jr','sr'])[{_GN} - 12]
+             ELSE {_GN}::text END
+    WHEN {_GW} IS NOT NULL THEN
+        CASE WHEN pool LIKE 'college%%' THEN {_GW}
+             ELSE (ARRAY['9','10','11','12'])[array_position(ARRAY['fr','so','jr','sr'], {_GW})] END
+    ELSE {_G} END)"""
+
+
+def _gradeKey(value):
+    """The same key for a requested grade: '12' -> '12', 'Sr' -> 'sr'."""
+    v = str(value or "").strip().lower()
+    if v[:1].isdigit():
+        digits = "".join(ch for ch in v if ch.isdigit())[:3]
+        return str(int(digits)) if digits else v
+    for word, key in (("fr", "fr"), ("so", "so"), ("j", "jr"), ("sr", "sr"), ("se", "sr")):
+        if v.startswith(word):
+            return key
+    return v
+
+
 def _whereClauses(f, params, with_dates):
     """Shared filters -> SQL fragment, appending bind values to `params`.
 
@@ -760,6 +793,16 @@ def _whereClauses(f, params, with_dates):
             params["year_tf"] = [y - 1 for y in f["year"]]
             parts.append(" AND ((sport = 'TF' AND year = ANY(%(year_tf)s))"
                          "      OR (sport <> 'TF' AND year = ANY(%(year)s)))")
+        elif name == "grade":
+            # ★ THE GRADE IS MATCHED ON WHAT IT MEANS, NOT ON ITS SPELLING
+            #   (owner, 2026-09-07: "grade filter is removing ppl it
+            #   shouldn't"). The table keeps the feed's spelling: 12, 12th,
+            #   Sr, Senior, SR-4, 16. A filter for grade 12 that compared
+            #   the raw text dropped every senior a feed spelled Sr. Both
+            #   sides go through one key: a number for a school pool (Sr is
+            #   12 there), the class word for a college pool (16 is sr).
+            params["grade_keys"] = [_gradeKey(v) for v in f["grade"]]
+            parts.append(f" AND {GRADE_KEY_SQL} = ANY(%(grade_keys)s)")
         else:
             params[name] = f[name]
             parts.append(f" AND {name} = ANY(%({name})s)")
