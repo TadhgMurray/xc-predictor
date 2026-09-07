@@ -3376,6 +3376,7 @@ def race_tf(meet_id, event_id, div_id):
     return render_template("race_tf.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            college=(race_src == "tfrrs"),
+                           meet_id=meet_id, event_id=event_id, div_id=div_id,
                            header=header,
                            results=results,
                            sections=sections,
@@ -4313,6 +4314,46 @@ def card_athlete(person_id):
             raise
         print(f"card: athlete {person_id} failed ({type(exc).__name__}: {exc})", flush=True)
         return _redirect(url_for("static", filename="og-image.png"))
+
+
+def _serveCard(kind, build):
+    """One card route's body: draw or reuse, serve the PNG; a missing thing
+    is a 404, a drawing failure falls back to the site-wide image."""
+    from flask import send_file, redirect as _redirect
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                path = build(cur)
+        if path is None:
+            abort(404)
+        return send_file(path, mimetype="image/png", max_age=3600)
+    except Exception as exc:                          # noqa: BLE001
+        if getattr(exc, "code", None) == 404:
+            raise
+        print(f"card: {kind} failed ({type(exc).__name__}: {exc})", flush=True)
+        return _redirect(url_for("static", filename="og-image.png"))
+
+
+@app.route("/card/race/xc/<int:meet_id>/<int:div_id>.png")
+def card_race_xc(meet_id, div_id):
+    import cards
+    return _serveCard(f"race xc {meet_id}/{div_id}",
+                      lambda cur: cards.cachedRaceCard(cur, "XC", meet_id, div_id))
+
+
+@app.route("/card/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>.png")
+def card_race_tf(meet_id, event_id, div_id):
+    import cards
+    return _serveCard(f"race tf {meet_id}/{event_id}/{div_id}",
+                      lambda cur: cards.cachedRaceCard(cur, "TF", meet_id, div_id, event_id))
+
+
+@app.route("/card/school/<path:school_name>.png")
+def card_school(school_name):
+    import cards
+    state = (request.args.get("state") or "").strip().upper()[:2] or None
+    return _serveCard(f"school {school_name}",
+                      lambda cur: cards.cachedSchoolCard(cur, school_name, state))
 
 
 @app.route("/debug/athlete/<int:person_id>")

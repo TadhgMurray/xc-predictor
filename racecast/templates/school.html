@@ -33,6 +33,8 @@
                       "url": site_origin ~ "/school/" ~ (school|urlencode),
                       "address": ({"@type": "PostalAddress", "addressRegion": state,
                                    "addressCountry": "US"} if state else none)} %}
+    {% set meta_image = site_origin ~ "/card/school/" ~ (school|urlencode) ~ ".png" ~ ("?state=" ~ state if state else "") %}
+    {% set meta_image_alt = school ~ " on Racecast: the top seven and the team rating" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
@@ -41,7 +43,14 @@
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
 <main class="page-wide">
-    <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    <div class="hdr-row">
+      <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+      <button type="button" class="share-box share-btn" data-share-title="{{ school }} on Racecast"
+              data-share-url="{{ site_origin }}/school/{{ school|urlencode }}{% if state %}?state={{ state }}{% endif %}" title="Share this page; the preview is its card">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+        <span>Share</span>
+      </button>
+    </div>
     {# the school's own facts, long-form: this line is not shared with a
        grade and a compare link, so there is room to spell them out #}
     {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}
@@ -278,5 +287,6 @@
 
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
 </body>
 </html>

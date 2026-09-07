@@ -21,6 +21,8 @@
                       "eventStatus": "https://schema.org/EventScheduled",
                       "location": ({"@type": "Place", "name": header.course_name}
                                    if header.course_name else none)} %}
+    {% set meta_image = site_origin ~ "/card/race/xc/" ~ header.meet_id ~ "/" ~ header.div_id ~ ".png" %}
+    {% set meta_image_alt = (header.meet_name|with_year(race_date)) ~ ": the top finishers and their ratings" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>
@@ -28,7 +30,14 @@
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide">
-    <h1>{{ header.meet_name }}</h1>
+    <div class="hdr-row">
+      <h1>{{ header.meet_name }}</h1>
+      <button type="button" class="share-box share-btn" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+              data-share-url="{{ site_origin }}/race/xc/{{ header.meet_id }}/{{ header.div_id }}" title="Share this page; the preview is its card">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+        <span>Share</span>
+      </button>
+    </div>
     <p class="meta">
         {# |urlencode, same as every school link: the name goes into the URL
            as DATA, so characters that mean something in a URL (& # ? %) must
@@ -195,5 +204,6 @@
     {% endif %}
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
 </body>
 </html>

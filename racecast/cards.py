@@ -274,3 +274,244 @@ def cachedAthleteCard(cur, person_id):
         fh.write(png)
     os.replace(tmp, path)
     return path
+
+
+# ===================================================================== #
+#  RACE AND SCHOOL CARDS (281, "more share cards", 2026-09-07)
+# ===================================================================== #
+
+def _clock(seconds):
+    if seconds is None:
+        return "-"
+    s = float(seconds)
+    if s >= 3600:
+        return f"{int(s // 3600)}:{int(s % 3600 // 60):02d}:{s % 60:05.2f}"
+    m = int(s // 60)
+    return f"{m}:{s - 60 * m:05.2f}" if s < 600 else f"{m}:{int(round(s - 60 * m)):02d}"
+
+
+def _frame(title, sub, dr, img):
+    """The dark card's shared frame: the gold band, the wordmark and tagline
+    top right, a title and a sub line top left. Returns the y under them."""
+    from PIL import Image
+    M = 64
+    dr.rectangle((0, 0, CARD_W, BAND), fill=GOLD)
+    tag = "Every result on one comparable scale"
+    ft = _font(False, 20)
+    try:
+        logo = _logoLight(Image.open(LOGO).convert("RGBA"))
+        lh = 40
+        lw = int(logo.width * lh / logo.height)
+        logo = logo.resize((lw, lh), Image.LANCZOS)
+        img.paste(logo, (CARD_W - M - lw, M - 8), logo)
+    except Exception:                              # noqa: BLE001
+        fw = _font(True, 30)
+        dr.text((CARD_W - M - dr.textlength("racecast.co", font=fw), M - 6), "racecast.co", font=fw, fill="#ffffff")
+    dr.text((CARD_W - M - dr.textlength(tag, font=ft), M + 40), tag, font=ft, fill=DARK_MUTED)
+    # the title wraps onto a second line before it shrinks: a meet's name
+    # is long, and cutting "Invitational" to "Invitati" is not allowed
+    width = CARD_W - 2 * M - 420       # stops short of the wordmark and its tagline
+
+    def wrap(size):
+        f = _font(True, size)
+        lines, cur = [], ""
+        for w in title.split():
+            t = (cur + " " + w).strip()
+            if dr.textlength(t, font=f) <= width or not cur:
+                cur = t
+            else:
+                lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return f, lines
+
+    # two lines at the largest size that holds them; cut only as a last resort
+    for size in (48, 42, 36, 30):
+        f, lines = wrap(size)
+        if len(lines) <= 2 and all(dr.textlength(ln, font=f) <= width for ln in lines):
+            break
+    else:
+        f, one = _fit(dr, title, True, 30, width, 24)
+        lines = [one]
+    yy = M + 2
+    for ln in lines:
+        dr.text((M, yy), ln, font=f, fill="#ffffff")
+        yy += int(f.size * 1.18)
+    yy = max(yy, M + 60)
+    f, sb = _fit(dr, sub, False, 26, CARD_W - 2 * M, 18)
+    dr.text((M, yy + 8), sb, font=f, fill=DARK_MUTED)
+    return yy + 66
+
+
+def raceCardData(cur, sport, meet_id, div_id, event_id=None):
+    """The race card's fields: the meet's name and where, and the top five
+    with time and rating. None when the race has no rows."""
+    from app import get_race_header, get_race_results, get_tf_race_header, get_tf_race_results
+    from school_identity import schoolLabel
+    if sport == "XC":
+        header = get_race_header(cur, meet_id, div_id)
+        rows = get_race_results(cur, meet_id, div_id) if header else []
+    else:
+        header = get_tf_race_header(cur, meet_id, div_id, event_id)
+        rows = get_tf_race_results(cur, meet_id, div_id, event_id) if header else []
+    if not header or not rows:
+        return None
+    header = dict(header)
+    date = str(rows[0].get("date") or "")[:10]
+    if sport == "XC":
+        where = header.get("course_name") or ""
+        dist = header.get("distance")
+        what = f"{int(dist)}m" if dist else ""
+    else:
+        from tf_points import prettyEventName
+        try:
+            what = prettyEventName(header.get("event_short") or "") or (header.get("event_short") or "")
+        except Exception:                          # noqa: BLE001
+            what = header.get("event_short") or ""
+        where = header.get("venue_name") or header.get("state") or ""
+    sub = " · ".join(x for x in [what, header.get("division") or "", where, date] if x)
+    top = []
+    for r in rows[:6]:
+        top.append({
+            "name": (r.get("name") or r.get("athlete_name") or "Unknown").strip(),
+            "school": schoolLabel(r.get("school")) if r.get("school") else "",
+            "time": _clock(r.get("time_seconds")) if r.get("time_seconds") is not None else (str(r.get("mark") or "")),
+            "rating": r.get("speed_rating"),
+        })
+    return {"title": header.get("meet_name") or "Race", "sub": sub, "top": top,
+            "n": len(rows), "difficulty": header.get("difficulty")}
+
+
+def renderRaceCard(d):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    # the top five as rows: place, name, school, time, rating in gold
+    fp, ft = _font(True, 28), _font(True, 28)
+    row_h = 50
+    for i, r in enumerate(d["top"]):
+        yy = y + i * row_h
+        if i == 0:
+            dr.rounded_rectangle((M - 16, yy - 7, CARD_W - M + 16, yy + row_h - 9), radius=12, fill=DARK_PILL)
+        dr.text((M, yy), f"{i + 1}", font=fp, fill=GOLD if i == 0 else DARK_MUTED)
+        f, name = _fit(dr, r["name"], True, 28, 360, 20)
+        dr.text((M + 52, yy), name, font=f, fill="#ffffff")
+        f, school = _fit(dr, r["school"], False, 22, 330, 16)
+        dr.text((M + 430, yy + 4), school, font=f, fill=DARK_MUTED)
+        tw = dr.textlength(r["time"], font=ft)
+        dr.text((CARD_W - M - 150 - tw, yy), r["time"], font=ft, fill="#ffffff")
+        rt = f"{r['rating']:.1f}" if r["rating"] is not None else "-"
+        rw = dr.textlength(rt, font=ft)
+        dr.text((CARD_W - M - rw, yy), rt, font=ft, fill=GOLD)
+    foot = f"{d['n']} finishers"
+    if d.get("difficulty") is not None:
+        foot += f" · course {float(d['difficulty']) * 100:+.1f}%"
+    dr.text((M, CARD_H - 50), foot, font=_font(False, 22), fill=DARK_MUTED)
+    lab = "RATING"
+    dr.text((CARD_W - M - dr.textlength(lab, font=_font(False, 18)), y - 30), lab, font=_font(False, 18), fill=DARK_MUTED)
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def schoolCardData(cur, school, state=None):
+    """The school card: the newest season of either sport, its top seven
+    by season rating, the team rating (the top five's mean)."""
+    from school import schoolRoster, currentSeason
+    from school_identity import schoolLabel
+    best = None
+    for sport in ("XC", "TF"):
+        y = currentSeason(cur, school, sport)
+        if y is None:
+            continue
+        # a track season is stored as its opening academic year: XC 2025 and
+        # TF 2025 (spring 2026) both read 2025, and the track one is newer
+        key = (y, 1 if sport == "TF" else 0)
+        if best is None or key > best[0]:
+            best = (key, sport, y)
+    if best is None:
+        return None
+    _, sport, year = best
+    rows = schoolRoster(cur, school, year, sport)
+    rows = [dict(r) for r in rows if r.get("mean_rating") is not None]
+    rows.sort(key=lambda r: -float(r["mean_rating"]))
+    top = rows[:7]
+    five = [float(r["mean_rating"]) for r in top[:5]]
+    team = sum(five) / len(five) if len(five) == 5 else None
+    label = year + 1 if sport == "TF" else year
+    from grade_label import gradeLabel
+    return {"title": schoolLabel(school) if not state else f"{school} ({state})",
+            "sub": f"{label} {'cross country' if sport == 'XC' else 'track'} · top seven by season rating",
+            "team": team, "athletes": len(rows),
+            "top": [{"name": (r.get("name") or "").strip() or "Unknown",
+                     "grade": gradeLabel(r.get("grade"), r.get("pool")) or "",
+                     "rating": float(r["mean_rating"]), "races": r.get("n_races") or 0}
+                    for r in top]}
+
+
+def renderSchoolCard(d):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    # the team number, left; the seven, right
+    dr.text((M, y), "TEAM RATING", font=_font(False, 20), fill=DARK_MUTED)
+    big = f"{d['team']:.1f}" if d["team"] is not None else "-"
+    dr.text((M, y + 26), big, font=_font(True, 96), fill=GOLD)
+    dr.text((M, y + 150), "mean of the top five", font=_font(False, 22), fill=DARK_MUTED)
+    dr.text((M, y + 182), f"{d['athletes']} rated this season", font=_font(False, 22), fill=DARK_MUTED)
+    lx = 470
+    fs, fr = _font(False, 20), _font(True, 26)
+    row_h = 50
+    for i, r in enumerate(d["top"]):
+        yy = y + i * row_h - 4
+        dr.text((lx, yy), f"{i + 1}", font=_font(True, 22), fill=DARK_MUTED)
+        f, name = _fit(dr, r["name"], True, 26, 360, 18)
+        dr.text((lx + 36, yy), name, font=f, fill="#ffffff")
+        dr.text((lx + 420, yy + 4), r["grade"], font=fs, fill=DARK_MUTED)
+        rt = f"{r['rating']:.1f}"
+        dr.text((CARD_W - M - dr.textlength(rt, font=fr), yy), rt, font=fr, fill=GOLD if i < 5 else "#f2f2ee")
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def _cached(name, build):
+    """Draw-or-reuse for any card: `build()` returns PNG bytes or None."""
+    os.makedirs(CARD_DIR, exist_ok=True)
+    path = os.path.join(CARD_DIR, name)
+    try:
+        if time.time() - os.path.getmtime(path) < CARD_TTL:
+            return path
+    except OSError:
+        pass
+    png = build()
+    if png is None:
+        return None
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(png)
+    os.replace(tmp, path)
+    return path
+
+
+def cachedRaceCard(cur, sport, meet_id, div_id, event_id=None):
+    name = (f"race-xc-{int(meet_id)}-{int(div_id)}.png" if sport == "XC"
+            else f"race-tf-{int(meet_id)}-{int(event_id)}-{int(div_id)}.png")
+    def build():
+        d = raceCardData(cur, sport, meet_id, div_id, event_id)
+        return renderRaceCard(d) if d else None
+    return _cached(name, build)
+
+
+def cachedSchoolCard(cur, school, state=None):
+    import hashlib
+    key = hashlib.sha1(f"{school}|{state or ''}".encode("utf-8")).hexdigest()[:16]
+    def build():
+        d = schoolCardData(cur, school, state)
+        return renderSchoolCard(d) if d else None
+    return _cached(f"school-{key}.png", build)
