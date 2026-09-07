@@ -64,13 +64,13 @@
    indexed; the athlete page carries the name and is the target. #}
 {% if request.args.get('r') %}<meta name="robots" content="noindex,follow">{% endif %}
 <meta property="og:url" content="{{ site_origin ~ (meta_path | default(request.path)) }}">
-<meta property="og:image" content="{{ url_for('static', filename='og-image.png', _external=True) }}">
+<meta property="og:image" content="{{ meta_image if meta_image else url_for('static', filename='og-image.png', _external=True) }}">
 {# Declared dimensions let a scraper lay out the card before the image
    finishes downloading -- without them, first-time shares often render
    with no picture and only fix themselves on a later re-scrape. #}
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Racecast - every result on one comparable scale">
+<meta property="og:image:alt" content="{{ meta_image_alt if meta_image_alt else 'Racecast - every result on one comparable scale' }}">
 
 {# ---- Twitter/X: reads og:* for everything except the card type ------ #}
 {# summary_large_image gives the full-width image. Without this tag the

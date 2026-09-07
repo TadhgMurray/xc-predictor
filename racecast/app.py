@@ -24,7 +24,7 @@ import psycopg2.extras
 #   import side effect for an exception class in an except clause is a
 #   NameError at the worst possible moment.
 import psycopg2.errors
-from flask import Flask, render_template, abort, redirect
+from flask import Flask, render_template, abort, redirect, url_for
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
@@ -4275,6 +4275,29 @@ def school_prs_page(school_name):
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
                            has_hs_view=has_hs_view)
+
+
+@app.route("/card/athlete/<int:person_id>.png")
+def card_athlete(person_id):
+    """The athlete's share card (cards.py, 281): the page's og:image, and
+    what a Share button hands over. Cached on disk, redrawn every six
+    hours. A missing athlete is a 404; a drawing failure is logged and
+    falls back to the site-wide image so a preview is never blank."""
+    from flask import send_file, redirect as _redirect
+    try:
+        import cards
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                path = cards.cachedAthleteCard(cur, person_id)
+        if path is None:
+            abort(404)
+        resp = send_file(path, mimetype="image/png", max_age=3600)
+        return resp
+    except Exception as exc:                          # noqa: BLE001
+        if getattr(exc, "code", None) == 404:
+            raise
+        print(f"card: athlete {person_id} failed ({type(exc).__name__}: {exc})", flush=True)
+        return _redirect(url_for("static", filename="og-image.png"))
 
 
 @app.route("/debug/athlete/<int:person_id>")

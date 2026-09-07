@@ -247,3 +247,4 @@ model/data/
 #   cost in every process. Post-launch work, but this is the reason.
 engine/corrections.py
 racecast/static/sitemaps/
+static/cards/

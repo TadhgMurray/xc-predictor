@@ -26,6 +26,8 @@
                       "url": site_origin ~ "/athlete/" ~ athlete.person_id,
                       "affiliation": ({"@type": "Organization",
                                        "name": athlete.school|school_label} if athlete.school else none)} %}
+    {% set meta_image = site_origin ~ "/card/athlete/" ~ athlete.person_id ~ ".png" %}
+    {% set meta_image_alt = athlete.name ~ " on Racecast: speed rating, best race and ranks" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
@@ -267,7 +269,7 @@
 {% endmacro %}
 
     <h1>{{ athlete.name }}</h1>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a> · <button type="button" class="share-btn" data-share-title="{{ athlete.name }} on Racecast" data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}">Share</button></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
@@ -595,5 +597,18 @@
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('athlete-charts.js') }}"></script>
 
+<script>
+/* Share (281): the phone's share sheet where there is one, the link on the
+   clipboard where there is not; the card is the link's preview either way. */
+document.querySelectorAll(".share-btn").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var url = b.dataset.shareUrl, title = b.dataset.shareTitle;
+    if (navigator.share) { navigator.share({title: title, url: url}).catch(function () {}); return; }
+    var done = function () { var was = b.textContent; b.textContent = "Link copied"; setTimeout(function () { b.textContent = was; }, 1600); };
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function () { window.prompt("Copy this link", url); });
+    else window.prompt("Copy this link", url);
+  });
+});
+</script>
 </body>
 </html>

@@ -95,7 +95,7 @@ cd /srv/xc-predictor && git pull --ff-only || true
 chown -R xcp:xcp /srv/xc-predictor
 python3 -m venv /srv/venv 2>/dev/null || true
 /srv/venv/bin/pip install -q --upgrade pip
-/srv/venv/bin/pip install -q flask gunicorn psycopg2-binary numpy scipy torch \
+/srv/venv/bin/pip install -q flask gunicorn psycopg2-binary numpy scipy torch Pillow \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
 echo "== env + service =="
