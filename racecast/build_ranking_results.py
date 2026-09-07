@@ -2469,6 +2469,24 @@ def main():
 
     stage = args.stage
     with getConn() as conn:
+        if stage == "restamp":
+            # ★ THE SEASON TABLE'S UNIT COLUMNS, REFRESHED IN PLACE (304):
+            #   a directory rebuild or a units change used to wait for the
+            #   next full step 10 to reach the ability board. The old values
+            #   are cleared first, because the stamping's fallback passes fill
+            #   only NULLs; then the same three passes run on the live table.
+            #   UPDATEs take row locks only; the site keeps reading.
+            with phase("restamp athlete_season units from school_unit"):
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE athlete_season SET "
+                                + ", ".join(f'"{c}" = NULL' for c in _UNIT_COLS))
+                    print(f"    cleared {cur.rowcount:,} rows")
+                conn.commit()
+                _stampSeasonUnits(conn, "athlete_season")
+                analyze(conn, "athlete_season")
+            print("  restamped. The performance board's rows carry the old units "
+                  "until the next full run.")
+            return
         # ★ NOTHING DESTRUCTIVE HAPPENS UNTIL THE SWAP. The old TRUNCATE /
         #   DELETE left the site with an empty or half-loaded board for the
         #   entire 15-25 minute load. Everything now goes into a shadow copy
