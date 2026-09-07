@@ -612,7 +612,7 @@ def cachedSchoolCard(cur, school, state=None):
 
 def meetCardData(cur, meet_id):
     """The meet card: the meet's name, course and date, and the team scores
-    of its biggest division (the varsity race, in practice), top six."""
+    of its biggest division (the varsity race, in practice), top ten."""
     from app import get_meet_header, get_meet_divisions, get_race_results
     from meet_compile import scoreRows
     from school_identity import schoolLabel
@@ -635,7 +635,7 @@ def meetCardData(cur, meet_id):
     return {"title": header.get("meet_name") or "Meet", "sub": sub,
             "division": div.get("division") or "",
             "teams": [{"school": schoolLabel(t["school"]) if t.get("school") else "",
-                       "points": t.get("points")} for t in teams[:6]],
+                       "points": t.get("points")} for t in teams[:10]],
             "winner": {"name": (winner.get("name") or "Unknown").strip(),
                        "school": schoolLabel(winner.get("school")) if winner.get("school") else "",
                        "time": _clock(winner.get("time_seconds")),
@@ -649,30 +649,35 @@ def renderMeetCard(d):
     M = 64
     y = _frame(d["title"], d["sub"], dr, img)
     lab = f"TEAM SCORES · {d['division'].upper()}" if d["division"] else "TEAM SCORES"
-    dr.text((M, y - 26), lab, font=_font(False, 18), fill=DARK_MUTED)
-    fp, ft = _font(True, 28), _font(True, 28)
-    row_h = 48
+    dr.text((M, y - 22), lab, font=_font(False, 18), fill=DARK_MUTED)
+    # ten rows have to fit under a title that may take two lines: the row
+    # height comes from the room left, and the type follows it
+    top = y + 14
+    n = max(1, len(d["teams"]))
+    row_h = max(30, min(40, (CARD_H - 36 - top) // n))
+    size = max(19, min(26, row_h - 12))
+    fp, ft = _font(True, size), _font(True, size)
     for i, t in enumerate(d["teams"]):
-        yy = y + 4 + i * row_h
+        yy = top + i * row_h
         if i == 0:
-            dr.rounded_rectangle((M - 16, yy - 6, 700, yy + row_h - 10), radius=12, fill=DARK_PILL)
+            dr.rounded_rectangle((M - 16, yy - 5, 700, yy + row_h - 7), radius=10, fill=DARK_PILL)
         dr.text((M, yy), f"{i + 1}", font=fp, fill=GOLD if i == 0 else DARK_MUTED)
-        f, sch = _fit(dr, t["school"], True, 28, 440, 18)
+        f, sch = _fit(dr, t["school"], True, size, 440, 17)
         dr.text((M + 52, yy), sch, font=f, fill="#ffffff")
         pts = f"{t['points']}" if t.get("points") is not None else "-"
         dr.text((680 - 16 - dr.textlength(pts, font=ft), yy), pts, font=ft, fill=GOLD if i == 0 else "#f2f2ee")
     # the individual winner, right
     wx = 760
-    dr.text((wx, y - 26), "WON BY", font=_font(False, 18), fill=DARK_MUTED)
+    dr.text((wx, y - 22), "WON BY", font=_font(False, 18), fill=DARK_MUTED)
     w = d["winner"]
     f, nm = _fit(dr, w["name"], True, 34, CARD_W - M - wx, 20)
-    dr.text((wx, y + 4), nm, font=f, fill="#ffffff")
+    dr.text((wx, top), nm, font=f, fill="#ffffff")
     f, sc = _fit(dr, w["school"], False, 22, CARD_W - M - wx, 16)
-    dr.text((wx, y + 50), sc, font=f, fill=DARK_MUTED)
-    dr.text((wx, y + 92), w["time"], font=_font(True, 40), fill="#ffffff")
+    dr.text((wx, top + 46), sc, font=f, fill=DARK_MUTED)
+    dr.text((wx, top + 88), w["time"], font=_font(True, 40), fill="#ffffff")
     if w.get("rating") is not None:
-        dr.text((wx, y + 146), f"{float(w['rating']):.1f}", font=_font(True, 40), fill=GOLD)
-        dr.text((wx, y + 196), "speed rating", font=_font(False, 20), fill=DARK_MUTED)
+        dr.text((wx, top + 142), f"{float(w['rating']):.1f}", font=_font(True, 40), fill=GOLD)
+        dr.text((wx, top + 192), "speed rating", font=_font(False, 20), fill=DARK_MUTED)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
