@@ -718,3 +718,173 @@ def cachedMeetCard(cur, meet_id):
         d = meetCardData(cur, meet_id)
         return renderMeetCard(d) if d else None
     return _cached(f"meet-xc-{int(meet_id)}.png", build)
+
+
+# ---------------------------------------------------------------- more cards
+# The rankings board, the TF meet, a prediction, a course and a track venue
+# (owner, 2026-09-07: "Sure for all those. Start with renders"). They share
+# one table drawer so the rows look like the race and meet cards.
+
+def _table(dr, y, rows, cols, bottom, max_row=50, pill_w=None):
+    """Rows between y and bottom: the row height and the type follow the
+    room. cols: dicts with key, x (left edge, or right edge when align is
+    'r'), bold, fill (a colour or a callable of the row index), dsize (a
+    size delta), and w for the fit width. The first column is the rank."""
+    M = 64
+    n = max(1, len(rows))
+    row_h = max(34, min(max_row, (bottom - y) // n))
+    size = max(21, min(28, row_h - 14))
+    fp = _font(True, size)
+    for i, r in enumerate(rows):
+        yy = y + i * row_h
+        if i == 0:
+            dr.rounded_rectangle((M - 16, yy - 7, (pill_w or CARD_W - M) + 16, yy + row_h - 9),
+                                 radius=12, fill=DARK_PILL)
+        _rank(dr, M, yy, i, fp)
+        for c in cols:
+            txt = r.get(c["key"])
+            txt = "-" if txt is None else str(txt)
+            sz = size + c.get("dsize", 0)
+            f, txt = _fit(dr, txt, c.get("bold", False), sz, c.get("w", 400), max(14, sz - 8))
+            fill = c.get("fill", "#ffffff")
+            fill = fill(i) if callable(fill) else fill
+            x = c["x"] - dr.textlength(txt, font=f) if c.get("align") == "r" else c["x"]
+            dr.text((x, yy + (size - f.size) // 2), txt, font=f, fill=fill)
+    return y + n * row_h
+
+
+def _colLabel(dr, x, y, lab, align="l"):
+    f = _font(False, 18)
+    if align == "r":
+        x -= dr.textlength(lab, font=f)
+    dr.text((x, y), lab, font=f, fill=DARK_MUTED)
+
+
+def _png(img):
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def renderBoardCard(d):
+    """A rankings board: its scope as the title, the top ten as rows."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    _colLabel(dr, CARD_W - M, y - 30, "RATING", "r")
+    cols = [{"key": "name", "x": M + 52, "bold": True, "w": 400},
+            {"key": "school", "x": M + 480, "dsize": -4, "fill": DARK_MUTED, "w": 380},
+            {"key": "grade", "x": CARD_W - M - 150, "dsize": -4, "fill": DARK_MUTED, "w": 60, "align": "r"},
+            {"key": "rating", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 120}]
+    _table(dr, y, d["rows"], cols, CARD_H - 40, max_row=40)
+    return _png(img)
+
+
+def renderMeetTfCard(d):
+    """A track meet: the best marks of the day by rating, one row each, the
+    event beside the name (there is no team score to lead with)."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    _colLabel(dr, M, y - 22, "BEST MARKS OF THE MEET")
+    _colLabel(dr, CARD_W - M, y - 22, "RATING", "r")
+    y += 14
+    cols = [{"key": "name", "x": M + 52, "bold": True, "w": 330},
+            {"key": "school", "x": M + 400, "dsize": -6, "fill": DARK_MUTED, "w": 250},
+            {"key": "event", "x": M + 670, "dsize": -6, "fill": DARK_MUTED, "w": 130},
+            {"key": "mark", "x": CARD_W - M - 140, "bold": True, "align": "r", "w": 150},
+            {"key": "rating", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 120}]
+    _table(dr, y, d["rows"], cols, CARD_H - 40)
+    return _png(img)
+
+
+def renderPredictionCard(d):
+    """A prediction: the predicted team scores left, the predicted top
+    individuals right, with predicted times. Says PREDICTED so a screenshot
+    is never mistaken for a result."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    _colLabel(dr, M, y - 22, "PREDICTED TEAM SCORES")
+    y += 14
+    cols = [{"key": "school", "x": M + 52, "bold": True, "w": 380},
+            {"key": "points", "x": 600, "bold": True, "align": "r", "w": 80,
+             "fill": lambda i: _medal(i) if i < 3 else "#f2f2ee"}]
+    _table(dr, y, d["teams"], cols, CARD_H - 40, max_row=44, pill_w=600)
+    wx = 690
+    _colLabel(dr, wx, y - 36, "PREDICTED TOP FIVE")
+    f = _font(True, 24)
+    fm = _font(False, 19)
+    ft = _font(True, 24)
+    for i, r in enumerate(d["athletes"][:5]):
+        yy = y + i * 60
+        fn, nm = _fit(dr, r["name"], True, 24, 300, 18)
+        dr.text((wx, yy), nm, font=fn, fill="#ffffff")
+        fs, sc = _fit(dr, r["school"], False, 19, 300, 14)
+        dr.text((wx, yy + 30), sc, font=fs, fill=DARK_MUTED)
+        t = r["time"]
+        dr.text((CARD_W - M - dr.textlength(t, font=ft), yy), t, font=ft, fill=GOLD if i == 0 else "#ffffff")
+    fn, note = _fit(dr, d.get("note") or "", False, 19, CARD_W - M - wx, 15)
+    dr.text((wx, CARD_H - 50), note, font=fn, fill=DARK_MUTED)
+    return _png(img)
+
+
+def _bigStat(dr, x, y, lab, val, right=False):
+    """A label over a big gold number, left- or right-aligned at x."""
+    fl, fv = _font(False, 18), _font(True, 44)
+    lw, vw = dr.textlength(lab, font=fl), dr.textlength(val, font=fv)
+    dr.text((x - lw if right else x, y), lab, font=fl, fill=DARK_MUTED)
+    dr.text((x - vw if right else x, y + 24), val, font=fv, fill=GOLD)
+
+
+def renderCourseCard(d):
+    """A course: its difficulty and how many races it holds up top, the
+    all-time fastest ratings run there as rows."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    # three stats in a row: difficulty, races, the distance most run
+    xs = (M, M + 300, M + 600)
+    for x, (lab, val) in zip(xs, d["stats"]):
+        _bigStat(dr, x, y - 10, lab, val)
+    y += 106
+    _colLabel(dr, M, y - 30, "FASTEST EVER HERE")
+    _colLabel(dr, CARD_W - M, y - 30, "RATING", "r")
+    cols = [{"key": "name", "x": M + 52, "bold": True, "w": 340},
+            {"key": "school", "x": M + 410, "dsize": -6, "fill": DARK_MUTED, "w": 300},
+            {"key": "when", "x": M + 730, "dsize": -6, "fill": DARK_MUTED, "w": 120},
+            {"key": "time", "x": CARD_W - M - 140, "bold": True, "align": "r", "w": 140},
+            {"key": "rating", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 120}]
+    _table(dr, y, d["rows"], cols, CARD_H - 36, max_row=44)
+    return _png(img)
+
+
+def renderVenueCard(d):
+    """A track venue, indoor or outdoor: the same shape as the course card
+    with the event beside each mark."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    xs = (M, M + 300, M + 600)
+    for x, (lab, val) in zip(xs, d["stats"]):
+        _bigStat(dr, x, y - 10, lab, val)
+    y += 106
+    _colLabel(dr, M, y - 30, "BEST MARKS HERE")
+    _colLabel(dr, CARD_W - M, y - 30, "RATING", "r")
+    cols = [{"key": "name", "x": M + 52, "bold": True, "w": 320},
+            {"key": "school", "x": M + 390, "dsize": -6, "fill": DARK_MUTED, "w": 250},
+            {"key": "event", "x": M + 660, "dsize": -6, "fill": DARK_MUTED, "w": 120},
+            {"key": "mark", "x": CARD_W - M - 140, "bold": True, "align": "r", "w": 140},
+            {"key": "rating", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 120}]
+    _table(dr, y, d["rows"], cols, CARD_H - 36, max_row=44)
+    return _png(img)
