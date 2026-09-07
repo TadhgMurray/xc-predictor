@@ -142,30 +142,56 @@ def closePool():
 # Output: Yields a psycopg2 connection object.
 @contextmanager
 def getConn():
+    """A live connection from the pool, returned when the block ends.
 
-    # Lazy init - if initPool() wasn't called explicitlym init now.
+    ★ CHECKED ON THE WAY OUT, DISCARDED ON THE WAY BACK (2026-09-07). The
+      pool never noticed a connection whose server side had died (a
+      terminated backend, a Postgres restart), so every request that drew
+      that one failed with "connection already closed" until the service
+      was restarted: the athlete page was a 500 while the rest of the site
+      worked. One round trip before handing a connection out finds a dead
+      socket, and a connection that broke inside the block is closed rather
+      than put back."""
     if _pool is None:
         initPool()
-    conn = _pool.getconn()
-
-    try:
-        # yield hands the connection to the caller's with block.
-        yield conn
-    except Exception:
-        # If the caller's code raised an exception, roll back any
-        # uncommitted writes so the connection is clean when returned.
-        conn.rollback()
-        raise
-    # finally always does something no matter what.
-    finally:
+    conn = None
+    for _attempt in range(3):
+        cand = _pool.getconn()
+        if cand.closed:
+            _pool.putconn(cand, close=True)
+            continue
         try:
-            conn.rollback()      # ensure no open/aborted txn rides back to the pool
+            with cand.cursor() as probe:
+                probe.execute("SELECT 1")
+            cand.rollback()
+            conn = cand
+            break
+        except (psycopg2.InterfaceError, psycopg2.OperationalError):
+            _pool.putconn(cand, close=True)
+    if conn is None:
+        raise RuntimeError("[DB] no live connection in the pool after three tries")
+
+    broken = False
+    try:
+        yield conn
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        broken = True
+        raise
+    except Exception:
+        try:
+            conn.rollback()      # the caller raised: leave no open transaction
         except Exception:
-            pass
-        # Always return the connection — whether the block succeeded or failed.
-        # putconn() does NOT close the connection, it just marks it as
-        # available for the next caller to grab.
-        _pool.putconn(conn)
+            broken = True
+        raise
+    finally:
+        if not broken:
+            try:
+                conn.rollback()  # no open or aborted txn rides back to the pool
+            except Exception:
+                broken = True
+        # a broken connection is closed and dropped; the pool opens a fresh
+        # one on the next request instead of handing the corpse out again
+        _pool.putconn(conn, close=broken or conn.closed)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Write helpers
