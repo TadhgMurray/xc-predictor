@@ -4506,3 +4506,18 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 
 /* the best race's sport beside its number (owner, 2026-09-07) */
 .bests-panel .rating-head .value-sport { font-size: 0.72rem; font-weight: 400; color: #9ca3af; margin-left: 0.3rem; vertical-align: 0.15rem; }
+
+/* ---- recruiting (282): the coach's search and the athlete's profile ---- */
+.recruiting-page .filters select[multiple] { min-width: 7rem; }
+.recruiting-page .go { padding: 0.45rem 0.9rem; font: inherit; font-weight: 600;
+                       border: 1px solid #111; border-radius: 5px; background: #111; color: #fff; cursor: pointer; }
+.recruiting-page .pager { display: flex; gap: 0.75rem; align-items: center; margin: 0.75rem 0; }
+.recruiting-page .r-foot { margin-top: 1rem; }
+.gain-up { color: #146c2e; }
+.gain-down { color: #a23b2a; }
+.recruit-page h2 { margin-top: 1.6rem; font-size: 1.05rem; }
+.recruit-page .recruit-tbl { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.recruit-page .recruit-tbl th, .recruit-page .recruit-tbl td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #e5e7eb; text-align: left; }
+.recruit-page .recruit-tbl th { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+.recruit-page .recruit-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.recruiting-page table.rk td.num, .recruiting-page table.rk th.num { text-align: right; font-variant-numeric: tabular-nums; }

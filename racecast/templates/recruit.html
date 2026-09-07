@@ -1,0 +1,75 @@
+{# recruit.html -- one athlete's recruiting profile (282): every high
+   school season with its gain, the graduation year, and where the latest
+   season's rating would rank on each college division's board. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% from "_explain.html" import rating_i %}
+{% set meta_title = p.name ~ " · Recruiting Profile" %}
+{% set meta_description = p.name ~ ((" (" ~ p.school_label ~ ")") if p.school_label else "") ~ ": season by season speed ratings, year-over-year gain, graduation year and where their rating would rank in each college division." %}
+{% set meta_crumbs = [("Recruiting", "/recruiting"), (p.name, none)] %}
+{% set meta_image = site_origin ~ "/card/athlete/" ~ p.person_id ~ ".png" %}
+{% set meta_image_alt = p.name ~ " on Racecast" %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide recruit-page">
+  <div class="hdr-row">
+    <h1>{{ p.name }}</h1>
+    {% with share_title=p.name ~ " recruiting profile on Racecast", share_url=site_origin ~ "/recruit/" ~ p.person_id %}{% include "_share.html" %}{% endwith %}
+  </div>
+  <p class="meta">
+    {% if p.school %}<a href="/school/{{ p.school|urlencode }}{% if p.state %}?state={{ p.state }}{% endif %}">{{ p.school_label }}</a>{% else %} - {% endif %}
+    {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
+    · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
+    · <a href="/compare?a={{ p.person_id }}">Compare</a>
+  </p>
+
+  <h2>Seasons</h2>
+  <table class="recruit-tbl">
+    <thead><tr><th>Season</th><th>Grade</th><th class="num">Rating{{ rating_i() }}</th><th class="num">Gain</th><th class="num">Best race</th><th class="num">Races</th></tr></thead>
+    <tbody>
+    {% for s in p.seasons|reverse %}
+      <tr>
+        <td>{{ s.label }} {{ "XC" if s.sport == "XC" else "Track" }}</td>
+        <td>{{ s.grade_label or " - " }}</td>
+        <td class="num">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else " - " }}</td>
+        <td class="num {{ 'gain-up' if s.gain is not none and s.gain > 0 else ('gain-down' if s.gain is not none and s.gain < 0 else '') }}">{{ ("%+.1f"|format(s.gain)) if s.gain is not none else " - " }}</td>
+        <td class="num">{{ "%.1f"|format(s.best_rating) if s.best_rating is not none else " - " }}</td>
+        <td class="num">{{ s.n_races }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="meta">Gain is the season's rating minus the season a year earlier in the same sport. A blank means no season the year before.</p>
+
+  {% for pl in p.placements %}
+  <h2>Where {{ "the " ~ pl.label ~ " XC" if pl.sport == "XC" else "the " ~ pl.label ~ " track" }} rating would rank in college</h2>
+  {% if pl.rows %}
+  <table class="recruit-tbl">
+    <thead><tr><th>Division</th><th class="num">Would rank</th><th class="num">Of</th><th>Season</th></tr></thead>
+    <tbody>
+    {% for r in pl.rows %}
+      <tr>
+        <td><a href="{{ r.board_url }}">{{ r.division }}</a></td>
+        <td class="num">#{{ "{:,}".format(r.rank) }}</td>
+        <td class="num">{{ "{:,}".format(r.total) }}</td>
+        <td>{{ r.year }} {{ "XC" if pl.sport == "XC" else "Track" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="meta">The {{ "%.1f"|format(pl.rating) }} high school rating placed on each division's season board through the same scale conversion the mixed boards use. The links open that board.</p>
+  {% else %}
+  <p class="meta">No college board to place this rating on yet.</p>
+  {% endif %}
+  {% endfor %}
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+</body>
+</html>

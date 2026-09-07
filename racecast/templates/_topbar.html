@@ -27,6 +27,7 @@
 
         <a href="/conversions" class="{{ 'is-here' if here.startswith('/conversions') }}">Conversions</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="{{ url_for('recruiting_page') }}" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
         <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
         {# Muted, and last. The topbar is the only element on EVERY page, so
            it is the only place a report link gets site-wide reach -- but it

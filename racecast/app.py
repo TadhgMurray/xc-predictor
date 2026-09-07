@@ -6421,6 +6421,71 @@ def api_predict_team():
     return jsonify(out)
 
 
+# ===================================================================== #
+#  RECRUITING (282): the coach's search and the athlete's profile
+# ===================================================================== #
+
+def _seasonYears(cur):
+    """{"XC": label, "TF": label}: the current season per sport, from the
+    homepage meta; a sport with no known season is left out."""
+    out = {}
+    try:
+        meta = get_homepage_meta(cur)
+        for sp in ("XC", "TF"):
+            v = meta.get(f"season_year_{sp}")
+            if v and str(v).isdigit():
+                out[sp] = int(v)
+    except psycopg2.Error:
+        cur.connection.rollback()
+    return out
+
+
+@app.route("/recruiting")
+def recruiting_page():
+    import recruiting as R
+    from rankings import US_STATES
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            years = _seasonYears(cur)
+    return render_template("recruiting.html", season_years=years,
+                           states=sorted(US_STATES),
+                           sorts=list(R.SORTS), default_floor=R.DEFAULT_FLOOR)
+
+
+@app.route("/api/recruiting")
+def api_recruiting():
+    import recruiting as R
+    from school_identity import schoolLabelIn
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            f, err = R.parseFilters(request.args, _seasonYears(cur))
+            if err:
+                return jsonify({"error": err}), 400
+            rows, err = R.searchOrTimeout(cur, f)
+            if err:
+                return jsonify({"error": err}), 200
+    for r in rows:
+        r["school_label"] = schoolLabelIn(r["school"], r.get("state")) if r.get("school") else ""
+        r["grade_label"] = _grade_label.gradeLabel(r.get("grade"), f["pool"]) if r.get("grade") else ""
+        for k in ("mean_rating", "prev_rating", "best_rating", "gain"):
+            r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+    return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
+                    "limit": f["limit"], "offset": f["offset"]})
+
+
+@app.route("/recruit/<int:person_id>")
+def recruit_profile(person_id):
+    import recruiting as R
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            prof = R.recruitProfile(cur, person_id)
+            if prof is None:
+                abort(404)
+    for s in prof["seasons"]:
+        s["grade_label"] = _grade_label.gradeLabel(s.get("grade"), s.get("pool")) if s.get("grade") else ""
+    return render_template("recruit.html", p=prof)
+
+
 @app.route("/rankings")
 def rankings_page():
     # the preview is the board the query names (the default board when bare)
