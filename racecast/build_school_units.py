@@ -160,7 +160,7 @@ def directoryDivisions(cur, rows):
     if cur.fetchone()[0] is None:
         return 0
     try:
-        from build_college_directory import normName
+        from build_college_directory import lookup
     except ImportError:
         return 0
     cur.execute("SELECT name_norm, division FROM college_directory")
@@ -169,7 +169,7 @@ def directoryDivisions(cur, rows):
     i_college = 3 + len(_COLS)
     n = 0
     for row in rows:
-        d = known.get(normName(row[0]))
+        d = lookup(known, row[0])
         if d and row[i_div] != d:
             row[i_div] = d
             row[i_college] = True

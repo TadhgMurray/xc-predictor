@@ -115,10 +115,10 @@ def _collegeState(school):
     if not college or not school:
         return None
     try:
-        from build_college_directory import normName
+        from build_college_directory import lookup
     except ImportError:                  # scripts/ not on the path: no directory
         return None
-    return college.get(normName(school))
+    return lookup(college, school)
 
 
 def schoolLabelFor(school, pool, state=None):

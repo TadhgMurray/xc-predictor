@@ -104,6 +104,44 @@ ALIASES = {
 _STRIP = re.compile(r"\b(the|university|college|of|at|in|and|state university)\b")
 
 
+def lookup(known, name):
+    """The directory entry for a feed's spelling of a school, or None.
+
+    ★ THREE STEPS, IN ORDER (issue 304, owner: "D3 filter is better but
+      not perfect"): the normalised name exactly; then the feed's short
+      form with its punctuation collapsed ("Wis.-La Crosse" -> the tokens
+      wis, la, crosse); then the ONE directory entry whose tokens contain
+      every token of the feed's name, with a common abbreviation expanded
+      (wis -> wisconsin, st -> saint, cal -> california). Ambiguity is a
+      miss: "Wesleyan" alone matches five schools and gets none.
+    `known` maps name_norm -> anything; the value is returned."""
+    if not name:
+        return None
+    key = normName(name)
+    if key in known:
+        return known[key]
+    toks = [_ABBR.get(t, t) for t in key.split() if t]
+    if not toks:
+        return None
+    hits = []
+    for k in known:
+        kt = set(k.split())
+        if all(t in kt for t in toks):
+            hits.append(k)
+    if len(hits) == 1:
+        return known[hits[0]]
+    return None
+
+
+_ABBR = {"wis": "wisconsin", "st": "saint", "cal": "california", "mt": "mount",
+         "ft": "fort", "no": "north", "so": "south", "univ": "", "u": "",
+         "tech": "technology", "poly": "polytechnic", "penn": "pennsylvania",
+         "ill": "illinois", "mich": "michigan", "minn": "minnesota", "wash": "washington",
+         "colo": "colorado", "conn": "connecticut", "mass": "massachusetts",
+         "tenn": "tennessee", "ky": "kentucky", "fla": "florida", "ga": "georgia",
+         "va": "virginia", "nc": "north carolina", "sc": "south carolina"}
+
+
 def normName(name):
     s = html.unescape(name or "").lower()
     s = re.sub(r"\[[^\]]*\]", "", s)                    # footnotes

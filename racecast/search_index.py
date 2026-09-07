@@ -126,10 +126,10 @@ def _collegeStateOf(colleges, school):
     if not colleges or not school:
         return None
     try:
-        from build_college_directory import normName
+        from build_college_directory import lookup
     except ImportError:
         return None
-    return colleges.get(normName(school))
+    return lookup(colleges, school)
 
 
 def _stateFor(identity, school, home_state, min_share=0.03, colleges=None):

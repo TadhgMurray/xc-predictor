@@ -466,6 +466,49 @@ def sitemap_index():
     return send_from_directory(folder, "sitemap.xml", mimetype="application/xml")
 
 
+# ★ A DATABASE BLIP IS RETRIED, NOT SHOWN (issue 300). The pipeline's table
+#   swap terminates a page's backend a few times a run, and the pool then
+#   hands the next request a fresh connection; the request in flight was
+#   still a 500. A GET is safe to run again, so it runs again once, on a
+#   new connection. A second failure, or a database that is down, is a 503
+#   with Retry-After: a visitor sees the branded page, a crawler keeps the
+#   page indexed and comes back.
+MAINTENANCE_FLAG = os.environ.get("XCP_MAINTENANCE_FLAG", "/var/tmp/racecast-maintenance")
+
+
+@app.before_request
+def _maintenance():
+    """While the flag file exists (the pipeline drops it around a table
+    swap) every page is a 503 with Retry-After, never a half-built page."""
+    if request.path.startswith("/static/"):
+        return None
+    if os.path.exists(MAINTENANCE_FLAG):
+        return render_template("error.html", code=503), 503, {"Retry-After": "120"}
+    return None
+
+
+@app.errorhandler(psycopg2.InterfaceError)
+@app.errorhandler(psycopg2.OperationalError)
+def _db_blip(err):
+    from flask import g
+    print(f"db blip on {request.method} {request.path}: {type(err).__name__}: {err}", flush=True)
+    if request.method == "GET" and not getattr(g, "db_retried", False):
+        g.db_retried = True
+        try:
+            return app.full_dispatch_request()
+        except (psycopg2.InterfaceError, psycopg2.OperationalError) as again:
+            print(f"db blip retry failed on {request.path}: {again}", flush=True)
+    return render_template("error.html", code=503), 503, {"Retry-After": "30"}
+
+
+@app.errorhandler(500)
+def _server_error(_err):
+    """The branded failure page; the traceback is already in the journal."""
+    if request.path.startswith("/api/") or request.path.startswith("/card/"):
+        return _err                     # JSON and image callers get the raw status
+    return render_template("error.html", code=500), 500
+
+
 @app.errorhandler(404)
 def not_found(_err):
     """The branded not-found page; every abort(404) and dead URL lands here

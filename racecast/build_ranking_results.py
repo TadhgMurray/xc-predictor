@@ -824,8 +824,8 @@ def _campusState(school):
     if hit != "":
         return hit
     try:
-        from build_college_directory import normName
-        st = _UNITS["campus"].get(normName(school))
+        from build_college_directory import lookup
+        st = lookup(_UNITS["campus"], school)
     except Exception:                               # noqa: BLE001
         st = None
     _UNITS["campus_cache"][school] = st
@@ -2049,51 +2049,54 @@ def swapIn(conn):
         #   renamed away with nothing in its place, and every page 500s. A
         #   timeout rolls the whole thing back, which is what makes the retry
         #   safe to simply start over.
-        for attempt in range(1, _SWAP_ATTEMPTS + 1):
-            try:
-                cur.execute("BEGIN")
-                cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
-                # ⚠ BOTH TABLES UP FRONT, IN ONE STATEMENT, AND THIS IS WHAT
-                #   THE DEADLOCK WAS. The renames took ACCESS EXCLUSIVE on
-                #   ranking_results first and asked for athlete_season second;
-                #   a page reading athlete_season and then ranking_results
-                #   holds those two in the OPPOSITE order. Classic ABBA, and
-                #   lock_timeout does not save you from it -- Postgres's
-                #   deadlock detector fires at deadlock_timeout (1s by
-                #   default), well before a 3s lock_timeout, so the build died
-                #   with DeadlockDetected after six hours of work.
-                #
-                # ! TAKING THEM TOGETHER MAKES THE TIMEOUT THE FAILURE MODE
-                #   AGAIN, which is the one the retry below was written for.
-                cur.execute("LOCK TABLE ranking_results, athlete_season "
-                            "IN ACCESS EXCLUSIVE MODE")
-                cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
-                cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
-                cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
-                cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
-                conn.commit()
-                break
-            # ⚠ DEADLOCK IS THE SIBLING OF TIMEOUT, NOT A DIFFERENT
-            #   PROBLEM, and catching only one of them is why a six-hour
-            #   build threw its work away. Both mean "a reader was in the
-            #   way", both roll the whole transaction back, and both are
-            #   fixed by waiting and trying again. tests/test_swap_retry.py
-            #   holds every swap site to catching the pair.
-            except (psycopg2.errors.LockNotAvailable,
-                    psycopg2.errors.DeadlockDetected):
-                conn.rollback()
-                if attempt == _SWAP_ATTEMPTS:
-                    # ! THE SHADOW SURVIVES, so a rerun resumes at the swap
-                    #   rather than reloading 61.6M rows. Raising beats
-                    #   swapping half of it.
-                    raise RuntimeError(
-                        "ranking_results swap: could not take ACCESS "
-                        f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
-                        "pg_stat_activity for a long read; the shadow "
-                        "tables are loaded and waiting.")
-                print(f"    readers hold the tables, attempt {attempt}"
-                      f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s")
-                time.sleep(_SWAP_BACKOFF)
+        from maintenance import siteMaintenance
+        # the site answers 503 while the rename waits for or holds the lock (300)
+        with siteMaintenance("swap ranking_results"):
+            for attempt in range(1, _SWAP_ATTEMPTS + 1):
+                try:
+                    cur.execute("BEGIN")
+                    cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
+                    # ⚠ BOTH TABLES UP FRONT, IN ONE STATEMENT, AND THIS IS WHAT
+                    #   THE DEADLOCK WAS. The renames took ACCESS EXCLUSIVE on
+                    #   ranking_results first and asked for athlete_season second;
+                    #   a page reading athlete_season and then ranking_results
+                    #   holds those two in the OPPOSITE order. Classic ABBA, and
+                    #   lock_timeout does not save you from it -- Postgres's
+                    #   deadlock detector fires at deadlock_timeout (1s by
+                    #   default), well before a 3s lock_timeout, so the build died
+                    #   with DeadlockDetected after six hours of work.
+                    #
+                    # ! TAKING THEM TOGETHER MAKES THE TIMEOUT THE FAILURE MODE
+                    #   AGAIN, which is the one the retry below was written for.
+                    cur.execute("LOCK TABLE ranking_results, athlete_season "
+                                "IN ACCESS EXCLUSIVE MODE")
+                    cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
+                    cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
+                    cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
+                    cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
+                    conn.commit()
+                    break
+                # ⚠ DEADLOCK IS THE SIBLING OF TIMEOUT, NOT A DIFFERENT
+                #   PROBLEM, and catching only one of them is why a six-hour
+                #   build threw its work away. Both mean "a reader was in the
+                #   way", both roll the whole transaction back, and both are
+                #   fixed by waiting and trying again. tests/test_swap_retry.py
+                #   holds every swap site to catching the pair.
+                except (psycopg2.errors.LockNotAvailable,
+                        psycopg2.errors.DeadlockDetected):
+                    conn.rollback()
+                    if attempt == _SWAP_ATTEMPTS:
+                        # ! THE SHADOW SURVIVES, so a rerun resumes at the swap
+                        #   rather than reloading 61.6M rows. Raising beats
+                        #   swapping half of it.
+                        raise RuntimeError(
+                            "ranking_results swap: could not take ACCESS "
+                            f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
+                            "pg_stat_activity for a long read; the shadow "
+                            "tables are loaded and waiting.")
+                    print(f"    readers hold the tables, attempt {attempt}"
+                          f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s")
+                    time.sleep(_SWAP_BACKOFF)
     print("  swapped. dropping the old copies...")
 
     # The old ranking_results is ~23GB. Timed because a drop that size is not
@@ -2360,14 +2363,14 @@ def _stampSeasonUnits(conn, season_table):
                 cur.execute("SELECT name_norm, state FROM college_directory")
                 campus = {r[0]: r[1] for r in cur.fetchall()}
                 try:
-                    from build_college_directory import normName
+                    from build_college_directory import lookup
                 except ImportError:
-                    normName = None
-                if normName and campus:
+                    lookup = None
+                if lookup and campus:
                     cur.execute(f"SELECT DISTINCT school FROM {season_table} WHERE school IS NOT NULL")
                     pairs = []
                     for (sch,) in cur.fetchall():
-                        st = campus.get(normName(sch))
+                        st = lookup(campus, sch)
                         if st:
                             pairs.append((sch, st))
                     cur.execute("DROP TABLE IF EXISTS tmp_campus")

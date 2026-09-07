@@ -205,13 +205,13 @@ def applyCollegeDirectory(cur):
         print("  school_identity: no college_directory (scripts/"
               "build_college_directory.py --write); the data rule stands", flush=True)
         return
-    from build_college_directory import normName
+    from build_college_directory import lookup
     cur.execute("SELECT name_norm, state FROM college_directory")
     directory = {k: v for k, v in cur.fetchall()}
     cur.execute("SELECT DISTINCT school FROM school_identity_new")
     hits = {}
     for (school,) in cur.fetchall():
-        st = directory.get(normName(school))
+        st = lookup(directory, school)
         if st:
             hits[school] = st
     if not hits:

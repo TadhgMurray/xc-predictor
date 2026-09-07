@@ -446,6 +446,14 @@ _SIEGE_WAIT_S = 30
 
 
 def _swapSiege(conn, table, cap):
+    # the site answers 503 with Retry-After while the swap holds or waits
+    # for the lock (issue 300), instead of queueing pages behind it
+    from maintenance import siteMaintenance
+    with siteMaintenance(f"swap {table}"):
+        return _swapSiegeRounds(conn, table, cap)
+
+
+def _swapSiegeRounds(conn, table, cap):
     for rnd in range(1, _SIEGE_ROUNDS + 1):
         if rnd > _SIEGE_POLITE:
             try:

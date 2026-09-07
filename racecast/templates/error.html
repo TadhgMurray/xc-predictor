@@ -1,0 +1,47 @@
+{# =====================================================================
+   error.html -- the branded page for a 500 or a 503 (issue 300).
+
+   A visitor who hits a failure still gets the topbar, the search box and
+   a way on; a crawler gets the right status. A 503 carries Retry-After so
+   search engines keep the page indexed and come back, which a bare 500
+   repeated across crawls would not.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ "Back in a moment" if code == 503 else "Something went wrong" }} - Racecast</title>
+    <meta name="robots" content="noindex">
+    <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="nf-page">
+    <div class="nf-code">{{ code }}</div>
+    {% if code == 503 %}
+    <h1>Back in a moment</h1>
+    <p class="meta">The data is being rebuilt. This page will work again in a
+       minute or two; nothing is lost.</p>
+    {% else %}
+    <h1>Something went wrong</h1>
+    <p class="meta">This page failed to load. It has been logged. Try it again,
+       or search for what you were after.</p>
+    {% endif %}
+    <form class="nf-search" action="/search" method="get" role="search">
+        <input type="search" name="q" autocomplete="off"
+               placeholder="Search athletes, meets, courses…" aria-label="Search">
+        <button type="submit">Search</button>
+    </form>
+    <p class="nf-links">
+        <a href="/">Home</a> · <a href="/rankings">Rankings</a> ·
+        <a href="/conversions">Conversions</a>
+    </p>
+    {% if code != 503 %}
+    <p class="nf-report">If this keeps happening, <a href="/report">report it</a>.</p>
+    {% endif %}
+</main>
+</body>
+</html>
