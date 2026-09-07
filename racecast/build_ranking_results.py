@@ -1565,6 +1565,82 @@ _LOAD_TABLE = "ranking_results_new"
 _LOAD_SEASON = "athlete_season_new"
 
 
+def _columnMissing(cur, table, col):
+    cur.execute("""SELECT is_nullable FROM information_schema.columns
+                   WHERE table_name = %s AND column_name = %s""", (table, col))
+    return cur.fetchone() is None
+
+
+def _columnNotNull(cur, table, col):
+    cur.execute("""SELECT is_nullable FROM information_schema.columns
+                   WHERE table_name = %s AND column_name = %s""", (table, col))
+    row = cur.fetchone()
+    return row is not None and row[0] == "NO"
+
+
+def _migrateLive(conn, like):
+    """The idempotent schema migrations on the LIVE table, before the
+    shadow is created from it (adding the column to the shadow alone would
+    be undone by the next swap).
+
+    ! ONLY THE ALTERs THAT CHANGE SOMETHING, UNDER A LOCK TIMEOUT, COMMITTED
+      AT ONCE (issue 300, 2026-09-07). ADD COLUMN IF NOT EXISTS takes
+      ACCESS EXCLUSIVE even when the column exists; that lock queues behind
+      any open read (a site page) and every later read queues behind it,
+      which is how the fill step took the site down for hours. So each
+      migration is looked up first in information_schema and run only when
+      needed, the batch waits at most five seconds for the lock and tries
+      again a few times, and it commits before the shadow build so the
+      lock is held for milliseconds, not the length of step 10.
+
+    ⚠ THESE MIGRATIONS BELONG TO ranking_results ONLY, except the unit
+      columns, which athlete_season carries too (2026-09-06): the ability
+      board, the rank line and the counts filter that table, and a unit
+      filter on a table without the columns is a 400."""
+    wanted = []                       # (probe, ddl)
+    if like == "athlete_season":
+        for _u in _UNIT_COLS:
+            wanted.append((lambda c, u=_u: _columnMissing(c, like, u),
+                           f'ALTER TABLE IF EXISTS {like} ADD COLUMN IF NOT EXISTS "{_u}" text'))
+    if like == "ranking_results":
+        for col, typ in (("distance", "real"), ("event_id", "bigint"),
+                         ("event_kind", "text"), ("mark", "real")):
+            wanted.append((lambda c, col=col: _columnMissing(c, like, col),
+                           f"ALTER TABLE IF EXISTS {like} ADD COLUMN IF NOT EXISTS {col} {typ}"))
+        # #46: a time-only row has no rating; a field row has no time
+        for col in ("speed_rating", "time_seconds"):
+            wanted.append((lambda c, col=col: _columnNotNull(c, like, col),
+                           f"ALTER TABLE IF EXISTS {like} ALTER COLUMN {col} DROP NOT NULL"))
+        for _u in ("division", "region", "conference", "league", "state_div",
+                   "section_div", "district", "county", "class", "area", "section"):
+            wanted.append((lambda c, u=_u: _columnMissing(c, like, u),
+                           f'ALTER TABLE IF EXISTS {like} ADD COLUMN IF NOT EXISTS "{_u}" text'))
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", (like,))
+        if cur.fetchone()[0] is None:
+            conn.rollback()
+            return                     # first run: no live table to migrate
+        todo = [ddl for probe, ddl in wanted if probe(cur)]
+    conn.rollback()
+    if not todo:
+        return
+    for attempt in range(6):
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                for ddl in todo:
+                    cur.execute(ddl)
+            conn.commit()
+            print(f"[rankings] {like}: {len(todo)} schema migration(s) applied", flush=True)
+            return
+        except psycopg2.errors.LockNotAvailable:
+            conn.rollback()
+            print(f"[rankings] {like}: migration waited on a lock (try {attempt + 1}/6)", flush=True)
+            time.sleep(10)
+    raise RuntimeError(f"{like}: could not migrate the live table (lock held by another session)")
+
+
+
 def createShadow(conn, name, like):
     """Fresh empty `name` shaped exactly like `like`.
 
@@ -1600,58 +1676,8 @@ def createShadow(conn, name, like):
     # ⚠ ON THE LIVE TABLE, NOT THE SHADOW. The shadow is created from it a
     #   line later; adding the column to the shadow alone would be undone by
     #   the next swap.
+    _migrateLive(conn, like)
     with conn.cursor() as cur:
-        # ⚠ THESE MIGRATIONS BELONG TO ranking_results ONLY. createShadow is
-        #   also called for athlete_season, which has no speed_rating column:
-        #   the #46 DROP NOT NULL below raised UndefinedColumn there and
-        #   killed step 10 on 2026-09-01, after the 61.6M-row load and the
-        #   index build -- and the ADD COLUMNs would have grown athlete_season
-        #   four board columns it never reads. Keyed on the table, not on
-        #   column probing, so the intent is legible.
-        # ★ athlete_season CARRIES THE UNIT COLUMNS TOO (2026-09-06): the
-        #   ability board, the rank line and the counts filter this table,
-        #   and a unit filter on a table without the columns is a 400.
-        #   Stamped by _stampSeasonUnits after the group-by.
-        if like == "athlete_season":
-            for _u in _UNIT_COLS:
-                cur.execute(f'ALTER TABLE IF EXISTS {like} '
-                            f'ADD COLUMN IF NOT EXISTS "{_u}" text')
-        if like == "ranking_results":
-            cur.execute(f"""
-                ALTER TABLE IF EXISTS {like}
-                ADD COLUMN IF NOT EXISTS distance real
-            """)
-            cur.execute(f"""
-                ALTER TABLE IF EXISTS {like}
-                ADD COLUMN IF NOT EXISTS event_id bigint
-            """)
-            # ★ #46: A TIME-ONLY ROW HAS NO RATING. Idempotent, and separate from
-            #   the ADD COLUMNs above because it is a constraint change on a
-            #   column that has always existed -- an older live table was built
-            #   when every row was rated, and CREATE TABLE ... LIKE INCLUDING
-            #   CONSTRAINTS would copy the NOT NULL onto the shadow and fail the
-            #   COPY on the first sprint.
-            cur.execute(f"""
-                ALTER TABLE IF EXISTS {like}
-                ALTER COLUMN speed_rating DROP NOT NULL
-            """)
-            # ★ THE TIMES/MARKS BOARD (owner, 2026-09-02): a field row has
-            #   a mark and no time, a hurdle or steeple row a kind.
-            cur.execute(f"ALTER TABLE IF EXISTS {like} "
-                        f"ADD COLUMN IF NOT EXISTS event_kind text")
-            cur.execute(f"ALTER TABLE IF EXISTS {like} "
-                        f"ADD COLUMN IF NOT EXISTS mark real")
-            cur.execute(f"ALTER TABLE IF EXISTS {like} "
-                        f"ALTER COLUMN time_seconds DROP NOT NULL")
-
-            # Same idempotent migration for the unit columns. text, because a
-            # league is a name and a division is "DI" -- neither is a number.
-            for _u in ("division", "region", "conference", "league",
-                       "state_div", "section_div", "district", "county",
-                       "class", "area", "section"):
-
-                cur.execute(f'ALTER TABLE IF EXISTS {like} '
-                            f'ADD COLUMN IF NOT EXISTS "{_u}" text')
         cur.execute(f"DROP TABLE IF EXISTS {name}")
 
         # ! UNLOGGED, AND THIS IS THE BIGGEST SINGLE WIN AVAILABLE HERE. A
