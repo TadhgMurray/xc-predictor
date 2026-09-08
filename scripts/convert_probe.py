@@ -82,10 +82,6 @@ def main():
             print(f"{int(args.target)}m at {label:16} from the {src_label:11}: {tt / 60:.0f}:{tt % 60:05.2f}")
 
 
-if __name__ == "__main__":
-    main()
-
-
 def sample(args, C):
     """Across random rated 2025 track rows: ln(adjusted from the stored
     rating / adjusted from the raw time through venue, distance and
@@ -124,3 +120,7 @@ def sample(args, C):
               f"(p25 {100 * sorted(gaps)[len(gaps) // 4]:+.2f}, p75 {100 * sorted(gaps)[3 * len(gaps) // 4]:+.2f})  "
               f"sport gain here {100 * statistics.median(x[1] for x in v):+.2f}%  "
               f"venue known {100 * sum(x[2] for x in v) / len(v):.0f}%")
+
+
+if __name__ == "__main__":
+    main()
