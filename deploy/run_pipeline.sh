@@ -360,7 +360,11 @@ step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 
 # ★ TWO SOLVERS, ONE SWITCH.
-#   XCP_JOINT_LIVE=1  the joint solve IS step 08: it writes course_difficulties,
+#   XCP_JOINT_LIVE=1  (THE DEFAULT since 2026-09-08: two runs went live on
+#   the old engine because the flag was left off the command line, and a
+#   day was spent reading the old engine's ratings through the joint's
+#   tables; issue 310. XCP_JOINT_LIVE=0 asks for the old engine.)
+#   the joint solve IS step 08: it writes course_difficulties,
 #                     athlete_ratings, results.speed_rating and
 #                     pair_difficulty.npz (issue 116). The tilt is inside its
 #                     ratings, so 09_tilt is skipped -- running it would tilt
@@ -368,7 +372,7 @@ step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --
 #                     a parameter and the bbar loop has nothing to steer.
 #   XCP_JOINT=1       the sequential solve stays live; the joint solve runs
 #                     beside it as a shadow and writes joint_difficulty.npz only.
-if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
+if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # ! NO --holdout ON THE LIVE STEP: it is a second full solve (three hours
   #   on 59M rows) that scores a split and publishes nothing. The shadow
   #   step keeps it; that is what the shadow is for.
@@ -419,7 +423,7 @@ stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream
        10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
-if [ "${XCP_JOINT_LIVE:-0}" = "1" ]; then
+if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # measured for telemetry only: the joint level is not steered by the json
   step 10c_gap        "$PY" -u scripts/measure_sport_gap.py
 else
