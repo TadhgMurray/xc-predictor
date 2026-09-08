@@ -270,11 +270,27 @@ def _is_team_filter(school):
 import difficulty_view
 app.template_filter("diffpct")(difficulty_view.diffPct)
 
-# The sports whose ratings carry the race-day term (run_joint
-# --race-effect-sports, default XC since 2026-09-06). The hover on a
-# track difficulty still shows the day, and says it is not applied.
+# The sports whose ratings carry the race-day term. The hover still SHOWS
+# the day for every sport; this decides whether it says the rating carries
+# it.
+#
+# ⚠ IT MUST MATCH run_joint --race-effect-sports, AND IT DID NOT
+#   (owner, 2026-09-08: "I still see that tf gets the race day tilt, same
+#   with xc, and I'm not certain either are supposed to"). This defaulted
+#   to "XC" from the day the engine's default was XC; the engine's default
+#   became NONE for both sports later the same week and this did not
+#   follow. So the hover told a reader that every XC rating from a slow day
+#   was raised by that amount, while the solve had put the term in neither
+#   sport. The go-live log is the authority and says so on every run:
+#
+#     [joint/live] race-day term, XC: median 1.67 ... OUT OF the rating
+#     [joint/live] race-day term, TF: median 1.18 ... OUT OF the rating
+#
+#   Empty now, matching run_joint's own default, and pinned to it by
+#   tests/test_race_day_wording.py. If the engine is ever run WITH
+#   --race-effect-sports, set XCP_RACE_DAY_SPORTS to the same list.
 RACE_DAY_SPORTS = tuple(
-    x.strip().upper() for x in os.environ.get("XCP_RACE_DAY_SPORTS", "XC").split(",")
+    x.strip().upper() for x in os.environ.get("XCP_RACE_DAY_SPORTS", "").split(",")
     if x.strip())
 app.jinja_env.globals["RACE_DAY_SPORTS"] = RACE_DAY_SPORTS
 

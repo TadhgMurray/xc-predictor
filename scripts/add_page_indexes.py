@@ -56,6 +56,22 @@ WANTED = [
     #   report: not the round trips, which are already parallel, but a full
     #   scan behind each of them.
     ("athlete_season",  "person_id", "idx_athlete_season_person", None),
+    # ★ THE EVENTS WINDOW ON THE ATHLETES BOARD (2026-09-08,
+    #   rankings._abilitySource). That board re-aggregates ranking_results
+    #   over a distance range, and with sport='both' there is NO sport
+    #   predicate -- so rr_board_rating_idx (pool, sport, year, ...) can only
+    #   use `pool` as its leading equality and never reaches `year`. On
+    #   college_m that is every row of the pool, on every page load: enough
+    #   to hit the site's 55s statement_timeout and hand back the HTML error
+    #   page the console reports as "Unexpected token '<'".
+    #
+    # ! LEADING (pool, year) SO THE YEAR IS USABLE WITHOUT A SPORT, with
+    #   distance riding along so the range is an index condition rather than
+    #   a heap filter. build_ranking_results creates the same index on the
+    #   shadow at step 10; this is here so it can be built on the LIVE table
+    #   now, without waiting for a rebuild.
+    ("ranking_results", "pool", "rr_pool_year_dist_idx",
+     "(pool, year, distance)"),
     # ★ THE ATHLETE PICKER'S NAME MATCH (2026-09-01). /api/predict/athletes
     #   filters on `(first_name || ' ' || last_name) ILIKE '%tok%'`, and a
     #   LEADING wildcard cannot use a btree at all -- so every keystroke was

@@ -16,8 +16,8 @@ fixed
 |---|---|---|
 | 1 | `git pull` on the box, restart the site | you |
 | 2 | `python racecast/build_team_season.py` — read the `restated` line | you |
-| 3 | `CREATE INDEX CONCURRENTLY IF NOT EXISTS rr_pool_year_dist_idx ON ranking_results (pool, year, distance);` | you |
-| 4 | `python engine/wheelchair_flag.py --write` — read the `carried forward` line | you |
+| 3 | `/srv/venv/bin/python scripts/add_page_indexes.py` — builds it CONCURRENTLY, site stays up | you |
+| 4 | `/srv/venv/bin/python engine/wheelchair_flag.py --write` — read the `carried forward` line | you |
 | 5 | Paste the two athlete dumps (§6) so the 230 and the chair case can be closed | you |
 
 Nothing in §1–§4 needs a pipeline run. §5 items do.
@@ -234,7 +234,10 @@ reaches `year`. On college_m that is every row of the pool per page load —
 enough to hit the 55s statement timeout and return the HTML page the console
 read as `Unexpected token '<'`.
 
-*Index added; build it now with `CREATE INDEX CONCURRENTLY`.* `4882c27`
+*Index added in two places: `build_ranking_results` creates it on the shadow
+at step 10, and `scripts/add_page_indexes.py` builds it on the LIVE table with
+`CREATE INDEX CONCURRENTLY` — no locks, safe with the site running, and it is
+already step 11b so it stays maintained.* `4882c27`
 
 ### ✅ 4.3 Returning teams
 "Leaving" control on the Teams tab. Re-scores from `athlete_season` because
@@ -274,12 +277,26 @@ pattern, not a venue one — and it is consistent with the 10k-too-slow /
 ### 💤 5.5 Women's 800m
 Suspected larger rating issue than men's.
 
-### 🔎 5.6 Race-day tilt still visible for both sports
-`--race-effect-sports` defaults to **none** for both, and `run_pipeline.sh`
-does not pass it. Unresolved: whether what you are seeing is the **hover**,
-which shows the term deliberately even when it is out of the rating.
-**Settle it with:** `grep "race-day term" logs/20260908_124500/08_golive.log`
-— both lines should read `OUT OF the rating`.
+### ✅ 5.6 Race-day tilt — the PAGE was lying, the ratings were fine
+The log settled it:
+
+```
+race-day term, XC: median 1.67 points at 130, p90 4.82, OUT OF the rating
+race-day term, TF: median 1.18 points at 130, p90 3.01, OUT OF the rating
+```
+
+The term is in neither rating. But `app.RACE_DAY_SPORTS` defaulted to
+**`"XC"`** — set when the engine's default *was* XC, and never moved when the
+engine's default became none for both sports days later. So the hover told you
+every XC rating from a slow day was *"raised by"* that amount, which was false
+about the number underneath it. **You were right to doubt it; the doubt just
+belonged to the sentence, not the rating.**
+
+*Default is now empty, matching `run_joint`'s own, and
+`tests/test_race_day_wording.py` pins the two together — they live in
+different files and different languages and nothing connected them. The
+not-carried wording also stopped hardcoding "Track", since that branch now
+renders for XC races too.* Live on restart.
 
 ---
 
