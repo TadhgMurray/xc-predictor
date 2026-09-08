@@ -1131,6 +1131,27 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
     rz = float(r @ z)
     rhs_norm = max(float(np.linalg.norm(rhs)), 1e-30)
 
+    # ★ XCP_CG_TRACE=<n>: print the relative residual every n iterations.
+    #   Free -- the norm below is computed every iteration for the tolerance
+    #   test anyway -- and it answers the only question that decides whether
+    #   this loop can be made shorter (2026-09-08).
+    #
+    #   A CG count of 300-400 has two very different causes and they want
+    #   opposite fixes. ONE weakly-determined direction (the XC-to-track
+    #   level against the sport offset, which CG_TOL_OUTER above blames) is
+    #   cheap for CG: an isolated small eigenvalue costs about one extra
+    #   iteration, and deflating it works. A CLUSTER of weak directions --
+    #   say the beta block, one per athlete under a ridge of 0.5 -- is what
+    #   actually produces hundreds, and deflating one direction out of such
+    #   a cluster buys NOTHING (measured on a synthetic operator of this
+    #   shape: 20 small eigenvalues, plain 448 iterations, deflate-one 449,
+    #   deflate-twenty 59).
+    #
+    #   The trace tells them apart by SHAPE. A smooth geometric decay is a
+    #   cluster; a plateau that breaks into a sudden drop is a handful of
+    #   isolated directions, and the count of drops is roughly how many to
+    #   deflate. Read one outer's trace before writing any deflation code.
+    trace = int(os.environ.get("XCP_CG_TRACE", "0"))
     for it in range(max_iter):
         Ap = matvec(p)
         pAp = float(p @ Ap)
@@ -1139,7 +1160,10 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
         alpha = rz / pAp
         x += alpha * p
         r -= alpha * Ap
-        if float(np.linalg.norm(r)) / rhs_norm < tol:
+        rel = float(np.linalg.norm(r)) / rhs_norm
+        if trace and (it % trace == 0):
+            print(f"    [cg] {it + 1:4d}  rel {rel:.3e}", flush=True)
+        if rel < tol:
             return x, it + 1
         z = inv_diag * r
         rz_new = float(r @ z)
