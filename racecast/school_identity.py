@@ -121,19 +121,62 @@ def _collegeState(school):
     return lookup(college, school)
 
 
-def schoolLabelFor(school, pool, state=None):
-    """The label for a SEASON: a college-pooled season of a name the
-    college directory knows gets the college's state ("Amherst (MA)"),
-    whatever the name's biggest cluster is; anything else is
-    schoolLabelIn(school, state). The template filter for season lines."""
+def teamState(school, pool=None, state=None):
+    """The state a school BELONGS to, given a row that happened in `state`.
+
+    ★ THE ANSWER TO "WHICH TEAM IS THIS", NOT "WHERE DID THEY RACE".
+      ranking_results.state -- and so athlete_season.state, which is the
+      MODE of a season's rows -- is where the RESULT happened. A college
+      races away most weekends, so the mode is a travel state: Air Force
+      came out OK, Oregon CA, Furman FL. build_team_season keys a team
+      (school, state) via team_rank.teamKey, so one squad became several
+      teams sharing a name -- BYU held ranks 5, 7 and 8 of the college
+      board as WI, OK and FL, with five and six athletes each instead of
+      one BYU with seventeen (owner, 2026-09-08). That breaks the
+      invariant build_team_season states in its own docstring: "A team
+      sits in exactly one state ... two rows per team, never more."
+
+    ! IT IS NOT JUST primaryState(). Two genuinely different schools share
+      a name -- Kingston WA and Kingston MO -- and (school, state) is what
+      separates them; collapsing everything to the primary would merge two
+      real teams into one. The clustering already drew that line:
+      build_school_identity merges co-racing clusters of one name (BYU)
+      and leaves clusters that never share a race apart (the Kingstons).
+      So a context state that IS one of the name's own clusters is kept,
+      and only a state the name has no cluster in -- a travel state --
+      falls back to the primary. Same rule, same threshold, as
+      schoolLabelIn.
+
+    ! AND THE SAME PRECEDENCE AS THE LABEL, deliberately: schoolLabelFor
+      is now a thin wrapper over this, so the state a board KEYS a team by
+      and the state it SHOWS cannot disagree. A second lookup would be a
+      second answer -- see primaryState.
+    """
     if not school:
-        return school
+        return state
     p = (pool or "").lower()
     if p.startswith("college") or p.startswith("pro"):
         st = _collegeState(school)
         if st:
-            return f"{school} ({st})"
-    return schoolLabelIn(school, state)
+            return st
+    if state:
+        clusters = _LABELS.get("clusters") or {}
+        share = (clusters.get(school) or {}).get(state)
+        if share is not None and share >= CONTEXT_MIN_SHARE:
+            return state
+    return _LABELS["map"].get(school) or state
+
+
+def schoolLabelFor(school, pool, state=None):
+    """The label for a SEASON: a college-pooled season of a name the
+    college directory knows gets the college's state ("Amherst (MA)"),
+    whatever the name's biggest cluster is; anything else is the name's
+    cluster in context, else its primary. The template filter for season
+    lines -- and the same verdict teamState reaches, by construction."""
+    if not school:
+        return school
+    st = teamState(school, pool, state)
+    return f"{school} ({st})" if st else school
 
 
 def stateFor(school, preferred=None):

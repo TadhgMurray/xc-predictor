@@ -183,6 +183,44 @@ def countingRows(rows, stats):
         yield row
 
 
+# ★ THE TEAM'S OWN STATE, NOT THE ONE IT RACED IN (owner, 2026-09-08).
+#   athlete_season.state is the MODE of a season's rows, and a row's state
+#   is where the RESULT happened (build_ranking_results: "a row's state is
+#   where the RACE was"). A college races away most weekends, so the mode
+#   is a travel state -- and since team_rank.teamKey keys a squad
+#   (school, state), one team became several. The college board carried
+#   BYU at ranks 5, 7 and 8 as WI, OK and FL, five and six athletes each,
+#   instead of one BYU with seventeen; Air Force read OK, Oregon CA,
+#   Furman FL.
+#
+# ⚠ WHICH BREAKS THIS MODULE'S OWN STATED INVARIANT, at the top of the
+#   file: "A team sits in exactly one state, so it appears in its own
+#   state's meet and in the national one -- two rows per (team, pool,
+#   sport, year), never more." Three BYUs is that contract failing, not a
+#   design choice, and it moves the ranking: the split squads score as
+#   five- and six-man teams against full ones.
+#
+# ! THE ANSWER ALREADY EXISTED AND NOTHING ASKED IT. school_identity
+#   clusters each school name by its athletes' home states, merges the
+#   clusters that race each other (one BYU) and keeps apart the ones that
+#   never do (Kingston WA and Kingston MO stay two schools).
+#   school_identity.primaryState says so in its own docstring -- "The
+#   identity table already answers the question; nothing was asking it" --
+#   and it was written for the board's LABELS while the KEY went on using
+#   the venue. teamState is that same verdict, so the state a team is
+#   keyed by and the state it is shown under cannot disagree.
+def resolvedStates(rows, stats):
+    """Each row's state replaced by its school's own. Counts the moves."""
+    from school_identity import teamState
+    for row in rows:
+        was = row.get("state")
+        now = teamState(row.get("school"), row.get("pool"), was)
+        if now != was:
+            stats["restated"] += 1
+            row["state"] = now
+        yield row
+
+
 def boards(rows):
     """Stream of athlete-seasons -> (scope, pool, sport, year, ranked teams).
 
@@ -328,9 +366,15 @@ def build(conn, sport, since):
             cur.copy_expert(
                 f"COPY team_season_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
 
-    stats = {"read": 0, "years": set(), "teams": 0, "dropped": {}}
+    stats = {"read": 0, "years": set(), "teams": 0, "dropped": {},
+             "restated": 0}
+    # the school -> state map behind resolvedStates; a missing
+    # school_identity table loads empty and every row keeps its own state
+    from school_identity import loadLabels
+    loadLabels(getConn)
     buf, n_rows, n_boards = io.StringIO(), 0, 0
-    for board in boards(eligibleRows(countingRows(read_rows, stats), stats)):
+    for board in boards(eligibleRows(
+            resolvedStates(countingRows(read_rows, stats), stats), stats)):
         n_boards += 1
         stats["teams"] += len(board[4])
         for row in toRows(board):
@@ -385,6 +429,15 @@ def build(conn, sport, since):
              if stats["years"] else "none")
     print(f"  read      {stats['read']:,} athlete-seasons "
           f"(n_races >= {MIN_RACES}, US states, rankable pools)")
+    # ! LOUD, because a zero here is the failure mode. resolvedStates
+    #   degrades silently when school_identity is missing or empty -- every
+    #   row keeps its venue state and the teams split again -- and that is
+    #   exactly how this bug survived: the identity table existed and the
+    #   key never read it. A run that restates nothing has not fixed
+    #   anything, whatever the board looks like.
+    print(f"  restated  {stats['restated']:,} athlete-seasons moved to "
+          f"their school's own state (0 means school_identity is missing "
+          f"or empty -- run 10b_school_ids)")
     print(f"  seasons   {len(stats['years'])} ({years})")
     print(f"  boards    {n_boards:,}  (one national + one per state, "
           f"per pool/sport/season)")
