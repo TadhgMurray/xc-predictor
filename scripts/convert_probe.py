@@ -94,12 +94,25 @@ def sample(args, C):
                        FROM results_tf r
                        JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id AND m.event_id = r.event_id
                        WHERE r.date >= '2025-01-01' AND r.speed_rating > 0 AND r.normalized_time > 0
-                         AND r.rating_pool = %s AND m.distance_meters BETWEEN 800 AND 10000
+                         AND (r.rating_pool = %s OR r.rating_pool LIKE %s)
+                         AND m.distance_meters BETWEEN 800 AND 10000
                          AND COALESCE(r.is_field, 0) = 0
-                       ORDER BY random() LIMIT %s""", (args.pool, args.sample))
+                       ORDER BY random() LIMIT %s""", (args.pool, args.pool + "|%", args.sample))
         rows = cur.fetchall()
+        # ! THE BARE POOL NAME IS THE FILL'S SPELLING; the go-live writes the
+        #   sport inside it. The first cut of this sampled the bare name and
+        #   so sampled only filled rows (2026-09-08). Both are shown apart.
+        cur.execute("""SELECT r.rating_pool, count(*) FROM results_tf r
+                       WHERE r.date >= '2025-01-01' AND r.speed_rating > 0
+                         AND (r.rating_pool = %s OR r.rating_pool LIKE %s) GROUP BY 1""",
+                    (args.pool, args.pool + "|%"))
+        print("== rows by pool spelling since 2025: " + "; ".join(f"{p} {n:,}" for p, n in cur.fetchall()))
+        cur.execute("""SELECT r.result_id, r.rating_pool FROM results_tf r WHERE r.result_id = ANY(%s)""",
+                    ([r[0] for r in rows],))
+        spelled = dict(cur.fetchall())
     bands = {}
     for rid, t, nt, rating, ev, dist, loc, indoor in rows:
+        filled = "|" not in (spelled.get(rid) or "")
         try:
             venue = C.venue_difficulty("TF", location_id=loc, distance_meters=dist, is_indoor=bool(indoor))
             adj = C._norm_from_rating(float(rating), args.pool, 0.0, "TF")
@@ -109,12 +122,14 @@ def sample(args, C):
             continue
         if not adj or not fwd:
             continue
-        b = int(float(rating) // 10 * 10)
+        b = ("filled" if filled else "solved", int(float(rating) // 10 * 10))
         bands.setdefault(b, []).append((math.log(adj / fwd), gain, venue is not None))
     print(f"== {len(rows)} random 2025 {args.pool} track rows: ln(rating path / time path), by rating band")
     print("   zero = the stored rating carries every term; +sport gain = the shift was never applied")
     for b in sorted(bands):
         v = bands[b]
+        kind, b = b
+        print(f"  {kind:6}", end="")
         gaps = [x[0] for x in v]
         print(f"  {b}-{b + 10}: n {len(v):4d}  median gap {100 * statistics.median(gaps):+.2f}%  "
               f"(p25 {100 * sorted(gaps)[len(gaps) // 4]:+.2f}, p75 {100 * sorted(gaps)[3 * len(gaps) // 4]:+.2f})  "
