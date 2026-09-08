@@ -39,8 +39,9 @@ _SORTS_ABILITY = {
     "rating":  ("s.mean_rating",    "DESC"),
     "best":    ("s.best_rating",    "DESC"),
     "races":   ("s.n_races",        "DESC"),
-    # ! THE LABEL, so the column sorts the way it reads. See _YEAR_LABEL.
-    "year":    ("(CASE WHEN s.sport = 'TF' THEN s.year + 1 ELSE s.year END)", "DESC"),
+    # ! THE STORED ACADEMIC YEAR, which is also what the column shows on
+    #   this page -- so it sorts the way it reads. See _YEAR_LABEL.
+    "year":    ("s.year", "DESC"),
     "name":    ("a.name",           "ASC"),
     "school":  ("s.school",         "ASC"),
     "state":   ("s.state",          "ASC"),
@@ -53,7 +54,7 @@ _SORTS_PERFORMANCE = {
     "rating":  ("p.speed_rating",   "DESC"),
     "date":    ("p.race_date",      "DESC"),
     "time":    ("p.time_seconds",   "ASC"),
-    "year":    ("(CASE WHEN p.sport = 'TF' THEN p.year + 1 ELSE p.year END)", "DESC"),
+    "year":    ("p.year", "DESC"),
     "name":    ("a.name",           "ASC"),
     "school":  ("p.school",         "ASC"),
     "state":   ("p.state",          "ASC"),
@@ -81,7 +82,7 @@ _SORTS_PR = {
 
     "date":    ("p.race_date",     "DESC"),
     "rating":  ("p.speed_rating",  "DESC"),
-    "year":    ("(CASE WHEN p.sport = 'TF' THEN p.year + 1 ELSE p.year END)", "DESC"),
+    "year":    ("p.year", "DESC"),
     "name":    ("a.name",          "ASC"),
     "school":  ("p.school",        "ASC"),
     "state":   ("p.state",         "ASC"),
@@ -148,11 +149,26 @@ POOLS = {"hs_m", "hs_f", "ms_m", "ms_f", "college_m", "college_f"}
 #   from December 2025 to July 2026, all of which is academic 2025, and no
 #   athlete calls that their 2025 season.
 #
-# ! SO THE LABEL IS year + 1 FOR TF AND year FOR XC, and the filter accepts
-#   the LABEL rather than the stored value -- see _yearClause. Storing one
-#   thing and showing another is only safe when the filter agrees with what is
-#   shown.
-_YEAR_LABEL = "(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)"
+# ⚠ THE BOARDS SHOW THE ACADEMIC YEAR, THE REST OF THE SITE DOES NOT
+#   (owner, 2026-09-08: "year should be academic year" ... "Just change for
+#   rankings"). season_year.py stores one clock -- August to July, named for
+#   the year it opens in -- and the /rankings page now shows and filters
+#   exactly that, for both sports, on all four boards.
+#
+#   The athlete page, the school page and the share cards keep the +1 for
+#   track (app.season_label, school.py, cards.py): spring 2026 reads "2026
+#   TF" there, because that is what an athlete calls the season. So the
+#   same season is "2025" on a board and "2026 TF" on a page, deliberately.
+#   That divergence was raised before the change and chosen anyway; it is
+#   not an oversight, and closing it means moving those three together.
+#
+# ! THE FILTER AND THE DISPLAY MOVED TOGETHER, which is the only part that
+#   is not a preference. Showing one and filtering the other is how a Year
+#   chip silently selects the wrong season.
+# ! KEPT AS THE ONE PLACE THIS RULE IS WRITTEN DOWN, even though it is now
+#   the bare column: every comment about the boards' year points here, and a
+#   future change back to a label has one definition to edit.
+_YEAR_LABEL = "year"
 
 
 # ! 'all' IS A PR-BOARD POOL AND ONLY A PR-BOARD POOL. A rating board mixing
@@ -947,18 +963,14 @@ def _whereClauses(f, params, with_dates):
         if not f.get(name):
             continue
         if name == "year":
-            # ★ TWO INDEXABLE BRANCHES, NOT A CASE ON EVERY ROW. The user
-            #   names a season the way the sport does -- "2026" means autumn
-            #   2026 in XC and spring 2026 in track -- so the two sports want
-            #   different stored values for the same word.
-            #
-            #   Writing it as `CASE WHEN sport='TF' ... = ANY(...)` would be
-            #   correct and would compute an expression per row, defeating the
-            #   year index. An OR of two plain equalities keeps both usable.
+            # ★ THE STORED ACADEMIC YEAR, DIRECTLY (2026-09-08). This used to
+            #   be an OR of two branches, because the boards showed the label
+            #   -- year + 1 for track -- and the filter had to accept what was
+            #   shown. The boards show the academic year now (see _YEAR_LABEL),
+            #   so the filter is one plain equality on an indexed column and
+            #   the two sports need no separate branch.
             params["year"] = f["year"]
-            params["year_tf"] = [y - 1 for y in f["year"]]
-            parts.append(" AND ((sport = 'TF' AND year = ANY(%(year_tf)s))"
-                         "      OR (sport <> 'TF' AND year = ANY(%(year)s)))")
+            parts.append(" AND year = ANY(%(year)s)")
         elif name == "grade":
             # ★ THE GRADE IS MATCHED ON WHAT IT MEANS, NOT ON ITS SPELLING
             #   (owner, 2026-09-07: "grade filter is removing ppl it
@@ -1284,8 +1296,7 @@ def getPerformanceRankings(cur, f):
                p.pool, p.distance,
                p.speed_rating                       AS rating,
                to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
-               (CASE WHEN p.sport = 'TF' THEN p.year + 1
-                     ELSE p.year END)              AS year,
+               p.year,
                p.state, p.school, p.grade,
                p.meet_id, p.div_id, p.event_id, p.time_seconds,
                COALESCE(a.name, 'Unknown')          AS name
@@ -1389,8 +1400,7 @@ def getPrRankings(cur, f):
 
                p.speed_rating                       AS rating,
                to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
-               (CASE WHEN p.sport = 'TF' THEN p.year + 1
-                     ELSE p.year END)              AS year,
+               p.year,
                p.state, p.school, p.grade,
                p.meet_id, p.div_id, p.event_id,
                COALESCE(a.name, 'Unknown')          AS name
@@ -1433,9 +1443,10 @@ def getAbilityRankings(cur, f):
 
     cur.execute(f"""
         SELECT s.person_id, s.sport, s.pool,
-               -- ! THE LABEL, NOT THE STORED VALUE. See _YEAR_LABEL.
-               (CASE WHEN s.sport = 'TF' THEN s.year + 1
-                     ELSE s.year END)              AS year,
+               -- ! THE STORED ACADEMIC YEAR, shown as it is stored: the
+               --   boards stopped adding one for track (see _YEAR_LABEL),
+               --   so there is nothing left to convert here.
+               s.year,
                s.mean_rating                        AS rating,
                s.best_rating, s.n_races,
                s.state, s.school, s.grade,

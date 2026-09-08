@@ -80,7 +80,7 @@
         </tbody>
     </table>
     {% if sec.on_board %}
-    <p class="view-all"><a href="/rankings?board=pr&amp;sport={{ sport }}&amp;pool={{ data.pools[g] }}&amp;distance={{ sec.distance }}&amp;school={{ school|urlencode }}{% if data.year %}&amp;year={{ data.year }}{% endif %}{% if data.course %}&amp;course={{ data.course|urlencode }}{% endif %}">View all →</a></p>
+    <p class="view-all"><a href="/rankings?board=pr&amp;sport={{ sport }}&amp;pool={{ data.pools[g] }}&amp;distance={{ sec.distance }}&amp;school={{ school|urlencode }}{% if board_year %}&amp;year={{ board_year }}{% endif %}{% if data.course %}&amp;course={{ data.course|urlencode }}{% endif %}">View all →</a></p>
     {% endif %}
     {% endif %}
 {%- endmacro %}

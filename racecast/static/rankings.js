@@ -464,8 +464,15 @@ const GRADES = [
 
 /* Newest first: the reason to open a year filter is almost always this season
    or last, and nobody scrolls to 1990 by choice. */
+/* ★ ACADEMIC YEARS, SINCE 2026-09-08. The boards show and filter the
+   stored academic year for both sports now (rankings._YEAR_LABEL), so the
+   list no longer runs a year ahead for track: the current academic year is
+   the one that OPENED, which after August is this calendar year and before
+   it is the last. Offering a year the boards cannot hold would put an
+   always-empty option at the top of the list every autumn. */
 const YEARS = (() => {
-  const now = new Date().getFullYear() + 1;   // a TF season runs ahead
+  const d = new Date();
+  const now = d.getFullYear() - (d.getMonth() < 7 ? 1 : 0);   // Aug opens it
   const out = [];
   for (let y = now; y >= 1990; y--) out.push([String(y), String(y)]);
   return out;

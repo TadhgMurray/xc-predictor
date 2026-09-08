@@ -4360,8 +4360,18 @@ def school_prs_page(school_name):
                 else:
                     r["display_mark"] = r.get("mark") or " - "
 
+    # ⚠ THE BOARD SPEAKS THE ACADEMIC YEAR NOW, THIS PAGE STILL SPEAKS THE
+    #   LABEL (2026-09-08). The "View all" links go to /rankings, which
+    #   filters the stored academic year for both sports since the boards
+    #   stopped adding one for track -- while this page, the athlete page
+    #   and the school page kept the label. So the year is converted HERE,
+    #   at the one place the two conventions meet: without it every "View
+    #   all" on a track season lands on the season before.
+    from school import storedYear as _storedYear
+    board_year = _storedYear(sport, data.get("year")) if data.get("year") else None
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
+                           board_year=board_year,
                            has_hs_view=has_hs_view)
 
 

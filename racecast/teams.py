@@ -95,8 +95,7 @@ _SORTS = {
     "fifth":    ("t.fifth_rating", "DESC"),
     "best":     ("t.best_rating",  "DESC"),
     "athletes": ("t.n_athletes",   "DESC"),
-    "year":     ("(CASE WHEN t.sport = 'TF' THEN t.year + 1 ELSE t.year END)",
-                 "DESC"),
+    "year":     ("t.year", "DESC"),
 }
 
 # ! NO 'both' AND NO 'all'. A hypothetical meet is one field: cross country
@@ -252,12 +251,12 @@ def _fieldWhere(f, params):
         parts.append(" AND t.state = ANY(%(states)s)")
 
     if f["year"]:
-        # Two indexable branches, not a CASE per row -- rankings._whereClauses
-        # explains why. A TF season is named for the year it ENDS in.
+        # ★ THE STORED ACADEMIC YEAR (2026-09-08). The Teams tab shares the
+        #   /rankings page's one Year control with the athlete boards, so it
+        #   moved with them -- see rankings._YEAR_LABEL. Splitting them would
+        #   put two meanings behind one combo.
         params["year"] = f["year"]
-        params["year_tf"] = [y - 1 for y in f["year"]]
-        parts.append(" AND ((t.sport = 'TF' AND t.year = ANY(%(year_tf)s))"
-                     "      OR (t.sport <> 'TF' AND t.year = ANY(%(year)s)))")
+        parts.append(" AND t.year = ANY(%(year)s)")
 
     params["min_athletes"] = f["min_athletes"]
     parts.append(" AND t.n_athletes >= %(min_athletes)s")
@@ -351,8 +350,7 @@ def getTeamRankings(cur, f):
 
     cur.execute(f"""
         SELECT t.school, t.state, t.pool, t.sport,
-               (CASE WHEN t.sport = 'TF' THEN t.year + 1
-                     ELSE t.year END)  AS year,
+               t.year,
                t.scope, t.rank, t.points, t.n_athletes,
                t.top5_mean, t.fifth_rating, t.best_rating
         FROM   team_season t
@@ -417,8 +415,7 @@ def getTeamField(cur, f):
     where = _fieldWhere(f, params)
     cur.execute(f"""
         SELECT t.school, t.state, t.pool, t.sport,
-               (CASE WHEN t.sport = 'TF' THEN t.year + 1
-                     ELSE t.year END)  AS year,
+               t.year,
                t.scope, t.rank, t.points, t.n_athletes,
                t.top5_mean, t.fifth_rating, t.best_rating, t.ratings
         {_FIELD_SQL_TAIL.format(where=where)}
