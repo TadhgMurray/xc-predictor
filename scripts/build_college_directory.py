@@ -349,9 +349,40 @@ def main():
         cur.executemany(
             "INSERT INTO college_directory_new VALUES (%s, %s, %s, %s, 'wikipedia')",
             rows_out)
-        cur.execute("DROP TABLE IF EXISTS college_directory")
-        cur.execute("ALTER TABLE college_directory_new RENAME TO college_directory")
         conn.commit()
+        # ! THE SWAP WAITS FIVE SECONDS AT A TIME, NOT FOREVER (2026-09-08:
+        #   --write hung behind a pipeline step's read of the live table).
+        #   A step 10 or 10b transaction holds ACCESS SHARE on the
+        #   directory for its whole run; DROP wants ACCESS EXCLUSIVE and
+        #   queued behind it with no message. Now: lock_timeout, a dozen
+        #   tries, the blocker named each time, and a clean exit that
+        #   leaves college_directory_new in place for the next attempt.
+        import time
+        import psycopg2.errors
+        for attempt in range(1, 13):
+            try:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                cur.execute("DROP TABLE IF EXISTS college_directory")
+                cur.execute("ALTER TABLE college_directory_new RENAME TO college_directory")
+                conn.commit()
+                break
+            except psycopg2.errors.LockNotAvailable:
+                conn.rollback()
+                cur.execute("""SELECT a.pid, a.application_name, a.state,
+                                      now() - a.xact_start, left(a.query, 70)
+                               FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+                               WHERE l.relation = 'college_directory'::regclass
+                                 AND a.pid <> pg_backend_pid()""")
+                who = cur.fetchall()
+                conn.rollback()
+                print(f"  swap try {attempt}/12: college_directory is held by "
+                      + (", ".join(f"pid {w[0]} ({w[1] or 'no app'}, {w[2]}, {w[3]}): {w[4]}" for w in who) or "nobody visible"),
+                      flush=True)
+                if attempt == 12:
+                    print("  giving up: college_directory_new is loaded; rerun --write "
+                          "when the holder is done (a pipeline step 10 or 10b).")
+                    return
+                time.sleep(10)
     print(f"  college_directory: {len(rows_out):,} rows written")
 
 
