@@ -492,8 +492,20 @@ const YEARS = (() => {
   const out = [];
   /* value is the stored academic year; the LABEL spans it, because
      "2025" alone reads as the calendar year and the spring half of that
-     season is 2026. */
-  for (let y = now; y >= 1990; y--) out.push([String(y), academicLabel(y)]);
+     season is 2026.
+
+     ! THE THIRD ELEMENT IS THE CODE, AND IT IS THE LABEL ON PURPOSE.
+       renderOptions falls back to `o[2] || o[0]`, i.e. the VALUE, and draws
+       it beside the label whenever the two differ -- which is right for
+       states ("California" with "CA" beside it) and was invisible for years
+       while value and label were the same string. The moment the label
+       became "2025-26" every row grew a second "2025" chip beside it
+       (owner, 2026-09-08, screenshot). Passing the label as the code makes
+       `code !== label` false and the extra span is dropped. */
+  for (let y = now; y >= 1990; y--) {
+    const lab = academicLabel(y);
+    out.push([String(y), lab, lab]);
+  }
   return out;
 })();
 
@@ -536,7 +548,9 @@ const PANEL = {
   /* 56 states / 4 columns = 14 rows, which fits without a scrollbar. Three
      columns needed 19 rows and did not. */
   state:  { cols: 4, width: 560, flow: "column" },
-  year:   { cols: 4, width: 400, flow: "column" },
+  /* 4 columns of "2025-26" needs more room than 4 columns of "2025": the
+     labels were being ellipsised to "20..." at 400 (owner, 2026-09-08). */
+  year:   { cols: 4, width: 520, flow: "column" },
   grade:  { cols: 2, width: 300, flow: "column" },
   /* Searched, so the option count is unbounded and unknown until it returns.
      Column-major over a variable-length result list would move every entry

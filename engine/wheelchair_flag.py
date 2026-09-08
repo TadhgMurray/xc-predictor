@@ -194,6 +194,46 @@ _PEOPLE = """
     ANALYZE wheelchair_person;
 """
 
+# ★ ONCE FLAGGED, ALWAYS FLAGGED (owner, 2026-09-08: "it's not a detection
+#   gap bcs we've detected these ppl so many times b4, which is an issue
+#   that keeps popping up in them stop getting detected").
+#
+# ⚠ THE REBUILD ABOVE IS A SNAPSHOT, AND THIS FILE'S OWN RULE IS NOT.
+#   The docstring says "ANY CONFIRMED CHAIR RACE CONDEMNS THE WHOLE CAREER"
+#   and "IT FLAGS, IT NEVER DELETES" -- but DROP TABLE + CREATE TABLE AS
+#   re-derives the list from whatever labels survive in results TODAY. Every
+#   run, a person whose evidence has gone silently leaves the list and is
+#   rated again. The evidence goes for ordinary reasons:
+#
+#     - the rowguard drops the chair result. A racing chair covers 1500m
+#       far faster than a runner, so on the running scale a chair time
+#       looks exactly like the impossible row the rowguard exists to
+#       remove -- and removing it removes the proof. That is a FEEDBACK
+#       LOOP: flagged, rated, absurd, dropped, unflagged, rated again.
+#     - a re-scrape renames the division, or the meet's div_id changes.
+#     - a person merge renumbers person_id.
+#
+#   So the fresh pass is UNIONED with what the table already held, and a
+#   person is only ever added. `via` is prefixed 'carried:' for the ones the
+#   fresh pass no longer sees, so --census and --review show the churn
+#   instead of hiding it, and n_chair/first_date keep the values that were
+#   true when the evidence still existed.
+#
+# ! THE ESCAPE HATCH IS EXPLICIT, because a permanent list needs one: a
+#   genuine false positive comes off with --forget <person_id>, which is a
+#   deliberate act and leaves a line in the log. Nothing else removes a row.
+_CARRY = """
+    INSERT INTO wheelchair_person
+        (person_id, n_chair, n_total, first_date, last_date, label, via)
+    SELECT o.person_id, o.n_chair, o.n_total, o.first_date, o.last_date,
+           o.label,
+           CASE WHEN o.via LIKE 'carried:%%' THEN o.via
+                ELSE 'carried:' || COALESCE(o.via, '?') END
+    FROM   wheelchair_person_prev o
+    WHERE  NOT EXISTS (SELECT 1 FROM wheelchair_person n
+                       WHERE n.person_id = o.person_id)
+"""
+
 # ★ THE TABLE, POSSIBLY EMPTY, FOR EVERY READER THAT ANTI-JOINS IT (2026-09-03).
 #   The boards and fill_ratings exclude chair athletes by person through this
 #   table; a database that has never run --write must still build. Same
@@ -258,6 +298,13 @@ def main():
                     help="build wheelchair_race and wheelchair_person")
     ap.add_argument("--review", type=int, default=0, metavar="N",
                     help="list N athletes whose chair races are a minority")
+    # ★ THE ONLY WAY OFF THE LIST. The list is permanent by design (see
+    #   _CARRY), so a genuine false positive needs a deliberate act that
+    #   leaves a line in the log rather than a quiet re-derivation.
+    ap.add_argument("--forget", type=int, nargs="+", default=None,
+                    metavar="PERSON_ID",
+                    help="remove these people from wheelchair_person and do "
+                         "not carry them forward (needs --write to persist)")
     ap.add_argument("--census", action="store_true",
                     help="races and people per source, so the two-feed claim "
                          "can be checked rather than assumed")
@@ -269,7 +316,44 @@ def main():
         #   that is to do it and not commit. UNLOGGED + a real table, so a
         #   rollback leaves nothing behind.
         cur.execute(_RACES.format(rx=WHEELCHAIR_RX))
+
+        # ★ KEEP THE OLD LIST BEFORE THE REBUILD DROPS IT (see _CARRY). The
+        #   copy is taken inside the same transaction, so a dry run rolls it
+        #   back with everything else.
+        ensureTable(cur)
+        cur.execute("DROP TABLE IF EXISTS wheelchair_person_prev")
+        cur.execute("CREATE TEMP TABLE wheelchair_person_prev AS "
+                    "SELECT * FROM wheelchair_person")
+        cur.execute("SELECT count(*) AS n FROM wheelchair_person_prev")
+        n_prev = int(cur.fetchone()["n"])
+
         cur.execute(_PEOPLE)
+
+        # ! --forget FIRST, so a person the owner has just un-flagged is not
+        #   immediately carried back in from the previous table.
+        n_forgot = 0
+        if args.forget:
+            cur.execute("DELETE FROM wheelchair_person WHERE person_id = ANY(%s)",
+                        (list(args.forget),))
+            n_forgot = cur.rowcount
+            cur.execute("DELETE FROM wheelchair_person_prev "
+                        "WHERE person_id = ANY(%s)", (list(args.forget),))
+            print(f"[chair] --forget: {n_forgot} person(s) removed from the "
+                  f"list and not carried forward")
+
+        cur.execute(_CARRY)
+        n_carried = cur.rowcount
+        if n_carried:
+            # ⚠ LOUD. A nonzero count is the churn this exists to survive:
+            #   people the labels no longer reach, most often because the
+            #   rowguard dropped the very race that proved it.
+            print(f"[chair] carried forward {n_carried:,} of {n_prev:,} people "
+                  f"the fresh scan no longer finds -- once flagged, always "
+                  f"flagged (via 'carried:'). --review them, and --forget any "
+                  f"that are wrong.")
+        elif n_prev:
+            print(f"[chair] all {n_prev:,} previously flagged people were "
+                  f"found again by the fresh scan")
 
         cur.execute(_SUMMARY)
         s = cur.fetchone()
