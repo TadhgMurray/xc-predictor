@@ -61,6 +61,46 @@ _SPORT_NAME = {0: "XC", 1: "TF"}
 #   Averaging ratings would anchor on a ratio of ratios and the 100 point would
 #   drift with the shape of the distribution instead of sitting at the pool's
 #   middle.
+# ★ A PRO IS RATED ON THE COLLEGE SCALE (owner, 2026-09-08: "pro athletes
+#   still get crazy low speed ratings. They should honestly be incorporated
+#   to college speed pool mechanically but not ranked as such").
+#
+#   A rating is 100 * pool_mean / exp(a): 100 is the MEAN OF YOUR OWN POOL.
+#   The pro pool's mean is a professional, so an elite professional reads
+#   just over 100 -- Graham Blanks' 29:41 at the USATF trials came out 96.4
+#   beside his college rows at 146. Nothing is broken in the solve; the two
+#   numbers are simply on different scales, and only one of them is the
+#   scale a reader has in their head.
+#
+# ! SO THE ANCHOR MOVES, NOT THE POOL. The obvious alternative -- repool
+#   pros as college -- would fold professional abilities INTO the college
+#   mean and shift every college rating down. This takes the college pool's
+#   mean and APPLIES it to pro rows, leaving the college mean computed over
+#   collegians alone. Pros keep pool 'pro_m'/'pro_f', so rankings.POOLS
+#   still excludes them from every board: rated on the college scale, not
+#   ranked as college, which is exactly what was asked.
+_PRO_SCALE_PREFIX = "pro_"
+_PRO_SCALE_ONTO = "college_"
+
+
+def _proScaleMap(pool_names):
+    """Index -> the pool index whose MEAN each pool should be rated against.
+    Identity everywhere except pro_x -> college_x."""
+    names = [str(n) for n in pool_names]
+    out = np.arange(max(len(names), 1), dtype=np.int64)
+    by_name = {n: i for i, n in enumerate(names)}
+    for i, n in enumerate(names):
+        if not n.startswith(_PRO_SCALE_PREFIX):
+            continue
+        onto = by_name.get(_PRO_SCALE_ONTO + n[len(_PRO_SCALE_PREFIX):])
+        # ! ONLY WHEN THE COLLEGE POOL IS REALLY THERE. A corpus with pros
+        #   and no collegians of that gender keeps its own anchor rather
+        #   than silently rating against nothing.
+        if onto is not None:
+            out[i] = onto
+    return out
+
+
 def poolMeanPerGroup(ability, attrs, valid, anchor=None):
     # ★ THE ANCHOR SET, NOT THE RATED SET. buildRatings now rates 2-race
     #   athlete-seasons but keeps them out of pool_mean; the same distinction has
@@ -71,9 +111,29 @@ def poolMeanPerGroup(ability, attrs, valid, anchor=None):
     n_pools = max(len(attrs["pool_names"]), 1)
     career, _ = pr._meanBy(ability, pool, n_pools, a)
 
+    # the means stay per REAL pool (so college's is collegians only); only
+    # the LOOKUP is redirected for pro rows
+    scale_of = _proScaleMap(attrs["pool_names"])
+    career = career[scale_of]
+
     combo = pool.astype(np.int64) * 10000 + attrs["season"]
     _u, code = np.unique(combo, return_inverse=True)
     seasonal, _ = pr._meanBy(ability, code, code.max() + 1, a)
+
+    # ! THE SEASONAL HALF NEEDS THE SAME REDIRECT, and it is a lookup rather
+    #   than an index remap: a pro row of season s must read the code for
+    #   (college pool, s). searchsorted works because np.unique returns _u
+    #   sorted. A season with no collegians has no such code, so that row
+    #   keeps its own -- better a pro-anchored season than a rating against
+    #   a pool that did not race.
+    want = scale_of[pool].astype(np.int64) * 10000 + attrs["season"]
+    moved = want != combo
+    if moved.any():
+        idx = np.searchsorted(_u, want)
+        found = (idx < _u.size)
+        idx_safe = np.clip(idx, 0, max(_u.size - 1, 0))
+        found &= _u[idx_safe] == want
+        code = np.where(moved & found, idx_safe, code)
 
     # ★ A POOL MEAN IS RETURNED FOR EVERY GROUP, rated or not. A one-race
     #   athlete-season has no usable ability -- alpha IS that row's residual, so
