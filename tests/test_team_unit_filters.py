@@ -1,0 +1,145 @@
+"""A division is a FIELD on the team board, not a slice of one.
+
+Owner, 2026-09-08: "when you do like a div/section filter the place numbers
+should update, so it's actually 1,2,3 not just like 45, 150, 200."
+
+Two things were wrong, and only one of them was the numbering:
+
+  1. rankings.js shows the division / region / conference / section combos
+     by POOL, not by board -- syncUnitRows keys off $("pool").value alone --
+     so the Teams tab has always offered them, buildQuery has always SENT
+     them, and teams.parseFilters never read them. Picking Division III did
+     nothing, silently.
+
+  2. The renumbering itself is refused on purpose. teams.py: "renumbering
+     them 1, 2, 3 would invent a championship that was never run", and the
+     alternative it names is to hold the meet -- raceStored. So the fix is
+     not to renumber a sliced board, it is to let the division REACH the
+     field, after which serveBoard races it and there is one first place
+     because one race was run.
+
+    python tests/test_team_unit_filters.py
+"""
+import io
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "racecast"))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+
+failed = []
+
+
+def ok(cond, msg):
+    if not cond:
+        failed.append(msg)
+    return cond
+
+
+import teams                                                     # noqa: E402
+from rankings import UNIT_FILTERS                                 # noqa: E402
+
+
+# no database here: the school list is the only thing _fieldWhere needs
+teams._unitSchools = lambda key, values: ["Amherst", "Williams", "Tufts"]
+teams._hasSchoolUnitArea = lambda: True
+
+
+def _filters(**over):
+    f = {"sport": "XC", "pool": "college_m", "scope": "usa", "state": [],
+         "school": [], "year": [], "board_scope": "usa", "min_athletes": 5,
+         "limit": 50, "offset": 0, "span": "alltime"}
+    for k in UNIT_FILTERS:
+        f[k] = []
+    f.update(over)
+    return f
+
+
+# ---- 1. the filters are parsed at all --------------------------------- #
+class _Args(dict):
+    def get(self, k, default=None):
+        return dict.get(self, k, default)
+
+    def getlist(self, k):
+        v = dict.get(self, k)
+        return [v] if v is not None else []
+
+
+f, err = teams.parseFilters(_Args(sport="XC", pool="college_m",
+                                  division="NCAA DIII"))
+ok(err is None, f"parseFilters rejected a division: {err}")
+ok(f is not None and f.get("division") == ["NCAA DIII"],
+   f"division not parsed: {f.get('division') if f else None}")
+for key in UNIT_FILTERS:
+    ok(f is not None and key in f, f"parseFilters drops the {key} filter")
+
+
+# ---- 2. a division narrows the FIELD ---------------------------------- #
+params = {}
+where = teams._fieldWhere(_filters(division=["NCAA DIII"]), params)
+ok("t.school = ANY(%(division_schools)s)" in where,
+   "a division must narrow the field, so raceStored races only those teams")
+ok(params.get("division_schools") == ["Amherst", "Williams", "Tufts"],
+   "the school list must be bound, not interpolated")
+
+# every unit filter reaches the field, not just division
+for key in UNIT_FILTERS:
+    p = {}
+    w = teams._fieldWhere(_filters(**{key: ["X"]}), p)
+    ok(f"%({key}_schools)s" in w, f"the {key} filter never reaches the field")
+
+
+# ---- 3. a school stays a SUBJECT -------------------------------------- #
+#   The distinction is the whole point: race the school filter and every
+#   filtered squad comes first. _fieldWhere must not touch it.
+p = {}
+w = teams._fieldWhere(_filters(school=["Amherst"]), p)
+ok("school" not in w.replace("t.school = ANY(%(division_schools)s)", ""),
+   "a school name must not narrow the field -- see _fieldWhere's docstring")
+p2 = {}
+w2 = teams._subjectWhere(_filters(school=["Amherst"]), p2)
+ok("lower(btrim(t.school))" in w2, "a school is still a subject filter")
+
+
+# ---- 4. no filter set adds no clause ---------------------------------- #
+p3 = {}
+w3 = teams._fieldWhere(_filters(), p3)
+for key in UNIT_FILTERS:
+    ok(f"{key}_schools" not in p3,
+       f"an unset {key} filter must add no bind (it would kill the index)")
+ok(" AND FALSE" not in w3, "an unset filter must not empty the board")
+
+
+# ---- 5. a unit no school carries empties the board, loudly ------------ #
+teams._unitSchools = lambda key, values: []
+p4 = {}
+w4 = teams._fieldWhere(_filters(division=["Division Nowhere"]), p4)
+ok(" AND FALSE" in w4,
+   "a division no school carries must return nothing, not everything")
+teams._unitSchools = lambda key, values: ["Amherst"]
+
+
+# ---- 6. and the numbering is NOT hand-rolled -------------------------- #
+#   If a later change renumbers a sliced board instead of racing it, the
+#   module's own argument is being ignored.
+TE = io.open(os.path.join(ROOT, "racecast", "teams.py"), encoding="utf-8").read()
+ok("raceStored(getTeamField(cur, f))" in TE,
+   "serveBoard must still race the field it selected")
+# ! SCOPED TO THE TEAM-BOARD FUNCTIONS. getCoursePerformances further down
+#   uses row_number() for its own per-race dedup, which is a different
+#   board and a different question.
+_team_half = TE[TE.index("def getTeamRankings("):TE.index("#  SINGLE RACES")]
+ok("row_number()" not in _team_half,
+   "the team board must not renumber a sliced board -- hold the meet "
+   "instead (see the module docstring)")
+ok("row_number()" in TE[TE.index("#  SINGLE RACES"):],
+   "the course board's own row_number should still be there -- if this "
+   "fails the slice above is looking at the wrong half of the file")
+
+
+if __name__ == "__main__":
+    for m in failed:
+        print("FAIL:", m)
+    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)

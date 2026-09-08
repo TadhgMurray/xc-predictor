@@ -74,7 +74,8 @@ caller did not set.
 from team_rank import raceStored
 from rankings import (US_STATES, POOLS, SPORTS, SCOPES, MAX_LIMIT,
                       DEFAULT_LIMIT, _boundedInt, _multiValue, _multiInt,
-                      MAX_MULTI)
+                      MAX_MULTI, UNIT_FILTERS, _unitSchools,
+                      _hasSchoolUnitArea)
 
 # Each entry is (expression, natural direction) -- same contract as
 # rankings._SORTS_*. Rank ascends because first place is the best.
@@ -133,6 +134,16 @@ def parseFilters(args):
         "limit": _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
         "offset": _boundedInt(args, "offset", 0, 0, 100000),
     }
+
+    # ★ THE UNIT FILTERS WERE ON SCREEN AND NOWHERE ELSE (owner, 2026-09-08:
+    #   "when you do like a div/section filter the place numbers should
+    #   update"). rankings.js shows the division / region / conference /
+    #   section combos by POOL, not by board (syncUnitRows keys off
+    #   $("pool").value alone), so the Teams tab has always offered them --
+    #   and parseFilters never read them. Picking Division III did nothing
+    #   at all, silently, which is also why the ranks looked untouched.
+    for key in UNIT_FILTERS:
+        f[key] = _multiValue(args, key)
 
     # ★ ONE YEAR MEANS THAT YEAR'S MEET; ANYTHING ELSE MEANS THE ALL-TIME
     #   ONE. Not a preference -- the season boards cannot be stacked (thirty
@@ -243,6 +254,39 @@ def _fieldWhere(f, params):
 
     params["min_athletes"] = f["min_athletes"]
     parts.append(" AND t.n_athletes >= %(min_athletes)s")
+
+    # ★ A DIVISION IS A FIELD, NOT A SUBJECT -- which is what makes the
+    #   ranks come out 1, 2, 3 without renumbering anything. The module
+    #   docstring refuses to renumber a sliced board ("that invents a
+    #   championship that was never run") and names the alternative: hold
+    #   the meet. So DIII goes in HERE, with state and season, and
+    #   serveBoard races the teams it selected -- one first place, because
+    #   one race was run. Renumbering was never needed; the filter just
+    #   had to reach the field.
+    #
+    # ! CONTRAST WITH school, WHICH STAYS A SUBJECT (see _subjectWhere). A
+    #   division is a population that plausibly lines up together; a school
+    #   name is a question about where one team stands, and racing it would
+    #   put every filtered squad first.
+    #
+    # ⚠ BY NAME, so a shared school name can over-select. team_season
+    #   carries no unit columns -- the rows the athlete boards filter on
+    #   are stamped per (school, state) at build time and these are not --
+    #   so this takes rankings' school-list path, the same one the athlete
+    #   boards fall back to for a column they lack. Two same-named schools
+    #   in different divisions both enter; the fix is unit columns on
+    #   team_season, not a second lookup here.
+    for key in UNIT_FILTERS:
+        if not f.get(key):
+            continue
+        if key == "area" and not _hasSchoolUnitArea():
+            continue                     # column not built yet: a no-op
+        schools = _unitSchools(key, f[key])
+        if not schools:
+            parts.append(" AND FALSE")   # no school carries that unit
+            continue
+        params[f"{key}_schools"] = schools
+        parts.append(f" AND t.school = ANY(%({key}_schools)s)")
     return "".join(parts)
 
 
