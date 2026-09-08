@@ -382,15 +382,35 @@ fi
 # ! BOTH caches must go: packed_XC_TF.npz is checked for existence only, and
 #   pair_solve_cache.npz fingerprints on sum(y), which does not notice a pool
 #   reassignment that leaves the sum intact.
-if [ "$FROM" -le 6 ]; then
+#
+# ★ THE GATE IS 7, NOT 6, AND THAT IS THE POINT (2026-09-08). Step 07 runs
+#   `speed_ratings.py --cache --pack-only`, and --cache means "reuse
+#   engine/data/packed_XC_TF.npz if the file is there" -- its own help says
+#   DELETE THE FILE AFTER ANY DATA OR QUERY CHANGE. So `--from 7` used to
+#   skip the clear at 6 and then hand step 07 a pack it would simply reuse:
+#   the step ran, printed, took no time and rebuilt nothing. There is no
+#   reason to run 07 against a valid cached pack -- that is a no-op wearing
+#   a step's name -- so the clear now happens whenever 07 is going to run.
+#   06 and 07 are one unit; only `--from 8` and later keep the pack.
+#
+# ⚠ AND `wheelchair_flag --write` IS A QUERY CHANGE. _chairFilter() is
+#   interpolated into both pack queries (speed_ratings_db, the XC and TF
+#   builders), so the pack's ROW SET depends on wheelchair_person. Rebuild
+#   the list without rebuilding the pack and the chair athletes stay in the
+#   solve with their abilities intact -- off every board, because the fill
+#   and the board builds anti-join the list directly, but still perturbing
+#   everyone they raced. Out of the RATINGS needs --from 7 or lower.
+if [ "$FROM" -le 7 ]; then
   if [ "$DRY" -eq 1 ]; then
     echo "  06_clear_cache : rm engine/data/{packed_XC_TF,pair_solve_cache}.npz"
   else
     rm -f engine/data/packed_XC_TF.npz engine/data/pair_solve_cache.npz
-    echo "  06_clear_cache : caches cleared"
+    echo "  06_clear_cache : caches cleared (07_pack will rebuild the pack)"
   fi
 else
-  echo "  06_clear_cache skipped (--from $FROM)"
+  echo "  06_clear_cache skipped (--from $FROM): 07_pack would reuse the" \
+       "cached pack anyway. The pack keeps whatever wheelchair_person held" \
+       "when it was built -- see 04b_wheelchair."
 fi
 
 # ★ THE PACK CARRIES dist_m SINCE 2026-09-03 (issue 148): the joint solve

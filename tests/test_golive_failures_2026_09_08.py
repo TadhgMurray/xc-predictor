@@ -138,6 +138,23 @@ ok(_always is not None and "02_drop_old" in _always.group(1),
 ok("IS ON THE --skip LIST" in PIPE,
    "skipping 04b_wheelchair must say what it costs")
 
+# ★ AND THE LIST ONLY REACHES THE RATINGS THROUGH THE PACK. _chairFilter()
+#   is interpolated into both pack queries, so rebuilding wheelchair_person
+#   without rebuilding the pack leaves the chair athletes in the solve.
+#   Step 07 runs with --cache, which reuses packed_XC_TF.npz when the file
+#   exists -- so the clear must fire whenever 07 is going to run, or `--from
+#   7` is a step that rebuilds nothing.
+ok("_chairFilter()" in SRDB.split("def _chairFilter(")[-1] or
+   SRDB.count("_chairFilter()") >= 3,
+   "_chairFilter must still be interpolated into the pack queries")
+# the gate line immediately above the 06_clear_cache block
+_clear = PIPE.rindex('if [ "$FROM" -le ', 0, PIPE.index("06_clear_cache"))
+_gate = PIPE[_clear:PIPE.index("]", _clear)].split("-le")[1].strip()
+ok(_gate == "7",
+   f"06_clear_cache is gated at --from {_gate}; it must fire for 7 too, "
+   f"since 07_pack reuses the cached pack and `--from 7` would then "
+   f"rebuild nothing")
+
 CK = _src("scripts", "run_checklist.py")
 ok("def checkWheelchairFresh(" in CK,
    "run_checklist needs the freshness check (4a-ii)")
