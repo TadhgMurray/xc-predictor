@@ -23,6 +23,7 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
 """
 import argparse
 import os
+import time
 import sys
 from urllib.parse import quote
 from xml.sax.saxutils import escape
@@ -109,6 +110,14 @@ def collect(conn):
                         + [("/schools", None)]
                         + [(f"/schools/{c.lower()}", None) for c in STATE_NAMES]}
     with conn.cursor() as cur:
+        # ★ THE RACE LISTS ARE TWO FULL-TABLE GROUP BYs (34M and 30M rows,
+        #   millions of groups) and the athlete list a third over 12.9M. At
+        #   the server's default work_mem those hash aggregates spill to
+        #   disk and the step ran for hours (owner, 2026-09-08: "13d is
+        #   taking forever"). In memory, with parallel workers, they are
+        #   minutes. Session-only; nothing else sees it.
+        cur.execute("SET work_mem = '1GB'")
+        cur.execute("SET max_parallel_workers_per_gather = 4")
         if _exists(cur, "school_identity"):
             cur.execute("""SELECT DISTINCT school FROM school_identity
                            WHERE is_primary AND school IS NOT NULL""")
@@ -132,6 +141,7 @@ def collect(conn):
         #   division and every track event with a rated result, the race's
         #   date as lastmod so Google fetches the recent ones first.
         races = []
+        t0 = time.time()
         if _exists(cur, "results"):
             cur.execute("""
                 SELECT meet_id, div_id, max(date)
@@ -152,6 +162,8 @@ def collect(conn):
                       for m, e, d, lm in cur.fetchall()]
         if races:
             by_kind["races"] = races
+        print(f"  races: {len(races):,} pages in {time.time() - t0:.0f}s", flush=True)
+        t0 = time.time()
         if _exists(cur, "athlete_season"):
             # ranked athletes only: a page Google should show is one with a
             # season on the boards. lastmod tells it which pages moved.
@@ -164,6 +176,7 @@ def collect(conn):
                 GROUP  BY person_id
             """)
             by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()]
+            print(f"  athletes: {len(by_kind['athletes']):,} pages in {time.time() - t0:.0f}s", flush=True)
     return by_kind
 
 
