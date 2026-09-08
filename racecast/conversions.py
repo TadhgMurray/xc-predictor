@@ -23,6 +23,7 @@
 # instead of divide. Weather is the same trick (probe _applyWeather at 1.0).
 
 import math
+import os
 import statistics
 import sys
 import threading
@@ -247,8 +248,19 @@ def _loadSportGain():
 
 def sport_gain(pool, sport, rating):
     """The log-time shift the engine applied to a track row at this
-    rating (0 for XC, or without the table)."""
+    rating (0 for XC, or without the table).
+
+    ! OFF UNLESS ASKED FOR (issue 306, 2026-09-08). The stored track
+      ratings do not carry the band shift the sport_gain table records:
+      across 300 random 2025 hs_m track rows the stored rating sat
+      3 percent above what the raw time gives through venue, distance
+      and shift at the top bands, which is the shift to within a point.
+      Adding it here turned a stored 9:01 into a 9:28 at its own
+      distance. Until the go-live and the table agree, conversions run
+      on the ratings as stored; XCP_CONVERT_SPORT_GAIN=1 puts it back."""
     if not pool or (sport or "").upper() != "TF":
+        return 0.0
+    if os.environ.get("XCP_CONVERT_SPORT_GAIN") != "1":
         return 0.0
     with _offset_lock:
         if time.time() - _gain["at"] > _OFFSET_TTL:
