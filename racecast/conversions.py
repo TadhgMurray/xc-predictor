@@ -641,8 +641,8 @@ def _norm_from_rating(rating, pool, difficulty=0.0, sport=None):
 # their cells differently -- see venue_difficulty above.
 _RESULT_SQL = {
     "XC": """
-        SELECT r.normalized_time, cd.difficulty, NULL::real, rr.pool,
-               r.speed_rating
+        SELECT r.normalized_time, cd.difficulty, m.distance, rr.pool,
+               r.speed_rating, r.time_seconds, r.rating_pool, NULL::text
         FROM results r
         LEFT JOIN ranking_results rr
                ON rr.result_id = r.result_id AND rr.sport = 'XC'
@@ -661,7 +661,7 @@ _RESULT_SQL = {
     """,
     "TF": """
         SELECT r.normalized_time, cd.difficulty, m.distance_meters, rr.pool,
-               r.speed_rating
+               r.speed_rating, r.time_seconds, r.rating_pool, r.event_short
         FROM results_tf r
         LEFT JOIN meets_tf m
                ON m.meet_id  = r.meet_id
@@ -713,6 +713,22 @@ def _norm_from_result(result_id, sport):
         return None
 
     norm, difficulty, dist, pool, rating = row[0], row[1], row[2], row[3], row[4]
+    t, rating_pool, ev = row[5], row[6], row[7]
+    pool = pool or (rating_pool or "").split("|")[0] or None
+    # ★ A FILLED ROW GOES THROUGH ITS TIME, NOT ITS RATING (issue 306,
+    #   2026-09-08). The fill (09b) prices a row the solve left unrated as
+    #   pool constant over normalized time: no venue, no distance term, no
+    #   shift, and it writes the bare pool name where the go-live writes
+    #   the sport inside it. Reading such a rating back as if it carried
+    #   every term turned a 9:01.10 at Arcadia into a 9:28 at its own
+    #   distance. The raw time through the same terms every other source
+    #   uses is the honest number for it.
+    filled = bool(rating_pool) and "|" not in rating_pool
+    if filled and t and dist and pool:
+        out = _norm_from_time(float(t), float(dist), pool, sport=sport,
+                              event_short=ev, chosen=difficulty)
+        if out:
+            return out
     # ★ A RATED ROW INVERTS ITS OWN RATING (issue 162). The engine's number
     #   is 100 * pool_mean / adjusted, with the tilt, the day and the event
     #   offset inside `adjusted`; re-deriving the neutral time from the
