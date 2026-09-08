@@ -434,8 +434,12 @@ step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --
 #                     athlete_ratings, results.speed_rating and
 #                     pair_difficulty.npz (issue 116). The tilt is inside its
 #                     ratings, so 09_tilt is skipped -- running it would tilt
-#                     twice -- and 10c_gap is skipped, since the sport level is
-#                     a parameter and the bbar loop has nothing to steer.
+#                     twice -- and 10c_gap runs WITHOUT --emit: the sport
+#                     level is a parameter of the solve and the bbar loop has
+#                     nothing to steer, so the gap is measured for telemetry
+#                     and written to no json. (It is not skipped; this
+#                     comment said so until 2026-09-08 and the code below
+#                     never did.)
 #   XCP_JOINT=1       the sequential solve stays live; the joint solve runs
 #                     beside it as a shadow and writes joint_difficulty.npz only.
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
