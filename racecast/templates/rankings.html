@@ -146,6 +146,19 @@
       <div class="combo" data-field="state"></div>
     </div>
 
+    {# ★ RETURNING TEAMS (owner, 2026-09-08). Drop the grades that are
+         leaving and the board is next year's squad. Teams-only: on an
+         athlete board "remove the seniors" is just the Grade filter
+         inverted, and the two side by side would be one control too many.
+
+         ⚠ IT NEEDS A YEAR and the API says so -- an all-time board with
+           the seniors removed is a field of squads from thirty seasons,
+           which would look like a working answer. #}
+    <div class="field teams-only">
+      <label for="exclude_grade-input">Leaving (returning teams)</label>
+      <div class="combo" data-field="exclude_grade"></div>
+    </div>
+
     <div class="field not-courses">
       <label for="grade-input">Grade</label>
       <div class="combo" data-field="grade"></div>

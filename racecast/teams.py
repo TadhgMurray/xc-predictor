@@ -71,10 +71,11 @@ caller did not set.
   the page which sentence to print. Both are true; only one is contiguous.
 """
 
-from team_rank import raceStored
+from team_rank import raceStored, rankTeams
 from rankings import (US_STATES, POOLS, SPORTS, SCOPES, MAX_LIMIT,
                       DEFAULT_LIMIT, _boundedInt, _multiValue, _multiInt,
-                      MAX_MULTI, UNIT_FILTERS, UNIT_COLUMNS)
+                      MAX_MULTI, UNIT_FILTERS, UNIT_COLUMNS,
+                      gradeKeySql, _gradeKey, nameLateral)
 
 # The unit columns team_season carries (build_team_season.UNIT_COLS). A
 # filter key whose columns are all outside this set is skipped rather than
@@ -150,6 +151,17 @@ def parseFilters(args):
     #   at all, silently, which is also why the ranks looked untouched.
     for key in UNIT_FILTERS:
         f[key] = _multiValue(args, key)
+
+    # ★ RETURNING TEAMS (owner, 2026-09-08): drop the grades that are
+    #   leaving and the board is next year's squad. See raceReturning.
+    f["exclude_grade"] = _multiValue(args, "exclude_grade")
+    if f["exclude_grade"] and len(f["year"] or ()) != 1:
+        # ! ONE SEASON, EXPLICITLY. "Next year's team" is a question about
+        #   a season; the all-time board with the seniors removed is a
+        #   field of squads from thirty different years, which is not a
+        #   thing anybody wants and would look like a working answer.
+        return None, ("removing grades needs exactly one year selected: it "
+                      "asks what a squad looks like next season")
 
     # ★ ONE YEAR MEANS THAT YEAR'S MEET; ANYTHING ELSE MEANS THE ALL-TIME
     #   ONE. Not a preference -- the season boards cannot be stacked (thirty
@@ -471,6 +483,130 @@ def sortAndPage(rows, f):
     return ordered[start:start + f["limit"]], len(ordered)
 
 
+# ------------------------------------------------------------------ #
+#  RETURNING TEAMS -- the board with some grades taken out
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (owner, 2026-09-08): "I think you should be able to get team
+#   rankings by removing certain grades." Drop the seniors and what is left
+#   is next year's squad, which is the question a coach asks in September
+#   and the stored board cannot answer.
+#
+# ⚠ AND THE STORED BOARD REALLY CANNOT. team_season.ratings is seven bare
+#   numbers -- no person, no grade -- so there is nothing to take a senior
+#   OUT of. Racing the stored seven minus "the last two" would be a guess
+#   about which runners the grades belonged to. So this path goes back to
+#   athlete_season, where a row is one athlete and carries their grade,
+#   and re-scores from there with the same rankTeams the build uses.
+#
+# ! WHICH MAKES IT A DIFFERENT SHAPE OF QUERY, and the cap is on ATHLETES
+#   rather than teams. rankTeams is linear in entrants and this hands it
+#   every eligible athlete-season, not a pre-trimmed seven per team.
+RETURN_CAP = 300000
+
+# ! PINNED TO THE BUILD BY TEST. build_team_season uses this floor when it
+#   decides who is eligible for a team; a different one here would rank a
+#   different squad from the one the ordinary board shows.
+TEAM_MIN_RACES = 2          # build_team_season.MIN_RACES
+
+
+def gradeExcluded(f):
+    """Is the board being asked for the squad minus some grades?"""
+    return bool(f.get("exclude_grade"))
+
+
+def _athleteFieldWhere(f, params):
+    """The same population _fieldWhere selects, expressed against
+    athlete_season -- which is where the grades are."""
+    parts = [" AND s.pool = %(pool)s", " AND s.sport = %(sport)s",
+             " AND s.mean_rating IS NOT NULL",
+             " AND s.n_races >= %(min_races)s"]
+    params["pool"] = f["pool"]
+    params["sport"] = f["sport"]
+    params["min_races"] = TEAM_MIN_RACES
+
+    # ! ONE YEAR, ALWAYS. parseFilters refuses the filter without one --
+    #   "next year's team" is a question about a season, and an all-time
+    #   board with the seniors removed is not a thing anybody wants.
+    params["year"] = f["year"]
+    parts.append(" AND s.year = ANY(%(year)s)")
+
+    for key in UNIT_FILTERS:
+        if not f.get(key):
+            continue
+        cols = [c for c in UNIT_COLUMNS[key] if c in TEAM_UNIT_COLS]
+        if not cols:
+            continue
+        params[f"{key}_vals"] = list(f[key])
+        ors = " OR ".join(f's."{c}" = ANY(%({key}_vals)s)' for c in cols)
+        parts.append(f" AND ({ors})")
+
+    # ★ EXCLUDED BY MEANING, NOT BY SPELLING. The feeds write a senior as
+    #   12, 12th, Sr, Senior, SR-4 or 16, and rankings._gradeKey is the one
+    #   place that already knows they are the same person. Comparing raw
+    #   text would leave every senior a feed spelled "Sr" in the returning
+    #   squad -- the same bug the athlete board's grade filter had
+    #   (owner, 2026-09-07: "grade filter is removing ppl it shouldn't").
+    params["ex_grade_keys"] = [_gradeKey(v) for v in f["exclude_grade"]]
+    grade_sql = gradeKeySql("s")
+    # ! A ROW WITH NO GRADE STAYS IN. An unknown grade is not evidence that
+    #   the athlete is leaving, and dropping them would quietly shrink every
+    #   team whose feed is thin on grades -- which is most older seasons.
+    parts.append(f" AND ({grade_sql} IS NULL"
+                 f"      OR {grade_sql} <> ALL(%(ex_grade_keys)s))")
+    return "".join(parts)
+
+
+def getReturningField(cur, f):
+    """Athlete-seasons for the selected teams, minus the excluded grades."""
+    params = {"cap": RETURN_CAP}
+    where = _athleteFieldWhere(f, params)
+    units = "".join(f', s."{c}"' for c in sorted(TEAM_UNIT_COLS))
+    cur.execute(f"""
+        SELECT s.person_id, s.school, s.state, s.grade, s.pool,
+               s.mean_rating AS rating{units},
+               COALESCE(a.name, 'Unknown') AS name
+        FROM   athlete_season s
+        {nameLateral("s")}
+        WHERE  TRUE {where}
+        LIMIT  %(cap)s
+    """, params)
+    return cur.fetchall()
+
+
+def raceReturning(cur, f):
+    """The returning board: (rows, field_size) or (None, n) when too big."""
+    rows = [dict(r) for r in getReturningField(cur, f)]
+    if len(rows) >= RETURN_CAP:
+        return None, len(rows)
+
+    # ★ THE SAME TWO STEPS THE BUILD TAKES, IN THE SAME ORDER, or this board
+    #   keys its teams differently from the one beside it: the pool ceiling
+    #   drops implausible runners (a mis-pooled transfer, not their team),
+    #   and teamState moves each row from the state it RACED in to the one
+    #   its school belongs to. Skip the second and BYU is three teams here
+    #   and one on the ordinary board.
+    from pool_ceiling import withinPool
+    from school_identity import teamState, loadLabels
+    from database import getConn
+    loadLabels(getConn)
+    field = []
+    for r in rows:
+        if not withinPool(r["pool"], r["rating"]):
+            continue
+        r["state"] = teamState(r.get("school"), r.get("pool"), r.get("state"))
+        field.append(r)
+
+    # a state board, or the national one narrowed to some states
+    if f["board_scope"] != "usa":
+        field = [r for r in field if r["state"] == f["board_scope"]]
+    elif f["state"]:
+        wanted = set(f["state"])
+        field = [r for r in field if r["state"] in wanted]
+
+    return rankTeams(field), len(field)
+
+
 def serveBoard(cur, f):
     """One page of the team board, raced if the field fits. -> (rows, info)
 
@@ -489,6 +625,31 @@ def serveBoard(cur, f):
 
       A sort the user clicked is never overridden; see parseFilters.
     """
+    # ★ THE RETURNING BOARD IS ITS OWN PATH, decided first. It cannot come
+    #   from team_season at all -- see raceReturning -- so the stored-board
+    #   fallback below has nothing to fall back TO, and a field too big is
+    #   an honest refusal rather than a board of the wrong squads.
+    if gradeExcluded(f):
+        raced, size = raceReturning(cur, f)
+        if raced is None:
+            return [], {"raced": False, "field_size": size,
+                        "shown_of_field": None, "span": f["span"],
+                        "reason": "cap", "total": None,
+                        "race_cap": RETURN_CAP, "unscored": 0,
+                        "returning": True}
+        if not f["sort_explicit"]:
+            f["sort"], f["dir"] = "rank", "ASC"
+        shown = [r for r in raced if matchesSubject(r, f)]
+        rows, total = sortAndPage(shown, f)
+        return rows, {"raced": True, "field_size": len(raced),
+                      "shown_of_field": len(shown), "span": f["span"],
+                      "reason": None, "total": total,
+                      "race_cap": RETURN_CAP, "unscored": 0,
+                      # the page says which grades came out, so a reader
+                      # cannot mistake this for the ordinary board
+                      "returning": True,
+                      "excluded_grades": list(f["exclude_grade"])}
+
     size = countField(cur, f)
     # ⚠ TWO DIFFERENT REASONS TO FALL BACK, and the page has to tell them
     #   apart: "narrow your filter" is useless advice when the real problem

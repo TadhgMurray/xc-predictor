@@ -289,6 +289,14 @@ function buildQuery() {
     if (vals.length) q.set(field, vals.join(","));
   }
 
+  /* ! TEAMS ONLY. The API 400s on exclude_grade without exactly one year,
+     and on the athlete boards it is not a filter at all -- sending it from
+     there would be an error the reader could not act on. */
+  if (state.board === "teams") {
+    const ex = combos.exclude_grade ? combos.exclude_grade.values() : [];
+    if (ex.length) q.set("exclude_grade", ex.join(","));
+  }
+
   /* Sort. `dir` is only sent when the user overrode it, so the API can apply
      each column's natural direction -- highest rating, latest date, FASTEST
      time. Sending "desc" blindly would make the time sort list slowest first. */
@@ -481,6 +489,8 @@ const YEARS = (() => {
 const FIELD_OPTIONS = {
   state:  US_STATES,
   grade:  GRADES,
+  /* the returning-teams control: the same grade list, taken AWAY */
+  exclude_grade: GRADES,
   year:   YEARS,
   school: []          // searched, not listed -- see SEARCHED below
 };

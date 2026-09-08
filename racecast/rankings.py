@@ -651,21 +651,38 @@ def parseFilters(args):
 # number (9th -> 9), except 13..16 in a college pool, which are the class
 # words; a class word is fr/so/jr/sr in a college pool and 9..12 in a
 # school pool. Anything else compares as itself, lower-cased.
+# ! QUALIFIABLE, because a second caller needs it against an aliased table
+#   (teams._athleteFieldWhere, the returning board). The expression names
+#   TWO columns -- grade and pool -- so a caller cannot safely qualify it by
+#   string replacement: patching only "grade" leaves "pool" bare, and
+#   replacing the word "pool" would also hit the 'college%' literal beside
+#   it. gradeKeySql(alias) builds it correctly instead.
+def gradeKeySql(alias=""):
+    """The grade key expression, optionally qualified: gradeKeySql("s")."""
+    q = f"{alias}." if alias else ""
+    g = f"lower(trim({q}grade))"
+    gn = f"left(regexp_replace({g}, '[^0-9]', '', 'g'), 3)::int"
+    gw = (f"(CASE WHEN {g} LIKE 'fr%%' THEN 'fr' WHEN {g} LIKE 'so%%' THEN 'so' "
+          f"WHEN {g} LIKE 'j%%' THEN 'jr' "
+          f"WHEN {g} LIKE 'sr%%' OR {g} LIKE 'se%%' THEN 'sr' END)")
+    return f"""(CASE
+    WHEN {g} ~ '^[0-9]' THEN
+        CASE WHEN {q}pool LIKE 'college%%' AND {gn} BETWEEN 13 AND 16
+             THEN (ARRAY['fr','so','jr','sr'])[{gn} - 12]
+             ELSE {gn}::text END
+    WHEN {gw} IS NOT NULL THEN
+        CASE WHEN {q}pool LIKE 'college%%' THEN {gw}
+             ELSE (ARRAY['9','10','11','12'])[array_position(ARRAY['fr','so','jr','sr'], {gw})] END
+    ELSE {g} END)"""
+
+
 _G = "lower(trim(grade))"
 _GN = f"left(regexp_replace({_G}, '[^0-9]', '', 'g'), 3)::int"
 # the class word from any spelling: fr, freshman, so, soph, jr, junior,
 # sr, sr-4, senior
 _GW = (f"(CASE WHEN {_G} LIKE 'fr%%' THEN 'fr' WHEN {_G} LIKE 'so%%' THEN 'so' "
        f"WHEN {_G} LIKE 'j%%' THEN 'jr' WHEN {_G} LIKE 'sr%%' OR {_G} LIKE 'se%%' THEN 'sr' END)")
-GRADE_KEY_SQL = f"""(CASE
-    WHEN {_G} ~ '^[0-9]' THEN
-        CASE WHEN pool LIKE 'college%%' AND {_GN} BETWEEN 13 AND 16
-             THEN (ARRAY['fr','so','jr','sr'])[{_GN} - 12]
-             ELSE {_GN}::text END
-    WHEN {_GW} IS NOT NULL THEN
-        CASE WHEN pool LIKE 'college%%' THEN {_GW}
-             ELSE (ARRAY['9','10','11','12'])[array_position(ARRAY['fr','so','jr','sr'], {_GW})] END
-    ELSE {_G} END)"""
+GRADE_KEY_SQL = gradeKeySql()
 
 
 def _gradeKey(value):
