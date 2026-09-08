@@ -221,6 +221,28 @@
              title="Default 3. Seasons from 2026 cross country on have no minimum unless you set one.">
     </div>
 
+    {# ★ THE EVENT WINDOW (owner, 2026-09-08). A track season's rating is
+         an aggregate over everything the athlete ran, so an 800 specialist
+         and a 5000 runner share one board and neither number projects an
+         autumn. Restricting the aggregate to the longer events asks the
+         question a preseason cross-country guess is actually asking.
+
+         ! PRESETS, NOT TWO NUMBER BOXES. The useful windows are few and the
+           pair dist_min/dist_max is easy to invert by accident (the API
+           400s on that, but a control that cannot express the mistake is
+           better than an error message). The API takes metres, so a custom
+           window is still reachable by URL for anyone who wants one. #}
+    <div class="field ability-only">
+      <label for="events">Events</label>
+      <select id="events" title="Rate each athlete on this slice of their season only.">
+        <option value="">All events</option>
+        <option value="800">800m and up</option>
+        <option value="1500">1500m and up</option>
+        <option value="3000">3000m and up (XC projection)</option>
+        <option value="5000">5000m and up</option>
+      </select>
+    </div>
+
     {# The distance to rank. PR-only: the other boards are already
        distance-normalised, so asking them for "5000 m" would filter the
        board rather than define it. #}

@@ -511,7 +511,38 @@ def parseFilters(args):
     if scope not in SCOPES:
         return None, f"scope must be one of {sorted(SCOPES)}"
 
+    # ★ THE EVENT WINDOW ON THE ABILITY BOARD (owner, 2026-09-08). Metres,
+    #   inclusive both ends: dist_min=3000 asks "how good are they over
+    #   3000m and up", which is the question a preseason cross-country
+    #   projection is actually asking. The other boards already rank one
+    #   event at a time through `distance`, so this belongs to ability
+    #   alone -- and is REFUSED elsewhere rather than ignored, the same
+    #   posture date_from takes on the ability board.
+    dist_min = dist_max = None
+    for key in ("dist_min", "dist_max"):
+        raw = args.get(key)
+        if raw in (None, ""):
+            continue
+        if board != "ability":
+            return None, (f"{key} applies only to the Athletes board; the "
+                          f"other boards rank one event through `distance`")
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None, f"{key} must be a distance in metres"
+        if not 0 < val <= 200000:
+            return None, f"{key} must be between 0 and 200000 metres"
+        if key == "dist_min":
+            dist_min = val
+        else:
+            dist_max = val
+    if (dist_min is not None and dist_max is not None
+            and dist_min > dist_max):
+        return None, "dist_min is greater than dist_max: no event can match"
+
     f = {
+        "dist_min": dist_min,
+        "dist_max": dist_max,
         "board": board,
         "sport": sport,
         "pool": pool,
@@ -631,6 +662,141 @@ def _gradeKey(value):
         if v.startswith(word):
             return key
     return v
+
+
+# ------------------------------------------------------------------ #
+#  THE ABILITY BOARD, RESTRICTED TO A SET OF EVENTS
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (owner, 2026-09-08): "for best athletes I think you should be able
+#   to filter out certain events out of those ratings. So you can get the
+#   best athlete ratings for like longer distance events in pre season to
+#   guess for xc." A track season's rating is an aggregate over everything
+#   the athlete ran, so an 800 specialist and a 5000 runner sit on one
+#   board and neither number projects a cross-country autumn. Restricting
+#   the aggregate to 3000m and up asks the question that does.
+#
+# ★ THE SAME ESTIMATOR, OR THE BOARD IS NOT COMPARABLE. athlete_season's
+#   mean_rating is the 80th percentile of a season's rated races, computed
+#   over rows that survive the season-median outlier guard -- not a mean,
+#   for the reasons build_ranking_results sets out at length (a mean
+#   punishes the athlete who raced more). Recomputing it with a plain
+#   avg() would put a different statistic beside the unfiltered board's and
+#   invite exactly the comparison it cannot support. So this reproduces
+#   build_ranking_results._ATHLETE_SEASON_SQL: same percentile, same
+#   median-minus-20 guard, same mode() columns.
+#
+# ! WHICH IS A DUPLICATED DEFINITION, AND THAT IS THE RISK HERE. If the
+#   build's estimator changes and this does not, the two boards silently
+#   disagree. tests/test_event_filter.py pins the constants against
+#   build_ranking_results so the pair cannot drift unnoticed.
+_EVENT_KEYS = ("dist_min", "dist_max")
+
+# ! COPIED FROM build_ranking_results, AND PINNED BY TEST. These three are
+#   the estimator: the season quantile, the outlier guard, and the unit
+#   columns a row carries. tests/test_event_filter.py reads the build's own
+#   source and fails if either number moves without this one following.
+_SEASON_Q = 0.80                       # build_ranking_results._SEASON_Q
+_SEASON_OUTLIER_PTS = 20.0             # ..._SEASON_OUTLIER_PTS
+_UNIT_ROW_COLS = ("division", "region", "conference", "league",
+                  "state_div", "section_div", "district", "county",
+                  "class", "area", "section")
+
+
+def eventRestricted(f):
+    """Is the ability board being asked for a subset of events?"""
+    return any(f.get(k) is not None for k in _EVENT_KEYS)
+
+
+def _abilitySource(f, params, where=""):
+    """The FROM fragment for the ability board, aliased `s`.
+
+    Unrestricted this is the prebuilt table. Restricted it is the same
+    aggregate over ranking_results, which carries distance per row --
+    athlete_season cannot answer an event question because it has already
+    aggregated the events away.
+
+    ! EVERY COLUMN THE BOARD, rankOf, countOf AND _whereClauses TOUCH has
+      to come out of both shapes under the same name, or a filter that
+      works on one board 500s on the other. That is why the subquery names
+      the unit columns explicitly rather than SELECT *: ranking_results
+      carries them (they are stamped per school+state at build time, same
+      as on athlete_season), and leaving one out would make a division
+      filter fail only in the restricted case.
+    """
+    if not eventRestricted(f):
+        return "athlete_season s"
+
+    dist = []
+    if f.get("dist_min") is not None:
+        params["dist_min"] = float(f["dist_min"])
+        dist.append("r.distance >= %(dist_min)s")
+    if f.get("dist_max") is not None:
+        params["dist_max"] = float(f["dist_max"])
+        dist.append("r.distance <= %(dist_max)s")
+    # ! A ROW WITH NO DISTANCE CANNOT BE JUDGED and is left out rather than
+    #   let in: the question is "how good over these events", and a race
+    #   whose distance nobody parsed is not evidence either way.
+    dist.append("r.distance IS NOT NULL")
+    where_dist = " AND ".join(dist)
+
+    # ⚠ THE SUBQUERY MUST EXPOSE WHAT _whereClauses WILL NAME, AND THE TWO
+    #   PROBE DIFFERENT TABLES. For the ability board _whereClauses asks
+    #   _rowHasUnit(col, "athlete_season") -- that is the table it thinks it
+    #   is filtering -- and emits `"division" = ANY(...)` against whatever
+    #   that probe allows. This source is built from ranking_results. Emit
+    #   only the intersection and the outer clause names a column that is
+    #   not there: UndefinedColumn, on the restricted board alone, for a
+    #   filter that works on every other board.
+    #
+    #   So: one column per unit the OUTER clause may name, taken from
+    #   ranking_results where it has one and NULL where it does not. A NULL
+    #   column makes that one filter match nothing here, which is
+    #   wrong-but-empty rather than a 500 -- and it should not arise, since
+    #   the same build stamps both tables in one pass.
+    cols = [c for c in _UNIT_ROW_COLS if _rowHasUnit(c, "athlete_season")]
+    have = {c for c in cols if _rowHasUnit(c, "ranking_results")}
+    # ★ THE BOARD'S OWN FILTERS GO INSIDE, NOT JUST OUTSIDE. Left to the
+    #   outer WHERE alone this aggregates every rated row in the corpus at
+    #   or above the distance -- millions of them, per page load -- and
+    #   then throws away all but one pool and season. _whereClauses emits
+    #   UNQUALIFIED predicates (`AND pool = %(pool)s`), which is exactly
+    #   what lets them be reused here against `r`. They stay on the outer
+    #   query too: duplicated they cost a plan node, dropped they would be
+    #   a correctness bug the first time this helper is called without
+    #   them.
+    return f"""(
+        WITH ev AS (
+            SELECT r.*
+            FROM   ranking_results r
+            WHERE  r.speed_rating IS NOT NULL AND {where_dist} {where}
+        ),
+        med AS (
+            SELECT person_id, pool, sport, year,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+                       AS m
+            FROM   ev GROUP BY person_id, pool, sport, year
+        )
+        SELECT e.person_id, e.pool, e.sport, e.year,
+               (percentile_cont({_SEASON_Q})
+                    WITHIN GROUP (ORDER BY e.speed_rating))::real
+                                                      AS mean_rating,
+               max(e.speed_rating)::real              AS best_rating,
+               count(*)                               AS n_races,
+               min(e.race_date)                       AS first_race,
+               max(e.race_date)                       AS last_race,
+               mode() WITHIN GROUP (ORDER BY e.state)  AS state,
+               mode() WITHIN GROUP (ORDER BY e.school) AS school,
+               mode() WITHIN GROUP (ORDER BY e.grade)  AS grade,
+               {"".join((f'mode() WITHIN GROUP (ORDER BY e."{c}") AS "{c}", '
+                          if c in have else f'NULL::text AS "{c}", ')
+                         for c in cols)[:-2] or "NULL AS _no_units"}
+        FROM   ev e
+        JOIN   med ON med.person_id = e.person_id AND med.pool = e.pool
+                  AND med.sport = e.sport AND med.year = e.year
+        WHERE  e.speed_rating >= med.m - {_SEASON_OUTLIER_PTS}
+        GROUP  BY e.person_id, e.pool, e.sport, e.year
+    ) s"""
 
 
 def _whereClauses(f, params, with_dates):
@@ -1262,6 +1428,7 @@ def getAbilityRankings(cur, f):
         "offset":    f["offset"],
     }
     where = _whereClauses(f, params, with_dates=False)
+    source = _abilitySource(f, params, where)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
 
     cur.execute(f"""
@@ -1275,7 +1442,7 @@ def getAbilityRankings(cur, f):
                to_char(s.first_race, 'YYYY-MM-DD')  AS first_race,
                to_char(s.last_race,  'YYYY-MM-DD')  AS last_race,
                COALESCE(a.name, 'Unknown')          AS name
-        FROM   athlete_season s
+        FROM   {source}
         {nameLateral("s")}
         WHERE  {floorSql(f['min_races_explicit'])} {where}
         ORDER  BY {order}
@@ -1369,9 +1536,10 @@ def countOf(cur, f):
     as the board and rankOf, so the fraction is of the board it links to."""
     params = {"min_races": f["min_races"]}
     where = _whereClauses(f, params, with_dates=False)
+    source = _abilitySource(f, params, where)
     cur.execute(f"""
         SELECT count(*)
-        FROM   athlete_season s
+        FROM   {source}
         WHERE  {floorSql(f['min_races_explicit'])} {where}
     """, params)
     return int(cur.fetchone()[0])
@@ -1398,6 +1566,13 @@ def isDefaultBoard(f):
         if f.get(k):
             return False
     if f["board"] == "performance" and f.get("distance") is not None:
+        return False
+    # ⚠ AN EVENT-RESTRICTED ABILITY BOARD IS NOT THE DEFAULT ONE, and this
+    #   line is load-bearing: storedBoardSize would otherwise hand back the
+    #   count build_ranking_results wrote for the WHOLE board, so a 3000m+
+    #   board of four thousand athletes would say "of 812,940" and every
+    #   percentile on it would be wrong by two orders of magnitude.
+    if eventRestricted(f):
         return False
     return True
 
@@ -1489,10 +1664,11 @@ def _rankByCount(cur, f, person_id):
     """
     params = {"min_races": f["min_races"], "person_id": person_id}
     where = _whereClauses(f, params, with_dates=False)
+    source = _abilitySource(f, params, where)
 
     cur.execute(f"""
         SELECT s.mean_rating
-        FROM   athlete_season s
+        FROM   {source}
         WHERE  s.person_id = %(person_id)s
           AND  {floorSql(f['min_races_explicit'])} {where}
         ORDER  BY s.mean_rating DESC NULLS LAST
@@ -1505,7 +1681,7 @@ def _rankByCount(cur, f, person_id):
 
     cur.execute(f"""
         SELECT count(*)
-        FROM   athlete_season s
+        FROM   {source}
         WHERE  {floorSql(f['min_races_explicit'])} {where}
           AND  (s.mean_rating > %(target)s
                 OR (s.mean_rating = %(target)s
@@ -1563,13 +1739,14 @@ def rankOf(cur, f, person_id):
         "person_id": person_id,
     }
     where = _whereClauses(f, params, with_dates=False)
+    source = _abilitySource(f, params, where)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
 
     cur.execute(f"""
         WITH ranked AS (
             SELECT s.person_id,
                    row_number() OVER (ORDER BY {order}) AS rn
-            FROM   athlete_season s
+            FROM   {source}
             {nameLateral("s")}
             WHERE  {floorSql(f['min_races_explicit'])} {where}
         )

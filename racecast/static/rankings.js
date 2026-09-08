@@ -275,6 +275,15 @@ function buildQuery() {
      "CA,TX" is one bind, not two clauses. An empty combo sends NOTHING, which
      is what keeps the index usable: an always-true predicate stops Postgres
      choosing one. */
+  /* ★ THE EVENT WINDOW, ABILITY BOARD ONLY. Sent as dist_min in metres;
+     the API refuses it on the other boards rather than ignoring it, so it
+     must not be sent from them. An empty value sends nothing at all, which
+     is what keeps the ordinary board reading the prebuilt table. */
+  if (state.board === "ability") {
+    const ev = $("events");
+    if (ev && ev.value) q.set("dist_min", ev.value);
+  }
+
   for (const field of ["state", "grade", "year", "school"]) {
     const vals = combos[field] ? combos[field].values() : [];
     if (vals.length) q.set(field, vals.join(","));
@@ -1851,6 +1860,11 @@ function syncUnitRows() {
 }
 
 $("pool").addEventListener("change", syncUnitRows);
+/* the event window re-queries like any other filter, and resets paging:
+   a 3000m+ board is a different board, not a page of the same one */
+if ($("events")) {
+  $("events").addEventListener("change", () => { state.offset = 0; applyNow(); });
+}
 
 syncUnitRows();
 $("distance").addEventListener("change", applyNow);
