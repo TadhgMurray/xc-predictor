@@ -51,6 +51,12 @@ SQUAD = SCORERS + DISPLACERS
 _SEP = "\x1f"
 
 
+# The unit columns a squad carries from its athletes to the stored board.
+# build_team_season writes them into team_season; teams.py filters on them.
+UNIT_KEYS = ("division", "region", "conference", "league",
+             "state_div", "section_div", "class", "area", "section")
+
+
 def teamKey(school, state):
     return f"{school or ''}{_SEP}{state or ''}"
 
@@ -142,6 +148,14 @@ def rankTeams(athletes):
             #   at once, say. Seven and not more because an eighth runner
             #   cannot affect any score; see SQUAD.
             "ratings": [round(float(m["rating"]), 2) for m in members[:SQUAD]],
+            # ★ THE SQUAD'S UNITS, CARRIED THROUGH (2026-09-08). Every
+            #   athlete of one team shares them -- they are stamped per
+            #   (school, state) upstream and the key IS (school, state) --
+            #   so the first member speaks for the squad. Passed along
+            #   rather than looked up again: a second lookup would be a
+            #   second answer, and this is the value the athlete boards
+            #   already filter on.
+            "units": {u: members[0].get(u) for u in UNIT_KEYS},
             "scorers": [{"person_id": r.get("person_id"), "name": r.get("name"),
                          "place": r["score_place"],
                          "rating": round(float(r["rating"]), 2)}

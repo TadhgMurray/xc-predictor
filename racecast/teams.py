@@ -74,8 +74,15 @@ caller did not set.
 from team_rank import raceStored
 from rankings import (US_STATES, POOLS, SPORTS, SCOPES, MAX_LIMIT,
                       DEFAULT_LIMIT, _boundedInt, _multiValue, _multiInt,
-                      MAX_MULTI, UNIT_FILTERS, _unitSchools,
-                      _hasSchoolUnitArea)
+                      MAX_MULTI, UNIT_FILTERS, UNIT_COLUMNS)
+
+# The unit columns team_season carries (build_team_season.UNIT_COLS). A
+# filter key whose columns are all outside this set is skipped rather than
+# silently matching nothing -- `district` and `county` are in UNIT_COLUMNS
+# for the athlete boards and are not stored here.
+TEAM_UNIT_COLS = frozenset(("division", "region", "conference", "league",
+                            "state_div", "section_div", "class", "area",
+                            "section"))
 
 # Each entry is (expression, natural direction) -- same contract as
 # rankings._SORTS_*. Rank ascends because first place is the best.
@@ -269,24 +276,25 @@ def _fieldWhere(f, params):
     #   name is a question about where one team stands, and racing it would
     #   put every filtered squad first.
     #
-    # ⚠ BY NAME, so a shared school name can over-select. team_season
-    #   carries no unit columns -- the rows the athlete boards filter on
-    #   are stamped per (school, state) at build time and these are not --
-    #   so this takes rankings' school-list path, the same one the athlete
-    #   boards fall back to for a column they lack. Two same-named schools
-    #   in different divisions both enter; the fix is unit columns on
-    #   team_season, not a second lookup here.
+    # ★ ON THE TEAM'S OWN STAMPED COLUMN, NOT ON A LIST OF SCHOOL NAMES
+    #   (owner, 2026-09-08: "DI school in DIII filter: Washington WA ...
+    #   NCAA DI"). The first cut resolved a division to school NAMES out of
+    #   school_unit and matched t.school against them, because team_season
+    #   had no unit columns. Names are shared -- "Washington" is DI in WA
+    #   and DIII in MO -- so a DIII filter pulled the DI team in, which is
+    #   the same class of error the (school, state) team key exists to
+    #   prevent. team_season now carries the units athlete_season already
+    #   stamped per (school, state), so this is the identical column
+    #   comparison the ATHLETE boards make and the two cannot disagree.
     for key in UNIT_FILTERS:
         if not f.get(key):
             continue
-        if key == "area" and not _hasSchoolUnitArea():
-            continue                     # column not built yet: a no-op
-        schools = _unitSchools(key, f[key])
-        if not schools:
-            parts.append(" AND FALSE")   # no school carries that unit
-            continue
-        params[f"{key}_schools"] = schools
-        parts.append(f" AND t.school = ANY(%({key}_schools)s)")
+        cols = [c for c in UNIT_COLUMNS[key] if c in TEAM_UNIT_COLS]
+        if not cols:
+            continue                     # a unit this table does not carry
+        params[f"{key}_vals"] = list(f[key])
+        ors = " OR ".join(f't."{c}" = ANY(%({key}_vals)s)' for c in cols)
+        parts.append(f" AND ({ors})")
     return "".join(parts)
 
 

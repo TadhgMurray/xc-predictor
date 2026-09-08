@@ -41,9 +41,7 @@ import teams                                                     # noqa: E402
 from rankings import UNIT_FILTERS                                 # noqa: E402
 
 
-# no database here: the school list is the only thing _fieldWhere needs
-teams._unitSchools = lambda key, values: ["Amherst", "Williams", "Tufts"]
-teams._hasSchoolUnitArea = lambda: True
+# no database and no school list: the filter is a column comparison now
 
 
 def _filters(**over):
@@ -78,16 +76,33 @@ for key in UNIT_FILTERS:
 # ---- 2. a division narrows the FIELD ---------------------------------- #
 params = {}
 where = teams._fieldWhere(_filters(division=["NCAA DIII"]), params)
-ok("t.school = ANY(%(division_schools)s)" in where,
+ok('t."division" = ANY(%(division_vals)s)' in where,
    "a division must narrow the field, so raceStored races only those teams")
-ok(params.get("division_schools") == ["Amherst", "Williams", "Tufts"],
-   "the school list must be bound, not interpolated")
+ok(params.get("division_vals") == ["NCAA DIII"],
+   "the value must be bound, not interpolated")
 
-# every unit filter reaches the field, not just division
+# ⚠ THE REGRESSION: on the TEAM'S OWN stamped column, never on a list of
+#   school names. Owner, 2026-09-08: "DI school in DIII filter: Washington
+#   WA ... NCAA DI". "Washington" is DI in WA and DIII in MO, so a name
+#   match pulled the DI team into a DIII board -- the same class of error
+#   the (school, state) team key exists to prevent.
+ok("_schools" not in where and "t.school = ANY" not in where,
+   "a unit filter must not match by school NAME: shared names put a DI "
+   "school in the DIII field")
+
+# every unit filter team_season stores reaches the field, not just division
 for key in UNIT_FILTERS:
     p = {}
     w = teams._fieldWhere(_filters(**{key: ["X"]}), p)
-    ok(f"%({key}_schools)s" in w, f"the {key} filter never reaches the field")
+    cols = [c for c in __import__("rankings").UNIT_COLUMNS[key]
+            if c in teams.TEAM_UNIT_COLS]
+    if cols:
+        ok(f"%({key}_vals)s" in w,
+           f"the {key} filter never reaches the field")
+    else:
+        ok(f"%({key}_vals)s" not in w,
+           f"{key} is not stored on team_season and must be skipped, not "
+           f"matched against a column that is not there")
 
 
 # ---- 3. a school stays a SUBJECT -------------------------------------- #
@@ -95,7 +110,7 @@ for key in UNIT_FILTERS:
 #   filtered squad comes first. _fieldWhere must not touch it.
 p = {}
 w = teams._fieldWhere(_filters(school=["Amherst"]), p)
-ok("school" not in w.replace("t.school = ANY(%(division_schools)s)", ""),
+ok("school" not in w,
    "a school name must not narrow the field -- see _fieldWhere's docstring")
 p2 = {}
 w2 = teams._subjectWhere(_filters(school=["Amherst"]), p2)
@@ -106,18 +121,27 @@ ok("lower(btrim(t.school))" in w2, "a school is still a subject filter")
 p3 = {}
 w3 = teams._fieldWhere(_filters(), p3)
 for key in UNIT_FILTERS:
-    ok(f"{key}_schools" not in p3,
+    ok(f"{key}_vals" not in p3,
        f"an unset {key} filter must add no bind (it would kill the index)")
-ok(" AND FALSE" not in w3, "an unset filter must not empty the board")
 
 
-# ---- 5. a unit no school carries empties the board, loudly ------------ #
-teams._unitSchools = lambda key, values: []
-p4 = {}
-w4 = teams._fieldWhere(_filters(division=["Division Nowhere"]), p4)
-ok(" AND FALSE" in w4,
-   "a division no school carries must return nothing, not everything")
-teams._unitSchools = lambda key, values: ["Amherst"]
+# ---- 5. the stored columns match what the build writes ---------------- #
+#   Three lists have to agree or a filter binds a column that is not there:
+#   the DDL, build_team_season.UNIT_COLS, and teams.TEAM_UNIT_COLS.
+BTS = io.open(os.path.join(ROOT, "racecast", "build_team_season.py"),
+              encoding="utf-8").read()
+import re as _re
+_build_units = _re.search(r"UNIT_COLS = \((.*?)\)", BTS, _re.S).group(1)
+_build_units = tuple(_re.findall(r'"([a-z_]+)"', _build_units))
+ok(set(_build_units) == set(teams.TEAM_UNIT_COLS),
+   f"build writes {sorted(_build_units)} but teams filters "
+   f"{sorted(teams.TEAM_UNIT_COLS)}")
+_ddl = BTS[BTS.index("_DDL = "):BTS.index("_COLUMNS = ")]
+for c in _build_units:
+    ok(f'{c}' in _ddl, f"team_season DDL has no {c} column")
+# and both passes stamp them -- the all-time board is the one the site opens
+ok(BTS.count("_unitTuple(t)") == 2,
+   "both toRows and toAlltimeRows must stamp the units")
 
 
 # ---- 6. and the numbering is NOT hand-rolled -------------------------- #

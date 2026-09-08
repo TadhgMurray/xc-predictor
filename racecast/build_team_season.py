@@ -113,13 +113,39 @@ CREATE TABLE IF NOT EXISTS {name} (
     --   is to hold another meet. See team_rank.raceStored and teams.py.
     --   Seven because an eighth runner cannot affect any score.
     ratings      real[],
+    -- ★ THE TEAM'S OWN UNITS, STAMPED (owner, 2026-09-08: "DI school in
+    --   DIII filter: Washington WA ... NCAA DI"). The team board's unit
+    --   filter used to resolve a division to a list of school NAMES and
+    --   match on the name alone, because this table had no unit columns.
+    --   Names are shared: "Washington" is a DI school in WA and a DIII
+    --   one in MO, so a DIII filter pulled the DI team in.
+    --
+    -- ! athlete_season ALREADY CARRIES THESE, stamped per (school, state)
+    --   at build time -- which is how the ATHLETE boards filter exactly
+    --   while this one guessed. They ride through _SOURCE_SQL and land
+    --   here, so a division filter is now the same column comparison on
+    --   both boards and the two cannot disagree.
+    division     text,
+    region       text,
+    conference   text,
+    league       text,
+    state_div    text,
+    section_div  text,
+    "class"      text,
+    area         text,
+    section      text,
     PRIMARY KEY (span, scope, school, state, pool, sport, year)
 );
 """
 
+# The unit columns a team carries, in one place: the DDL above, the
+# SELECT below, _COLUMNS, and the row written by toRows all read this.
+UNIT_COLS = ("division", "region", "conference", "league",
+             "state_div", "section_div", "class", "area", "section")
+
 _COLUMNS = ("span", "scope", "school", "state", "pool", "sport", "year",
             "rank", "points", "n_athletes", "top5_mean", "fifth_rating",
-            "best_rating", "ratings")
+            "best_rating", "ratings") + UNIT_COLS
 
 # ! ORDERED BY THE GROUP so one pass can be cut into boards without holding
 #   the whole table. mean_rating is the athlete's season average -- the same
@@ -132,7 +158,18 @@ _SOURCE_SQL = """
            upper(btrim(state)) AS state,
            btrim(school)       AS school,
            person_id,
-           mean_rating AS rating
+           mean_rating AS rating,
+           -- the units athlete_season already carries, stamped per
+           -- (school, state); every athlete of one team shares them
+           "division",
+           "region",
+           "conference",
+           "league",
+           "state_div",
+           "section_div",
+           "class",
+           "area",
+           "section"
     FROM   athlete_season
     WHERE  mean_rating IS NOT NULL
       AND  n_races >= %(min_races)s
@@ -266,13 +303,27 @@ def arrayLiteral(values):
     return "{" + ",".join(repr(round(float(v), 2)) for v in values) + "}"
 
 
+# ! TWO SHAPES, ONE ANSWER. Pass one's teams come from rankTeams, which
+#   nests the squad's units under "units"; pass two's come from raceStored,
+#   which carries the stored ROW through with {**row} and so has them flat.
+#   Reading only one shape leaves the other board's units NULL -- and the
+#   all-time board is the one the site opens on, so that half would answer
+#   a division filter with nothing.
+def _unitTuple(team):
+    src = team.get("units")
+    if not isinstance(src, dict):
+        src = team
+    return tuple(src.get(c) for c in UNIT_COLS)
+
+
 def toRows(board):
     scope, pool, sport, year, teams = board
     for t in teams:
-        yield ("season", scope, t["school"], t["state"], pool, sport, year,
-               t["rank"], t["points"], t["n_athletes"],
-               t["top5_mean"], t["fifth_rating"], t["best_rating"],
-               arrayLiteral(t["ratings"]))
+        yield (("season", scope, t["school"], t["state"], pool, sport, year,
+                t["rank"], t["points"], t["n_athletes"],
+                t["top5_mean"], t["fifth_rating"], t["best_rating"],
+                arrayLiteral(t["ratings"]))
+               + _unitTuple(t))
 
 
 # ! READ BACK FROM THE SHADOW, NOT ACCUMULATED IN MEMORY DURING PASS ONE.
@@ -282,7 +333,20 @@ def toRows(board):
 #   second pass costs one sequential scan.
 _ALLTIME_SQL = """
     SELECT scope, pool, sport, school, state, year, ratings, n_athletes,
-           top5_mean, fifth_rating, best_rating
+           top5_mean, fifth_rating, best_rating,
+           -- ! THE UNITS RIDE INTO PASS TWO AS WELL, or the all-time board
+           --   answers a division filter with nothing while the season
+           --   boards answer it correctly -- and the all-time board is the
+           --   one the site opens on.
+           "division",
+           "region",
+           "conference",
+           "league",
+           "state_div",
+           "section_div",
+           "class",
+           "area",
+           "section"
     FROM   team_season_new
     WHERE  span = 'season'
     ORDER  BY scope, pool, sport
@@ -319,10 +383,11 @@ def alltimeBoards(rows):
 def toAlltimeRows(board):
     scope, pool, sport, teams = board
     for t in teams:
-        yield ("alltime", scope, t["school"], t["state"], pool, sport,
-               t["year"], t["rank"], t["points"], t["n_athletes"],
-               t["top5_mean"], t["fifth_rating"], t["best_rating"],
-               arrayLiteral(t["ratings"]))
+        yield (("alltime", scope, t["school"], t["state"], pool, sport,
+                t["year"], t["rank"], t["points"], t["n_athletes"],
+                t["top5_mean"], t["fifth_rating"], t["best_rating"],
+                arrayLiteral(t["ratings"]))
+               + _unitTuple(t))
 
 
 def build(conn, sport, since):
