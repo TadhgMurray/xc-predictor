@@ -51,10 +51,23 @@ JS = _src("racecast", "static", "rankings.js")
 
 
 # ---- 1. no offset left anywhere on the rankings page ------------------ #
+# ! CODE ONLY, VIA tokenize. Dropping lines that START with # missed
+#   docstrings, and boardYear's docstring legitimately explains the label
+#   as "year + 1 for track" -- which failed this check for saying so.
+def _codeOnly(src):
+    import io as _io, tokenize, token as _t
+    out = []
+    for tok in tokenize.generate_tokens(_io.StringIO(src).readline):
+        if tok.type in (tokenize.COMMENT, tokenize.STRING, _t.NEWLINE,
+                        tokenize.NL, tokenize.INDENT, tokenize.DEDENT):
+            continue
+        out.append(tok.string)
+    return " ".join(out)
+
+
 for name, src in (("rankings.py", RK), ("teams.py", TE)):
-    code = "\n".join(l for l in src.split("\n")
-                     if not l.lstrip().startswith(("#", "--")))
-    ok("year + 1" not in code and "year+1" not in code,
+    code = _codeOnly(src)
+    ok("year + 1" not in code,
        f"{name} still adds one to a track year somewhere in code")
     ok("year_tf" not in code,
        f"{name} still converts a label year back to the stored one")

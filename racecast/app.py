@@ -643,8 +643,14 @@ def meets_page():
                 rows = get_course_meets(cur, course, dist=None, limit=2000)
         years, current = [], None
         for m in rows:
+            # ⚠ results.date IS TEXT, so max(r.date) comes back a STRING and
+            #   .year raised AttributeError on every course view of this page
+            #   (2026-09-08). Both shapes are handled rather than one: the
+            #   column is text today and a later migration to `date` should
+            #   not break the page a second time.
             d = m.get("last_date")
-            label = str(d.year) if d else "Undated"
+            label = (str(getattr(d, "year", "") or str(d)[:4]) if d
+                     else "Undated")
             if current is None or current[0] != label:
                 current = (label, [])
                 years.append(current)
@@ -975,6 +981,14 @@ def buildRankLine(cur, person_id, season):
         return None
 
     sport = season["sport"]
+    # ⚠ TWO YEARS, AND THEY GO TO DIFFERENT PLACES (2026-09-08). The
+    #   /rankings boards filter the STORED academic year; the school page
+    #   still speaks the label (year + 1 for track). Send the wrong one and
+    #   the rank line asks the board for a season the athlete has no row in,
+    #   which comes out as "not on board" in the log and a missing rank on
+    #   the page -- e.g. a Camas TF season stored 2025 was being looked up
+    #   as 2026.
+    board_year = season["year"]
     label_year = season["year"] + 1 if sport == "TF" else season["year"]
     state = (season.get("state") or "").strip().upper() or None
     school = season.get("school")
@@ -991,7 +1005,7 @@ def buildRankLine(cur, person_id, season):
         #   here is the number the link opens on. Sent explicitly, so the
         #   board holds this year's rows to exactly this floor.
         args = {"board": "ability", "pool": season["pool"], "sport": sport,
-                "year": str(label_year),
+                "year": str(board_year),      # the board wants academic
                 "min_races": str(floorFor(season["year"]))}
         if with_state:
             args["state"] = state
@@ -6666,7 +6680,8 @@ def rankings_landing(sport, pool, state=None):
     if state:
         board["state"] = state
     if year:
-        board["year"] = str(year)
+        # the View-all link goes to a board, so it carries the academic year
+        board["year"] = str(L.boardYearFor(L.SPORTS[sport], year))
     from urllib.parse import urlencode
     return render_template(
         "landing.html",

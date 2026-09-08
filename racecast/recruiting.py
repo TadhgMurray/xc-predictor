@@ -217,7 +217,9 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
     out = []
     for div in COLLEGE_DIVISIONS:
         args = {"board": "ability", "pool": college, "sport": sport,
-                "year": str(labelYear(stored, sport)), "division": div}
+                # the boards take the stored academic year (rankings.
+                # boardYear); labelYear is for what a reader is SHOWN
+                "year": str(stored), "division": div}
         f, err = boardFilters(MultiDict(args))
         if err:
             continue

@@ -65,11 +65,26 @@ def allLandingPaths():
     return out
 
 
+def boardYearFor(sport_code, label):
+    """Re-exported so app.py's landing route converts through the same rule
+    as landingRows itself -- the page's rows and its View-all link must
+    describe one season."""
+    from rankings import boardYear
+    return boardYear(sport_code, label)
+
+
 def landingRows(cur, sport, pool, state, year):
     """The top LIMIT of the ability board for one sport, pool, state and
     season label. (rows, filters) or (None, error)."""
+    # ⚠ `year` ARRIVES AS A LABEL and the board wants the academic year.
+    #   get_homepage_meta publishes season_year_TF as year + 1 (panels.py
+    #   says why), so passing it straight through asked the board for the
+    #   season AFTER the one the page is about -- an empty landing page and
+    #   an empty share card, with no error anywhere.
+    from rankings import boardYear
+    stored = boardYear(SPORTS[sport], year)
     args = {"board": "ability", "sport": SPORTS[sport], "pool": POOLS[pool][0],
-            "limit": str(LIMIT), "year": str(year) if year else ""}
+            "limit": str(LIMIT), "year": str(stored) if stored else ""}
     if state:
         args["state"] = state.upper()
     f, err = parseFilters(args)

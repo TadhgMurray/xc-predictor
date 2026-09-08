@@ -657,6 +657,27 @@ def parseFilters(args):
 #   string replacement: patching only "grade" leaves "pool" bare, and
 #   replacing the word "pool" would also hit the 'college%' literal beside
 #   it. gradeKeySql(alias) builds it correctly instead.
+def boardYear(sport, label):
+    """A season LABEL as the boards want it: the stored academic year.
+
+    ★ THE ONE CONVERSION, IN ONE PLACE (2026-09-08). The boards filter the
+      stored academic year; the athlete page, the school page, the share
+      cards and the homepage meta all still speak the label (year + 1 for
+      track). Every link that crosses from one of those into a board has to
+      convert, and each one that forgot came out as an EMPTY board rather
+      than an error -- the landing pages, the home page's View-all, and the
+      athlete page's rank line all silently asked for the season after the
+      one on screen.
+
+    ! None PASSES THROUGH, because "no year" is a real state on every one of
+      those callers and must not become year 1.
+    """
+    if label in (None, ""):
+        return None
+    n = int(label)
+    return n - 1 if (sport or "").upper() == "TF" else n
+
+
 def gradeKeySql(alias=""):
     """The grade key expression, optionally qualified: gradeKeySql("s")."""
     q = f"{alias}." if alias else ""
