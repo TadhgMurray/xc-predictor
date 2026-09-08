@@ -478,11 +478,22 @@ const GRADES = [
    the one that OPENED, which after August is this calendar year and before
    it is the last. Offering a year the boards cannot hold would put an
    always-empty option at the top of the list every autumn. */
+/* 2025 -> "2025-26". One place, used by the Year combo and by every row
+   that prints a season, so a board and its filter cannot read differently. */
+function academicLabel(y) {
+  const n = Number(y);
+  if (!Number.isFinite(n)) return String(y);
+  return `${n}-${String((n + 1) % 100).padStart(2, "0")}`;
+}
+
 const YEARS = (() => {
   const d = new Date();
   const now = d.getFullYear() - (d.getMonth() < 7 ? 1 : 0);   // Aug opens it
   const out = [];
-  for (let y = now; y >= 1990; y--) out.push([String(y), String(y)]);
+  /* value is the stored academic year; the LABEL spans it, because
+     "2025" alone reads as the calendar year and the spring half of that
+     season is 2026. */
+  for (let y = now; y >= 1990; y--) out.push([String(y), academicLabel(y)]);
   return out;
 })();
 
@@ -1162,7 +1173,7 @@ function renderAbility(rows) {
       ${schoolCell(r.school, r.school_state || r.state)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
-      <td>${r.year}</td>
+      <td>${academicLabel(r.year)}</td>
       <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
       <td>${fmtRating(rval(r, "best_rating"))}</td>
       <td>${r.n_races === null || r.n_races === undefined ? "" : r.n_races}</td>
@@ -1406,7 +1417,7 @@ function renderTeams(rows, span) {
      is selected and an all-time placing otherwise, and calling the second one
      a season finish would be a confident lie in a tooltip. */
   const where = (r) => span === "season"
-    ? `in the ${r.year} season` : "all-time";
+    ? `in the ${academicLabel(r.year)} season` : "all-time";
   const body = rows.map((r) => `
     <tr>
       <td class="rank${r.rank <= 3 ? " top3" : ""}"${r.board_rank
@@ -1414,7 +1425,7 @@ function renderTeams(rows, span) {
           `on ${r.board_points} points"` : ""}>${r.rank}</td>
       <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td><span class="state">${esc(r.state)}</span></td>
-      <td>${r.year}</td>
+      <td>${academicLabel(r.year)}</td>
       <td class="rating">${r.points}</td>
       <td>${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${fmtRating(rval(r, "fifth_rating"))}</td>

@@ -1750,6 +1750,17 @@ _CANONICAL_INDEXES = {
         ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
         ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # ★ THE EVENT WINDOW (rankings._abilitySource, 2026-09-08).
+        #   That board re-aggregates ranking_results over a distance
+        #   range, and with sport='both' there is NO sport predicate --
+        #   so rr_board_rating_idx can only use `pool` as its leading
+        #   equality and `year` is never reached. On college_m that is
+        #   every row of the pool, on every page load, which is what
+        #   made the restricted board slow enough to hit the site's
+        #   55s statement_timeout. Leading (pool, year) keeps the year
+        #   usable with no sport, and distance rides along so the range
+        #   is an index condition rather than a heap filter.
+        ("rr_pool_year_dist_idx", "(pool, year, distance)"),
         # rankings marks boards: WHERE event_kind = 'shot_put' ...
         #   ORDER BY mark DESC. Partial: flat rows carry NULL and are the
         #   whole table; the kinds are a sliver.
