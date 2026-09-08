@@ -431,11 +431,27 @@ CG_TOL_PROBE = 1e-4
 #   night. At 150 iterations a probe is a usable Hutchinson sample -- the
 #   estimate's own error is 1/sqrt(16) -- and the pass is under an hour.
 CG_MAX_ITER_PROBE = 150
-# bincount and fancy indexing release the GIL; the operator's independent
-# block reductions run on a small pool. Sized to the box, capped at four:
-# past that the scatter is memory-bound and more threads just contend.
-# the block reductions and the row gathers run on this many threads; the
-# cap was 4, the server has more cores than that (XCP_THREADS overrides)
+# bincount and fancy indexing release the GIL, so two different things run
+# on this pool -- and they scale differently, which is the whole reason to
+# read this before tuning XCP_THREADS:
+#
+#   _Operator._reduce   the block reductions (the adjoint's bincounts). One
+#                       job per model term, so 8-9 of them. Threads past
+#                       that sit idle, and the scatter is memory-bound
+#                       anyway -- this is where the old cap of 4 came from.
+#
+#   rowPrediction       splits the ROWS into _N_THREADS chunks (~60M of
+#                       them). This one scales with cores, not with the
+#                       number of model terms, and it is the bigger half of
+#                       every CG iteration: measured at 0.9 s of 1.2 s per
+#                       8M rows on four cores (2026-09-06).
+#
+# ⚠ SO THE JOB COUNT IS NOT THE CEILING. Sizing this to ~9 because that is
+#   how many reduction jobs exist leaves the dominant term -- the gather --
+#   on a fraction of the box. On the 32-core server the default of 8 runs
+#   rowPrediction on a quarter of it. Raise XCP_THREADS toward the core
+#   count and measure the per-outer line; the gather keeps paying until
+#   memory bandwidth saturates, and only the reductions stop caring.
 _N_THREADS = max(1, min(int(os.environ.get("XCP_THREADS", "8")), os.cpu_count() or 1))
 
 
