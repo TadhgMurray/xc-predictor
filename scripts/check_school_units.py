@@ -741,6 +741,16 @@ def buildVotes(cur, sport, state_filter=None):
             is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
         else:
             st_["lvl"] += 1
+            # ! THE MEET NAME VETOES THE LEVEL (304, 2026-09-08). The level
+            #   map is keyed by the state the rows RACED in, so Georgetown
+            #   University's away meets in Massachusetts made (Georgetown,
+            #   MA) a college, and the Massachusetts high school of that
+            #   name then had "MIAA Division 3A-3B-3C" read by the college
+            #   parser: Division 3 became NCAA DIII, and the D3 board got
+            #   a Texas-page high school. An association acronym or an HS
+            #   marker in the name is a high-school meet whoever runs it.
+            if is_coll and meet_name and not _isCollegeName(meet_name):
+                is_coll = False
         if st in _FOREIGN_ST or (meet_name and (
                 _NEVER_RX.search(meet_name)
                 or (not is_coll and _NATIONALS_RX.search(meet_name)))):

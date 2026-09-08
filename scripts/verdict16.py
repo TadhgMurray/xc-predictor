@@ -38,18 +38,23 @@ def main():
             rows = cur.fetchall()
             print(f"== top {top} {args.pool} seasons by sport: "
                   + "; ".join(f"{r[0]} {r[1]} ({float(r[2]):.1f} to {float(r[3]):.1f})" for r in rows))
-        print("== same athlete, XC then next TF season, median gain (the real winter gain), by XC rating band")
+        # ! BANDED ON THE AVERAGE OF THE TWO SEASONS, NOT ON THE XC ONE:
+        #   picking pairs by a high XC rating picks the lucky XC seasons
+        #   and their track seasons regress, which read as a -4.8 "gain"
+        #   at the top and +7.4 at the bottom on the first cut of this.
+        print("== same athlete, fall XC and the next spring's TF, median TF-XC by band of their average")
         cur.execute("""
-            SELECT width_bucket(x.mean_rating, 90, 150, 6) AS band, count(*),
-                   percentile_cont(0.5) WITHIN GROUP (ORDER BY t.mean_rating - x.mean_rating)
+            SELECT width_bucket((x.mean_rating + t.mean_rating) / 2, 90, 150, 6) AS band, count(*),
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY t.mean_rating - x.mean_rating),
+                   avg((t.mean_rating > x.mean_rating)::int)
             FROM athlete_season x JOIN athlete_season t
               ON t.person_id = x.person_id AND t.pool = x.pool AND t.sport = 'TF' AND t.year = x.year
             WHERE x.pool = %s AND x.sport = 'XC' AND x.n_races >= 3 AND t.n_races >= 3
               AND x.year >= 2015
             GROUP BY 1 ORDER BY 1""", (args.pool,))
-        for band, n, med in cur.fetchall():
+        for band, n, med, share in cur.fetchall():
             lo = 90 + (band - 1) * 10
-            print(f"  XC {lo}-{lo + 10}: n {n:,} median TF-XC {float(med):+.2f}")
+            print(f"  avg {lo}-{lo + 10}: n {n:,} median TF-XC {float(med):+.2f}, TF higher in {100 * float(share):.0f}%")
         print(f"== {args.school}: school_unit rows")
         cur.execute("""SELECT state, sport, division, votes FROM school_unit
                        WHERE school = %s ORDER BY sport, state""", (args.school,))
