@@ -58,6 +58,13 @@ ALIASES = {
     "uw la crosse": "wisconsin la crosse", "wis la crosse": "wisconsin la crosse",
     "uw eau claire": "wisconsin eau claire", "wis eau claire": "wisconsin eau claire",
     "uw oshkosh": "wisconsin oshkosh", "wis oshkosh": "wisconsin oshkosh",
+    # from the unmatched report (304, 2026-09-08): the feed's short forms
+    "uc colorado springs": "colorado colorado springs",
+    "uccs": "colorado colorado springs",
+    "uc santa cruz": "california santa cruz", "ucsc": "california santa cruz",
+    "tcnj": "new jersey", "army west point": "united states military academy",
+    "army": "united states military academy", "navy": "united states naval academy",
+    "air force": "united states air force academy",
     "uw stevens point": "wisconsin stevens point", "wis stevens point": "wisconsin stevens point",
     "uw whitewater": "wisconsin whitewater", "wis whitewater": "wisconsin whitewater",
     "uw platteville": "wisconsin platteville", "wis platteville": "wisconsin platteville",

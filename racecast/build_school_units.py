@@ -158,6 +158,19 @@ _DIR_DIV = {"D1": "NCAA DI", "D2": "NCAA DII", "D3": "NCAA DIII", "NAIA": "NAIA"
 
 _CLUB = re.compile(r"\bclub\b", re.I)
 _JC = re.compile(r"\b(cc|jc|community college|city college|junior college|college of the \w+)\b", re.I)
+# California's big junior colleges as the feeds spell them: no pattern
+# gives them away, and they were in the unmatched report's top forty
+_JC_NAMES = {"mt. sac", "mt sac", "hartnell", "cerritos", "riverside city", "clovis",
+             "san joaquin delta", "de anza", "foothill", "el camino", "golden west",
+             "orange coast", "saddleback", "santa rosa", "american river", "sierra",
+             "modesto", "fresno city", "bakersfield", "ventura", "moorpark", "cuesta",
+             "santa barbara city", "san diego mesa", "grossmont", "palomar", "southwestern",
+             "chaffey", "citrus", "glendale", "pasadena city", "santa monica", "long beach city",
+             "cypress", "fullerton", "irvine valley", "mt. san jacinto", "mt san jacinto",
+             "college of the sequoias", "college of the canyons", "college of the desert",
+             "west valley", "san mateo", "canada", "skyline", "chabot", "las positas",
+             "diablo valley", "los medanos", "contra costa", "solano", "napa valley",
+             "sacramento city", "cosumnes river", "folsom lake", "butte", "shasta"}
 
 
 def _outsideNcaa(name):
@@ -170,7 +183,7 @@ def _outsideNcaa(name):
     n = name or ""
     if _CLUB.search(n):
         return "Club"
-    if _JC.search(n):
+    if _JC.search(n) or n.strip().lower() in _JC_NAMES:
         return "JC"
     return None
 
