@@ -13,13 +13,17 @@
 #               again after 2021).
 #            4. No wheelchair division carries a rating anywhere, and
 #               no athlete who ever raced one carries a rating on ANY
-#               of their races (the division titles label only some).
+#               of their races (the division titles label only some) --
+#               AND the exclusion list they are checked against is itself
+#               current (4a-ii, 2026-09-08: checks 4 and 4a read the same
+#               list the engine reads, so a list that has gone stale
+#               passes them both while chair athletes rank).
 #
 #     python scripts/run_checklist.py          # exit 0 = all PASS/SKIP
 #
 # Runs LAST in the pipeline (step 17), so a FAIL is loud in the morning
 # log but cannot stop any build work -- everything else already ran.
-# Read-only.
+# Read-only (the one temp table it makes is session-scoped).
 
 import json
 import os
@@ -288,6 +292,116 @@ def checkWheelchairPeople(cur):
                 "division") + via)
 
 
+# ---- 4a-ii. IS THE LIST ITSELF CURRENT? (2026-09-08) ------------------ #
+#   ★ CHECK 4a IS TAUTOLOGICAL AND THAT IS WHY IT KEEPS PASSING. It asks
+#     "does anyone on the exclusion list carry a rating?", and the engine
+#     builds its refusals from that same list -- so it can only catch a
+#     PROPAGATION failure (the list was consulted and the rows survived
+#     anyway). It cannot catch a DETECTION failure: a chair athlete the list
+#     has never heard of is rated by the engine and passed by the check,
+#     identically, for the same reason.
+#
+#   ⚠ AND DETECTION IS THE FAILURE THAT ACTUALLY HAPPENS. wheelchair_person
+#     is a DROP-and-CREATE snapshot built only by engine/wheelchair_flag.py
+#     --write, pipeline step 04b. Every run that omits that step -- it did
+#     not exist before 2026-09-01, and the standard `--from 8` recipe put it
+#     on --skip after that -- leaves the snapshot describing an older
+#     corpus, and every chair athlete ingested since is priced by
+#     fill_ratings and ranked on the boards. Twice now the owner has found
+#     them there while the checklist said PASS.
+#
+#   So: apply the engine's OWN rule to the corpus as it stands right now,
+#   and compare against what the table stored. A person the live rule finds
+#   and the table does not is the snapshot being out of date; one of those
+#   carrying a rating is a chair athlete on the boards today.
+_RESCAN_TIMEOUT_MS = 900_000            # 15 minutes; it is a scan of results
+
+_FRESH_SQL = """
+    CREATE TEMP TABLE _ck_fresh AS
+    SELECT DISTINCT r.person_id
+    FROM   results r
+    LEFT   JOIN meets m  ON m.div_id  = r.div_id  AND r.source = 'anet'
+    LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
+    WHERE  r.person_id IS NOT NULL
+      AND (COALESCE(m.division, '') ~* %(rx)s
+        OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
+                    '') ~* %(rx)s)
+    UNION
+    SELECT DISTINCT r.person_id
+    FROM   results_tf r
+    WHERE  r.person_id IS NOT NULL
+      AND  COALESCE(r.event_short, '') ~* %(rx)s
+"""
+
+
+def checkWheelchairFresh(cur):
+    name = "wheelchair list is current"
+    if not _exists(cur, "wheelchair_person"):
+        _mark("FAIL", name,
+              "wheelchair_person does not exist -- nothing excludes chair "
+              "athletes by person. Run: python engine/wheelchair_flag.py --write")
+        return
+    try:
+        from wheelchair_flag import WHEELCHAIR_RX          # the engine's rule
+    except Exception as exc:                               # noqa: BLE001
+        _mark("WARN", name, f"could not import the engine's rule: {exc}")
+        return
+
+    # ! BOUNDED. This is the same scan step 04b does, and the checklist runs
+    #   at the end of a five-hour night; a pathological plan must not turn
+    #   the go/no-go into another hour. A timeout is a WARN, never a PASS --
+    #   "we did not look" and "we looked and it was clean" are not the same
+    #   answer, and the whole point of this check is that the reassuring one
+    #   was being printed without looking.
+    try:
+        cur.execute(f"SET LOCAL statement_timeout = {_RESCAN_TIMEOUT_MS}")
+        cur.execute(_FRESH_SQL, {"rx": WHEELCHAIR_RX})
+    except Exception as exc:                               # noqa: BLE001
+        cur.connection.rollback()
+        _mark("WARN", name,
+              f"the rescan did not finish ({str(exc).strip().splitlines()[0]}); "
+              "the list's freshness is UNKNOWN. Run step 04b "
+              "(python engine/wheelchair_flag.py --write) and re-check")
+        return
+    cur.execute("SET LOCAL statement_timeout = 0")
+
+    cur.execute("""
+        SELECT count(*) FROM _ck_fresh f
+        WHERE NOT EXISTS (SELECT 1 FROM wheelchair_person w
+                          WHERE w.person_id = f.person_id)""")
+    n_missing = cur.fetchone()[0]
+    if not n_missing:
+        _mark("PASS", name,
+              "the engine's rule finds nobody wheelchair_person is missing")
+        return
+
+    # missing is bad; missing AND RATED is the thing the owner is looking at
+    rated = []
+    for t in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT count(*) FROM {t} r
+            WHERE  r.speed_rating IS NOT NULL
+              AND  EXISTS (SELECT 1 FROM _ck_fresh f
+                           WHERE f.person_id = r.person_id)
+              AND  NOT EXISTS (SELECT 1 FROM wheelchair_person w
+                               WHERE w.person_id = r.person_id)""")
+        n = cur.fetchone()[0]
+        if n:
+            rated.append(f"{t}: {n:,}")
+    fix = ("Rebuild it: python engine/wheelchair_flag.py --write "
+           "(pipeline step 04b), then rerun 09b_fill and the boards.")
+    if rated:
+        _mark("FAIL", name,
+              f"wheelchair_person is STALE -- the engine's rule finds "
+              f"{n_missing:,} chair athlete(s) it does not list, and they "
+              f"carry ratings right now ({'; '.join(rated)}). " + fix)
+    else:
+        _mark("WARN", name,
+              f"wheelchair_person is STALE: the engine's rule finds "
+              f"{n_missing:,} chair athlete(s) it does not list. None is "
+              f"rated yet, so no board is wrong today. " + fix)
+
+
 # ---- 4b. the stale-rating invariant (2026-08-27 postmortem) ----------- #
 #   The backfill NULLs normalized_time for skipped rows but never touched
 #   speed_rating; every nuked row kept its pre-nuke rating. fill_ratings
@@ -316,6 +430,7 @@ def main():
         checkCanaries(cur)
         checkWheelchair(cur)
         checkWheelchairPeople(cur)
+        checkWheelchairFresh(cur)
         checkStale(cur)
     fails = [r for r in _results if r[0] == "FAIL"]
     warns = [r for r in _results if r[0] == "WARN"]

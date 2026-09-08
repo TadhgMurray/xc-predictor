@@ -96,15 +96,61 @@ skipped() {                      # is step $1 on the --skip list?
   case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac
 }
 
+failed() {                       # did step $1 already fail this run?
+  case " $FAILED " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# summarise <exit-code> -- the closing banner, from here or from the end of
+# the file. Factored out so an early abort reports exactly like a full run.
+summarise() {
+  TOTAL=$(( $(date +%s) - T_START ))
+  echo ""
+  echo "======================================================================"
+  echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m"
+  if [ -n "$FAILED" ]; then
+    echo "  FAILED STEPS:$FAILED"
+    echo "  logs: $LOGDIR"
+    exit 1
+  fi
+  echo "  all steps ok -- logs: $LOGDIR"
+  echo "======================================================================"
+  exit "${1:-0}"
+}
+
+# ★ THE STEPS --from DOES NOT SKIP. Both are cheap, both are read-only over
+#   the corpus, and both are facts a LATER step consults rather than work a
+#   later step redoes -- so "start at 8" must not silently drop them.
+#     02_drop_old   the go-live refuses to start with a stale <table>_old.
+#     04b_wheelchair wheelchair_person is the list fill_ratings and the board
+#                   builds anti-join. Skipped, it holds whatever the last run
+#                   that built it found, so every chair athlete who has
+#                   arrived since is priced and ranked -- issue 14, twice
+#                   (2026-09-01 the step did not exist; 2026-09-08 the
+#                   standard --from 8 recipe left it out). Run after the
+#                   pack it cannot un-rate them in the SOLVE, but it does
+#                   keep them out of the fill and off every board, which is
+#                   where they show.
+_ALWAYS="02_drop_old 04b_wheelchair"
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
+  case " $_ALWAYS " in *" $name "*) always=1 ;; *) always=0 ;; esac
+  if [ "${num:-0}" -lt "$FROM" ] && [ "$always" -eq 0 ]; then
     echo "  $name skipped (--from $FROM)"
     return 0
   fi
   if skipped "$name"; then
     echo "  $name skipped (--skip)"
+    # ⚠ AND SAY WHAT IT COSTS. --skip is explicit, so it is honoured -- but
+    #   the one step whose omission is invisible until the boards are wrong
+    #   does not get to go quietly.
+    if [ "$always" -eq 1 ]; then
+      echo "  ⚠⚠ $name IS ON THE --skip LIST. wheelchair_person will not be" \
+           "rebuilt, so chair athletes who arrived since it was last built" \
+           "will be rated and ranked. run_checklist cannot catch this: it" \
+           "consults the same stale list. Drop it from --skip."
+    fi
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -407,6 +453,47 @@ else
   fi
   step 09_tilt          "$PY" -u engine/apply_tilt.py --refresh --write
 fi
+
+# ★ A FAILED GO-LIVE STOPS THE RUN HERE (2026-09-08, issue 310 again).
+#   step() records a failure and carries on, which is right for a diagnostic
+#   or a board -- and wrong for this one step. Everything below republishes
+#   the site FROM results.speed_rating: 09b_fill prices the unrated rows
+#   against it, 10_* rebuild the boards from it, 13c/13d/13e push it to the
+#   search index, the sitemap and Bing. When 08 fails, that column is
+#   whatever the LAST run left there, so the run spends four more hours
+#   dressing stale ratings up as today's and the summary's one FAILED line
+#   is the only sign. That is how the old engine's ratings served the site
+#   for two days (310), and how run 20260908_030942 published a rating set
+#   whose go-live had crashed.
+#
+#   The rebuild is safe to lose: the ratings are still in the database and
+#   the pack is still on disk, so the fix is `--from 8` again once the
+#   go-live's own failure is understood -- reading 08_golive.log FIRST.
+#
+#   XCP_IGNORE_GOLIVE_FAIL=1 continues anyway. That is for the one case
+#   where you have decided the ratings on disk are the ones you want
+#   published -- never for "let's see if the rest works".
+if failed 08_golive; then
+  if [ "${XCP_IGNORE_GOLIVE_FAIL:-0}" = "1" ]; then
+    echo ""
+    echo "  ⚠ 08_golive FAILED, and XCP_IGNORE_GOLIVE_FAIL=1 -- continuing." \
+         "The boards below will be built from the ratings the PREVIOUS run" \
+         "left in results.speed_rating." | tee -a "$SUMMARY"
+  else
+    echo "" | tee -a "$SUMMARY"
+    echo "  ABORTING: 08_golive failed, so results.speed_rating still holds" \
+         "the PREVIOUS run's ratings. Everything after this step republishes" \
+         "that column to the site, so the run stops instead of shipping" \
+         "stale ratings as new ones (310)." | tee -a "$SUMMARY"
+    echo "  read: $LOGDIR/08_golive.log" | tee -a "$SUMMARY"
+    echo "  then: bash deploy/run_pipeline.sh --from 8 ...   (the pack is" \
+         "still current; nothing before 8 needs to rerun)" | tee -a "$SUMMARY"
+    echo "  or:   XCP_IGNORE_GOLIVE_FAIL=1 ... to publish the ratings as" \
+         "they stand." | tee -a "$SUMMARY"
+    summarise
+  fi
+fi
+
 step 09b_fill         "$PY" -u engine/fill_ratings.py
 
 
@@ -474,14 +561,4 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 step 17_checklist     "$PY" -u scripts/run_checklist.py
 
 # ---- summary -------------------------------------------------------- #
-TOTAL=$(( $(date +%s) - T_START ))
-echo ""
-echo "======================================================================"
-echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m"
-if [ -n "$FAILED" ]; then
-  echo "  FAILED STEPS:$FAILED"
-  echo "  logs: $LOGDIR"
-  exit 1
-fi
-echo "  all steps ok -- logs: $LOGDIR"
-echo "======================================================================"
+summarise
