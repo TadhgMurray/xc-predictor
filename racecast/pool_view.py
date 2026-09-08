@@ -433,6 +433,13 @@ def stampHsRatings(pool_rows, races):
         sport = race.get("sport")
         pool = exact.get((sport, race.get("result_id")))
         if pool is None:
+            # ★ THE ROW'S OWN POOL NEXT (issue 308, 2026-09-08): the go-live
+            #   writes rating_pool on every rated row, boards or not. A pro
+            #   row is on no board, so ranking_results had no pool for it,
+            #   the season poll had no rows either, and a 29:41 10k stayed
+            #   on the pro scale beside college rows on the HS one.
+            pool = race.get("rating_pool") or None
+        if pool is None:
             try:
                 academic = (int(race.get("season_label"))
                             - (1 if sport == "TF" else 0))
