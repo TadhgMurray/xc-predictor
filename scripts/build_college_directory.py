@@ -173,6 +173,26 @@ def _pick(cands, strong, weak):
     return None
 
 
+_POSTINGS = {}          # id(entries) -> (entries, {token: set(keys)})
+_ANSWERS = {}           # (id(entries), name, state) -> value
+
+
+def _postings(entries):
+    """token -> the directory keys containing it, built once per map.
+    ! WITHOUT THIS THE FUZZY STEP WAS A SCAN OF THE WHOLE DIRECTORY PER
+      CALL, and the search index calls it once per athlete row: step 13c
+      ran for hours on 2026-09-08."""
+    hit = _POSTINGS.get(id(entries))
+    if hit is not None and hit[0] is entries:
+        return hit[1]
+    post = {}
+    for k in entries:
+        for t in set(k.split()):
+            post.setdefault(t, set()).add(k)
+    _POSTINGS[id(entries)] = (entries, post)
+    return post
+
+
 def lookup(entries, name, state=None):
     """The directory's value for a feed's spelling of a school, or None.
 
@@ -183,9 +203,21 @@ def lookup(entries, name, state=None):
       the directory entries whose tokens contain every token of the
       name. A name several schools share (Cornell, Trinity, Augustana)
       is settled by the state the feed wrote in parentheses, or the
-      state passed in; unsettled, it is a miss, never a guess.
-    `entries` is loadDirectory's map, or a plain {name_norm: value}."""
+      state passed in; unsettled, it is a miss, never a guess. A club
+      team ("Virginia Tech Club") is never a member: None at once.
+    `entries` is loadDirectory's map, or a plain {name_norm: value}.
+    Answers are memoised per map, name and state."""
     if not name:
+        return None
+    ck = (id(entries), name, state)
+    if ck in _ANSWERS:
+        return _ANSWERS[ck]
+    _ANSWERS[ck] = out = _lookup(entries, name, state)
+    return out
+
+
+def _lookup(entries, name, state):
+    if "club" in name.lower():
         return None
     strong, weak = parenState(name), state
     key = normName(name)
@@ -196,11 +228,18 @@ def lookup(entries, name, state=None):
     toks = [t for t in toks if t and t not in _NOISE]
     if not toks:
         return None
+    post = _postings(entries)
+    keys = None
+    for t in toks:
+        ks = post.get(t)
+        if not ks:
+            return None
+        keys = ks if keys is None else keys & ks
+        if not keys:
+            return None
     cands = []
-    for k in entries:
-        kt = set(k.split())
-        if all(t in kt for t in toks):
-            cands.extend(_candidates(entries, k))
+    for k in keys:
+        cands.extend(_candidates(entries, k))
     return _pick(cands, strong, weak)
 
 
