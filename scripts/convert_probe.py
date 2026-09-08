@@ -22,8 +22,14 @@ def main():
     ap.add_argument("--person", type=int)
     ap.add_argument("--seconds", type=float)
     ap.add_argument("--target", type=float, default=3200.0)
+    ap.add_argument("--sample", type=int, default=0,
+                    help="instead: N random 2025 track rows of --pool, the gap between "
+                         "the rating path and the time path by rating band")
+    ap.add_argument("--pool", default="hs_m")
     args = ap.parse_args()
     import conversions as C
+    if args.sample:
+        return sample(args, C)
     with getConn() as conn, conn.cursor() as cur:
         if args.tf is True:
             cur.execute("""SELECT result_id FROM results_tf WHERE person_id = %s
@@ -78,3 +84,43 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def sample(args, C):
+    """Across random rated 2025 track rows: ln(adjusted from the stored
+    rating / adjusted from the raw time through venue, distance and
+    sport gain). Zero means the stored rating carries every term; a gap
+    equal to the sport gain means the go-live never applied the shift."""
+    import statistics
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT r.result_id, r.time_seconds, r.normalized_time, r.speed_rating,
+                              r.event_short, m.distance_meters, m.location_id, m.is_indoor
+                       FROM results_tf r
+                       JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id AND m.event_id = r.event_id
+                       WHERE r.date >= '2025-01-01' AND r.speed_rating > 0 AND r.normalized_time > 0
+                         AND r.rating_pool = %s AND m.distance_meters BETWEEN 800 AND 10000
+                         AND COALESCE(r.is_field, 0) = 0
+                       ORDER BY random() LIMIT %s""", (args.pool, args.sample))
+        rows = cur.fetchall()
+    bands = {}
+    for rid, t, nt, rating, ev, dist, loc, indoor in rows:
+        try:
+            venue = C.venue_difficulty("TF", location_id=loc, distance_meters=dist, is_indoor=bool(indoor))
+            adj = C._norm_from_rating(float(rating), args.pool, 0.0, "TF")
+            fwd = C._norm_from_time(float(t), float(dist), args.pool, sport="TF", chosen=venue, event_short=ev)
+            gain = C.sport_gain(args.pool, "TF", float(rating))
+        except Exception:                             # noqa: BLE001
+            continue
+        if not adj or not fwd:
+            continue
+        b = int(float(rating) // 10 * 10)
+        bands.setdefault(b, []).append((math.log(adj / fwd), gain, venue is not None))
+    print(f"== {len(rows)} random 2025 {args.pool} track rows: ln(rating path / time path), by rating band")
+    print("   zero = the stored rating carries every term; +sport gain = the shift was never applied")
+    for b in sorted(bands):
+        v = bands[b]
+        gaps = [x[0] for x in v]
+        print(f"  {b}-{b + 10}: n {len(v):4d}  median gap {100 * statistics.median(gaps):+.2f}%  "
+              f"(p25 {100 * sorted(gaps)[len(gaps) // 4]:+.2f}, p75 {100 * sorted(gaps)[3 * len(gaps) // 4]:+.2f})  "
+              f"sport gain here {100 * statistics.median(x[1] for x in v):+.2f}%  "
+              f"venue known {100 * sum(x[2] for x in v) / len(v):.0f}%")
