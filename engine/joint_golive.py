@@ -507,9 +507,24 @@ def writeLive(live):
     print(f"[joint/live] athlete_ratings: {len(live['athletes']):,} rows")
     saveAthleteRatings(live["athletes"], ("XC", "TF"))
 
-    for name, (rid, rating) in live["per_sport"].items():
-        saveResultSpeedRatings(name, (rid, rating))
-        print(f"[joint/live] {name}: {rid.size:,} result ratings written")
+    # ! DO NOT DESTRUCTURE THIS. buildLive puts (result_id, rating, pool)
+    #   here -- three arrays since fbf4419 (issue 171: the pool the rating
+    #   was computed in rides on the row as rating_pool, so no page has to
+    #   guess it). This loop was left unpacking two and raised
+    #   "ValueError: too many values to unpack (expected 2)" three hours
+    #   into run 20260908_030942, AFTER course_difficulties and
+    #   athlete_ratings had been written and before a single result rating
+    #   was. It went unseen for a day because XCP_JOINT_LIVE was off and no
+    #   run reached this line (issue 310).
+    #
+    #   saveResultSpeedRatings takes the tuple whole: speed_ratings_db.
+    #   _asPairs already accepts (rid, val) or (rid, val, pool), and the
+    #   staging table has had a `pool` column all along. So pass it
+    #   through rather than naming its parts, and this cannot rot again
+    #   the next time buildLive learns to carry something else.
+    for name, arrays in live["per_sport"].items():
+        saveResultSpeedRatings(name, arrays)
+        print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
     writeSuspectDays(live.get("suspect_days", []))
