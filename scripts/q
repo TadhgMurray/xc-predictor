@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# scripts/q -- one query, compact, no pager (owner, 2026-09-08: "there must
+# be some better way to print queries"). Sources the server env itself.
+#   scripts/q "SELECT ..."            # rows as  a | b | c , no pager
+#   scripts/q "SELECT ..." > /tmp/x   # then: head -40 /tmp/x
+set -a; [ -f /etc/xc-predictor.env ] && . /etc/xc-predictor.env; set +a
+PGPASSWORD="$XCP_DB_PASSWORD" psql -h 127.0.0.1 -U postgres xc_predictor \
+  -P pager=off -A -F ' | ' -c "$1"
