@@ -2430,8 +2430,11 @@ def main():
     #   once, two `stream --sport` processes COPY into it side by side
     #   (each builds its own session temps), and `finish` indexes, builds
     #   athlete_season and swaps. No stage = the old one-process run.
-    parser.add_argument("--stage", choices=["prepare", "stream", "finish"],
-                        default=None)
+    parser.add_argument("--stage", choices=["prepare", "stream", "finish", "restamp"],
+                        default=None,
+                        help="restamp: the unit columns onto the LIVE athlete_season "
+                             "from school_unit, no rebuild (after a directory or "
+                             "units change; the result rows follow at the next full run)")
     parser.add_argument("--since", default="1990-01-01",
                         help="earliest race date to include")
     # ★ A SPORT IN TWO HALVES (2026-09-06, the owner: "speed up the
