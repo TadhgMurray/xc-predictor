@@ -3,7 +3,9 @@ import re
 import argparse
 from urllib.parse import quote
 
+import psycopg2.errors
 import psycopg2.extras
+import time
 
 sys.path.insert(0, "scripts")
 from database import getConn
@@ -220,7 +222,14 @@ def _load_athletes(conn):
 
     write = conn.cursor()
     batch, total = [], 0
+    t0 = time.time()
+    seen = 0
     for row in read:
+        seen += 1
+        if seen % 500_000 == 0:
+            el = time.time() - t0
+            print(f"    athletes: {seen:,} rows read, {total:,} written, "
+                  f"{seen / el:,.0f} rows/s, {el / 60:.1f} min", flush=True)
         name   = row["name"]
         school = row.get("school")
         # ★ THE SCHOOL'S STATE, NOT THE ATHLETE'S (owner, 2026-09-06): the
@@ -254,7 +263,7 @@ def _load_athletes(conn):
         total += _flush(write, batch)
     read.close()
     conn.commit()
-    print(f"  athletes: {total:,}")
+    print(f"  athletes: {total:,} in {(time.time() - t0) / 60:.1f} min", flush=True)
     return total
 
 
@@ -574,30 +583,53 @@ def main():
                 cur.execute(_DDL.format(table=_TARGET))
                 conn.commit()
 
-        print(f"building {_TARGET}...")
-        if args.only:
-            _LOADERS[args.only](conn)
-        else:
-            for fn in _LOADERS.values():
-                fn(conn)
+        print(f"building {_TARGET}...", flush=True)
+        # every loader says how long it took (owner, 2026-09-08: "can you
+        # make it print more at least?")
+        for key, fn in _LOADERS.items():
+            if args.only and key != args.only:
+                continue
+            t0 = time.time()
+            fn(conn)
+            print(f"  {key}: {time.time() - t0:.0f}s", flush=True)
 
         if not args.only:
             with conn.cursor() as cur:
-                print("building indexes...")
+                # ★ THE TRIGRAM INDEX IS THE LONG POLE: a GIN build over 15M
+                #   rows. Memory and parallel workers for the build, and a
+                #   line before and after so a slow build is a slow build
+                #   and not a mystery.
+                cur.execute("SET maintenance_work_mem = '2GB'")
+                cur.execute("SET max_parallel_maintenance_workers = 4")
+                print("building indexes (prefix, trigram, school label)...", flush=True)
+                t0 = time.time()
                 cur.execute(_INDEX.format(table="search_index_new",
                                           prefix="idx_search_new"))
                 conn.commit()
-                # the swap, one transaction: old index or new, never none.
-                # The indexes are renamed with the table so the next run's
-                # CREATE INDEX IF NOT EXISTS makes fresh ones.
-                cur.execute("DROP TABLE IF EXISTS search_index")
-                cur.execute("ALTER TABLE search_index_new RENAME TO search_index")
-                cur.execute("ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix")
-                cur.execute("ALTER INDEX idx_search_new_trgm RENAME TO idx_search_trgm")
-                cur.execute("ALTER INDEX idx_search_new_school_label RENAME TO idx_search_school_label")
+                print(f"  indexes: {time.time() - t0:.0f}s", flush=True)
+                # ! THE SWAP WAITS FIVE SECONDS AT A TIME, NOT FOREVER: DROP
+                #   needs ACCESS EXCLUSIVE and a search in flight holds
+                #   ACCESS SHARE (issue 300's lock family).
+                for attempt in range(1, 25):
+                    try:
+                        cur.execute("SET LOCAL lock_timeout = '5s'")
+                        cur.execute("DROP TABLE IF EXISTS search_index")
+                        cur.execute("ALTER TABLE search_index_new RENAME TO search_index")
+                        cur.execute("ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix")
+                        cur.execute("ALTER INDEX idx_search_new_trgm RENAME TO idx_search_trgm")
+                        cur.execute("ALTER INDEX idx_search_new_school_label RENAME TO idx_search_school_label")
+                        conn.commit()
+                        break
+                    except psycopg2.errors.LockNotAvailable:
+                        conn.rollback()
+                        print(f"  swap try {attempt}/24: search_index is being read; retrying", flush=True)
+                        time.sleep(5)
+                else:
+                    raise RuntimeError("search_index swap: could not take the lock in two minutes; "
+                                       "search_index_new is built, rerun to swap")
                 cur.execute("ANALYZE search_index")
             conn.commit()
-            print("search_index: swapped in")
+            print("search_index: swapped in", flush=True)
 
         print("done.")
 
