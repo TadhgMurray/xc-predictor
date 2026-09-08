@@ -327,6 +327,18 @@ def hsFactor(pool, sport, distance_m):
         if not f_own or not f_hs:
             continue
         ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
+    if not ratios and pool.startswith("pro_"):
+        # ★ A PRO POOL RIDES ON THE COLLEGE FACTOR (2026-09-08, Graham
+        #   Blanks' page: a 29:41 10k at the World XC trials read 96.4
+        #   beside college rows at 146, because pro_m has too few rated
+        #   rows for a constant of its own and the rating stayed on the
+        #   pro scale). The college pool of the same gender is the nearest
+        #   scale with a factor; wrong by the pro-college gap, which is
+        #   small, rather than wrong by the whole conversion.
+        college = hsFactor("college_" + suffix, sport, distance_m)
+        if college:
+            _FACTOR_CACHE[key] = college
+            return college
     if not ratios:
         why = f"no sport with both constants and factors ({pool} and hs_{suffix})"
     else:
