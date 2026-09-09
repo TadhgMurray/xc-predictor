@@ -33,6 +33,23 @@ Run from the PROJECT ROOT. Reads only; nothing here writes.
   athlete-season is hs_m, mean 1236.4s, and he rates 187. On one anchor he
   rates about 112.
 
+⚠ AND IT IS NOT ONE EIGHTH GRADER. Owner, 2026-09-09, with the 2023 HS mile
+  final -- eight seniors inside four seconds of each other:
+
+      Birnbaum   4:02.22  144.2        Leo Young  4:02.58  231.8
+      Hansen     4:03.63  143.4        Lex Young  4:04.60  229.9
+      Burns      4:04.24  143.0
+      Cutting    4:05.38  142.2   Boler 4:06.01 141.9   Jones 4:06.93 141.4
+
+  One race, one distance, one day. rating x time is 34,918 for the six
+  (spread 0.12%) and 56,232 for the two Youngs (spread 0.01%) -- a ratio of
+  1.6104, which is a different ANCHOR and nothing else. That season the
+  Youngs ran mostly non-HS races, so their season resolved to college_m
+  while these rows had been normalised as hs_m. 1656.5 / 1028.6 = 1.610.
+
+  So the population is "anyone who raced across levels in one season", and
+  the athlete did nothing unusual except be good enough to be invited.
+
 ★ THE TEST IS A RECOMPUTATION, NOT AN INFERENCE. Given the row's own time
   and distance, normalizeTime is deterministic -- so run it with the pool
   the row is RATED in and compare. Agreement means both stages used the same
@@ -138,8 +155,15 @@ def whichPool(time_seconds, distance, stored_nt, pools, sport=None):
       with the wrong pool, and searching only pools would report the nearest
       pool in the right sport and name the wrong cause with confidence.
     """
+    # ! THE AUDITED SPORT FIRST, AND TIES GO TO IT. hs_m anchors at 5000m in
+    #   BOTH sports, so a track row normalised as hs_m matches hs_m|XC and
+    #   hs_m|TF equally -- and iterating XC first reported "hs_m|XC" for a
+    #   track row, which sends the reader after a sport bug that is not
+    #   there. `was` exists to name the cause; naming it wrong is worse than
+    #   leaving it blank.
+    order = [sport] + [x for x in ("XC", "TF", None) if x != sport]
     best, best_off = None, None
-    for sp in ("XC", "TF", None):
+    for sp in order:
         for p in pools:
             _, _expected, ratio = mismatch(time_seconds, distance, stored_nt,
                                            p, sp)
@@ -161,16 +185,39 @@ def whichPool(time_seconds, distance, stored_nt, pools, sport=None):
 #   dist_override first, then the meets column. Reading k.distance found
 #   400,000 of 400,000 rows unanswerable on XC as well, and the second time
 #   the message at least said which.
+# ★ THE POOL COMES OFF THE ROW, AND THE BOARD JOIN IS A LEFT JOIN. This was
+#   an INNER JOIN to ranking_results, which meant a row only got checked if it
+#   reached a BOARD -- and build_ranking_results drops anything above
+#   raceCeiling(pool) before it writes one (_GATE 'outside_pool').
+#
+# ⚠ SO THE AUDIT WAS BLIND TO EXACTLY THE ROWS IT EXISTS TO FIND. A mismatch
+#   inflates a rating by 60% or more; an inflated rating is over the ceiling;
+#   an over-ceiling row never reaches ranking_results; and the check that
+#   would have named the cause never saw it. The worse the mismatch, the more
+#   certain it was to be invisible.
+#
+#   Owner, 2026-09-09, on the two Youngs rating 230 in a race whose other six
+#   finishers rate 141-144 on the same times: "If we catch him we catch all
+#   of them." Not while the gate that hides them also hides them from here.
+#
+# ! rating_pool IS ON THE ROW SINCE ISSUE 171 (speed_ratings_db writes it
+#   beside speed_rating), so the pool the row was RATED in no longer has to
+#   be fetched from the board. k is kept only to report whether the row made
+#   it onto one.
 _SQL = """
-    SELECT k.pool, k.sport, r.result_id, r.person_id,
+    SELECT {pool_expr}                          AS pool,
+           %(sport)s::text                      AS sport,
+           (k.result_id IS NOT NULL)            AS on_board,
+           r.result_id, r.person_id,
            r.time_seconds, {dist} AS distance, {event} AS event_short,
            r.normalized_time, r.speed_rating
     FROM   {table} r
-    JOIN   ranking_results k ON k.result_id = r.result_id
-                            AND k.sport = %(sport)s
+    LEFT   JOIN ranking_results k ON k.result_id = r.result_id
+                                 AND k.sport = %(sport)s
     {joins}
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
       AND  r.time_seconds > 0
+      AND  {pool_expr} IS NOT NULL
       {person}
     LIMIT  %(scan)s
 """
@@ -221,8 +268,18 @@ def main():
     fetched = []
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # ! ASK THE CATALOG. rating_pool is added by speed_ratings_db
+            #   on a database that has been through a pack; one that has not
+            #   still has the board's pool, and falling back keeps this
+            #   runnable there rather than dying on a missing column.
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'rating_pool'""", (table,))
+            pool_expr = ("COALESCE(r.rating_pool, k.pool)"
+                         if cur.fetchone() else "k.pool")
             cur.execute(_SQL.format(
                 table=table, dist=dist, event=event, joins=joins,
+                pool_expr=pool_expr,
                 person=("AND r.person_id = %(person)s" if args.person else "")),
                 {"sport": args.sport, "scan": args.scan,
                  **({"person": args.person} if args.person else {})})
@@ -280,6 +337,15 @@ def main():
     total_bad = sum(v[1] for v in by_pool.values())
     print(f"\n  {total_bad:,} of {seen:,} rows "
           f"({100.0 * total_bad / seen:.2f}%)")
+    # ⚠ THE ONES THE BOARDS NEVER SHOW. A big mismatch inflates the rating
+    #   past raceCeiling, and build_ranking_results drops it -- so the worst
+    #   rows are precisely the ones missing from every board, and from this
+    #   audit until the join above became a LEFT JOIN.
+    off = sum(1 for _o, r, _e, _r, _w in bad if not r["on_board"])
+    if bad:
+        print(f"  {off:,} of those {len(bad):,} are NOT on any board "
+              f"({100.0 * off / len(bad):.0f}%) -- inflated past "
+              f"raceCeiling and dropped,\n  which is why nothing noticed")
 
     if not bad:
         print("\n  Nothing to nuke: every row was normalised on the pool it "
@@ -291,13 +357,15 @@ def main():
     print("  `was` is the pool whose anchor actually reproduces the stored "
           "value.\n")
     print(f"  {'result_id':>12}{'person':>11}{'rated in':>11}{'was':>11}"
-          f"{'stored nt':>11}{'expected':>10}{'off':>8}{'rating':>8}")
-    print("  " + "-" * 82)
+          f"{'stored nt':>11}{'expected':>10}{'off':>8}{'rating':>8}"
+          f"{'board':>7}")
+    print("  " + "-" * 89)
     for _off, r, expected, ratio, was in bad[:args.limit]:
         print(f"  {r['result_id']:>12}{r['person_id']:>11}{r['pool']:>11}"
               f"{str(was):>11}{r['normalized_time']:>11.1f}{expected:>10.1f}"
               f"{ratio - 1:>+7.1%}"
-              f"{(r['speed_rating'] or 0):>8.1f}")
+              f"{(r['speed_rating'] or 0):>8.1f}"
+              f"{('yes' if r['on_board'] else 'NO'):>7}")
 
     print(f"\n  ⚠ These are RATED ON THE WRONG SCALE. Every one of them is "
           f"inflated\n    or deflated by the ratio above, and the athlete "

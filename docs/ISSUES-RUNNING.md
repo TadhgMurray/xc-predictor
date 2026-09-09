@@ -402,71 +402,74 @@ refuses otherwise. `5c97334`
 
 ## 5. ENGINE JUDGEMENTS — open, in your priority order
 
-### 🔎 5.1 The 200–400 ratings — **located, not yet fixed**
-> *"235 isn't crazy because of anything mechanically, it's bcs of something
-> we're doing extra, not something we're missing."* … *"I think its prolly
-> just rating them and normalizing on diff scales/anchors."*
+### 🔎 5.1 The 200–400 ratings — **found: normalised on one pool, rated on another**
+> *"The entire season is insane. That means it has to be something with
+> pool."* … *"If we catch him we catch all of them."*
 
-Both right. Measured over 38 rows spanning **1995 to 2026**, four athletes and
-eight events:
+The 2023 HS mile final settles it — eight seniors inside four seconds:
 
-    rating × normalized_time = 165,645 ± 25     (a spread of 0.03%)
-
-So for a pool, `rating` is **exactly** `100 × anchor / normalized_time` — no
-per-row term, no seasonal component, no course difficulty. Two consequences:
-
-- **the solve is not implicated.** An impossible rating is an impossible
-  `normalized_time` arriving at a correct division.
-- `college_m`'s anchor is 1,656.5, and the population centre is
-  `normalized_time ≈ 1,550` (avg rating 106.9). The bad rows sit at 400–870.
-
-**And `normalized_time` is not on one scale.** The multiplier
-`normalized_time / time_seconds` should be one number per (pool, event),
-moved only a few percent by weather/altitude/era. It isn't:
-
-| event | multiplier | implied reference | rating |
+| | time | rating | rating × time |
 |---|---|---|---|
-| 800m | ×14.2 | ~10,000m | ~106 (correct) |
-| 800m | ×4.72 | ~3,400m | ~320 |
-| 800m | ×3.37 | ~2,500m | ~407 |
-| 5000m | ×1.005 | 5,000m | 202 (Lex Young) |
-| 5000m | ×0.618 | ~3,200m | 317 |
+| Birnbaum | 4:02.22 | 144.2 | 34,928 |
+| **Leo Young** | 4:02.58 | **231.8** | **56,230** |
+| Hansen | 4:03.63 | 143.4 | 34,937 |
+| Burns | 4:04.24 | 143.0 | 34,926 |
+| **Lex Young** | 4:04.60 | **229.9** | **56,234** |
+| Cutting | 4:05.38 | 142.2 | 34,893 |
+| Boler | 4:06.01 | 141.9 | 34,909 |
+| Jones | 4:06.93 | 141.4 | 34,916 |
 
-Same pool, same event, **three different reference distances sharing one
-anchor**. `elem_m` normalises on ~2,450m and `college_m` on ~10,000m — so
-these look like rows normalised against one pool's reference and then rated
-against another pool's anchor.
+One race, one distance, one day. The six sit on one anchor (spread 0.12%),
+the two Youngs on another (spread 0.01%), **ratio 1.6104**.
 
-⚠ **It got much worse recently.** `college_m` p99 by academic year: 2021
-`123.7`, 2022 `123.5`, 2023 `129.7`, **2024 `170.2`, 2025 `171.1`** — about
-1,450 and 1,500 rows a year above 170. Spread across every distance (800m
-1,501 rows, mile 871, 1500m 860, 3000m 464, 5000m 418), so not one event.
-2020 spiked to `156.9` and came back.
+`rating = 100 × pool_mean / normalized_time`, and
+`normalize_distance.targetFor` gives:
 
-*`scripts/rating_scale_probe.py` recreates it from the stored columns —
-nothing imported from the engine, so it shows what the rows actually did:*
+    elem_m 2414m · ms_m 3200m · hs_m 5000m · college_m 8000m · college_f 6000m
 
-    scripts/rating_scale_probe.py                     # last two academic years
-    scripts/rating_scale_probe.py --since 1900-01-01  # everything
-    scripts/rating_scale_probe.py --pool college_m --event 800m
-    scripts/rating_scale_probe.py --rows <result_id> ...
+Recomputing every row of that race on the **hs_m** spline reproduces all
+eight stored `normalized_time` values. Divide them out:
 
-§1 proves the anchor claim (`k_p02 == k_p98`); §2 lists (pool, event) cells
-holding more than one scale, worst first. Read-only, guarded by
-`tests/test_rating_scale_probe.py`.
+    the six      -> pool_mean 1,219   (hs_m; the module's own note says 1236.4)
+    the Youngs   -> pool_mean 1,962   (hs_m x (8000/5000) -- college_m's)
 
-**Lex Young (23965611) was never the interesting case** — his 191–202 rows sit
-*inside* that population, not above it (2022's max is 317). His times are real
-(13:34.96 5000m, 3:43.5 1500m, 4:04.6 mile as a Newbury Park senior); his
-`normalized_time` is on a 5,000m reference against a 10,000m anchor.
+**Their rows were normalised as `hs_m` and rated against `college_m`'s pool
+mean.** That season the Youngs ran mostly non-HS races, so the season
+resolved to `college_m` while these rows had already been normalised as
+`hs_m`. The population is therefore *anyone who raced across levels in one
+season*, and the athlete did nothing unusual except get invited.
 
-Still open and probably related: **no academic-2022 TF season exists in
-`athlete_season`** for him at all, though the rated result rows are right
-there.
+This is the failure `engine/anchor_check.py` was written for — one level up
+from the eighth grader in its header (ms 3200 against hs 5000, 1.64×).
 
-⚠ Two theories I had and the data killed: it is **not** the (college_m, 2022)
-seasonal anchor (2022 is normal — avg 106.0, p99 123.5), and it is **not**
-confined to recent data (the max has been 280–345 in most years since 2002).
+⚠ **And the audit could not see them.** It joined `ranking_results` with an
+INNER join to learn the pool, while `build_ranking_results` drops anything
+over `raceCeiling(pool)` before writing a board row. A mismatch inflates a
+rating by ~60%; an inflated rating is over the ceiling; an over-ceiling row
+never reaches a board. **The worse the mismatch, the more certain the checker
+was to miss it.**
+
+*Fixed: the pool comes off the row (`rating_pool`, issue 171), the board join
+is a LEFT JOIN, and the report has a `board` column plus a count of how many
+findings never reached one. `was` also no longer names the wrong sport —
+hs_m anchors at 5000m in both sports, so a track row tied and XC won.*
+`tests/test_anchor_check.py`
+
+    /srv/venv/bin/python engine/anchor_check.py --sport TF --person 23965611
+    /srv/venv/bin/python engine/anchor_check.py --sport TF --scan 2000000
+
+⏳ **Not fixed: the mismatch itself.** The audit names it; nothing yet makes
+the two stages agree. Options are (a) re-normalise on the rated pool at
+go-live, (b) pin the pool at backfill and make the solve use that one. Needs
+your call once the corpus count is in.
+
+**Not the cause, ruled out:** the seasonal anchor (academic 2022 is normal —
+avg 106.0, p99 123.5); recency (max has been 280–345 most years since 2002);
+the solve (`rating × normalized_time` is constant to 0.03% across 38 rows
+1995–2026, so an impossible rating is an impossible `normalized_time`).
+
+`scripts/rating_scale_probe.py` still measures the population corpus-wide;
+`anchor_check.py` names the cause per row.
 
 ### 💤 5.2 TF overrated vs XC (the sport gap)
 Your read. Note it may be the same coin as 5.3: a systematic XC-difficulty
