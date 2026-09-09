@@ -378,6 +378,39 @@ else
   fi
 fi
 
+# ★★ THE ANCHOR REPAIR, IMMEDIATELY AFTER THE BACKFILL AND BEFORE THE PACK
+#    (2026-09-09). The backfill picks the pool that sets the SCALE
+#    normalized_time is written on; the solve picks the pool that sets the
+#    ANCHOR it is divided by. For an athlete who raced across levels in one
+#    season those two disagree -- backfill_normalize reads season_level,
+#    which only speaks when a season's verdict is UNANIMOUS, so a runner who
+#    did mostly non-HS races and a few HS ones falls back to
+#    poolFor(grade=12) -> hs_m and is written at the 5000m anchor, while the
+#    engine's majority rule calls the season college_m and divides by a mean
+#    on the 8000m anchor. About 1.61x, for free, aimed at exactly the
+#    athletes good enough to be invited up a level.
+#
+# ★ THE ORDER IS THE WHOLE VALUE. After 05, or the backfill would overwrite
+#   the repair with the same mismatch. BEFORE the pack, so THIS run's solve
+#   reads the corrected times rather than the next one -- run it after
+#   go-live instead and the fix is always one run behind.
+#
+# ! IT NEEDS results*.rating_pool, WHICH A PREVIOUS GO-LIVE WROTE. On a
+#   database that has never packed there is nothing to repair and the script
+#   says so and exits; `|| true` keeps that from stopping the run.
+#
+# ⚠ IT RESCALES, IT DOES NOT RECOMPUTE. Only the pool factor is divided out
+#   and the right one multiplied in, so the era, weather, geometry and course
+#   corrections already inside the stored value survive exactly. It is
+#   idempotent: a repaired row reads as already right on the next pass, so
+#   running it every pipeline costs one scan and changes nothing once clean.
+if [ "${XCP_SKIP_ANCHOR_REPAIR:-0}" = "1" ]; then
+  echo "  05b_anchor_repair skipped (XCP_SKIP_ANCHOR_REPAIR=1)"
+else
+  steps2 05b_anchor_repair_xc "$PY -u engine/anchor_repair.py --sport XC --apply" \
+         05b_anchor_repair_tf "$PY -u engine/anchor_repair.py --sport TF --apply"
+fi
+
 # ---- pack and solve ------------------------------------------------- #
 # ! BOTH caches must go: packed_XC_TF.npz is checked for existence only, and
 #   pair_solve_cache.npz fingerprints on sum(y), which does not notice a pool

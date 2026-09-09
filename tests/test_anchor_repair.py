@@ -109,6 +109,33 @@ else:
        f"a correct row must be left alone, got ({n3}, {why3!r})")
 
 
+# ---- 4. it runs every pipeline, in the one place that helps ----------- #
+PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
+               encoding="utf-8").read()
+ok("05b_anchor_repair" in PIPE, "the repair must be a pipeline step")
+
+# ★★ ORDER IS THE WHOLE VALUE. After the backfill, or 05 overwrites the
+#    repair with the same mismatch. Before the pack, or THIS run's solve
+#    reads the old times and the fix is permanently one run behind.
+i_back = PIPE.index("05_backfill_tf")
+i_fix = PIPE.index("05b_anchor_repair")
+i_pack = PIPE.index("---- pack and solve")
+ok(i_back < i_fix < i_pack,
+   f"the repair must sit between the backfill and the pack "
+   f"(backfill {i_back}, repair {i_fix}, pack {i_pack})")
+
+ok("--apply" in PIPE[i_fix:i_fix + 400],
+   "wired in without --apply it is a dry run every night and fixes nothing")
+ok("XCP_SKIP_ANCHOR_REPAIR" in PIPE,
+   "a step that WRITES needs a way to turn it off without editing the file")
+# ! BOTH SPORTS. The mismatch is not a track phenomenon; it is any athlete
+#   whose season resolved to a different pool than their rows were written
+#   on, and XC has the same seam.
+ok("--sport XC" in PIPE[i_fix:i_fix + 400]
+   and "--sport TF" in PIPE[i_fix:i_fix + 400],
+   "both sports, or half the corpus keeps the mismatch")
+
+
 if __name__ == "__main__":
     for m in failed:
         print("FAIL:", m)
