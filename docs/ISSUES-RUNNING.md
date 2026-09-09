@@ -594,6 +594,45 @@ exactly D, whatever the base turns out to be.
 `beta` and `--ridge` decides how much of the level lives in `beta` rather
 than `mu`. Change the ridge, re-measure.
 
+**Two ways to tell scale from fitness, both built (2026-09-09).**
+> *"Could track fitness gain be messing up on indoor to outdoor switch?"*
+
+The sandwich cancels a linear trend **exactly** and the curvature between its
+two bread types — the internal check is clean, the two types differ by
+`0.02940 − 0.02638 = 0.00302` and twice the measured curvature is
+`2 × 0.00151 = 0.00302`. But a **phase-locked** season (sharper every spring
+than every autumn) enters both arrangements with the same sign and is
+**inside D**. And by `joint_golive`'s own rule — form is left in the rating,
+"a November race SHOULD rate higher if it was better" — that part *should* be
+there. **So D = −0.02795 is an upper bound on the scale error.**
+
+    scripts/measure_sport_gap.py --split-indoor
+    scripts/curve_window_gap.py logs/run18.out --compare -0.02795
+
+**(a) `--split-indoor`.** Indoor and outdoor are one sport to the engine —
+one indicator, one `mu`, one pool anchor — so no sport-level scale error can
+sit between them. Whatever gap they show is phase.
+
+    D(indoor − outdoor)  = pure phase (+ any indoor geometry error)
+    D(XC − indoor), D(XC − outdoor)  would be EQUAL if the gap were pure scale
+
+The report prints the ratio `(XC−out − XC−in) / (in−out)`: **+1.00 means the
+two XC arms differ by exactly the indoor/outdoor phase**. Verified on a
+fixture with three planted levels under a 0.05/yr improvement — every level
+recovered to 1e-9, trend cancelled.
+
+**(b) `curve_window_gap.py`.** The solve already fits a per-pool form curve
+and prints `curve TF-XC window gap` every pass — the same quantity from a
+completely different estimator (the shape of the season for *everybody*, not
+just crossers). Curve ≈ D means the curve already absorbed it and correcting
+the level double-counts; curve ≈ 0 means D is more likely real scale.
+
+⚠ **Even after (a), the XC-arm average is still an upper bound** — indoor vs
+outdoor bounds the phase *within track only*. Subtract at most the
+indoor/outdoor figure before passing anything to `--sport-gap-delta`.
+
+`tests/test_phase_split.py`
+
 Still possibly the same coin as 5.3: a systematic XC-difficulty compression
 shows up as "TF looks overrated". Worth re-measuring D after 5.3 lands.
 

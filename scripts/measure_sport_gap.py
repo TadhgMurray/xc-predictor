@@ -153,8 +153,52 @@ SPAN_LO, SPAN_HI = 200, 900
 #   (see _COLUMNS in build_ranking_results), and XC and TF keep theirs in
 #   different tables. A lateral picking between them would run 56 million
 #   times; two aggregates the planner can hash-join separately do not.
+# ★ THE ARM IS A PARAMETER, NOT ALWAYS THE SPORT (owner, 2026-09-09: "Could
+#   track fitness gain be messing up on indoor to outdoor switch?").
+#
+#   The sandwich cancels a LINEAR trend exactly and a quadratic between its
+#   two bread types, but it does NOT cancel a phase-locked seasonal effect:
+#   both arrangements interpolate between two same-phase seasons and compare
+#   against the opposite phase, so a real "sharper every spring than every
+#   autumn" enters both with the same sign and sits inside D.
+#
+# ★ INDOOR AGAINST OUTDOOR IS THE CONTROL THAT SEPARATES THEM, and it is the
+#   owner's question turned into an experiment. Indoor and outdoor are the
+#   SAME sport to the engine -- one `sport` indicator, one mu, one pool
+#   anchor -- so no sport-level scale error can exist between them. Whatever
+#   D comes back from an indoor/outdoor sandwich is therefore phase and
+#   calibration, not sport level. Then:
+#
+#       D(indoor vs outdoor)   = pure phase (+ any indoor geometry error)
+#       D(XC vs outdoor)       = sport scale + a half-year of phase
+#       D(XC vs indoor)        = sport scale + a season of phase
+#
+#   If D(in/out) is ~0 and the two XC arms agree, the gap is a scale error
+#   and the whole of it should be corrected. If D(in/out) is large, or the
+#   XC-indoor and XC-outdoor arms disagree by about it, that much of D is
+#   fitness the rating is SUPPOSED to carry and correcting it would flatten
+#   a real effect.
+_ARM_SPORT = "k.sport"
+
+# ! LATERAL, AND ONLY FOR TF. meets_tf is one row per EVENT, so a plain join
+#   fans a result out across its meet; LIMIT 1 is exactly one. The ON k.sport
+#   = 'TF' keeps it off every XC row rather than looking up a table that
+#   cannot contain them.
+_ARM_INOUT = """CASE WHEN k.sport <> 'TF' THEN k.sport
+                     WHEN io.is_indoor = 1 THEN 'TF-in'
+                     ELSE 'TF-out' END"""
+_ARM_INOUT_JOIN = """
+LEFT   JOIN LATERAL (
+    SELECT m.is_indoor
+    FROM   results_tf rt
+    JOIN   meets_tf m ON m.meet_id = rt.meet_id AND m.source = rt.source
+    WHERE  rt.result_id = k.result_id
+    LIMIT  1
+) io ON k.sport = 'TF'
+"""
+
 _BLOCK_SELECT = """
-SELECT k.person_id, k.pool, k.sport, k.year,
+SELECT k.person_id, k.pool, {arm} AS sport, k.year,
        {stat}                                                        AS rating,
        -- ! CARRIED FOR THE COVARIATE REPORT, NOT FOR THE ESTIMATE. D is
        --   computed from `rating` alone; these only answer "what else is
@@ -172,7 +216,7 @@ WHERE  k.person_id IS NOT NULL
   AND  k.speed_rating BETWEEN %(lo)s AND %(hi)s
   AND  (%(pool)s IS NULL OR k.pool = %(pool)s)
   {extra}
-GROUP  BY k.person_id, k.pool, k.sport, k.year
+GROUP  BY k.person_id, k.pool, {arm}, k.year
 HAVING count(*) >= %(min_races)s
 """
 
@@ -190,10 +234,14 @@ _SOURCES = {
 }
 
 
-def blockSql(source):
+def blockSql(source, split_indoor=False):
     """The CREATE TEMP TABLE for one source, one arm per sport table."""
-    arms = "\nUNION ALL\n".join(_BLOCK_SELECT.format(**v)
-                                 for v in _SOURCES[source])
+    arm = _ARM_INOUT if split_indoor else _ARM_SPORT
+    extra_join = _ARM_INOUT_JOIN if split_indoor else ""
+    arms = "\nUNION ALL\n".join(
+        _BLOCK_SELECT.format(arm=arm, stat=v["stat"],
+                             join=v["join"] + extra_join, extra=v["extra"])
+        for v in _SOURCES[source])
     return ("DROP TABLE IF EXISTS sg_block;\n"
             "CREATE TEMP TABLE sg_block AS\n" + arms + ";\n"
             "CREATE INDEX ON sg_block (person_id, pool, mid_date);\n"
@@ -262,6 +310,120 @@ def _collect(rows):
         d = math.log(r["rating"]) - (la + w * (lc - la))
         out[r["a_sport"]].append(d)
     return out
+
+
+# ★ THE PAIRWISE REPORT, FOR --split-indoor. With three arms a sandwich can
+#   be any (ends, middle) pair, so the estimate is per PAIR rather than one
+#   number. Same arithmetic as _report; only the bookkeeping differs.
+#
+# ! ARM ORDER IS PINNED, NOT ALPHABETICAL, so every D printed reads the same
+#   way round as the headline one: XC first where XC is in the pair, and
+#   indoor before outdoor otherwise. A sign convention that flips between
+#   rows of the same table is a trap, not a table.
+_ARM_RANK = {"XC": 0, "TF-in": 1, "TF-out": 2, "TF": 1}
+
+
+def _collectPairs(rows):
+    """{(first, second): {ends_arm: [d, ...]}} over every arm pair present."""
+    out = {}
+    for r in rows:
+        span = (r["c_date"] - r["a_date"]).days
+        if span <= 0:
+            continue
+        w = (r["mid_date"] - r["a_date"]).days / span
+        la, lc = math.log(r["a_rating"]), math.log(r["c_rating"])
+        d = math.log(r["rating"]) - (la + w * (lc - la))
+        pair = tuple(sorted((r["a_sport"], r["sport"]),
+                            key=lambda a: (_ARM_RANK.get(a, 9), a)))
+        out.setdefault(pair, {}).setdefault(r["a_sport"], []).append(d)
+    return out
+
+
+def _reportPairs(pairs):
+    """Print D for each arm pair. Returns {pair: D}."""
+    got = {}
+    print(f"\n  {'pair (first minus interpolated second)':<40} {'n':>9} "
+          f"{'D (log)':>10} {'SE':>8}")
+    print("  " + "-" * 70)
+    for pair in sorted(pairs, key=lambda p: (_ARM_RANK.get(p[0], 9), p)):
+        first, second = pair
+        by_end = pairs[pair]
+        # ends = second  -> middle is first  -> d is (first - interp second) = +D
+        # ends = first   -> middle is second -> d is (second - interp first) = -D
+        n_p, m_p, _md, se_p = _stats(by_end.get(second, []))
+        n_m, m_m, _md2, se_m = _stats(by_end.get(first, []))
+        vals = []
+        if n_p:
+            vals.append((n_p, m_p, se_p))
+        if n_m:
+            vals.append((n_m, -m_m, se_m))
+        if not vals:
+            continue
+        n = sum(v[0] for v in vals)
+        D = sum(v[0] * v[1] for v in vals) / n
+        se = math.sqrt(sum((v[0] / n) ** 2 * v[2] ** 2 for v in vals))
+        got[pair] = D
+        print(f"  {first + ' - ' + second:<40} {n:>9,} {D:>10.5f} "
+              f"{se:>8.5f}")
+        if n_p and n_m:
+            # ⚠ THE TWO DIRECTIONS, PRINTED. They differ by twice the
+            #   curvature of the year; agreement is the cross-check that the
+            #   interpolation is doing its job.
+            print(f"    {'ends ' + second:<38} {n_p:>9,} {m_p:>10.5f}")
+            print(f"    {'ends ' + first:<38} {n_m:>9,} {-m_m:>10.5f}")
+    return got
+
+
+# ★ WHAT THE THREE ARMS MEAN TOGETHER. This is the whole point of the mode:
+#   indoor and outdoor are the SAME sport to the engine -- one indicator, one
+#   mu, one pool anchor -- so no sport-LEVEL scale error can sit between
+#   them. Whatever D they show is phase (real fitness) plus any indoor
+#   geometry miscalibration, and that is the part of the XC/TF gap that must
+#   NOT be corrected away.
+def _phaseVerdict(D):
+    io_pair = ("TF-in", "TF-out")
+    xin = ("XC", "TF-in")
+    xout = ("XC", "TF-out")
+    print("\n" + "=" * 68)
+    print("  HOW MUCH OF THE XC/TF GAP IS FITNESS RATHER THAN SCALE")
+    print("=" * 68)
+    if io_pair not in D:
+        print("\n  No indoor/outdoor sandwiches -- cannot separate them.")
+        return
+    d_io = D[io_pair]
+    print(f"\n    indoor minus outdoor            {d_io:+.5f}")
+    print("      Same sport, same mu, same pool anchor: NO sport-level scale")
+    print("      error can live here. This is phase (and any indoor geometry")
+    print("      error), and it is the size of the effect the rating is")
+    print("      SUPPOSED to carry.")
+    if xin in D and xout in D:
+        print(f"\n    XC minus indoor                 {D[xin]:+.5f}")
+        print(f"    XC minus outdoor                {D[xout]:+.5f}")
+        # ! (XC-out) - (XC-in) = in - out, NOT the other way round. The
+        #   first version printed (XC-in) - (XC-out) and reported a ratio of
+        #   -1.00 on a fixture built to be exactly phase -- the right answer
+        #   with the sign inverted, which reads as "nothing is explained".
+        gap = D[xout] - D[xin]
+        print(f"    outdoor arm minus indoor arm    {gap:+.5f}")
+        print("      If the XC/TF gap were pure scale, the two XC arms would")
+        print("      be EQUAL -- one sport level, measured twice -- and this")
+        print("      would be zero. It is instead the indoor/outdoor phase,")
+        print(f"      so it should come out near the {d_io:+.5f} above.")
+        if abs(d_io) < 1e-9:
+            print("        indoor/outdoor is zero -- the whole gap is scale.")
+        else:
+            print(f"        ratio = {gap / d_io:+.2f}"
+                  f"   (+1.00 = the two XC arms differ by exactly the "
+                  f"indoor/outdoor phase)")
+        scale = (D[xin] + D[xout]) / 2.0
+        print(f"\n    the two XC arms average         {scale:+.5f}")
+        print("      ⚠ THAT AVERAGE IS STILL NOT THE SCALE ERROR. It is the")
+        print("        scale error plus whatever phase separates the TF")
+        print("        season as a whole from the XC season, which this")
+        print("        design cannot see -- indoor/outdoor only bounds the")
+        print("        phase WITHIN track. Treat it as an upper bound, and")
+        print("        subtract at most the indoor/outdoor figure from it")
+        print("        before passing anything to --sport-gap-delta.")
 
 
 def _report(label, by_end):
@@ -587,6 +749,14 @@ def main():
                          "both the cell difficulty and the normalisation. "
                          "norm: 1/normalized_time, which carries only the "
                          "normalisation. Subtract them for the cell half.")
+    # ★ THE OWNER'S QUESTION AS A FLAG (2026-09-09): "Could track fitness
+    #   gain be messing up on indoor to outdoor switch?"
+    ap.add_argument("--split-indoor", action="store_true", dest="split_indoor",
+                    help="treat indoor and outdoor track as separate arms. "
+                         "They share one sport indicator, one mu and one pool "
+                         "anchor, so any gap between them is phase rather "
+                         "than sport scale -- which is what bounds how much "
+                         "of the XC/TF gap may honestly be corrected.")
     ap.add_argument("--self-test", action="store_true", dest="self_test",
                     help="check the estimator against synthetic athletes with "
                          "a known gap and known improvement. No database.")
@@ -610,7 +780,7 @@ def main():
             #   SET LOCAL dies with the transaction, so nothing leaks.
             cur.execute("SET LOCAL work_mem = '1GB'")
             print(f"\n  building season blocks from {args.source}...")
-            cur.execute(blockSql(args.source),
+            cur.execute(blockSql(args.source, args.split_indoor),
                         {"lo": RATING_LO, "hi": RATING_HI,
                          "pool": args.pool, "min_races": args.min_races})
             cur.execute("SELECT count(*) AS n, count(DISTINCT person_id) AS a "
@@ -630,6 +800,14 @@ def main():
     if not rows:
         print("\n  NOTHING TO MEASURE. Widen --span or lower --min-races.\n")
         return 1
+
+    if args.split_indoor:
+        print("\n" + "=" * 68)
+        print("  THREE ARMS: XC, INDOOR TRACK, OUTDOOR TRACK")
+        print("=" * 68)
+        _phaseVerdict(_reportPairs(_collectPairs(rows)))
+        print()
+        return 0
 
     print("\n" + "=" * 68)
     print("  XC MINUS INTERPOLATED TF, IN LOG-RATING")
