@@ -454,7 +454,27 @@ _XC_SQL = f"""
         -- tracked across races, and are useless/polluting to a per-athlete
         -- sequence model. (See 6/25 diagnostics: ~2.5M such TF rows.)
         AND   r.athlete_id IS NOT NULL
-                       
+        -- ★★ CHAIR AND ADAPTIVE ATHLETES ARE NOT IN THE TRAINING SET (14,
+        --    2026-09-09). A racing chair covers 1500m far faster than a pair
+        --    of legs, so a chair time is not a slow runner or a fast one --
+        --    it is a different sport wearing the same units. Fed to a
+        --    sequence model as a valid trajectory it teaches the impossible:
+        --    Kohen Grantom's 1:42.68 800m sits beside a 16.54 100m in the
+        --    same meet.
+        --
+        -- ⚠ THE ENGINE HAS EXCLUDED THEM FOR WEEKS AND THIS DID NOT. The
+        --    pack reads wheelchair_person through _chairFilter(); this query
+        --    never did, so every chair race has been training data the whole
+        --    time. The list also grew from 481 people to 6,056 when the anet
+        --    track feed's division column was finally read -- 39,555 races.
+        --
+        -- ! ONE LIST, ONE RULE. wheelchair_person is a fact about a PERSON,
+        --   not a race: one confirmed chair race condemns the career,
+        --   because an ordinary race by a chair athlete is still that
+        --   athlete. Same table the boards and the engine consult, so the
+        --   three cannot drift.
+        AND   NOT EXISTS (SELECT 1 FROM wheelchair_person wp
+                          WHERE wp.person_id = r.person_id)
 {_ORDER_BY}
 """
 
@@ -685,6 +705,27 @@ _TF_SQL = f"""
             AND   r.is_relay = 0
             -- Drop NULL-athlete_id profile-less entries (see XC note above).
             AND   r.athlete_id IS NOT NULL
+            -- ★★ CHAIR AND ADAPTIVE ATHLETES ARE NOT IN THE TRAINING SET (14,
+            --    2026-09-09). A racing chair covers 1500m far faster than a pair
+            --    of legs, so a chair time is not a slow runner or a fast one --
+            --    it is a different sport wearing the same units. Fed to a
+            --    sequence model as a valid trajectory it teaches the impossible:
+            --    Kohen Grantom's 1:42.68 800m sits beside a 16.54 100m in the
+            --    same meet.
+            --
+            -- ⚠ THE ENGINE HAS EXCLUDED THEM FOR WEEKS AND THIS DID NOT. The
+            --    pack reads wheelchair_person through _chairFilter(); this query
+            --    never did, so every chair race has been training data the whole
+            --    time. The list also grew from 481 people to 6,056 when the anet
+            --    track feed's division column was finally read -- 39,555 races.
+            --
+            -- ! ONE LIST, ONE RULE. wheelchair_person is a fact about a PERSON,
+            --   not a race: one confirmed chair race condemns the career,
+            --   because an ordinary race by a chair athlete is still that
+            --   athlete. Same table the boards and the engine consult, so the
+            --   three cannot drift.
+            AND   NOT EXISTS (SELECT 1 FROM wheelchair_person wp
+                              WHERE wp.person_id = r.person_id)
 {_ORDER_BY}
 """
 
