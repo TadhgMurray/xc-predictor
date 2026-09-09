@@ -17,7 +17,7 @@ fixed
 | 1 | `git pull` on the box, restart the site | you |
 | 2 | `python racecast/build_team_season.py` — **run it again**, so the ceiling change (§2.6) lands | you |
 | 3 | ~~`scripts/add_page_indexes.py`~~ ✅ **done** — `rr_pool_year_dist_idx` built | — |
-| 4 | `engine/wheelchair_flag.py --write` — **run it again**: §1.10 finds the anet chair divisions, §1.11 makes it finish | you |
+| 4 | ~~`engine/wheelchair_flag.py --write`~~ ✅ **done** — 69s, 6,056 people (the labels check out: `Wheelchair` 19,708 races, `Ambulatory` 5,997, `Adaptive` 1,543, real T/F class codes) | — |
 | 5 | ~~`scripts/athlete_dump.py 26155532 23965611`~~ ✅ **done** — Kohen was §1.10; Lex Young is §5.1, still open | — |
 
 Nothing in §1–§4 needs a pipeline run. §5 items do.
@@ -402,14 +402,71 @@ refuses otherwise. `5c97334`
 
 ## 5. ENGINE JUDGEMENTS — open, in your priority order
 
-### 🔎 5.1 The 230/235 season — **next**
+### 🔎 5.1 The 200–400 ratings — **located, not yet fixed**
 > *"235 isn't crazy because of anything mechanically, it's bcs of something
-> we're doing extra, not something we're missing."*
+> we're doing extra, not something we're missing."* … *"I think its prolly
+> just rating them and normalizing on diff scales/anchors."*
 
-Taking that steer: the candidates are the winter-gain band shift
-(`XCP_WINTER_GAIN_BANDS`), the amplitude tilt (`AMP_TILT_PER_POINT`) and the
-distance offset — all things applied *on top of* the solve. Needs the athlete
-dump (§6).
+Both right. Measured over 38 rows spanning **1995 to 2026**, four athletes and
+eight events:
+
+    rating × normalized_time = 165,645 ± 25     (a spread of 0.03%)
+
+So for a pool, `rating` is **exactly** `100 × anchor / normalized_time` — no
+per-row term, no seasonal component, no course difficulty. Two consequences:
+
+- **the solve is not implicated.** An impossible rating is an impossible
+  `normalized_time` arriving at a correct division.
+- `college_m`'s anchor is 1,656.5, and the population centre is
+  `normalized_time ≈ 1,550` (avg rating 106.9). The bad rows sit at 400–870.
+
+**And `normalized_time` is not on one scale.** The multiplier
+`normalized_time / time_seconds` should be one number per (pool, event),
+moved only a few percent by weather/altitude/era. It isn't:
+
+| event | multiplier | implied reference | rating |
+|---|---|---|---|
+| 800m | ×14.2 | ~10,000m | ~106 (correct) |
+| 800m | ×4.72 | ~3,400m | ~320 |
+| 800m | ×3.37 | ~2,500m | ~407 |
+| 5000m | ×1.005 | 5,000m | 202 (Lex Young) |
+| 5000m | ×0.618 | ~3,200m | 317 |
+
+Same pool, same event, **three different reference distances sharing one
+anchor**. `elem_m` normalises on ~2,450m and `college_m` on ~10,000m — so
+these look like rows normalised against one pool's reference and then rated
+against another pool's anchor.
+
+⚠ **It got much worse recently.** `college_m` p99 by academic year: 2021
+`123.7`, 2022 `123.5`, 2023 `129.7`, **2024 `170.2`, 2025 `171.1`** — about
+1,450 and 1,500 rows a year above 170. Spread across every distance (800m
+1,501 rows, mile 871, 1500m 860, 3000m 464, 5000m 418), so not one event.
+2020 spiked to `156.9` and came back.
+
+*`scripts/rating_scale_probe.py` recreates it from the stored columns —
+nothing imported from the engine, so it shows what the rows actually did:*
+
+    scripts/rating_scale_probe.py                     # last two academic years
+    scripts/rating_scale_probe.py --since 1900-01-01  # everything
+    scripts/rating_scale_probe.py --pool college_m --event 800m
+    scripts/rating_scale_probe.py --rows <result_id> ...
+
+§1 proves the anchor claim (`k_p02 == k_p98`); §2 lists (pool, event) cells
+holding more than one scale, worst first. Read-only, guarded by
+`tests/test_rating_scale_probe.py`.
+
+**Lex Young (23965611) was never the interesting case** — his 191–202 rows sit
+*inside* that population, not above it (2022's max is 317). His times are real
+(13:34.96 5000m, 3:43.5 1500m, 4:04.6 mile as a Newbury Park senior); his
+`normalized_time` is on a 5,000m reference against a 10,000m anchor.
+
+Still open and probably related: **no academic-2022 TF season exists in
+`athlete_season`** for him at all, though the rated result rows are right
+there.
+
+⚠ Two theories I had and the data killed: it is **not** the (college_m, 2022)
+seasonal anchor (2022 is normal — avg 106.0, p99 123.5), and it is **not**
+confined to recent data (the max has been 280–345 in most years since 2002).
 
 ### 💤 5.2 TF overrated vs XC (the sport gap)
 Your read. Note it may be the same coin as 5.3: a systematic XC-difficulty
