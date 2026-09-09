@@ -501,6 +501,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
       ${XCP_MERGE_SPORTS:+--merge-sports} \
+      ${XCP_CENTRE_CURVE:+--centre-curve} \
+      ${XCP_TAU_MAX:+--tau-max "$XCP_TAU_MAX"} \
+      ${XCP_SPLIT_ABILITY:+--split-ability} \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_ALTITUDE:+--altitude}

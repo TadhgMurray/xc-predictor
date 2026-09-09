@@ -131,6 +131,24 @@ ok("|| true" in PIPE[i:i + 260],
    "a report that can abort the pipeline is a gate, and this is not one")
 
 
+# ---- 6. the flags are reachable from the pipeline ---------------------- #
+#   ! A FLAG THE PIPELINE CANNOT PASS IS A FLAG NOBODY WILL USE. The step
+#     builds its command from ${VAR:+--flag}, so each needs its own variable.
+for var, flag in (("XCP_CENTRE_CURVE", "--centre-curve"),
+                  ("XCP_TAU_MAX", "--tau-max"),
+                  ("XCP_SPLIT_ABILITY", "--split-ability")):
+    ok(f"${{{var}:+{flag}" in PIPE,
+       f"{flag} must be reachable as {var}, or the only way to run it is by "
+       f"hand")
+cmd = "\n".join(ln.split("#")[0] for ln in PIPE.splitlines())
+for flag in ("--centre-curve", "--tau-max", "--split-ability"):
+    bare = cmd
+    for v in ("XCP_CENTRE_CURVE", "XCP_TAU_MAX", "XCP_SPLIT_ABILITY"):
+        bare = bare.replace("${" + v + ":+" + flag, "")
+    ok(flag not in bare or "${" in cmd,
+       f"{flag} must never be passed unconditionally")
+
+
 if __name__ == "__main__":
     for m in failed:
         print("FAIL:", m)
