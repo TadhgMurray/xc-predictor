@@ -458,6 +458,35 @@ hs_m anchors at 5000m in both sports, so a track row tied and XC won.*
     /srv/venv/bin/python engine/anchor_check.py --sport TF --person 23965611
     /srv/venv/bin/python engine/anchor_check.py --sport TF --scan 2000000
 
+**Confirmed on the live corpus, 2026-09-09.** All eight of Lex Young's rows:
+rated `college_m`, normalised `hs_m|TF`, −38.5%, **none on a board**. And
+2M rows scanned: **1,419 mismatched (0.07%), 100% of them off the boards.**
+Both directions exist — `college_m` rated on an `hs_m` scale inflates
+(230), `elem_m` rated on a `college_m` scale deflates (41–47).
+
+| pool | checked | mismatched | % |
+|---|---|---|---|
+| college_f | 387,063 | 613 | 0.16% |
+| college_m | 426,105 | 376 | 0.09% |
+| elem_f | 3,527 | 41 | 1.16% |
+| elem_m | 3,949 | 44 | 1.11% |
+| hs_f | 453,833 | 41 | 0.01% |
+| hs_m | 628,145 | 164 | 0.03% |
+| ms_f | 43,625 | 51 | 0.12% |
+| ms_m | 53,737 | 73 | 0.14% |
+| **pro_f** | 5 | 5 | **100%** |
+| **pro_m** | 11 | 11 | **100%** |
+
+⚠ That scan was `LIMIT` with no `ORDER BY` — the first pages on disk, not a
+sample. `--pct 1` now uses `TABLESAMPLE` for a real corpus rate.
+
+⚠ **pro_m/pro_f read 100%, and that is probably the audit, not the data.**
+`normalize_distance` says pro and open have **no pool mean and no distance
+spline**, so there is no pro scale for a row to be normalised on and the
+check does not apply as written. 16 rows; worth a look, not a fire. It is
+also downstream of the pro-scale change (§1.7), which redirects pro rows to
+the college anchor.
+
 ⏳ **Not fixed: the mismatch itself.** The audit names it; nothing yet makes
 the two stages agree. Options are (a) re-normalise on the rated pool at
 go-live, (b) pin the pool at backfill and make the solve use that one. Needs

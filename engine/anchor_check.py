@@ -211,7 +211,7 @@ _SQL = """
            r.result_id, r.person_id,
            r.time_seconds, {dist} AS distance, {event} AS event_short,
            r.normalized_time, r.speed_rating
-    FROM   {table} r
+    FROM   {table} r {sample}
     LEFT   JOIN ranking_results k ON k.result_id = r.result_id
                                  AND k.sport = %(sport)s
     {joins}
@@ -242,6 +242,14 @@ def main():
     ap.add_argument("--sport", choices=["XC", "TF"], default="TF")
     ap.add_argument("--person", type=int)
     ap.add_argument("--scan", type=int, default=400_000)
+    # ⚠ LIMIT WITHOUT ORDER BY IS NOT A SAMPLE, it is the first physical
+    #   pages -- which on an append-ordered table means the oldest rows, and
+    #   the first corpus run reported a rate for those rather than for the
+    #   corpus. TABLESAMPLE picks pages across the whole table.
+    ap.add_argument("--pct", type=float, default=0.0, metavar="PCT",
+                    help="sample this %% of the table at random pages "
+                         "instead of taking the first --scan rows; use it "
+                         "for any corpus-wide RATE (e.g. --pct 1)")
     ap.add_argument("--limit", type=int, default=25)
     args = ap.parse_args()
 
@@ -280,6 +288,8 @@ def main():
             cur.execute(_SQL.format(
                 table=table, dist=dist, event=event, joins=joins,
                 pool_expr=pool_expr,
+                sample=(f"TABLESAMPLE SYSTEM ({float(args.pct)})"
+                        if args.pct > 0 and not args.person else ""),
                 person=("AND r.person_id = %(person)s" if args.person else "")),
                 {"sport": args.sport, "scan": args.scan,
                  **({"person": args.person} if args.person else {})})
@@ -328,8 +338,10 @@ def main():
             print(f"    {n:>10,}  {why}")
 
     print(f"\n\nROWS WHOSE STORED normalized_time DOES NOT MATCH THEIR POOL")
+    how = (f"{args.pct}% random pages" if args.pct > 0 and not args.person
+           else "the first rows on disk -- pass --pct 1 for a real rate")
     print(f"  ({args.sport}, {seen:,} rows checked, tolerance "
-          f"{TOLERANCE:.0%})\n")
+          f"{TOLERANCE:.0%}, {how})\n")
     print(f"  {'pool':<12}{'checked':>10}{'mismatched':>12}{'%':>8}")
     print("  " + "-" * 42)
     for pool, (n, n_bad) in sorted(by_pool.items()):
@@ -356,14 +368,19 @@ def main():
     print(f"\n\nTHE WORST OF THEM")
     print("  `was` is the pool whose anchor actually reproduces the stored "
           "value.\n")
-    print(f"  {'result_id':>12}{'person':>11}{'rated in':>11}{'was':>11}"
-          f"{'stored nt':>11}{'expected':>10}{'off':>8}{'rating':>8}"
+    # ! WIDTHS THAT FIT THE VALUES. `was` is up to "college_m|TF" (12) and
+    #   ran into the pool beside it -- the first corpus run printed
+    #   "elem_mcollege_m|TF", which reads as one nonsense pool and hides the
+    #   very thing the column exists to say. result_ids are signed 64-bit on
+    #   some feeds (-2461217917090015319, 20 characters).
+    print(f"  {'result_id':>21}{'person':>10}{'rated in':>11}  {'was':<13}"
+          f"{'stored nt':>10}{'expected':>10}{'off':>9}{'rating':>8}"
           f"{'board':>7}")
-    print("  " + "-" * 89)
+    print("  " + "-" * 101)
     for _off, r, expected, ratio, was in bad[:args.limit]:
-        print(f"  {r['result_id']:>12}{r['person_id']:>11}{r['pool']:>11}"
-              f"{str(was):>11}{r['normalized_time']:>11.1f}{expected:>10.1f}"
-              f"{ratio - 1:>+7.1%}"
+        print(f"  {r['result_id']:>21}{r['person_id']:>10}{r['pool']:>11}  "
+              f"{str(was):<13}{r['normalized_time']:>10.1f}{expected:>10.1f}"
+              f"{ratio - 1:>+8.1%}"
               f"{(r['speed_rating'] or 0):>8.1f}"
               f"{('yes' if r['on_board'] else 'NO'):>7}")
 
