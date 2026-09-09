@@ -619,6 +619,43 @@ every 20th **person** (a sandwich needs all three of a person's seasons, so
 row sampling would shred them), and runs with `work_mem 256MB` and 8 workers
 instead of 1GB and 2.
 
+**MEASURED 2026-09-09, AND IT DOES NOT SUPPORT A CORRECTION.**
+
+    XC - TF-in     -0.03189   (n 7,767,  SE 0.00055)
+    XC - TF-out    -0.02556   (n 80,301, SE 0.00016)
+    TF-in - TF-out -0.00807   (n 5,867,  SE 0.00036)
+
+★ **The triangle does not close.** Three arms with one level each make the
+pairwise differences differences of three constants, so
+`(XC−out) − (XC−in)` must equal `(in − out)`:
+
+    (XC-out) - (XC-in)   +0.00633
+    indoor - outdoor     -0.00807
+    CLOSURE ERROR        +0.01440      <- 20-90 SE, not noise
+
+**D is not a single sport constant.** The answer depends on which pair you
+measure — i.e. on how far apart in the calendar the two seasons sit — which
+is a phase effect by definition, and no single `--sport-gap-delta` can be
+right. The opening (0.0144) is larger than the indoor/outdoor gap itself and
+half the size of D.
+
+⚠ **So do not apply −0.02795.** Not yet, and not as one number.
+
+**(b) came back useless, and I should have seen it before shipping it.**
+`logs/run18.out` gave `-0.02000` for eleven windows and `nan` for three.
+`joint_solve` sets `gap_target = -winter_gain` with `CURVE_GAP_WEIGHT = 100`,
+and the run carried `XCP_WINTER_GAIN=0.02` — **the curve was told to be
+−0.02**. It agreeing with a sandwich D of −0.02795 is the pin, not evidence.
+`curve_window_gap.py` now detects that and refuses to compare. To get a real
+second opinion the solve has to be re-run with `--winter-gain 0`.
+
+The `nan`s are a sentinel (a pool with no dual-sport balance), not a bug —
+now counted and skipped rather than averaged into a `nan` mean I then drew a
+conclusion from.
+
+⚠ Also worth noting: that run's own bbar was **+0.00361**, nowhere near the
+−0.03924 the tool quotes. Confirms the delta-not-absolute call.
+
 **(a) `--split-indoor`.** Indoor and outdoor are one sport to the engine —
 one indicator, one `mu`, one pool anchor — so no sport-level scale error can
 sit between them. Whatever gap they show is phase.
@@ -646,7 +683,7 @@ indoor/outdoor figure before passing anything to `--sport-gap-delta`.
 Still possibly the same coin as 5.3: a systematic XC-difficulty compression
 shows up as "TF looks overrated". Worth re-measuring D after 5.3 lands.
 
-### 🔎 5.3 XC course difficulty compression — **audit built, needs a run**
+### ✅ 5.3 XC course difficulty — **not compressed, and not a CA thing**
 > *"look at if it's a CA thing as well"*
 
 The symptom, from Lex Young's dump — his six California courses:
@@ -684,6 +721,53 @@ anchored on them.
 
 Read-only, one pass over `meets`, no per-row lookups.
 `tests/test_difficulty_spread.py`
+
+---
+
+**RESULT (2026-09-09): the compression hypothesis is wrong on all three
+tests.**
+
+**Not compressed.** 47,165 XC courses, sd **6.09**, p05 −4.14 to p95 11.25 —
+a 15-point span. And the famous courses land where they should:
+
+| fastest | | hardest | |
+|---|---|---|---|
+| Detweiller Park (IL) | −1.81 | Hereford HS (MD) | 10.51 |
+| Great Park (CA) | −1.55 | Van Cortlandt (NY) | 6.76 |
+| Woodbridge HS (CA) | −1.50 | Mt. SAC (CA) | 5.85 |
+
+Detweiller and Woodbridge are the two fastest courses in the country and read
+negative; Hereford, Van Cortlandt and Mt. SAC are the hardest and read high.
+**The model is working on well-evidenced courses.**
+
+**Not a CA thing.** California is *wider* than average, not narrower —
+sd 6.96 vs 6.01, span 17.25 vs a 11–21 range across states. It also reads
+slightly harder (weighted mean 2.23 vs 1.70), which is plausible on its face.
+
+★ **The real problem is the opposite of shrinkage.** sd *falls* monotonically
+with evidence:
+
+| n_results | courses | sd |
+|---|---|---|
+| <50 | 13,610 | **8.33** |
+| 50–199 | 14,768 | 5.87 |
+| 200–999 | 12,592 | 4.28 |
+| 1k–5k | 5,096 | 3.18 |
+| 5k–20k | 913 | 2.48 |
+| 20k+ | 186 | 2.43 |
+
+Thin courses are **under-shrunk, not over-shrunk** — that 8.33 is noise, not
+signal. **28,378 of 47,165 courses (60%) have under 200 results** and carry
+sd 6–8, and every rating computed on them inherits it. The fix is *more*
+shrinkage for thin courses, not less.
+
+💤 **Two loose ends, not chased yet:**
+- **Impossible outliers**: min −34.54%, max **173.06%**. Nothing is 173%
+  harder than average; those want a cap or a look at what they are.
+- **The mean is +2.57, not 0.** Whatever "0" is anchored on is faster than
+  the average course, so the whole XC scale carries an offset.
+- TF shows `no_state` for all 27,205 rows — the state map only reads `meets`
+  (XC). Cosmetic; TF "courses" are tracks and their sd of 0.51 is expected.
 
 Mt SAC and Crystal Springs +8% → +4%; Foot Locker at Morley Field +0.7% on a
 hard course; Ultimook back to +8.7%. **Your own hypothesis is the one I would

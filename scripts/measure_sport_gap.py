@@ -430,31 +430,48 @@ def _phaseVerdict(D):
     if xin in D and xout in D:
         print(f"\n    XC minus indoor                 {D[xin]:+.5f}")
         print(f"    XC minus outdoor                {D[xout]:+.5f}")
-        # ! (XC-out) - (XC-in) = in - out, NOT the other way round. The
-        #   first version printed (XC-in) - (XC-out) and reported a ratio of
-        #   -1.00 on a fixture built to be exactly phase -- the right answer
-        #   with the sign inverted, which reads as "nothing is explained".
-        gap = D[xout] - D[xin]
-        print(f"    outdoor arm minus indoor arm    {gap:+.5f}")
-        print("      If the XC/TF gap were pure scale, the two XC arms would")
-        print("      be EQUAL -- one sport level, measured twice -- and this")
-        print("      would be zero. It is instead the indoor/outdoor phase,")
-        print(f"      so it should come out near the {d_io:+.5f} above.")
-        if abs(d_io) < 1e-9:
-            print("        indoor/outdoor is zero -- the whole gap is scale.")
+        # ★★ THE TRIANGLE, AND IT IS THE WHOLE TEST. If each arm has ONE
+        #    level -- which is what "a sport-scale error" means -- then the
+        #    three pairwise differences are differences of three constants
+        #    and must close exactly:
+        #
+        #        (XC - out) - (XC - in) = in - out
+        #
+        #    An open triangle says the arms do NOT have one level each: the
+        #    answer depends on which pair you measure, i.e. on how far apart
+        #    in the calendar the two seasons sit. That is a phase effect by
+        #    definition, and no single constant can correct it.
+        #
+        # ⚠ THE FIRST VERSION PRINTED A RATIO INSTEAD and quietly assumed the
+        #   triangle closed. On the real corpus it does not, and the ratio
+        #   came out -0.78 -- a number with no meaning, presented as though
+        #   it had one.
+        lhs = D[xout] - D[xin]
+        err = lhs - d_io
+        print(f"\n    (XC-out) - (XC-in)              {lhs:+.5f}")
+        print(f"    indoor - outdoor                {d_io:+.5f}")
+        print(f"    CLOSURE ERROR                   {err:+.5f}")
+        print("      These two are the same quantity written two ways. If")
+        print("      each arm had ONE level they would be equal and this")
+        print("      would be zero.")
+        if abs(err) < 0.002:
+            print("      -> the triangle CLOSES. The arms behave like three")
+            print("         constants, so the XC/TF gap is a real scale")
+            print("         error and correcting it is defensible.")
+            scale = (D[xin] + D[xout]) / 2.0
+            print(f"\n    the two XC arms average         {scale:+.5f}")
+            print("      ⚠ still an upper bound: indoor/outdoor bounds the")
+            print("        phase WITHIN track only.")
         else:
-            print(f"        ratio = {gap / d_io:+.2f}"
-                  f"   (+1.00 = the two XC arms differ by exactly the "
-                  f"indoor/outdoor phase)")
-        scale = (D[xin] + D[xout]) / 2.0
-        print(f"\n    the two XC arms average         {scale:+.5f}")
-        print("      ⚠ THAT AVERAGE IS STILL NOT THE SCALE ERROR. It is the")
-        print("        scale error plus whatever phase separates the TF")
-        print("        season as a whole from the XC season, which this")
-        print("        design cannot see -- indoor/outdoor only bounds the")
-        print("        phase WITHIN track. Treat it as an upper bound, and")
-        print("        subtract at most the indoor/outdoor figure from it")
-        print("        before passing anything to --sport-gap-delta.")
+            print("      -> the triangle is OPEN by more than the "
+                  "indoor/outdoor gap")
+            print("         itself. The three arms do not share one set of")
+            print("         levels, so D is NOT a single sport constant and")
+            print("         no single --sport-gap-delta can be right. The")
+            print("         opening is the size of the date-dependent part.")
+            print(f"\n      Do not pass {(D[xin] + D[xout]) / 2.0:+.5f} to "
+                  f"--sport-gap-delta on the strength of\n      this run. "
+                  f"Something that varies with the calendar is inside it.")
 
 
 def _report(label, by_end):

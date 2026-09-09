@@ -136,12 +136,49 @@ else:
     with contextlib.redirect_stdout(buf):
         m._phaseVerdict(got)
     out = buf.getvalue()
-    ok("ratio = +1.00" in out,
-       f"a corpus that is PURELY phase must report a ratio of +1.00; got:\n"
-       f"{[ln for ln in out.splitlines() if 'ratio' in ln]}")
+    # ★★ THE TRIANGLE IS THE TEST. Three arms with ONE level each make the
+    #    three pairwise differences differences of three constants, so
+    #    (XC-out) - (XC-in) must equal (in - out) exactly. The fixture above
+    #    is built that way, so it must CLOSE.
+    ok("CLOSURE ERROR" in out, "the verdict must print the closure error")
+    ok("triangle CLOSES" in out,
+       f"a fixture built from three constants must close; got:\n"
+       f"{[ln for ln in out.splitlines() if 'triangle' in ln]}")
     ok("upper bound" in out,
-       "the verdict must say the XC-arm average is an UPPER bound on the "
-       "scale error -- indoor/outdoor bounds the phase WITHIN track only")
+       "even when it closes, the XC-arm average is an UPPER bound -- "
+       "indoor/outdoor bounds the phase WITHIN track only")
+
+    # ⚠ AND AN OPEN TRIANGLE MUST REFUSE TO HAND OVER A NUMBER. These are
+    #   the real corpus's figures (2026-09-09): the closure error is
+    #   +0.01440, larger than the indoor/outdoor gap itself.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        m._phaseVerdict({("XC", "TF-in"): -0.03189,
+                         ("XC", "TF-out"): -0.02556,
+                         ("TF-in", "TF-out"): -0.00807})
+    real = buf.getvalue()
+    ok("triangle is OPEN" in real,
+       "the real corpus's numbers do not close and the verdict must say so")
+    ok("Do not pass" in real,
+       "an open triangle must refuse to recommend a --sport-gap-delta, not "
+       "print one and add a caveat")
+    ok("triangle CLOSES" not in real,
+       "it must not say both things")
+
+
+# ---- 3b. the curve reader must not be fooled by a pinned curve --------- #
+#   ⚠⚠ logs/run18.out returned -0.02000 for eleven windows. joint_solve sets
+#      gap_target = -winter_gain with CURVE_GAP_WEIGHT = 100.0, and the run
+#      carried XCP_WINTER_GAIN=0.02 -- so the curve was TOLD to be -0.02. It
+#      agreeing with a sandwich D of -0.02795 is not evidence, it is the pin.
+CWSRC = io.open(os.path.join(ROOT, "scripts", "curve_window_gap.py"),
+                encoding="utf-8").read()
+ok("PINNED, NOT FITTED" in CWSRC,
+   "the reader must detect a curve held at gap_target and say so")
+ok("gap_target" in CWSRC and "winter_gain" in CWSRC,
+   "...and name the mechanism, so the next reader can turn it off")
+ok("not comparing against" in CWSRC,
+   "a pinned curve must not be compared against the sandwich estimate at all")
 
 
 # ---- 4. the log reader ------------------------------------------------- #
@@ -155,6 +192,13 @@ sample = ("junk\n"
           "[ 0.0011 -0.0007]\n"
           "[joint] b, recentred by -0.03924, curve TF-XC window gap "
           "[ 0.0009 -0.0005]\n")
+# ! nan IS A SENTINEL (a pool with no dual-sport balance), not a failure.
+#   The first version averaged them, printed a mean of nan, and drew a
+#   conclusion from it anyway.
+ok("v == v" in CWSRC or "isnan" in CWSRC or "math.isnan" in CWSRC,
+   "nan windows must be filtered out of the mean")
+ok("windows are nan" in CWSRC, "...and counted out loud")
+
 gaps = cw.gapsIn(sample)
 ok(len(gaps) == 2, f"both passes must be read, got {len(gaps)}")
 ok(gaps[-1][1] == [0.0009, -0.0005],

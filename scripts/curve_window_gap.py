@@ -16,19 +16,27 @@ within-year difference is.
   That is the same quantity measured a completely different way: not from
   crossers, but from the shape of the season for everybody.
 
-⚠ AND THE TWO ANSWERS MEAN DIFFERENT THINGS IF THEY DISAGREE.
+⚠⚠ AND ON THE FIRST REAL RUN IT WAS PINNED, WHICH MAKES IT NO OPINION AT
+   ALL (2026-09-09). logs/run18.out returned -0.02000 for eleven windows and
+   nan for three:
 
-    curve gap ~= D   the curve has already ABSORBED the within-year
-                     difference, so it is form, not sport scale, and
-                     correcting the sport level would double-count it.
+       pass 4: [-0.02000 -0.02000 ... -0.02000 +nan +nan +nan]
 
-    curve gap ~= 0   the curve sees no within-year TF/XC difference while
-                     the crossers do. Then D is much more likely a real
-                     scale error, and --sport-gap-delta is the right lever.
+   joint_solve: `gap_target = -float(winter_gain or 0.0)` and
+   CURVE_GAP_WEIGHT = 100.0. The run carried XCP_WINTER_GAIN=0.02, so the
+   curve's TF-XC gap was CONSTRAINED to -0.02 by a very heavy penalty. It
+   agreeing with a sandwich D of -0.02795 means nothing whatever: it was
+   told to be -0.02 and it obeyed.
 
-  Neither is proof. They are two estimators of overlapping quantities, and
-  the useful output is the SIZE of the disagreement, which is why this
-  prints both and their difference rather than a verdict.
+   So this is a second opinion ONLY when the pin is off. Re-run the solve
+   with --winter-gain 0 (gap_target 0) and the curve is free to find its own
+   TF-XC gap; then the comparison below is worth reading. This script now
+   refuses to draw a conclusion when the windows are all the same number.
+
+! nan IS A SENTINEL, NOT A FAILURE. curveWindowGaps returns nan for a pool
+  with no dual-sport balance to measure -- three of fourteen on that run.
+  They are counted and skipped; the first version averaged them and printed
+  a mean of nan, then drew a conclusion from it anyway.
 
 ! READS A LOG, WRITES NOTHING, TOUCHES NO DATABASE. The number is already
   printed by every verbose run; it just scrolls past at 3am.
@@ -93,17 +101,46 @@ def main():
         last = gaps[-1][1]
         if not last:
             continue
+        # ! SKIP THE SENTINELS, AND SAY HOW MANY. A pool with no dual-sport
+        #   balance has nothing to measure and comes back nan.
+        finite = [v for v in last if v == v]
+        n_nan = len(last) - len(finite)
+        if n_nan:
+            print(f"    {n_nan} of {len(last)} windows are nan (a pool with "
+                  f"no dual-sport balance) -- skipped")
+        if not finite:
+            print("    every window is nan; nothing to compare.")
+            continue
         # ! THE MEAN OVER WINDOWS, and it is a summary rather than the
         #   quantity: the windows are separate parts of the year and a
         #   season that is high early and low late averages to nothing while
         #   being very much not flat. The per-window line above is the data.
-        mean = sum(last) / len(last)
-        span = max(last) - min(last)
-        print(f"    last pass: mean {mean:+.5f} over {len(last)} window(s), "
-              f"spread {span:.5f}")
+        mean = sum(finite) / len(finite)
+        span = max(finite) - min(finite)
+        print(f"    last pass: mean {mean:+.5f} over {len(finite)} finite "
+              f"window(s), spread {span:.5f}")
         if bbars:
             print(f"    and the sport recentring that pass: {bbars[-1]:+.5f}")
-        if args.compare is not None:
+
+        # ⚠⚠ THE PIN. CURVE_GAP_WEIGHT is 100.0 and gap_target is
+        #    -winter_gain, so with a winter gain set the curve is TOLD what
+        #    its TF-XC gap must be. Every window landing on the same number
+        #    is that penalty winning, and a pinned curve cannot corroborate
+        #    anything.
+        pinned = span < 0.002 and abs(mean) > 1e-6
+        if pinned:
+            print(f"\n    ⚠ PINNED, NOT FITTED. All {len(finite)} windows "
+                  f"agree to {span:.5f}, which is the\n      "
+                  f"CURVE_GAP_WEIGHT=100 penalty holding the gap at "
+                  f"gap_target = -winter_gain.\n      This run looks like "
+                  f"XCP_WINTER_GAIN={-mean:g}. The curve is not an "
+                  f"independent\n      estimate here -- re-run the solve "
+                  f"with --winter-gain 0 to free it.")
+        if args.compare is not None and pinned:
+            print(f"\n    (not comparing against {args.compare:+.5f}: a "
+                  f"pinned curve agreeing with\n     a measurement is not "
+                  f"evidence, it is the pin.)")
+        elif args.compare is not None:
             d = args.compare
             print(f"\n    sandwich D          {d:+.5f}")
             print(f"    curve window mean   {mean:+.5f}")
