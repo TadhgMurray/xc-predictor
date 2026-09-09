@@ -179,6 +179,41 @@ Verified against a real Postgres on a fixture: the old form emitted result 10
 twice, the new one emits it once, and the clean row in the same meet under a
 different `div_id` is still untouched.
 
+**And it now says where it is.** The build was one multi-statement `execute`,
+so nothing printed until it was over — a working run and a wedged one looked
+identical for however long that took. It is five statements now, each counted
+and timed:
+
+    [chair] scanning results 12.4M · results_tf 61.2M · meets_tf 14.1M  (8 workers, work_mem 256MB)
+    [chair]   1/5 chair divisions      meets_tf       2,904 rows    38.2s
+    [chair]   2/5 XC, both feeds       results        1,102 rows   112.4s
+    [chair]   3/5 track, event names   results_tf     2,571 rows   201.7s
+    [chair]   4/5 track, divisions     results_tf       431 rows     9.1s
+    [chair]   5/5 union, index, analyze                6,004 rows     0.4s
+    [chair]   races built in 362s
+    [chair]   previous list kept: 578 people
+    [chair]   people rolled up               601 rows    44.3s
+
+(row counts and times illustrative — the shape is what to read). Every print
+is flushed, so a redirect to a log shows them as they happen.
+
+**Two things also made it genuinely faster:**
+
+- **Parallel scans.** Every expensive step is a regex over a whole table,
+  which is exactly what a parallel seq scan is for, and Postgres' default
+  `max_parallel_workers_per_gather` is **2** on a 32-core box. Now 8 —
+  `--workers N` or `XCP_PG_WORKERS` to change it, and the server's own
+  `max_parallel_workers` still caps it, so asking high is free. The scratch
+  tables are `UNLOGGED`, **not** `TEMP`, for this reason alone: a parallel
+  worker cannot read a temp table.
+- **`n_total` stopped counting everybody.** It was a hash aggregate over
+  `results` + `results_tf` — ~73M rows into millions of groups, big enough to
+  spill to disk — to then `LEFT JOIN` the six hundred rows it wanted. It now
+  semi-joins to the flagged set first. Same numbers (checked both ways on a
+  fixture, including a flagged athlete with a long ordinary career); neither
+  table has a `person_id` index so the scans remain, but the aggregate is
+  gone.
+
 ### ⏳ 1.7 Pros get "crazy low" ratings
 Not a solve bug. A rating is `100 × pool_mean / exp(a)` and 100 is the mean of
 **your own pool** — the pro pool's mean is a professional, so an elite pro

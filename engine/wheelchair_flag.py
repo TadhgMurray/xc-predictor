@@ -70,6 +70,7 @@ people that the pack then reads. Issue #14.
 import argparse
 import os
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -128,58 +129,66 @@ _CODES = r"\m[TF](1[1-3]|20|3[1-8]|4[0-7]|5[1-7]|6[1-4])\M"
 WHEELCHAIR_RX = rf"({_WORDS})|({_CODES})"
 
 
-_RACES = """
-    DROP TABLE IF EXISTS wheelchair_race;
-    CREATE UNLOGGED TABLE wheelchair_race AS
-    -- ★ THE TRACK DIVISIONS ARE RESOLVED ON THEIR OWN TABLE, FIRST (owner,
-    --   2026-09-09: "wheelchair flag is taking forever can you speed it
-    --   up"). The first version of the division read below was written as
-    --   one predicate over a join -- results_tf LEFT JOIN meets_tf, 61M rows
-    --   against 14M, with BOTH regexes evaluated on the join output. It is
-    --   correct and it is unusable: nothing narrows either side before the
-    --   join, so the planner has to build the whole thing.
-    --
-    --   Matching the division regex against meets_tf ALONE is 14M short
-    --   strings and no join, and the few thousand rows that survive it then
-    --   drive index lookups into results_tf on meet_id (idx_results_tf_meet,
-    --   scripts/add_page_indexes.py). Same rows out; one scan of each table
-    --   rather than a product of the two biggest tables in the database.
-    --
-    -- ⚠ AND IT FIXES A DOUBLE-COUNT, WHICH IS WHY THE DISTINCT ON IS NOT
-    --   DECORATION. meets_tf is PRIMARY KEY (div_id, event_id) -- one row
-    --   per EVENT, not per division (scripts/database.py: "one row per
-    --   event/division combo"; app.py says the same where it needs a
-    --   LATERAL to survive it). A chair division that ran four events is
-    --   four rows, so the three-column join matched each of its results
-    --   four times and n_chair counted them four times. n_chair is what
-    --   --review divides by n_total to decide who is doubtful, so it was
-    --   quietly making chair-heavy careers look chair-heavier. Verified on
-    --   a fixture: two meets_tf rows for one division turned result 10 into
-    --   two rows under the old form and one under this.
-    --
-    --   DISTINCT ON collapses that back to one row per (meet, division,
-    --   feed), which is the grain the join actually wants.
-    WITH chair_div AS MATERIALIZED (
+# ★ ONE STATEMENT PER STEP, NOT ONE STATEMENT FOR THE LOT (owner, 2026-09-09:
+#   "can we get more prints for it or somethgn it's slow asf. I need it to go").
+#   The whole scan used to be a single multi-statement execute, so nothing
+#   printed until it was over -- a run that was working and a run that was
+#   wedged looked identical for however long that took. Each step now names
+#   itself, counts its rows and says how long it took, which is also the only
+#   way to see WHICH scan is expensive without an EXPLAIN on the box.
+#
+# ! AND THE SCRATCH TABLES ARE UNLOGGED, NOT TEMP, ON PURPOSE. A parallel
+#   worker cannot read a TEMP table, so making these temporary would quietly
+#   switch parallelism off on the two scans that need it most. UNLOGGED skips
+#   the WAL, is still transactional, and still vanishes on the rollback a dry
+#   run does.
+
+# 1. The chair DIVISIONS, matched on meets_tf and nothing else.
+#
+# ★ THIS IS THE STEP THAT MADE THE WHOLE THING RUNNABLE. The first version of
+#   the division read was one predicate over results_tf LEFT JOIN meets_tf --
+#   61M rows against 14M, both regexes evaluated on the join output, nothing
+#   narrowing either side. Correct, and unusable. Here the regex meets 14M
+#   short strings on their own table, and the few rows that survive drive
+#   index lookups into results_tf (idx_results_tf_meet) in step 4.
+#
+# ! DISTINCT ON, AND IT IS NOT DECORATION. meets_tf is PRIMARY KEY
+#   (div_id, event_id) -- one row per EVENT, not per division -- so a chair
+#   division that ran four events is four rows, and joining the raw matches
+#   back would repeat every one of its results four times. n_chair is what
+#   --review divides by n_total to decide who is doubtful, so that inflation
+#   would be silent. One row per (meet, division, feed) is the grain the join
+#   wants.
+_SQL_DIV = """
+    DROP TABLE IF EXISTS wc_div;
+    CREATE UNLOGGED TABLE wc_div AS
         SELECT DISTINCT ON (meet_id, div_id, source)
                meet_id, div_id, source, division
         FROM   meets_tf
         WHERE  division ~* '{rx}'
-        ORDER  BY meet_id, div_id, source
-    )
-        -- XC, both feeds. The join is SOURCE-SCOPED: `meets` describes anet
-        -- and a tfrrs div_id is a different namespace, so joining it to both
-        -- would match the wrong division by coincidence of number.
-        SELECT 'XC'::text                                     AS sport,
+        ORDER  BY meet_id, div_id, source;
+    ANALYZE wc_div;
+"""
+
+# 2. XC, both feeds. The join is SOURCE-SCOPED: `meets` describes anet and a
+#    tfrrs div_id is a different namespace, so joining it to both would match
+#    the wrong division by coincidence of number.
+_SQL_XC = """
+    DROP TABLE IF EXISTS wc_xc;
+    CREATE UNLOGGED TABLE wc_xc AS
+        SELECT 'XC'::text                                   AS sport,
                r.result_id, r.person_id, r.date,
                COALESCE(m.division,
-                        mt.division_distances -> r.div_id::text ->> 'div_name')
-                                                              AS label,
+                        mt.division_distances -> r.div_id::text ->> 'div_name'
+                       )::text                               AS label,
                -- ! anet FIRST IN THE TEST, NOT JUST IN THE COALESCE. A row
-           --   matching on both would otherwise have to be attributed by
-           --   guess; --census is the only thing that can say which source
-           --   is doing the work, so it must not be an artefact of ordering.
-           CASE WHEN COALESCE(m.division, '') ~* '{rx}'
-                    THEN 'anet.division' ELSE 'tfrrs.div_name' END AS via
+               --   matching on both would otherwise have to be attributed by
+               --   guess; --census is the only thing that can say which
+               --   source is doing the work, so it must not be an artefact
+               --   of ordering.
+               (CASE WHEN COALESCE(m.division, '') ~* '{rx}'
+                     THEN 'anet.division' ELSE 'tfrrs.div_name' END)::text
+                                                             AS via
         FROM   results r
         LEFT   JOIN meets m
                     ON m.div_id = r.div_id AND r.source = 'anet'
@@ -188,68 +197,149 @@ _RACES = """
         WHERE  r.person_id IS NOT NULL
           AND (COALESCE(m.division, '') ~* '{rx}'
             OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
-                        '') ~* '{rx}')
-        UNION ALL
-        -- ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09), WHICH IS WHY
-        --   THERE ARE TWO TF BRANCHES BELOW. There was one, reading
-        --   event_short alone, on the stated theory that "TF keeps the
-        --   distance and the class in the EVENT name, which is where
-        --   'Wheelchair 1500' lives. No division blob to read." That is
-        --   true of the tfrrs feed and false of the anet one, and the
-        --   comment made the gap invisible.
-        --
-        -- ⚠ THE anet TRACK FEED PUTS THE CLASS IN THE DIVISION AND LEAVES
-        --   THE EVENT BARE. Kohen Grantom's race page reads
-        --   "800m · Boys · Wheelchair · Outdoor" -- the word is in
-        --   meets_tf.division and the event_short is a plain "800m", so
-        --   nothing here matched and he was rated 150.8 for a 1:42.68 800m,
-        --   first on the high-school boys performance board. His 100m in
-        --   the same meet is 16.54, which is the tell: no pair of legs
-        --   produces both, and a racing chair produces both easily.
-        --
-        -- ! WHICH IS WHY THE CENSUS LOOKED HEALTHY. 425 people via TF event
-        --   names, 0 via the tfrrs blob -- and no line at all for an anet
-        --   track division, because nothing was reading one.
-        --
-        -- So: first the tfrrs feed, where the class is in the event name.
-        SELECT 'TF', r.result_id, r.person_id, r.date,
-               r.event_short, 'tf.event_short'
+                        '') ~* '{rx}');
+"""
+
+# 3. Track, the tfrrs way: the class is in the EVENT name ("Wheelchair 1500").
+#
+# ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09), WHICH IS WHY THERE ARE
+#   TWO TF STEPS. There was one, reading event_short alone, on a premise that
+#   was true of one feed and false of the other: "TF keeps the distance and
+#   the class in the EVENT name. No division blob to read."
+#
+# ⚠ THE anet TRACK FEED PUTS THE CLASS IN THE DIVISION AND LEAVES THE EVENT
+#   BARE. Kohen Grantom's race page reads "800m · Boys · Wheelchair ·
+#   Outdoor" -- the word is in meets_tf.division and the event_short is a
+#   plain "800m", so nothing matched and he was rated 150.8 for a 1:42.68
+#   800m, first on the high-school boys performance board. His 100m in the
+#   same meet is 16.54, which is the tell: no pair of legs produces both, and
+#   a racing chair produces both easily.
+#
+# ! WHICH IS WHY THE CENSUS LOOKED HEALTHY. 425 people via TF event names, 0
+#   via the tfrrs blob -- and no line at all for an anet track division,
+#   because nothing was reading one.
+_SQL_EV = """
+    DROP TABLE IF EXISTS wc_ev;
+    CREATE UNLOGGED TABLE wc_ev AS
+        SELECT 'TF'::text AS sport, r.result_id, r.person_id, r.date,
+               r.event_short::text AS label, 'tf.event_short'::text AS via
         FROM   results_tf r
         WHERE  r.person_id IS NOT NULL
-          AND  COALESCE(r.event_short, '') ~* '{rx}'
-        UNION ALL
-        -- ...and the anet track feed, where the class is in the DIVISION and
-        -- the event name is a bare "800m". Same evidence, different column.
-        --
-        -- ! THE !~* IS NOT AN OPTIMISATION, IT IS THE UNIQUENESS OF
-        --   result_id. A race labelled in BOTH columns would otherwise come
-        --   out of this UNION twice and be counted as two chair races. The
-        --   branch above wins that tie, which is the same precedence the
-        --   single CASE expression had when this was one query.
-        SELECT 'TF', r.result_id, r.person_id, r.date,
-               d.division, 'tf.division'
-        FROM   chair_div d
+          AND  COALESCE(r.event_short, '') ~* '{rx}';
+"""
+
+# 4. Track, the anet way: the class is in the DIVISION, found in step 1.
+#
+# ! THE !~* IS NOT AN OPTIMISATION, IT IS THE UNIQUENESS OF result_id. A race
+#   labelled in BOTH columns would otherwise come out of steps 3 and 4 and be
+#   counted as two chair races. Step 3 wins that tie, which is the same
+#   precedence the single CASE expression had when this was one query.
+_SQL_DV = """
+    DROP TABLE IF EXISTS wc_dv;
+    CREATE UNLOGGED TABLE wc_dv AS
+        SELECT 'TF'::text AS sport, r.result_id, r.person_id, r.date,
+               d.division::text AS label, 'tf.division'::text AS via
+        FROM   wc_div d
         JOIN   results_tf r
                     ON r.meet_id = d.meet_id
                    AND r.div_id  = d.div_id
                    AND r.source  = d.source
         WHERE  r.person_id IS NOT NULL
           AND  COALESCE(r.event_short, '') !~* '{rx}';
+"""
+
+# 5. The three put together, which is cheap: they are thousands of rows.
+_SQL_RACE = """
+    DROP TABLE IF EXISTS wheelchair_race;
+    CREATE UNLOGGED TABLE wheelchair_race AS
+        SELECT * FROM wc_xc
+        UNION ALL SELECT * FROM wc_ev
+        UNION ALL SELECT * FROM wc_dv;
     CREATE INDEX ON wheelchair_race (person_id);
     ANALYZE wheelchair_race;
+    DROP TABLE wc_xc, wc_ev, wc_dv, wc_div;
 """
+
+_BUILD = [
+    ("chair divisions      meets_tf", "wc_div",          _SQL_DIV),
+    ("XC, both feeds       results",  "wc_xc",           _SQL_XC),
+    ("track, event names   results_tf", "wc_ev",         _SQL_EV),
+    ("track, divisions     results_tf", "wc_dv",         _SQL_DV),
+    ("union, index, analyze",        "wheelchair_race", _SQL_RACE),
+]
+
+# ! PLANNER ESTIMATES, NOT COUNTS. reltuples is free; count(*) on results_tf
+#   would itself be one of the scans this is trying to explain.
+_SIZES = """
+    SELECT c.relname AS t, c.reltuples::bigint AS n
+    FROM   pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
+    WHERE  s.nspname = 'public' AND c.relkind = 'r'
+      AND  c.relname = ANY(%s)
+"""
+
+
+def _big(n):
+    return f"{n/1e6:.1f}M" if n >= 1e6 else f"{n:,}"
+
+
+def buildRaces(cur, workers, work_mem):
+    """Build wheelchair_race a step at a time, printing each as it lands."""
+    # ★ PARALLEL, BECAUSE EVERY EXPENSIVE STEP HERE IS A REGEX OVER A WHOLE
+    #   TABLE and that is exactly the shape a parallel seq scan is for. The
+    #   default max_parallel_workers_per_gather is 2; the box has 32 cores.
+    #   Capped in the end by max_parallel_workers, so asking for more than
+    #   the server allows costs nothing.
+    cur.execute(f"SET LOCAL max_parallel_workers_per_gather = {int(workers)}")
+    cur.execute("SET LOCAL work_mem = %s", (work_mem,))
+
+    cur.execute(_SIZES, (["results", "results_tf", "meets", "meets_tf",
+                          "meets_tfrrs"],))
+    sizes = {r["t"]: r["n"] for r in cur.fetchall()}
+    print("[chair] scanning " + " · ".join(
+        f"{t} {_big(sizes.get(t, 0))}"
+        for t in ("results", "results_tf", "meets_tf", "meets_tfrrs")
+        if t in sizes) + f"  ({workers} workers, work_mem {work_mem})",
+        flush=True)
+
+    started = time.time()
+    for i, (label, table, sql) in enumerate(_BUILD, 1):
+        t0 = time.time()
+        cur.execute(sql.format(rx=WHEELCHAIR_RX))
+        cur.execute(f"SELECT count(*) AS n FROM {table}")
+        n = _one(cur)
+        # ⚠ flush=True ON EVERY ONE. The pipeline runs this with stdout
+        #   redirected to a log, and a block-buffered pipe would hold all of
+        #   these until the process exits -- which is the exact problem the
+        #   prints exist to solve.
+        print(f"[chair]   {i}/{len(_BUILD)} {label:<32} "
+              f"{n:>8,} rows {time.time() - t0:7.1f}s", flush=True)
+    print(f"[chair]   races built in {time.time() - started:.0f}s", flush=True)
+
 
 # ! n_total COUNTS BOTH SPORTS, because the share is about a CAREER. An
 #   athlete with one chair XC race and forty track races is exactly the row
 #   --review exists to show, and counting only XC would hide them at 100%.
+#
+# ★ AND IT ASKS FOR THE TOTALS OF THE FLAGGED PEOPLE ONLY (2026-09-09). This
+#   used to count EVERY person's races -- a hash aggregate over both tables,
+#   ~73M rows into millions of groups, big enough to spill to disk -- and
+#   then LEFT JOIN the six hundred rows it actually wanted out of the answer.
+#   Neither table has an index on person_id, so both scans stay; but a semi
+#   join against a few hundred people is a tiny hash table and no aggregate
+#   worth the name. Same numbers, and it stops being the slowest step here.
 _PEOPLE = """
     DROP TABLE IF EXISTS wheelchair_person;
     CREATE TABLE wheelchair_person AS
-    WITH tot AS (
+    WITH flagged AS MATERIALIZED (
+        SELECT DISTINCT person_id FROM wheelchair_race
+    ),
+    tot AS (
         SELECT person_id, count(*) AS n_total FROM (
-            SELECT person_id FROM results     WHERE person_id IS NOT NULL
+            SELECT person_id FROM results
+             WHERE person_id IN (SELECT person_id FROM flagged)
             UNION ALL
-            SELECT person_id FROM results_tf  WHERE person_id IS NOT NULL
+            SELECT person_id FROM results_tf
+             WHERE person_id IN (SELECT person_id FROM flagged)
         ) x GROUP BY 1
     )
     SELECT w.person_id,
@@ -401,14 +491,26 @@ def main():
     ap.add_argument("--census", action="store_true",
                     help="races and people per source, so the two-feed claim "
                          "can be checked rather than assumed")
+    # ★ THE SCANS ARE THE WHOLE COST AND THEY PARALLELISE. Default 8 rather
+    #   than Postgres' 2; the server has 32 cores and max_parallel_workers
+    #   caps this anyway, so asking high is free.
+    ap.add_argument("--workers", type=int,
+                    default=int(os.environ.get("XCP_PG_WORKERS", "8")),
+                    metavar="N",
+                    help="max_parallel_workers_per_gather for this session")
+    ap.add_argument("--work-mem", default=os.environ.get("XCP_WORK_MEM",
+                                                         "256MB"),
+                    metavar="SIZE",
+                    help="work_mem for this session (the DISTINCT ON sorts)")
     args = ap.parse_args()
 
+    began = time.time()
     with getConn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         # ! BUILT EVEN FOR A DRY RUN, then rolled back. The report has to
         #   describe what --write WOULD do, and the only honest way to say
         #   that is to do it and not commit. UNLOGGED + a real table, so a
         #   rollback leaves nothing behind.
-        cur.execute(_RACES.format(rx=WHEELCHAIR_RX))
+        buildRaces(cur, args.workers, args.work_mem)
 
         # ★ KEEP THE OLD LIST BEFORE THE REBUILD DROPS IT (see _CARRY). The
         #   copy is taken inside the same transaction, so a dry run rolls it
@@ -419,8 +521,13 @@ def main():
                     "SELECT * FROM wheelchair_person")
         cur.execute("SELECT count(*) AS n FROM wheelchair_person_prev")
         n_prev = _one(cur)
+        print(f"[chair]   previous list kept: {n_prev:,} people", flush=True)
 
+        t0 = time.time()
         cur.execute(_PEOPLE)
+        cur.execute("SELECT count(*) AS n FROM wheelchair_person")
+        print(f"[chair]   people rolled up            "
+              f"{_one(cur):>8,} rows {time.time() - t0:7.1f}s", flush=True)
 
         # ! --forget FIRST, so a person the owner has just un-flagged is not
         #   immediately carried back in from the previous table.
@@ -486,6 +593,8 @@ def main():
                       f"{(who or '?')[:24]:<24} {(r['school'] or '')[:22]:<22} "
                       f"{r['first_date']}..{r['last_date']}  "
                       f"[{r['via']}] {(r['label'] or '')[:34]}")
+
+        print(f"[chair] {time.time() - began:.0f}s total", flush=True)
 
         if args.write:
             conn.commit()
