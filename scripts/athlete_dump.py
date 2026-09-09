@@ -153,6 +153,14 @@ def dump(cur, person_id):
                 sel.insert(1, "left(m.meet_name, 30) AS meet")
             if not has_ev_on_row and ev in mcols:
                 sel.insert(2, f"left(m.{ev}, 24) AS {ev}")
+            # ⚠ AND THE DIVISION EVEN WHEN THE ROW HAS AN EVENT. Track has
+            #   BOTH: anet puts the class in meets_tf.division ("Wheelchair")
+            #   and leaves event_short a bare "800m". Showing only the event
+            #   is what made this dump report "no chair signal" for an
+            #   athlete whose race page says "800m · Boys · Wheelchair"
+            #   (2026-09-09).
+            if has_ev_on_row and "division" in mcols:
+                sel.insert(2, "left(m.division, 20) AS division")
             diff = ""
             if "course_name" in mcols and _exists(cur, "course_difficulties"):
                 sel.append("round((cd.difficulty * 100)::numeric, 1) "
@@ -206,10 +214,16 @@ def dump(cur, person_id):
             WHERE  r.person_id = %(p)s
               AND  COALESCE(m.division, '') ~* %(rx)s
             UNION ALL
-            SELECT 'TF', r.date, left(r.event_short, 44)
+            SELECT 'TF', r.date,
+                   left(concat_ws(' | ', NULLIF(mt.division, ''),
+                                  r.event_short), 44)
             FROM   results_tf r
+            LEFT   JOIN meets_tf mt ON mt.meet_id = r.meet_id
+                                   AND mt.div_id  = r.div_id
+                                   AND mt.source  = r.source
             WHERE  r.person_id = %(p)s
-              AND  COALESCE(r.event_short, '') ~* %(rx)s
+              AND (COALESCE(r.event_short, '') ~* %(rx)s
+                OR COALESCE(mt.division, '')  ~* %(rx)s)
             ORDER  BY 2
         """, {"p": person_id, "rx": WHEELCHAIR_RX}), limit=20)
 
@@ -226,8 +240,14 @@ def dump(cur, person_id):
                                    AND r.source = 'anet'
                 WHERE  r.person_id = %(p)s GROUP BY 2
                 UNION ALL
-                SELECT 'TF', left(r.event_short, 44), count(*)
-                FROM   results_tf r WHERE r.person_id = %(p)s GROUP BY 2
+                -- BOTH track columns: the class can be in either one
+                SELECT 'TF', left(concat_ws(' | ', NULLIF(mt.division, ''),
+                                            r.event_short), 44), count(*)
+                FROM   results_tf r
+                LEFT   JOIN meets_tf mt ON mt.meet_id = r.meet_id
+                                       AND mt.div_id  = r.div_id
+                                       AND mt.source  = r.source
+                WHERE  r.person_id = %(p)s GROUP BY 2
             ) x ORDER BY sport, n DESC
         """, p), limit=40)
 

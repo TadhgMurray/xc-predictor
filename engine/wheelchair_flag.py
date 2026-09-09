@@ -157,11 +157,37 @@ _RACES = """
         UNION ALL
         -- TF keeps the distance and the class in the EVENT name, which is
         -- where "Wheelchair 1500" lives. No division blob to read.
-        SELECT 'TF', r.result_id, r.person_id, r.date, r.event_short,
-               'tf.event_short'
+        -- ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09). This branch
+        --   read event_short ALONE, on the stated theory that "TF keeps the
+        --   distance and the class in the EVENT name, which is where
+        --   'Wheelchair 1500' lives. No division blob to read." That is
+        --   true of one feed and false of the other, and the comment made
+        --   the gap invisible.
+        --
+        -- ⚠ THE anet TRACK FEED PUTS THE CLASS IN THE DIVISION AND LEAVES
+        --   THE EVENT BARE. Kohen Grantom's race page reads
+        --   "800m · Boys · Wheelchair · Outdoor" -- the word is in
+        --   meets_tf.division and the event_short is a plain "800m", so
+        --   nothing here matched and he was rated 150.8 for a 1:42.68 800m,
+        --   first on the high-school boys performance board. His 100m in
+        --   the same meet is 16.54, which is the tell: no pair of legs
+        --   produces both, and a racing chair produces both easily.
+        --
+        -- ! WHICH IS WHY THE CENSUS LOOKED HEALTHY. 425 people via TF event
+        --   names, 0 via the tfrrs blob -- and no line at all for an anet
+        --   track division, because nothing was reading one.
+        SELECT 'TF', r.result_id, r.person_id, r.date,
+               COALESCE(NULLIF(mt.division, ''), r.event_short),
+               CASE WHEN COALESCE(r.event_short, '') ~* '{rx}'
+                    THEN 'tf.event_short' ELSE 'tf.division' END
         FROM   results_tf r
+        LEFT   JOIN meets_tf mt
+                    ON mt.meet_id = r.meet_id
+                   AND mt.div_id  = r.div_id
+                   AND mt.source  = r.source
         WHERE  r.person_id IS NOT NULL
           AND (COALESCE(r.event_short, '') ~* '{rx}'
+            OR COALESCE(mt.division, '')  ~* '{rx}')
 );
     CREATE INDEX ON wheelchair_race (person_id);
     ANALYZE wheelchair_race;
@@ -281,7 +307,13 @@ _SUMMARY = """
            sum(n_total)                                    AS all_their_races,
            count(*) FILTER (WHERE n_chair * 2 < n_total)   AS minority,
            count(*) FILTER (WHERE via = 'tfrrs.div_name')  AS via_tfrrs,
-           count(*) FILTER (WHERE via = 'tf.event_short')  AS via_tf
+           count(*) FILTER (WHERE via = 'tf.event_short')  AS via_tf,
+           -- ! COUNTED, BECAUSE AN UNCOUNTED SOURCE IS AN INVISIBLE ONE.
+           --   The census read healthy for weeks -- 425 via TF event names
+           --   -- while the anet track DIVISION was not being read at all
+           --   and had no line here to be zero on.
+           count(*) FILTER (WHERE via = 'tf.division')     AS via_tf_div,
+           count(*) FILTER (WHERE via LIKE 'carried:%%')   AS via_carried
     FROM   wheelchair_person
 """
 
@@ -379,6 +411,11 @@ def main():
         print(f"  found via the tfrrs blob: {s['via_tfrrs']:,} people "
               f"-- INVISIBLE to the filter this replaces")
         print(f"  found via TF event names: {s['via_tf']:,}")
+        print(f"  found via TF divisions:   {s['via_tf_div']:,} "
+              f"(anet track puts the class here, not in the event)")
+        if s["via_carried"]:
+            print(f"  carried from an earlier run: {s['via_carried']:,} "
+                  f"(the fresh scan no longer finds them)")
         print(f"  chair races are a MINORITY of the career for "
               f"{s['minority']:,} -- read those with --review")
 

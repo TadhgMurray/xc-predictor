@@ -119,6 +119,36 @@ exposed a latent assumption. *Fixed — both shapes handled.*
 **Run once (done, 2026-09-09): `all 578 previously flagged people were found
 again` — carry count zero, so this was never the cause here.**
 
+### ✅ 1.10 Chair athletes: the rule read one of track's TWO label columns — **the actual cause**
+Kohen Grantom (26155532), first on the HS boys performance board at **150.8**
+for a 1:42.68 800m. In the same meet he ran **16.54** for 100m. No pair of
+legs produces both; a racing chair produces both easily.
+
+His race page says it outright: **`800m · Boys · Wheelchair · Outdoor`**. The
+word is in **`meets_tf.division`**, and `event_short` is a bare `"800m"`.
+
+`wheelchair_flag`'s TF branch read `event_short` **alone**, on a stated
+premise that was true of one feed and false of the other:
+
+> *"TF keeps the distance and the class in the EVENT name, which is where
+> 'Wheelchair 1500' lives. No division blob to read."*
+
+tfrrs does that. **anet track puts the class in the division and leaves the
+event bare.** So every anet chair track race was invisible.
+
+**And the census read healthy the whole time** — `425 via TF event names,
+0 via the tfrrs blob` — because a source nobody reads has no line to be zero
+on. It now counts `tf.division` and the carried rows separately.
+
+*Both columns are matched now, joined on (meet_id, div_id, source) so the
+per-event `meets_tf` cannot fan out.* Re-run `wheelchair_flag.py --write`:
+the `found via TF divisions` line is this bug, counted.
+
+⚠ **I got this wrong twice before landing it** — first blaming a stale list
+(the carry proved nothing was lost), then concluding the labels carried no
+chair signal at all. They did; the dump wasn't showing the division, because
+it read the same single column the rule did.
+
 ### ⏳ 1.7 Pros get "crazy low" ratings
 Not a solve bug. A rating is `100 × pool_mean / exp(a)` and 100 is the mean of
 **your own pool** — the pro pool's mean is a professional, so an elite pro

@@ -101,6 +101,36 @@ ok("--forget any" in SRC or "--forget" in SRC[SRC.index("carried forward"):
    "the message should name the escape hatch")
 
 
+# ---- 5b. BOTH track columns are read ---------------------------------- #
+#   Owner, 2026-09-09, pasting the race page: "800m · Boys · Wheelchair ·
+#   Outdoor". The word is in meets_tf.division and the event_short is a
+#   plain "800m" -- the anet track feed puts the class in the DIVISION and
+#   leaves the event bare, while the tfrrs one puts it in the event name.
+#   Reading only event_short missed every anet chair track race, which is
+#   how a 1:42.68 800m (beside a 16.54 100m, in the same meet) came out
+#   150.8 and first on the high-school boys performance board.
+races = re.search(r'_RACES = """(.*?)"""', SRC, re.S).group(1)
+tf_half = races[races.index("SELECT 'TF'"):]
+# ! THE PREDICATE, NOT THE SELECT LIST. An earlier version of this check
+#   only looked for "mt.division" anywhere in the branch -- which the
+#   COALESCE in the SELECT satisfies, so deleting the WHERE clause that
+#   actually MATCHES on it still passed. Assert what filters.
+where = tf_half[tf_half.index("WHERE"):]
+ok("mt.division, '')  ~* " in where or "mt.division, '') ~* " in where,
+   "the TF branch must MATCH on meets_tf.division, not merely select it")
+ok("event_short, '') ~* " in where,
+   "...and must still match event_short: tfrrs puts the class there")
+ok("mt.div_id" in tf_half and "mt.source" in tf_half,
+   "the meets_tf join must be narrowed by div_id AND source -- that table "
+   "holds one row per event and would otherwise fan out")
+
+# ! AND THE CENSUS HAS TO COUNT IT. The census read healthy for weeks
+#   because a source nobody reads has no line to be zero on.
+ok("tf.division" in SRC[SRC.index("_SUMMARY"):],
+   "the census must count the TF-division source separately")
+ok("via_tf_div" in SRC, "and print it")
+
+
 # ---- 6. the rule itself is unchanged ---------------------------------- #
 #   This is a stickiness fix, not a widening. If the regex ever narrows,
 #   that is a different bug and should not hide behind the carry.
