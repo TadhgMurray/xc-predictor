@@ -123,10 +123,27 @@ _SOURCE_SQL = """
             --   'name:' key, and a COPY into a keyed table would abort the
             --   whole build over it. The best-supported row wins and the
             --   count is printed, which is a report rather than a crash.
+            -- ★★ THE DISTANCE IS PART OF THE KEY (owner, 2026-09-09: "the
+            --    course board keeps only the most run distance of a
+            --    course"). course_difficulties is keyed
+            --    (canonical_id, DISTANCE) -- Mt. SAC has 4828m with 5,831
+            --    results, 5230m with 1,179 and 5000m with 360, three real
+            --    cells with three real difficulties. De-duplicating on the
+            --    canonical id ALONE collapsed them to one and `n_results
+            --    DESC` kept the 4828m, so the other two vanished from the
+            --    board entirely.
+            --
+            -- ! THE NAME-COLLISION GUARD IS UNCHANGED, only narrowed. Two
+            --   venues with no canonical id and the same name still collapse
+            --   to one row PER DISTANCE, which is what the guard is for; it
+            --   was never meant to merge distances.
             DISTINCT ON (COALESCE(xc.canonical_id::text,
-                                  'name:' || xc.course_name))
+                                  'name:' || xc.course_name),
+                         xc.key_distance)
             COALESCE(xc.canonical_id::text,
-                     'name:' || xc.course_name)          AS course_key,
+                     'name:' || xc.course_name)
+              || ':d' || COALESCE(xc.key_distance::text, '?')
+                                                         AS course_key,
             xc.course_name,
             xc.canonical_id,
             -- ★ ONLY WHEN THE NAME IS THIS VENUE'S ALONE. `venue` is joined
@@ -145,6 +162,7 @@ _SOURCE_SQL = """
         JOIN   shared s ON s.course_name = xc.course_name
         LEFT   JOIN venue v ON v.course_name = xc.course_name
         ORDER  BY COALESCE(xc.canonical_id::text, 'name:' || xc.course_name),
+                  xc.key_distance,
                   xc.n_results DESC
     )
     SELECT * FROM ranked

@@ -4749,8 +4749,25 @@ def get_course_cell_difficulties(cur, course_name):
         """, {"course": course_name})
         return {int(r["distance_m"]): float(r["difficulty"])
                 for r in cur.fetchall()}
-    except Exception:                    # noqa: BLE001
+    except Exception as e:               # noqa: BLE001
+        # ⚠⚠ IT USED TO SWALLOW THIS AND RETURN {}, SO EVERY DISTANCE ON
+        #    EVERY COURSE PAGE RENDERED AS "-" AND NOTHING SAID WHY (owner,
+        #    2026-09-09: "difficulty not printed here"). The likely cause is
+        #    the join above: course_difficulties.canonical_id is a MIGRATION,
+        #    not part of the base DDL, and build_course_rank has its own
+        #    "course_difficulties has no canonical_id column" warning for the
+        #    database where it is missing. A bare except turned a missing
+        #    column into a blank column.
+        #
+        # ! STILL NOT FATAL -- a course page is worth rendering without its
+        #   difficulty -- but it says so once, in the log, where it can be
+        #   fixed.
         cur.connection.rollback()
+        app.logger.warning(
+            "course difficulties unavailable for %s: %s: %s -- the page will "
+            "show '-' for every distance. If this names canonical_id, run "
+            "scripts/build_course_canonical.py.",
+            course_name, type(e).__name__, e)
         return {}
 
 
