@@ -828,12 +828,26 @@ difficulty **and** of the race effect are dropped rather than banked, so the
 two sports' average course is equal by construction. Then autumn-to-spring
 movement has nowhere to go but the form curve — which is fitness.
 
-    XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 \
-      --joint-args "--merge-sports"
+    XCP_MERGE_SPORTS=1 XCP_ALTITUDE=1 \
+      bash deploy/run_pipeline.sh --from 7 2>&1 | tee logs/run19.out
 
-It implies, and applies, all four halves of the same assumption:
-`--no-sport-offset` (no beta), `--winter-gain 0`, `--curve-gap 0` (curve
-free), and it refuses `--sport-gap-delta`.
+**Drop `XCP_WINTER_GAIN` and `XCP_WINTER_GAIN_BANDS` from the line** — they
+are the assumption this replaces. Leaving them set is harmless (run_joint
+drops them and says so) but pointless.
+
+It implies, and applies, **five** places the sport level is asserted today —
+four in the solve and one after it:
+
+| flag | what it was |
+|---|---|
+| `--no-sport-offset` | the per-athlete sport offset `beta` |
+| `--winter-gain 0` | the curve pinned at `gap_target = -winter_gain` |
+| `--curve-gap 0` | the `CURVE_GAP_WEIGHT = 100` penalty enforcing that pin |
+| `--sport-gap-delta` refused | meaningless with no sport level to shift |
+| `--winter-gain-bands` dropped | ⚠ **a post-solve shift of the track rows at go-live** (issue 194) — not in the solve at all, so `merge=True` would have been undone by hand right after the fit |
+
+That fifth one is why this is a single flag and not a command line the
+operator assembles.
 
 ! **`targetFor` already ignores the sport** — its own docstring: "the bare
 key is authoritative", so hs_m normalises to 5000m in *both* sports. The
