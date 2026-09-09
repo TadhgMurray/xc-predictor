@@ -606,8 +606,18 @@ than every autumn) enters both arrangements with the same sign and is
 "a November race SHOULD rate higher if it was better" — that part *should* be
 there. **So D = −0.02795 is an upper bound on the scale error.**
 
-    scripts/measure_sport_gap.py --split-indoor
+    scripts/measure_sport_gap.py --split-indoor            # ~2-4 min
+    scripts/measure_sport_gap.py --split-indoor --pool hs_m   # faster still
     scripts/curve_window_gap.py logs/run18.out --compare -0.02795
+
+⚠ **The first cut of `--split-indoor` ate the server** — the `is_indoor`
+lookup was a per-row LATERAL. `results_tf.result_id` is a PRIMARY KEY so it
+*looked* harmless, but over millions of `ranking_results` rows an indexed
+lookup is millions of **random seeks** into a 191M-row table plus another
+into `meets_tf`. It is now two sequential passes with hash joins, samples
+every 20th **person** (a sandwich needs all three of a person's seasons, so
+row sampling would shred them), and runs with `work_mem 256MB` and 8 workers
+instead of 1GB and 2.
 
 **(a) `--split-indoor`.** Indoor and outdoor are one sport to the engine —
 one indicator, one `mu`, one pool anchor — so no sport-level scale error can

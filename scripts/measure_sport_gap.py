@@ -101,6 +101,7 @@ import argparse
 import math
 import os
 import sys
+import time
 
 from psycopg2.extras import RealDictCursor
 
@@ -180,22 +181,48 @@ SPAN_LO, SPAN_HI = 200, 900
 #   a real effect.
 _ARM_SPORT = "k.sport"
 
-# ! LATERAL, AND ONLY FOR TF. meets_tf is one row per EVENT, so a plain join
-#   fans a result out across its meet; LIMIT 1 is exactly one. The ON k.sport
-#   = 'TF' keeps it off every XC row rather than looking up a table that
-#   cannot contain them.
-_ARM_INOUT = """CASE WHEN k.sport <> 'TF' THEN k.sport
-                     WHEN io.is_indoor = 1 THEN 'TF-in'
-                     ELSE 'TF-out' END"""
-_ARM_INOUT_JOIN = """
-LEFT   JOIN LATERAL (
-    SELECT m.is_indoor
-    FROM   results_tf rt
-    JOIN   meets_tf m ON m.meet_id = rt.meet_id AND m.source = rt.source
-    WHERE  rt.result_id = k.result_id
-    LIMIT  1
-) io ON k.sport = 'TF'
+# ⚠ THE FIRST VERSION OF THIS WAS A PER-ROW LATERAL AND IT ATE THE SERVER.
+#   results_tf.result_id is a PRIMARY KEY, so the lookup was indexed and
+#   looked harmless -- but "indexed" over millions of ranking_results rows
+#   means millions of RANDOM SEEKS into a 191M-row table plus another into
+#   meets_tf, and random I/O at that count is hours. Owner, 2026-09-09: "you
+#   need to stop giving me scripts that take up the entire server."
+#
+# ★ SO THE MAP IS BUILT ONCE, IN BULK, AND SAMPLED. Two sequential passes
+#   with hash joins instead of millions of seeks, and only every Nth person:
+#   the headline D has SE 0.00004 on 2.4M sandwiches, while telling 0.012
+#   from 0.030 needs about SE 0.001 -- roughly 20,000 sandwiches. Asking for
+#   2.4M of them to answer that is the actual bug.
+#
+# ! SAMPLED ON person_id, NOT ON ROWS. A sandwich needs all three of a
+#   person's seasons; sampling rows would shred them and quietly bias what
+#   survived toward athletes with more races.
+_INDOOR_MAP = """
+    DROP TABLE IF EXISTS sg_io;
+    CREATE TEMP TABLE sg_io AS
+        SELECT DISTINCT ON (meet_id, source) meet_id, source, is_indoor
+        FROM   meets_tf
+        WHERE  is_indoor IS NOT NULL
+        ORDER  BY meet_id, source;
+    CREATE INDEX ON sg_io (meet_id, source);
+    ANALYZE sg_io;
+
+    DROP TABLE IF EXISTS sg_ind;
+    CREATE TEMP TABLE sg_ind AS
+        SELECT r.result_id, io.is_indoor
+        FROM   results_tf r
+        JOIN   sg_io io ON io.meet_id = r.meet_id AND io.source = r.source
+        WHERE  r.person_id IS NOT NULL
+          AND  (r.person_id %% %(mod)s) = 0;
+    CREATE INDEX ON sg_ind (result_id);
+    ANALYZE sg_ind;
 """
+
+_ARM_INOUT = """CASE WHEN k.sport <> 'TF' THEN k.sport
+                     WHEN ind.is_indoor = 1 THEN 'TF-in'
+                     ELSE 'TF-out' END"""
+# a hash join against a small temp table, not a seek per row
+_ARM_INOUT_JOIN = "\nLEFT   JOIN sg_ind ind ON ind.result_id = k.result_id\n"
 
 _BLOCK_SELECT = """
 SELECT k.person_id, k.pool, {arm} AS sport, k.year,
@@ -215,6 +242,10 @@ WHERE  k.person_id IS NOT NULL
   AND  k.race_date IS NOT NULL
   AND  k.speed_rating BETWEEN %(lo)s AND %(hi)s
   AND  (%(pool)s IS NULL OR k.pool = %(pool)s)
+  -- ! THE SAME SAMPLE AS sg_ind, or an athlete's XC seasons survive while
+  --   their track ones do not and every sandwich is broken. %(mod)s is 1 in
+  --   the default mode, which is every person.
+  AND  (k.person_id %% %(mod)s) = 0
   {extra}
 GROUP  BY k.person_id, k.pool, {arm}, k.year
 HAVING count(*) >= %(min_races)s
@@ -751,6 +782,14 @@ def main():
                          "normalisation. Subtract them for the cell half.")
     # ★ THE OWNER'S QUESTION AS A FLAG (2026-09-09): "Could track fitness
     #   gain be messing up on indoor to outdoor switch?"
+    # ★ EVERY Nth PERSON. The headline D has SE 0.00004 on 2.4M sandwiches;
+    #   separating a 0.012 phase from a 0.030 gap needs about SE 0.001, i.e.
+    #   ~20,000 sandwiches. 1 is the whole corpus and is what the default
+    #   mode uses.
+    ap.add_argument("--sample", type=int, default=1, metavar="N",
+                    help="use every Nth person (default 1 = all). "
+                         "--split-indoor defaults to 20 when this is not "
+                         "given; raise it if the box is busy.")
     ap.add_argument("--split-indoor", action="store_true", dest="split_indoor",
                     help="treat indoor and outdoor track as separate arms. "
                          "They share one sport indicator, one mu and one pool "
@@ -774,15 +813,42 @@ def main():
     if args.self_test:
         return selfTest()
 
+    # ⚠ THE SPLIT MODE IS THE EXPENSIVE ONE, so it samples unless told not
+    #   to. Explicit --sample 1 still means everybody.
+    mod = args.sample
+    if args.split_indoor and mod == 1 and "--sample" not in sys.argv:
+        mod = 20
+    if mod > 1:
+        print(f"\n  sampling every {mod}th person "
+              f"(--sample 1 for the whole corpus)")
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # ! ONE BIG AGGREGATE. Give it room rather than letting it spill;
             #   SET LOCAL dies with the transaction, so nothing leaks.
-            cur.execute("SET LOCAL work_mem = '1GB'")
+            # ! 256MB, NOT 1GB, AND max_parallel_workers_per_gather RAISED.
+            #   These passes are big sequential scans, which is what parallel
+            #   workers are for; a gigabyte of work_mem per worker is how a
+            #   diagnostic takes the box down.
+            cur.execute("SET LOCAL work_mem = '256MB'")
+            cur.execute("SET LOCAL max_parallel_workers_per_gather = 8")
+            if args.split_indoor:
+                t0 = time.time()
+                print("  building the indoor/outdoor map (one pass over "
+                      "meets_tf, one over results_tf)...", flush=True)
+                cur.execute(_INDOOR_MAP, {"mod": mod})
+                cur.execute("SELECT count(*) AS n, "
+                            "count(*) FILTER (WHERE is_indoor = 1) AS ind "
+                            "FROM sg_ind")
+                r = cur.fetchone()
+                print(f"    {r['n']:,} track results mapped, "
+                      f"{r['ind']:,} indoor  ({time.time() - t0:.0f}s)",
+                      flush=True)
             print(f"\n  building season blocks from {args.source}...")
             cur.execute(blockSql(args.source, args.split_indoor),
                         {"lo": RATING_LO, "hi": RATING_HI,
-                         "pool": args.pool, "min_races": args.min_races})
+                         "pool": args.pool, "min_races": args.min_races,
+                         "mod": mod})
             cur.execute("SELECT count(*) AS n, count(DISTINCT person_id) AS a "
                         "FROM sg_block")
             b = cur.fetchone()

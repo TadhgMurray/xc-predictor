@@ -41,11 +41,39 @@ def ok(cond, msg):
 ok("--split-indoor" in SRC, "the mode must exist")
 ok("_ARM_INOUT" in SRC and "is_indoor" in SRC,
    "the indoor arm must come from meets_tf.is_indoor")
-# ⚠ meets_tf IS ONE ROW PER EVENT. A plain join fans a result across its
-#   whole meet; the rest of this repo has been bitten by that twice.
-ok("LEFT   JOIN LATERAL" in SRC and "LIMIT  1" in SRC,
-   "the is_indoor lookup must be a LATERAL with LIMIT 1, or one result "
-   "becomes one row per event of its meet")
+# ⚠ meets_tf IS ONE ROW PER EVENT (PRIMARY KEY (div_id, event_id)), so a
+#   plain join fans a result across its whole meet. DISTINCT ON collapses it
+#   to one row per (meet, feed) BEFORE anything joins to it -- the same guard
+#   wheelchair_flag needed, and cheaper than a per-row LIMIT 1.
+ok("DISTINCT ON (meet_id, source)" in SRC,
+   "the indoor map must be one row per (meet, feed) or every track result "
+   "is counted once per event of its meet")
+
+# ⚠ AND IT MUST NOT BE A PER-ROW LOOKUP. The first version was a LATERAL
+#   into results_tf. result_id is a PRIMARY KEY so it LOOKED harmless, but
+#   over millions of ranking_results rows an indexed lookup is millions of
+#   RANDOM SEEKS into a 191M-row table plus another into meets_tf, and that
+#   ran for hours. It is two sequential passes with hash joins now.
+ok("LATERAL" not in SRC[SRC.index("_INDOOR_MAP"):SRC.index("_BLOCK_SELECT")],
+   "the indoor map must be built in bulk, not with a correlated lookup")
+ok("sg_ind ind ON ind.result_id = k.result_id" in SRC,
+   "the arm must read a prebuilt temp table")
+
+# ---- 1b. and it samples, on the PERSON --------------------------------- #
+#   A sandwich needs all three of a person's seasons, so sampling rows would
+#   shred them and bias what survived toward athletes with more races.
+ok("(r.person_id %% %(mod)s) = 0" in SRC,
+   "the indoor map must be sampled by person")
+ok("(k.person_id %% %(mod)s) = 0" in SRC,
+   "...and the blocks by the SAME rule, or an athlete's XC seasons survive "
+   "while their track ones do not")
+ok('"--sample"' in SRC and "mod = 20" in SRC,
+   "--split-indoor must default to a sample rather than the whole corpus")
+ok("work_mem = '256MB'" in SRC and "'1GB'" not in SRC,
+   "a gigabyte of work_mem per parallel worker is how a diagnostic takes "
+   "the box down")
+ok("max_parallel_workers_per_gather" in SRC,
+   "these passes are big sequential scans -- that is what workers are for")
 ok("GROUP  BY k.person_id, k.pool, {arm}, k.year" in SRC,
    "the blocks must be grouped by the ARM, not by k.sport -- otherwise "
    "indoor and outdoor land in one block and the split does nothing")
