@@ -15,10 +15,10 @@ fixed
 | # | Thing | Who does it |
 |---|---|---|
 | 1 | `git pull` on the box, restart the site | you |
-| 2 | ~~`python racecast/build_team_season.py`~~ ✅ **done** — 686,207 seasons restated | — |
+| 2 | `python racecast/build_team_season.py` — **run it again**, so the ceiling change (§2.6) lands | you |
 | 3 | ~~`scripts/add_page_indexes.py`~~ ✅ **done** — `rr_pool_year_dist_idx` built | — |
-| 4 | ~~`engine/wheelchair_flag.py --write`~~ ✅ **done** — 578 people, nothing lost, so §1.6 was not the cause | — |
-| 5 | `/srv/venv/bin/python scripts/athlete_dump.py 26155532 23965611` — one command, paste the output | you |
+| 4 | `engine/wheelchair_flag.py --write` — **run it again**: §1.10 finds the anet chair divisions, §1.11 makes it finish | you |
+| 5 | ~~`scripts/athlete_dump.py 26155532 23965611`~~ ✅ **done** — Kohen was §1.10; Lex Young is §5.1, still open | — |
 
 Nothing in §1–§4 needs a pipeline run. §5 items do.
 
@@ -140,14 +140,44 @@ event bare.** So every anet chair track race was invisible.
 0 via the tfrrs blob` — because a source nobody reads has no line to be zero
 on. It now counts `tf.division` and the carried rows separately.
 
-*Both columns are matched now, joined on (meet_id, div_id, source) so the
-per-event `meets_tf` cannot fan out.* Re-run `wheelchair_flag.py --write`:
-the `found via TF divisions` line is this bug, counted.
+*Both columns are matched now.* Re-run `wheelchair_flag.py --write`: the
+`found via TF divisions` line is this bug, counted.
+
+⚠ **The first version of that fix was too slow to run and double-counted** —
+see §1.11. Use the current one.
 
 ⚠ **I got this wrong twice before landing it** — first blaming a stale list
 (the carry proved nothing was lost), then concluding the labels carried no
 chair signal at all. They did; the dump wasn't showing the division, because
 it read the same single column the rule did.
+
+### ✅ 1.11 …and the fix for it took forever, and double-counted
+> *"wheelchair flag is taking forever can you speed it up"* — you, 2026-09-09
+
+I wrote the division read as one predicate over a join: `results_tf LEFT JOIN
+meets_tf`, **61M rows against 14M**, with both regexes evaluated on the join
+output. Nothing narrows either side first, so the planner has to build the
+whole product. Correct, and unusable.
+
+**It was also wrong.** `meets_tf` is `PRIMARY KEY (div_id, event_id)` — one
+row per **event**, not per division. A chair division that ran four events is
+four rows there, so the three-column join matched each of its results four
+times and `n_chair` counted them four times. `n_chair / n_total` is exactly
+what `--review` reads to decide who is doubtful, so it was quietly making
+chair-heavy careers look chair-heavier. My own comment on that join said it
+"cannot fan out". It could.
+
+*The division regex now runs against `meets_tf` alone — 14M short strings, no
+join — `DISTINCT ON (meet_id, div_id, source)` collapses it to one row per
+division, and those few rows drive index lookups into `results_tf` on
+`meet_id`. One scan of each table instead of a product of the two biggest
+tables in the database.* The event-name branch is separate and unchanged, and
+excludes what the division branch already took, so a race labelled in **both**
+columns is still one row.
+
+Verified against a real Postgres on a fixture: the old form emitted result 10
+twice, the new one emits it once, and the clean row in the same meet under a
+different `div_id` is still untouched.
 
 ### ⏳ 1.7 Pros get "crazy low" ratings
 Not a solve bug. A rating is `100 × pool_mean / exp(a)` and 100 is the mean of
@@ -227,6 +257,38 @@ athlete boards make.* `fb2afb8`
 `results.date` is **TEXT**, so `max(r.date)` returns a string and `d.year`
 raised `AttributeError`. Pre-existing, unrelated to this session's changes.
 *Both shapes handled.* `cf74838`
+
+### ✅ 2.6 The straight 150 cap on team rankings is gone
+> *"There probably shouldn't be a straight 150 cap btw" … "just remove it for
+> now flag if an issue later"* — you, 2026-09-09
+
+`build_team_season` dropped any athlete-season above its pool's ceiling before
+a team was scored, so a squad could be ranked on five runners while a
+neighbouring squad kept six. A flat line through a distribution with a real
+tail cannot tell a genuine 150.1 from a chair time on the running scale — and
+the second one has a cause worth fixing at the source, which §1.10 now does.
+
+*The rail counts and no longer drops.* The build still prints what it would
+have removed:
+
+    ceiling   N athlete-seasons are ABOVE their pool's ceiling and are
+              RANKED ANYWAY -- hs_m N (>150), ...
+
+If a squad turns up with an impossible scorer, that line is where to look.
+
+**Removed from both places at once.** `teams.raceReturning` applied the same
+ceiling to the returning board; leaving it there would have scored one board
+on five runners and the other on six, and the two would disagree about a team
+that had not changed. `tests/test_returning_teams.py` now runs the build's
+rail on a stub where *everything* is implausible and asserts every row
+survives — so the two can't drift apart again.
+
+⚠ **A different rail is still up, and I have not touched it.**
+`build_ranking_results.raceCeiling` = pool ceiling + 10, applied **per race**
+to the athlete/performance boards. That one is there for a measured reason:
+the whole top-25 of the 2025 `hs_m` XC board was once a single meet, times
+21:32–21:55, every row rated 157–159 from a bad anchor. Say the word and it
+goes too — but it is not the same rail and removing it puts that back.
 
 ### ✅ 2.5 The year combo drew every option twice
 `renderOptions` falls back to `o[2] || o[0]` for the code chip and draws it

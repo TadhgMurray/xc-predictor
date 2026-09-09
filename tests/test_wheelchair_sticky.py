@@ -101,7 +101,7 @@ ok("--forget any" in SRC or "--forget" in SRC[SRC.index("carried forward"):
    "the message should name the escape hatch")
 
 
-# ---- 5b. BOTH track columns are read ---------------------------------- #
+# ---- 5b. BOTH track columns are read, and the second one cheaply -------- #
 #   Owner, 2026-09-09, pasting the race page: "800m · Boys · Wheelchair ·
 #   Outdoor". The word is in meets_tf.division and the event_short is a
 #   plain "800m" -- the anet track feed puts the class in the DIVISION and
@@ -109,20 +109,61 @@ ok("--forget any" in SRC or "--forget" in SRC[SRC.index("carried forward"):
 #   Reading only event_short missed every anet chair track race, which is
 #   how a 1:42.68 800m (beside a 16.54 100m, in the same meet) came out
 #   150.8 and first on the high-school boys performance board.
+#
+# ⚠ THE FIRST FIX WAS ONE PREDICATE OVER A JOIN AND WAS UNUSABLE (owner:
+#   "wheelchair flag is taking forever"). results_tf LEFT JOIN meets_tf is
+#   61M rows against 14M with both regexes on the join output, and nothing
+#   narrows either side first. The division has to be resolved on meets_tf
+#   ALONE and the survivors joined back -- so this section asserts the
+#   SHAPE, not just the columns.
 races = re.search(r'_RACES = """(.*?)"""', SRC, re.S).group(1)
-tf_half = races[races.index("SELECT 'TF'"):]
-# ! THE PREDICATE, NOT THE SELECT LIST. An earlier version of this check
-#   only looked for "mt.division" anywhere in the branch -- which the
-#   COALESCE in the SELECT satisfies, so deleting the WHERE clause that
-#   actually MATCHES on it still passed. Assert what filters.
-where = tf_half[tf_half.index("WHERE"):]
-ok("mt.division, '')  ~* " in where or "mt.division, '') ~* " in where,
-   "the TF branch must MATCH on meets_tf.division, not merely select it")
-ok("event_short, '') ~* " in where,
-   "...and must still match event_short: tfrrs puts the class there")
-ok("mt.div_id" in tf_half and "mt.source" in tf_half,
-   "the meets_tf join must be narrowed by div_id AND source -- that table "
-   "holds one row per event and would otherwise fan out")
+
+
+# ! ASSERT ON THE SQL, NOT ON THE COMMENTS ABOUT IT. The first draft of this
+#   section checked for "!~*" anywhere in the TF half -- and the comment
+#   explaining why the "!~*" is there satisfied it, so deleting the predicate
+#   itself still passed. Every check below reads the stripped text.
+def _bare(sql):
+    return "\n".join(ln.split("--")[0] for ln in sql.splitlines())
+
+
+tf_half = _bare(races[races.index("SELECT 'TF'"):])
+
+# the division match happens on meets_tf by itself
+cte = _bare(races[races.index("WITH chair_div"):races.index("SELECT 'XC'")])
+ok("FROM   meets_tf" in cte and "division ~* " in cte,
+   "the division regex must be applied to meets_tf on its own, before any "
+   "join to results_tf")
+ok("chair_div" in tf_half,
+   "...and the TF half must then read what that CTE found")
+
+# ! AND NOT ALSO THE OTHER WAY. A LEFT JOIN from results_tf to meets_tf in
+#   the TF half is the slow shape coming back, whatever else is true.
+ok("meets_tf" not in tf_half,
+   "the TF branches must not join meets_tf directly -- that is the 61M x "
+   "14M join this was rewritten to avoid")
+
+ok("event_short, '') ~* " in tf_half,
+   "the TF half must still match event_short: tfrrs puts the class there")
+
+# ⚠ meets_tf IS PRIMARY KEY (div_id, event_id) -- ONE ROW PER EVENT. A
+#   division that ran four events is four rows there, so joining the raw
+#   matches back multiplies every result of that division by four and
+#   n_chair (which --review divides by n_total) is inflated to match.
+ok("DISTINCT ON (meet_id, div_id, source)" in cte,
+   "the division set must be one row per (meet, division, feed) or the "
+   "join fans out and n_chair is wrong")
+ok("mt.div_id" in cte or "div_id" in cte, "and be keyed by div_id")
+ok("source" in cte,
+   "...and by source: meet_id is not one meet across feeds, the id spaces "
+   "collide")
+
+# ⚠ ONE ROW PER RESULT. Two branches over the same table can emit the same
+#   result_id twice -- a race whose event name AND division both say
+#   wheelchair -- and that is the same double-count by another route.
+ok("!~* " in tf_half,
+   "the division branch must exclude rows the event_short branch already "
+   "took, or a race labelled in both columns is counted twice")
 
 # ! AND THE CENSUS HAS TO COUNT IT. The census read healthy for weeks
 #   because a source nobody reads has no line to be zero on.

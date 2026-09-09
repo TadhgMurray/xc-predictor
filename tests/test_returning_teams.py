@@ -117,8 +117,30 @@ ok(teams.TEAM_MIN_RACES == build_min,
    f"{build_min} -- the returning board would rank a different squad")
 
 TE = io.open(os.path.join(ROOT, "racecast", "teams.py"), encoding="utf-8").read()
-ok("withinPool" in TE,
-   "the returning board must apply the pool ceiling the build applies")
+
+# ⚠ THE POOL CEILING IS PAIRED, WHICHEVER WAY IT GOES. Owner, 2026-09-09:
+#   "There probably shouldn't be a straight 150 cap btw ... just remove it
+#   for now flag if an issue later" -- so today it drops nobody in either
+#   place. What must never happen is one place dropping and the other not:
+#   the returning board would score a squad on five runners while the
+#   ordinary board scored it on six, and two boards would disagree about a
+#   team that had not changed. So this checks the BEHAVIOUR of both, not the
+#   presence of a name -- build_team_season still calls withinPool to COUNT.
+ns = {"withinPool": lambda pool, rating: False}   # everything is implausible
+exec(compile(BTS[BTS.index("def railCheckedRows"):BTS.index("def countingRows")],
+             "build_team_season", "exec"), ns)
+stats = {"above_rail": {}}
+kept = list(ns["railCheckedRows"](
+    [{"pool": "hs_m", "rating": 999.0}, {"pool": "hs_m", "rating": 1.0}], stats))
+ok(len(kept) == 2,
+   "the build's rail must pass every row through -- it counts, it does not "
+   "drop")
+ok(stats["above_rail"] == {"hs_m": 2},
+   "...and it must still COUNT them, or the build stops being able to say "
+   "what the old rail would have removed")
+ok("withinPool" not in TE,
+   "the build's rail drops nobody, so the returning board must not drop "
+   "anybody either -- if the ceiling comes back, it comes back in both")
 ok("teamState(" in TE,
    "the returning board must resolve the school's state, or BYU is three "
    "teams here and one on the board beside it")

@@ -580,20 +580,25 @@ def raceReturning(cur, f):
     if len(rows) >= RETURN_CAP:
         return None, len(rows)
 
-    # ★ THE SAME TWO STEPS THE BUILD TAKES, IN THE SAME ORDER, or this board
-    #   keys its teams differently from the one beside it: the pool ceiling
-    #   drops implausible runners (a mis-pooled transfer, not their team),
-    #   and teamState moves each row from the state it RACED in to the one
-    #   its school belongs to. Skip the second and BYU is three teams here
-    #   and one on the ordinary board.
-    from pool_ceiling import withinPool
+    # ★ THE SAME STEPS THE BUILD TAKES, IN THE SAME ORDER, or this board keys
+    #   its teams differently from the one beside it: teamState moves each row
+    #   from the state it RACED in to the one its school belongs to. Skip it
+    #   and BYU is three teams here and one on the ordinary board.
+    #
+    # ⚠ AND THE POOL CEILING IS GONE FROM BOTH, TOGETHER (owner, 2026-09-09:
+    #   "There probably shouldn't be a straight 150 cap btw ... just remove it
+    #   for now flag if an issue later"). It used to drop implausible runners
+    #   here exactly as build_team_season.railCheckedRows dropped them there.
+    #   Removing it from one alone is worse than leaving it in both: the
+    #   returning board would score a squad on five runners while the
+    #   ordinary board scored it on six, and the two would disagree about a
+    #   team that had not changed. If the rail comes back, it comes back in
+    #   both places on the same day.
     from school_identity import teamState, loadLabels
     from database import getConn
     loadLabels(getConn)
     field = []
     for r in rows:
-        if not withinPool(r["pool"], r["rating"]):
-            continue
         r["state"] = teamState(r.get("school"), r.get("pool"), r.get("state"))
         field.append(r)
 

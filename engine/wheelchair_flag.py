@@ -131,6 +131,41 @@ WHEELCHAIR_RX = rf"({_WORDS})|({_CODES})"
 _RACES = """
     DROP TABLE IF EXISTS wheelchair_race;
     CREATE UNLOGGED TABLE wheelchair_race AS
+    -- ★ THE TRACK DIVISIONS ARE RESOLVED ON THEIR OWN TABLE, FIRST (owner,
+    --   2026-09-09: "wheelchair flag is taking forever can you speed it
+    --   up"). The first version of the division read below was written as
+    --   one predicate over a join -- results_tf LEFT JOIN meets_tf, 61M rows
+    --   against 14M, with BOTH regexes evaluated on the join output. It is
+    --   correct and it is unusable: nothing narrows either side before the
+    --   join, so the planner has to build the whole thing.
+    --
+    --   Matching the division regex against meets_tf ALONE is 14M short
+    --   strings and no join, and the few thousand rows that survive it then
+    --   drive index lookups into results_tf on meet_id (idx_results_tf_meet,
+    --   scripts/add_page_indexes.py). Same rows out; one scan of each table
+    --   rather than a product of the two biggest tables in the database.
+    --
+    -- ⚠ AND IT FIXES A DOUBLE-COUNT, WHICH IS WHY THE DISTINCT ON IS NOT
+    --   DECORATION. meets_tf is PRIMARY KEY (div_id, event_id) -- one row
+    --   per EVENT, not per division (scripts/database.py: "one row per
+    --   event/division combo"; app.py says the same where it needs a
+    --   LATERAL to survive it). A chair division that ran four events is
+    --   four rows, so the three-column join matched each of its results
+    --   four times and n_chair counted them four times. n_chair is what
+    --   --review divides by n_total to decide who is doubtful, so it was
+    --   quietly making chair-heavy careers look chair-heavier. Verified on
+    --   a fixture: two meets_tf rows for one division turned result 10 into
+    --   two rows under the old form and one under this.
+    --
+    --   DISTINCT ON collapses that back to one row per (meet, division,
+    --   feed), which is the grain the join actually wants.
+    WITH chair_div AS MATERIALIZED (
+        SELECT DISTINCT ON (meet_id, div_id, source)
+               meet_id, div_id, source, division
+        FROM   meets_tf
+        WHERE  division ~* '{rx}'
+        ORDER  BY meet_id, div_id, source
+    )
         -- XC, both feeds. The join is SOURCE-SCOPED: `meets` describes anet
         -- and a tfrrs div_id is a different namespace, so joining it to both
         -- would match the wrong division by coincidence of number.
@@ -155,12 +190,13 @@ _RACES = """
             OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
                         '') ~* '{rx}')
         UNION ALL
-        -- ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09). This branch
-        --   read event_short ALONE, on the stated theory that "TF keeps the
+        -- ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09), WHICH IS WHY
+        --   THERE ARE TWO TF BRANCHES BELOW. There was one, reading
+        --   event_short alone, on the stated theory that "TF keeps the
         --   distance and the class in the EVENT name, which is where
         --   'Wheelchair 1500' lives. No division blob to read." That is
-        --   true of one feed and false of the other, and the comment made
-        --   the gap invisible.
+        --   true of the tfrrs feed and false of the anet one, and the
+        --   comment made the gap invisible.
         --
         -- ⚠ THE anet TRACK FEED PUTS THE CLASS IN THE DIVISION AND LEAVES
         --   THE EVENT BARE. Kohen Grantom's race page reads
@@ -174,18 +210,31 @@ _RACES = """
         -- ! WHICH IS WHY THE CENSUS LOOKED HEALTHY. 425 people via TF event
         --   names, 0 via the tfrrs blob -- and no line at all for an anet
         --   track division, because nothing was reading one.
+        --
+        -- So: first the tfrrs feed, where the class is in the event name.
         SELECT 'TF', r.result_id, r.person_id, r.date,
-               COALESCE(NULLIF(mt.division, ''), r.event_short),
-               CASE WHEN COALESCE(r.event_short, '') ~* '{rx}'
-                    THEN 'tf.event_short' ELSE 'tf.division' END
+               r.event_short, 'tf.event_short'
         FROM   results_tf r
-        LEFT   JOIN meets_tf mt
-                    ON mt.meet_id = r.meet_id
-                   AND mt.div_id  = r.div_id
-                   AND mt.source  = r.source
         WHERE  r.person_id IS NOT NULL
-          AND (COALESCE(r.event_short, '') ~* '{rx}'
-            OR COALESCE(mt.division, '')  ~* '{rx}');
+          AND  COALESCE(r.event_short, '') ~* '{rx}'
+        UNION ALL
+        -- ...and the anet track feed, where the class is in the DIVISION and
+        -- the event name is a bare "800m". Same evidence, different column.
+        --
+        -- ! THE !~* IS NOT AN OPTIMISATION, IT IS THE UNIQUENESS OF
+        --   result_id. A race labelled in BOTH columns would otherwise come
+        --   out of this UNION twice and be counted as two chair races. The
+        --   branch above wins that tie, which is the same precedence the
+        --   single CASE expression had when this was one query.
+        SELECT 'TF', r.result_id, r.person_id, r.date,
+               d.division, 'tf.division'
+        FROM   chair_div d
+        JOIN   results_tf r
+                    ON r.meet_id = d.meet_id
+                   AND r.div_id  = d.div_id
+                   AND r.source  = d.source
+        WHERE  r.person_id IS NOT NULL
+          AND  COALESCE(r.event_short, '') !~* '{rx}';
     CREATE INDEX ON wheelchair_race (person_id);
     ANALYZE wheelchair_race;
 """

@@ -181,27 +181,36 @@ _SOURCE_SQL = """
 """
 
 
-def eligibleRows(rows, stats):
-    """Pass rows through, dropping the ones no pool could have produced.
+def railCheckedRows(rows, stats):
+    """Pass every row through, counting the ones above their pool's ceiling.
 
-    ⚠ THE GRAIN IS THE ATHLETE, NOT THE TEAM, and that is the whole reason
-      this works as a filter rather than as a post-hoc deletion. Drop the
-      implausible RUNNERS and a club made entirely of them loses every
-      entrant and stops being a team at all -- scoreRows lifts out anything
-      that cannot field five. A real school with one mis-pooled transfer
-      loses that one runner and still scores, on the six who are really
-      theirs.
+    ★ IT USED TO DROP THEM, AND IT NO LONGER DOES -- see below. The count is
+      the whole remaining product: the build prints what the old rail WOULD
+      have removed, so the guess stays visible without acting on anything.
 
     ! COUNTED PER POOL AND PRINTED. A ceiling is a guess until somebody
       measures it, and a guess that is quietly deleting four thousand real
       high school seasons looks exactly like a guess that is working.
     """
+    # ★ THE RAIL COUNTS, IT NO LONGER DROPS (owner, 2026-09-09: "There
+    #   probably shouldn't be a straight 150 cap btw ... just remove it for
+    #   now flag if an issue later").
+    #
+    #   A flat line through a distribution with a real tail cannot tell a
+    #   150.1 season that is genuine from a 150.8 that is a wheelchair time
+    #   on the running scale -- and the second one has a cause worth fixing
+    #   at the source, which the chair-detection work now does. Dropping
+    #   both was buying very little and costing real seasons silently.
+    #
+    # ! STILL MEASURED, AND STILL PRINTED, so this stays a decision rather
+    #   than an amnesia: the count says what the old rail WOULD have
+    #   removed. If a squad turns up on a board with an impossible scorer,
+    #   that line is where to look first.
     for row in rows:
-        if withinPool(row["pool"], row["rating"]):
-            yield row
-        else:
-            stats["dropped"][row["pool"]] = (
-                stats["dropped"].get(row["pool"], 0) + 1)
+        if not withinPool(row["pool"], row["rating"]):
+            stats["above_rail"][row["pool"]] = (
+                stats["above_rail"].get(row["pool"], 0) + 1)
+        yield row
 
 
 def countingRows(rows, stats):
@@ -431,14 +440,14 @@ def build(conn, sport, since):
             cur.copy_expert(
                 f"COPY team_season_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
 
-    stats = {"read": 0, "years": set(), "teams": 0, "dropped": {},
+    stats = {"read": 0, "years": set(), "teams": 0, "above_rail": {},
              "restated": 0}
     # the school -> state map behind resolvedStates; a missing
     # school_identity table loads empty and every row keeps its own state
     from school_identity import loadLabels
     loadLabels(getConn)
     buf, n_rows, n_boards = io.StringIO(), 0, 0
-    for board in boards(eligibleRows(
+    for board in boards(railCheckedRows(
             resolvedStates(countingRows(read_rows, stats), stats), stats)):
         n_boards += 1
         stats["teams"] += len(board[4])
@@ -507,17 +516,17 @@ def build(conn, sport, since):
     print(f"  boards    {n_boards:,}  (one national + one per state, "
           f"per pool/sport/season)")
     print(f"  teams     {stats['teams']:,} ranked, {n_rows:,} rows written")
-    n_dropped = sum(stats["dropped"].values())
-    if n_dropped:
+    n_above = sum(stats["above_rail"].values())
+    if n_above:
         detail = ", ".join(f"{pool} {n:,} (>{POOL_CEILING.get(pool, '?')})"
-                           for pool, n in sorted(stats["dropped"].items()))
-        print(f"  ceiling   {n_dropped:,} athlete-seasons dropped as "
-              f"implausible for their pool -- {detail}")
-        print("            (see pool_ceiling.py; run audit_pool_ceilings.py "
-              "before trusting these numbers)")
+                           for pool, n in sorted(stats["above_rail"].items()))
+        print(f"  ceiling   {n_above:,} athlete-seasons are ABOVE their "
+              f"pool's ceiling and are RANKED ANYWAY -- {detail}")
+        print("            (the rail counts, it no longer drops; see "
+              "pool_ceiling.py and audit_pool_ceilings.py)")
     else:
-        print("  ceiling   0 athlete-seasons dropped -- either the pools are "
-              "clean or the ceilings are too high")
+        print("  ceiling   0 athlete-seasons above their pool's ceiling -- "
+              "either the pools are clean or the ceilings are too high")
     print(f"  alltime   {at_boards:,} boards, {at_rows:,} rows "
           f"({at_took:.0f}s) -- every season of a pool in one field")
     print(f"  took      {time.time() - started:.0f}s")
