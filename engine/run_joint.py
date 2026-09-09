@@ -596,6 +596,36 @@ def main():
     #   in an artifact nobody re-measured. Re-measure after any --ridge
     #   change: bbar is a weighted mean of beta and the ridge decides how
     #   much of the level lives there.
+    # ★★ OPTION (b), THE OWNER'S CALL 2026-09-09. One scale that means
+    #    fitness, by asserting the one thing the data cannot see rather than
+    #    trying to estimate it.
+    #
+    #    Sport is season -- XC is autumn, track is spring, and nobody races
+    #    both close enough together for fitness to be held constant. So the
+    #    mean offset between the two sports and the autumn-to-spring fitness
+    #    rise are the SAME QUANTITY in this corpus, and no estimator can
+    #    separate them. --merge-sports stops trying:
+    #
+    #      * the per-athlete sport offset (beta) is dropped -- there is no
+    #        sport to be offset from;
+    #      * recentreLevels DISCARDS each sport's mean course difficulty
+    #        instead of banking it in mu, so the two sports' average course
+    #        is equal by construction on the shared ruler;
+    #      * the curve is FREED (no winter-gain pin, no gap penalty), so
+    #        every bit of autumn-to-spring movement lands in the form curve.
+    #
+    #    Which is the property that was asked for: a rating means fitness,
+    #    and the number moving means fitness moved.
+    #
+    # ⚠ IT IS AN ASSUMPTION AND IT REPLACES FOUR IMPLICIT ONES. Today the
+    #   same scalar is set by XCP_WINTER_GAIN=0.02 pinning the curve at
+    #   weight 100, tangled with beta, the ridge and mu. This is that choice
+    #   made once, in the open.
+    ap.add_argument("--merge-sports", action="store_true",
+                    help="one scale for XC and TF: no sport offset, no sport "
+                         "level, and the curve free to carry the season. "
+                         "Implies --no-sport-offset, --winter-gain 0 and "
+                         "--curve-gap 0.")
     ap.add_argument("--sport-gap-delta", type=float, default=0.0,
                     metavar="D",
                     help="add this to the solve's bbar every pass -- D from "
@@ -626,6 +656,24 @@ def main():
                          "The solve keeps the term for both sports, the "
                          "hover shows it")
     args = ap.parse_args()
+
+    # ! THE IMPLICATIONS ARE APPLIED HERE, NOT DOCUMENTED AND LEFT TO THE
+    #   OPERATOR. Every one of them is part of the same assumption, and a run
+    #   that carried three of the four would be measuring nothing anybody
+    #   could name.
+    if args.merge_sports:
+        args.no_sport_offset = True
+        args.winter_gain = 0.0
+        args.curve_gap = 0.0
+        if args.sport_gap_delta:
+            print("[joint] --sport-gap-delta is meaningless with "
+                  "--merge-sports (there is no sport level to shift); "
+                  "ignoring it")
+            args.sport_gap_delta = 0.0
+        print("[joint] MERGED SPORTS: no beta, no sport level, curve free.\n"
+              "        The two sports' mean course difficulty is held equal "
+              "by construction,\n        so all autumn-to-spring movement "
+              "is carried by the form curve.")
 
 
     if not os.path.exists(args.pack):
@@ -671,7 +719,8 @@ def main():
                         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
                                        else js.ALT_PRIOR_PEN_FIXED),
                         dist_cal=not args.no_dist_cal,
-                        sport_gap_delta=args.sport_gap_delta)
+                        sport_gap_delta=args.sport_gap_delta,
+                        merge_sports=args.merge_sports)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap

@@ -1335,14 +1335,50 @@ def _recentreWith(b, D, bbar, s_row, cnt_a):
 #   races) and against the abilities (a uniform u over all races). The
 #   penalised optimum has every such mean at exactly zero, so moving them
 #   is a step toward the optimum, not away from it.
-def recentreLevels(b, D):
+# ★ THE ONE NUMBER THE DATA CANNOT SEE (owner, 2026-09-09: "how does that
+#   not mess with the difference being fitness?").
+#
+#   Sport is season: cross country is autumn, track is spring, and nobody
+#   races both close enough together for fitness to be held constant. So
+#   "track courses are easier" and "athletes are fitter in spring" are the
+#   same sentence in this data, and no estimator can split them. Two months
+#   of trying to measure a sport gap were spent on something unidentified.
+#
+# ★ BUT IT IS EXACTLY ONE SCALAR, AND THIS IS WHERE IT LIVES. Everything
+#   else IS identified: relative difficulties inside autumn (athletes race
+#   several grass courses each fall), relative difficulties inside spring,
+#   and the curve's shape inside each window. The only free thing is the
+#   mean offset between the two sets -- which this function computes as
+#   d_mean and stores in mu.
+#
+# ★ merge=True IS OPTION (b): ASSERT IT IS ZERO. The per-sport mean course
+#   difficulty is dropped instead of being kept in mu, so the two sports'
+#   average course is equal BY CONSTRUCTION on the shared ruler, and every
+#   bit of autumn-to-spring movement has nowhere to go but the form curve --
+#   which is to say, into FITNESS. That is the property the owner asked for:
+#   the number moving means fitness moved.
+#
+# ⚠ IT IS AN ASSUMPTION, NOT A MEASUREMENT, AND IT IS ALREADY BEING MADE.
+#   Today the same scalar is fixed by XCP_WINTER_GAIN=0.02 pinning the
+#   curve at CURVE_GAP_WEIGHT=100, entangled with beta, the ridge and mu --
+#   four places, interacting, none of them labelled as the assumption. This
+#   is the same choice made once, in the open, where it can be argued with.
+#
+# ! targetFor ALREADY IGNORES THE SPORT (its own docstring: "the bare key is
+#   authoritative"), so hs_m normalises to 5000m in BOTH sports. The shared
+#   ruler this rests on is already there; nothing needs re-normalising.
+def recentreLevels(b, D, merge=False):
     """Zero the per-group mean of d and of u, moving them into mu (and,
-    for the reference group, into every ability). In place."""
+    for the reference group, into every ability). In place.
+
+    merge=True drops those means instead of banking them in mu: the sports
+    are held to one level and the difference becomes fitness."""
     g = D.group_of_cell
     d_mean = (np.bincount(g, weights=b["d"], minlength=D.n_group)
               / np.maximum(np.bincount(g, minlength=D.n_group), 1))
     b["d"] = b["d"] - d_mean[g]
-    b["mu"] = b["mu"] + d_mean
+    if not merge:
+        b["mu"] = b["mu"] + d_mean
 
     race_group = np.zeros(D.n_race, dtype=np.int64)
     race_group[D.race] = D.group_row
@@ -1353,7 +1389,14 @@ def recentreLevels(b, D):
         if m.any():
             u_mean[gg] = float(b["u"][m].mean())
     b["u"] = np.where(seen, b["u"] - u_mean[race_group], b["u"])
-    b["mu"] = b["mu"] + u_mean
+    # ! THE RACE-DAY MEANS TOO, OR THE LEVEL COMES BACK THROUGH THE BACK
+    #   DOOR. u is the per-race effect; its per-sport mean is a sport level
+    #   by another name, and banking it in mu would rebuild exactly the
+    #   quantity merge=True exists to refuse. The first cut of this guarded
+    #   only the difficulty half and left mu at [0, 1.5] on a fixture built
+    #   to come out [0, 0].
+    if not merge:
+        b["mu"] = b["mu"] + u_mean
 
     # mu[0] is pinned at zero: whatever landed there is a global constant
     shift = float(b["mu"][0])
@@ -1440,7 +1483,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
-               dist_cal=True, sport_gap_delta=0.0):
+               dist_cal=True, sport_gap_delta=0.0,
+               merge_sports=False):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1491,7 +1535,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         bbar = 0.0
         if D.n_beta:
             b, bbar = recentreSportOffset(b, D, w, delta=sport_gap_delta)
-        b = recentreLevels(b, D)
+        b = recentreLevels(b, D, merge=merge_sports)
         theta = _pack(b, D)
 
         resid = y - rowPrediction(b, D, h, amp)

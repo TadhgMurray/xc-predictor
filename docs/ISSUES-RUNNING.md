@@ -806,6 +806,63 @@ renders for XC races too.* Live on restart.
 
 ---
 
+## 5a. ONE SCALE THAT MEANS FITNESS — `--merge-sports`
+
+> *"so how do we get one scale that actually means fitness"*
+
+**Sport is season.** XC is autumn, track is spring, and nobody races both
+close enough together for fitness to be held constant. So *"track courses are
+easier"* and *"athletes are fitter in spring"* are the **same sentence** in
+this corpus. No estimator can split them — which is why the sport gap came
+back as a closure error of +0.01440 instead of a number. **It was never
+identified.**
+
+★ **But it is exactly one scalar.** Relative difficulties inside autumn are
+pinned by athletes racing several grass courses each fall; same inside
+spring; same for the curve's shape inside each window. The only thing the
+data cannot see is the mean offset between the two sets — and
+`recentreLevels` is already where that number lives, banked in `mu`.
+
+★ **`--merge-sports` asserts it is zero.** The per-sport means of course
+difficulty **and** of the race effect are dropped rather than banked, so the
+two sports' average course is equal by construction. Then autumn-to-spring
+movement has nowhere to go but the form curve — which is fitness.
+
+    XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 \
+      --joint-args "--merge-sports"
+
+It implies, and applies, all four halves of the same assumption:
+`--no-sport-offset` (no beta), `--winter-gain 0`, `--curve-gap 0` (curve
+free), and it refuses `--sport-gap-delta`.
+
+! **`targetFor` already ignores the sport** — its own docstring: "the bare
+key is authoritative", so hs_m normalises to 5000m in *both* sports. The
+shared ruler this rests on is already there. **Nothing needs re-normalising
+and no backfill is required.**
+
+⚠ **This is an assumption, and it replaces four implicit ones.** Today the
+same scalar is set by `XCP_WINTER_GAIN=0.02` pinning the curve at weight 100,
+tangled with `beta`, the ridge and `mu` — four places, interacting, none
+labelled. This is that choice made once, in the open, where it can be argued
+with.
+
+**No second run is needed to find the winter gain.** Under `--merge-sports`
+there is no winter gain input: the curve is free and *reports* the
+autumn-to-spring path instead of being told it. Read it afterwards with
+`scripts/curve_window_gap.py logs/<run>.out` — unpinned, that number is now
+meaningful.
+
+**Constant, by grade, or by ability?** Neither constant nor a new knob: the
+curve is already fitted **per pool** (elem/ms/hs/college × gender ≈ grade
+band) with 14 knots, and its amplitude is already tilted by ability
+(`amplitudeFromRating`, `AMP_TILT_PER_POINT`). So it is per-grade and
+ability-scaled today. It has just never been allowed to move. Free it first,
+look at the shape, then decide whether it needs more structure.
+
+`tests/test_merge_sports.py`
+
+---
+
 ## 5b. THE RESET — two ratings and one conversion
 
 > *"there must just be some way to say that this is a 145 in xc, and it
