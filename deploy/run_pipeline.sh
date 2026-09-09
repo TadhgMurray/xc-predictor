@@ -130,7 +130,13 @@ summarise() {
 #                   pack it cannot un-rate them in the SOLVE, but it does
 #                   keep them out of the fill and off every board, which is
 #                   where they show.
-_ALWAYS="02_drop_old 04b_wheelchair"
+# ⚠ 05b_anchor_repair IS HERE BECAUSE --from 7 IS THE STANDARD RECIPE AND
+#   IT SKIPPED THE REPAIR ENTIRELY (owner's run20:
+#   "05b_anchor_repair_xc + 05b_anchor_repair_tf skipped (--from 7)").
+#   Placing a fix at step 5 and then never running step 5 is not a fix.
+#   It is cheap once the corpus is clean -- one scan, idempotent, no
+#   writes when nothing is wrong -- so it runs on every --from.
+_ALWAYS="02_drop_old 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift

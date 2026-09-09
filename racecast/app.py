@@ -4747,8 +4747,24 @@ def get_course_cell_difficulties(cur, course_name):
               AND  cd.difficulty IS NOT NULL
             ORDER  BY cd.distance_m, cd.n_results DESC NULLS LAST
         """, {"course": course_name})
-        return {int(r["distance_m"]): float(r["difficulty"])
-                for r in cur.fetchall()}
+        # ★★ KEYED THE WAY IT IS LOOKED UP, WHICH IT WAS NOT (owner,
+        #    2026-09-09: "difficulty not printed here"). The caller asks for
+        #    int(round(d / 100) * 100) -- 4828m becomes 4800 -- while this
+        #    returned the RAW distance_m, so 4828 went in and 4800 was asked
+        #    for and every distance on every course page rendered "-".
+        #    course_difficulties.canonical_id exists after all; the column was
+        #    never the problem, the key was.
+        #
+        # ! BOTH SPELLINGS ARE KEPT. Some cells are stored already rounded and
+        #   some are not, and a page that renders a difficulty only for the
+        #   ones that happen to be round is the same bug with better odds.
+        out = {}
+        for r in cur.fetchall():
+            d = float(r["distance_m"])
+            val = float(r["difficulty"])
+            out[int(d)] = val
+            out.setdefault(int(round(d / 100.0) * 100), val)
+        return out
     except Exception as e:               # noqa: BLE001
         # ⚠⚠ IT USED TO SWALLOW THIS AND RETURN {}, SO EVERY DISTANCE ON
         #    EVERY COURSE PAGE RENDERED AS "-" AND NOTHING SAID WHY (owner,

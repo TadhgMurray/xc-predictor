@@ -78,10 +78,35 @@ ok("except Exception as e" in blk,
 ok("app.logger" in blk or "print(" in blk,
    "a query that silently returns {} renders '-' everywhere and says "
    "nothing -- it has to report")
-ok("canonical_id" in blk and "build_course_canonical" in blk,
-   "and name the likely cause, since the fix is a specific script")
 # ! STILL NOT FATAL. A course page without its difficulty is worth rendering.
 ok("return {}" in blk, "but it must still degrade rather than 500")
+
+
+# ---- 4. and the key it returns is the key the caller asks for ---------- #
+#   ⚠⚠ THIS WAS THE ACTUAL CAUSE OF THE "-", not a missing column:
+#      canonical_id and distance_m both exist. The caller looks up
+#      int(round(d / 100) * 100) -- 4828m becomes 4800 -- while the dict was
+#      built on the RAW distance_m. 4828 in, 4800 asked for, miss, every
+#      distance on every course page.
+ok("round(d / 100.0) * 100" in blk,
+   "the returned dict must also carry the rounded key the caller uses")
+ok("out[int(d)] = val" in blk,
+   "...and the raw one, because some cells are stored already rounded")
+ok("setdefault" in blk,
+   "the raw spelling must win a collision rather than being overwritten by "
+   "a rounded neighbour")
+
+
+# ---- 5. the anchor repair survives --from 7 ---------------------------- #
+#   ⚠⚠ run20: "05b_anchor_repair_xc + 05b_anchor_repair_tf skipped
+#      (--from 7)". --from 7 is the standard recipe, so a fix placed at step
+#      5 was a fix that never ran. _ALWAYS is the pipeline's own mechanism
+#      for a step that must run on every --from.
+PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
+               encoding="utf-8").read()
+always = re.search(r'_ALWAYS="([^"]*)"', PIPE).group(1)
+ok("05b_anchor_repair_xc" in always and "05b_anchor_repair_tf" in always,
+   f"both repair steps must be in _ALWAYS or --from 7 skips them: {always}")
 
 
 if __name__ == "__main__":
