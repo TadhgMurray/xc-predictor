@@ -646,7 +646,45 @@ indoor/outdoor figure before passing anything to `--sport-gap-delta`.
 Still possibly the same coin as 5.3: a systematic XC-difficulty compression
 shows up as "TF looks overrated". Worth re-measuring D after 5.3 lands.
 
-### 💤 5.3 XC course difficulty compression
+### 🔎 5.3 XC course difficulty compression — **audit built, needs a run**
+> *"look at if it's a CA thing as well"*
+
+The symptom, from Lex Young's dump — his six California courses:
+
+    Woodbridge 0.1%   Clovis 0.2%   CIF State 0.2%
+    Marmonte 1.7%     CIF-SS 5.8%   NXN 5.9%
+
+A flat September 5k and a hilly November one do not differ by a fifth of one
+percent, and the three with the **largest fields** are the ones reading as
+exactly average.
+
+    scripts/difficulty_spread.py            # seconds
+    scripts/difficulty_spread.py --top 40
+
+**Two explanations, different fixes, and §2 of the report separates them:**
+
+- **shrinkage** — thin courses pulled toward zero by a prior. Then the sd of
+  difficulty **rises** across the `n_results` buckets and the big courses are
+  already honest.
+- **a flat scale** — every course near zero however much data it has. sd
+  stays flat, and more data will not fix it.
+
+**§3 and §4 ask the CA question both ways round**, because both answers are
+plausible and need opposite fixes:
+
+- CA **wider** → the estimator works where the data is dense and the rest of
+  the country is being shrunk.
+- CA **narrower** → the big CA courses are effectively defining zero, and the
+  compression starts there.
+
+§4 also weights by results, not by course: CA has many small courses and a
+few enormous ones, and "what does a random *race* look like" is the question.
+§5 lists the biggest courses — if those cluster at 0.00, the scale is
+anchored on them.
+
+Read-only, one pass over `meets`, no per-row lookups.
+`tests/test_difficulty_spread.py`
+
 Mt SAC and Crystal Springs +8% → +4%; Foot Locker at Morley Field +0.7% on a
 hard course; Ultimook back to +8.7%. **Your own hypothesis is the one I would
 chase**: *"might be something with distance solve with really good runners vs
