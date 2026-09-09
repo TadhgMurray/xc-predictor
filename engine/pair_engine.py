@@ -78,8 +78,24 @@ def buildResponse(cols):
 # Syntax:    one int64 key beats np.unique(axis=0) at 59M rows; multiplying the
 #            athlete code by 10000 makes the combination unique for any 4-digit
 #            season.
-def athleteSeasonCodes(athlete, year):
+# ★ sport SPLITS THE ABILITY, AND THAT IS THE POINT OF IT (owner,
+#   2026-09-09). Keyed on (athlete, year) alone, ONE ability has to serve an
+#   autumn 5k and a spring 800 -- which it cannot, so `beta`, a per-athlete
+#   sport offset, was bolted on to patch the difference. Keyed on
+#   (athlete, year, sport) the two are separate numbers, the real
+#   autumn-to-spring gain is the difference between them, and it reaches the
+#   rating because the rating IS the ability. beta then has nothing left to
+#   patch and comes out.
+#
+# ! sport=None IS THE OLD KEY, EXACTLY. Callers that do not pass one behave
+#   as they always did.
+def athleteSeasonCodes(athlete, year, sport=None):
     key = athlete.astype(np.int64) * 10000 + year.astype(np.int64)
+    if sport is not None:
+        # ⚠ MULTIPLY, DO NOT ADD A SMALL FLAG. year already occupies the low
+        #   four digits; adding sport to the same field would collide an
+        #   athlete's TF season with their XC season of the following year.
+        key = key * 2 + (np.asarray(sport).astype(np.int64) != 0)
     _, codes = np.unique(key, return_inverse=True)
     return codes.astype(np.int64), int(codes.max()) + 1
 

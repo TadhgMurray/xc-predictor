@@ -264,7 +264,7 @@ def bandLabels(base_labels):
 
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
-                dist_bands=True):
+                dist_bands=True, split_ability=False):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
@@ -274,7 +274,14 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
     days = cols["days"][keep]
     sport = cols["sport"][keep] if "sport" in cols else None
 
-    athlete, n_ath = pe.athleteSeasonCodes(cols["athlete"], cols["year"])
+    # ★ ONE ABILITY PER SPORT-SEASON UNDER --split-ability. See
+    #   athleteSeasonCodes: keyed (athlete, year) a single number has to
+    #   serve an autumn 5k and a spring 800, which is what beta existed to
+    #   patch. Split, the autumn-to-spring gain is the difference between two
+    #   abilities and reaches the rating, because the rating IS the ability.
+    athlete, n_ath = pe.athleteSeasonCodes(
+        cols["athlete"], cols["year"],
+        (cols["sport"] if split_ability and "sport" in cols else None))
     athlete = athlete[keep]                       # codes over ALL rows: aligned
     race_all, n_race = raceCodes(cols["course"], cols["days"])
     race = race_all[keep]
@@ -482,12 +489,14 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
                              link=args.link and not args.no_link,
-                             dist_bands=not args.no_dist_bands)
+                             dist_bands=not args.no_dist_bands,
+                             split_ability=args.split_ability)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
                              link=args.link and not args.no_link,
-                             dist_bands=not args.no_dist_bands)
+                             dist_bands=not args.no_dist_bands,
+                             split_ability=args.split_ability)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
                         n_outer=args.outer, robust=not args.no_robust,
@@ -621,6 +630,27 @@ def main():
     #   same scalar is set by XCP_WINTER_GAIN=0.02 pinning the curve at
     #   weight 100, tangled with beta, the ridge and mu. This is that choice
     #   made once, in the open.
+    # ★★ THE RESTRUCTURE (owner, 2026-09-09). "fitness should have a mean of
+    #    0 in season but fitness needs to apply to course difficulty."
+    #
+    #      ability   per (athlete, year, SPORT) -- carries the level, and it
+    #                is what the rating reads, so nothing is deleted
+    #      beta      gone; there is no single ability left for it to patch
+    #      curve     shape only, still applied when difficulty is estimated
+    #
+    #    The autumn-to-spring gain stops being a curve term and becomes the
+    #    difference between two abilities, which is where a reader would
+    #    look for it.
+    #
+    # ⚠ IT DOES NOT MAKE THE XC/TF LEVEL IDENTIFIED, AND NOTHING CAN. Split
+    #   by sport, autumn athlete-seasons touch only autumn courses and spring
+    #   only spring: two components with nothing joining them. What changes
+    #   is that the one free scalar is now ISOLATED -- see XC_TRACK_GAP --
+    #   instead of leaking through beta, mu, the winter-gain pin and the
+    #   go-live band shift at once.
+    ap.add_argument("--split-ability", action="store_true",
+                    help="one ability per (athlete, year, sport). Implies "
+                         "--no-sport-offset: beta has nothing left to patch.")
     ap.add_argument("--merge-sports", action="store_true",
                     help="one scale for XC and TF: no sport offset, no sport "
                          "level, and the curve free to carry the season. "
@@ -661,6 +691,15 @@ def main():
     #   OPERATOR. Every one of them is part of the same assumption, and a run
     #   that carried three of the four would be measuring nothing anybody
     #   could name.
+    if args.split_ability:
+        # ! beta PATCHED A SHARED ABILITY. There is no shared ability now, so
+        #   leaving it in would fit a sport offset on top of two separate
+        #   sport levels -- the same quantity twice.
+        args.no_sport_offset = True
+        print("[joint] SPLIT ABILITY: one ability per (athlete, year, "
+              "sport); beta off.\n        The autumn-to-spring gain is now "
+              "the difference between two\n        abilities, and it reaches "
+              "the rating.")
     if args.merge_sports:
         args.no_sport_offset = True
         args.winter_gain = 0.0
@@ -702,7 +741,8 @@ def main():
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
         link=args.link and not args.no_link, altitude=args.altitude,
-        dist_bands=not args.no_dist_bands)
+        dist_bands=not args.no_dist_bands,
+        split_ability=args.split_ability)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")

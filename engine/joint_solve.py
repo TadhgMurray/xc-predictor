@@ -101,6 +101,42 @@ SPORT_RIDGE = 0.5
 # The form curve: knots every 30 days from 1 August (academic day 0), 13 of
 # them, so the last spans June into July. Piecewise linear: two nonzeros per
 # row, no scipy, and a second difference is the natural roughness.
+# ★★ THE ONE NUMBER THE DATA CANNOT MEASURE (owner, 2026-09-09: "how do we
+#    measure the free scalar?"). It cannot. Sport is season and the two
+#    components share no data, so the relative level of XC against TF is a
+#    DEFINITION. This is that definition, written down once.
+#
+# ★ TRACK IS THE REFERENCE, AND THE SCALE MEANS "WHAT YOU WOULD RUN ON A
+#   TRACK". A track is the fastest, most standardised surface in the corpus,
+#   so anchoring there is the one choice that is not arbitrary -- and it is
+#   the only one that makes a CHECKABLE prediction about the difficulties.
+#
+# ★ 0.0583 = ln(1.06), FROM COACHING PRACTICE, NOT FROM THIS CORPUS. The
+#   long-standing conversion for the same distance on grass rather than a
+#   track:
+#
+#       firm and flat        x1.03      hilly                x1.08
+#       average course       x1.06      muddy championship   x1.10
+#
+#   so an average cross country course costs about 6%. Independent physiology
+#   agrees on the size: running on grass costs roughly 5% more energy than a
+#   hard surface at the same speed.
+#
+# ⚠ A CONSTANT IS THE RIGHT SHAPE, AND THAT WAS CHECKED RATHER THAN ASSUMED.
+#   The surface cost is a per-step energy loss and stays a roughly constant
+#   FRACTION of running economy across speeds, so it does not vary with
+#   ability. What it varies by is the COURSE -- the 3% to 10% ladder above --
+#   and that variation already has a home in course_difficulties. Putting it
+#   in this scalar as well would count it twice.
+#
+# ! HOW TO FALSIFY IT. Anchored here, the XC difficulty distribution must
+#   come out physically sane: the famously fast courses near +2%, an average
+#   one near +6%, the brutal ones +10-15%, and nothing meaningfully NEGATIVE
+#   (nothing is faster than a track). scripts/difficulty_spread.py prints
+#   exactly that distribution. If it does not look like the ladder, this
+#   number is wrong and the failure is visible in one command.
+XC_TRACK_GAP = 0.0583
+
 CURVE_KNOT_DAYS = 30.0
 CURVE_N_KNOTS = 13
 ACADEMIC_YEAR_START_DOY = 213          # 1 August

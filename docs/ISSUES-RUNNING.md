@@ -806,6 +806,70 @@ renders for XC races too.* Live on restart.
 
 ---
 
+## 5-0. THE RESTRUCTURE — ability per sport-season, and one written-down scalar
+
+> *"fitness should have a mean of 0 in season but fitness needs to apply to
+> course difficulty"* … *"how do we measure the free scalar?"*
+
+**You can't.** Sport is season, the two halves share no data, so the relative
+level of XC against TF is a **definition**. Everything below is about making
+it one definition in one place instead of four implicit ones.
+
+### What's built
+
+- **ability per `(athlete, year, sport)`** — `--split-ability`. It was keyed
+  `(athlete, year)`, so one number had to serve an autumn 5k and a spring
+  800; `beta` was bolted on to patch the difference. Split, the
+  autumn-to-spring gain **is** the difference between two abilities, and it
+  reaches the rating because the rating *is* the ability. Nothing is deleted
+  at go-live.
+- **`beta` off** — implied by the flag; there's no shared ability left to
+  patch, and leaving it in would fit the sport level twice.
+- **`XC_TRACK_GAP = 0.0583`** in `joint_solve` — the free scalar, named,
+  once.
+
+⚠ All three `buildDesign` call sites pass it, including the holdout's two — a
+holdout scored on a differently-keyed ability is scoring a different model
+from the one that goes live.
+
+### The scalar: track is the reference
+
+`ln(1.06) = 0.0583`. The scale then means **"what you'd run on a track."**
+From coaching practice, not from this corpus — same distance on grass:
+
+| firm / flat | average | hilly | muddy championship |
+|---|---|---|---|
+| ×1.03 | **×1.06** | ×1.08 | ×1.10 |
+
+Physiology agrees on the size: grass costs roughly 5% more energy than a hard
+surface at the same speed.
+
+**Constant, not a function of ability — and that was checked, not assumed.**
+The surface cost is a per-step energy loss and stays a roughly constant
+*fraction* of running economy across speeds. The course-to-course variation
+(the 3→10% ladder) already lives in `course_difficulties`; putting it in the
+scalar too would count it twice.
+
+**How to falsify it in one command.** Anchored at track, the XC difficulties
+must land on that ladder — famous fast courses near +2%, average near +6%,
+brutal ones +10–15%, and **nothing meaningfully negative** (nothing is faster
+than a track). `scripts/difficulty_spread.py` prints exactly that
+distribution.
+
+### Still open — the curve
+
+⚠ **Not built, deliberately.** With ability split by sport-season, a constant
+inside one window is still confounded between the curve and the abilities in
+it, and the curve is dropped at go-live — so it can still delete signal. The
+fix is to move each window's curve mean *into* the abilities (a
+reparameterisation, predictions unchanged), not to penalise it toward a
+guess. That needs care with the amplitude weighting and the pinned reference
+knot, and I've shipped one wrong version of this already tonight.
+
+`tests/test_split_ability.py`
+
+---
+
 ## 5a. ONE SCALE THAT MEANS FITNESS — `--merge-sports`
 
 > *"so how do we get one scale that actually means fitness"*
