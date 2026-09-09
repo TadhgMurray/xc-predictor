@@ -487,10 +487,44 @@ check does not apply as written. 16 rows; worth a look, not a fire. It is
 also downstream of the pro-scale change (§1.7), which redirects pro rows to
 the college anchor.
 
-⏳ **Not fixed: the mismatch itself.** The audit names it; nothing yet makes
-the two stages agree. Options are (a) re-normalise on the rated pool at
-go-live, (b) pin the pool at backfill and make the solve use that one. Needs
-your call once the corpus count is in.
+✅ **Fixed by `engine/anchor_repair.py`** — option (a), your call.
+
+    python engine/anchor_repair.py --sport TF            # dry run, counts
+    python engine/anchor_repair.py --sport TF --apply
+    python engine/anchor_repair.py --sport XC --apply
+
+**The seam:** `backfill_normalize` resolves a season's level from
+`season_level`, which only speaks when the verdict is **unanimous**. An
+athlete who ran mostly non-HS races and a few HS ones has no unanimous
+verdict, so the backfill falls back to `poolFor(grade=12)` → `hs_m` and
+writes `normalized_time` at the 5000m anchor. The engine's resolver takes a
+majority, calls the season `college_m`, and divides by a mean on the 8000m
+anchor.
+
+⚠ **It rescales, it does not recompute.** `anchor_check`'s `expected` is a
+bare distance factor — no season, no weather, no track geometry, no course.
+The stored value has all of those baked in, so writing `expected` back would
+fix the anchor and silently strip every correction the pipeline computed.
+Instead:
+
+    new = stored × factor(d, rated_pool) / factor(d, pool_it_was_on)
+
+Everything that is not the pool factor survives exactly. Verified on a
+fixture carrying a 1.7% correction: the repaired value matches the correct
+one to five significant figures, and the naive `expected` write does not.
+
+It abstains rather than guesses: if no pool reproduces the stored value to
+within `IDENTIFY_TOL` (3%, against the 10% that decides "wrong"), the row is
+counted and left alone. It is idempotent, dry-run by default, and writes
+`normalized_time` and nothing else.
+
+⚠ **It takes a run to show up.** The rating is computed *from*
+`normalized_time` during the solve, so this fixes the next engine run, not
+the ratings in the table now. Order: go-live (writes `rating_pool`) →
+`anchor_repair --apply` → re-run the engine.
+
+Expected effect on the mile final: **Leo 231.8 → 142.9, Lex 229.9 → 141.7**,
+beside Birnbaum's 144.2 and Hansen's 143.4.
 
 **Not the cause, ruled out:** the seasonal anchor (academic 2022 is normal —
 avg 106.0, p99 123.5); recency (max has been 280–345 most years since 2002);
