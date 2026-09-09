@@ -71,6 +71,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     # --- season ratings, exactly as the sequential path builds them ------ #
     attrs = pr.groupAttributes(D.athlete, athlete_raw, year, D.n_ath,
                                pr.poolPerAthlete(cols["athlete_keys"]))
+
     rat = pr.buildRatings(out["ability"], attrs)
 
     # --- per-result ratings, both anchors -------------------------------- #
@@ -158,9 +159,57 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     chosen = rs if anchor == "seasonal" else rc
 
     # --- the difficulty, display-anchored ---------------------------------- #
+    # ★★ THE ZERO IS A TRACK (owner, 2026-09-09: "how do we make average track
+    #    difficulty default 0.0?"). It used to be the results-weighted mean
+    #    over BOTH sports at once -- so the zero sat wherever the corpus'
+    #    mix of XC and TF happened to put it, TF has more results per cell,
+    #    and the zero was dragged toward the track while every XC course read
+    #    positive against a meaningless reference.
+    #
+    #    Anchored on the TF cells alone, a track is 0.0 by construction and
+    #    the scale means "what you would run on a track". Every XC course is
+    #    then measured against a surface, not against an average of two
+    #    sports whose mixture changes every time the corpus grows.
+    #
+    # ★ AND IT MAKES THE SCALE FALSIFIABLE, WHICH IS THE REAL GAIN. Anchored
+    #   here, the XC mean has a predicted value that comes from outside this
+    #   corpus: coaching practice puts the same distance on grass at x1.06 of
+    #   a track (x1.03 firm and flat, x1.08 hilly, x1.10 muddy), i.e.
+    #   js.XC_TRACK_GAP = ln(1.06) = 0.0583. That is not imposed here -- it is
+    #   PRINTED and compared, so a wrong scale announces itself on every run.
     w = rows_per_cell.astype(np.float64)
     raw = out["delta"]
-    anchored = raw - np.average(raw[solved], weights=w[solved])
+    # which cells are track: a cell belongs to one sport, so take it from the
+    # rows that raced there
+    tf_rows = np.bincount(D.cell, weights=(sport == 1).astype(np.float64),
+                          minlength=D.n_cell)
+    is_tf = tf_rows > (rows_per_cell * 0.5)
+    ref = solved & is_tf
+    if ref.any():
+        anchored = raw - np.average(raw[ref], weights=w[ref])
+        xc_ref = solved & ~is_tf
+        if xc_ref.any():
+            xc_mean = float(np.average(anchored[xc_ref], weights=w[xc_ref]))
+            print(f"[joint/live] difficulty zero = the average TRACK. "
+                  f"Cross country lands at {100 * np.expm1(xc_mean):+.2f}% "
+                  f"(expected about "
+                  f"{100 * np.expm1(js.XC_TRACK_GAP):+.2f}% -- grass at the "
+                  f"same distance)")
+            off = xc_mean - js.XC_TRACK_GAP
+            if abs(off) > 0.03:
+                # ⚠ 3 POINTS IS A THIRD OF THE WHOLE LADDER (firm 3% to muddy
+                #   10%). Past that the scale is not measuring a surface.
+                print(f"[joint/live] ⚠ that is {100 * off:+.1f} points off "
+                      f"the expected grass cost. The XC/TF scale is wrong, "
+                      f"not merely uncertain -- read "
+                      f"scripts/difficulty_spread.py before trusting these "
+                      f"boards.")
+    else:
+        # ! NO TRACK CELLS AT ALL (an XC-only pack). Fall back to the old
+        #   both-sports mean rather than dividing by nothing.
+        print("[joint/live] no track cells in this pack -- difficulty "
+              "anchored on all solved cells, as before")
+        anchored = raw - np.average(raw[solved], weights=w[solved])
     difficulty = np.where(solved, np.expm1(anchored), 0.0)
     diffs = pg.buildDifficultyDict(keys, difficulty, D.cell, athlete_raw,
                                    solved)

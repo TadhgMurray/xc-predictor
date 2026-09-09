@@ -648,6 +648,26 @@ def main():
     #   is that the one free scalar is now ISOLATED -- see XC_TRACK_GAP --
     #   instead of leaking through beta, mu, the winter-gain pin and the
     #   go-live band shift at once.
+    # ★ FITNESS KEEPS ITS SHAPE AND GIVES BACK ITS LEVEL. joint_solve already
+    #   folds the curve's POOL-wide mean into the ability; this does it per
+    #   athlete-season, which is the grain that matters, because the leftover
+    #   is exactly the season-correlated part that go-live deletes.
+    ap.add_argument("--centre-curve", action="store_true",
+                    help="fold each athlete-season's own mean curve "
+                         "contribution into its ability, so the season curve "
+                         "keeps only its shape and its level reaches the "
+                         "rating")
+    # ★ MORE SHRINKAGE THAN THE DATA ASK FOR, PER GROUP. tau is the prior SD
+    #   of a course's difficulty in log terms; pen_cell = sigma2/tau2, so a
+    #   smaller tau shrinks every course harder and the thin ones hardest,
+    #   which is where the noise is. Measured on this corpus, the spread of
+    #   WELL-EVIDENCED courses is about 0.024 (2.4%) while courses under 50
+    #   results scatter at 0.083 -- so a cap near the former pulls the latter
+    #   in without touching the courses that earned their number.
+    ap.add_argument("--tau-max", default=None, metavar="XC,TF",
+                    help="cap the per-sport course-difficulty prior SD, e.g. "
+                         "0.025,0.025. Empty for one side keeps it free "
+                         "(e.g. ',0.02' caps TF only).")
     ap.add_argument("--split-ability", action="store_true",
                     help="one ability per (athlete, year, sport). Implies "
                          "--no-sport-offset: beta has nothing left to patch.")
@@ -691,6 +711,20 @@ def main():
     #   OPERATOR. Every one of them is part of the same assumption, and a run
     #   that carried three of the four would be measuring nothing anybody
     #   could name.
+    # ! PARSED INTO THE {group: cap} SHAPE solveJoint already takes for
+    #   --tau-tf-max, so there is one mechanism rather than two.
+    if args.tau_max:
+        parts = [p.strip() for p in args.tau_max.split(",")]
+        if len(parts) != 2:
+            ap.error("--tau-max wants XC,TF (either may be empty)")
+        caps = {g: float(v) for g, v in enumerate(parts) if v}
+        if caps:
+            args.tau_tf_max = None      # the general form supersedes it
+            args._tau_caps = caps
+            print(f"[joint] course-difficulty prior capped at "
+                  f"{ {('XC', 'TF')[g]: v for g, v in caps.items()} } "
+                  f"(log SD) -- thin courses shrink toward their sport's "
+                  f"level")
     if args.split_ability:
         # ! beta PATCHED A SHARED ABILITY. There is no shared ability now, so
         #   leaving it in would fit a sport offset on top of two separate
@@ -767,12 +801,15 @@ def main():
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=args.probes,
                         curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
-                        tau_max={1: args.tau_tf_max} if args.tau_tf_max else None,
+                        tau_max=(getattr(args, "_tau_caps", None)
+                                 or ({1: args.tau_tf_max}
+                                     if args.tau_tf_max else None)),
                         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
                                        else js.ALT_PRIOR_PEN_FIXED),
                         dist_cal=not args.no_dist_cal,
                         sport_gap_delta=args.sport_gap_delta,
-                        merge_sports=args.merge_sports)
+                        merge_sports=args.merge_sports,
+                        centre_curve=args.centre_curve)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap

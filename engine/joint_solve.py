@@ -1403,6 +1403,49 @@ def _recentreWith(b, D, bbar, s_row, cnt_a):
 # ! targetFor ALREADY IGNORES THE SPORT (its own docstring: "the bare key is
 #   authoritative"), so hs_m normalises to 5000m in BOTH sports. The shared
 #   ruler this rests on is already there; nothing needs re-normalising.
+# ★★ FITNESS HAS MEAN ZERO IN A SEASON, AND ITS LEVEL BELONGS IN THE RATING
+#    (owner, 2026-09-09: "fitness should have a mean of 0 in season but
+#    fitness needs to apply to course difficulty").
+#
+#    The curve sits beside the ability in the prediction:
+#
+#        time ~ ability[athlete-season] + amp * f(pool, day) + difficulty
+#
+#    Inside one season, adding c to the curve and taking c off every ability
+#    in it gives IDENTICAL predictions -- a null direction the model cannot
+#    resolve. The solver parks the constant wherever its priors push it, and
+#    then go-live reads the rating from the ability ALONE and throws the
+#    curve away. Whatever the curve happened to hold is deleted.
+#
+#    Measured tonight: unpinned, the curve held -0.09 to -0.19 by pool. That
+#    much, deleted, sport-selectively.
+#
+# ★ SO GIVE THE LEVEL BACK. Per athlete-season, the mean of its own curve
+#   contribution is added to its ability. The curve then explains only what
+#   varies WITHIN the season -- shape, which is what it is for and what
+#   de-biases a course that only ever hosts November races -- while the level
+#   reaches the board.
+#
+# ! A PUBLISH-TIME RELABEL, NOT A SOLVE-TIME PROJECTION, AND THAT IS
+#   DELIBERATE. The fit is finished and untouched: this only changes which
+#   number is called the ability. A reparameterisation inside the loop would
+#   have to move the shared curve's knots to match, respecting the pinned
+#   reference knot and the per-athlete amplitude, and getting that subtly
+#   wrong is how the merge attempt corrupted a whole run.
+def curveLevelPerAthlete(b, D, amp):
+    """Each athlete-season's mean curve contribution, per athlete-season.
+
+    Zeros when there is no curve. Pure: no database, no globals."""
+    n = int(D.n_ath)
+    if b.get("c") is None or not getattr(D, "has_curve", False):
+        return np.zeros(n)
+    f_row = D.w0 * b["c"][D.k0] + D.w1 * b["c"][D.k1]
+    a_row = amp if np.ndim(amp) else np.full(D.n, float(amp))
+    tot = np.bincount(D.athlete, weights=a_row * f_row, minlength=n)
+    cnt = np.maximum(np.bincount(D.athlete, minlength=n), 1)
+    return tot / cnt
+
+
 def recentreLevels(b, D, merge=False):
     """Zero the per-group mean of d and of u, moving them into mu (and,
     for the reference group, into every ability). In place.
@@ -1520,7 +1563,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                dist_cal=True, sport_gap_delta=0.0,
-               merge_sports=False):
+               merge_sports=False, centre_curve=False):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1697,6 +1740,30 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         pool_g[D.athlete] = D.pool_row
         out["ability_raw"] = b["a"]
         out["ability"] = b["a"] + amp_g * mean_p[pool_g]
+
+        # ★★ PER ATHLETE-SEASON, NOT PER POOL (owner, 2026-09-09: "fitness
+        #    should have a mean of 0 in season"). The line above folds back
+        #    the curve's mean over the WHOLE POOL -- every athlete, all year,
+        #    both sports. An athlete who races only in autumn does not
+        #    experience that average, so what is left in the curve for them
+        #    is their own season's deviation from it: precisely the
+        #    season-correlated part, and precisely what gets deleted when
+        #    go-live reads the rating from the ability alone.
+        #
+        #    Unpinned, that leftover was -0.09 to -0.19 by pool -- 9 to 19%
+        #    of a rating, applied by season and therefore by sport.
+        #
+        # ! IT IS THE SAME REPARAMETERISATION AT A FINER GRAIN, and it is
+        #   still exact: amp is constant within an athlete-season, so its own
+        #   mean curve contribution is a constant for that season and moving
+        #   it changes no prediction. On the comment above's own test -- the
+        #   per-race median agreeing with the season rating -- this is
+        #   strictly better, because the ability now IS the athlete's average
+        #   form over the races they actually ran.
+        if centre_curve:
+            lvl = curveLevelPerAthlete(b, D, amp)
+            out["ability"] = b["a"] + lvl
+            out["curve_level"] = lvl
         out["curve"] = c
         out["curve_anchored"] = c - mean_p[:, None]
         out["curve_knot_days"] = np.arange(D.n_knot) * D.knot_days

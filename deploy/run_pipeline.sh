@@ -471,6 +471,18 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_ALTITUDE:+--altitude}
+  # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
+  #   row's normalized_time on the pool it is RATED in and reports the ones
+  #   that disagree -- rows normalised as hs_m and rated as college_m come
+  #   out 60% inflated, which is how two athletes rated 230 in a race whose
+  #   other six finishers rated 141-144.
+  #
+  # ⚠ IT IS A REPORT, NOT A GATE. It writes nothing and cannot fail the run;
+  #   `|| true` keeps a diagnostic from ever taking a pipeline down. Read the
+  #   percentages: they should be a fraction of a percent, and a jump means
+  #   the two stages have drifted apart again.
+  step 08c_anchor_check "$PY" -u engine/anchor_check.py --sport TF --pct 1 \
+      || true
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else
