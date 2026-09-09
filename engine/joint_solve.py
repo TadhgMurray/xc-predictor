@@ -452,7 +452,21 @@ CG_MAX_ITER_PROBE = 150
 #   rowPrediction on a quarter of it. Raise XCP_THREADS toward the core
 #   count and measure the per-outer line; the gather keeps paying until
 #   memory bandwidth saturates, and only the reductions stop caring.
-_N_THREADS = max(1, min(int(os.environ.get("XCP_THREADS", "8")), os.cpu_count() or 1))
+# ★ THE DEFAULT FOLLOWS THE BOX (owner, 2026-09-09: "yes do that free
+#   thing"). It was a flat 8, which on the 32-core server ran rowPrediction
+#   -- the bigger half of every CG iteration -- on a quarter of the machine
+#   while the reductions, which cannot use more than their ~9 jobs, were
+#   never the reason for the cap. An env var you have to remember every run
+#   is not a default.
+#
+# ! CAPPED AT 24, not left at cpu_count. The gather is memory-bandwidth
+#   bound at the top end and the reductions stop caring past their job
+#   count, so the last threads buy little and contend for the same
+#   bandwidth. On a box with 24 cores or fewer this changes nothing.
+#   XCP_THREADS still overrides in both directions.
+_N_THREADS = max(1, min(int(os.environ.get("XCP_THREADS", "0")) or
+                        min(os.cpu_count() or 1, 24),
+                        os.cpu_count() or 1))
 
 
 # ------------------------------------------------------------------ #

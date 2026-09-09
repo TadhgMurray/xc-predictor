@@ -15,10 +15,10 @@ fixed
 | # | Thing | Who does it |
 |---|---|---|
 | 1 | `git pull` on the box, restart the site | you |
-| 2 | `python racecast/build_team_season.py` — read the `restated` line | you |
-| 3 | `/srv/venv/bin/python scripts/add_page_indexes.py` — builds it CONCURRENTLY, site stays up | you |
+| 2 | ~~`python racecast/build_team_season.py`~~ ✅ **done** — 686,207 seasons restated | — |
+| 3 | ~~`scripts/add_page_indexes.py`~~ ✅ **done** — `rr_pool_year_dist_idx` built | — |
 | 4 | `/srv/venv/bin/python engine/wheelchair_flag.py --write` — read the `carried forward` line | you |
-| 5 | Paste the two athlete dumps (§6) so the 230 and the chair case can be closed | you |
+| 5 | `/srv/venv/bin/python scripts/athlete_dump.py 26155532 23965611` — one command, paste the output | you |
 
 Nothing in §1–§4 needs a pipeline run. §5 items do.
 
@@ -99,6 +99,11 @@ renumbering `person_id`.
 added. Carried rows are marked `via 'carried:'` and the count is printed.
 `--forget <person_id>` is the only way off.* `9231cc9`
 
+⚠ The first run of this crashed: `ensureTable` did `cur.fetchone()[0]`, which
+works on the plain cursor `build_ranking_results` uses and raises
+`KeyError: 0` on the `RealDictCursor` this module runs on. My new call site
+exposed a latent assumption. *Fixed — both shapes handled.*
+
 **Run `engine/wheelchair_flag.py --write` and read the `carried forward`
 line — a nonzero count is this bug, quantified.**
 
@@ -125,16 +130,25 @@ signature, so the one-vector deflation would have bought nothing.
 before any deflation is written.* Smooth geometric decay = cluster (wrong
 tool); plateau breaking into drops = isolated directions. `1e4b288`
 
-### 💤 1.9 The solve is slow (8h 14m)
-`XCP_THREADS` defaults to 8 on a 32-core box. `rowPrediction` splits ~60M
-**rows** across threads and is 0.9s of every 1.2s iteration — it scales with
-cores, unlike the reductions. **Try `XCP_THREADS=24`.** `d744086`
+### ⏳ 1.9 The solve is slow (8h 14m)
+`XCP_THREADS` defaulted to a flat 8 on a 32-core box. `rowPrediction` splits
+~60M **rows** across threads and is 0.9s of every 1.2s iteration — it scales
+with cores, unlike the reductions, which cannot use more than their ~9 jobs
+and were never the reason for the cap.
+
+*The default now follows the box: `min(cpu_count, 24)`, so the server gets 24
+and nothing under 24 cores changes. Capped rather than left at `cpu_count`
+because the gather is memory-bandwidth bound at the top end. `XCP_THREADS`
+still overrides both ways.* Takes effect on the next solve. `d744086`
 
 ---
 
 ## 2. THE SITE — BOARDS
 
-### ✅ 2.1 One squad ranked as several teams
+### ✅ 2.1 One squad ranked as several teams — **confirmed live**
+> `restated  686,207 athlete-seasons moved to their school's own state`
+
+
 BYU held ranks 5, 7 and 8 as WI, OK and FL with 5/6/6 athletes instead of one
 BYU with 17. `ranking_results.state` is where the **race** was;
 `athlete_season.state` is the mode of that; `team_rank.teamKey` keys a squad
@@ -302,26 +316,23 @@ renders for XC races too.* Live on restart.
 
 ## 6. WHAT I NEED FROM YOU
 
-`racecast.co` is blocked from my sandbox by the network egress proxy, so I
-cannot open the athlete links. These two queries give me the same thing:
+`racecast.co` is blocked from my sandbox by the environment's egress policy,
+so I cannot open the athlete links, and you should not have to write SQL for
+me. One command gives me everything:
 
 ```sh
-# the 230 season -- 23965611
-scripts/q "SELECT r.date, m.meet_name, r.event_short, r.time_seconds,
-                  r.speed_rating, r.rating_pool, r.normalized_time
-           FROM results_tf r LEFT JOIN meets_tf m USING (meet_id)
-           WHERE r.person_id = 23965611 ORDER BY r.date" > /tmp/a.txt
-scripts/q "SELECT year, sport, pool, mean_rating, best_rating, n_races, grade
-           FROM athlete_season WHERE person_id = 23965611 ORDER BY year" >> /tmp/a.txt
-
-# the chair athlete -- 26155532
-scripts/q "SELECT * FROM wheelchair_person WHERE person_id = 26155532"
-scripts/q "SELECT r.date, m.division, r.event_short, r.speed_rating
-           FROM results_tf r LEFT JOIN meets m ON m.div_id = r.div_id
-           WHERE r.person_id = 26155532 ORDER BY r.date LIMIT 40"
+/srv/venv/bin/python scripts/athlete_dump.py 26155532 23965611
 ```
 
-For the chair one the question is specific: **is 26155532 in
-`wheelchair_person` at all**, and if not, do any of their rows still carry a
-label the regex would match? That separates "the evidence was deleted" (§1.6,
-fixed) from "the rule never matched them" (a different bug).
+It prints, per athlete: identity, `athlete_season` rows (the rating the boards
+rank), every rated race with `rating_pool` / `normalized_time` / course
+difficulty, the exclusion tables, **whether the live chair rule matches any of
+their rows regardless of the list**, and how many rows lost their
+`normalized_time`.
+
+That last pair is the whole chair diagnosis in two lines: in the list → fine;
+not in the list but the rule matches → the list went stale (§1.6, fixed); not
+in the list and the rule matches nothing → the rule never saw them, which is a
+different bug and needs a different fix.
+
+Read-only — every statement is a SELECT, safe with the site running.

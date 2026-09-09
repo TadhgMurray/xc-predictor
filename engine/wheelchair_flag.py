@@ -252,12 +252,27 @@ _EMPTY_DDL = """
 """
 
 
+# ! ONE ROW, EITHER CURSOR. This module runs on a RealDictCursor and
+#   build_ranking_results.ensureWheelchairPerson calls ensureTable on a
+#   PLAIN one, so a bare row[0] works for one caller and raises KeyError: 0
+#   for the other. That is exactly what happened the first time
+#   wheelchair_flag itself called ensureTable (2026-09-08).
+def _one(cur):
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row[0])
+    except (KeyError, TypeError):
+        return int(next(iter(row.values())))
+
+
 def ensureTable(cur):
     """wheelchair_person exists, possibly empty. Returns its row count so
     the caller can say out loud when the exclusion is a no-op."""
     cur.execute(_EMPTY_DDL)
-    cur.execute("SELECT count(*) FROM wheelchair_person")
-    return int(cur.fetchone()[0])
+    cur.execute("SELECT count(*) AS n FROM wheelchair_person")
+    return _one(cur)
 
 
 _SUMMARY = """
@@ -325,7 +340,7 @@ def main():
         cur.execute("CREATE TEMP TABLE wheelchair_person_prev AS "
                     "SELECT * FROM wheelchair_person")
         cur.execute("SELECT count(*) AS n FROM wheelchair_person_prev")
-        n_prev = int(cur.fetchone()["n"])
+        n_prev = _one(cur)
 
         cur.execute(_PEOPLE)
 
