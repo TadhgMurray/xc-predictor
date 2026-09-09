@@ -143,6 +143,9 @@ def dump(cur, person_id):
                            "is_field", "mark"])
             has_ev_on_row = ev in rcols
             mcols = _have(cur, meets, ["meet_name", "course_name", "division"])
+            # narrow the lateral by division when both sides carry one
+            div_join = bool(_have(cur, meets, ["div_id"])
+                            and _have(cur, table, ["div_id"]))
             sel = [f"r.{c}" for c in rcols if c != "speed_rating"]
             if "speed_rating" in rcols:
                 sel.append("round(r.speed_rating::numeric, 1) AS rating")
@@ -156,11 +159,24 @@ def dump(cur, person_id):
                            "AS course_pct")
                 diff = ("LEFT JOIN course_difficulties cd ON cd.course_name = "
                         f"'{sport}:' || m.course_name")
+            # ⚠ A LATERAL, NOT A JOIN, AND THIS COST A WHOLE DUMP.
+            #   meets holds one row per DIVISION and meets_tf one row per
+            #   EVENT (14.17M rows over 658K (meet_id, div_id) pairs, ~21.5
+            #   each), so `JOIN ... ON meet_id AND source` fans every result
+            #   out across every division or event of its meet. Kohen
+            #   Grantom's THREE track rows came back as 405 identical lines,
+            #   which reads as "this athlete has 405 races" and is the
+            #   opposite of what a diagnostic is for. LIMIT 1 is exactly one
+            #   meet row per result, whatever the meet's shape.
             _table(*_rows(cur, f"""
                 SELECT {', '.join(sel)}
                 FROM   {table} r
-                LEFT   JOIN {meets} m ON m.meet_id = r.meet_id
-                                     AND m.source  = r.source
+                LEFT   JOIN LATERAL (
+                    SELECT * FROM {meets} mm
+                    WHERE  mm.meet_id = r.meet_id AND mm.source = r.source
+                    {"AND mm.div_id = r.div_id" if div_join else ""}
+                    LIMIT  1
+                ) m ON TRUE
                 {diff}
                 WHERE  r.person_id = %(p)s
                 ORDER  BY r.date
