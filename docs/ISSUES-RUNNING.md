@@ -17,7 +17,7 @@ fixed
 | 1 | `git pull` on the box, restart the site | you |
 | 2 | ~~`python racecast/build_team_season.py`~~ ✅ **done** — 686,207 seasons restated | — |
 | 3 | ~~`scripts/add_page_indexes.py`~~ ✅ **done** — `rr_pool_year_dist_idx` built | — |
-| 4 | `/srv/venv/bin/python engine/wheelchair_flag.py --write` — read the `carried forward` line | you |
+| 4 | ~~`engine/wheelchair_flag.py --write`~~ ✅ **done** — 578 people, nothing lost, so §1.6 was not the cause | — |
 | 5 | `/srv/venv/bin/python scripts/athlete_dump.py 26155532 23965611` — one command, paste the output | you |
 
 Nothing in §1–§4 needs a pipeline run. §5 items do.
@@ -75,7 +75,19 @@ list without rebuilding the pack leaves chair athletes in the solve. Worse,
 
 *The clear now fires whenever 07 will run.* `0ea462a`, `97b30e3`
 
-### ⏳ 1.6 Chair athletes keep un-detecting themselves (14) — **the real one**
+### ⏳ 1.6 Chair athletes keep un-detecting themselves (14) — **a guard, NOT the cause**
+
+> ⚠ **CORRECTION, 2026-09-09.** I was wrong that this is what you are seeing.
+> The first sticky run reported `all 578 previously flagged people were found
+> again by the fresh scan` — **nothing had been lost**. The list is not stale
+> and the feedback loop below did not fire on this corpus. The fix stays as a
+> guard (it costs nothing and the failure it prevents is real and silent), but
+> the chair athlete on your board is a **different bug**, still open. The dump
+> in §6 decides which: the rule not matching them at all, or the rule matching
+> and something downstream rating them anyway.
+
+The mechanism, kept because it is still a live hazard:
+
 > *"it's not a detection gap bcs we've detected these ppl so many times b4,
 > which is an issue that keeps popping up in them stop getting detected."*
 
@@ -104,8 +116,8 @@ works on the plain cursor `build_ranking_results` uses and raises
 `KeyError: 0` on the `RealDictCursor` this module runs on. My new call site
 exposed a latent assumption. *Fixed — both shapes handled.*
 
-**Run `engine/wheelchair_flag.py --write` and read the `carried forward`
-line — a nonzero count is this bug, quantified.**
+**Run once (done, 2026-09-09): `all 578 previously flagged people were found
+again` — carry count zero, so this was never the cause here.**
 
 ### ⏳ 1.7 Pros get "crazy low" ratings
 Not a solve bug. A rating is `100 × pool_mean / exp(a)` and 100 is the mean of
