@@ -583,6 +583,24 @@ def main():
                          "default, see the note above")
     ap.add_argument("--no-link", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-sport-offset", action="store_true")
+    # ★ THE MEASURED XC/TF GAP (owner, 2026-09-09: "mainly the fact that most
+    #   of the best seasons of all time are tf"). scripts/measure_sport_gap.py
+    #   interpolates each athlete's TF level across an XC season and back --
+    #   2.4M sandwiches, SE 0.00004 -- and reports D, the error in the gap in
+    #   log-rating. Pass that D here and the solve's own bbar is nudged by it
+    #   on every outer pass, which moves TF by D/2 and XC by -D/2.
+    #
+    # ! OFF BY DEFAULT, and deliberately not read from a file. This is the
+    #   number that decides which sport tops an all-time board, so it should
+    #   appear in the command that produced the run and in its log, not sit
+    #   in an artifact nobody re-measured. Re-measure after any --ridge
+    #   change: bbar is a weighted mean of beta and the ridge decides how
+    #   much of the level lives there.
+    ap.add_argument("--sport-gap-delta", type=float, default=0.0,
+                    metavar="D",
+                    help="add this to the solve's bbar every pass -- D from "
+                         "scripts/measure_sport_gap.py (e.g. -0.02795). "
+                         "Negative means TF currently rates too high.")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
     # ⚠ THE LIVE SWITCH (issue 116). --golive writes course_difficulties,
@@ -652,8 +670,19 @@ def main():
                         tau_max={1: args.tau_tf_max} if args.tau_tf_max else None,
                         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
                                        else js.ALT_PRIOR_PEN_FIXED),
-                        dist_cal=not args.no_dist_cal)
+                        dist_cal=not args.no_dist_cal,
+                        sport_gap_delta=args.sport_gap_delta)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
+    if args.sport_gap_delta:
+        # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap
+        #   correction and one without produce different all-time boards
+        #   from the same data, and the only difference is this number.
+        print(f"[joint] sport gap: bbar carried a measured "
+              f"{args.sport_gap_delta:+.5f} -- TF cells moved "
+              f"{args.sport_gap_delta / 2:+.5f}, XC "
+              f"{-args.sport_gap_delta / 2:+.5f} in log-rating "
+              f"({abs(args.sport_gap_delta) * 50:.1f} points at a 100 rating, "
+              f"{abs(args.sport_gap_delta) * 75:.1f} at 150)")
 
     delta = out["delta"]
     rows_per_cell = np.bincount(D.cell, minlength=D.n_cell).astype(np.float64)

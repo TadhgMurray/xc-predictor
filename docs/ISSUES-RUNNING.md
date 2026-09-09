@@ -534,9 +534,68 @@ the solve (`rating × normalized_time` is constant to 0.03% across 38 rows
 `scripts/rating_scale_probe.py` still measures the population corpus-wide;
 `anchor_check.py` names the cause per row.
 
-### 💤 5.2 TF overrated vs XC (the sport gap)
-Your read. Note it may be the same coin as 5.3: a systematic XC-difficulty
-compression shows up as "TF looks overrated relative to XC".
+### ⏳ 5.2 TF overrated vs XC (the sport gap) — **measured, plumbed, not yet run**
+> *"mainly the fact that most of the best seasons of all time are tf"*
+
+`scripts/measure_sport_gap.py`, on **2.4M sandwiches** (an athlete's TF level
+interpolated across an XC season and back), SE 0.00004:
+
+    D = -0.02795 in log-rating, XC minus interpolated TF
+
+Negative = XC rates **below** the athlete's own interpolated TF level, i.e.
+**TF is over-rewarded by 2.8%.** Each sport carries half:
+
+| | now | corrected |
+|---|---|---|
+| a 150 TF season | 150 | **147.9** |
+| a 150 XC season | 150 | **152.1** |
+
+A 4.2-point swing at 150 — which is exactly the size that decides an all-time
+board.
+
+**It is not the distance curve.** The tool's own test: `D/span` across the 8
+pools has mean −0.0234 and sd 0.0165, a spread 70% of the mean. Not constant,
+so the distance-exponent hypothesis is out. Against the other columns
+(n=8, all confounded, so read as a hint not a finding):
+
+    TF races per season   r = -0.886
+    mean race distance    r = -0.87
+    mean season rating    r = +0.728
+    span                  r = -0.625
+
+⚠ **A single global constant is right for the boards that matter and wrong
+for the small pools.** Residual after applying D globally:
+
+    hs_m       +0.4%   hs_f       -0.5%
+    college_m  -1.3%   college_f  -1.1%     <- still TF-high
+    ms_m       +2.9%   ms_f       +1.0%     <- now TF-low
+    elem_m     +1.9%   elem_f     +2.0%
+
+All-time boards are hs and college, so the global fix takes those from
+2.4–4.0% wrong to under 1.3%. ms/elem get worse in relative terms. Per-pool
+bbar is the obvious follow-up; not built.
+
+*Plumbed as `run_joint --sport-gap-delta D`, off by default.*
+`tests/test_sport_gap_delta.py`
+
+    XCP_WINTER_GAIN=0.02 XCP_WINTER_GAIN_BANDS=0.045,0.04,0.035 XCP_ALTITUDE=1 \
+      bash deploy/run_pipeline.sh --from 7 ... --sport-gap-delta -0.02795
+
+★ **A delta, not an absolute — and the tool's own suggestion is wrong here.**
+It prints `bbar -0.03924 -> -0.06719`, but −0.03924 is the **old pair
+engine's** number, quoted out of `linkage_check`'s header. The joint solve
+computes its own bbar from `beta` on every outer pass and never reads
+`sport_gap_bbar.json`, so pinning the absolute would import an unrelated
+engine's estimate. Adding D to whatever the pass computed moves the gap by
+exactly D, whatever the base turns out to be.
+
+⚠ **Only valid at the ridge it was measured at** — the same caveat
+`linkage_check.recenterSport` already carries. bbar is a weighted mean of
+`beta` and `--ridge` decides how much of the level lives in `beta` rather
+than `mu`. Change the ridge, re-measure.
+
+Still possibly the same coin as 5.3: a systematic XC-difficulty compression
+shows up as "TF looks overrated". Worth re-measuring D after 5.3 lands.
 
 ### 💤 5.3 XC course difficulty compression
 Mt SAC and Crystal Springs +8% → +4%; Foot Locker at Morley Field +0.7% on a

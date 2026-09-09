@@ -1264,9 +1264,36 @@ def ratingsFromAbility(a, athlete_pool, n_races, n_pool,
 #   season already removed, i.e. the surface -- not whether it is needed.
 #   Applied after every CG pass as a reparameterisation, so the next pass
 #   warm-starts on the centred point.
-def recentreSportOffset(b, D, w=None):
+# ★ THE DELTA IS THE ONLY WAY THE MEASURED SPORT GAP GETS IN (2026-09-09).
+#   scripts/measure_sport_gap.py interpolates an athlete's TF level across an
+#   XC season and back, over 2.4M sandwiches, and reports D -- the error in
+#   the XC/TF GAP, in log-rating. Its own closing line: "recenterSport has to
+#   TAKE a bbar rather than compute one; the reparameterisation arithmetic is
+#   unchanged, you are only replacing a confounded estimate with a measured
+#   constant."
+#
+# ⚠ A DELTA, NOT AN ABSOLUTE, AND THE DIFFERENCE IS NOT COSMETIC. The
+#   measurement's product is the ERROR in the gap, and it printed
+#   "bbar -0.03924 -> -0.06719" against the value in linkage_check's header
+#   -- the OLD pair engine's number, read out of a comment. This solve
+#   computes its own bbar from beta on every outer pass and does not read
+#   that file, so the two are not the same quantity and pinning the absolute
+#   would import an unrelated engine's estimate. Adding D to whatever this
+#   pass computed moves the gap by exactly D, which is what was measured,
+#   whatever the base turns out to be.
+#
+# ⚠ AND IT IS ONLY VALID AT THE RIDGE IT WAS MEASURED AT, the same caveat
+#   linkage_check.recenterSport carries: bbar is a weighted mean of beta and
+#   the ridge decides how much of the level sits in beta rather than mu. A
+#   run with a different --ridge needs the measurement repeated.
+#
+# ! DEFAULTS TO 0.0, so a run that does not pass one behaves exactly as
+#   before. The verbose line prints the base and the delta separately, so a
+#   log says which run carried it.
+def recentreSportOffset(b, D, w=None, delta=0.0):
     """Move the weighted mean of beta into mu (and the abilities). Returns
-    (b, bbar); b is modified in place."""
+    (b, bbar); b is modified in place. `delta` is added to the computed
+    bbar -- the measured gap error, not a replacement estimate."""
     if b.get("beta") is None or D.sc is None:
         return b, 0.0
     ww = np.ones(D.n) if w is None else w
@@ -1274,7 +1301,7 @@ def recentreSportOffset(b, D, w=None):
     ok = wsum > 0
     if not ok.any():
         return b, 0.0
-    bbar = float(np.average(b["beta"][ok], weights=wsum[ok]))
+    bbar = float(np.average(b["beta"][ok], weights=wsum[ok])) + float(delta)
     # s per row is sc + sbar_g; the group's mean s and each athlete's sbar
     s_row = D.sc + (np.bincount(D.athlete, weights=D.sc, minlength=D.n_ath)
                     / np.maximum(np.bincount(D.athlete, minlength=D.n_ath), 1)
@@ -1413,7 +1440,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
-               dist_cal=True):
+               dist_cal=True, sport_gap_delta=0.0):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1463,7 +1490,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         b = D.unpack(theta)
         bbar = 0.0
         if D.n_beta:
-            b, bbar = recentreSportOffset(b, D, w)
+            b, bbar = recentreSportOffset(b, D, w, delta=sport_gap_delta)
         b = recentreLevels(b, D)
         theta = _pack(b, D)
 
@@ -1516,6 +1543,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             if D.n_beta:
                 extra += (f", |beta| mean {np.abs(b['beta']).mean():.4f}, "
                           f"recentred by {bbar:+.5f}")
+                if sport_gap_delta:
+                    extra += (f" (measured gap {sport_gap_delta:+.5f} of it, "
+                              f"base {bbar - sport_gap_delta:+.5f})")
             if D.n_c:
                 gaps = curveWindowGaps(theta[D.o_c:D.o_r],
                                        curveGapVectors(D, w, amp))
