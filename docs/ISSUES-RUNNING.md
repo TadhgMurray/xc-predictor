@@ -806,6 +806,47 @@ renders for XC races too.* Live on restart.
 
 ---
 
+## 5b. THE RESET — two ratings and one conversion
+
+> *"there must just be some way to say that this is a 145 in xc, and it
+> correlates to a 4:00 mile fitness wise at that moment."*
+
+There is, and it is a **different question** from the one the solve asks.
+
+    the solve   one ability per athlete plus a sport offset -- "how good are
+                they, and how much do they specialise?"
+    this        a MAPPING -- "an XC rating of R at this time of year goes
+                with what track performance?"
+
+★ **The first question has no answer in this data.** The closure error
+(+0.01440, 20–90 SE) says the three arms do not share one set of levels.
+Every hour spent hunting a single XC/TF offset was spent hunting something
+that is not there.
+
+★ **The mapping does exist, and the closure error IS its shape.** It is the
+conversion varying with the calendar — which is exactly what an athlete
+experiences. So stop removing time to recover a constant; keep it.
+
+    scripts/xc_tf_bridge.py --pool hs_m
+
+Three tables: TF-minus-XC by **month** of the track race; the same by
+**level** (a constant ratio is an assumption, so it gets checked); and what a
+TF rating is **in seconds** over the mile. Compose them:
+
+    an XC rating R in month M  ->  TF rating R x (1 + pct/100)  ->  a mile time
+
+On a fixture with a month-by-month gap planted, it recovered every month
+exactly and turned a 145 into a **4:00.3 mile**.
+
+⚠ This is a measurement. It writes nothing and changes no rating. It exists
+to show the mapping is there and has a shape, so the engine can be pointed at
+it — and it is the natural companion to splitting the sports (§5.2), not a
+replacement for it: rate each sport on its own scale, then publish the
+conversion between them. That says strictly more than one blended scale, and
+it is honest about the part that moves.
+
+---
+
 ## 6. WHAT I NEED FROM YOU
 
 `racecast.co` is blocked from my sandbox by the environment's egress policy,
