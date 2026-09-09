@@ -163,10 +163,22 @@ def dump(cur, person_id):
                 sel.insert(2, "left(m.division, 20) AS division")
             diff = ""
             if "course_name" in mcols and _exists(cur, "course_difficulties"):
+                # ⚠ ALSO A LATERAL. course_difficulties holds several rows
+                #   per course_name -- it is keyed by canonical_id and
+                #   distance underneath -- so a plain join on the name
+                #   repeated Lex Young's Clovis race two dozen times with a
+                #   different figure each line, one of them 55.0%. The
+                #   biggest cell is the representative one; the column is
+                #   indicative, and named so.
                 sel.append("round((cd.difficulty * 100)::numeric, 1) "
                            "AS course_pct")
-                diff = ("LEFT JOIN course_difficulties cd ON cd.course_name = "
-                        f"'{sport}:' || m.course_name")
+                order = ("ORDER BY n_results DESC NULLS LAST"
+                         if _have(cur, "course_difficulties", ["n_results"])
+                         else "")
+                diff = ("LEFT JOIN LATERAL (SELECT difficulty FROM "
+                        "course_difficulties c WHERE c.course_name = "
+                        f"'{sport}:' || m.course_name {order} LIMIT 1) "
+                        "cd ON TRUE")
             # ⚠ A LATERAL, NOT A JOIN, AND THIS COST A WHOLE DUMP.
             #   meets holds one row per DIVISION and meets_tf one row per
             #   EVENT (14.17M rows over 658K (meet_id, div_id) pairs, ~21.5
@@ -190,6 +202,27 @@ def dump(cur, person_id):
                 ORDER  BY r.date
             """, p), limit=60)
         _section(f"3{'a' if sport == 'XC' else 'b'}. {sport} races", races)
+
+    # ★ LEAD WITH THE OUTLIERS. A dump that pages through a career in date
+    #   order buries the one row being asked about -- Lex Young's 3,214 XC
+    #   rows pushed the season in question past every limit twice. The
+    #   question is always "why is THAT number that big", so the biggest
+    #   numbers go on screen first.
+    def extremes():
+        for sport, table in (("XC", "results"), ("TF", "results_tf")):
+            if not _have(cur, table, ["speed_rating"]):
+                continue
+            print(f"  {sport}, highest-rated rows:")
+            _table(*_rows(cur, f"""
+                SELECT r.date,
+                       round(r.speed_rating::numeric, 1) AS rating,
+                       r.rating_pool, r.time_seconds, r.normalized_time
+                FROM   {table} r
+                WHERE  r.person_id = %(p)s AND r.speed_rating IS NOT NULL
+                ORDER  BY r.speed_rating DESC
+                LIMIT  8
+            """, p))
+    _section("2b. the biggest ratings on file", extremes)
 
     def exclusions():
         if _exists(cur, "wheelchair_person"):

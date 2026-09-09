@@ -155,8 +155,6 @@ _RACES = """
             OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
                         '') ~* '{rx}')
         UNION ALL
-        -- TF keeps the distance and the class in the EVENT name, which is
-        -- where "Wheelchair 1500" lives. No division blob to read.
         -- ★ TWO PLACES ON TRACK, NOT ONE (owner, 2026-09-09). This branch
         --   read event_short ALONE, on the stated theory that "TF keeps the
         --   distance and the class in the EVENT name, which is where
@@ -187,8 +185,7 @@ _RACES = """
                    AND mt.source  = r.source
         WHERE  r.person_id IS NOT NULL
           AND (COALESCE(r.event_short, '') ~* '{rx}'
-            OR COALESCE(mt.division, '')  ~* '{rx}')
-);
+            OR COALESCE(mt.division, '')  ~* '{rx}');
     CREATE INDEX ON wheelchair_race (person_id);
     ANALYZE wheelchair_race;
 """
