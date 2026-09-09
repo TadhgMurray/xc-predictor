@@ -123,9 +123,25 @@ ok("MERGED SPORTS" in RJ,
 # ---- 4. the pipeline does not turn it on by itself --------------------- #
 PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
                encoding="utf-8").read()
-ok("--merge-sports" not in PIPE,
-   "run_pipeline must not acquire this silently -- it changes what a rating "
-   "means")
+# ! THE PIPELINE OFFERS IT, BUT ONLY WHEN ASKED. XCP_MERGE_SPORTS is the
+#   same ${VAR:+--flag} shape as the winter gain beside it: absent unless the
+#   operator sets it.
+ok("${XCP_MERGE_SPORTS:+--merge-sports}" in PIPE,
+   "the pipeline must expose it, or the only way to run it is by hand")
+# ! COMMENTS STRIPPED FIRST. The shell comment above the step explains what
+#   the flag does and names it; that is documentation, not an invocation.
+_cmd = "\n".join(ln.split("#")[0] for ln in PIPE.splitlines())
+ok("--merge-sports" not in _cmd.replace(
+       "${XCP_MERGE_SPORTS:+--merge-sports}", ""),
+   "and nowhere unconditionally -- it changes what a rating means")
+
+# ⚠⚠ THE FIFTH PLACE, AND IT IS NOT IN THE SOLVE. --winter-gain-bands shifts
+#    the TRACK ROWS at go-live (issue 194), which is a sport level asserted
+#    after the fit. Leaving it on would put back by hand exactly what
+#    recentreLevels(merge=True) refused.
+ok("args.winter_gain_bands = None" in block,
+   "--merge-sports must also drop the go-live band shift, or the sport "
+   "level is reinstated after the solve")
 
 
 if __name__ == "__main__":

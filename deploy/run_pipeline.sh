@@ -458,8 +458,16 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # (issue 194); unset, no shift.
   # --outer 5: the sixth outer moved sigma by 0.00003 and the level by
   #   nothing on run12; XCP_OUTER=6 puts it back.
+  # ★ XCP_MERGE_SPORTS=1 -- ONE SCALE THAT MEANS FITNESS (2026-09-09).
+  #   Sport is season, so the XC/TF level is not identified by any data this
+  #   corpus contains; --merge-sports asserts it is zero instead of
+  #   estimating it, and the form curve carries autumn-to-spring movement as
+  #   FITNESS. It turns off beta, the winter-gain pin, the curve-gap penalty
+  #   and the go-live band shift by itself -- so setting XCP_WINTER_GAIN
+  #   alongside it is harmless but pointless, and run_joint says so.
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
+      ${XCP_MERGE_SPORTS:+--merge-sports} \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_ALTITUDE:+--altitude}

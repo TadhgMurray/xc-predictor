@@ -670,6 +670,18 @@ def main():
                   "--merge-sports (there is no sport level to shift); "
                   "ignoring it")
             args.sport_gap_delta = 0.0
+        # ⚠⚠ AND THE FIFTH PLACE, WHICH IS NOT IN THE SOLVE AT ALL.
+        #    --winter-gain-bands shifts the TRACK ROWS at go-live (issue
+        #    194), per rating band. That is a sport level asserted AFTER the
+        #    fit, so leaving it on would put back by hand exactly what
+        #    recentreLevels(merge=True) refused. Four flags inside the solve
+        #    and one outside it, all saying the same thing.
+        if args.winter_gain_bands:
+            print(f"[joint] --winter-gain-bands "
+                  f"{args.winter_gain_bands} is a post-solve shift of the "
+                  f"track rows; with --merge-sports it would reinstate the "
+                  f"sport level. Dropping it.")
+            args.winter_gain_bands = None
         print("[joint] MERGED SPORTS: no beta, no sport level, curve free.\n"
               "        The two sports' mean course difficulty is held equal "
               "by construction,\n        so all autumn-to-spring movement "
