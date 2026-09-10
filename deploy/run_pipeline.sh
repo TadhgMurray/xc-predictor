@@ -534,6 +534,28 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude)
+  # ★★ THE SCOREBOARD, EVERY RUN (2026-09-10). Until now nothing in this
+  #    pipeline produced a number that said whether a change helped, so
+  #    modelling questions were settled by argument. 08a scores the shipped
+  #    model on races it never saw, and 08b runs the same score across the
+  #    ablations -- including a Slaney-shaped rung with a fraction of our
+  #    parameters, which is the honest test of whether our extra terms earn
+  #    their keep.
+  #
+  #  ! ON A SAMPLE, AND IT REPORTS ONLY. The ladder writes no board and no
+  #    difficulty; a human reads the table and decides what the NEXT run
+  #    carries. Automatic model selection on one number, computed once, on
+  #    a sample, is how you get a model that is excellent at the holdout
+  #    and wrong about Foot Locker.
+  #
+  #  ! `|| true` on both: an evidence step must never fail a pipeline that
+  #    has already produced good boards.
+  step 08a_holdout      "$PY" -u engine/run_joint.py --holdout \
+      --holdout-kind race --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
+      --outer "${XCP_OUTER:-5}" --probes 0 --altitude || true
+  step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
+      --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" || true
+
   # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
   #   row's normalized_time on the pool it is RATED in and reports the ones
   #   that disagree -- rows normalised as hs_m and rated as college_m come

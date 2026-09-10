@@ -66,6 +66,12 @@ import pair_engine as pe                                        # noqa: E402
 #   pace went out are shared by everyone on the course that day, across
 #   divisions; and the pack carries `days` (days ago) per row where a meet id
 #   is not available. Coarser than a division, right for conditions.
+# set from --no-race-term before the design is built; a module-level flag
+# for the same reason _ALT_FIT is one -- buildDesign is called from three
+# places and threading a bool through all of them buys nothing.
+_NO_RACE_TERM = {"on": False}
+
+
 def raceCodes(course, day):
     key = np.stack([np.asarray(course).astype(np.int64),
                     np.asarray(day).astype(np.int64)], axis=1)
@@ -285,6 +291,16 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
     athlete = athlete[keep]                       # codes over ALL rows: aligned
     race_all, n_race = raceCodes(cols["course"], cols["days"])
     race = race_all[keep]
+    # ★ A REAL ABLATION OF THE RACE-DAY TERM, which did not exist before.
+    #   --no-race-effect only stops the term reaching the per-result RATING;
+    #   the SOLVE kept it either way, so there was no way to ask "is the
+    #   day effect earning its keep?" -- and an ablation rung using that
+    #   flag would have scored the shipped model and been reported as a
+    #   result. Collapsing every row to one race id leaves u as a single
+    #   intercept, i.e. no day term at all.
+    if _NO_RACE_TERM["on"]:
+        race = np.zeros_like(race)
+        n_race = 1
     n_cells = len(cols["course_keys"])
     group, _n_grp = cellGroups(cols["course"][cols["course"] >= 0],
                                None if sport is None
@@ -511,8 +527,11 @@ def solveKwargs(args, athlete_pool, verbose):
         curve_smooth=args.curve_smooth,
         curve_gap=args.curve_gap,
         winter_gain=args.winter_gain,
-        tau_max=(getattr(args, "_tau_caps", None)
-                 or ({1: args.tau_tf_max} if args.tau_tf_max else "default")),
+        # ! hasattr, not `or` -- an explicit None from --tau-max none means
+        #   NO CAP, and `or` would turn it back into "default".
+        tau_max=(args._tau_caps if hasattr(args, "_tau_caps")
+                 else ({1: args.tau_tf_max} if args.tau_tf_max
+                       else "default")),
         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args_altitude_fit()
                        else js.ALT_PRIOR_PEN_FIXED),
         dist_cal=not args.no_dist_cal,
@@ -581,13 +600,25 @@ def holdout(cols, keep, args, athlete_pool, D_full):
           "scored 0.044325 on 2026-08-31's corpus")
 
 
-def main():
+# ★ THE PARSER AND ITS IMPLICATIONS ARE FUNCTIONS, NOT main()'s LOCALS, so
+#   they can be exercised without a pack. tests/test_ablation_ladder.py
+#   parses every ladder rung through them and asserts each one actually
+#   changes the solve configuration -- a rung that silently parses back to
+#   the baseline is a control group masquerading as a treatment, which is
+#   exactly what `--tau-max ,` used to be.
+def buildParser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pack", default=os.path.join(_HERE, "data",
                                                    "packed_XC_TF.npz"))
     ap.add_argument("--out", default=os.path.join(_HERE, "data",
                                                   "joint_difficulty.npz"))
     ap.add_argument("--outer", type=int, default=6)
+    # ★ For the ablation ladder: solve a sample so a rung costs minutes.
+    #   See the note where it is applied -- sampling is by ATHLETE.
+    ap.add_argument("--sample-pct", type=float, default=0.0, metavar="PCT",
+                    help="solve only this %% of ATHLETES (0 = everyone). "
+                         "For comparing configurations, not for go-live")
+    ap.add_argument("--sample-seed", type=int, default=11)
     ap.add_argument("--probes", type=int, default=16)
     ap.add_argument("--curve-smooth", type=float, default=js.CURVE_SMOOTH,
                     help="second-difference weight on the year curve, as a "
@@ -779,6 +810,11 @@ def main():
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "
                          "kept only for comparison")
+    ap.add_argument("--no-race-term", action="store_true",
+                    help="collapse every row to one race id, removing the "
+                         "race-day effect FROM THE SOLVE. Distinct from "
+                         "--no-race-effect, which only keeps the term out "
+                         "of the per-result rating")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
     # ⚠ THE LIVE SWITCH (issue 116). --golive writes course_difficulties,
@@ -803,8 +839,10 @@ def main():
                          "weather is credited in the normalisation instead). "
                          "The solve keeps the term for both sports, the "
                          "hover shows it")
-    args = ap.parse_args()
+    return ap
 
+
+def applyImplications(args, ap):
     # ! THE IMPLICATIONS ARE APPLIED HERE, NOT DOCUMENTED AND LEFT TO THE
     #   OPERATOR. Every one of them is part of the same assumption, and a run
     #   that carried three of the four would be measuring nothing anybody
@@ -812,10 +850,23 @@ def main():
     # ! PARSED INTO THE {group: cap} SHAPE solveJoint already takes for
     #   --tau-tf-max, so there is one mechanism rather than two.
     if args.tau_max:
-        parts = [p.strip() for p in args.tau_max.split(",")]
-        if len(parts) != 2:
-            ap.error("--tau-max wants XC,TF (either may be empty)")
-        caps = {g: float(v) for g, v in enumerate(parts) if v}
+        # ⚠ 'none' MEANS NO CAP AT ALL, and it needs to be sayable. An empty
+        #   'XC,TF' parses to an empty dict, which silently fell through to
+        #   js.TAU_MAX_DEFAULT -- so an ablation rung meant to REMOVE the
+        #   caps quietly kept them and the ladder would have reported a
+        #   no-op as a result.
+        if args.tau_max.strip().lower() in ("none", "off"):
+            args.tau_tf_max = None
+            args._tau_caps = None
+            print("[joint] course-difficulty prior caps OFF (--tau-max none)")
+            parts = caps = None
+        else:
+            parts = [p.strip() for p in args.tau_max.split(",")]
+            if len(parts) != 2:
+                ap.error("--tau-max wants XC,TF, or 'none'")
+            caps = {g: float(v) for g, v in enumerate(parts) if v}
+            if not caps:
+                ap.error("--tau-max got no numbers; use 'none' to disable")
         if caps:
             args.tau_tf_max = None      # the general form supersedes it
             args._tau_caps = caps
@@ -857,7 +908,12 @@ def main():
               "        The two sports' mean course difficulty is held equal "
               "by construction,\n        so all autumn-to-spring movement "
               "is carried by the form curve.")
+    return args
 
+
+def main():
+    ap = buildParser()
+    args = applyImplications(ap.parse_args(), ap)
 
     if not os.path.exists(args.pack):
         sys.exit(f"[joint] no pack at {args.pack} -- run 07_pack first")
@@ -866,9 +922,23 @@ def main():
     cols = pe.loadPack(args.pack)
     cols = sortRowsByAthlete(cols)
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
+    # ★ THE LADDER RUNS ON A SAMPLE. Each rung is a full solve, and a
+    #   comparison between rungs only needs the ORDER to be right, not the
+    #   absolute value -- so a 15% athlete sample turns 40 minutes a rung
+    #   into a few. Sampled by ATHLETE, never by row: half an athlete's
+    #   season is a different (and biased) estimation problem.
+    if args.sample_pct and args.sample_pct < 100:
+        ath_all = np.asarray(cols["athlete"])
+        uniq = np.unique(ath_all[keep])
+        rng = np.random.default_rng(args.sample_seed)
+        picked = uniq[rng.random(uniq.size) < args.sample_pct / 100.0]
+        keep = keep & np.isin(ath_all, picked)
+        print(f"[joint] SAMPLE: {args.sample_pct}% of athletes "
+              f"({picked.size:,} of {uniq.size:,}), {int(keep.sum()):,} rows")
     y = np.log(cols["norm"][keep])
 
     _ALT_FIT["on"] = bool(args.altitude_fit)
+    _NO_RACE_TERM["on"] = bool(args.no_race_term)
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
