@@ -252,58 +252,67 @@ def main():
     ap.add_argument("--timeout", default="20min")
     args = ap.parse_args()
 
+    # ⚠ getConn IS A CONTEXT MANAGER OVER A POOLED CONNECTION, not a
+    #   connection. It must be used as `with getConn() as conn`, and it
+    #   dies at the FIRST cursor if you forget, which no offline check can
+    #   see. tests/test_lint_getconn.py greps for it now.
+    #
+    # ! SET LOCAL, not SET. The connection goes back to this process's pool
+    #   and a later query here would inherit the setting. (It cannot reach
+    #   the site -- gunicorn is a different process with its own pool.)
+    #   LOCAL keeps the tuning scoped to the work that asked for it.
     from database import getConn
-    conn = getConn()
-    conn.autocommit = True
-    cur = conn.cursor()
-    cur.execute(f"SET work_mem = '{args.work_mem}'")
-    cur.execute(f"SET statement_timeout = '{args.timeout}'")
-    cur.execute("SET max_parallel_workers_per_gather = 2")
-
-    try:
-        print("\n" + "=" * 68)
-        print("1. THE LEVEL AND SPREAD PER SPORT")
-        print("   mean_pct is the question 'is track difficulty 0.0?'.")
-        print("=" * 68)
-        cols, rows = _rows(cur, _LEVEL)
-        _table(cols, rows)
-        cols, rows = _rows(cur, _LEVEL_W)
-        print("\n  results-weighted mean (the anchor the solver actually set):")
-        _table(cols, rows)
-        print("\n  A sport whose weighted mean is not within ~0.1 of zero is")
-        print("  anchored somewhere nobody chose. Unweighted can differ --")
-        print("  it counts a one-race course the same as Mt. SAC.")
-
-        sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
-        src = _RACES_EXACT if args.exact else _RACES_FAST
-        for sp in sports:
-            t0 = time.time()
+    with getConn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SET LOCAL work_mem = '{args.work_mem}'")
+        cur.execute(f"SET LOCAL statement_timeout = '{args.timeout}'")
+        cur.execute("SET LOCAL max_parallel_workers_per_gather = 2")
+        try:
             print("\n" + "=" * 68)
-            print(f"2. {sp}: DIFFICULTY SPREAD BY NUMBER OF RACES")
-            print("   sd_pct should RISE from left to right if the prior is")
-            print("   doing anything. Flat means it is not.")
+            print("1. THE LEVEL AND SPREAD PER SPORT")
+            print("   mean_pct is the question 'is track difficulty 0.0?'.")
             print("=" * 68)
-            cols, rows = _rows(cur, _BUCKETS.format(races=src[sp]),
-                               {"pfx": sp + ":%"})
+            cols, rows = _rows(cur, _LEVEL)
             _table(cols, rows)
-            print(_verdict(rows))
-            print(f"  ({time.time() - t0:.0f}s)")
+            cols, rows = _rows(cur, _LEVEL_W)
+            print("\n  results-weighted mean (the anchor the solver actually set):")
+            _table(cols, rows)
+            print("\n  A sport whose weighted mean is not within ~0.1 of zero is")
+            print("  anchored somewhere nobody chose. Unweighted can differ --")
+            print("  it counts a one-race course the same as Mt. SAC.")
 
-            print("\n" + "=" * 68)
-            print(f"3. {sp}: BIG DIFFICULTY ON ALMOST NO EVIDENCE")
-            print(f"   |difficulty| >= {100 * args.big:.0f}% on "
-                  f"<= {args.thin} races.")
-            print("=" * 68)
-            cols, rows = _rows(cur, _WORST.format(races=src[sp]),
-                               {"pfx": sp + ":%", "big": args.big,
-                                "thin": args.thin, "worst": args.worst})
-            _table(cols, rows)
-            print("  Every row here is a course the site is confidently")
-            print("  wrong about. n_results is large only because a race has")
-            print("  many finishers -- n_races is the evidence.")
-    finally:
-        cur.close()
-        conn.close()
+            sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
+            src = _RACES_EXACT if args.exact else _RACES_FAST
+            for sp in sports:
+                t0 = time.time()
+                print("\n" + "=" * 68)
+                print(f"2. {sp}: DIFFICULTY SPREAD BY NUMBER OF RACES")
+                print("   sd_pct should RISE from left to right if the prior is")
+                print("   doing anything. Flat means it is not.")
+                print("=" * 68)
+                cols, rows = _rows(cur, _BUCKETS.format(races=src[sp]),
+                                   {"pfx": sp + ":%"})
+                _table(cols, rows)
+                print(_verdict(rows))
+                print(f"  ({time.time() - t0:.0f}s)")
+
+                print("\n" + "=" * 68)
+                print(f"3. {sp}: BIG DIFFICULTY ON ALMOST NO EVIDENCE")
+                print(f"   |difficulty| >= {100 * args.big:.0f}% on "
+                      f"<= {args.thin} races.")
+                print("=" * 68)
+                cols, rows = _rows(cur, _WORST.format(races=src[sp]),
+                                   {"pfx": sp + ":%", "big": args.big,
+                                    "thin": args.thin, "worst": args.worst})
+                _table(cols, rows)
+                print("  Every row here is a course the site is confidently")
+                print("  wrong about. n_results is large only because a race has")
+                print("  many finishers -- n_races is the evidence.")
+        finally:
+            # read-only: nothing to keep, and the rollback leaves the
+            # pooled connection exactly as it was found
+            conn.rollback()
+            cur.close()
     return 0
 
 

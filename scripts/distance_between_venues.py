@@ -290,72 +290,77 @@ def main():
         print("--pct must be above 0")
         return 2
 
+    # ⚠ getConn IS A CONTEXT MANAGER OVER A POOLED CONNECTION, not a
+    #   connection: `with getConn() as conn`. It dies at the FIRST cursor
+    #   if you forget, which no offline check can see;
+    #   tests/test_lint_getconn.py greps for it now.
+    #
+    # ! SET LOCAL, not SET. The connection goes back to this process's pool
+    #   and a later query here would inherit the setting. (It cannot reach
+    #   the site -- gunicorn is a different process with its own pool.)
+    #
+    # ! AND THE SCRATCH TABLE LIVES INSIDE THE TRANSACTION. Rolling back at
+    #   the end undoes the CREATE completely, so nothing is left behind on
+    #   a pooled connection however this ends -- including a Ctrl-C.
     from database import getConn
-    conn = getConn()
-    conn.autocommit = True
-    cur = conn.cursor()
-
-    # ! MODEST, ON PURPOSE. The site shares this box; a diagnostic that
-    #   takes it down is worse than no diagnostic.
-    cur.execute(f"SET work_mem = '{args.work_mem}'")
-    cur.execute(f"SET statement_timeout = '{args.timeout}'")
-    cur.execute("SET max_parallel_workers_per_gather = 2")
-
-    try:
-        cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
-        pool = "AND r.rating_pool = %(pool)s" if args.pool else ""
-        t0 = time.time()
-        print(f"\npass A: reading results for {args.pct}% of athletes"
-              f"{' in ' + args.pool if args.pool else ''} ...", flush=True)
-        cur.execute(_PASS_A.format(pool=pool), {"cut": cut, "pool": args.pool})
-        cur.execute(f"SELECT count(*) FROM {_SCRATCH}")
-        n = cur.fetchone()[0]
-        print(f"  {n:,} rows in {time.time() - t0:.0f}s", flush=True)
-        if n == 0:
-            print("  nothing to measure")
-            return 1
-        cur.execute(f"CREATE INDEX ON {_SCRATCH} (person_id, season)")
-
-        print("\nSLOPE OF RESIDUAL ON ln(distance), by pool")
-        print("  residual = this row's log normalized_time MINUS the same")
-        print("  athlete-season's mean AT OTHER VENUES.")
-        print("  slope     RAW -- CONFOUNDED by cov(difficulty, distance);")
-        print("            a corpus with no bias at all reads +0.065 here.")
-        print("  slope_adj the same after subtracting the venue's own")
-        print("            course_difficulties entry. THIS IS THE ESTIMATE.")
-        cols, rows = _rows(cur, _SLOPE, {"min_n": args.min_n})
-        _table(cols, rows)
-        overall = [r for r in rows if r[0] == "(all)"]
-        if overall:
-            n, adj, have = overall[0][1], overall[0][5], overall[0][4]
-            print(f"\n  => {_verdict(adj)}")
-            print(f"     (difficulty-adjusted, on {have:,} of {n:,} rows "
-                  f"that matched a course_difficulties cell)")
-            print("     UPPER BOUND: those difficulties came from a solve")
-            print("     that already used this curve. See the header.")
-
-        print("\nRESIDUAL BY DISTANCE BAND (500m bands, all pools)")
-        band = "(round(distance / 500.0) * 500)::int"
-        cols, rows = _rows(cur, _PASS_B.format(group=band),
-                           {"min_n": args.min_n})
-        _table(cols, rows)
-        print("  mean_res is in LOG units: -0.01 means those races come out")
-        print("  1% faster than the same athletes run elsewhere.")
-
-        print(f"\nWORST {args.cells} VENUE-DISTANCE CELLS vs ELSEWHERE")
-        print("  pct_vs_elsewhere > 0: athletes run SLOWER here than they do")
-        print("  at other venues, i.e. a HARD cell. This number is built")
-        print("  entirely from other venues, so the cell cannot move it.")
-        cols, rows = _rows(cur, _CELLS,
-                           {"cells": args.cells, "cell_n": args.cell_n})
-        _table(cols, rows)
-    finally:
+    with getConn() as conn:
+        cur = conn.cursor()
+        # ! MODEST, ON PURPOSE. The site shares this box; a diagnostic that
+        #   takes it down is worse than no diagnostic.
+        cur.execute(f"SET LOCAL work_mem = '{args.work_mem}'")
+        cur.execute(f"SET LOCAL statement_timeout = '{args.timeout}'")
+        cur.execute("SET LOCAL max_parallel_workers_per_gather = 2")
         try:
             cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
-        except Exception as exc:                            # noqa: BLE001
-            print(f"  ! could not drop {_SCRATCH}: {exc}")
-        cur.close()
-        conn.close()
+            pool = "AND r.rating_pool = %(pool)s" if args.pool else ""
+            t0 = time.time()
+            print(f"\npass A: reading results for {args.pct}% of athletes"
+                  f"{' in ' + args.pool if args.pool else ''} ...", flush=True)
+            cur.execute(_PASS_A.format(pool=pool), {"cut": cut, "pool": args.pool})
+            cur.execute(f"SELECT count(*) FROM {_SCRATCH}")
+            n = cur.fetchone()[0]
+            print(f"  {n:,} rows in {time.time() - t0:.0f}s", flush=True)
+            if n == 0:
+                print("  nothing to measure")
+                return 1
+            cur.execute(f"CREATE INDEX ON {_SCRATCH} (person_id, season)")
+
+            print("\nSLOPE OF RESIDUAL ON ln(distance), by pool")
+            print("  residual = this row's log normalized_time MINUS the same")
+            print("  athlete-season's mean AT OTHER VENUES.")
+            print("  slope     RAW -- CONFOUNDED by cov(difficulty, distance);")
+            print("            a corpus with no bias at all reads +0.065 here.")
+            print("  slope_adj the same after subtracting the venue's own")
+            print("            course_difficulties entry. THIS IS THE ESTIMATE.")
+            cols, rows = _rows(cur, _SLOPE, {"min_n": args.min_n})
+            _table(cols, rows)
+            overall = [r for r in rows if r[0] == "(all)"]
+            if overall:
+                n, adj, have = overall[0][1], overall[0][5], overall[0][4]
+                print(f"\n  => {_verdict(adj)}")
+                print(f"     (difficulty-adjusted, on {have:,} of {n:,} rows "
+                      f"that matched a course_difficulties cell)")
+                print("     UPPER BOUND: those difficulties came from a solve")
+                print("     that already used this curve. See the header.")
+
+            print("\nRESIDUAL BY DISTANCE BAND (500m bands, all pools)")
+            band = "(round(distance / 500.0) * 500)::int"
+            cols, rows = _rows(cur, _PASS_B.format(group=band),
+                               {"min_n": args.min_n})
+            _table(cols, rows)
+            print("  mean_res is in LOG units: -0.01 means those races come out")
+            print("  1% faster than the same athletes run elsewhere.")
+
+            print(f"\nWORST {args.cells} VENUE-DISTANCE CELLS vs ELSEWHERE")
+            print("  pct_vs_elsewhere > 0: athletes run SLOWER here than they do")
+            print("  at other venues, i.e. a HARD cell. This number is built")
+            print("  entirely from other venues, so the cell cannot move it.")
+            cols, rows = _rows(cur, _CELLS,
+                               {"cells": args.cells, "cell_n": args.cell_n})
+            _table(cols, rows)
+        finally:
+            conn.rollback()          # takes the scratch table with it
+            cur.close()
     return 0
 
 
