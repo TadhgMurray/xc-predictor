@@ -1669,7 +1669,29 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
 #    Morley have thousands of results across dozens of races, so the prior
 #    is nowhere near them at any floor. If those courses are wrong the
 #    cause is elsewhere, and scripts/venue_check.py is how to tell.
-SIGMA_U_FLOOR = 0.045
+# ★★ PER SPORT, BECAUSE THE TWO SPORTS ARE NOT THE SAME PROBLEM
+#    (2026-09-10). Within a race, delta and u are EXACTLY COLLINEAR -- see
+#    rowPrediction -- so which of them takes the common effect is decided
+#    by tau2 against sigma_u2 and by nothing else. A shared sigma_u
+#    therefore hands both sports the same answer to a question they answer
+#    differently:
+#
+#      XC   difficulty reliability 0.928 -- courses ARE different, and
+#           93 per cent of the difference reproduces on independent races
+#      TF   difficulty reliability 0.574 -- a flat oval is a flat oval, and
+#           most of what separated two of them was the days they hosted
+#
+#    ⚠ AND A SHARED FLOOR AT 0.045 WAS ACTIVELY WRONG FOR XC. With the
+#      measured cap tau[XC] = 0.035, a race-day prior of 0.045 is LARGER
+#      than the course prior, so the day won the split on every cross
+#      country race and genuine course difficulty leaked into u -- which
+#      is exactly what a thin elite venue like Foot Locker cannot afford,
+#      and it came back still reading too low.
+#
+#    XC is left to the data (0.0) because its difficulty is demonstrably
+#    real and the tau cap already shrinks its thin cells. TF keeps the
+#    floor because there the days really are most of it.
+SIGMA_U_FLOOR = {0: 0.0, 1: 0.045}          # 0 = XC, 1 = TF
 
 # ★★ THE COURSE-DIFFICULTY PRIOR, MEASURED (2026-09-10). Until now tau was
 #    whatever the EB update landed on, and --tau-max was an unset env var.
@@ -1704,6 +1726,14 @@ def racesPerCell(D):
     return np.bincount(D.cell[first], minlength=D.n_cell)
 
 
+def groupOfRace(D):
+    """The sport group each race belongs to. Races nest inside cells and
+    cells carry a group, so a race inherits its cell's."""
+    out = np.zeros(D.n_race, dtype=np.int64)
+    out[D.race] = D.group_of_cell[D.cell]
+    return out
+
+
 def cellOfRace(D):
     """The cell each race belongs to (races nest inside cells)."""
     out = np.zeros(D.n_race, dtype=np.int64)
@@ -1721,13 +1751,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                tau_max="default", alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
-               identified_priors=True, sigma_u_floor=SIGMA_U_FLOOR):
+               identified_priors=True, sigma_u_floor="default"):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
     n = y.size
     assert D.n == n, "design and response disagree on the row count"
 
+    if isinstance(sigma_u_floor, str) and sigma_u_floor == "default":
+        sigma_u_floor = dict(SIGMA_U_FLOOR)
     # see TAU_MAX_DEFAULT: the sentinel keeps None meaning "no cap"
     if isinstance(tau_max, str) and tau_max == "default":
         tau_max = dict(TAU_MAX_DEFAULT)
@@ -1762,7 +1794,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     # ★ START WEAK, NOT AT ZERO. tau2 = inf would be a flat prior and a
     #   singular first solve; these are loosened by the updates below.
     tau2 = np.full(D.n_group, 0.05)
-    sigma_u2 = 0.01
+    group_of_race = groupOfRace(D)
+    sigma_u2 = np.full(D.n_group, 0.01)
     sigma2 = 1.0
     scale = None
     n_cal = 0
@@ -1783,7 +1816,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
-        pen_race = sigma2 / max(sigma_u2, 1e-12)
+        pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
         pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
@@ -1814,20 +1847,29 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         d_var = sigma2 / np.maximum(diag[D.o_d:D.o_u], 1e-12)
         u_var = sigma2 / np.maximum(diag[D.o_u:D.o_mu], 1e-12)
         # ! race_ok / cell_ok, NOT every race and cell. See racesPerCell.
-        sigma_u2 = max(float(np.mean(b["u"][race_ok] ** 2
-                                     + u_var[race_ok])), 1e-9)
-        # a race day is worth at least this much; see SIGMA_U_FLOOR
-        sigma_u_fitted = np.sqrt(sigma_u2)
-        if sigma_u_floor and sigma_u_floor > 0:
-            sigma_u2 = max(sigma_u2, float(sigma_u_floor) ** 2)
+        #   And PER GROUP, because the split between a course and a day is
+        #   the priors' alone -- see SIGMA_U_FLOOR.
+        for g in range(D.n_group):
+            m = (group_of_race == g) & race_ok
+            if not m.any():
+                m = group_of_race == g
+            if not m.any():
+                continue
+            fitted = max(float(np.mean(b["u"][m] ** 2 + u_var[m])), 1e-9)
+            floor = (sigma_u_floor.get(g, 0.0)
+                     if isinstance(sigma_u_floor, dict)
+                     else float(sigma_u_floor or 0.0))
+            sigma_u2[g] = max(fitted, floor ** 2) if floor > 0 else fitted
             if verbose and outer == n_outer - 1:
-                bound = np.sqrt(sigma_u2) > sigma_u_fitted + 1e-12
-                print(f"[joint] race-day floor {sigma_u_floor:.4f} "
-                      f"{'BINDING' if bound else 'not binding'} "
-                      f"(fitted sigma_u {sigma_u_fitted:.5f}); a one-race "
-                      f"course keeps about "
-                      f"{tau2.mean() / (tau2.mean() + sigma_u2):.2f} of what "
-                      f"that race showed", flush=True)
+                name = ("XC", "TF")[g] if g < 2 else str(g)
+                bound = floor > 0 and sigma_u2[g] > fitted + 1e-12
+                share = tau2[g] / (tau2[g] + sigma_u2[g])
+                print(f"[joint] {name}: race-day sd "
+                      f"{np.sqrt(sigma_u2[g]):.5f} "
+                      f"(fitted {np.sqrt(fitted):.5f}"
+                      f"{', floor BINDING' if bound else ''}), course prior "
+                      f"{np.sqrt(tau2[g]):.5f} -- a one-race course keeps "
+                      f"{share:.2f} of what that race showed", flush=True)
         for g in range(D.n_group):
             m = (D.group_of_cell == g) & cell_ok
             if not m.any():                 # a group of one-race cells only
@@ -1882,12 +1924,13 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
-                  f"{np.sqrt(sigma_u2):.5f}, tau {np.round(np.sqrt(tau2), 5)}, "
+                  f"{np.round(np.sqrt(sigma_u2), 5)}, "
+                  f"tau {np.round(np.sqrt(tau2), 5)}, "
                   f"mean w {w.mean():.3f}{extra}")
 
     # --- posterior variance, and the shrinkage it licenses ----------- #
     pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
-    pen_race = sigma2 / max(sigma_u2, 1e-12)
+    pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
     pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,

@@ -400,6 +400,19 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
 _ALT_FIT = {"on": False}
 
 
+# ! 'XC,TF' -> {0: xc, 1: tf}. The floor is per sport now because the
+#   course/day split is the priors' alone; see js.SIGMA_U_FLOOR.
+def _sigmaUFloor(spec):
+    if spec is None or (isinstance(spec, str) and spec == "default"):
+        return dict(js.SIGMA_U_FLOOR)
+    parts = [p.strip() for p in str(spec).split(",")]
+    if len(parts) == 1:                      # one number means both sports
+        parts = parts * 2
+    if len(parts) != 2:
+        raise SystemExit("--sigma-u-floor wants XC,TF (or one number)")
+    return {i: float(v) for i, v in enumerate(parts)}
+
+
 def args_altitude_fit():
     return _ALT_FIT["on"]
 
@@ -686,14 +699,16 @@ def main():
     #   sigma_u to zero -- so the course kept 100% of one race's noise. See
     #   joint_solve.racesPerCell. The flag exists to measure the change,
     #   not because the old behaviour is defensible.
-    ap.add_argument("--sigma-u-floor", type=float, default=js.SIGMA_U_FLOOR,
-                    metavar="SD",
-                    help="how slow a race day is worth at minimum (log SD; "
-                         "default %(default)s). This is what decides how "
-                         "much a course seen ONCE is trusted: it keeps "
-                         "tau2/(tau2+sigma_u2) of that one race. 0 disables "
-                         "the floor and uses the fitted value, which is "
-                         "biased low")
+    ap.add_argument("--sigma-u-floor", default="default", metavar="XC,TF",
+
+                    help="how slow a race day is worth at minimum, PER "
+                         "SPORT as 'XC,TF' in log SD (default "
+                         f"{js.SIGMA_U_FLOOR[0]},{js.SIGMA_U_FLOOR[1]}). "
+                         "Within a race the course and the day are exactly "
+                         "collinear, so this is what decides which of them "
+                         "takes the common effect: a one-race course keeps "
+                         "tau2/(tau2+sigma_u2). '0,0' uses the fitted "
+                         "values, which are biased low")
     ap.add_argument("--priors-from-all-cells", action="store_true",
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "
@@ -831,7 +846,7 @@ def main():
                         merge_sports=args.merge_sports,
                         centre_curve=args.centre_curve,
                         identified_priors=not args.priors_from_all_cells,
-                        sigma_u_floor=args.sigma_u_floor)
+                        sigma_u_floor=_sigmaUFloor(args.sigma_u_floor))
     print(f"[joint] solved in {time.time() - t0:.0f}s")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap

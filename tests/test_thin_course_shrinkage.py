@@ -99,7 +99,9 @@ def _run(sigma_u_floor=0.0, identified_priors=True, **kw):
     return {"thick": kept(slice(0, n_thick)), "thin": kept(thin),
             "thin_rmse": float(np.sqrt(np.mean((d[thin] - truth[thin]) ** 2))),
             "tau": float(np.sqrt(out["tau2"][0])),
-            "sigma_u": float(np.sqrt(out["sigma_u2"]))}
+            # ! sigma_u2 IS PER GROUP NOW (see js.SIGMA_U_FLOOR). These
+            #   worlds have one group, so element 0 is the whole story.
+            "sigma_u": float(np.sqrt(np.atleast_1d(out["sigma_u2"])[0]))}
 
 
 class Helpers(unittest.TestCase):
@@ -145,7 +147,8 @@ class SigmaUCollapse(unittest.TestCase):
         kept = float(np.dot(d, truth) / np.dot(truth, truth))
         self.assertGreater(kept, 0.95,
                            "the fixture no longer reproduces the collapse")
-        self.assertLess(float(np.sqrt(out["sigma_u2"])), 0.005,
+        self.assertLess(float(np.sqrt(np.atleast_1d(out["sigma_u2"])[0])),
+                        0.005,
                         "sigma_u did not collapse; fixture has drifted")
 
     def test_the_floor_stops_it(self):
@@ -163,7 +166,8 @@ class SigmaUCollapse(unittest.TestCase):
         out = js.solveJoint(np.array(y), np.array(ath), np.array(cel),
                             np.array(rac), n_outer=6, tilt=False,
                             sigma_u_floor=0.03, tau_max=None)
-        self.assertGreaterEqual(float(np.sqrt(out["sigma_u2"])), 0.03 - 1e-9)
+        self.assertGreaterEqual(
+            float(np.sqrt(np.atleast_1d(out["sigma_u2"])[0])), 0.03 - 1e-9)
 
 
 class RaceDayFloor(unittest.TestCase):
@@ -201,7 +205,7 @@ class RaceDayFloor(unittest.TestCase):
         ath, cel, rac, y, truth, _ = mixedWorld(u_sd=0.03)
         out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False,
                             sigma_u_floor=0.0, tau_max=None)
-        fitted = float(np.sqrt(out["sigma_u2"]))
+        fitted = float(np.sqrt(np.atleast_1d(out["sigma_u2"])[0]))
         self.assertLess(fitted, 0.03 * 0.75,
                         f"sigma_u is no longer understated ({fitted:.4f} vs "
                         "a planted 0.030) -- re-justify SIGMA_U_FLOOR")
@@ -240,6 +244,92 @@ class IdentifiedPriors(unittest.TestCase):
         old = _run(identified_priors=False)
         new = _run(identified_priors=True)
         self.assertGreaterEqual(new["sigma_u"], old["sigma_u"])
+
+
+class PerSportSplit(unittest.TestCase):
+    """★★ WITHIN A RACE THE COURSE AND THE DAY ARE THE SAME NUMBER
+    (rowPrediction), so which one takes it is decided by tau2 against
+    sigma_u2 and by nothing else. The two sports need different answers:
+    XC course difficulty reproduces at 0.928, TF's at 0.574.
+
+    ⚠ A SHARED FLOOR WAS ACTIVELY WRONG. With tau[XC] capped at the
+    measured 0.035, a shared race-day floor of 0.045 made the DAY prior
+    larger than the COURSE prior, so the day won every cross country
+    split and real difficulty leaked into u."""
+
+    def _world(self, seed=5):
+        """Two groups. Every cell in both has ONE race, so d and u are
+        perfectly collinear and only the priors can separate them."""
+        rng = np.random.default_rng(seed)
+        n_cell = 80
+        truth = rng.normal(0, 0.05, n_cell)
+        ability = rng.normal(0, 0.06, 1500)
+        ath, cel, rac, y = [], [], [], []
+        for c in range(n_cell):
+            for a in rng.choice(len(ability), 30, replace=False):
+                ath.append(int(a)); cel.append(c); rac.append(c)
+                y.append(ability[a] + truth[c] + rng.normal(0, 0.03))
+        group = np.array([0] * (n_cell // 2) + [1] * (n_cell // 2))
+        return (np.array(y), np.array(ath), np.array(cel), np.array(rac),
+                group, truth, n_cell)
+
+    def test_the_floor_is_applied_per_sport(self):
+        y, ath, cel, rac, group, truth, n_cell = self._world()
+        out = js.solveJoint(y, ath, cel, rac, group=group, n_outer=6,
+                            tilt=False, tau_max={0: 0.035, 1: 0.0122},
+                            sigma_u_floor={0: 0.0, 1: 0.045})
+        su = np.sqrt(out["sigma_u2"])
+        self.assertEqual(len(su), 2, "sigma_u is still a single number")
+        self.assertLess(su[0], 0.045,
+                        f"XC took the floor it was not given: {su[0]:.4f}")
+        # ! >=, not ==. The floor is a FLOOR: if the data fits a larger
+        #   race-day sd than 0.045 it keeps the larger one, which is the
+        #   whole point of the word.
+        self.assertGreaterEqual(su[1], 0.045 - 1e-9,
+                                f"TF fell below its floor: {su[1]:.4f}")
+        self.assertGreater(su[1], su[0],
+                           f"TF should carry the larger day prior: "
+                           f"XC {su[0]:.4f}, TF {su[1]:.4f}")
+
+    def test_xc_keeps_its_difficulty_and_tf_gives_it_to_the_day(self):
+        y, ath, cel, rac, group, truth, n_cell = self._world()
+        out = js.solveJoint(y, ath, cel, rac, group=group, n_outer=6,
+                            tilt=False, tau_max={0: 0.035, 1: 0.0122},
+                            sigma_u_floor={0: 0.0, 1: 0.045})
+        d = out["delta"]
+        half = n_cell // 2
+
+        def kept(sl):
+            dd = d[sl] - d[sl].mean()
+            tt = truth[sl] - truth[sl].mean()
+            return float(np.dot(dd, tt) / np.dot(tt, tt))
+
+        xc, tf = kept(slice(0, half)), kept(slice(half, None))
+        self.assertGreater(xc, tf * 1.5,
+                           f"XC should keep far more of a one-race course "
+                           f"than TF: XC {xc:.2f}, TF {tf:.2f}")
+        self.assertGreater(xc, 0.4, f"XC kept only {xc:.2f}")
+
+    def test_the_shared_045_floor_was_starving_xc(self):
+        """The regression, reproduced: give XC the old shared floor and it
+        keeps materially less of its own courses."""
+        y, ath, cel, rac, group, truth, n_cell = self._world()
+        half = n_cell // 2
+
+        def xcKept(floor):
+            out = js.solveJoint(y, ath, cel, rac, group=group, n_outer=6,
+                                tilt=False, tau_max={0: 0.035, 1: 0.0122},
+                                sigma_u_floor=floor)
+            d = out["delta"][:half]
+            dd = d - d.mean()
+            tt = truth[:half] - truth[:half].mean()
+            return float(np.dot(dd, tt) / np.dot(tt, tt))
+
+        shared = xcKept({0: 0.045, 1: 0.045})
+        split = xcKept({0: 0.0, 1: 0.045})
+        self.assertGreater(split, shared * 1.25,
+                           f"the shared floor is no longer costing XC: "
+                           f"shared {shared:.2f}, per-sport {split:.2f}")
 
 
 if __name__ == "__main__":
