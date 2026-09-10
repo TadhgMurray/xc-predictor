@@ -33,6 +33,9 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# the summary block ends with the collapse alarm, so exec'ing it needs `js`
+import joint_solve as _js
+
 _RUN_JOINT = os.path.join(_ROOT, "engine", "run_joint.py")
 _LADDER = os.path.join(_ROOT, "scripts", "ablation_ladder.py")
 _PIPELINE = os.path.join(_ROOT, "deploy", "run_pipeline.sh")
@@ -96,7 +99,7 @@ class VarianceComponentsAreArrays(unittest.TestCase):
         sys.stdout = buf
         try:
             exec(compile(block, "<summary>", "exec"),
-                 {"np": np, "out": out})
+                 {"np": np, "out": out, "js": _js})
         finally:
             sys.stdout = old
         text = buf.getvalue()
@@ -120,7 +123,8 @@ class VarianceComponentsAreArrays(unittest.TestCase):
         old = sys.stdout
         sys.stdout = buf
         try:
-            exec(compile(block, "<summary>", "exec"), {"np": np, "out": out})
+            exec(compile(block, "<summary>", "exec"),
+                 {"np": np, "out": out, "js": _js})
         finally:
             sys.stdout = old
         self.assertIn("0.04000", buf.getvalue())

@@ -1784,9 +1784,34 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
 #      and it came back still reading too low.
 #
 #    XC is left to the data (0.0) because its difficulty is demonstrably
-#    real and the tau cap already shrinks its thin cells. TF keeps the
-#    floor because there the days really are most of it.
-SIGMA_U_FLOOR = {0: 0.0, 1: 0.045}          # 0 = XC, 1 = TF
+#    real and the tau cap already shrinks its thin cells.
+#
+# ★★★ AND THEN TF's OWN FLOOR DID THE SAME THING TO TF (2026-09-10, run22).
+#     The paragraph above diagnoses a 0.045 floor destroying XC difficulty
+#     and, in the same breath, keeps a 0.045 floor on TF. It destroyed TF
+#     difficulty. From the shipped run's log:
+#
+#       TF: race-day sd 0.04500 (fitted 0.02279, floor BINDING),
+#           course prior 0.00147 -- a one-race course keeps 0.00
+#
+#     The floor was TWICE what the data fitted, so the day won every TF
+#     split and the course prior collapsed to 0.147% -- against a spread
+#     of 1.22% that difficulty_reliability.py MEASURED as real by
+#     splitting each venue's races in half on different days, which a
+#     race-day effect cannot fake. Every track was published as the
+#     average track: share = tau^2/(tau^2 + sigma_u^2) = 0.001.
+#
+#     Both floors are now 0. The floor was a second, cruder fix for the
+#     problem identified_priors already solves -- tau and sigma_u are
+#     unidentified only within a ONE-RACE cell, and the priors are now
+#     estimated on 2+ race cells alone, where the data separate them. A
+#     floor on top of that is not a guard; it is an override of a
+#     measurement by a guess, and it was wrong by 8x.
+#
+#  ! IF A COLLAPSE COMES BACK, the answer is not a floor. checkPriors below
+#    shouts when a fitted tau lands far from the measured spread; find out
+#    why the cells stopped identifying it.
+SIGMA_U_FLOOR = {0: 0.0, 1: 0.0}            # 0 = XC, 1 = TF
 
 # ★★ THE COURSE-DIFFICULTY PRIOR, MEASURED (2026-09-10). Until now tau was
 #    whatever the EB update landed on, and --tau-max was an unset env var.
@@ -1842,6 +1867,54 @@ SIGMA_U_FLOOR = {0: 0.0, 1: 0.045}          # 0 = XC, 1 = TF
 #     thin cells, which is where the noise is -- and the ladder's
 #     `free-tau` rung measures what either costs.
 TAU_MAX_DEFAULT = {0: 0.0364, 1: 0.0161}         # 0 = XC, 1 = TF
+
+# The true (reproducing) course spread each sport was MEASURED to have, by
+# splitting every venue's races in half on different days -- which a
+# race-day effect cannot fake. checkPriors reads the solve against these.
+MEASURED_TRUE_SD = {0: 0.0351, 1: 0.0122}        # 0 = XC, 1 = TF
+
+
+def checkPriors(tau2, sigma_u2, group_names=("XC", "TF")):
+    """★★ THE COLLAPSE ALARM. Returns a list of complaint strings.
+
+    Within a race, delta and u are EXACTLY COLLINEAR (see rowPrediction),
+    so which of them takes the common effect is decided by tau2 against
+    sigma_u2 and by nothing else. When sigma_u is forced above what the
+    data fit, the day wins every split, the course prior collapses toward
+    zero, and every course in that sport is published as the average
+    course -- silently, because the solve converges happily and the boards
+    are merely flat.
+
+    That is not hypothetical. A 0.045 race-day floor against a fitted
+    0.0228 drove tau[TF] to 0.00147, 8x below a measured 0.0122, and it
+    shipped. The floor is gone; this is the alarm that would have caught
+    it, and it reads the fit against the MEASUREMENT rather than against
+    a guess.
+    """
+    tau2 = np.atleast_1d(np.asarray(tau2, dtype=np.float64))
+    sigma_u2 = np.atleast_1d(np.asarray(sigma_u2, dtype=np.float64))
+    out = []
+    for g in range(min(tau2.size, sigma_u2.size)):
+        name = group_names[g] if g < len(group_names) else str(g)
+        tau = float(np.sqrt(tau2[g]))
+        su = float(np.sqrt(sigma_u2[g]))
+        share = tau2[g] / (tau2[g] + sigma_u2[g])
+        truth = MEASURED_TRUE_SD.get(g)
+        if truth and tau < truth / 3.0:
+            out.append(
+                f"{name}: course prior COLLAPSED -- tau {tau:.5f} against a "
+                f"MEASURED true spread of {truth:.4f} ({truth / max(tau, 1e-9):.1f}x "
+                f"larger). Race-day sd is {su:.5f}. A one-race course keeps "
+                f"{share:.3f} of what its race showed, so this sport's "
+                f"courses are being published as one average course. The "
+                f"day is taking the difficulty: check SIGMA_U_FLOOR and "
+                f"whether enough cells have 2+ races to identify the split.")
+        elif share < 0.05:
+            out.append(
+                f"{name}: a one-race course keeps only {share:.3f} of what "
+                f"its race showed (tau {tau:.5f} vs race-day {su:.5f}) -- "
+                f"thin courses in this sport are all the sport's average.")
+    return out
 
 
 def racesPerCell(D):
@@ -2014,6 +2087,13 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 # more shrinkage toward the sport's level than the data ask
                 if tau_max and g in tau_max and tau_max[g]:
                     tau2[g] = min(tau2[g], float(tau_max[g]) ** 2)
+
+        # ⚠ THE COLLAPSE ALARM, on the last pass. A sport whose course
+        #   prior has fallen to nothing still converges and still writes a
+        #   board -- a flat one. See checkPriors.
+        if verbose and outer == n_outer - 1:
+            for _c in checkPriors(tau2, sigma_u2):
+                print(f"[joint] ⚠⚠ {_c}", flush=True)
 
         # --- robust reweighting (replaces rowguard) ------------------ #
         if robust:

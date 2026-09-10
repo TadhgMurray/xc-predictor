@@ -1076,6 +1076,11 @@ def main():
         _s = float(np.sqrt(_su[_g if _g < _su.size else -1]))
         _t = float(np.sqrt(_tau[_g if _g < _tau.size else -1]))
         print(f"[joint] {_name}: race-day sigma_u {_s:.5f} | tau {_t:.5f}")
+    # ⚠ AND SAY IT AGAIN AT THE END. The solve prints this too, but that is
+    #   3000 seconds up the log; a collapsed course prior belongs beside the
+    #   summary a human actually reads.
+    for _c in js.checkPriors(out["tau2"], out["sigma_u2"]):
+        print(f"[joint] ⚠⚠ {_c}")
     print(f"[joint] {out['n_downweighted']:,} rows down-weighted, 0 dropped")
     print(f"[joint] cell SE: median {np.median(out['cell_se']):.4f}, "
           f"p95 {np.percentile(out['cell_se'], 95):.4f}")
