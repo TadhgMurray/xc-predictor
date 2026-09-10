@@ -50,6 +50,13 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine")):
 
 import joint_solve as js                                        # noqa: E402
 
+# ! tau_max=None ON EVERY SOLVE HERE, DELIBERATELY. solveJoint now defaults
+#   to js.TAU_MAX_DEFAULT -- the MEASURED true difficulty spread of this
+#   corpus (XC 0.035, TF 0.0122). These worlds plant their own, wider,
+#   spreads to make the mechanics visible, so the corpus cap would crush
+#   them and the tests would be measuring the cap rather than the thing
+#   they are about.
+
 
 def mixedWorld(n_thick=50, n_thin=50, races_thick=12, per_race=14,
                delta_sd=0.05, u_sd=0.03, noise=0.05, seed=3):
@@ -82,7 +89,7 @@ def _run(sigma_u_floor=0.0, identified_priors=True, **kw):
     ath, cel, rac, y, truth, n_thick = mixedWorld(**kw)
     out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False,
                         identified_priors=identified_priors,
-                        sigma_u_floor=sigma_u_floor)
+                        sigma_u_floor=sigma_u_floor, tau_max=None)
     d = out["delta"] - out["delta"].mean()
 
     def kept(sl):
@@ -133,7 +140,7 @@ class SigmaUCollapse(unittest.TestCase):
                 y.append(ability[a] + truth[c] + u + rng.normal(0, 0.02))
         out = js.solveJoint(np.array(y), np.array(ath), np.array(cel),
                             np.array(rac), n_outer=6, tilt=False,
-                            sigma_u_floor=0.0)
+                            sigma_u_floor=0.0, tau_max=None)
         d = out["delta"] - out["delta"].mean()
         kept = float(np.dot(d, truth) / np.dot(truth, truth))
         self.assertGreater(kept, 0.95,
@@ -155,7 +162,7 @@ class SigmaUCollapse(unittest.TestCase):
                 y.append(ability[a] + truth[c] + u + rng.normal(0, 0.02))
         out = js.solveJoint(np.array(y), np.array(ath), np.array(cel),
                             np.array(rac), n_outer=6, tilt=False,
-                            sigma_u_floor=0.03)
+                            sigma_u_floor=0.03, tau_max=None)
         self.assertGreaterEqual(float(np.sqrt(out["sigma_u2"])), 0.03 - 1e-9)
 
 
@@ -193,7 +200,7 @@ class RaceDayFloor(unittest.TestCase):
         recovers the truth, the floor should be removed, not retuned."""
         ath, cel, rac, y, truth, _ = mixedWorld(u_sd=0.03)
         out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False,
-                            sigma_u_floor=0.0)
+                            sigma_u_floor=0.0, tau_max=None)
         fitted = float(np.sqrt(out["sigma_u2"]))
         self.assertLess(fitted, 0.03 * 0.75,
                         f"sigma_u is no longer understated ({fitted:.4f} vs "
@@ -207,7 +214,7 @@ class RaceDayFloor(unittest.TestCase):
         errs = {}
         for fl in (0.0, 0.03):
             out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False,
-                                sigma_u_floor=fl)
+                                sigma_u_floor=fl, tau_max=None)
             d = out["delta"] - out["delta"].mean()
             errs[fl] = float(np.sqrt(np.mean((d - truth) ** 2)))
         self.assertGreater(errs[0.03], errs[0.0],

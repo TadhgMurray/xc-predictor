@@ -818,9 +818,12 @@ def main():
                         n_outer=args.outer, robust=not args.no_robust,
                         tilt=not args.no_tilt, n_probe=args.probes,
                         curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
+                        # ! "default" means js.TAU_MAX_DEFAULT -- the
+                        #   measured true spread per sport. An explicit
+                        #   --tau-max or --tau-tf-max still wins.
                         tau_max=(getattr(args, "_tau_caps", None)
                                  or ({1: args.tau_tf_max}
-                                     if args.tau_tf_max else None)),
+                                     if args.tau_tf_max else "default")),
                         alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
                                        else js.ALT_PRIOR_PEN_FIXED),
                         dist_cal=not args.no_dist_cal,

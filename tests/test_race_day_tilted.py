@@ -11,7 +11,11 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engine"))
-import joint_solve as js                                        # noqa: E402
+import joint_solve as js
+# ! tau_max=None: solveJoint now defaults to js.TAU_MAX_DEFAULT, the
+#   MEASURED difficulty spread of this corpus (XC 0.035, TF 0.0122). This
+#   world plants its own, wider spread, so the corpus cap would crush it
+#   and the test would be measuring the cap.                                        # noqa: E402
 
 
 def _world(seed=0, n_ath=800, n_cell=16, races_per_cell=5, per_athlete=8):
@@ -33,7 +37,7 @@ def _world(seed=0, n_ath=800, n_cell=16, races_per_cell=5, per_athlete=8):
 
 def test_days_average_to_zero_inside_the_cell_with_the_tilt_on():
     ath, cel, rac, y, true_delta, race_u, race_cell = _world()
-    out = js.solveJoint(y, ath, cel, rac, n_outer=5, tilt=True, n_probe=2)
+    out = js.solveJoint(y, ath, cel, rac, n_outer=5, tilt=True, n_probe=2, tau_max=None)
     d = out["delta"] - out["delta"].mean()
     r = float(np.corrcoef(d, true_delta)[0, 1])
     assert r > 0.9, r          # 5 days per cell, day sd 0.05 vs course sd 0.06

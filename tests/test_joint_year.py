@@ -16,7 +16,17 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engine"))
-import joint_solve as js                                        # noqa: E402
+import joint_solve as js
+# ! tau_max=None: solveJoint now defaults to js.TAU_MAX_DEFAULT, the
+#   MEASURED difficulty spread of this corpus (XC 0.035, TF 0.0122). This
+#   world plants its own, wider spread, so the corpus cap would crush it
+#   and the test would be measuring the cap.
+#
+# ! sigma_u_floor=0.0 for the same reason. The default (0.045) is a CLAIM
+#   that race days vary by at least that much -- true of this corpus, not
+#   of a world that plants its own race-day sd. Forcing one here costs
+#   difficulty recovery, which is the documented cost of the floor and not
+#   a bug in it. See engine/joint_solve.SIGMA_U_FLOOR.                                        # noqa: E402
 
 TRUE_LEVEL = -0.03          # mu[TF] - mu[XC]: track surface reads 3% easier
 TRUE_RUST = np.array([0.012, 0.014])
@@ -130,7 +140,8 @@ def world(indoor=True, seed=0, n_ath=700, indoor_frac=0.4, indoor_races=2):
 
 def fit(y, D, truth, **kw):
     return js.solveJoint(y, design=D, athlete_pool=truth["pool_of_ath"],
-                         n_outer=6, tilt=False, n_probe=8, **kw)
+                         n_outer=6, tilt=False, n_probe=8, **kw,
+                         tau_max=None, sigma_u_floor=0.0)
 
 
 def report_curve(out, D, doy):

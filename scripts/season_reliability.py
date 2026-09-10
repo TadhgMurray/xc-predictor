@@ -117,24 +117,25 @@ _SCRATCH = "sr_rows"
 #   everywhere. See tests/test_tf_event_bias.py.
 _ISO_DATE = "date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'"
 
-_SEASON = ("(CASE WHEN substr(date::text, 6, 2)::int >= 8 "
-           "THEN substr(date::text, 1, 4)::int "
-           "ELSE substr(date::text, 1, 4)::int - 1 END)")
+_SEASON = ("(CASE WHEN substr(race_date::text, 6, 2)::int >= 8 "
+           "THEN substr(race_date::text, 1, 4)::int "
+           "ELSE substr(race_date::text, 1, 4)::int - 1 END)")
 
+# ⚠⚠ ranking_results, NOT results. athlete_season.mean_rating is
+#    percentile_cont(0.80) over ranking_results -- the GATED set, after the
+#    ceiling, the rowguard and the rest -- not over every rated row. Read
+#    from `results` this script said the top 200 was 16.5 per cent XC while
+#    the board said 95, and the whole difference was the gate. A diagnostic
+#    that does not rank the rows the board ranks is measuring a different
+#    board.
 _PASS_A = f"""
 CREATE UNLOGGED TABLE {_SCRATCH} AS
-SELECT person_id, {_SEASON} AS season, rating_pool AS pool,
-       'XC'::text AS sport, date::text AS d, speed_rating::float AS rating
-FROM   results
-WHERE  speed_rating IS NOT NULL AND rating_pool IS NOT NULL
-  AND  date IS NOT NULL AND {_ISO_DATE}
-  AND  abs(mod(hashint8(person_id::bigint), 10000)) < %(cut)s
-UNION ALL
-SELECT person_id, {_SEASON} AS season, rating_pool AS pool,
-       'TF'::text AS sport, date::text AS d, speed_rating::float AS rating
-FROM   results_tf
-WHERE  speed_rating IS NOT NULL AND rating_pool IS NOT NULL
-  AND  date IS NOT NULL AND {_ISO_DATE}
+SELECT person_id, {_SEASON} AS season, pool,
+       sport::text AS sport, race_date::text AS d,
+       speed_rating::float AS rating
+FROM   ranking_results
+WHERE  speed_rating IS NOT NULL AND pool IS NOT NULL
+  AND  race_date IS NOT NULL
   AND  abs(mod(hashint8(person_id::bigint), 10000)) < %(cut)s
 """
 

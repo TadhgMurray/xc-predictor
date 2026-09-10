@@ -41,7 +41,7 @@ def _world(n_ath=400, n_cell=60, races_per_cell=4, per_athlete=8,
 
 def test_recovers_known_difficulty():
     ath, cel, rac, y, true_delta, _, _ = _world()
-    out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False)
+    out = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False, tau_max=None)
     d = out["delta"] - out["delta"].mean()
     r = float(np.corrcoef(d, true_delta)[0, 1])
     rmse = float(np.sqrt(np.mean((d - true_delta) ** 2)))
@@ -54,10 +54,10 @@ def test_race_day_effect_protects_the_venue():
     """The claim: without u, day-level noise becomes permanent difficulty."""
     ath, cel, rac, y, true_delta, _, _ = _world(u_sd=0.10, noise_sd=0.02,
                                                 seed=3)
-    with_u = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False)
+    with_u = js.solveJoint(y, ath, cel, rac, n_outer=6, tilt=False, tau_max=None)
     # race=0 everywhere collapses u to a single intercept, i.e. no race term.
     without_u = js.solveJoint(y, ath, cel, np.zeros_like(rac), n_outer=6,
-                              tilt=False)
+                              tilt=False, tau_max=None)
 
     def err(o):
         d = o["delta"] - o["delta"].mean()
@@ -77,9 +77,9 @@ def test_robust_weights_downweight_but_never_drop():
     y_bad[hit] += 0.60                                # 60% slow: blowups
 
     rob = js.solveJoint(y_bad, ath, cel, rac, n_outer=6, robust=True,
-                        tilt=False)
+                        tilt=False, tau_max=None)
     plain = js.solveJoint(y_bad, ath, cel, rac, n_outer=6, robust=False,
-                          tilt=False)
+                          tilt=False, tau_max=None)
 
     def err(o):
         d = o["delta"] - o["delta"].mean()
@@ -152,7 +152,7 @@ def test_posterior_variance_matches_the_exact_inverse():
 
 def test_thin_cells_get_larger_standard_errors():
     ath, cel, rac, y, _, _, _ = _world(seed=13)
-    out = js.solveJoint(y, ath, cel, rac, n_outer=5, tilt=False, n_probe=60)
+    out = js.solveJoint(y, ath, cel, rac, n_outer=5, tilt=False, n_probe=60, tau_max=None)
     rows = np.bincount(cel, minlength=len(out["cell_se"]))
     thin = rows <= np.percentile(rows, 25)
     thick = rows >= np.percentile(rows, 75)

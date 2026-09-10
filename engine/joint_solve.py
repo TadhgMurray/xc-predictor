@@ -1671,6 +1671,31 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
 #    cause is elsewhere, and scripts/venue_check.py is how to tell.
 SIGMA_U_FLOOR = 0.045
 
+# ★★ THE COURSE-DIFFICULTY PRIOR, MEASURED (2026-09-10). Until now tau was
+#    whatever the EB update landed on, and --tau-max was an unset env var.
+#    scripts/difficulty_reliability.py split each venue's races in two and
+#    correlated the halves, which gives the fraction of the observed spread
+#    that reproduces -- and therefore the spread that is REAL:
+#
+#      XC   reliability 0.928   observed sd 3.64%   true sd 3.51%
+#      TF   reliability 0.574   observed sd 1.61%   true sd 1.22%
+#
+#    Cross country's difficulty is real: 93 per cent of it reproduces on
+#    independent races, and shrinking it would throw away signal. TRACK'S
+#    IS MOSTLY NOT. Only 57 per cent reproduces, and at the thin end far
+#    less -- 0.40 on 4-5 races, against 0.90 on 61+. A track is a flat
+#    400m oval; most of what separated one oval from another was the days
+#    they happened to host.
+#
+#    So the prior SD is capped at the MEASURED TRUE SPREAD of each sport.
+#    A well-evidenced venue still keeps its own value -- the cap is a
+#    prior, not a clamp -- while a thin one is pulled to its sport's
+#    level, and track's thin ones are pulled much harder because that is
+#    what the data says they are worth.
+#
+#  ! --tau-max still overrides this, and 0 disables the cap.
+TAU_MAX_DEFAULT = {0: 0.035, 1: 0.0122}          # 0 = XC, 1 = TF
+
 
 def racesPerCell(D):
     """How many distinct races back each cell."""
@@ -1693,7 +1718,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_smooth=CURVE_SMOOTH, cg_max_iter=CG_MAX_ITER,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
-               tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
+               tau_max="default", alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor=SIGMA_U_FLOOR):
@@ -1702,6 +1727,16 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                                                  group_of_cell=group)
     n = y.size
     assert D.n == n, "design and response disagree on the row count"
+
+    # see TAU_MAX_DEFAULT: the sentinel keeps None meaning "no cap"
+    if isinstance(tau_max, str) and tau_max == "default":
+        tau_max = dict(TAU_MAX_DEFAULT)
+    if verbose and tau_max:
+        print("[joint] course-difficulty prior capped at "
+              + ", ".join(f"{('XC', 'TF')[g]} {v:.4f}"
+                          for g, v in sorted(tau_max.items()))
+              + " (measured true spread; difficulty_reliability.py)",
+              flush=True)
 
     n_races = np.bincount(D.athlete, minlength=D.n_ath)
     # ★ WHERE tau2 AND sigma_u2 ARE ALLOWED TO COME FROM. See the note on
