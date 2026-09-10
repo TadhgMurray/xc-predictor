@@ -503,8 +503,16 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   a cell SE nobody could use. XCP_PROBES=4 puts them back.
   # XCP_WINTER_GAIN=0.03 states the average athlete's fall-to-spring gain
   # (issue 143); unset, the level carries the whole change.
-  # XCP_ALTITUDE=1 turns on the altitude term (issue 172; needs
-  # venue_elevation from scripts/build_venue_elevation.py).
+  # ★★ ALTITUDE IS ON BY DEFAULT NOW (2026-09-10). It was gated behind
+  #    XCP_ALTITUDE=1, which was never set -- so the term has been OFF in
+  #    every run since issue 172 landed, and BYU (1,400 m) has been reading
+  #    slow because the model had no way to know why (owner: "BYU course
+  #    too slow (altitude)"). venue_elevation exists on the box, so the
+  #    only thing keeping the term off was an env var nobody set.
+  #
+  #  ! IT FAILS SOFT. run_joint prints "venue_elevation is absent ... the
+  #    term is OFF" and carries on if the table is ever missing, so
+  #    defaulting this on cannot break a run. XCP_ALTITUDE=0 turns it off.
   # XCP_WINTER_GAIN_BANDS=0.03,0.02,0.03 states it per rating band
   # (low / middle / top) and the go-live shifts the track rows to it
   # (issue 194); unset, no shift.
@@ -525,7 +533,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_SPLIT_ABILITY:+--split-ability} \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
-      ${XCP_ALTITUDE:+--altitude}
+      $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude)
   # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
   #   row's normalized_time on the pool it is RATED in and reports the ones
   #   that disagree -- rows normalised as hs_m and rated as college_m come
