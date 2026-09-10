@@ -1229,6 +1229,101 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
 # ! NOTHING IS EVER DROPPED. A row that would have been condemned gets a small
 #   weight and stays in the design, so it can still anchor its athlete and can
 #   recover on the next iteration if the fit moves.
+# ★★ THE BACK OF THE FIELD IS NOISE, AND WE HAVE BEEN COUNTING IT AS
+#    EVIDENCE (owner, 2026-09-10, liking Slaney's top-25%-of-finishers
+#    filter). The observation is right: a runner jogging the JV race is not
+#    producing a measurement of the course, and residual variance is
+#    strongly heteroscedastic in ability.
+#
+#  ⚠⚠ AND THE OBVIOUS OBJECTION TO SLANEY'S CUT DID NOT SURVIVE TESTING.
+#     The argument was: cutting on finishing position is selection on the
+#     OUTCOME, an athlete makes the top quartile more often on days they ran
+#     WELL, so kept rows carry negative residuals and the course reads easy.
+#     Planted worlds say otherwise -- see tests/test_ability_weighting.py.
+#     Recovered difficulty was IDENTICAL to four decimals with and without a
+#     top-25% cut, even on a fixture built specifically to break it (half
+#     the courses hosting elite-only fields, half mixed, noise scaling with
+#     ability).
+#
+#     The reason is worth knowing: ABILITY IS A FREE PARAMETER. If an
+#     athlete is kept only when they run well, their ability is estimated
+#     faster to match, the residual at the kept rows goes to zero, and the
+#     selection lands in the ability rather than in the cell. Relative
+#     difficulty is untouched.
+#
+#     Ability recovery did not move either (rmse 0.0308 full, 0.0307 cut,
+#     0.0309 weighted). So on synthetic data NONE of the three matters, and
+#     the honest position is that this cannot be settled by simulation --
+#     both are rungs on the ladder and the held-out score decides.
+#
+#     Inverse-variance weighting is kept because it is the textbook response
+#     to heteroscedasticity and costs nothing, not because it was shown to
+#     beat the cut.
+#
+#  ! MEASURED, NOT ASSUMED. The residual sd is estimated per rating band
+#    from the current residuals each outer, so a corpus where the back of
+#    the field is NOT noisier produces flat weights and this does nothing.
+#
+#  ! AND IT COMPOSES WITH robustWeights, which handles single outliers. This
+#    is the systematic half: a whole class of rows being less informative.
+ABILITY_BANDS = (85.0, 95.0, 105.0, 115.0, 130.0)
+# a band's weight is capped so a thin band cannot dominate the solve
+ABILITY_W_FLOOR, ABILITY_W_CEIL = 0.25, 2.0
+
+
+def abilityWeights(resid, rating, w_prev=None):
+    """Inverse-variance weights by rating band, normalised to mean 1.
+
+    resid   current residuals, per row
+    rating  the athlete-season's rating, per row (refreshed each outer)
+    """
+    r = np.asarray(rating, dtype=np.float64)
+    band = np.searchsorted(np.asarray(ABILITY_BANDS), r, side="right")
+    n_band = len(ABILITY_BANDS) + 1
+    var = np.full(n_band, np.nan)
+    for b in range(n_band):
+        m = band == b
+        if m.sum() >= 50:
+            var[b] = max(float(np.mean(resid[m] ** 2)), 1e-12)
+    seen = np.isfinite(var)
+    if seen.sum() < 2:                      # nothing to compare
+        return np.ones_like(r), np.ones(n_band)
+    # ⚠ THE MEDIAN OVER POPULATED BANDS ONLY. Filling empty bands with 1.0
+    #   first put a variance of ONE beside real ones near 0.0004, so the
+    #   median was 1.0, every real band's ratio was tiny, 1/var blew past
+    #   the ceiling and EVERY band clipped to the same weight -- the whole
+    #   thing silently did nothing.
+    mid = float(np.median(var[seen]))
+    var = np.where(seen, var, mid)
+    # ! RELATIVE TO THE TYPICAL BAND, not to the best one: the target is a
+    #   reweighting, not a global rescale of sigma2.
+    var /= max(mid, 1e-12)
+    w = np.clip(1.0 / var, ABILITY_W_FLOOR, ABILITY_W_CEIL)[band]
+    return w / max(float(w.mean()), 1e-12), var
+
+
+# ★ SLANEY'S FILTER, VERBATIM, SO IT CAN BE TESTED RATHER THAN ARGUED
+#   ABOUT. Keep the fastest `frac` of each race and drop the rest. It is
+#   selection on the outcome, which sounds fatal and measurably is not --
+#   see abilityWeights above for the planted-world result and why. A rung on
+#   the ladder, decided by the held-out score.
+#
+# ! IMPLEMENTED AS A ZERO WEIGHT, not by rebuilding the design: the athlete
+#   and cell indices stay put, so the two rungs differ in exactly one thing.
+def topFractionWeights(y, race, frac):
+    if not frac or frac >= 1.0:
+        return np.ones_like(y)
+    order = np.lexsort((y, race))
+    r = np.asarray(race)[order]
+    start = np.searchsorted(r, r, side="left")
+    rank = np.arange(r.size) - start                      # 0-based, in race
+    size = np.bincount(r, minlength=int(r.max()) + 1)[r]
+    keep_sorted = rank < np.maximum(1, np.ceil(size * frac))
+    w = np.zeros_like(y)
+    w[order] = keep_sorted.astype(np.float64)
+    return w
+
+
 def robustWeights(resid, scale=None):
     if scale is None:
         mad = float(np.median(np.abs(resid - np.median(resid))))
@@ -1751,7 +1846,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                tau_max="default", alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
-               identified_priors=True, sigma_u_floor="default"):
+               identified_priors=True, sigma_u_floor="default",
+               ability_weight=False, top_frac=0.0):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1800,6 +1896,14 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     scale = None
     n_cal = 0
     w = np.ones(n)
+    # ! BEFORE THE LOOP, because it never changes: it is a property of the
+    #   finish order, not of the current fit.
+    if top_frac:
+        w = topFractionWeights(y, D.race, float(top_frac))
+        if verbose:
+            print(f"[joint] top-fraction filter: keeping the fastest "
+                  f"{100 * float(top_frac):.0f}% of each race "
+                  f"({int((w > 0).sum()):,} of {n:,} rows)", flush=True)
     h = np.ones(n)
     amp = np.ones(n)
     lam = np.zeros(max(D.n_pool, 1))
@@ -1884,6 +1988,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         # --- robust reweighting (replaces rowguard) ------------------ #
         if robust:
             w, scale = robustWeights(resid)
+        # ! ABILITY WEIGHTING ON TOP, and it needs the ratings, so it can
+        #   only run once they exist (athlete_pool given, second outer on).
+        #   See abilityWeights.
+        if ability_weight and rating is not None:
+            aw, band_var = abilityWeights(resid, rating[D.athlete])
+            w = w * aw
+            if verbose and outer == n_outer - 1:
+                print("[joint] ability weights by band "
+                      f"(var/median): {np.round(band_var, 3)}", flush=True)
 
         # --- the tilt and the amplitude, at the model's own ability -- #
         if athlete_pool is not None:

@@ -521,6 +521,8 @@ def solveKwargs(args, athlete_pool, verbose):
         centre_curve=args.centre_curve,
         identified_priors=not args.priors_from_all_cells,
         sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
+        ability_weight=args.ability_weight,
+        top_frac=args.top_frac,
     )
 
 
@@ -762,6 +764,17 @@ def main():
                          "takes the common effect: a one-race course keeps "
                          "tau2/(tau2+sigma_u2). '0,0' uses the fitted "
                          "values, which are biased low")
+    # ★ THE TWO WAYS TO SAY "THE BACK OF THE FIELD IS NOISE". See
+    #   js.abilityWeights and js.topFractionWeights -- one weights by
+    #   measured variance per rating band, the other cuts on finishing
+    #   position the way Slaney does. They are rungs on the ladder; the
+    #   held-out score decides, not the argument.
+    ap.add_argument("--ability-weight", action="store_true",
+                    help="inverse-variance row weights by rating band, "
+                         "refreshed each outer")
+    ap.add_argument("--top-frac", type=float, default=0.0, metavar="F",
+                    help="keep only the fastest F of each race (Slaney's "
+                         "top-25%% filter is 0.25); 0 keeps everyone")
     ap.add_argument("--priors-from-all-cells", action="store_true",
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "
