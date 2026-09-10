@@ -78,10 +78,19 @@ def test_link_steadies_a_thin_season_only():
     assert links[0].tolist() == [0] and links[1].tolist() == [1]
     D_link = js.Design(ath, cel, rac, link=links)
     D_none = js.Design(ath, cel, rac)
+    # ! sigma_u_floor=0 ON PURPOSE, and it is not a workaround. This world
+    #   plants NO race-day effect -- y is truth + difficulty + iid noise --
+    #   so the default floor (js.SIGMA_U_FLOOR, a claim that race days DO
+    #   vary) would force the solver to attribute variance to a race term
+    #   that is genuinely zero here, and abilities would move for a reason
+    #   the test is not about. Measured on this world: ability rmse 0.00710
+    #   at floor 0, 0.01341 at 0.03. The floor is tested where it belongs,
+    #   in tests/test_thin_course_shrinkage.py, against a world that has a
+    #   race-day effect to find.
     a_link = js.solveJoint(y, design=D_link, n_outer=3, tilt=False, n_probe=1,
-                           robust=False)["ability"]
+                           robust=False, sigma_u_floor=0.0)["ability"]
     a_none = js.solveJoint(y, design=D_none, n_outer=3, tilt=False, n_probe=1,
-                           robust=False)["ability"]
+                           robust=False, sigma_u_floor=0.0)["ability"]
     gap_link = abs(a_link[1] - a_link[0])
     gap_none = abs(a_none[1] - a_none[0])
     assert gap_link < gap_none, (gap_link, gap_none)

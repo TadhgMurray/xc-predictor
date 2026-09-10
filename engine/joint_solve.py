@@ -1554,6 +1554,122 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
 #            ability (tilt and amplitude) without a file; pool_mean_row --
 #            the legacy per-row pool mean for the tilt.
 # Output:    dict of fitted blocks, variance components and diagnostics.
+# ★★ ESTIMATE A VARIANCE COMPONENT ONLY WHERE IT IS IDENTIFIED.
+#
+#   THE BUG (measured 2026-09-10; owner: courses on 0-2 races sitting at
+#   +54%, +52%, +49%). In a cell with ONE race, the course effect d and the
+#   race-day effect u are THE SAME NUMBER -- nothing in the data separates
+#   "this course is slow" from "that day was slow". The model is fine with
+#   that: the prior is supposed to split the common effect between them in
+#   proportion to tau2 and sigma_u2.
+#
+#   But both are re-estimated each outer from their own posteriors, and
+#   that is a winner-take-all race. Whichever starts larger takes more of
+#   the common effect, which makes its next estimate larger still, which
+#   takes more. Measured on a synthetic world with one race per cell:
+#
+#       races/cell   kept    tau      sigma_u
+#       1            1.000   0.1386   0.0012      <-- collapsed
+#       2            0.981   0.1338   0.0201
+#       4            0.957   0.1296   0.0257
+#
+#   sigma_u goes to zero and the cell keeps ONE HUNDRED PERCENT of a single
+#   race's noise. That is "shrinkage is not working", and it is not the
+#   prior being weak -- it is the prior being estimated from the cells that
+#   cannot inform it.
+#
+#   THE FIX. A cell's d is identified apart from u only if the cell has at
+#   least TWO races; a race's u is identified apart from d only if its cell
+#   does. So tau2 and sigma_u2 are estimated on that subset alone and then
+#   APPLIED EVERYWHERE. Single-race cells are consumers of the prior, never
+#   contributors to it, and the split they get is the one the rest of the
+#   corpus supports.
+#
+# ⚠ WHAT I TRIED FIRST AND WHY IT WAS WRONG, so it is not tried again.
+#   Scaling pen_cell by rows-per-race, to turn n/(n+k) into R/(R+k). The
+#   arithmetic is right and the effect is not: penalising d while leaving u
+#   free does not shrink a course, it LAUNDERS the course's difficulty
+#   through the race term. On the same world sigma_u ran from 0.016 to
+#   0.133 -- almost exactly the planted delta_sd of 0.15 -- while tau
+#   collapsed to 0.005. The difficulty was still there, just wearing a
+#   different name.
+# ★ HOW SLOW A DAY CAN BE, AS A FLOOR (2026-09-10).
+#
+#   The identified-priors fix above stops sigma_u COLLAPSING, but it does
+#   not decide how much a single race should be trusted -- the data does,
+#   and on this corpus it says "quite a lot". A cell seen once keeps
+#
+#       tau2 / (tau2 + sigma_u2)
+#
+#   of whatever that one race showed. With the measured tau near 4.5% and
+#   sigma_u near 1.5%, that is ~0.90: a course seen once is published at
+#   ninety percent of one day's noise.
+#
+#   sigma_u is also biased DOWN by the estimator (the posterior variance
+#   comes off the information diagonal, which is a lower bound). Measured
+#   on a synthetic world where the answer is known:
+#
+#       planted u_sd   recovered
+#       0.010          0.0050
+#       0.030          0.0237
+#       0.060          0.0557
+#       0.100          0.0939
+#
+#   -- fine at the top, half at the bottom, and the bottom is where this
+#   corpus sits. On a world with FEW RACES PER ATHLETE it is far worse: a
+#   planted 3% race day came back as 0.0041, a SEVENFOLD underestimate,
+#   and flooring it at the truth improved athlete ability rmse (0.02130 ->
+#   0.02021) as well as pulling thin courses in.
+#
+# ⚠ THE FLOOR IS NOT FREE, AND THIS IS THE COST. On a world with NO
+#   race-day effect at all, forcing one costs ability accuracy:
+#   rmse 0.00710 at floor 0, 0.01341 at 0.03. So the floor is a claim that
+#   race days DO vary -- true of cross country (mud, heat, wind, a slow
+#   field) and the reason it is on by default. Set --sigma-u-floor 0 to
+#   drop the claim.
+#
+# ! SO THE FLOOR IS A STATED BELIEF, NOT A FITTED ONE, and it is the only
+#   honest place to put one: "a race day is worth at least this much".
+#   Mud, heat, wind, a slow field and a tactical race are all real and all
+#   land here. At 0.04 a course seen once keeps ~0.56 instead of ~0.90.
+#   Zero restores the pure fitted behaviour.
+# ★ WHY 0.03 AND NOT ANOTHER NUMBER. Swept on a mixed world (50 cells with
+#   12 races, 50 with one; planted tau 0.05, planted race day 0.03):
+#
+#       floor   thick kept   thin kept   thin RMSE
+#       0.00    1.003        0.873       0.0312
+#       0.02    0.989        0.739       0.0291
+#       0.03    0.985        0.716       0.0289   <-- best
+#       0.04    0.966        0.602       0.0294
+#       0.06    0.903        0.390       0.0344
+#
+#   The floor that minimises error on thin cells is the TRUE race-day sd,
+#   which is what theory says it should be, and it costs the thick cells
+#   almost nothing (1.003 -> 0.985). Past it thin cells over-shrink and the
+#   error climbs again: a floor with an optimum, not a dial that always
+#   helps.
+#
+# ⚠ 0.03 IS A BELIEF ABOUT RACE DAYS, NOT A MEASUREMENT OF THIS CORPUS. The
+#   solve prints the FITTED sigma_u beside it every run and says whether the
+#   floor is binding, so this is visible rather than assumed. If the fitted
+#   value is already above it, this does nothing at all.
+SIGMA_U_FLOOR = 0.03
+
+
+def racesPerCell(D):
+    """How many distinct races back each cell."""
+    pair = D.cell * np.int64(D.n_race) + D.race
+    first = np.unique(pair, return_index=True)[1]
+    return np.bincount(D.cell[first], minlength=D.n_cell)
+
+
+def cellOfRace(D):
+    """The cell each race belongs to (races nest inside cells)."""
+    out = np.zeros(D.n_race, dtype=np.int64)
+    out[D.race] = D.cell
+    return out
+
+
 def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                pool_mean_row=None, n_outer=6, robust=True, tilt=True,
                n_probe=64, seed=0, verbose=False,
@@ -1563,7 +1679,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max=None, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                dist_cal=True, sport_gap_delta=0.0,
-               merge_sports=False, centre_curve=False):
+               merge_sports=False, centre_curve=False,
+               identified_priors=True, sigma_u_floor=SIGMA_U_FLOOR):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -1571,6 +1688,22 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     assert D.n == n, "design and response disagree on the row count"
 
     n_races = np.bincount(D.athlete, minlength=D.n_ath)
+    # ★ WHERE tau2 AND sigma_u2 ARE ALLOWED TO COME FROM. See the note on
+    #   racesPerCell: a one-race cell cannot tell d from u, so it must not
+    #   vote on how they are split.
+    _rpc = racesPerCell(D)
+    cell_ok = _rpc >= 2
+    race_ok = cell_ok[cellOfRace(D)]
+    if not identified_priors or not cell_ok.any() or not race_ok.any():
+        if identified_priors and verbose:
+            print("[joint] no multi-race cells -- variance components fall "
+                  "back to every cell", flush=True)
+        cell_ok = np.ones(D.n_cell, dtype=bool)
+        race_ok = np.ones(D.n_race, dtype=bool)
+    elif verbose:
+        print(f"[joint] priors from identified cells only: "
+              f"{int(cell_ok.sum()):,} of {D.n_cell:,} cells have 2+ races "
+              f"({int(race_ok.sum()):,} of {D.n_race:,} races)", flush=True)
     if athlete_pool is not None:
         athlete_pool = np.asarray(athlete_pool, dtype=np.int64)
         n_pool_r = int(athlete_pool.max()) + 1
@@ -1629,9 +1762,25 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         sigma2 = float(np.average(resid ** 2, weights=w))
         d_var = sigma2 / np.maximum(diag[D.o_d:D.o_u], 1e-12)
         u_var = sigma2 / np.maximum(diag[D.o_u:D.o_mu], 1e-12)
-        sigma_u2 = max(float(np.mean(b["u"] ** 2 + u_var)), 1e-9)
+        # ! race_ok / cell_ok, NOT every race and cell. See racesPerCell.
+        sigma_u2 = max(float(np.mean(b["u"][race_ok] ** 2
+                                     + u_var[race_ok])), 1e-9)
+        # a race day is worth at least this much; see SIGMA_U_FLOOR
+        sigma_u_fitted = np.sqrt(sigma_u2)
+        if sigma_u_floor and sigma_u_floor > 0:
+            sigma_u2 = max(sigma_u2, float(sigma_u_floor) ** 2)
+            if verbose and outer == n_outer - 1:
+                bound = np.sqrt(sigma_u2) > sigma_u_fitted + 1e-12
+                print(f"[joint] race-day floor {sigma_u_floor:.4f} "
+                      f"{'BINDING' if bound else 'not binding'} "
+                      f"(fitted sigma_u {sigma_u_fitted:.5f}); a one-race "
+                      f"course keeps about "
+                      f"{tau2.mean() / (tau2.mean() + sigma_u2):.2f} of what "
+                      f"that race showed", flush=True)
         for g in range(D.n_group):
-            m = D.group_of_cell == g
+            m = (D.group_of_cell == g) & cell_ok
+            if not m.any():                 # a group of one-race cells only
+                m = D.group_of_cell == g
             if m.any():
                 tau2[g] = max(float(np.mean(b["d"][m] ** 2 + d_var[m])), 1e-9)
                 # an owner's cap on a group's cell spread (--tau-tf-max):

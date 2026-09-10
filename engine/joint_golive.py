@@ -186,7 +186,22 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     is_tf = tf_rows > (rows_per_cell * 0.5)
     ref = solved & is_tf
     if ref.any():
-        anchored = raw - np.average(raw[ref], weights=w[ref])
+        # ★★ THE MEDIAN TRACK, NOT THE RESULTS-WEIGHTED MEAN TRACK (owner,
+        #    2026-09-10: "that tf difficulty isn't super tight, also it's
+        #    not default at 0"). Anchoring on the results-weighted mean put
+        #    THAT statistic at zero and nothing else: measured after the
+        #    last run, TF read weighted mean 0.003% but unweighted mean
+        #    0.201% and MEDIAN 0.188%. So the typical track was +0.19%, and
+        #    "a track is 0.0" was true only of a number nobody looks at.
+        #
+        #    The weighted mean is dragged by the handful of enormous cells
+        #    -- a conference championship oval with 40,000 results outvotes
+        #    a thousand ordinary tracks -- and those cells are exactly the
+        #    ones whose difficulty is least like a typical track's. The
+        #    median is the typical track by definition and is unmoved by
+        #    them, so p50 lands at 0.000 and the mean follows it to within
+        #    a rounding error.
+        anchored = raw - float(np.median(raw[ref]))
         xc_ref = solved & ~is_tf
         if xc_ref.any():
             xc_mean = float(np.average(anchored[xc_ref], weights=w[xc_ref]))

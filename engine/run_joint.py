@@ -681,6 +681,23 @@ def main():
                     help="add this to the solve's bbar every pass -- D from "
                          "scripts/measure_sport_gap.py (e.g. -0.02795). "
                          "Negative means TF currently rates too high.")
+    # ★ ON BY DEFAULT (2026-09-10). With one race in a cell, d and u are the
+    #   same number, and letting such cells vote on tau2/sigma_u2 collapses
+    #   sigma_u to zero -- so the course kept 100% of one race's noise. See
+    #   joint_solve.racesPerCell. The flag exists to measure the change,
+    #   not because the old behaviour is defensible.
+    ap.add_argument("--sigma-u-floor", type=float, default=js.SIGMA_U_FLOOR,
+                    metavar="SD",
+                    help="how slow a race day is worth at minimum (log SD; "
+                         "default %(default)s). This is what decides how "
+                         "much a course seen ONCE is trusted: it keeps "
+                         "tau2/(tau2+sigma_u2) of that one race. 0 disables "
+                         "the floor and uses the fitted value, which is "
+                         "biased low")
+    ap.add_argument("--priors-from-all-cells", action="store_true",
+                    help="estimate tau2/sigma_u2 from every cell including "
+                         "one-race cells -- the pre-2026-09-10 behaviour, "
+                         "kept only for comparison")
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-robust", action="store_true")
     # ⚠ THE LIVE SWITCH (issue 116). --golive writes course_difficulties,
@@ -809,7 +826,9 @@ def main():
                         dist_cal=not args.no_dist_cal,
                         sport_gap_delta=args.sport_gap_delta,
                         merge_sports=args.merge_sports,
-                        centre_curve=args.centre_curve)
+                        centre_curve=args.centre_curve,
+                        identified_priors=not args.priors_from_all_cells,
+                        sigma_u_floor=args.sigma_u_floor)
     print(f"[joint] solved in {time.time() - t0:.0f}s")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap
