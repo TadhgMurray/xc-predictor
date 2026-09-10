@@ -550,7 +550,13 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #
   #  ! `|| true` on both: an evidence step must never fail a pipeline that
   #    has already produced good boards.
-  step 08a_holdout      "$PY" -u engine/run_joint.py --holdout \
+  #  ! --holdout-only, NOT --holdout. Plain --holdout scores the held-out
+  #    races and then solves the full model on the sample and writes it
+  #    over engine/data/joint_difficulty.npz -- the file the diagnostics
+  #    read -- for a solve nobody looks at. It cost this step half its
+  #    wall clock (3073s of 6371s) and would have shipped a quarter-sample
+  #    difficulty file to explain_joint_row.
+  step 08a_holdout      "$PY" -u engine/run_joint.py --holdout-only \
       --holdout-kind race --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
       --outer "${XCP_OUTER:-5}" --probes 0 --altitude || true
   step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \

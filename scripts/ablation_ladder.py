@@ -92,7 +92,12 @@ LADDER = [
 
 def runRung(name, flags, args):
     cmd = [args.python, "-u", os.path.join("engine", "run_joint.py"),
-           "--holdout", "--holdout-kind", args.kind,
+           # ! --holdout-only. With plain --holdout every rung scores its
+           #   held-out races and THEN solves the full model on the sample
+           #   and writes it over engine/data/joint_difficulty.npz -- 12
+           #   solves nobody reads, and the last rung's leftovers under
+           #   the diagnostics. The ladder reports; it writes nothing.
+           "--holdout-only", "--holdout-kind", args.kind,
            "--sample-pct", str(args.pct), "--sample-seed", str(args.seed),
            "--outer", str(args.outer), "--probes", "0"]
     # ! EVERY RUNG CARRIES ITS OWN COMPLETE FLAGS, including --altitude, so

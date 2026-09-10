@@ -677,6 +677,15 @@ def buildParser():
                     help="what to hold out together (default race)")
     ap.add_argument("--holdout", action="store_true",
                     help="also fit on 90%% of rows and score the rest")
+    # ★ A REPORT STEP MUST NOT WRITE THE THING IT REPORTS ON. Without this,
+    #   `--holdout --sample-pct 25` scores the holdout and then solves the
+    #   FULL model on a quarter of the athletes and writes that over
+    #   engine/data/joint_difficulty.npz -- the file explain_joint_row and
+    #   the other diagnostics read. It also doubles the step's wall clock
+    #   for a solve nobody looks at.
+    ap.add_argument("--holdout-only", action="store_true",
+                    help="stop after the held-out score: no full solve, "
+                         "nothing written (implies --holdout)")
     ap.add_argument("--curve-gap", type=float, default=js.CURVE_GAP_WEIGHT,
                     help="weight (x rows per pool) pinning the curve's "
                          "track-window mean to its XC-window mean, so the "
@@ -1011,8 +1020,11 @@ def main():
           f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
 
-    if args.holdout:
+    if args.holdout or args.holdout_only:
         holdout(cols, keep, args, athlete_pool, D)
+    if args.holdout_only:
+        print("[joint] --holdout-only: no full solve, nothing written")
+        return
 
     t0 = time.time()
     out = js.solveJoint(y, design=D, n_probe=args.probes,
@@ -1033,8 +1045,18 @@ def main():
     rows_per_cell = np.bincount(D.cell, minlength=D.n_cell).astype(np.float64)
     solved = rows_per_cell > 0
     anchored = delta - np.average(delta[solved], weights=rows_per_cell[solved])
-    print(f"\n[joint] sigma {np.sqrt(out['sigma2']):.5f} | race-day sigma_u "
-          f"{np.sqrt(out['sigma_u2']):.5f} | tau {np.sqrt(out['tau2'])}")
+    # ! sigma_u2 AND tau2 ARE PER-GROUP ARRAYS, not scalars. XC and TF get
+    #   their own race-day and course spreads -- a shared pair let the TF
+    #   floor eat XC's course difficulty. Format them group by group, or
+    #   numpy raises on the ':.5f'.
+    print(f"\n[joint] sigma {np.sqrt(out['sigma2']):.5f}")
+    _su = np.atleast_1d(np.asarray(out["sigma_u2"], dtype=np.float64))
+    _tau = np.atleast_1d(np.asarray(out["tau2"], dtype=np.float64))
+    for _g in range(max(_su.size, _tau.size)):
+        _name = ("XC", "TF")[_g] if _g < 2 else str(_g)
+        _s = float(np.sqrt(_su[_g if _g < _su.size else -1]))
+        _t = float(np.sqrt(_tau[_g if _g < _tau.size else -1]))
+        print(f"[joint] {_name}: race-day sigma_u {_s:.5f} | tau {_t:.5f}")
     print(f"[joint] {out['n_downweighted']:,} rows down-weighted, 0 dropped")
     print(f"[joint] cell SE: median {np.median(out['cell_se']):.4f}, "
           f"p95 {np.percentile(out['cell_se'], 95):.4f}")
