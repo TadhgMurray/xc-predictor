@@ -489,16 +489,23 @@ def sitemap_index():
 #   new connection. A second failure, or a database that is down, is a 503
 #   with Retry-After: a visitor sees the branded page, a crawler keeps the
 #   page indexed and comes back.
-MAINTENANCE_FLAG = os.environ.get("XCP_MAINTENANCE_FLAG", "/var/tmp/racecast-maintenance")
+# ⚠ NOT os.path.exists. A pipeline step killed with SIGKILL mid-swap leaves
+#   the flag file behind, and a bare existence check then answers 503 to
+#   every visitor and every crawler FOREVER -- silently, and looking exactly
+#   like the site being down. engine/maintenance.isMaintenance honours the
+#   flag only while it is fresh (a live holder refreshes it); an old one is
+#   debris. See engine/maintenance.py.
+from maintenance import isMaintenance as _inMaintenance
 
 
 @app.before_request
 def _maintenance():
-    """While the flag file exists (the pipeline drops it around a table
-    swap) every page is a 503 with Retry-After, never a half-built page."""
+    """While the flag file exists AND IS FRESH (the pipeline drops it around
+    a table swap) every page is a 503 with Retry-After, never a half-built
+    page. A stale flag is a killed process, not a swap: serve the site."""
     if request.path.startswith("/static/"):
         return None
-    if os.path.exists(MAINTENANCE_FLAG):
+    if _inMaintenance():
         return render_template("error.html", code=503), 503, {"Retry-After": "120"}
     return None
 

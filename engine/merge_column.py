@@ -454,7 +454,11 @@ def _swapSiege(conn, table, cap):
 
 
 def _swapSiegeRounds(conn, table, cap):
+    from maintenance import heartbeat
     for rnd in range(1, _SIEGE_ROUNDS + 1):
+        # the flag EXPIRES so a killed swap cannot 503 the site forever
+        # (engine/maintenance.py); a live siege says so every round
+        heartbeat()
         if rnd > _SIEGE_POLITE:
             try:
                 with conn.cursor() as cur:

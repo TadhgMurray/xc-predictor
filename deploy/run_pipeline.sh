@@ -83,6 +83,19 @@ if [ "$CORR_MB" -lt 100 ]; then
 fi
 echo "  corrections.py present (${CORR_MB}MB)"
 
+# ★ A FLAG LEFT BY A KILLED SWAP 503s THE WHOLE SITE UNTIL SOMEONE NOTICES.
+#   siteMaintenance removes it in a `finally`, which SIGKILL does not run --
+#   and killing a step whose query will not die is a normal thing to do here.
+#   The app now ignores a flag older than XCP_MAINTENANCE_MAX_S, so the site
+#   heals itself; this clears the debris too, and SAYS SO, because a stale
+#   flag means the site was serving 503 to visitors and crawlers until now.
+STALE_AGE=$("$PY" -c 'import sys; sys.path.insert(0, "engine"); import maintenance; a = maintenance.clearStale(); print("" if a is None else int(a))' 2>/dev/null)
+if [ -n "${STALE_AGE:-}" ]; then
+  echo "  ! cleared a STALE maintenance flag (${STALE_AGE}s old) -- the site" >&2
+  echo "    was answering 503 to every request for that long. A step was" >&2
+  echo "    killed mid-swap. Check search-console coverage." >&2
+fi
+
 LOGDIR="$ROOT/logs/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOGDIR"
 SUMMARY="$LOGDIR/summary.log"
