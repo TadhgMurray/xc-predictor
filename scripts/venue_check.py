@@ -99,6 +99,11 @@ SELECT r.person_id,
         || ':' || COALESCE(r.source, ''))               AS race,
        r.date::text                                     AS d,
        ln(r.normalized_time)                            AS lnt,
+       -- ★★ EVERY ROW'S PUBLISHED DIFFICULTY, not just the target's. See
+       --    _MEASURE: without this the comparison is between two different
+       --    zeros and reports a gap that is mostly the anchor.
+       ln(1 + COALESCE(cd.difficulty, 0))               AS pub,
+       (cd.difficulty IS NOT NULL)                      AS has_pub,
        (h.meet_id IS NOT NULL)                          AS is_target
 FROM   results r
 JOIN   who w ON w.person_id = r.person_id
@@ -108,6 +113,10 @@ LEFT   JOIN dist_override dov ON dov.meet_id = r.meet_id
                              AND dov.div_id = r.div_id
 LEFT   JOIN hits h ON h.meet_id = r.meet_id AND h.div_id = r.div_id
                   AND h.source = r.source
+LEFT   JOIN course_difficulties cd
+       ON cd.course_name = 'XC:' || m.course_name
+      AND round(cd.distance_m::numeric)
+          = round(COALESCE(dov.distance, m.distance)::numeric)
 WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
   AND  m.course_name IS NOT NULL
   AND  r.date IS NOT NULL AND {_ISO_DATE}
@@ -118,24 +127,55 @@ _MEASURE = f"""
 WITH per_season AS (
     SELECT person_id, season, count(*) AS n_all, sum(lnt) AS s_all
     FROM   {_SCRATCH} GROUP BY 1, 2
+), per_season_pub AS (
+    -- the same leave-own-venue-out mean, over the PUBLISHED difficulty of
+    -- the courses this athlete raced
+    SELECT person_id, season, count(*) AS n_all, sum(pub) AS s_all
+    FROM   {_SCRATCH} WHERE has_pub GROUP BY 1, 2
 ), per_venue AS (
     SELECT person_id, season, venue, count(*) AS n_own, sum(lnt) AS s_own
     FROM   {_SCRATCH} GROUP BY 1, 2, 3
+), per_venue_pub AS (
+    SELECT person_id, season, venue, count(*) AS n_own, sum(pub) AS s_own
+    FROM   {_SCRATCH} WHERE has_pub GROUP BY 1, 2, 3
 ), resid AS (
     SELECT b.venue, b.race, b.person_id,
            round(b.dist / 100.0) * 100                      AS cell,
-           b.lnt - (p.s_all - v.s_own) / (p.n_all - v.n_own) AS res
+           b.lnt - (p.s_all - v.s_own) / (p.n_all - v.n_own) AS res,
+           -- ★★ WHAT THE BOARD PREDICTS THIS RESIDUAL SHOULD BE. Published
+           --    difficulty is anchored on the median TRACK, so an XC course
+           --    reads about 6.9 points high before it is hard at all; the
+           --    measured residual is against this athlete's OTHER XC
+           --    courses, whose zero is that same 6.9. Comparing the two raw
+           --    numbers reports the anchor as an error -- it is how a
+           --    published 8.69 and a measured -1.39 looked like a ten-point
+           --    scandal when the real disagreement was about three.
+           --    Differencing the published values the same way the times
+           --    are differenced cancels the anchor exactly.
+           --
+           -- ! AND NO PER-CENT SIGNS IN HERE. psycopg2 scans the whole
+           --   query string for placeholders, SQL COMMENTS INCLUDED, so a
+           --   lone one in prose dies with "dict is not a sequence".
+           CASE WHEN b.has_pub AND pp.n_all > vp.n_own
+                THEN b.pub - (pp.s_all - vp.s_own) / (pp.n_all - vp.n_own)
+                END                                          AS pred
     FROM   {_SCRATCH} b
     JOIN   per_season p ON p.person_id = b.person_id AND p.season = b.season
     JOIN   per_venue  v ON v.person_id = b.person_id AND v.season = b.season
                        AND v.venue = b.venue
+    LEFT   JOIN per_season_pub pp ON pp.person_id = b.person_id
+                                 AND pp.season = b.season
+    LEFT   JOIN per_venue_pub  vp ON vp.person_id = b.person_id
+                                 AND vp.season = b.season
+                                 AND vp.venue = b.venue
     WHERE  b.is_target AND p.n_all > v.n_own
 ), per_race AS (
     SELECT venue, cell, race, count(*) AS n,
-           avg(res) AS race_res, min(person_id) AS anyone
+           avg(res) AS race_res, avg(pred) AS race_pred,
+           min(person_id) AS anyone
     FROM   resid GROUP BY 1, 2, 3
 ), halved AS (
-    SELECT venue, cell, race, n, race_res,
+    SELECT venue, cell, race, n, race_res, race_pred,
            (row_number() OVER (PARTITION BY venue, cell ORDER BY race) %% 2)
                                                             AS half
     FROM   per_race
@@ -144,6 +184,9 @@ SELECT venue, cell::int AS dist,
        count(*)                                             AS races,
        sum(n)                                               AS results,
        round((100 * sum(race_res * n) / sum(n))::numeric, 2) AS measured_pct,
+       round((100 * sum(race_pred * n) FILTER (WHERE race_pred IS NOT NULL)
+              / NULLIF(sum(n) FILTER (WHERE race_pred IS NOT NULL), 0))
+             ::numeric, 2)                                  AS board_says_pct,
        round((100 * stddev_samp(race_res)
               / sqrt(count(*)))::numeric, 2)                AS se_pct,
        round((100 * sum(race_res * n) FILTER (WHERE half = 0)
@@ -229,7 +272,12 @@ def main():
 
             print("\n" + "=" * 74)
             print("2. WHAT THE ATHLETES SAY (vs their races ELSEWHERE)")
-            print("   measured_pct > 0 = they run SLOWER here than elsewhere")
+            print("   measured_pct  > 0 = they run SLOWER here than elsewhere")
+            print("   board_says_pct    what the PUBLISHED difficulties")
+            print("                     predict that same number to be --")
+            print("                     differenced the same way, so the")
+            print("                     track anchor cancels. THIS is what")
+            print("                     measured_pct must be compared with.")
             print("   half_a / half_b  = the venue's races split in two;")
             print("                      far apart means it is not stable")
             print("=" * 74)
@@ -246,43 +294,54 @@ def main():
                       "few races elsewhere")
                 return 0
             for row in meas:
-                venue, dist, races, results, m, se, ha, hb = row
+                (venue, dist, races, results, m, board, se,
+                 ha, hb) = row
                 m = float(m)
                 se = float(se) if se is not None else float("nan")
-                key = None
+                raw_pub = None
                 for (pv, pd), val in published.items():
                     if pv.lower() in venue.lower() or venue.lower() in pv.lower():
                         if pd is None or abs((pd or 0) - dist) <= 150:
-                            key = val
+                            raw_pub = val
                             break
                 print(f"\n    {venue}  {dist}m   {races} races, "
                       f"{results:,} results")
-                print(f"      measured  {m:+.2f}%  (se {se:.2f})")
+                print(f"      the runners     {m:+.2f}%  (se {se:.2f})   "
+                      f"vs their races elsewhere")
+                if board is not None:
+                    print(f"      the board says  {float(board):+.2f}%   "
+                          f"for the SAME comparison")
+                if raw_pub is not None:
+                    print(f"      (published difficulty {raw_pub:+.2f}%, on "
+                          f"the track-anchored scale --\n       not "
+                          f"comparable to the two numbers above; an XC "
+                          f"course reads\n       about +6.9% there before "
+                          f"it is hard at all)")
                 if ha is not None and hb is not None:
                     spread = abs(float(ha) - float(hb))
-                    print(f"      halves    {float(ha):+.2f}% / "
+                    print(f"      halves          {float(ha):+.2f}% / "
                           f"{float(hb):+.2f}%   (apart by {spread:.2f})")
                     if spread > 3.0:
-                        print("      ⚠ the two halves disagree by more than "
-                              "3 points -- this venue's\n        difficulty "
+                        print("      ⚠ the halves disagree by more than 3 "
+                              "points -- this venue's\n        difficulty "
                               "is not stable enough to argue about.")
-                if key is None:
-                    print("      published (no course_difficulties row "
-                          "matched this cell)")
+                if board is None:
+                    print("      => no published difficulty on the athletes' "
+                          "other courses, so\n         there is nothing to "
+                          "compare against.")
                     continue
-                print(f"      published {key:+.2f}%")
-                gap = key - m
+                gap = float(board) - m
                 if abs(gap) < max(1.0, 2 * se):
                     print("      => the board agrees with the runners.")
                 elif gap > 0:
                     print(f"      => the board rates this course "
-                          f"{gap:.2f} points HARDER than the\n         "
-                          f"runners did, so times here are credited more "
+                          f"{gap:.2f} points HARDER than the runners\n"
+                          f"         did, so times here are credited more "
                           f"than they earned.")
                 else:
                     print(f"      => the board rates this course "
-                          f"{-gap:.2f} points EASIER than the\n         "
-                          f"runners did, so times here are credited less "
+                          f"{-gap:.2f} points EASIER than the runners\n"
+                          f"         did, so times here are credited less "
                           f"than they earned.")
             print("\n    ⚠ For a national championship (Foot Locker, NXN) "
                   "read the gap as partly\n      the season form curve: the "

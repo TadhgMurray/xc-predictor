@@ -1653,7 +1653,23 @@ def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
 #   solve prints the FITTED sigma_u beside it every run and says whether the
 #   floor is binding, so this is visible rather than assumed. If the fitted
 #   value is already above it, this does nothing at all.
-SIGMA_U_FLOOR = 0.03
+# ★★ RAISED TO 0.045 (owner, 2026-09-10: "we should shrink more, make it
+#    so"). At 0.03 a course seen once kept tau2/(tau2+sigma_u2) = 0.69 of
+#    what that one race showed -- a +54 percent course came out at +37,
+#    which is not shrinkage anybody would notice. With tau near 0.045 on
+#    this corpus, a floor at 0.045 makes a one-race course keep HALF, which
+#    is the honest reading of "one race is one opinion".
+#
+#  ! THIS IS STILL A STATED BELIEF, and the sweep above says the optimum is
+#    the TRUE race-day sd. scripts/difficulty_reliability.py measures that
+#    per race-count band; when it has been run, set this from it rather
+#    than from the argument above.
+#
+#  ⚠ AND IT WILL NOT FIX A WELL-EVIDENCED VENUE. Glendoveer, Balboa and
+#    Morley have thousands of results across dozens of races, so the prior
+#    is nowhere near them at any floor. If those courses are wrong the
+#    cause is elsewhere, and scripts/venue_check.py is how to tell.
+SIGMA_U_FLOOR = 0.045
 
 
 def racesPerCell(D):

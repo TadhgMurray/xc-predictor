@@ -47,20 +47,38 @@ CREATE TABLE course_difficulties (course_name text, difficulty float,
 NAME = "Foot Locker Nationals"
 
 
-def plant(cur, true_diff=0.08, published=0.02, day_sd=0.0, races=12,
-          n_ath=3000, per=40, seed=21):
-    """Ordinary venues at difficulty 0 to be the benchmark, plus one named
-    venue with a known difficulty and a known published value."""
+# ★ EVERY XC COURSE CARRIES THIS BEFORE IT IS HARD AT ALL. Published
+#   difficulty is anchored on the median TRACK, so the whole sport sits
+#   about +6.9 up the scale. A comparison that does not cancel it reports
+#   the anchor as an error -- which is how a published +8.69 and a measured
+#   -1.39 once looked like a ten-point scandal over a three-point
+#   disagreement.
+TRACK_ANCHOR = 0.069
+
+
+def plant(cur, true_diff=0.08, published=None, day_sd=0.0, races=12,
+          n_ath=3000, per=40, seed=21, anchor=TRACK_ANCHOR,
+          board_error=0.0):
+    """Ordinary venues scattered around the XC average, plus one named
+    venue at a known difficulty.
+
+    Every course gets a published difficulty on the TRACK-anchored scale
+    (true + anchor), and the named venue's is offset by `board_error` so a
+    genuine board mistake can be planted separately from the anchor.
+    """
     rng = random.Random(seed)
     ability = [rng.gauss(0, 0.06) for _ in range(n_ath)]
-    mrows, rrows = [], []
+    mrows, rrows, drows = [], [], []
     mid = 0
     for v in range(30):
+        base = rng.gauss(0.0, 0.02)
+        drows.append((f"XC:Regular {v}",
+                      math.expm1(math.log1p(base) + anchor), 400, 300, 5000))
         for k in range(10):
             mrows.append((mid, 1, "x", f"Regular {v}", 5000))
             for a in rng.sample(range(n_ath), per):
                 rrows.append((a, f"2023-10-{1 + k % 28:02d}", mid, 1, "x",
-                              math.exp(ability[a] + rng.gauss(0, 0.03)
+                              math.exp(ability[a] + base + rng.gauss(0, 0.03)
                                        + math.log(1200))))
             mid += 1
     for k in range(races):
@@ -71,11 +89,13 @@ def plant(cur, true_diff=0.08, published=0.02, day_sd=0.0, races=12,
                           math.exp(ability[a] + true_diff + day
                                    + rng.gauss(0, 0.03) + math.log(1200))))
         mid += 1
+    drows.append((f"XC:{NAME}",
+                  math.expm1(math.log1p(true_diff + board_error) + anchor),
+                  races * per, n_ath, 5000))
     cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s,%s)", mrows)
     cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s)", rrows)
-    if published is not None:
-        cur.execute("INSERT INTO course_difficulties VALUES (%s,%s,%s,%s,%s)",
-                    (f"XC:{NAME}", published, races * per, n_ath, 5000))
+    cur.executemany("INSERT INTO course_difficulties VALUES "
+                    "(%s,%s,%s,%s,%s)", drows)
 
 
 def measure(cur, pat="Foot Locker"):
@@ -85,7 +105,15 @@ def measure(cur, pat="Foot Locker"):
     cur.execute(vc._MEASURE, {"min_rows": 20})
     rows = cur.fetchall()
     assert rows, "the venue produced no measurable cell"
-    return rows[0]      # venue, dist, races, results, measured, se, ha, hb
+    # venue, dist, races, results, measured, board_says, se, half_a, half_b
+    return rows[0]
+
+
+# ! NAMED, NOT INDEXED. Adding board_says_pct as column 5 shifted the halves
+#   from 6,7 to 7,8 and two tests failed on the OLD columns while still
+#   looking like they were about halves.
+def _halves(row):
+    return float(row[7]), float(row[8])
 
 
 @unittest.skipUnless(HOST and PORT and psycopg2,
@@ -117,18 +145,17 @@ class VenueCheck(unittest.TestCase):
 
     def test_the_halves_agree_on_a_stable_venue(self):
         plant(self.cur, true_diff=0.08)
-        row = measure(self.cur)
-        self.assertLess(abs(float(row[6]) - float(row[7])), 1.5,
-                        f"halves {row[6]} vs {row[7]}")
+        ha, hb = _halves(measure(self.cur))
+        self.assertLess(abs(ha - hb), 1.5, f"halves {ha} vs {hb}")
 
     def test_an_unstable_venue_is_flagged(self):
         """Same true difficulty, but every race day swings hugely. The
         venue's own number is then not worth arguing about, and the halves
         are how you can tell."""
         plant(self.cur, true_diff=0.08, day_sd=0.10, races=6)
-        row = measure(self.cur)
-        self.assertGreater(abs(float(row[6]) - float(row[7])), 3.0,
-                           f"halves {row[6]} vs {row[7]} -- not flagged")
+        ha, hb = _halves(measure(self.cur))
+        self.assertGreater(abs(ha - hb), 3.0,
+                           f"halves {ha} vs {hb} -- not flagged")
 
     def test_the_venue_does_not_benchmark_itself(self):
         """⚠ If the venue's own rows leaked into the benchmark, its
@@ -145,6 +172,39 @@ class VenueCheck(unittest.TestCase):
                                       "cut": 10000})
         self.cur.execute(f"SELECT count(*) FROM {vc._SCRATCH}")
         self.assertEqual(self.cur.fetchone()[0], 0)
+
+
+    def test_the_track_anchor_cancels(self):
+        """★★ THE BUG THIS FILE EXISTS TO PREVENT A SECOND TIME. Published
+        difficulty lives on a track-anchored scale; the measured residual
+        is against the athlete's other XC courses, whose zero is that same
+        anchor. Comparing them raw reports the anchor as a scandal.
+
+        Here the board is CORRECT and the anchor is large. measured and
+        board_says must agree, and both must be far from the published
+        number."""
+        plant(self.cur, true_diff=0.05, board_error=0.0)
+        row = measure(self.cur)
+        measured, board = float(row[4]), float(row[5])
+        self.assertAlmostEqual(measured, 5.0, delta=0.8)
+        self.assertAlmostEqual(board, measured, delta=0.8,
+                               msg=f"anchor did not cancel: {board} vs "
+                                   f"{measured}")
+        # and the raw published number is a full anchor away from both
+        self.cur.execute("SELECT difficulty FROM course_difficulties "
+                         "WHERE course_name = %s", (f"XC:{NAME}",))
+        raw = 100 * float(self.cur.fetchone()[0])
+        self.assertGreater(raw - measured, 5.0,
+                           "the fixture no longer carries a real anchor")
+
+    def test_a_genuinely_wrong_board_is_still_caught(self):
+        """⚠ The anchor correction must not swallow real errors too. Plant a
+        board that is 4 points too hard ON TOP of the anchor."""
+        plant(self.cur, true_diff=0.05, board_error=0.04)
+        row = measure(self.cur)
+        measured, board = float(row[4]), float(row[5])
+        self.assertAlmostEqual(board - measured, 4.0, delta=1.0,
+                               msg=f"board {board} vs measured {measured}")
 
 
 if __name__ == "__main__":
