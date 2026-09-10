@@ -640,8 +640,27 @@ def holdout(cols, keep, args, athlete_pool, D_full):
             if m.sum() > 1000:
                 e = y_te[m] - pred[m]
                 print(f"        {name}: {e.std():.6f}  ({int(m.sum()):,} rows)")
-    print("        compare: pair_all --validate 'pair/split' (ridge 0.5) "
-          "scored 0.044325 on 2026-08-31's corpus")
+    # ⚠ THE COMPARISON IS ONLY LEGAL ON THE ROW RUNG. pair_all's 0.044325
+    #   was a ROW split -- the same race was in train, so its race-day
+    #   effect was already fitted and the score is an INTERPOLATION. A race
+    #   split cannot see the held-out day at all, so its error carries the
+    #   whole race-day term on top. Printing the two side by side under a
+    #   race split reads as "we got worse" when it is a harder question.
+    if kind == "row":
+        print("        compare: pair_all --validate 'pair/split' (ridge 0.5) "
+              "scored 0.044325 on 2026-08-31's corpus")
+    else:
+        # the floor: a race we have never seen carries its own day, and no
+        # model can know it in advance. sqrt(sigma^2 + sigma_u^2) is the
+        # best any model can do here -- print it beside the score.
+        _s2 = float(out["sigma2"])
+        _su = np.atleast_1d(np.asarray(out["sigma_u2"], dtype=np.float64))
+        _floor = float(np.sqrt(_s2 + _su.mean()))
+        print(f"        floor {_floor:.6f} = sqrt(sigma^2 + sigma_u^2): a "
+              f"new race carries its own day and NO model can know it in "
+              f"advance. {err.std() / _floor:.3f}x the floor.")
+        print("        NOT comparable to pair_all's 0.044325 -- that was a "
+              "ROW split, which had the held-out race's day in train.")
 
 
 # ★ THE PARSER AND ITS IMPLICATIONS ARE FUNCTIONS, NOT main()'s LOCALS, so
