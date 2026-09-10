@@ -70,11 +70,49 @@ import pair_engine as pe                                        # noqa: E402
 # for the same reason _ALT_FIT is one -- buildDesign is called from three
 # places and threading a bool through all of them buys nothing.
 _NO_RACE_TERM = {"on": False}
+_RACE_KEY = {"by": "cell"}          # or "venue"; see venueOfCell
 
 
-def raceCodes(course, day):
-    key = np.stack([np.asarray(course).astype(np.int64),
-                    np.asarray(day).astype(np.int64)], axis=1)
+# ★★ WHAT SHARES A RACE-DAY EFFECT, and it is a real modelling choice.
+#
+#    A race has always been (CELL, day), where a cell is (venue, distance).
+#    That already pools divisions -- varsity, JV and the girls' race at the
+#    same venue and distance on one day share a single u, which is Beyer's
+#    "track variant" computed off a whole card rather than off one race.
+#
+#    What it does NOT pool is distance. Morley raced 4700, 4800, 4900 and
+#    5000 on the same afternoon gets FOUR separate day effects for one
+#    weather, one ground, one set of conditions.
+#
+#  ! AND THE OWNER'S CORRECTION MATTERS HERE: a venue can host several
+#    GENUINELY DIFFERENT courses, so those four cells legitimately differ
+#    in difficulty. That is an argument for keeping d per cell -- which
+#    this does not touch -- and it is also the argument FOR pooling u: if
+#    the routes really differ, we want the cell to carry the route and the
+#    day term to carry only the day, and a day term estimated across the
+#    whole venue is the cleaner separation.
+#
+#  ⚠ IT IS NOT OBVIOUSLY RIGHT. A "rain course" is a different route used
+#    in bad weather, so two courses at one venue on one day can genuinely
+#    face different conditions. Hence a flag and a ladder rung, not a
+#    change to the shipped model.
+def venueOfCell(course_keys):
+    """Cell key -> venue id, dropping the distance. 'XC:Morley:d4800' and
+    'XC:Morley:d5000' are one venue; TF keys carry no distance and are
+    already venue-grained."""
+    venue = []
+    for k in course_keys:
+        k = str(k)
+        head, tag, _dist = k.rpartition(":d")
+        venue.append(head if tag and _dist.isdigit() else k)
+    _, inv = np.unique(np.array(venue), return_inverse=True)
+    return inv.astype(np.int64)
+
+
+def raceCodes(course, day, venue_of_cell=None):
+    unit = (np.asarray(course).astype(np.int64) if venue_of_cell is None
+            else np.asarray(venue_of_cell)[np.asarray(course).astype(np.int64)])
+    key = np.stack([unit, np.asarray(day).astype(np.int64)], axis=1)
     _, inv = np.unique(key, axis=0, return_inverse=True)
     return inv.astype(np.int64), int(inv.max()) + 1
 
@@ -289,7 +327,11 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
         cols["athlete"], cols["year"],
         (cols["sport"] if split_ability and "sport" in cols else None))
     athlete = athlete[keep]                       # codes over ALL rows: aligned
-    race_all, n_race = raceCodes(cols["course"], cols["days"])
+    # see venueOfCell: --race-key venue pools the day effect across every
+    #   distance raced at that venue on that day
+    _voc = (venueOfCell(cols["course_keys"])
+            if _RACE_KEY["by"] == "venue" else None)
+    race_all, n_race = raceCodes(cols["course"], cols["days"], _voc)
     race = race_all[keep]
     # ★ A REAL ABLATION OF THE RACE-DAY TERM, which did not exist before.
     #   --no-race-effect only stops the term reaching the per-result RATING;
@@ -551,7 +593,9 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     idx = np.flatnonzero(keep)
     # ★ THE GROUPS THE LADDER HOLDS OUT TOGETHER. race is (cell, day) as the
     #   solve sees it; athlete and cell come straight off the pack.
-    race_all, _ = raceCodes(cols["course"], cols["days"])
+    race_all, _ = raceCodes(cols["course"], cols["days"],
+                            venueOfCell(cols["course_keys"])
+                            if _RACE_KEY["by"] == "venue" else None)
     kind = getattr(args, "holdout_kind", "race")
     te_local = pv.splitFor(kind, idx.size,
                            race=race_all[idx],
@@ -810,6 +854,11 @@ def buildParser():
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "
                          "kept only for comparison")
+    ap.add_argument("--race-key", default="cell", choices=("cell", "venue"),
+                    help="what shares a race-day effect: the (venue, "
+                         "distance) CELL and day as today, or the VENUE and "
+                         "day, which pools every distance raced there that "
+                         "day. See venueOfCell")
     ap.add_argument("--no-race-term", action="store_true",
                     help="collapse every row to one race id, removing the "
                          "race-day effect FROM THE SOLVE. Distinct from "
@@ -939,6 +988,7 @@ def main():
 
     _ALT_FIT["on"] = bool(args.altitude_fit)
     _NO_RACE_TERM["on"] = bool(args.no_race_term)
+    _RACE_KEY["by"] = args.race_key
     D, athlete_pool, pool_names = buildDesign(
         cols, keep, not args.no_sport_offset, not args.no_curve,
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,

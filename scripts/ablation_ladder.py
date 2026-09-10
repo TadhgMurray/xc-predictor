@@ -84,6 +84,9 @@ LADDER = [
      "drop the stated race-day floor and let the data fit it"),
     ("free-tau", ["--altitude", "--tau-max", "none"],
      "drop the measured difficulty prior caps"),
+    ("venue-day", ["--altitude", "--race-key", "venue"],
+     "pool the race-day effect across every distance raced at a venue that "
+     "day, instead of one per (venue, distance) cell"),
 ]
 
 
