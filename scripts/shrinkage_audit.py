@@ -6,7 +6,6 @@ there is almost no evidence for it, and does track difficulty average zero?
     scripts/shrinkage_audit.py                 # both sports
     scripts/shrinkage_audit.py --sport XC
     scripts/shrinkage_audit.py --worst 60      # more offenders listed
-    scripts/shrinkage_audit.py --exact         # count races from results
 
 Run from the PROJECT ROOT. READ-ONLY -- every statement is a SELECT.
 
@@ -40,11 +39,19 @@ Run from the PROJECT ROOT. READ-ONLY -- every statement is a SELECT.
   bug. If it RISES with races, shrinkage is working and the thin end is
   merely uncertain rather than wrong.
 
-! HOW RACES ARE COUNTED. By default from `meets` alone -- one race is one
-  (meet_id, div_id, source) listed at that course and distance -- which is
-  an index-sized read. --exact counts only divisions that actually have
-  results, which is a full pass over the results table; it moves the
-  numbers very little and costs minutes, so it is not the default.
+! HOW RACES ARE COUNTED, and what the count is and is not. One race is
+  one division at one meet, counted PER VENUE -- a course_name for XC, a
+  location_id plus the indoor flag for TF, because those are what the two
+  sports' cell keys are actually made of. A venue's races are split across
+  its distance cells, so this is an UPPER BOUND on any one cell's races:
+  if a venue reads thin, every cell in it is thin.
+
+  It is deliberately not joined on distance. The distance in an XC key is
+  SNAPPED (engine/distance_pin.snapStandard) while meets.distance is the
+  raw scraped number, so an equality join misses whenever snapping moved
+  it -- and the first version of this reported those misses as "0 races",
+  which then sat in the 1-race bucket and made the thin end look thinner
+  and wilder than it is. Unmatched cells now get their own row.
 
 ! DIFFICULTY IS A FRACTION and printed as a percent, matching the athlete
   page (which shows difficulty * 100).
@@ -104,12 +111,12 @@ _BUCKETS = """
                COALESCE(r.n_races, 0)                       AS n_races
         FROM   course_difficulties cd
         LEFT   JOIN races r
-               ON r.course_name = substring(cd.course_name FROM 4)
-              AND round(r.distance::numeric) = round(cd.distance_m::numeric)
+               ON r.venue_key = substring(cd.course_name FROM 4)
         WHERE  cd.difficulty IS NOT NULL
           AND  cd.course_name LIKE %(pfx)s
     )
-    SELECT CASE WHEN n_races <= 1  THEN '1'
+    SELECT CASE WHEN n_races = 0   THEN '0 (UNMATCHED)'
+                WHEN n_races = 1   THEN '1'
                 WHEN n_races = 2   THEN '2'
                 WHEN n_races <= 5  THEN '3-5'
                 WHEN n_races <= 10 THEN '6-10'
@@ -140,8 +147,7 @@ _WORST = """
            round((100 * cd.difficulty)::numeric, 2)         AS pct
     FROM   course_difficulties cd
     LEFT   JOIN races r
-           ON r.course_name = substring(cd.course_name FROM 4)
-          AND round(r.distance::numeric) = round(cd.distance_m::numeric)
+           ON r.venue_key = substring(cd.course_name FROM 4)
     WHERE  cd.difficulty IS NOT NULL
       AND  cd.course_name LIKE %(pfx)s
       AND  abs(cd.difficulty) >= %(big)s
@@ -150,36 +156,96 @@ _WORST = """
     LIMIT  %(worst)s
 """
 
-# One race is one division at one meet. --exact keeps only divisions that
-# actually produced results.
-_RACES_FAST = {
-    "XC": """SELECT course_name, distance, count(*) AS n_races
-             FROM (SELECT DISTINCT meet_id, div_id, source,
-                          course_name, distance
-                   FROM meets WHERE course_name IS NOT NULL) d
-             GROUP BY 1, 2""",
-    "TF": """SELECT course_name, distance, count(*) AS n_races
-             FROM (SELECT DISTINCT meet_id, div_id, source,
-                          course_name, distance
-                   FROM meets_tf WHERE course_name IS NOT NULL) d
-             GROUP BY 1, 2""",
-}
-_RACES_EXACT = {
-    "XC": """SELECT m.course_name, m.distance, count(*) AS n_races
-             FROM (SELECT DISTINCT r.meet_id, r.div_id, r.source
-                   FROM results r WHERE r.normalized_time > 0) x
-             JOIN meets m ON m.meet_id = x.meet_id AND m.div_id = x.div_id
-                          AND m.source = x.source
-             WHERE m.course_name IS NOT NULL
-             GROUP BY 1, 2""",
-    "TF": """SELECT m.course_name, m.distance, count(*) AS n_races
-             FROM (SELECT DISTINCT r.meet_id, r.div_id, r.source
-                   FROM results_tf r WHERE r.normalized_time > 0) x
-             JOIN meets_tf m ON m.meet_id = x.meet_id AND m.div_id = x.div_id
-                             AND m.source = x.source
-             WHERE m.course_name IS NOT NULL
-             GROUP BY 1, 2""",
-}
+# ★ HOW A CELL IS KEYED, WHICH IS NOT THE SAME FOR THE TWO SPORTS AND IS
+#   WHY THE FIRST VERSION OF THIS CRASHED ON TF AND SILENTLY REPORTED
+#   ZERO RACES ON HALF OF XC.
+#
+#     XC   'XC:<venue>:d<distance>'   venue is a course_name (or an id)
+#     TF   'TF:loc:<location_id>:<in|out>'
+#
+#   meets_tf has no course_name and no distance column at all -- a track
+#   venue is a location_id -- so the TF query had to be written against a
+#   different table shape, not the same one with a different filter.
+#
+# ⚠ AND THE XC DISTANCE IN THE KEY IS SNAPPED, NOT SCRAPED. The ':d' part
+#   comes off the engine key, where the backfill had already pinned it to
+#   a standard distance (engine/distance_pin.snapStandard); meets.distance
+#   is the raw scraped number. Joining the two on equality therefore MISSES
+#   whenever snapping moved the distance, and the miss looked like "this
+#   cell has 0 races" -- which then landed in the '1' bucket and made the
+#   thin end look thinner and wilder than it is.
+#
+#   So races are now counted PER VENUE, not per venue-distance cell. That
+#   is an UPPER BOUND on the cell's own races (a venue's races are split
+#   across its distance cells) and it cannot silently read zero. Cells that
+#   match no venue at all are reported as a count, not bucketed.
+
+
+def _cols(cur, table):
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = %s""",
+                (table,))
+    return {r[0] for r in cur.fetchall()}
+
+
+def _racesXc(cur):
+    """One race is one division at one meet, counted per course_name."""
+    have = _cols(cur, "meets")
+    if "course_name" not in have:
+        return None, "meets has no course_name column"
+    key = [c for c in ("meet_id", "div_id", "source") if c in have]
+    return ("""SELECT course_name AS venue_key, count(*) AS n_races
+               FROM (SELECT DISTINCT {k}, course_name
+                     FROM meets WHERE course_name IS NOT NULL) d
+               GROUP BY 1""".format(k=", ".join(key)), None)
+
+
+def _racesTf(cur):
+    """A track venue is a location_id, and the key carries the indoor flag.
+    Rebuilt to match 'loc:<id>:<in|out>' exactly."""
+    have = _cols(cur, "meets_tf")
+    if "location_id" not in have:
+        return None, ("meets_tf has no location_id column "
+                      f"(it has: {', '.join(sorted(have)) or 'nothing'})")
+    key = [c for c in ("meet_id", "div_id") if c in have]
+    indoor = ("CASE WHEN COALESCE(is_indoor, 0) = 1 THEN 'in' ELSE 'out' END"
+              if "is_indoor" in have else "'out'")
+    return ("""SELECT 'loc:' || location_id::text || ':' || {ind} AS venue_key,
+                      count(*) AS n_races
+               FROM (SELECT DISTINCT {k}, location_id{ic}
+                     FROM meets_tf WHERE location_id IS NOT NULL) d
+               GROUP BY 1""".format(
+        k=", ".join(key), ind=indoor,
+        ic=", is_indoor" if "is_indoor" in have else ""), None)
+
+
+# ★ SECTION 4. DIFFICULTY BY THE DISTANCE THE CELL CLAIMS. No join, so it
+#   cannot fail, and it is where the worst rows in section 3 come from: an
+#   XC "course" at 1600m with +94% difficulty is not a hard course, it is a
+#   5k whose distance was scraped as 1600m. Normalising a 5k time as though
+#   it were 1600m makes it absurdly slow, and the cell absorbs the whole
+#   error as difficulty.
+_BY_DIST = """
+    SELECT CASE WHEN distance_m IS NULL      THEN 'null'
+                WHEN distance_m <  1500      THEN '<1500'
+                WHEN distance_m <  2500      THEN '1500-2499'
+                WHEN distance_m <  3500      THEN '2500-3499'
+                WHEN distance_m <  4500      THEN '3500-4499'
+                WHEN distance_m <  5500      THEN '4500-5499'
+                WHEN distance_m <  7000      THEN '5500-6999'
+                ELSE                              '7000+' END  AS band,
+           count(*)                                         AS cells,
+           sum(n_results)                                   AS results,
+           round((100 * avg(difficulty))::numeric, 2)       AS mean_pct,
+           round((100 * stddev_samp(difficulty))::numeric, 2) AS sd_pct,
+           round((100 * percentile_cont(0.99) WITHIN GROUP
+                  (ORDER BY difficulty))::numeric, 2)       AS p99_pct,
+           count(*) FILTER (WHERE difficulty > 0.25)        AS over_25pct
+    FROM   course_difficulties
+    WHERE  difficulty IS NOT NULL AND course_name LIKE %(pfx)s
+    GROUP  BY 1
+    ORDER  BY min(COALESCE(distance_m, -1))
+"""
 
 
 def _rows(cur, sql, args=None):
@@ -204,6 +270,7 @@ def _verdict(rows):
     trusted like a course seen fifty times."""
     if len(rows) < 3:
         return "  (not enough buckets to judge)"
+    rows = [r for r in rows if not str(r[0]).startswith("0 ")]
     thin = [r for r in rows if r[0] in ("1", "2")]
     thick = [r for r in rows if r[0] in ("26-60", "61+")]
     if not thin or not thick:
@@ -239,9 +306,6 @@ def main():
         description="Is course difficulty shrunk when the evidence is thin, "
                     "and does track difficulty average zero?")
     ap.add_argument("--sport", choices=["XC", "TF", "both"], default="both")
-    ap.add_argument("--exact", action="store_true",
-                    help="count races from results rather than meets "
-                         "(a full pass; minutes, not seconds)")
     ap.add_argument("--worst", type=int, default=30)
     ap.add_argument("--big", type=float, default=0.05,
                     help="an offender's |difficulty| floor (default 0.05 "
@@ -282,15 +346,29 @@ def main():
             print("  it counts a one-race course the same as Mt. SAC.")
 
             sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
-            src = _RACES_EXACT if args.exact else _RACES_FAST
+            builders = {"XC": _racesXc, "TF": _racesTf}
             for sp in sports:
+                print("\n" + "=" * 68)
+                print(f"4. {sp}: DIFFICULTY BY THE DISTANCE THE CELL CLAIMS")
+                print("   A band whose mean and p99 run away from the rest is")
+                print("   not full of hard courses -- it is full of wrong")
+                print("   distances. over_25pct counts cells above +25%.")
+                print("=" * 68)
+                cols, rows = _rows(cur, _BY_DIST, {"pfx": sp + ":%"})
+                _table(cols, rows)
+
+                races_sql, why = builders[sp](cur)
+                if races_sql is None:
+                    print(f"\n  ! cannot count {sp} races: {why}")
+                    print("    sections 2 and 3 skipped for this sport.")
+                    continue
                 t0 = time.time()
                 print("\n" + "=" * 68)
                 print(f"2. {sp}: DIFFICULTY SPREAD BY NUMBER OF RACES")
                 print("   sd_pct should RISE from left to right if the prior is")
                 print("   doing anything. Flat means it is not.")
                 print("=" * 68)
-                cols, rows = _rows(cur, _BUCKETS.format(races=src[sp]),
+                cols, rows = _rows(cur, _BUCKETS.format(races=races_sql),
                                    {"pfx": sp + ":%"})
                 _table(cols, rows)
                 print(_verdict(rows))
@@ -301,7 +379,7 @@ def main():
                 print(f"   |difficulty| >= {100 * args.big:.0f}% on "
                       f"<= {args.thin} races.")
                 print("=" * 68)
-                cols, rows = _rows(cur, _WORST.format(races=src[sp]),
+                cols, rows = _rows(cur, _WORST.format(races=races_sql),
                                    {"pfx": sp + ":%", "big": args.big,
                                     "thin": args.thin, "worst": args.worst})
                 _table(cols, rows)
