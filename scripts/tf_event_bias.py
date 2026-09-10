@@ -84,7 +84,30 @@ _EV = ("CASE WHEN r.event_short IS NULL THEN NULL "
        "from '[0-9]+(?:\\.[0-9]+)?')::real END")
 
 
-def _passA(cur, pool):
+# ★★ TWO THINGS TO MEASURE, AND THEY ANSWER DIFFERENT QUESTIONS.
+#
+#    norm    ln(normalized_time) -- the solve's INPUT. A tilt here is the
+#            distance normalisation being wrong.
+#
+#    rating  -ln(speed_rating) -- the solve's OUTPUT, which is what the
+#            board shows. Negated because a rating is better when LARGER,
+#            so this keeps the sign convention: negative means overrated.
+#
+#    The distinction matters because the joint solve ALREADY fits a track
+#    distance offset per (pool, 100m bucket, rating band) with a 3 per cent
+#    prior -- joint_solve.DIST_PRIOR_SD, DIST_BANDS. A bias in `norm` that
+#    is absent from `rating` has already been corrected downstream and
+#    needs no fix at all; one that survives into `rating` is reaching the
+#    board and does.
+_MEASURES = {
+    "norm": ("ln(r.normalized_time)",
+             "r.normalized_time IS NOT NULL AND r.normalized_time > 0"),
+    "rating": ("-ln(r.speed_rating)",
+               "r.speed_rating IS NOT NULL AND r.speed_rating > 0"),
+}
+
+
+def _passA(cur, pool, measure="norm"):
     have = set()
     cur.execute("""SELECT column_name FROM information_schema.columns
                    WHERE table_schema='public' AND table_name='meets_tf'""")
@@ -94,6 +117,7 @@ def _passA(cur, pool):
     indoor = ("COALESCE(m.is_indoor, 0)" if "is_indoor" in have else "0")
     join = ("LEFT JOIN meets_tf m ON m.meet_id = r.meet_id "
             "AND m.div_id = r.div_id")
+    expr, nonnull = _MEASURES[measure]
     return f"""
         SELECT r.person_id,
                (CASE WHEN substr(r.date::text, 6, 2)::int >= 8
@@ -101,11 +125,11 @@ def _passA(cur, pool):
                      ELSE substr(r.date::text, 1, 4)::int - 1 END) AS season,
                {dist}::float                              AS dist,
                {indoor}::int                              AS indoor,
-               ln(r.normalized_time)                      AS lnt,
+               {expr}                                     AS lnt,
                r.rating_pool                              AS pool
         FROM   results_tf r
         {join}
-        WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+        WHERE  {nonnull}
           AND  r.rating_pool IS NOT NULL
           AND  r.date IS NOT NULL
           -- ⚠ date IS TEXT on results_tf, so EXTRACT() cannot be
@@ -272,6 +296,13 @@ def main():
     ap = argparse.ArgumentParser(
         description="Does the same athlete rate differently at 800 and "
                     "10,000?")
+    ap.add_argument("--on", choices=["norm", "rating", "both"],
+                    default="both",
+                    help="measure the solve's INPUT (normalized_time), its "
+                         "OUTPUT (speed_rating, what the board shows), or "
+                         "both. A bias present in norm and absent from "
+                         "rating is already fixed by the solve's distance "
+                         "offsets and needs no change")
     ap.add_argument("--pool", help="one rating pool, e.g. college_m")
     ap.add_argument("--pct", type=float, default=10.0,
                     help="percent of ATHLETES to sample (default 10)")
@@ -291,73 +322,81 @@ def main():
         cur.execute(f"SET LOCAL statement_timeout = '{args.timeout}'")
         cur.execute("SET LOCAL max_parallel_workers_per_gather = 2")
         try:
-            t0 = time.time()
-            cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
-            cur.execute(f"CREATE UNLOGGED TABLE {_SCRATCH} AS "
-                        + _passA(cur, args.pool),
-                        {"cut": cut, "pool": args.pool})
-            cur.execute(f"SELECT count(*) FROM {_SCRATCH}")
-            n = cur.fetchone()[0]
-            print(f"\n{n:,} track rows for {args.pct}% of athletes "
-                  f"({time.time() - t0:.0f}s)")
-            if n == 0:
-                return 1
-            cur.execute(f"CREATE INDEX ON {_SCRATCH} "
-                        f"(person_id, season, indoor)")
-            where = {"out": "WHERE indoor = 0", "in": "WHERE indoor = 1",
-                     "both": ""}[args.indoor]
+          for measure in (["norm", "rating"] if args.on == "both"
+                            else [args.on]):
+              print("\n" + "#" * 70)
+              print(f"# MEASURING: {measure}  "
+                    + ("(the solve's INPUT -- a tilt here is the distance "
+                       "normalisation)" if measure == "norm"
+                       else "(the solve's OUTPUT -- what the board shows)"))
+              print("#" * 70)
+              t0 = time.time()
+              cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
+              cur.execute(f"CREATE UNLOGGED TABLE {_SCRATCH} AS "
+                          + _passA(cur, args.pool, measure),
+                          {"cut": cut, "pool": args.pool})
+              cur.execute(f"SELECT count(*) FROM {_SCRATCH}")
+              n = cur.fetchone()[0]
+              print(f"\n{n:,} track rows for {args.pct}% of athletes "
+                    f"({time.time() - t0:.0f}s)")
+              if n == 0:
+                  return 1
+              cur.execute(f"CREATE INDEX ON {_SCRATCH} "
+                          f"(person_id, season, indoor)")
+              where = {"out": "WHERE indoor = 0", "in": "WHERE indoor = 1",
+                       "both": ""}[args.indoor]
 
-            print("\n" + "=" * 70)
-            print("TRACK EVENT BIAS, WITHIN THE ATHLETE-SEASON")
-            print("  each race judged against that athlete's races at OTHER "
-                  "distances")
-            print("=" * 70)
-            cols, rows = _rows(cur, _BIAS.format(grp=_BAND, where=where),
-                               {"min_n": args.min_n})
-            rows = sorted(rows, key=lambda r: _ORDER.index(r[0])
-                          if r[0] in _ORDER else 99)
-            _table(cols, rows)
-            _verdict(rows)
+              print("\n" + "=" * 70)
+              print("TRACK EVENT BIAS, WITHIN THE ATHLETE-SEASON")
+              print("  each race judged against that athlete's races at OTHER "
+                    "distances")
+              print("=" * 70)
+              cols, rows = _rows(cur, _BIAS.format(grp=_BAND, where=where),
+                                 {"min_n": args.min_n})
+              rows = sorted(rows, key=lambda r: _ORDER.index(r[0])
+                            if r[0] in _ORDER else 99)
+              _table(cols, rows)
+              _verdict(rows)
 
-            print("\n" + "=" * 70)
-            print("THE CURVE ERROR ITSELF, PER e-FOLD OF DISTANCE")
-            print("  regression of the residual on the athlete's own centred")
-            print("  ln(distance). Independent of which events each athlete")
-            print("  entered, so THIS is the number to act on.")
-            print("=" * 70)
-            cols, srows = _rows(cur, _SLOPE.format(grp="'all track'",
-                                                   where=where),
-                                {"min_n": args.min_n})
-            _table(cols, srows)
-            if srows:
-                k = float(srows[0][2])
-                print(f"\n    A 5000 is {abs(100 * k * 1.83):.2f}% "
-                      f"{'slower' if k > 0 else 'faster'} than an 800 says it "
-                      f"should be\n    (ln 5000 - ln 800 = 1.83 e-folds).")
-                if abs(k) < 0.002:
-                    print("    => the track distance curve is FINE.")
-                elif k > 0:
-                    print("    => the exponent is TOO LOW: the curve does not "
-                          "charge enough for\n       distance, so short "
-                          "events rate too fast.")
-                else:
-                    print("    => the exponent is TOO HIGH: long events rate "
-                          "too fast.")
-            cols, srows = _rows(cur, _SLOPE.format(grp="pool", where=where),
-                                {"min_n": args.min_n})
-            print()
-            _table(cols, srows)
+              print("\n" + "=" * 70)
+              print("THE CURVE ERROR ITSELF, PER e-FOLD OF DISTANCE")
+              print("  regression of the residual on the athlete's own centred")
+              print("  ln(distance). Independent of which events each athlete")
+              print("  entered, so THIS is the number to act on.")
+              print("=" * 70)
+              cols, srows = _rows(cur, _SLOPE.format(grp="'all track'",
+                                                     where=where),
+                                  {"min_n": args.min_n})
+              _table(cols, srows)
+              if srows:
+                  k = float(srows[0][2])
+                  print(f"\n    A 5000 is {abs(100 * k * 1.83):.2f}% "
+                        f"{'slower' if k > 0 else 'faster'} than an 800 says it "
+                        f"should be\n    (ln 5000 - ln 800 = 1.83 e-folds).")
+                  if abs(k) < 0.002:
+                      print("    => the track distance curve is FINE.")
+                  elif k > 0:
+                      print("    => the exponent is TOO LOW: the curve does not "
+                            "charge enough for\n       distance, so short "
+                            "events rate too fast.")
+                  else:
+                      print("    => the exponent is TOO HIGH: long events rate "
+                            "too fast.")
+              cols, srows = _rows(cur, _SLOPE.format(grp="pool", where=where),
+                                  {"min_n": args.min_n})
+              print()
+              _table(cols, srows)
 
-            print("\n" + "=" * 70)
-            print("THE SAME, BY POOL -- a curve can be right for college "
-                  "and wrong for")
-            print("middle school, and one number over both would hide it")
-            print("=" * 70)
-            grp = f"pool || ' ' || {_BAND}"
-            cols, prows = _rows(cur, _BIAS.format(grp=grp, where=where),
-                                {"min_n": args.min_n})
-            _table(cols, prows)
-            cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
+              print("\n" + "=" * 70)
+              print("THE SAME, BY POOL -- a curve can be right for college "
+                    "and wrong for")
+              print("middle school, and one number over both would hide it")
+              print("=" * 70)
+              grp = f"pool || ' ' || {_BAND}"
+              cols, prows = _rows(cur, _BIAS.format(grp=grp, where=where),
+                                  {"min_n": args.min_n})
+              _table(cols, prows)
+              cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
         finally:
             conn.rollback()
             cur.close()

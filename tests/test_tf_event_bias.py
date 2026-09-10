@@ -43,7 +43,7 @@ CREATE TABLE meets_tf (meet_id int, div_id int, distance_meters real,
 --   text) does not exist".
 CREATE TABLE results_tf (person_id int, date text, meet_id int, div_id int,
                          event_short text, normalized_time float,
-                         rating_pool text);
+                         speed_rating float, rating_pool text);
 """
 
 # ! 'Mile' AND '10,000m' ARE IN HERE ON PURPOSE. The metres-from-event-name
@@ -53,12 +53,15 @@ _EVENTS = [(800, "800m"), (1609.34, "Mile"), (3200, "3200m"),
            (5000, "5000m"), (10000, "10,000m")]
 
 
-def plant(cur, tilt, n_ath=2000, per=3, noise=0.01, seed=9):
+def plant(cur, tilt, n_ath=2000, per=3, noise=0.01, seed=9,
+          rating_tilt=None):
     """lnt = fitness + tilt * (ln d - ln 3000) + noise.
 
     tilt > 0 means long events normalise SLOW, i.e. the curve does not
     charge enough for distance and short events rate too fast.
     """
+    if rating_tilt is None:
+        rating_tilt = tilt
     rng = random.Random(seed)
     cur.executemany("INSERT INTO meets_tf VALUES (%s,%s,%s,%s)",
                     [(i, 1, d, 0) for i, (d, _) in enumerate(_EVENTS)])
@@ -69,17 +72,22 @@ def plant(cur, tilt, n_ath=2000, per=3, noise=0.01, seed=9):
             j = next(k for k, (dd, _) in enumerate(_EVENTS) if dd == d)
             lnt = (fit + tilt * (math.log(d) - math.log(3000))
                    + rng.gauss(0, noise))
+            # ! speed_rating carries `rating_tilt` instead of `tilt`, so
+            #   the input and the output can be planted independently --
+            #   which is the whole point of measuring both.
+            r_lnt = (fit + rating_tilt * (math.log(d) - math.log(3000))
+                     + rng.gauss(0, noise))
             rows.append((p, "2024-04-15", j, 1, name, math.exp(lnt),
-                         "college_m"))
+                         100000.0 * math.exp(-r_lnt), "college_m"))
     cur.executemany("INSERT INTO results_tf VALUES "
-                    "(%s,%s,%s,%s,%s,%s,%s)", rows)
+                    "(%s,%s,%s,%s,%s,%s,%s,%s)", rows)
 
 
-def slope(cur):
+def slope(cur, measure="norm"):
     import tf_event_bias as tb
     cur.execute(f"DROP TABLE IF EXISTS {tb._SCRATCH}")
     cur.execute(f"CREATE UNLOGGED TABLE {tb._SCRATCH} AS "
-                + tb._passA(cur, None), {"cut": 10000, "pool": None})
+                + tb._passA(cur, None, measure), {"cut": 10000, "pool": None})
     cur.execute(tb._SLOPE.format(grp="'all'", where="WHERE indoor = 0"),
                 {"min_n": 10})
     rows = cur.fetchall()
@@ -120,10 +128,11 @@ class EventBias(unittest.TestCase):
         plant(self.cur, tilt=0.03)
         junk = []
         for p in range(9001, 9101):
-            junk.append((p, "n/a", 0, 1, "800m", 200.0, "college_m"))
-            junk.append((p, "", 1, 1, "Mile", 400.0, "college_m"))
+            junk.append((p, "n/a", 0, 1, "800m", 200.0, 100.0,
+                         "college_m"))
+            junk.append((p, "", 1, 1, "Mile", 400.0, 100.0, "college_m"))
         self.cur.executemany("INSERT INTO results_tf VALUES "
-                             "(%s,%s,%s,%s,%s,%s,%s)", junk)
+                             "(%s,%s,%s,%s,%s,%s,%s,%s)", junk)
         self.assertAlmostEqual(slope(self.cur), 0.03, delta=0.003)
 
     def test_the_iso_guard_renders_as_a_real_regex(self):
@@ -155,6 +164,27 @@ class EventBias(unittest.TestCase):
                          f"FROM {tb._SCRATCH}")
         self.assertEqual(self.cur.fetchone()[0], len(_EVENTS),
                          "an event name did not survive the metres rule")
+
+
+    def test_a_bias_the_solve_already_fixes_shows_only_in_norm(self):
+        """★★ THE DISTINCTION THAT DECIDES WHETHER THERE IS ANYTHING TO FIX.
+        The joint solve already fits a track distance offset per (pool,
+        100m bucket, rating band) with a 3 per cent prior
+        (joint_solve.DIST_PRIOR_SD, DIST_BANDS). So a tilt in
+        normalized_time -- the solve's INPUT -- may be gone by the time it
+        reaches speed_rating, which is what the board shows.
+
+        Plant it in the input and NOT in the output, and the two measures
+        must disagree. If they ever agree here, the script cannot tell a
+        corrected bias from a live one and its verdict is worthless."""
+        plant(self.cur, tilt=0.03, rating_tilt=0.0)
+        self.assertAlmostEqual(slope(self.cur, "norm"), 0.03, delta=0.003)
+        self.assertLess(abs(slope(self.cur, "rating")), 0.003)
+
+    def test_a_bias_that_survives_shows_in_both(self):
+        plant(self.cur, tilt=0.03, rating_tilt=0.03)
+        self.assertAlmostEqual(slope(self.cur, "norm"), 0.03, delta=0.003)
+        self.assertAlmostEqual(slope(self.cur, "rating"), 0.03, delta=0.003)
 
 
 if __name__ == "__main__":
