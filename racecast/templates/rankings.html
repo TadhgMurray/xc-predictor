@@ -155,7 +155,12 @@
            the seniors removed is a field of squads from thirty seasons,
            which would look like a working answer. #}
     <div class="field teams-only">
-      <label for="exclude_grade-input">Leaving (returning teams)</label>
+      {# ! NAMED FOR WHAT IT DOES TO THE BOARD (owner, 2026-09-10:
+           "Leaving (returning teams) is just like the worst possible way
+           to describe that filter"). It read as though it FILTERED TO the
+           leavers; it removes them. The grade you pick is the one that
+           graduates, and what is left is next year's squad. #}
+      <label for="exclude_grade-input">Graduating (removed)</label>
       <div class="combo" data-field="exclude_grade"></div>
     </div>
 
