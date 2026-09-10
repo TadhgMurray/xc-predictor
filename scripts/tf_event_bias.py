@@ -53,6 +53,17 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine"),
 
 _SCRATCH = "tfe_rows"
 
+# ★ A CONSTANT, NOT A LITERAL IN THE SQL, AND THAT IS THE POINT. `date` is
+#   TEXT on results_tf, so EXTRACT() cannot be used and a malformed row
+#   would kill the cast -- hence the ISO guard. But the guard contains
+#   {4} and {2}, and these queries are variously f-strings, .format()
+#   templates and plain strings: doubling the braces is right in two of
+#   those and WRONG in the third, where it renders a literal {{4}} that
+#   matches nothing and silently returns zero rows. Substituting a
+#   constant is correct in all three, because the value's braces are never
+#   re-scanned.
+_ISO_DATE = "r.date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'"
+
 # The same metres-from-event-name rule speed_ratings_db uses, so this
 # measures the distance the ENGINE thinks was run, not a second opinion.
 _EV = ("CASE WHEN r.event_short IS NULL THEN NULL "
@@ -85,9 +96,9 @@ def _passA(cur, pool):
             "AND m.div_id = r.div_id")
     return f"""
         SELECT r.person_id,
-               (CASE WHEN EXTRACT(MONTH FROM r.date) >= 8
-                     THEN EXTRACT(YEAR FROM r.date)
-                     ELSE EXTRACT(YEAR FROM r.date) - 1 END)::int AS season,
+               (CASE WHEN substr(r.date::text, 6, 2)::int >= 8
+                     THEN substr(r.date::text, 1, 4)::int
+                     ELSE substr(r.date::text, 1, 4)::int - 1 END) AS season,
                {dist}::float                              AS dist,
                {indoor}::int                              AS indoor,
                ln(r.normalized_time)                      AS lnt,
@@ -97,6 +108,10 @@ def _passA(cur, pool):
         WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
           AND  r.rating_pool IS NOT NULL
           AND  r.date IS NOT NULL
+          -- ⚠ date IS TEXT on results_tf, so EXTRACT() cannot be
+          --   used and a bad row would kill the cast. The regex
+          --   is the guard: only ISO-shaped dates get parsed.
+          AND  {_ISO_DATE}
           AND  {dist} BETWEEN 400 AND 15000
           AND  abs(mod(hashint8(r.person_id::bigint), 10000)) < %(cut)s
           {"AND r.rating_pool = %(pool)s" if pool else ""}

@@ -37,7 +37,11 @@ _DDL = """
 DROP TABLE IF EXISTS results_tf, meets_tf, tfe_rows;
 CREATE TABLE meets_tf (meet_id int, div_id int, distance_meters real,
                        is_indoor int);
-CREATE TABLE results_tf (person_id int, date date, meet_id int, div_id int,
+-- ⚠ date IS TEXT, WHICH IS HOW IT REALLY IS. Declaring it `date` here is
+--   what let a query using EXTRACT(MONTH FROM r.date) pass every test and
+--   then die on the server with "function pg_catalog.extract(unknown,
+--   text) does not exist".
+CREATE TABLE results_tf (person_id int, date text, meet_id int, div_id int,
                          event_short text, normalized_time float,
                          rating_pool text);
 """
@@ -108,6 +112,34 @@ class EventBias(unittest.TestCase):
     def test_long_events_overrated(self):
         plant(self.cur, tilt=-0.02)
         self.assertAlmostEqual(slope(self.cur), -0.02, delta=0.003)
+
+    def test_malformed_dates_are_dropped_not_fatal(self):
+        """⚠ The season is parsed out of a TEXT date with substr, so a row
+        holding 'n/a' or '' would kill the ::int cast and take the whole
+        query with it. The ISO guard drops those rows instead."""
+        plant(self.cur, tilt=0.03)
+        junk = []
+        for p in range(9001, 9101):
+            junk.append((p, "n/a", 0, 1, "800m", 200.0, "college_m"))
+            junk.append((p, "", 1, 1, "Mile", 400.0, "college_m"))
+        self.cur.executemany("INSERT INTO results_tf VALUES "
+                             "(%s,%s,%s,%s,%s,%s,%s)", junk)
+        self.assertAlmostEqual(slope(self.cur), 0.03, delta=0.003)
+
+    def test_the_iso_guard_renders_as_a_real_regex(self):
+        """⚠⚠ THE BUG THIS CATCHES IS INVISIBLE AT RUNTIME. The guard holds
+        {4} and {2}, and these queries are variously f-strings, .format()
+        templates and plain strings. Doubling the braces is right in some
+        and wrong in others -- where it is wrong the SQL carries a literal
+        '{{4}}', which is a VALID regex that matches nothing, so the query
+        succeeds and returns zero rows. Hence a constant, and hence this."""
+        import re
+        import tf_event_bias as tb
+        sql = tb._passA(self.cur, None)
+        hits = re.findall(r"r\.date::text ~ '([^']*)'", sql)
+        self.assertTrue(hits, "the ISO date guard vanished from the query")
+        for h in hits:
+            self.assertEqual(h, r"^[0-9]{4}-[0-9]{2}-[0-9]{2}", h)
 
     def test_the_mile_and_the_comma_parse(self):
         """⚠ The metres rule is regex over an event NAME. If 'Mile' or

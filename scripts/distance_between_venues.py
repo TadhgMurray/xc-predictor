@@ -97,6 +97,17 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine"),
 
 _SCRATCH = "bv_rows"
 
+# ★ A CONSTANT, NOT A LITERAL IN THE SQL, AND THAT IS THE POINT. `date` is
+#   TEXT on results_tf, so EXTRACT() cannot be used and a malformed row
+#   would kill the cast -- hence the ISO guard. But the guard contains
+#   {4} and {2}, and these queries are variously f-strings, .format()
+#   templates and plain strings: doubling the braces is right in two of
+#   those and WRONG in the third, where it renders a literal {{4}} that
+#   matches nothing and silently returns zero rows. Substituting a
+#   constant is correct in all three, because the value's braces are never
+#   re-scanned.
+_ISO_DATE = "r.date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'"
+
 # ★ ONE PASS OVER results, ATHLETE-SAMPLED. The sample is on person_id's
 #   hash so an athlete is in or out WHOLE -- a half-sampled season has a
 #   benchmark built from the rows that happened to survive, which is a
@@ -107,9 +118,9 @@ _SCRATCH = "bv_rows"
 _PASS_A = f"""
 CREATE UNLOGGED TABLE {_SCRATCH} AS
 SELECT r.person_id,
-       (CASE WHEN EXTRACT(MONTH FROM r.date) >= 8
-             THEN EXTRACT(YEAR FROM r.date)
-             ELSE EXTRACT(YEAR FROM r.date) - 1 END)::int   AS season,
+       (CASE WHEN substr(r.date::text, 6, 2)::int >= 8
+             THEN substr(r.date::text, 1, 4)::int
+             ELSE substr(r.date::text, 1, 4)::int - 1 END)  AS season,
        m.course_name                                        AS venue,
        COALESCE(dov.distance, m.distance)::float            AS distance,
        ln(r.normalized_time)                                AS lnt,
@@ -131,6 +142,8 @@ LEFT   JOIN course_difficulties cd
       AND round(cd.distance_m::numeric)
           = round(COALESCE(dov.distance, m.distance)::numeric)
 WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
+  -- ⚠ date IS TEXT on results_tf; only ISO-shaped rows parse
+  AND  {_ISO_DATE}
   AND  r.rating_pool IS NOT NULL
   AND  m.course_name IS NOT NULL
   AND  COALESCE(dov.distance, m.distance) BETWEEN 800 AND 12000
