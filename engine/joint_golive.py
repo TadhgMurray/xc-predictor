@@ -201,7 +201,22 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         #    median is the typical track by definition and is unmoved by
         #    them, so p50 lands at 0.000 and the mean follows it to within
         #    a rounding error.
-        anchored = raw - float(np.median(raw[ref]))
+        # ★★ THE AVERAGE TRACK IS 0.0 AND IS THE BASELINE (owner,
+        #    2026-09-10: "just make tf difficulty average 0.0. Like the
+        #    average tf course will have difficulty 0.0 and be the
+        #    baseline"). The UNWEIGHTED mean over track cells, so it is the
+        #    average COURSE and not the average RESULT -- weighting by
+        #    results lets a handful of enormous championship ovals define
+        #    the zero, and those are the least typical tracks there are.
+        #
+        #  ! The median is printed beside it. On a distribution this tight
+        #    the two agree to a rounding error, and if they ever stop
+        #    agreeing that is worth seeing rather than discovering later.
+        anchored = raw - float(np.mean(raw[ref]))
+        _med = float(np.median(anchored[ref]))
+        print(f"[joint/live] track zero: mean 0.000, median "
+              f"{100 * np.expm1(_med):+.3f}% over {int(ref.sum()):,} "
+              f"track cells")
         xc_ref = solved & ~is_tf
         if xc_ref.any():
             xc_mean = float(np.average(anchored[xc_ref], weights=w[xc_ref]))

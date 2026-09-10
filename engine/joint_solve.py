@@ -1811,7 +1811,37 @@ SIGMA_U_FLOOR = {0: 0.0, 1: 0.045}          # 0 = XC, 1 = TF
 #    what the data says they are worth.
 #
 #  ! --tau-max still overrides this, and 0 disables the cap.
-TAU_MAX_DEFAULT = {0: 0.035, 1: 0.0122}          # 0 = XC, 1 = TF
+#  ⚠⚠ AND THE FIRST VERSION OF THIS OVER-SHRANK TRACK, by exactly the
+#     mistake this repo has now made twice (owner, 2026-09-10: "I think
+#     that tf variance might be too small now"). Setting tau to the
+#     MEASURED TRUE SPREAD is not the same as publishing that spread: with
+#     a correct prior the posterior means come out at
+#
+#         published sd  =  tau * sqrt(reliability)
+#
+#     so tau = 1.22% and r = 0.574 published about 0.92% -- against an
+#     observed 1.61% before, a board barely more than half as wide. It is
+#     the same sqrt(r) under-dispersion as the season-rating work
+#     (season_reliability section 3), walked into again one file later.
+#
+#     Sized the other way round, so the PUBLISHED spread lands on the true
+#     spread rather than below it:
+#
+#         tau  =  true_sd / sqrt(reliability)
+#              =  observed_sd                     (they cancel)
+#
+#     which is to say: with a correct prior, the cap that reproduces the
+#     true spread on the board is the OBSERVED spread. XC 0.0364, TF
+#     0.0161.
+#
+#   ! THIS IS A DISPLAY-FIDELITY CHOICE, NOT A BAYESIAN ONE. tau = true_sd
+#     minimises squared error per course and is what you want for a
+#     prediction; tau = observed_sd reproduces the spread and is what you
+#     want for a BOARD, where systematically flat numbers read as a broken
+#     scale. The shrinkage that matters is still there -- it falls on the
+#     thin cells, which is where the noise is -- and the ladder's
+#     `free-tau` rung measures what either costs.
+TAU_MAX_DEFAULT = {0: 0.0364, 1: 0.0161}         # 0 = XC, 1 = TF
 
 
 def racesPerCell(D):

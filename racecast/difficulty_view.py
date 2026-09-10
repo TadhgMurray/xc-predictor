@@ -1,18 +1,28 @@
 """difficulty_view.py -- course difficulty as a reader understands it.
 
 The engine stores difficulty as a multiplier on time, (1 + d), anchored so
-the row-weighted mean over EVERY cell, cross country and track together, is
-zero.
+the AVERAGE TRACK IS 0.0. This file displays that number and does not move
+it.
 
   ★ ONE ZERO FOR BOTH SPORTS (owner, 2026-09-02: "I wanted them on the same
-    scale"). An earlier version of this file gave cross country and track
-    each their own zero -- the mean of the sport's own cells -- so an
-    ordinary XC course read 0% and an ordinary track read 0%, and the two
-    could not be compared. That was wrong. The zero is the corpus mean,
-    read from course_difficulties and cached, so a hard XC course and a fast
-    track sit on one line and the gap between them is the sport gap the
-    engine measured. An ordinary XC course therefore reads a little above
-    0% and an ordinary track a little below, which is the truth.
+    scale"), AND THAT ZERO IS A TRACK (owner, 2026-09-10: "the average tf
+    course will have difficulty 0.0 and be the baseline"). Both hold at
+    once: the two sports are on one line, and the line starts at a flat
+    400m oval. An ordinary cross country course therefore reads about +7%,
+    and that gap IS the sport gap the engine measured -- it is the answer,
+    not an offset to remove.
+
+  ⚠ THIS FILE USED TO SUBTRACT THE CORPUS MEAN, and that quietly undid the
+    engine's anchor. The note here claimed "the engine anchors to this same
+    row-weighted mean, so the value is ~0 by construction" -- true when it
+    was written, false from the moment the engine started anchoring on
+    track. Cross country dominates the corpus, so the mean it subtracted
+    was about +6%, and a typical TRACK displayed near -6%. The owner asked
+    three times why track difficulty was not 0.0; this was why, and the
+    engine was innocent every time.
+
+    The zero is defined in ONE place now -- engine/joint_golive.py -- and
+    read here as a GUARD, not as a correction.
 
   ★ A PERCENTAGE, NOT A DECIMAL. "+4% slower than a typical course, about 40
     seconds on a 16-minute 5K" is what +0.04 means, and it is what the
@@ -38,16 +48,18 @@ _TTL = 3600.0
 _state = {"at": 0.0, "mean": 0.0}
 _lock = threading.Lock()
 
-# ! ONE ROW, BOTH SPORTS. The engine anchors its difficulties to this same
-#   row-weighted mean, so the value is ~0 by construction and the read is a
-#   guard against a table written with a different anchor, not a
-#   recentring.
+# ! THE GUARD READS THE TRACK CELLS, because those are what the engine
+#   anchored on. If this drifts far from zero the table was written by an
+#   engine with a different anchor, and the site says so in the log rather
+#   than silently re-centring -- silently re-centring is what went wrong.
 _SQL = """
-    SELECT sum(ln(1.0 + difficulty) * n_results) / NULLIF(sum(n_results), 0)
+    SELECT avg(ln(1.0 + difficulty))
     FROM   course_difficulties
     WHERE  difficulty IS NOT NULL AND difficulty > -0.9
-      AND  n_results > 0
+      AND  course_name LIKE 'TF:%%'
 """
+# how far the average track may sit from zero before the log complains
+_DRIFT_WARN = 0.01
 
 
 def _refresh():
@@ -66,9 +78,22 @@ def _refresh():
 
 
 def sportMeanLog(sport=None):
-    """ln(1 + d) of the typical course -- the same zero whatever the sport.
-    The argument is kept so every caller and template filter keeps working;
-    it no longer selects anything."""
+    """THE DISPLAY ZERO, WHICH IS NOW ALWAYS 0.0.
+
+    The engine anchors the average track at zero, so the stored number is
+    already the number to show. This returns 0 and exists only so every
+    caller and template filter keeps working.
+
+    trackDriftLog() is the guard: it reads what the average track actually
+    stored, for the log, without moving anything.
+    """
+    return 0.0
+
+
+def trackDriftLog():
+    """How far the stored average track sits from zero. Should be ~0; a
+    large value means the table was written by an engine with a different
+    anchor."""
     with _lock:
         if time.time() - _state["at"] > _TTL:
             _refresh()

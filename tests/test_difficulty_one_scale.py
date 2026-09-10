@@ -31,7 +31,7 @@ dv._state["mean"] = 0.0
 ok(dv.diffPct(0.04, "XC") == dv.diffPct(0.04, "TF") == "+4.0%",
    "the same raw difficulty reads the same on either sport")
 ok(dv.diffPct(0.0, "XC") == "0.0%" and dv.diffPct(-0.02, "TF") == "-2.0%",
-   "zero is the corpus zero, negative is fast")
+   "zero is the AVERAGE TRACK, negative is faster than one")
 ok(dv.sportMeanLog("XC") == dv.sportMeanLog("TF") == dv.sportMeanLog(None),
    "one zero, whatever the sport argument says")
 ok("typical course" in dv.diffWords(0.04, "TF")
@@ -39,8 +39,16 @@ ok("typical course" in dv.diffWords(0.04, "TF")
    "the sentence no longer names a per-sport reference")
 
 src = read("racecast", "difficulty_view.py")
-ok("GROUP  BY 1" not in src and "LIKE 'XC:%%'" not in src,
-   "the zero query no longer splits by sport")
+# ⚠ THIS CHECK WAS PASSING ON A TECHNICALITY. It looked for "LIKE 'XC:%%'"
+#   to prove the zero query "no longer splits by sport", and kept passing
+#   when the query became "LIKE 'TF:%%'" -- which does split by sport. The
+#   intent has legitimately changed: the zero IS a track now (owner,
+#   2026-09-10, "the average tf course will have difficulty 0.0 and be the
+#   baseline"), so the guard reads track cells on purpose. What must stay
+#   true is that DISPLAY does not move the number.
+ok("GROUP  BY 1" not in src, "the zero query is one number, not per sport")
+ok(dv.sportMeanLog() == 0.0 and round(dv.relativePct(0.069), 6) == 6.9,
+   "the display is the identity -- it shows what the engine stored")
 
 html = read("racecast", "templates", "_explain.html")
 ok('data-title="What a Rating Means"' in html
