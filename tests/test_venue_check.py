@@ -38,8 +38,12 @@ DROP TABLE IF EXISTS results, meets, dist_override, course_difficulties,
 CREATE TABLE meets (meet_id int, div_id int, source text, course_name text,
                     distance float);
 CREATE TABLE dist_override (meet_id int, div_id int, distance float);
+-- ! speed_rating IS REAL AND THE SCRIPT NEEDS IT: the row model applies
+--   h x difficulty (joint_solve.amplitudeFromRating), so a raw residual
+--   measures mean(h) x d, not d.
 CREATE TABLE results (person_id int, date text, meet_id int, div_id int,
-                      source text, normalized_time float);
+                      source text, normalized_time float,
+                      speed_rating float);
 CREATE TABLE course_difficulties (course_name text, difficulty float,
     n_results int, n_athletes int, distance_m float);
 """
@@ -58,7 +62,7 @@ TRACK_ANCHOR = 0.069
 
 def plant(cur, true_diff=0.08, published=None, day_sd=0.0, races=12,
           n_ath=3000, per=40, seed=21, anchor=TRACK_ANCHOR,
-          board_error=0.0):
+          board_error=0.0, rating=100.0):
     """Ordinary venues scattered around the XC average, plus one named
     venue at a known difficulty.
 
@@ -67,6 +71,12 @@ def plant(cur, true_diff=0.08, published=None, day_sd=0.0, races=12,
     genuine board mistake can be planted separately from the anchor.
     """
     rng = random.Random(seed)
+    # ★ THE FIXTURE HAS TO GENERATE WHAT THE MODEL GENERATES. The row model
+    #   is ability + h * difficulty, so planting the difficulty un-tilted
+    #   would make the raw residual already equal d and there would be
+    #   nothing for untilted_pct to undo -- the test would pass on a script
+    #   that ignored the tilt entirely.
+    h = min(1.80, max(0.15, 1.0 - 0.01135 * (rating - 100.0)))
     ability = [rng.gauss(0, 0.06) for _ in range(n_ath)]
     mrows, rrows, drows = [], [], []
     mid = 0
@@ -79,21 +89,23 @@ def plant(cur, true_diff=0.08, published=None, day_sd=0.0, races=12,
             for a in rng.sample(range(n_ath), per):
                 rrows.append((a, f"2023-10-{1 + k % 28:02d}", mid, 1, "x",
                               math.exp(ability[a] + base + rng.gauss(0, 0.03)
-                                       + math.log(1200))))
+                                       + math.log(1200)), rating))
             mid += 1
     for k in range(races):
         mrows.append((mid, 1, "x", NAME, 5000))
         day = rng.gauss(0, day_sd) if day_sd else 0.0
         for a in rng.sample(range(n_ath), per):
             rrows.append((a, f"2023-12-{1 + k % 28:02d}", mid, 1, "x",
-                          math.exp(ability[a] + true_diff + day
-                                   + rng.gauss(0, 0.03) + math.log(1200))))
+                          math.exp(ability[a] + h * true_diff + day
+                                   + rng.gauss(0, 0.03) + math.log(1200)),
+                          rating))
         mid += 1
     drows.append((f"XC:{NAME}",
                   math.expm1(math.log1p(true_diff + board_error) + anchor),
                   races * per, n_ath, 5000))
     cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s,%s)", mrows)
-    cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s)", rrows)
+    cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    rrows)
     cur.executemany("INSERT INTO course_difficulties VALUES "
                     "(%s,%s,%s,%s,%s)", drows)
 
@@ -105,7 +117,8 @@ def measure(cur, pat="Foot Locker"):
     cur.execute(vc._MEASURE, {"min_rows": 20})
     rows = cur.fetchall()
     assert rows, "the venue produced no measurable cell"
-    # venue, dist, races, results, measured, board_says, se, half_a, half_b
+    # venue, dist, races, results, measured, field_tilt, untilted,
+    # board_says, se, half_a, half_b
     return rows[0]
 
 
@@ -113,7 +126,11 @@ def measure(cur, pat="Foot Locker"):
 #   from 6,7 to 7,8 and two tests failed on the OLD columns while still
 #   looking like they were about halves.
 def _halves(row):
-    return float(row[7]), float(row[8])
+    return float(row[9]), float(row[10])
+
+
+def _board(row):
+    return float(row[7])
 
 
 @unittest.skipUnless(HOST and PORT and psycopg2,
@@ -185,7 +202,7 @@ class VenueCheck(unittest.TestCase):
         number."""
         plant(self.cur, true_diff=0.05, board_error=0.0)
         row = measure(self.cur)
-        measured, board = float(row[4]), float(row[5])
+        measured, board = float(row[4]), float(row[7])
         self.assertAlmostEqual(measured, 5.0, delta=0.8)
         self.assertAlmostEqual(board, measured, delta=0.8,
                                msg=f"anchor did not cancel: {board} vs "
@@ -202,7 +219,7 @@ class VenueCheck(unittest.TestCase):
         board that is 4 points too hard ON TOP of the anchor."""
         plant(self.cur, true_diff=0.05, board_error=0.04)
         row = measure(self.cur)
-        measured, board = float(row[4]), float(row[5])
+        measured, board = float(row[4]), float(row[7])
         self.assertAlmostEqual(board - measured, 4.0, delta=1.0,
                                msg=f"board {board} vs measured {measured}")
 
@@ -228,9 +245,10 @@ class VenueCheck(unittest.TestCase):
             for k in range(6):
                 mrows.append((mid, 1, "x", f"Regular {v}", 5000))
                 for a in rng.sample(range(2000), 30):
-                    rrows.append((a, f"2023-10-{1 + k % 28:02d}", mid, 1, "x",
-                                  math.exp(ability[a] + rng.gauss(0, 0.03)
-                                           + math.log(1200))))
+                    rrows.append((a, f"2023-10-{1 + k % 28:02d}", mid, 1,
+                                  "x", math.exp(ability[a]
+                                                + rng.gauss(0, 0.03)
+                                                + math.log(1200)), 100.0))
                 mid += 1
         # one venue, four cells 100m apart, each with its own difficulty
         planted = {4700: 0.09, 4800: 0.01, 4900: 0.05, 5000: -0.03}
@@ -241,15 +259,15 @@ class VenueCheck(unittest.TestCase):
             for k in range(6):
                 mrows.append((mid, 1, "x", NAME, dist))
                 for a in rng.sample(range(2000), 30):
-                    rrows.append((a, f"2023-11-{1 + k % 28:02d}", mid, 1, "x",
-                                  math.exp(ability[a] + diff
-                                           + rng.gauss(0, 0.03)
-                                           + math.log(1200))))
+                    rrows.append((a, f"2023-11-{1 + k % 28:02d}", mid, 1,
+                                  "x", math.exp(ability[a] + diff
+                                                + rng.gauss(0, 0.03)
+                                                + math.log(1200)), 100.0))
                 mid += 1
         self.cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s,%s)",
                              mrows)
         self.cur.executemany("INSERT INTO results VALUES "
-                             "(%s,%s,%s,%s,%s,%s)", rrows)
+                             "(%s,%s,%s,%s,%s,%s,%s)", rrows)
         self.cur.executemany("INSERT INTO course_difficulties VALUES "
                              "(%s,%s,%s,%s,%s)", drows)
 
@@ -264,13 +282,35 @@ class VenueCheck(unittest.TestCase):
             self.assertAlmostEqual(measured, 100 * diff, delta=1.5,
                                    msg=f"{dist}m measured {measured}, "
                                        f"planted {100 * diff}")
-            board = rows[dist][5]
+            board = rows[dist][7]
             self.assertIsNotNone(board,
                                  f"{dist}m has no board_says -- the "
                                  f"published join missed the cell")
             self.assertAlmostEqual(float(board), measured, delta=2.0,
                                    msg=f"{dist}m board {board} vs measured "
                                        f"{measured} -- borrowed a neighbour?")
+
+
+    def test_the_tilt_is_undone(self):
+        """★★ THE THIRD SCALE. The row model applies h x difficulty, so a
+        RAW residual measures mean(h) x d. Give the venue a fast field
+        (rating 150 -> h = 0.43) and the raw number reads far below the
+        planted difficulty; untilted_pct must recover it."""
+        plant(self.cur, true_diff=0.10, rating=150.0)
+        row = measure(self.cur)
+        measured, tilt, untilted = (float(row[4]), float(row[5]),
+                                    float(row[6]))
+        self.assertAlmostEqual(tilt, 0.4325, delta=0.02, msg=f"tilt {tilt}")
+        self.assertLess(measured, 6.0,
+                        f"a fast field should read LOW: {measured}")
+        self.assertAlmostEqual(untilted, 10.0, delta=1.5,
+                               msg=f"untilted {untilted}")
+
+    def test_a_neutral_field_leaves_the_tilt_at_one(self):
+        plant(self.cur, true_diff=0.08, rating=100.0)
+        row = measure(self.cur)
+        self.assertAlmostEqual(float(row[5]), 1.0, delta=0.02)
+        self.assertAlmostEqual(float(row[6]), float(row[4]), delta=0.3)
 
 
 if __name__ == "__main__":

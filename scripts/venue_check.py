@@ -99,6 +99,17 @@ SELECT r.person_id,
         || ':' || COALESCE(r.source, ''))               AS race,
        r.date::text                                     AS d,
        ln(r.normalized_time)                            AS lnt,
+       -- ★★ THE TILT. The row model is h * difficulty, not difficulty:
+       --    joint_solve.amplitudeFromRating, h = clip(1 - 0.01135 *
+       --    (rating - 100), 0.15, 1.80). A rating-150 runner absorbs 43
+       --    per cent of a course's difficulty, a rating-80 runner 123.
+       --    So a raw mean residual measures mean(h) * d, NOT d -- a venue
+       --    with a fast field reads easier than its cell value and one
+       --    with a slow field reads harder, with nothing wrong anywhere.
+       --    Dividing by the field's own mean h undoes it.
+       greatest(0.15, least(1.80,
+           1.0 - 0.01135 * (COALESCE(r.speed_rating, 100) - 100.0)))
+                                                        AS tilt,
        -- ★★ EVERY ROW'S PUBLISHED DIFFICULTY, not just the target's. See
        --    _MEASURE: without this the comparison is between two different
        --    zeros and reports a gap that is mostly the anchor.
@@ -144,7 +155,7 @@ WITH per_season AS (
     SELECT person_id, season, venue, count(*) AS n_own, sum(pub) AS s_own
     FROM   {_SCRATCH} WHERE has_pub GROUP BY 1, 2, 3
 ), resid AS (
-    SELECT b.venue, b.race, b.person_id,
+    SELECT b.venue, b.race, b.person_id, b.tilt,
            round(b.dist / 100.0) * 100                      AS cell,
            b.lnt - (p.s_all - v.s_own) / (p.n_all - v.n_own) AS res,
            -- ★★ WHAT THE BOARD PREDICTS THIS RESIDUAL SHOULD BE. Published
@@ -177,10 +188,10 @@ WITH per_season AS (
 ), per_race AS (
     SELECT venue, cell, race, count(*) AS n,
            avg(res) AS race_res, avg(pred) AS race_pred,
-           min(person_id) AS anyone
+           avg(tilt) AS race_tilt, min(person_id) AS anyone
     FROM   resid GROUP BY 1, 2, 3
 ), halved AS (
-    SELECT venue, cell, race, n, race_res, race_pred,
+    SELECT venue, cell, race, n, race_res, race_pred, race_tilt,
            (row_number() OVER (PARTITION BY venue, cell ORDER BY race) %% 2)
                                                             AS half
     FROM   per_race
@@ -189,6 +200,11 @@ SELECT venue, cell::int AS dist,
        count(*)                                             AS races,
        sum(n)                                               AS results,
        round((100 * sum(race_res * n) / sum(n))::numeric, 2) AS measured_pct,
+       round((sum(race_tilt * n) / sum(n))::numeric, 2)     AS field_tilt,
+       -- the cell value the board holds, recovered: measured / mean(h)
+       round((100 * sum(race_res * n) / sum(n)
+              / NULLIF(sum(race_tilt * n) / sum(n), 0))::numeric, 2)
+                                                            AS untilted_pct,
        round((100 * sum(race_pred * n) FILTER (WHERE race_pred IS NOT NULL)
               / NULLIF(sum(n) FILTER (WHERE race_pred IS NOT NULL), 0))
              ::numeric, 2)                                  AS board_says_pct,
@@ -218,6 +234,11 @@ _PUBLISHED = """
 """
 
 
+# ! POSITIONAL UNPACKING BIT ONCE ALREADY (board_says_pct shifted the
+#   halves from 6,7 to 7,8 and two tests failed on the old columns while
+#   still reading like they were about halves). The order is:
+#   venue, dist, races, results, measured, field_tilt, untilted,
+#   board_says, se, half_a, half_b
 def _table(cols, rows, indent="    "):
     if not rows:
         print(f"{indent}(no rows)")
@@ -299,8 +320,8 @@ def main():
                       "few races elsewhere")
                 return 0
             for row in meas:
-                (venue, dist, races, results, m, board, se,
-                 ha, hb) = row
+                (venue, dist, races, results, m, tilt, untilted,
+                 board, se, ha, hb) = row
                 m = float(m)
                 se = float(se) if se is not None else float("nan")
                 # ⚠⚠ EXACT CELL, AND THE NAME MUST MATCH EXACTLY TOO.
@@ -321,6 +342,13 @@ def main():
                       f"{results:,} results")
                 print(f"      the runners     {m:+.2f}%  (se {se:.2f})   "
                       f"vs their races elsewhere")
+                if tilt is not None:
+                    print(f"      field tilt      x{float(tilt):.2f}   "
+                          f"(the row model applies h x difficulty; a fast\n"
+                          f"                      field absorbs less of a "
+                          f"course than a slow one)")
+                    print(f"      untilted        {float(untilted):+.2f}%   "
+                          f"the cell value that implies")
                 if board is not None:
                     print(f"      the board says  {float(board):+.2f}%   "
                           f"for the SAME comparison")
