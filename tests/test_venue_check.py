@@ -207,5 +207,71 @@ class VenueCheck(unittest.TestCase):
                                msg=f"board {board} vs measured {measured}")
 
 
+    def test_adjacent_100m_cells_do_not_borrow_each_other(self):
+        """⚠⚠ THE OFF-BY-ONE. Morley races 4700, 4800, 4900 and 5000 at the
+        same venue -- cells 100m APART. The published lookup used a 150m
+        tolerance, so every cell printed its NEIGHBOUR's difficulty: the
+        4800 row showed 4700's number, 4900 showed 4800's, all the way
+        down. It looked like data.
+
+        Here each cell gets a deliberately distinct published value and the
+        measured difficulty differs between them too, so a borrowed number
+        is unmistakable."""
+        rng = random.Random(4)
+        ability = [rng.gauss(0, 0.06) for _ in range(2000)]
+        mrows, rrows, drows = [], [], []
+        mid = 0
+        # the benchmark: other venues, so the athletes have races elsewhere
+        for v in range(20):
+            drows.append((f"XC:Regular {v}",
+                          math.expm1(TRACK_ANCHOR), 400, 300, 5000))
+            for k in range(6):
+                mrows.append((mid, 1, "x", f"Regular {v}", 5000))
+                for a in rng.sample(range(2000), 30):
+                    rrows.append((a, f"2023-10-{1 + k % 28:02d}", mid, 1, "x",
+                                  math.exp(ability[a] + rng.gauss(0, 0.03)
+                                           + math.log(1200))))
+                mid += 1
+        # one venue, four cells 100m apart, each with its own difficulty
+        planted = {4700: 0.09, 4800: 0.01, 4900: 0.05, 5000: -0.03}
+        for dist, diff in planted.items():
+            drows.append((f"XC:{NAME}",
+                          math.expm1(math.log1p(diff) + TRACK_ANCHOR),
+                          300, 300, dist))
+            for k in range(6):
+                mrows.append((mid, 1, "x", NAME, dist))
+                for a in rng.sample(range(2000), 30):
+                    rrows.append((a, f"2023-11-{1 + k % 28:02d}", mid, 1, "x",
+                                  math.exp(ability[a] + diff
+                                           + rng.gauss(0, 0.03)
+                                           + math.log(1200))))
+                mid += 1
+        self.cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s,%s)",
+                             mrows)
+        self.cur.executemany("INSERT INTO results VALUES "
+                             "(%s,%s,%s,%s,%s,%s)", rrows)
+        self.cur.executemany("INSERT INTO course_difficulties VALUES "
+                             "(%s,%s,%s,%s,%s)", drows)
+
+        import venue_check as vc
+        self.cur.execute(f"DROP TABLE IF EXISTS {vc._SCRATCH}")
+        self.cur.execute(vc._PASS_A, {"pats": [f"%{NAME}%"], "cut": 10000})
+        self.cur.execute(vc._MEASURE, {"min_rows": 20})
+        rows = {int(r[1]): r for r in self.cur.fetchall()}
+        for dist, diff in planted.items():
+            self.assertIn(dist, rows, f"cell {dist} vanished")
+            measured = float(rows[dist][4])
+            self.assertAlmostEqual(measured, 100 * diff, delta=1.5,
+                                   msg=f"{dist}m measured {measured}, "
+                                       f"planted {100 * diff}")
+            board = rows[dist][5]
+            self.assertIsNotNone(board,
+                                 f"{dist}m has no board_says -- the "
+                                 f"published join missed the cell")
+            self.assertAlmostEqual(float(board), measured, delta=2.0,
+                                   msg=f"{dist}m board {board} vs measured "
+                                       f"{measured} -- borrowed a neighbour?")
+
+
 if __name__ == "__main__":
     unittest.main()

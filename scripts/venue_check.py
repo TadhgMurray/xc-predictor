@@ -113,10 +113,15 @@ LEFT   JOIN dist_override dov ON dov.meet_id = r.meet_id
                              AND dov.div_id = r.div_id
 LEFT   JOIN hits h ON h.meet_id = r.meet_id AND h.div_id = r.div_id
                   AND h.source = r.source
+-- ⚠ MATCHED ON THE 100m CELL, NOT THE RAW METRES. The residual is
+--   grouped by round(dist/100)*100, and course_difficulties holds a
+--   SNAPPED distance, so an exact join misses whenever the two disagree
+--   by a metre -- which left board_says_pct blank on cells with 27,000
+--   results and made it look as though the board had published nothing.
 LEFT   JOIN course_difficulties cd
        ON cd.course_name = 'XC:' || m.course_name
-      AND round(cd.distance_m::numeric)
-          = round(COALESCE(dov.distance, m.distance)::numeric)
+      AND round(cd.distance_m::numeric / 100) * 100
+          = round(COALESCE(dov.distance, m.distance)::numeric / 100) * 100
 WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
   AND  m.course_name IS NOT NULL
   AND  r.date IS NOT NULL AND {_ISO_DATE}
@@ -298,12 +303,20 @@ def main():
                  ha, hb) = row
                 m = float(m)
                 se = float(se) if se is not None else float("nan")
+                # ⚠⚠ EXACT CELL, AND THE NAME MUST MATCH EXACTLY TOO.
+                #    This used a 150m tolerance and a substring name test,
+                #    and Morley's cells are 100m APART: every published
+                #    number printed here was the neighbouring cell's. The
+                #    4800 row showed 4700's +10.92, the 4900 row showed
+                #    4800's +5.70, and so on all the way down -- an
+                #    off-by-one that looked like data.
                 raw_pub = None
                 for (pv, pd), val in published.items():
-                    if pv.lower() in venue.lower() or venue.lower() in pv.lower():
-                        if pd is None or abs((pd or 0) - dist) <= 150:
-                            raw_pub = val
-                            break
+                    if pv != venue or pd is None:
+                        continue
+                    if int(round(pd / 100.0) * 100) == int(dist):
+                        raw_pub = val
+                        break
                 print(f"\n    {venue}  {dist}m   {races} races, "
                       f"{results:,} results")
                 print(f"      the runners     {m:+.2f}%  (se {se:.2f})   "
