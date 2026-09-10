@@ -83,6 +83,60 @@ def splitByRow(n_rows, frac=0.10, seed=1):
     return rng.random(n_rows) < frac
 
 
+# ★★ WHAT YOU HOLD OUT DEFINES WHAT YOU ARE CLAIMING, and splitByRow above
+#    claims almost nothing.
+#
+#    Athletes and races are CROSSED random effects here. Take 10 per cent of
+#    ROWS at random and the same athlete and the same race sit in train AND
+#    test: the model has already fitted that race's day effect and that
+#    athlete's ability from the other 90 per cent of the same race, so the
+#    "prediction" is barely more than interpolation. It is the standard
+#    mistake with multilevel data -- randomly partitioning observations
+#    breaks the structure and gives an optimistic generalisation error.
+#
+#    So there is a LADDER, and each rung answers a different question:
+#
+#      row      fill in a missing finisher in a known race. Optimistic.
+#               Kept only so the new numbers can be compared with the old.
+#      race     predict a WHOLE race at a known course with known athletes.
+#               This is what the site actually does when new results land,
+#               and it is the number to publish.
+#      athlete  predict an athlete never seen before -- can we rate a
+#               newcomer from one race?
+#      course   predict a course never seen before. Tests whether the
+#               distance, altitude and pool structure generalise, since
+#               the cell's own difficulty is unavailable by construction.
+#
+#  ! EVERY SPLITTER RETURNS A ROW MASK, so the caller is unchanged. The
+#    difference is only in what is held out TOGETHER.
+def splitByGroup(group, frac=0.10, seed=1):
+    """Hold out whole groups: every row sharing a group id goes to the same
+    side. `group` is per row (race id, athlete id, cell id...)."""
+    g = np.asarray(group)
+    uniq = np.unique(g)
+    rng = np.random.default_rng(seed)
+    picked = uniq[rng.random(uniq.size) < frac]
+    return np.isin(g, picked)
+
+
+# The ladder, by name, so callers and logs agree on what a number means.
+HOLDOUT_KINDS = ("row", "race", "athlete", "course")
+
+
+def splitFor(kind, n_rows, race=None, athlete=None, cell=None,
+             frac=0.10, seed=1):
+    """One entry point for the ladder. Returns a boolean row mask."""
+    if kind == "row":
+        return splitByRow(n_rows, frac=frac, seed=seed)
+    src = {"race": race, "athlete": athlete, "course": cell}
+    if kind not in src:
+        raise ValueError(f"unknown holdout kind {kind!r}; "
+                         f"expected one of {HOLDOUT_KINDS}")
+    if src[kind] is None:
+        raise ValueError(f"holdout kind {kind!r} needs its group array")
+    return splitByGroup(src[kind], frac=frac, seed=seed)
+
+
 # ------------------------------------------------------------------ #
 # CHUNK 2 -- SOLVING A SUBSET
 # ------------------------------------------------------------------ #

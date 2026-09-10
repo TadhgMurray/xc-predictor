@@ -413,6 +413,11 @@ def _sigmaUFloor(spec):
     return {i: float(v) for i, v in enumerate(parts)}
 
 
+def pv_kinds():
+    import pair_validate as pv
+    return pv.HOLDOUT_KINDS
+
+
 def args_altitude_fit():
     return _ALT_FIT["on"]
 
@@ -491,11 +496,47 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                 print(f"    {'':<10} pairs      {'  '.join(pairs)}")
 
 
+# ★★ ONE PLACE THAT SAYS WHAT THE MODEL IS. The holdout used to pass a
+#    hand-picked seven of these while the real solve passed eighteen, so it
+#    scored a DIFFERENT MODEL from the one being shipped -- which is why a
+#    whole day of tau-versus-sigma_u argument had no number to settle it.
+#    Both callers go through here now; a new flag reaches both or neither.
+def solveKwargs(args, athlete_pool, verbose):
+    return dict(
+        athlete_pool=athlete_pool,
+        n_outer=args.outer,
+        robust=not args.no_robust,
+        tilt=not args.no_tilt,
+        verbose=verbose,
+        curve_smooth=args.curve_smooth,
+        curve_gap=args.curve_gap,
+        winter_gain=args.winter_gain,
+        tau_max=(getattr(args, "_tau_caps", None)
+                 or ({1: args.tau_tf_max} if args.tau_tf_max else "default")),
+        alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args_altitude_fit()
+                       else js.ALT_PRIOR_PEN_FIXED),
+        dist_cal=not args.no_dist_cal,
+        sport_gap_delta=args.sport_gap_delta,
+        merge_sports=args.merge_sports,
+        centre_curve=args.centre_curve,
+        identified_priors=not args.priors_from_all_cells,
+        sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
+    )
+
+
 def holdout(cols, keep, args, athlete_pool, D_full):
     import pair_validate as pv
     y_all = np.log(cols["norm"])
     idx = np.flatnonzero(keep)
-    te_local = pv.splitByRow(idx.size, frac=0.10, seed=1)
+    # ★ THE GROUPS THE LADDER HOLDS OUT TOGETHER. race is (cell, day) as the
+    #   solve sees it; athlete and cell come straight off the pack.
+    race_all, _ = raceCodes(cols["course"], cols["days"])
+    kind = getattr(args, "holdout_kind", "race")
+    te_local = pv.splitFor(kind, idx.size,
+                           race=race_all[idx],
+                           athlete=np.asarray(cols["athlete"])[idx],
+                           cell=np.asarray(cols["course"])[idx],
+                           frac=0.10, seed=1)
     keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
     keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
     D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
@@ -511,17 +552,22 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                              dist_bands=not args.no_dist_bands,
                              split_ability=args.split_ability)
     t0 = time.time()
-    out = js.solveJoint(y_all[keep_tr], design=D_tr, athlete_pool=athlete_pool,
-                        n_outer=args.outer, robust=not args.no_robust,
-                        tilt=not args.no_tilt, n_probe=4,
-                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=False,
-                        dist_cal=not args.no_dist_cal)
+    out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
+                        **solveKwargs(args, athlete_pool, verbose=False))
     pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
                                   tilt=not args.no_tilt)
     y_te = y_all[keep_te]
     err = y_te[cov] - pred[cov]
-    print(f"\n[joint] held-out (10% of rows, seed 1): error sd {err.std():.6f}"
-          f"   covered {cov.mean():.1%}   [{time.time() - t0:.0f}s]")
+    # ⚠ SAY WHICH RUNG. "error sd 0.044" means nothing without it: holding
+    #   out rows scores interpolation, holding out races scores prediction,
+    #   and the two are not comparable numbers.
+    _what = {"row": "10% of ROWS -- optimistic, the same race is in train",
+             "race": "10% of RACES -- a whole new race at a known course",
+             "athlete": "10% of ATHLETES -- rating a newcomer",
+             "course": "10% of COURSES -- a course never seen before"}[kind]
+    print(f"\n[joint] HELD OUT: {_what}")
+    print(f"[joint] error sd {err.std():.6f}   covered {cov.mean():.1%}"
+          f"   [{time.time() - t0:.0f}s]")
     sport_te = cols["sport"][keep_te] if "sport" in cols else None
     if sport_te is not None:
         for code, name in ((0, "XC"), (1, "TF")):
@@ -545,6 +591,13 @@ def main():
                     help="second-difference weight on the year curve, as a "
                          "multiple of rows-per-knot (a prior, not tunable "
                          "by held-out error)")
+    # ★ WHICH RUNG OF THE LADDER. See pair_validate.splitFor -- holding out
+    #   rows scores interpolation (the same race is in train), holding out
+    #   races scores prediction. `race` is the default because it is what
+    #   the site actually does when new results land.
+    ap.add_argument("--holdout-kind", default="race",
+                    choices=list(pv_kinds()),
+                    help="what to hold out together (default race)")
     ap.add_argument("--holdout", action="store_true",
                     help="also fit on 90%% of rows and score the rest")
     ap.add_argument("--curve-gap", type=float, default=js.CURVE_GAP_WEIGHT,
@@ -829,24 +882,8 @@ def main():
         holdout(cols, keep, args, athlete_pool, D)
 
     t0 = time.time()
-    out = js.solveJoint(y, design=D, athlete_pool=athlete_pool,
-                        n_outer=args.outer, robust=not args.no_robust,
-                        tilt=not args.no_tilt, n_probe=args.probes,
-                        curve_smooth=args.curve_smooth, curve_gap=args.curve_gap, winter_gain=args.winter_gain, verbose=True,
-                        # ! "default" means js.TAU_MAX_DEFAULT -- the
-                        #   measured true spread per sport. An explicit
-                        #   --tau-max or --tau-tf-max still wins.
-                        tau_max=(getattr(args, "_tau_caps", None)
-                                 or ({1: args.tau_tf_max}
-                                     if args.tau_tf_max else "default")),
-                        alt_prior_pen=(js.ALT_PRIOR_PEN_FIT if args.altitude_fit
-                                       else js.ALT_PRIOR_PEN_FIXED),
-                        dist_cal=not args.no_dist_cal,
-                        sport_gap_delta=args.sport_gap_delta,
-                        merge_sports=args.merge_sports,
-                        centre_curve=args.centre_curve,
-                        identified_priors=not args.priors_from_all_cells,
-                        sigma_u_floor=_sigmaUFloor(args.sigma_u_floor))
+    out = js.solveJoint(y, design=D, n_probe=args.probes,
+                        **solveKwargs(args, athlete_pool, verbose=True))
     print(f"[joint] solved in {time.time() - t0:.0f}s")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap
