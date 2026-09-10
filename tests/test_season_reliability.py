@@ -165,5 +165,45 @@ class SeasonReliability(unittest.TestCase):
         self.assertAlmostEqual(sr._mix(fixed, 200), 0.5, delta=0.10)
 
 
+    def test_the_p80_uplift_favours_the_noisier_sport(self):
+        """★★ THE MECHANISM BEHIND A 95% XC TOP 200. The board ranks on the
+        80th-percentile race, not the mean (build_ranking_results._SEASON_Q).
+        p80 sits ~0.84 within-season sd above the mean, so a sport whose
+        races scatter more is handed a bigger free uplift.
+
+        This fixture gives both sports the SAME fitness and the SAME mean.
+        The only difference is within-season scatter. If p80 were unbiased
+        across sports the board would stay near the pool's own mix; it does
+        not."""
+        import season_reliability as sr
+        plant(self.cur, xc_races=6, xc_noise=6.0, tf_races=6, tf_noise=2.0)
+        self.cur.execute(f"DROP TABLE IF EXISTS {sr._SCRATCH}")
+        self.cur.execute(sr._PASS_A, {"cut": 10000})
+        self.cur.execute(sr._UPLIFT, {"half_min": 2})
+        by = {}
+        for _p, sport, n, mean_r, p80, sd in self.cur.fetchall():
+            by.setdefault(sport, []).append((float(mean_r), float(p80)))
+        up = {s: sum(b - a for a, b in v) / len(v) for s, v in by.items()}
+        self.assertGreater(up["XC"] - up["TF"], 1.0,
+                           f"uplifts {up} -- fixture no longer shows the bias")
+        means = [(a, s) for s, v in by.items() for a, _b in v]
+        p80s = [(b, s) for s, v in by.items() for _a, b in v]
+        self.assertGreater(sr._mix(p80s, 200), sr._mix(means, 200) + 0.15,
+                           "the quantile no longer tilts the board")
+
+    def test_equal_scatter_gives_equal_uplift(self):
+        """The uplift is only a BIAS when the sports scatter differently."""
+        import season_reliability as sr
+        plant(self.cur, xc_races=6, xc_noise=4.0, tf_races=6, tf_noise=4.0)
+        self.cur.execute(f"DROP TABLE IF EXISTS {sr._SCRATCH}")
+        self.cur.execute(sr._PASS_A, {"cut": 10000})
+        self.cur.execute(sr._UPLIFT, {"half_min": 2})
+        by = {}
+        for _p, sport, n, mean_r, p80, sd in self.cur.fetchall():
+            by.setdefault(sport, []).append((float(mean_r), float(p80)))
+        up = {s: sum(b - a for a, b in v) / len(v) for s, v in by.items()}
+        self.assertLess(abs(up["XC"] - up["TF"]), 0.35, f"uplifts {up}")
+
+
 if __name__ == "__main__":
     unittest.main()

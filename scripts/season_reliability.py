@@ -72,10 +72,27 @@ transaction that is rolled back.
    of noise, put back on one ruler. Section 3 prints both so the
    difference is visible rather than asserted.
 
-! Season ratings here are computed from the ROWS (mean speed_rating over
-  the season's races), not read from athlete_season, because the halves
-  have to be computed the same way as the whole for the correlation to
-  mean anything.
+⚠⚠ AND THE BOARD DOES NOT RANK ON A MEAN. athlete_season.mean_rating holds
+   the athlete's 80th-PERCENTILE race, not their average one -- the column
+   kept its old name (build_ranking_results._SEASON_Q, and the note above
+   it). That choice is well argued: a mean rewards a thin championship-only
+   season, and a quantile is invariant to how many times somebody raced.
+
+   But a quantile is NOT invariant to how noisy each race is. p80 sits
+   about 0.84 within-season standard deviations above the mean, so a sport
+   whose races scatter more gets a bigger free uplift -- and cross country
+   scatters more than track by construction (different courses, mud, hills,
+   weather; track is the same oval). Section 4 measures that uplift per
+   sport, because it is a cross-sport bias hiding inside a within-sport
+   fix.
+
+   This is not theoretical: ranking these same seasons by MEAN puts the top
+   200 at 16.5% XC, and the board, ranking by p80, puts it at 95%.
+
+! Season ratings in sections 1-3 are computed from the ROWS, not read from
+  athlete_season, because the halves have to be computed the same way as
+  the whole for the correlation to mean anything. Section 4 is where the
+  board's own statistic is reproduced and compared.
 """
 
 import argparse
@@ -142,6 +159,20 @@ JOIN   agg b ON b.person_id = a.person_id AND b.season = a.season
             AND b.pool = a.pool AND b.sport = a.sport
             AND a.half = 0 AND b.half = 1
 WHERE  a.n >= %(half_min)s AND b.n >= %(half_min)s
+"""
+
+
+# ★ THE BOARD'S OWN STATISTIC, per athlete-season, beside the mean. n is
+#   kept because the uplift shrinks with races and the sports differ there
+#   too.
+_UPLIFT = f"""
+SELECT pool, sport, count(*) AS n_races,
+       avg(rating)                                          AS mean_r,
+       percentile_cont(0.80) WITHIN GROUP (ORDER BY rating)  AS p80,
+       coalesce(stddev_samp(rating), 0)                     AS sd_within
+FROM   {_SCRATCH}
+GROUP  BY person_id, season, pool, sport
+HAVING count(*) >= %(half_min)s * 2
 """
 
 
@@ -285,6 +316,71 @@ def _report(pool, rows, top):
               "not a variance\n      artefact, and this diagnosis is wrong.")
 
 
+def _uplift(pool, rows, top):
+    """Section 4: does the board's 80th-percentile statistic hand one sport
+    a bigger free uplift than the other?"""
+    by = {}
+    for _p, sport, n, mean_r, p80, sd in rows:
+        by.setdefault(sport, []).append((float(mean_r), float(p80),
+                                         float(sd), int(n)))
+    if len(by) < 2:
+        return
+    print(f"\n4. THE BOARD RANKS ON THE 80th PERCENTILE, NOT THE MEAN\n")
+    print("   (build_ranking_results._SEASON_Q -- the column is still called")
+    print("   mean_rating). p80 sits ~0.84 within-season sd above the mean,")
+    print("   so the sport whose races scatter more gets a bigger free lift.")
+    print()
+    print(f"   {'sport':<6} {'seasons':>9} {'races/season':>13} "
+          f"{'within-season sd':>17} {'p80 - mean':>11}")
+    lift = {}
+    for sport in ("XC", "TF"):
+        if sport not in by:
+            continue
+        v = by[sport]
+        sd = sum(x[2] for x in v) / len(v)
+        up = sum(x[1] - x[0] for x in v) / len(v)
+        nr = sum(x[3] for x in v) / len(v)
+        lift[sport] = up
+        print(f"   {sport:<6} {len(v):>9,} {nr:>13.1f} {sd:>17.2f} "
+              f"{up:>11.2f}")
+    if len(lift) < 2:
+        return
+    diff = lift["XC"] - lift["TF"]
+    print(f"\n   Cross country is handed {diff:+.2f} rating points more than "
+          f"track by the\n   quantile alone, before any athlete runs a step "
+          f"differently.")
+
+    # the board three ways, from the same seasons
+    means = [(x[0], s) for s, v in by.items() for x in v]
+    p80s = [(x[1], s) for s, v in by.items() for x in v]
+    # equalised: keep each sport's uplift but rescale it to the smaller one
+    target = min(lift.values())
+    fair = []
+    for sport, v in by.items():
+        k = target / lift[sport] if lift[sport] > 0 else 1.0
+        for mean_r, p80, _sd, _n in v:
+            fair.append((mean_r + k * (p80 - mean_r), sport))
+    base = sum(1 for _, s in means if s == "XC") / len(means)
+    print(f"\n   top {top} XC share, same seasons, three statistics:")
+    for label, board in (("mean          ", means),
+                         ("p80 (the board)", p80s),
+                         ("p80, uplift equalised", fair)):
+        m = _mix(board, top)
+        print(f"     {label:<24} {100 * m:>5.1f}%")
+    print(f"     {'the pool itself':<24} {100 * base:>5.1f}%")
+    gap_p80 = abs(_mix(p80s, top) - base)
+    gap_fair = abs(_mix(fair, top) - base)
+    if gap_fair < gap_p80 * 0.6:
+        print("\n   => THE QUANTILE IS THE BIAS. Equalising the uplift moves "
+              "the board most of\n      the way to the pool's own mix, and "
+              "nothing about the athletes changed.")
+    elif gap_fair < gap_p80 * 0.95:
+        print("\n   => the quantile is part of it, not all of it.")
+    else:
+        print("\n   => the quantile is not the cause; the imbalance is "
+              "elsewhere.")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Is cross country's wider rating spread real, or is it "
@@ -325,10 +421,18 @@ def main():
                 if args.pool and r[0] != args.pool:
                     continue
                 by_pool.setdefault(r[0], []).append(r)
+            cur.execute(_UPLIFT, {"half_min": args.half_min})
+            up_pool = {}
+            for r in cur.fetchall():
+                if args.pool and r[0] != args.pool:
+                    continue
+                up_pool.setdefault(r[0], []).append(r)
             for pool in sorted(by_pool, key=lambda p: -len(by_pool[p])):
                 if len(by_pool[pool]) < 200:
                     continue
                 _report(pool, by_pool[pool], args.top)
+                if pool in up_pool:
+                    _uplift(pool, up_pool[pool], args.top)
             cur.execute(f"DROP TABLE IF EXISTS {_SCRATCH}")
         finally:
             conn.rollback()
