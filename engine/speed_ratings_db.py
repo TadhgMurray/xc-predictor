@@ -498,26 +498,9 @@ def _placeholderSql() -> str:
 #   order, case-insensitively, as POSIX regexes (no `%`, no braces: the
 #   query is an f-string and psycopg2 scans for `%`). A misread name
 #   dilutes the class's coefficient a little; it cannot move a course.
-MEET_CLASS_RX_2 = ("(state|section|region|nation|nxn|nxr|foot ?locker|"
-                   "nike cross|super ?regional|qualif|ncaa|naia|njcaa)")
-MEET_CLASS_RX_1 = "(champ|conference|league|county|district|metro)"
-# an invitational is the reference class whatever else its name says
-# ("Golden State Invitational"), unless it is also a qualifier or a final
-MEET_CLASS_RX_INVITE = "invit"
-MEET_CLASS_RX_KEEP = "(qualif|champ|final)"
-
-
-def _meetClassSql(name_expr: str, flag_expr: str = None) -> str:
-    """A SELECT expression: 2, 1 or 0 for the meet name expression.
-    flag_expr, when given, is a boolean SQL expression that marks the meet
-    a championship from the feed itself (meets_tfrrs.is_championship):
-    it outranks the name, but not the invitational guard."""
-    flag = f"WHEN {flag_expr} THEN 2 " if flag_expr else ""
-    return (f"CASE WHEN {name_expr} ~* '{MEET_CLASS_RX_INVITE}' "
-            f"AND {name_expr} !~* '{MEET_CLASS_RX_KEEP}' THEN 0 "
-            f"{flag}"
-            f"WHEN {name_expr} ~* '{MEET_CLASS_RX_2}' THEN 2 "
-            f"WHEN {name_expr} ~* '{MEET_CLASS_RX_1}' THEN 1 ELSE 0 END")
+#   The rule lives in engine/meet_class.py (one place, with a Python twin
+#   the tests and scripts/meet_class_census.py run); this is its SQL.
+from meet_class import sql as _meetClassSql          # noqa: E402
 
 
 def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:

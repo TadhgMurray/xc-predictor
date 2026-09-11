@@ -104,6 +104,33 @@ data ask for it. A hyperprior on `tau`/`sigma_u` is not worth building:
 with 44k identified cells it is inert, and the observed-sd cap is a
 display choice.
 
+**Is the championship help to a course's difficulty automatic and
+always applied? (owner, 2026-09-11: "I could see that going very
+wrong.")** It is not automatic, and after the fourth commit it is gated.
+Measured on a planted world: a genuinely one-race ordinary venue
+mislabelled as a championship had its rows over-rated by 2.2% and its
+course read one point too hard, because the cell takes a share of the
+class's taper whether or not the label is right. Three guards now stand
+between a label and a rating, all in `engine/meet_class.py`:
+
+- the invitational guard: a name that says invitational, preview,
+  classic, festival, relays or dual is ordinary whatever else it says,
+  unless it also says qualifier, championship, final or prelim;
+- the season window: a championship-labelled meet outside the weeks
+  championships are run (XC mid-October to mid-December, track February
+  to the start of July) is ordinary;
+- the one-race gate: the term is not applied to rows at a venue with one
+  race in the pack. With two or more races the others pin the course and
+  the term is a relabel of the day; with one the course would take a
+  share of it either way.
+
+The coefficient itself is fitted per (pool, sport, class) with a ZERO
+prior mean; the taper literature's minus one and minus two and a half
+percent are what a healthy fit should look like in the log
+(`IMP_EXPECTED`), not a number that is applied. `scripts/meet_class_census.py`
+prints the biggest meet names behind each class on the real corpus, and
+`--find preview` looks one name up; run it before trusting the class.
+
 Answers to the three questions asked on 2026-09-11, so they are on file:
 
 - **Faster runners get less of a course's difficulty.** Yes, and it was

@@ -1136,6 +1136,15 @@ def packResults(batches, today, merge=False):
     print(f"[pack] cell_days: median {int(np.median(cell_days[cell_days > 0]))}"
           f"  one-day cells {int((cell_days == 1).sum()):,}"
           f"  of {int((cell_days > 0).sum()):,} populated")
+    # the championship class census (issue #22): read it against
+    # scripts/meet_class_census.py, which names the meets behind each class
+    for s_code, s_name in ((0, "XC"), (1, "TF")):
+        m = sport == s_code
+        if m.any():
+            c = np.bincount(np.clip(meet_class[m].astype(np.int64), 0, 2),
+                            minlength=3)
+            print(f"[pack] meet_class {s_name}: ordinary {c[0]:,}  "
+                  f"league-level {c[1]:,}  state/national-level {c[2]:,} rows")
 
     out = {
         "result_id": np.concatenate([c[0] for c in chunks])[order],

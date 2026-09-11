@@ -218,7 +218,20 @@ and the championship-only venues' rmse halves (`tests/test_shared_terms.py`).
 One design note: a prior stated in pseudo-rows (a first cut used 50)
 competes with `sigma_u²` summed over all championship races and halved
 the estimate on a small world. The prior is now a stated SD, like
-`DIST_PRIOR_SD`.
+`DIST_PRIOR_SD`, and its mean is zero: the literature's numbers are what
+a healthy fit should show, not an input.
+
+**Where a wrong class does harm, measured.** At a venue with two or more
+races the class term is a relabel of the day: the other races pin the
+course, and a mislabelled race changes nothing about the rows' ratings.
+At a venue with ONE race the cell takes a share of the class taper
+whether or not the label is right: on a planted world a mislabelled
+ordinary one-race venue read a point too hard and its rows were
+over-rated by 2.2%. So the rule lives in `engine/meet_class.py` with an
+invitational guard, a season window, and a one-race gate in
+`run_joint.importanceClasses` that withholds the term from such venues.
+`scripts/meet_class_census.py` shows the rule's verdicts on the real
+names.
 
 ### II.3 The sport level: asserted, out of theta
 

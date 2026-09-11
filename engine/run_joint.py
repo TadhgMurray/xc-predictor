@@ -260,10 +260,37 @@ def importanceClasses(cols, keep, pool_of_athlete, pool_names):
     (pool, sport, class) -> pool * 4 + sport * 2 + (class - 1), or -1 for
     an ordinary meet (class 0). Returns (index per kept row, n_imp, the
     prior mean per index from js.IMP_PRIOR_MEAN, labels)."""
+    import meet_class as mcl
     mc = np.asarray(cols["meet_class"], dtype=np.int64)[keep]
     sport = np.asarray(cols["sport"])[keep].astype(np.int64)
     pool_row = pool_of_athlete[np.asarray(cols["athlete"])[keep]]
     cls = np.clip(mc, 0, 2)
+    labelled = cls > 0
+    # ★ TWO GATES BETWEEN A LABEL AND A RATING (meet_class.py, "three
+    #   things"). A misread name at a venue that hosts one race hands that
+    #   race's rows about two thirds of the class's taper as extra credit,
+    #   and the rating cannot tell a wrong label from a right one there.
+    #   (a) the season window: a championship-labelled meet outside the
+    #       weeks championships are run is an ordinary meet
+    #   (b) venues with ONE race in the pack: the term is not applied to
+    #       their rows at all. With two or more races the others pin the
+    #       course and the term is a relabel of the day; with one the
+    #       course would take a share of it either way. The term is still
+    #       identified off every venue that hosts a mix.
+    if "doy" in cols:
+        aday = js.academicDay(np.asarray(cols["doy"])[keep])
+        out_of_season = labelled & ~mcl.inWindow(sport, aday)
+    else:
+        out_of_season = np.zeros(cls.size, dtype=bool)
+    course = np.asarray(cols["course"])[keep].astype(np.int64)
+    days = np.asarray(cols["days"])[keep].astype(np.int64)
+    ok_cell = course >= 0
+    pair = np.unique(course[ok_cell] * np.int64(1_000_000) + days[ok_cell])
+    races_per_cell = np.bincount((pair // 1_000_000).astype(np.int64),
+                                 minlength=int(course.max()) + 1)
+    one_race = ok_cell & (races_per_cell[np.maximum(course, 0)] < 2)
+    one_race |= ~ok_cell
+    cls = np.where(out_of_season | one_race, 0, cls)
     idx = np.where(cls > 0, pool_row * 4 + sport * 2 + (cls - 1), -1)
     n_imp = len(pool_names) * 4
     prior = np.zeros(n_imp)
@@ -274,10 +301,13 @@ def importanceClasses(cols, keep, pool_of_athlete, pool_names):
                 prior[p * 4 + s * 2 + (c - 1)] = js.IMP_PRIOR_MEAN[c]
                 labels.append(f"{name}:{sname}:c{c}")
     n_rows = int((idx >= 0).sum())
-    print(f"[joint] meet importance: {n_rows:,} of {idx.size:,} rows at a "
-          f"championship-class meet (class 1: {int((cls == 1).sum()):,}, "
-          f"class 2: {int((cls == 2).sum()):,}); {n_imp} coefficients, "
-          f"prior means {js.IMP_PRIOR_MEAN} sd {js.IMP_PRIOR_SD}")
+    print(f"[joint] meet importance: {n_rows:,} of {idx.size:,} rows carry "
+          f"the term (labelled {int(labelled.sum()):,}; dropped as out of "
+          f"season {int((labelled & out_of_season).sum()):,}, at a one-race "
+          f"venue {int((labelled & one_race & ~out_of_season).sum()):,}); "
+          f"class 1: {int((cls == 1).sum()):,}, class 2: "
+          f"{int((cls == 2).sum()):,}; {n_imp} coefficients, prior means "
+          f"{js.IMP_PRIOR_MEAN} sd {js.IMP_PRIOR_SD}")
     return idx.astype(np.int64), n_imp, prior, labels
 
 

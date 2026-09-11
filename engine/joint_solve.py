@@ -481,7 +481,13 @@ def altDistanceFactor(dist_m):
 #   2-3%, Bosquet et al. 2007; Mujika & Padilla 2003): log-time, negative =
 #   faster. The penalty is in row units, so fifty pseudo-rows: the millions
 #   of real ones decide, the prior only holds a class nobody raced.
-IMP_PRIOR_MEAN = {1: -0.010, 2: -0.025}
+#   ⚠ THE PRIOR MEAN IS ZERO (2026-09-11, the owner: "I could see that
+#     going very wrong"). The taper literature's -1% / -2.5% is the size to
+#     EXPECT in the log, not a number to apply: a class the corpus has no
+#     evidence for carries no taper at all, and the big classes are decided
+#     by their tens of thousands of rows either way.
+IMP_PRIOR_MEAN = {1: 0.0, 2: 0.0}
+IMP_EXPECTED = {1: -0.010, 2: -0.025}        # what a healthy fit looks like
 # ⚠ SIZED AS A PRIOR SD, LIKE DIST_PRIOR_SD, NOT AS PSEUDO-ROWS. The data
 #   cannot tell the importance term from the race-day terms of the
 #   championship races (within a race they are collinear); what separates
