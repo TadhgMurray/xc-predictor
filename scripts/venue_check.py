@@ -278,13 +278,16 @@ def main():
     if args.search:
         with getConn() as conn:
             with conn.cursor() as cur:
+                # ! course_name, NOT venue. `meets` has no venue column --
+                #   _PASS_A above matches on course_name and this query
+                #   guessed a different name for the same thing.
                 cur.execute("""
-                    SELECT venue, count(*) AS races,
+                    SELECT course_name, count(*) AS races,
                            min(substr(date::text, 1, 4)) AS first,
                            max(substr(date::text, 1, 4)) AS last
                     FROM   meets
-                    WHERE  venue ILIKE %(pat)s
-                    GROUP  BY venue
+                    WHERE  course_name ILIKE %(pat)s
+                    GROUP  BY course_name
                     ORDER  BY races DESC
                     LIMIT  40
                 """, {"pat": f"%{args.search}%"})
