@@ -391,6 +391,22 @@ def staticExists(filename):
 app.jinja_env.globals["static_exists"] = staticExists
 
 
+# ★★ THE PATHS THAT MUST NOT BE CACHED OR CRAWLED, in ONE place (2026-09-11).
+#    robots.txt and the edge-cache header need the same list, and two copies
+#    drift: a route added to one and missed in the other is either a crawled
+#    API or a cached search result. /search and /compare take free-text and
+#    athlete-id query strings, so their responses are per-request; /api/ and
+#    /debug/ are machine endpoints.
+_PRIVATE_PREFIXES = ("/api/", "/search", "/debug/", "/compare")
+
+# How long the EDGE may serve a stored page. The corpus changes only when a
+# pipeline run goes live (hours apart), so this is about how stale a board may
+# be just after a go-live, not about freshness in general. Browsers get a
+# shorter max-age so a person reloading sees new numbers sooner than a crawler.
+PAGE_MAX_AGE = int(os.environ.get("XCP_PAGE_MAX_AGE", "300"))
+PAGE_S_MAXAGE = int(os.environ.get("XCP_PAGE_S_MAXAGE", "900"))
+
+
 @app.after_request
 def _headers(resp):
     """Response headers Lighthouse and common sense ask for (2026-09-05).
@@ -405,6 +421,32 @@ def _headers(resp):
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif request.path.startswith("/static/"):
         resp.headers.setdefault("Cache-Control", "public, max-age=86400")
+    # ★★ AND THE PAGES THEMSELVES (2026-09-11). Until now only /static/ carried
+    #    a cache header, so every athlete page, race page and board went out
+    #    uncacheable and EVERY request reached gunicorn and then Postgres --
+    #    on the box that also runs the solve. The access log for two hours:
+    #    YandexBot 11,246, Applebot 6,760, and ~17,600 from one scraper
+    #    rotating fourteen Chrome user agents. About 460k requests a day,
+    #    almost none of them people.
+    #
+    #  ⚠ 200 AND GET ONLY, AND NEVER A MAINTENANCE PAGE. A cached 503 would
+    #    outlive the swap that caused it and keep the site down after it came
+    #    back up -- the stale-flag outage again, this time stored at the edge
+    #    where clearing the flag does not reach it. Same for 404/500: an error
+    #    held for 15 minutes is a page that stays broken after the fix.
+    #
+    #  ! THE HEADER IS NECESSARY BUT NOT SUFFICIENT. Cloudflare does not cache
+    #    HTML on Cache-Control alone -- it caches by file extension unless a
+    #    Cache Rule says "Eligible for cache" for these paths. Without that
+    #    rule this header only reaches browsers.
+    elif (request.method in ("GET", "HEAD") and resp.status_code == 200
+          and not any(request.path.startswith(p)
+                      for p in _PRIVATE_PREFIXES)):
+        resp.headers.setdefault(
+            "Cache-Control",
+            f"public, max-age={PAGE_MAX_AGE}, s-maxage={PAGE_S_MAXAGE}")
+    else:
+        resp.headers.setdefault("Cache-Control", "no-store")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -427,10 +469,9 @@ app.jinja_env.globals["site_origin"] = SITE_ORIGIN
 def robots_txt():
     body = "\n".join([
         "User-agent: *",
-        "Disallow: /api/",
-        "Disallow: /search",
-        "Disallow: /debug/",
-        "Disallow: /compare",
+        # from _PRIVATE_PREFIXES, so this list cannot drift from the one the
+        # cache header uses
+        *[f"Disallow: {p}" for p in _PRIVATE_PREFIXES],
         "Allow: /",
         f"Sitemap: {SITE_ORIGIN}/sitemap.xml",
         "",
