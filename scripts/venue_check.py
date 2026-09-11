@@ -255,7 +255,14 @@ def main():
     ap = argparse.ArgumentParser(
         description="For a named venue: what the board says vs what the "
                     "athletes say.")
-    ap.add_argument("--venue", action="append", required=True,
+    # ★ FIND THE NAME FIRST. "--venue Ultimook" came back "no matching
+    #   venue in `meets` -- check the spelling", which is true and useless:
+    #   the venue is in there under whatever the results provider called
+    #   it. --search prints the candidates and their race counts.
+    ap.add_argument("--search", metavar="TEXT",
+                    help="list venues whose name contains TEXT, with race "
+                         "counts, and exit (use instead of --venue)")
+    ap.add_argument("--venue", action="append",
                     help="name fragment, case-insensitive; repeatable")
     ap.add_argument("--pct", type=float, default=100.0,
                     help="percent of that venue's ATHLETES to sample "
@@ -264,11 +271,41 @@ def main():
     ap.add_argument("--work-mem", default="256MB")
     ap.add_argument("--timeout", default="30min")
     args = ap.parse_args()
+    if not args.search and not args.venue:
+        ap.error("give --venue NAME or --search TEXT")
+
+    from database import getConn
+    if args.search:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT venue, count(*) AS races,
+                           min(substr(date::text, 1, 4)) AS first,
+                           max(substr(date::text, 1, 4)) AS last
+                    FROM   meets
+                    WHERE  venue ILIKE %(pat)s
+                    GROUP  BY venue
+                    ORDER  BY races DESC
+                    LIMIT  40
+                """, {"pat": f"%{args.search}%"})
+                rows = cur.fetchall()
+        if not rows:
+            print(f"\n  nothing in `meets` matching '{args.search}'.")
+            print("  Try a shorter fragment -- the provider's name for a "
+                  "venue is\n  often longer than the one people say out "
+                  "loud.")
+            return
+        print(f"\n  venues matching '{args.search}'")
+        print(f"    {'races':>7}  {'years':<11}  venue")
+        for venue, races, first, last in rows:
+            span = f"{first}-{last}" if first != last else str(first)
+            print(f"    {races:>7,}  {span:<11}  {venue}")
+        print(f"\n  then: --venue \"<the name above>\"")
+        return
 
     pats = [f"%{v}%" for v in args.venue]
     cut = int(round(args.pct * 100))
 
-    from database import getConn
     with getConn() as conn:
         cur = conn.cursor()
         cur.execute(f"SET LOCAL work_mem = '{args.work_mem}'")

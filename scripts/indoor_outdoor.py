@@ -47,7 +47,8 @@ def _pct(x):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--min-races", type=int, default=0,
-                    help="only locations where BOTH sides have this many races")
+                    help="only locations where BOTH sides have this many "
+                         "results (the table counts results, not races)")
     args = ap.parse_args()
 
     with getConn() as conn:
@@ -56,14 +57,23 @@ def main():
             #   'TF:loc:<id>:<in|out>' and the id is numeric, so field 3 is
             #   the location and field 4 the surface. A LIKE '%%:in' also
             #   matches nothing useful when the suffix is missing.
-            cur.execute("""
+            # ! ASK THE SCHEMA, DO NOT GUESS A COLUMN. course_difficulties
+            #   carries n_results, not n_races (database.py:411) -- and
+            #   this script guessed wrong and crashed on a live run.
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_name = 'course_difficulties'""")
+            cols = {r[0] for r in cur.fetchall()}
+            n_col = next((c for c in ("n_results", "n_races", "n_athletes")
+                          if c in cols), None)
+            cur.execute(f"""
                 SELECT split_part(course_name, ':', 3)  AS loc,
                        split_part(course_name, ':', 4)  AS surface,
                        difficulty,
-                       COALESCE(n_races, 0)
+                       {('COALESCE(' + n_col + ', 0)') if n_col else '0'}
                 FROM   course_difficulties
                 WHERE  course_name LIKE 'TF:loc:%%'
                   AND  split_part(course_name, ':', 4) IN ('in', 'out')
+                  AND  difficulty IS NOT NULL
             """)
             rows = cur.fetchall()
 
