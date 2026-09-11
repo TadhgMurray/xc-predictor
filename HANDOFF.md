@@ -82,7 +82,15 @@ and `'Glendoveer'` (championship venues read harder than before);
 - Seven script-style tests fail on master before today
   (`test_anchor_repair`, `test_capped`, `test_pipeline_failures`,
   `test_returning_teams`, `test_shadow_migration`, `test_sprint_boards`,
-  `test_track_anchor`) — verified on a pristine checkout; left alone.
+  `test_track_anchor`) and six pytest-style ones (`test_hs_factor_per_pool`,
+  `test_meet_units`, `test_pager_last`, `test_pipeline_shards`,
+  `test_pipeline_step_guards`, `test_sport_gain`) — all verified on a
+  pristine checkout of the branch head; left alone. `test_rank_line_units`
+  and `test_weather_fixes` need the box's `database` module and do not
+  collect in a sandbox. Full pytest run here: 281 passed, 55 skipped.
+- `test_thin_course_shrinkage` reproduces the OLD collapse and now pins
+  `nested_var=False` to do it; `test_track_is_zero` pins the anchor's new
+  variable name.
 
 ## 5. OPEN
 

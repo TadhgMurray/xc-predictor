@@ -76,7 +76,11 @@ class DisplayDoesNotMoveIt(unittest.TestCase):
 class EngineAnchorsOnTheAverageTrack(unittest.TestCase):
     def test_golive_anchors_on_the_mean_of_track_cells(self):
         src = open(os.path.join(_ROOT, "engine", "joint_golive.py")).read()
-        self.assertIn("anchored = raw - float(np.mean(raw[ref]))", src,
+        # since 2026-09-11 the anchor is held in one variable so that
+        # engine_scale.anchor_shift is the same number (issue #21)
+        self.assertIn("anchor_used = float(np.mean(raw[ref]))", src,
+                      "the go-live anchor is no longer the mean track")
+        self.assertIn("anchored = raw - anchor_used", src,
                       "the go-live anchor is no longer the mean track")
         # ! UNWEIGHTED on purpose: weighting by results lets a handful of
         #   enormous championship ovals define the zero, and those are the

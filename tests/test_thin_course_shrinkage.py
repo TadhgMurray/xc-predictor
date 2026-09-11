@@ -140,9 +140,14 @@ class SigmaUCollapse(unittest.TestCase):
             for a in rng.choice(400, 50, replace=False):
                 ath.append(int(a)); cel.append(c); rac.append(c)
                 y.append(ability[a] + truth[c] + u + rng.normal(0, 0.02))
+        # ! nested_var=False: this reproduces the DIAGONAL E-step's collapse
+        #   (the bug as recorded). The nested E-step of 2026-09-11 no longer
+        #   drives sigma_u all the way to zero even on this degenerate world
+        #   (it lands near 0.009), so the demonstration pins the old E-step.
         out = js.solveJoint(np.array(y), np.array(ath), np.array(cel),
                             np.array(rac), n_outer=6, tilt=False,
-                            sigma_u_floor=0.0, tau_max=None)
+                            sigma_u_floor=0.0, tau_max=None,
+                            nested_var=False)
         d = out["delta"] - out["delta"].mean()
         kept = float(np.dot(d, truth) / np.dot(truth, truth))
         self.assertGreater(kept, 0.95,
