@@ -93,11 +93,20 @@ LADDER = [
      "the old variance E-step (information diagonal) instead of the exact "
      "cell + races block -- does the honest posterior variance help?"),
     ("no-importance", ["--altitude", "--no-importance"],
-     "no meet-importance (championship taper) term -- needs a pack with "
-     "meet_class, else this equals base"),
+     "no field-strength term (the race's front, from the model's own "
+     "ratings): do the venues that host only stacked fields stay honest "
+     "without it?"),
+    ("season-end", ["--altitude", "--importance", "season-end"],
+     "the taper covariate as the race's season-end share (from the "
+     "athletes' calendars) instead of its front strength"),
     ("no-indoor", ["--altitude", "--no-indoor"],
-     "no shared indoor coefficient; every indoor cell carries the surface "
-     "alone"),
+     "no indoor term at all; every indoor cell carries the surface alone"),
+    ("fit-indoor", ["--altitude", "--indoor-level", "fit"],
+     "the indoor level FITTED instead of asserted at the NCAA factor -- "
+     "indoor is season, so read this rung with the winter curve in mind"),
+    ("era-2", ["--altitude", "--era-years", "2"],
+     "each course split into two-year eras tied by a random walk (drift sd "
+     "1%/era): a venue that changed gets to move, a thin one does not"),
     ("no-dist-table", ["--altitude", "--no-dist-table"],
      "uncalibrated event offsets keep the zero prior instead of the "
      "published tables' relation"),

@@ -528,15 +528,23 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # ★ THE 2026-09-11 TERMS. XCP_SPORT_LEVEL=0.0583 ASSERTS the XC/TF level
   #   at the stated grass cost (joint_solve.XC_TRACK_GAP) instead of
   #   estimating what the data cannot identify; unset, the level is
-  #   estimated as before. The meet-importance term (needs a pack with
-  #   meet_class: --from 7), the shared indoor coefficient and the tables'
-  #   prior on event offsets are ON; XCP_NO_IMPORTANCE=1, XCP_NO_INDOOR=1,
-  #   XCP_NO_DIST_TABLE=1 switch each off. The holdout carries the same.
+  #   estimated as before. The field-strength term (the race's front, from
+  #   the model's own ratings; XCP_IMPORTANCE=season-end for the calendar
+  #   share instead), the indoor level ASSERTED at the NCAA factor
+  #   (XCP_INDOOR_LEVEL=fit to estimate it) and the tables' prior on event
+  #   offsets are ON; XCP_NO_IMPORTANCE=1, XCP_NO_INDOOR=1,
+  #   XCP_NO_DIST_TABLE=1 switch each off. XCP_ERA_YEARS=2 splits every
+  #   course into two-year eras tied by a random walk (the go-live
+  #   publishes each venue's latest era under its bare key). The holdout
+  #   carries the same.
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
+      ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
       ${XCP_NO_IMPORTANCE:+--no-importance} \
       ${XCP_NO_INDOOR:+--no-indoor} \
+      ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
+      ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_MERGE_SPORTS:+--merge-sports} \
       ${XCP_CENTRE_CURVE:+--centre-curve} \
@@ -571,8 +579,11 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       --holdout-kind race --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
       --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
+      ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
       ${XCP_NO_IMPORTANCE:+--no-importance} \
       ${XCP_NO_INDOOR:+--no-indoor} \
+      ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
+      ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} || true
   step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
       --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" || true

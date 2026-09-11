@@ -258,8 +258,19 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         anchor_used = float(np.average(raw[solved], weights=w[solved]))
         anchored = raw - anchor_used
     difficulty = np.where(solved, np.expm1(anchored), 0.0)
-    diffs = pg.buildDifficultyDict(keys, difficulty, D.cell, athlete_raw,
-                                   solved)
+    # ★ ERA-SPLIT CELLS PUBLISH THEIR LATEST ERA UNDER THE BARE KEY
+    #   (2026-09-11, --era-years). The page looks a venue up by its bare
+    #   key ('TF:loc:<id>:in', an XC canonical id and distance), so a
+    #   suffixed row would never be found and two eras under one name would
+    #   be a coin toss. Every row's own rating still uses its own era's
+    #   cell; only the published course number is "the venue as it is now".
+    pub_keys, pub_mask = latestEraKeys(keys, solved)
+    if pub_mask.sum() != solved.sum():
+        print(f"[joint/live] eras: {int(solved.sum()):,} solved (course, era) "
+              f"cells publish as {int(pub_mask.sum()):,} venues, each its "
+              f"latest era under the bare key")
+    diffs = pg.buildDifficultyDict(pub_keys, difficulty, D.cell, athlete_raw,
+                                   pub_mask)
 
     # --- athlete_ratings -------------------------------------------------- #
     r = {"valid": rat["valid"],
@@ -591,6 +602,30 @@ def writeNpz(live, path):
     np.savez(path, **live["npz"])
     print(f"[joint/live] wrote {path} (pair_difficulty shape, from the joint "
           f"solve)")
+
+
+def latestEraKeys(keys, solved):
+    """Era-split cells ('<key>@e<k>', run_joint.eraCells: k grows with the
+    year) publish their LATEST solved era under the bare key; every other
+    cell publishes as it is. Returns (bare keys, publish mask)."""
+    keys = [str(k) for k in keys]
+    solved = np.asarray(solved, dtype=bool)
+    bare, era = [], []
+    for k in keys:
+        b, _, e = k.partition("@e")
+        bare.append(b)
+        era.append(int(e) if e.isdigit() else -1)
+    era = np.asarray(era)
+    if (era < 0).all():
+        return bare, solved.copy()
+    best = {}
+    for i, (b, e) in enumerate(zip(bare, era)):
+        if solved[i] and e > best.get(b, (-2, -1))[0]:
+            best[b] = (int(e), i)
+    pub = np.zeros(len(keys), dtype=bool)
+    for _e, i in best.values():
+        pub[i] = True
+    return bare, pub
 
 
 def writeLive(live):

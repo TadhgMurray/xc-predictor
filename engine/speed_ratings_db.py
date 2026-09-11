@@ -900,6 +900,10 @@ def _escape(v):
 #            load; a save that crashes on old data is worse than one that
 #            carries it forward.
 def _splitVenueKey(key: str, names: dict):
+    # an era-split cell ('<key>@e<k>', --era-years) publishes under its bare
+    # key: the page looks venues up by the bare key, and a race date belongs
+    # to one era anyway
+    key = key.partition("@e")[0]
     sport, _, rest = key.partition(":")
 
     if sport != "XC":

@@ -200,7 +200,31 @@ higher than run22's, the one-race share `tau²/(tau² + sigma_u²)` a little
 lower, and the sd of published difficulty across `n_results` buckets
 (`scripts/difficulty_spread.py` §2) should stop *falling* with evidence.
 
-### II.2 The season-end taper term (issue #22)
+### II.2 The field-strength term (issue #22)
+
+**Third cut, same day (owner: "shouldn't do the championship thing.
+Instead should do by rating. If there is a race that is very top-heavy,
+where people will run fast because there's more competition, those races
+should get some refund to their difficulty").** The covariate is now the
+race's FRONT: the mean rating of its top five, from the model's own
+ratings each pass (as the tilt is), centred at the median race of its
+pool and sport, in units of 10 rating points, clipped to −4..+6
+(`joint_solve.fieldStrength`, `FIELD_TOP_K`, `FIELD_UNIT`, `FIELD_CLIP`).
+One coefficient per (pool, sport), zero prior, untilted, not in a rating.
+Constant within a race, so finishing order is untouched; identified
+across races by the same athletes in stronger and weaker fields and by
+venues that host both. The literature on the effect it absorbs: drafting
+is worth 1-2% at distance pace (Pugh 1971; Kyle 1979), and competition
+against a stronger field adds a comparable amount (Hopkins & Hewson
+2001 on race-to-race variability), so a few tenths of a percent per 10
+points of front strength is the expected size (`FIELD_EXPECTED` −0.005);
+the data decide, and `run_joint.reportFieldByBand` prints the residual
+by strength band so the shape is read, not assumed. The stacked-only
+venues (Foot Locker, NXN) keep their difficulty: that is the refund. On
+the planted world the coefficient is recovered through the fitted
+ratings (a little attenuated, errors in variables) and the stacked-only
+venues' bias halves (`tests/test_shared_terms.py`). The season-end share
+below is kept as `--importance season-end`, a ladder rung.
 
 **Second cut, same day.** The first cut read a championship class off
 the meet's name (three classes, each with its own coefficient, an
@@ -311,6 +335,21 @@ indoor cells' rmse falls.
   races by `08b`.
 - The XC pack reads `meets_tfrrs.is_championship` as class 2 before the
   name regex, for the `meet_class` cross-check column only.
+- **The indoor level is asserted** (+1.2%, `IND_LEVEL_DEFAULT`,
+  `--indoor-level`): indoor is season, exactly as XC/TF is, and the page
+  read every oval 2.4 to 3.8% easier than outdoors because the curve
+  interpolated the fall-to-spring gain through the winter and the indoor
+  cells absorbed the difference. Off theta like `mu_fixed`, indoor cells
+  recentred to it each pass, outdoor tracks recentred without them; the
+  NCAA-style last-indoor / first-outdoor pair check is printed
+  (`run_joint.indoorTransitionCheck`).
+- **The era split is wired** (`XCP_ERA_YEARS=2`, an `era-2` rung) and
+  publishable: the go-live writes each venue's latest solved era under
+  its bare key (`joint_golive.latestEraKeys`) and the venue-key splitter
+  drops the `@e<k>` suffix, so the page finds the venue.
+- **A track conversion with no venue is the zero** (difficulty 0.0, the
+  average outdoor track), not the median applied row effect
+  (`conversions.venueEffect`).
 - The tilt runs on past 140 instead of clamping (`TILT_RATING_LO/HI` are
   40/200, safety rails), and `run_joint.reportTiltByBand` prints the
   applied against the implied `h` per rating band every run.
@@ -361,7 +400,9 @@ XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 2>&1 | tee logs/run19.out
 ```
 
 `--from 7` because the pack gains the `meet_class` cross-check column
-(the taper term itself reads the calendars every pack has). Then, if the
+(the field term reads the solve's own ratings and the indoor check
+`dist_m` and `days`, so a pack from run 19 needs only `--from 8`; add
+`XCP_ERA_YEARS=2` for the era split). Then, if the
 owner wants
 the stated scale rather than the estimated one:
 
@@ -372,11 +413,15 @@ XCP_SPORT_LEVEL=0.0583 XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 8 ...
 ### What to read in `08_golive.log`
 
 ```
-[joint] season-end taper: N of M rows carry a share ...                    # by name class: share must rise with class
+[joint] field strength: the taper term's covariate is each race's FRONT   # the term is on
+[joint] indoor level ASSERTED at +1.20% ... / [joint] indoor check ...     # the pair check should bracket +1.2%
+[joint] eras: 2-year cells -> ...                                          # XCP_ERA_YEARS=2
 [joint] indoor: 1,574 of 74,366 cells are indoor tracks ...
 [joint] XC: race-day sd ... course prior ... a one-race course keeps 0.xx   # compare with run22
-[joint] season-end taper, log-time per unit share ...                      # expect near -2%
+[joint] field strength, log-time per unit of front strength ...          # negative, a few tenths of a percent
+[joint] field strength by band ...                                         # residual flat near zero
 [joint] tilt by rating band ...                                            # 140+: implied h close to applied
+[joint/live] eras: N solved (course, era) cells publish as M venues        # latest era under the bare key
 [joint] indoor, log-time per pool ...                                      # expect +0.5..+1.5%
 [joint/live] track zero: mean 0.000 ... over N track cells                 # outdoor cells now
 [joint/live] difficulty zero = the average TRACK. Cross country lands at   # the estimate, or the definition

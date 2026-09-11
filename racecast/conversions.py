@@ -281,11 +281,23 @@ def sport_gain(pool, sport, rating):
 
 def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
     """The applied effect (log) a race in this context carries on the
-    engine's scale: a chosen venue's own, else the sport's median."""
+    engine's scale: a chosen venue's own; else, for track, the AVERAGE
+    OUTDOOR TRACK (difficulty 0.0, the display zero); else the sport's
+    median race.
+
+    ★ A TRACK WITH NO VENUE IS THE ZERO (owner, 2026-09-11: "it might not
+      be using 0.0 difficulty for the track conversions, which is now the
+      default"). The page shows 0.0% for an unnamed track, and the median
+      applied effect over track ROWS is not 0.0: it is row-weighted, it
+      carries every indoor row, and it was ~1% off the anchor. Both legs
+      of a conversion go through here, so the round trip still closes; the
+      rating it produces is now the one a 0.0% track gives."""
     sc = engineScale(pool, sport)
     if sc is None:
         return None
     _pm, med, shift = sc
+    if chosen_difficulty is None and (sport or "").upper() == "TF":
+        chosen_difficulty = 0.0
     if chosen_difficulty is None:
         base = med
     else:
@@ -917,8 +929,9 @@ def normalized_to_time(norm, context):
 
     wmult = _weather_mult(context.get("weather"), context.get("course"),
                           context.get("sport"), context["distance"])
-    # A target with no stated venue is a TYPICAL venue for its sport, not a
-    # neutral one. For TF the difference is ~3%.
+    # A target with no stated venue: for track the average outdoor track
+    # (difficulty 0.0, the display zero); for XC the sport's median race.
+    # See venueEffect.
     sc = engineScale(context["pool"], context.get("sport"))
     if sc is not None:
         # the engine's scale (177): put the target's applied effect back

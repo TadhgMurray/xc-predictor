@@ -126,3 +126,32 @@ def test_the_design_takes_a_continuous_weight():
 def test_the_prior_is_zero_and_the_expectation_negative():
     assert js.IMP_PRIOR_MEAN == 0.0 and js.IMP_EXPECTED < 0
     assert rj.SEASON_END_DAYS == 14 and rj.SEASON_CLOSED_DAYS > rj.SEASON_END_DAYS
+
+
+def test_the_importance_flag_and_the_indoor_level_parse():
+    p = rj.buildParser()
+    a = rj.applyImplications(p.parse_args([]), p)
+    assert a.importance == "field" and a.indoor_level == js.IND_LEVEL_DEFAULT
+    kw = rj.sharedTermKwargs(a)
+    assert kw["importance"] == "field" and kw["indoor_level"] == js.IND_LEVEL_DEFAULT
+    a = rj.applyImplications(p.parse_args(["--no-importance"]), p)
+    assert rj.sharedTermKwargs(a)["importance"] == "none"
+    a = rj.applyImplications(p.parse_args(["--importance", "season-end"]), p)
+    assert rj.sharedTermKwargs(a)["importance"] == "season-end"
+    a = rj.applyImplications(p.parse_args(["--indoor-level", "fit"]), p)
+    assert a.indoor_level is None
+    a = rj.applyImplications(p.parse_args(["--indoor-level", "0.02"]), p)
+    assert a.indoor_level == 0.02
+    import pytest
+    with pytest.raises(SystemExit):
+        rj.applyImplications(p.parse_args(["--indoor-level", "lots"]), p)
+
+
+def test_the_field_rows_cover_every_row_with_a_cell(capsys):
+    course = np.array([0, 1, -1, 2])
+    sport = np.array([0, 1, 1, 0])
+    pool_row = np.array([0, 0, 1, 1])
+    idx, n_imp, prior, labels = rj.fieldTermRows(course, sport, pool_row, ["hs_m", "hs_f"])
+    assert idx.tolist() == [0, 1, -1, 2] and n_imp == 4
+    assert (prior == 0).all() and labels == ["hs_m:XC", "hs_m:TF", "hs_f:XC", "hs_f:TF"]
+    assert "field strength" in capsys.readouterr().out

@@ -392,3 +392,157 @@ def test_a_continuous_share_recovers_the_taper_and_frees_the_venues():
     print(f"  finals-only venues: rmse {e_with:.4f} with the share, {e_without:.4f} without")
     assert e_with < 0.7 * e_without, (e_with, e_without)
     print("  continuous share recovers the taper; finals venues honest ..... OK")
+
+
+# ---------------------------------------------------------------------- #
+# 2026-09-11, second cut: the FIELD-STRENGTH term (owner: "if there is a
+# race that is very top-heavy, where people will run fast because there's
+# more competition, those races should get some refund to their
+# difficulty") and the ASSERTED indoor level (owner: "I think indoor might
+# be off").
+# ---------------------------------------------------------------------- #
+
+def _field_world(seed=5, effect=-0.006, n_ath=1500, n_cell=60, n_rows=30):
+    """Ten finals venues host only stacked fields (drawn from the fastest
+    15%); fifty mixed venues cycle through weak, ordinary, strong and
+    stacked fields. y carries `effect` per unit of the race's front
+    (top-5 mean rating above the median race, per 10 points), computed
+    from the TRUE abilities exactly as the solve computes it from its own."""
+    rng = np.random.default_rng(seed)
+    true_a = rng.normal(0, 0.15, n_ath)
+    true_d = rng.normal(0, 0.04, n_cell); true_d -= true_d.mean()
+    order = np.argsort(true_a)                       # fastest first (low log-time)
+    pools = {-1: order[int(0.3 * n_ath):], 0: order, 1: order[:int(0.4 * n_ath)],
+             2: order[:int(0.15 * n_ath)]}
+    race_cell, race_kind = [], []
+    for c in range(n_cell):
+        kinds = [2] * 6 if c < 10 else [-1, 0, 0, 1, 2, 0]
+        for k in kinds:
+            race_cell.append(c); race_kind.append(k)
+    race_cell = np.array(race_cell); race_kind = np.array(race_kind)
+    n_race = race_cell.size
+    race_u = rng.normal(0, 0.02, n_race)
+    ath, cel, rac = [], [], []
+    for j in range(n_race):
+        picks = rng.choice(pools[int(race_kind[j])], n_rows, replace=False)
+        ath.extend(picks.tolist()); cel.extend([race_cell[j]] * n_rows)
+        rac.extend([j] * n_rows)
+    ath, cel, rac = map(np.array, (ath, cel, rac))
+    # the true front, as fieldStrength computes it from ratings
+    true_r = 100.0 * np.exp(true_a.mean()) / np.exp(true_a)
+    mask = np.ones(ath.size, dtype=bool)
+    w_true, s_true, _ = js.fieldStrength(true_r[ath], rac, n_race,
+                                         np.zeros(ath.size, dtype=np.int64),
+                                         mask, 1)
+    y = (true_a[ath] + true_d[cel] + race_u[rac] + effect * w_true
+         + rng.normal(0, 0.02, ath.size))
+    return y, ath, cel, rac, true_d, s_true, effect
+
+
+def test_the_field_strength_term_recovers_a_planted_front_effect():
+    y, ath, cel, rac, true_d, s_true, effect = _field_world()
+    n_ath = int(ath.max()) + 1
+    idx = np.zeros(ath.size, dtype=np.int64)
+    pool = np.zeros(n_ath, dtype=np.int64)
+    D = js.Design(ath, cel, rac, imp=idx, n_imp=1, imp_prior=[0.0],
+                  imp_kind="field")
+    assert D.imp_kind == "field" and float(np.abs(D.imp_w).max()) == 0.0
+    with_t = js.solveJoint(y, design=D, athlete_pool=pool, n_outer=6,
+                           tilt=False, tau_max=None, n_probe=0)
+    got = float(with_t["importance"][0])
+    print(f"  field strength per unit: planted {effect:+.4f}, recovered {got:+.4f}")
+    assert abs(got - effect) < 0.002, (got, effect)
+    # the covariate the solve built matches the planted one closely
+    assert with_t["field_strength"] is not None
+    corr = np.corrcoef(with_t["field_strength"], s_true)[0, 1]
+    assert corr > 0.97, corr
+    # and the stacked-only venues are freed: without the term they read easy
+    without = js.solveJoint(y, design=js.Design(ath, cel, rac),
+                            athlete_pool=pool, n_outer=6, tilt=False,
+                            tau_max=None, n_probe=0)
+    finals = np.arange(true_d.size) < 10
+
+    def err(o):
+        d = o["delta"] - o["delta"][~finals].mean() + true_d[~finals].mean()
+        return _rmse(d[finals], true_d[finals])
+
+    e_with, e_without = err(with_t), err(without)
+    # the planted effect is -1.8% on a stacked field; ten cells at six races
+    # each keep an estimation floor near 0.008, so the ratio is bounded
+    print(f"  stacked-only venues: rmse {e_with:.4f} with the term, {e_without:.4f} without")
+    assert e_with < 0.75 * e_without, (e_with, e_without)
+
+    def bias(o):
+        return float((o["delta"][finals] - o["delta"][~finals].mean()
+                      - (true_d[finals] - true_d[~finals].mean())).mean())
+
+    print(f"  stacked-only venues: mean bias {bias(with_t):+.4f} with, {bias(without):+.4f} without")
+    assert bias(without) < -0.008, bias(without)       # they read EASY without it
+    # the fitted covariate is the true one seen through fitted ratings, so
+    # the slope attenuates a little (errors in variables); the bias halves
+    assert abs(bias(with_t)) < 0.6 * abs(bias(without))
+    print("  field strength recovers the front effect; stacked venues honest ..... OK")
+
+
+def test_the_field_covariate_is_the_front_of_the_race():
+    race = np.array([0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2])
+    r = np.array([150, 140, 130, 120, 110, 100, 90, 105, 100, 95, 130, 70.0])
+    idx = np.zeros(race.size, dtype=np.int64)
+    w, s, cen = js.fieldStrength(r, race, 3, idx, np.ones(race.size, bool), 1,
+                                 k=5, unit=10.0, clip=(-4.0, 6.0))
+    front = np.array([130.0, 100.0, 100.0])          # top-5 mean, top-3, top-2
+    assert np.allclose(cen, [100.0])                  # the median race
+    assert np.allclose(s, (front - 100.0) / 10.0)
+    assert np.allclose(w, s[race])
+    # a fixed centre is honoured (a held-out design uses the training one)
+    w2, s2, cen2 = js.fieldStrength(r, race, 3, idx, np.ones(race.size, bool), 1,
+                                    centre=[110.0])
+    assert np.allclose(cen2, [110.0]) and np.allclose(s2, (front - 110.0) / 10.0)
+    # rows without a cell carry no weight, and a NaN rating counts as 100
+    m = np.ones(race.size, bool); m[:7] = False
+    w3, s3, _ = js.fieldStrength(np.where(race == 2, np.nan, r), race, 3, idx, m, 1)
+    assert (w3[:7] == 0).all() and np.isfinite(s3).all()
+
+
+def test_an_asserted_indoor_level_is_off_theta_and_the_ovals_keep_only_their_deviation():
+    rng = np.random.default_rng(3)
+    n_ath, n_xc, n_out, n_in, per_athlete = 800, 20, 20, 8, 10
+    n_cell = n_xc + n_out + n_in
+    group = np.r_[np.zeros(n_xc, int), np.ones(n_out + n_in, int)]
+    is_in = np.r_[np.zeros(n_xc + n_out, bool), np.ones(n_in, bool)]
+    level, mu_tf = 0.012, -0.05
+    true_d = rng.normal(0, 0.03, n_cell)
+    for g, m in ((0, group == 0), (1, (group == 1) & ~is_in), (1, is_in)):
+        true_d[m] -= true_d[m].mean()                  # each block centred
+    true_a = rng.normal(0, 0.2, n_ath)
+    race_cell = np.repeat(np.arange(n_cell), 4)
+    race_u = rng.normal(0, 0.015, race_cell.size)
+    ath = np.repeat(np.arange(n_ath), per_athlete)
+    rac = rng.integers(0, race_cell.size, ath.size)
+    cel = race_cell[rac]
+    y = (true_a[ath] + np.where(group[cel] == 1, mu_tf, 0.0) + true_d[cel]
+         + level * is_in[cel] + race_u[rac] + rng.normal(0, 0.02, ath.size))
+    pool_row = np.zeros(ath.size, dtype=np.int64)
+    D = js.Design(ath, cel, rac, group_of_cell=group, pool_row=pool_row,
+                  n_pool=1, mu_fixed=[0.0, mu_tf], ind=is_in, ind_fixed=[level])
+    assert D.n_ind == 0 and D.ind_fixed is not None and D.n_mu == 0
+    off = D.fixedOffset(np.ones(D.n))
+    assert np.allclose(off, np.where(group[cel] == 1, mu_tf, 0.0) + level * is_in[cel])
+    out = js.solveJoint(y, design=D, n_outer=4, tilt=False, tau_max=None,
+                        n_probe=0)
+    assert out["indoor_fixed"] and np.allclose(out["indoor"], [level])
+    d = out["d"]
+    # the outdoor tracks and the ovals are centred SEPARATELY: the level is
+    # the whole of the indoor offset, and delta carries it
+    assert abs(d[(group == 1) & ~is_in].mean()) < 1e-9
+    assert abs(d[is_in].mean()) < 1e-9
+    assert np.allclose(out["delta"][is_in], mu_tf + d[is_in] + level)
+    assert np.allclose(out["delta"][(group == 1) & ~is_in], mu_tf + d[(group == 1) & ~is_in])
+    assert _rmse(d[is_in], true_d[is_in]) < 0.012
+    assert _rmse(d[~is_in], true_d[~is_in]) < 0.012
+    # the fit's own residual and the held-out predictor both carry the level
+    pred, covered = js.predictHeldOut(out, D, D)
+    resid = y - pred
+    assert covered.all() and abs(float(resid.mean())) < 2e-3
+    assert float(np.sqrt(np.mean(resid ** 2))) < 0.03
+    print("  asserted indoor level: off theta, ovals centred, in delta and in the prediction ..... OK")

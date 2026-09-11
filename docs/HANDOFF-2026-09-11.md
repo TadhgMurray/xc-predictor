@@ -17,7 +17,10 @@ runs here; the first live log decides.
 | where | what | why |
 |---|---|---|
 | `joint_solve.nestedPosteriorVar` | the EM E-step's `Var(d)`, `Var(u)` are the exact (cell + its races) block, not `sigma²/A_ii` | the diagonal goes to zero with more rows of ONE race; the truth does not. `sigma_u` was under-stated and every thin course kept too much of one day |
-| `joint_solve` + `run_joint` | season-end taper term `imp[pool, sport] · share`, the share being the fraction of a race's field for whom the race falls within two weeks of the end of their own season (`run_joint.seasonEndShare`); no name is read | a championship-only venue booked the taper as an easy course (Foot Locker, state meets). Beyer's class pars, FIS's zero penalty: a class effect, never a venue's |
+| `joint_solve` + `run_joint` | **field-strength term** `imp[pool, sport] · front`: a race's front is the mean rating of its top five above the median race of its pool and sport, per 10 points, from the model's own ratings each pass (`joint_solve.fieldStrength`); the season-end share is kept as `--importance season-end` for the ladder | owner: "shouldn't do the championship thing, instead by rating: a top-heavy race should get some refund to its difficulty" |
+| `joint_solve` + `run_joint` | the **indoor level asserted** at +1.2% (`IND_LEVEL_DEFAULT`, `--indoor-level`; `fit` estimates it), off theta like the sport level; outdoor and indoor cells recentred separately; a last-indoor / first-outdoor pair check in the log | indoor is season: the page read every oval 2.4 to 3.8% EASIER than outdoors |
+| `joint_golive.latestEraKeys`, `speed_ratings_db._splitVenueKey`, `deploy/run_pipeline.sh` | `XCP_ERA_YEARS=2` splits every course into two-year eras (built before, never wired); the go-live publishes each venue's latest era under its bare key, so the page finds it | owner: "I have a feeling recently is a lot faster than previously" (Ultimook) |
+| `racecast/conversions.venueEffect` | a track conversion with no venue uses difficulty 0.0, the average outdoor track, not the median applied row effect | owner: "conversions still off ... not using 0.0 difficulty for the track" | a championship-only venue booked the taper as an easy course (Foot Locker, state meets). Beyer's class pars, FIS's zero penalty: a class effect, never a venue's |
 | `joint_solve` + `run_joint` | indoor as one coefficient per pool, folded into `delta` | 1,574 indoor cells each rediscovered a ~1% effect under a 1.6% prior; no location hosts both |
 | `joint_solve.Design.mu_fixed`, `run_joint --sport-level G` | the XC/TF level ASSERTED and taken out of theta | sport is season; nobody identifies this from results (Tully, NCAA, WMA all state it). `--merge-sports` left `mu` free and unpenalised |
 | `joint_solve.DIST_BANDS` (4 bands), `engine/distance_tables.py` | a top band from 135; the World Athletics / Purdy relation as the prior mean of an event offset the pairs cannot calibrate | the exponent rises as ability falls; the tangent extension beyond 3200 is unfounded (college 10k rode four pairs) |
@@ -38,30 +41,46 @@ the new behaviour: `tests/test_joint_dist.py` (four bands),
 
 ## 2. THE NEXT RUN
 
-The taper term reads the athletes' own calendars, which every pack has;
-the `meet_class` cross-check column needs a repack, so from 7:
+The pack from run 19 has everything these terms read (the field term uses
+the solve's own ratings, the indoor check uses `dist_m` and `days`), so
+from 8:
 
 ```
 cd /srv/xc-predictor && git pull
 set -a; . /etc/xc-predictor.env; set +a
-XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 2>&1 | tee logs/run19.out
+XCP_SPORT_LEVEL=0.0583 XCP_ERA_YEARS=2 XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 8 2>&1 | tee logs/run20.out
 ```
 
-That is today's shipped model plus the E-step, the season-end taper term,
-the indoor term, the table prior and the fourth band, with the level still
-**estimated**. To apply the stated scale instead (the owner's definition:
-track is the zero, an average XC course is +6%), add `XCP_SPORT_LEVEL=0.0583`.
-Both are the owner's call; the research doc (Part I.3, I.4) says why the
-level cannot be measured and what every other system does.
+`XCP_SPORT_LEVEL=0.0583` states the XC/TF scale (track is the zero, an
+average XC course +6%); leave it in, because with the level estimated the
+average fall-to-spring fitness gain is absorbed into the level and spring
+ratings sit level with fall ones by construction. `XCP_ERA_YEARS=2` is
+new to the pipeline: every course becomes (course, two-year era) cells
+tied by a random walk with a stated drift of 1% per era, so a venue with
+evidence can move (Ultimook) and a thin one cannot; the go-live publishes
+each venue's latest era under its bare key. Drop it to run one difficulty
+per course for all time, as before.
+
+The holdout (08a) and the ladder (08b) score the model and write nothing:
+skipping them changes no rating. Nothing after 08 rewrites a rating 08
+wrote; 09b prices only the rows 08 left unrated, and 10 onwards rebuild
+the boards from the ratings, so the pages show the new numbers only after
+those steps run.
 
 ## 3. WHAT TO READ FIRST IN `08_golive.log`
 
 ```
-[joint] season-end taper: N of M rows carry a share (median share ...)   # then: by name class 0..3, share must RISE with class
+[joint] field strength: the taper term's covariate is each race's FRONT   # the term is on
+[joint] indoor level ASSERTED at +1.20% log-time for every pool           # and the ovals are pinned
+[joint] indoor check, the NCAA way: ... median +x.xx% trimmed mean +x.xx% # should bracket +1.2%; see below
+[joint] eras: 2-year cells -> N (course, era) cells, M adjacent pairs     # XCP_ERA_YEARS=2
 [joint] indoor: 1,574 of 74,366 cells are indoor tracks
 [joint] XC: race-day sd ... course prior ... a one-race course keeps 0.xx  # vs run22: sigma_u a little up, share a little down
-[joint] season-end taper, log-time per unit share, per (pool, sport)     # near -2% (a whole field at its season's end)
+[joint] field strength, log-time per unit of front strength ...          # negative; a few tenths of a percent per 10 points
+[joint] field strength by band: ... applied ... resid                    # resid flat near zero = the line fits; a bend says where not
+[joint] indoor level ASSERTED, log-time per pool: ... +1.20% ...         # the indoor cells' mean deviation is zero by construction
 [joint] tilt by rating band: applied h against implied h                 # 140+ rows: implied close to applied = extrapolation holds
+[joint/live] eras: N solved (course, era) cells publish as M venues      # each its latest era under the bare key
 [joint] indoor, log-time per pool                                        # +0.5 .. +1.5%
 [joint/live] track zero: mean 0.000 ... over N track cells               # outdoor cells
 [joint/live] difficulty zero = the average TRACK. Cross country lands at # the estimate, or "ASSERTED"
@@ -107,45 +126,82 @@ data ask for it. A hyperprior on `tau`/`sigma_u` is not worth building:
 with 44k identified cells it is inert, and the observed-sd cap is a
 display choice.
 
-**Is the championship help to a course's difficulty automatic and
-always applied? (owner, 2026-09-11: "I could see that going very
-wrong.")** Not any more, and not from a name. The first cut read a class
-off the meet's name and applied one taper per class; the owner's two
-objections ("no one is tapering for their league championship, but they
-are for their state meet"; "it's so easy for it to go bad") are both
-objections to a label, and no guard on a label answers them. So the
-label is gone from the model. The term's covariate is now the race's
-**season-end share** (`run_joint.seasonEndShare`): of the athletes in the
-race whose season has closed and who ran three or more races, the
-fraction for whom this race falls within 14 days of the last race of
-their own season. A state final is a race where nearly everyone's season
-ends, so its share is near 1; a September invitational is near 0; a
-league championship sits wherever its own field puts it, which for most
-leagues is low because most of the field goes on to the section meet.
-Nothing is blanketed and nothing is read off a name. One coefficient per
-(pool, sport), zero prior mean, prior sd 0.02, fitted from the
-difference between races with high and low shares at the same venues
-and by the same athletes. A healthy fit reads about −2% per unit share
-(`IMP_EXPECTED`, the taper literature); the coefficient is not applied
-anywhere, it is estimated, and if the corpus shows no taper it is zero.
+**The taper term is gone; the field-strength term replaced it (owner,
+2026-09-11: "shouldn't do the championship thing. Instead should do by
+rating. If there is a race that is very top-heavy, where people will run
+fast because there's more competition, those races should get some
+refund to their difficulty").** The covariate is the race's front: the
+mean rating of its top five, from the model's own ratings each pass
+(the way the tilt is), centred at the median race of its pool and sport
+and counted in units of 10 rating points, clipped to −4..+6. A dual meet
+sits a unit or two below zero, a national final three to five above.
+One coefficient per (pool, sport), zero prior, fitted; it is the same
+number for everyone in a race, so finishing order inside a race never
+moves, and it is identified across races by the same athletes running in
+stronger and weaker fields and by venues that host both. It is not in a
+rating: the fast time in a stacked field is a real performance. What it
+does is stop the fast times of a stacked field from reading as an easy
+course, which is the refund. **How much** is the data's: a healthy fit
+reads a few tenths of a percent per unit (`FIELD_EXPECTED` −0.5%), and
+the log prints the residual by strength band so the shape can be read
+rather than assumed; if the top band bends, that table says by how much.
+On the planted world the coefficient is recovered and the stacked-only
+venues' bias halves (`tests/test_shared_terms.py`). The season-end share
+stays as `--importance season-end`, a ladder rung, not the default. The
+name classes stay in the pack as a diagnostic only.
 
-Two safeguards are built into the share itself. A season that is still
-running has no last race yet, so every recent race would look like a
-season end; an athlete-season whose last race is within 21 days of the
-pack date does not vote and its rows carry no share (a current
-championship at a venue with history is handled by the day term, as
-before). And rows at a venue with one race are treated like everyone
-else's, because within a race every row carries the same share: the
-term cannot move one athlete against another, only a race's rows
-together against the course, and the course is pinned by the venue's
-other races or, at a one-race venue, shrunk to the prior as it always
-was.
+**Indoor was off, and the reason is the same as the XC/TF one (owner:
+"I think indoor might be off").** The page read every indoor oval 2.4 to
+3.8% easier than outdoors, which is backwards: the NCAA facility factors
+and the WA short-track tables put a 200 m oval 0.8 to 1.8% slower. No
+location hosts both an indoor and an outdoor track and nobody races
+indoors in May, so the form curve's December-to-March level and the
+indoor cells' mean are one free direction: the smooth curve interpolates
+the fall-to-spring gain through the winter, and the indoor cells absorb
+the difference. Indoor is season. The answer is the sport level's: the
+indoor level is asserted (+1.2%, `IND_LEVEL_DEFAULT`, `--indoor-level`),
+taken off `y` like `mu_fixed`, and the indoor cells are recentred to it
+every pass so they keep only their own deviation, a banked BU below the
+level and a flat 200 m oval above. The outdoor tracks are recentred
+without the ovals voting. The log prints a check measured the NCAA way:
+each athlete-season's last indoor race against its first outdoor race at
+the same distance within six weeks, indoor minus outdoor, per pool. It
+brackets the level rather than fixing it, because fitness gained in
+between biases it up and a peaked last indoor race biases it down; if it
+reads far from +1.2%, change the number. On the page: the athlete in the
+message whose 1:54 indoor 800 rated 130 will rate about 135, above the
+1:56 outdoor at 131, which is the right order. `--indoor-level fit`
+restores the fitted coefficient, and the ladder has a `fit-indoor` rung.
 
-The name classes stay in the pack (`meet_class`) as a **cross-check**
-only. The log prints the mean season-end share by name class; finals
-must show the highest share and ordinary meets the lowest, or the
-calendars are wrong. `scripts/meet_class_census.py` still prints the
-names behind each class.
+**Ultimook, and "recently is a lot faster than previously" (owner).**
+The era split was built (`--era-years`) and never wired into the
+pipeline, and turning it on would have broken the page: the solve keys
+era cells `<key>@e<k>`, the page looks a venue up by its bare key, and
+the go-live wrote the suffixed keys. Now `XCP_ERA_YEARS=2` reaches 08 and
+08a, the go-live publishes each venue's latest solved era under the bare
+key (`joint_golive.latestEraKeys`; the venue-key splitter drops the
+suffix for the race-day table too), every row's own rating uses its own
+era, and the ladder has an `era-2` rung. Adjacent eras are tied by a
+random walk with a stated drift of 1% per era: a venue with evidence
+moves, a thin one does not. If Ultimook's recent eras come out faster,
+that is the course that changed; if every era reads the same, the
+craziness is elsewhere (its fields, which the field term now sees, or
+mud days, which are race-day terms).
+
+**The track conversion default (owner: "not using 0.0 difficulty for the
+track conversions, which is now the default").** Right: a conversion
+with no venue used the median applied effect over the sport's rows,
+which is row-weighted, carries every indoor row, and was about a percent
+off the anchor. For track it now uses difficulty 0.0, the average outdoor
+track, the display zero (`conversions.venueEffect`); XC with no venue
+still uses its median race. Both legs go through the same function, so
+the round trip still closes (pinned).
+
+**"The top is so far off the average" (owner).** That is what the
+tilt-by-band table measures: per rating band, the course multiplier
+applied against the one the residuals imply. Paste it, with the
+field-strength-by-band table, and the two together say whether the top
+needs a steeper tilt, a stronger field term, or neither.
 
 **The clamp (owner: "what are you actually tilting?", "why not just
 measure further? I'd prefer to extrapolate rather than remain

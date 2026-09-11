@@ -332,6 +332,99 @@ def seasonEndShare(cols, keep, athlete, n_ath, pool_of_athlete, pool_names):
     return idx.astype(np.int64), w, n_imp, prior, labels, share
 
 
+def fieldTermRows(course, sport, pool_row, pool_names):
+    """The field-strength term's rows (owner, 2026-09-11: "if there is a
+    race that is very top-heavy ... those races should get some refund to
+    their difficulty"): every row with a cell, one coefficient per (pool,
+    sport). The covariate itself -- the race's front, the mean rating of
+    its top five, centred at the median race of its pool and sport -- is
+    computed inside the solve from the model's own ratings each pass
+    (joint_solve.fieldStrength), because ratings are what the solve is
+    for. Returns (index per row, n_imp, prior means (zero), labels)."""
+    idx = np.where(course >= 0, pool_row * 2 + sport, -1).astype(np.int64)
+    n_imp = len(pool_names) * 2
+    labels = [f"{name}:{sname}" for name in pool_names
+              for sname in ("XC", "TF")]
+    print(f"[joint] field strength: the taper term's covariate is each race's "
+          f"FRONT (mean rating of its top {js.FIELD_TOP_K}, centred at the "
+          f"median race of its pool and sport, per {js.FIELD_UNIT:g} rating "
+          f"points, clipped to {js.FIELD_CLIP}); {n_imp} coefficients, zero "
+          f"prior, sd {js.IMP_PRIOR_SD}; a healthy fit reads about "
+          f"{js.FIELD_EXPECTED:+.3f} per unit. Zero on the first pass, live "
+          f"from the second, like the tilt; not in a rating")
+    return idx, n_imp, np.zeros(n_imp), labels
+
+
+INDOOR_PAIR_MAX_DAYS = 42
+
+
+def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names,
+                          max_gap_days=INDOOR_PAIR_MAX_DAYS):
+    """★ THE INDOOR LEVEL MEASURED THE NCAA WAY, AS A CHECK ON THE ASSERTED
+    ONE (the 2012 facility-indexing study: same-athlete pairs close in
+    time). Each athlete-season's LAST indoor race and FIRST outdoor race
+    at the same distance, within max_gap_days of each other: the
+    difference in log normalized time, indoor minus outdoor, + = indoor
+    slower. Fitness gained between the two biases it up, a peaked last
+    indoor race (a conference or national final) biases it down, so it
+    brackets the level rather than fixing it. Printed per pool; nothing
+    feeds back."""
+    try:
+        y = np.log(np.asarray(cols["norm"])[keep].astype(np.float64))
+        days = np.asarray(cols["days"])[keep].astype(np.float64)
+        dist = np.asarray(cols["dist_m"])[keep].astype(np.float64)
+        course = np.asarray(cols["course"])[keep].astype(np.int64)
+        sport = np.asarray(cols["sport"])[keep].astype(np.int64)
+        athlete = np.asarray(athlete, dtype=np.int64)
+        ok = (course >= 0) & (sport == 1) & np.isfinite(y) & np.isfinite(dist)
+        flag = np.zeros(ok.size, dtype=bool)
+        flag[ok] = np.asarray(ind_cell, dtype=bool)[course[ok]]
+        indoor = ok & flag
+        outdoor = ok & ~flag
+        if not indoor.any() or not outdoor.any():
+            return
+        n_ath = int(athlete.max()) + 1
+        last_in = np.full(n_ath, np.inf)               # fewest days ago
+        np.minimum.at(last_in, athlete[indoor], days[indoor])
+        first_out = np.full(n_ath, -np.inf)            # most days ago
+        np.maximum.at(first_out, athlete[outdoor], days[outdoor])
+        gap = last_in - first_out                      # indoor before outdoor
+        pair = (np.isfinite(last_in) & np.isfinite(first_out) & (gap > 0)
+                & (gap <= max_gap_days))
+        ri = np.flatnonzero(indoor & pair[athlete] & (days == last_in[athlete]))
+        ro = np.flatnonzero(outdoor & pair[athlete] & (days == first_out[athlete]))
+        ki = athlete[ri] * 100_000 + np.round(dist[ri]).astype(np.int64)
+        ko = athlete[ro] * 100_000 + np.round(dist[ro]).astype(np.int64)
+        ki_u, ii = np.unique(ki, return_index=True)
+        ko_u, io = np.unique(ko, return_index=True)
+        common, a_i, a_o = np.intersect1d(ki_u, ko_u, return_indices=True)
+        if common.size < 50:
+            print(f"[joint] indoor check: only {common.size} last-indoor / "
+                  f"first-outdoor pairs within {max_gap_days} days; skipped")
+            return
+        diff = y[ri[ii[a_i]]] - y[ro[io[a_o]]]
+        pool = pool_row[ri[ii[a_i]]]
+        print(f"[joint] indoor check, the NCAA way: each athlete-season's last "
+              f"indoor race against its first outdoor race at the same "
+              f"distance within {max_gap_days} days, log-time indoor minus "
+              f"outdoor (+ = indoor slower; fitness gained in between biases "
+              f"it up, a peaked last indoor race biases it down). The asserted "
+              f"level is {100 * js.IND_LEVEL_DEFAULT:+.2f}%; the literature "
+              f"says +0.8 to +1.8%")
+        for p, name in enumerate(pool_names):
+            m = pool == p
+            if m.sum() < 50:
+                continue
+            d = diff[m]
+            lo, hi = np.percentile(d, [10, 90])
+            trimmed = d[(d >= lo) & (d <= hi)]
+            print(f"    {name:<10} {int(m.sum()):>8,} pairs   median "
+                  f"{100 * float(np.median(d)):+.2f}%   trimmed mean "
+                  f"{100 * float(trimmed.mean()):+.2f}%")
+    except Exception as exc:                                 # noqa: BLE001
+        print(f"[joint] indoor check: skipped ({type(exc).__name__}: {exc})")
+
+
 def indoorCells(course_keys):
     """Per cell, is it an indoor track ('TF:loc:<id>:in', era suffix or
     not)? None when no cell is."""
@@ -455,8 +548,8 @@ def eraCells(course, year, years, n_cells, group, course_keys):
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
                 dist_bands=True, split_ability=False, era_years=0,
-                sport_level=None, importance=True, indoor=True,
-                dist_table=True):
+                sport_level=None, importance="field", indoor=True,
+                dist_table=True, indoor_level=js.IND_LEVEL_DEFAULT):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`.
@@ -564,13 +657,33 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
             print("[joint] --sport-level needs a two-sport pack; ignored")
         else:
             mu_fixed = np.array([0.0, -float(sport_level)])
-    # the meet-importance classes (issue #22): from the pack's meet_class
+    # the field / taper term (issue #22): the race's front strength by
+    # default (--importance field), the season-end share on request, or none
     imp_row, imp_w, n_imp, imp_prior, imp_labels = None, None, None, None, []
-    if importance and sport is not None and "days" in cols:
+    imp_kind = None
+    kind = {True: "field", False: "none", None: "none"}.get(importance, importance)
+    if kind == "season-end" and sport is not None and "days" in cols:
         imp_row, imp_w, n_imp, imp_prior, imp_labels, _share = seasonEndShare(
             cols, keep, athlete, n_ath, pool_of_athlete, pool_names)
-    # indoor as a shared term: from the cell keys (':in')
+        imp_kind = "share"
+    elif kind == "field" and sport is not None:
+        imp_row, n_imp, imp_prior, imp_labels = fieldTermRows(
+            course, sport.astype(np.int64), pool_row, pool_names)
+        imp_kind = "field"
+    # indoor as a shared term: from the cell keys (':in'); its level is
+    # ASSERTED (js.IND_LEVEL_DEFAULT) unless --indoor-level fit
     ind_cell = indoorCells(course_keys) if indoor else None
+    ind_fixed = None
+    if ind_cell is not None and indoor_level is not None:
+        ind_fixed = np.full(max(n_pool, 1), float(indoor_level))
+        print(f"[joint] indoor level ASSERTED at {100 * float(indoor_level):+.2f}% "
+              f"log-time for every pool (--indoor-level; 'fit' estimates it): "
+              f"indoor is season, so the indoor cells' mean deviation is held "
+              f"at zero each pass and the curve, not the ovals, carries the "
+              f"winter")
+        if sport is not None and "dist_m" in cols and "days" in cols:
+            indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row,
+                                  pool_names)
     # the published tables as the prior mean of an uncalibrated event
     # offset (distance_tables): NaN where no curve is reachable
     e_table = None
@@ -592,7 +705,8 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   era_pairs=era_pairs, era_w=era_w,
                   eras_per_base=eras_per_base,
                   mu_fixed=mu_fixed, imp=imp_row, n_imp=n_imp,
-                  imp_prior=imp_prior, imp_w=imp_w, ind=ind_cell,
+                  imp_prior=imp_prior, imp_w=imp_w, imp_kind=imp_kind,
+                  ind=ind_cell, ind_fixed=ind_fixed,
                   e_table=e_table,
                   # the event's share of the 5000's altitude cost (an 800 a
                   # fifth, a 10k a bit more), 1.0 without a distance
@@ -774,8 +888,7 @@ def reportTiltByBand(out, D, y):
     try:
         b = D.unpack(out["theta"])
         pred = js.rowPrediction(b, D, out["h"], out["amp"])
-        if out.get("mu_fixed") is not None:
-            pred = pred + out["h"] * out["mu_fixed"][D.group_row]
+        pred = pred + D.fixedOffset(out["h"])
         resid = np.asarray(y, dtype=np.float64) - pred
         x = out["delta"][D.cell]
         r = out["rating"][D.athlete]
@@ -808,12 +921,60 @@ def reportTiltByBand(out, D, y):
         print(f"[joint] tilt by band: skipped ({type(exc).__name__}: {exc})")
 
 
+FIELD_REPORT_BANDS = (-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0, 4.0)
+
+
+def reportFieldByBand(out, D, y):
+    """★ THE SHAPE OF THE FIELD EFFECT, READ OFF THE RESIDUALS (owner,
+    2026-09-11: "idk how much though, need to decide"). Rows binned by
+    their race's front strength; per band, the term applied and the mean
+    residual left after the fit. A flat zero means the linear term is
+    enough; a bend says where it is not, and by how much. The coefficient
+    itself is in reportSharedTerms. Read-only; nothing feeds back."""
+    if (getattr(D, "imp_kind", None) != "field" or not getattr(D, "n_imp", 0)
+            or out.get("theta") is None
+            or getattr(D, "field_strength", None) is None):
+        return
+    try:
+        b = D.unpack(out["theta"])
+        pred = js.rowPrediction(b, D, out["h"], out["amp"]) + D.fixedOffset(out["h"])
+        resid = np.asarray(y, dtype=np.float64) - pred
+        s = D.field_strength[D.race]
+        w = np.asarray(out["weights"], dtype=np.float64)
+        edges = (-np.inf,) + FIELD_REPORT_BANDS + (np.inf,)
+        print("[joint] field strength by band: rows by their race's front "
+              f"(units of {js.FIELD_UNIT:g} rating points above the median "
+              "race of the pool and sport), the term applied, and the mean "
+              "residual left (log-time; a flat zero means the line fits)")
+        print(f"    {'band':>10} {'races':>9} {'rows':>11} {'applied':>9} "
+              f"{'resid':>9} {'se':>8}")
+        for lo, hi in zip(edges, edges[1:]):
+            m = D.imp_mask & (s >= lo) & (s < hi)
+            n = int(m.sum())
+            if n < 2000:
+                continue
+            applied = float(np.average(D.imp_w[m] * b["imp"][D.imp_idx[m]],
+                                       weights=w[m]))
+            mr = float(np.average(resid[m], weights=w[m]))
+            se = float(np.sqrt(np.average((resid[m] - mr) ** 2, weights=w[m]) / n))
+            races = int(np.unique(D.race[m]).size)
+            lab = (f"<{lo + 0:.1f}" if lo == -np.inf else
+                   f"{lo:.1f}+" if hi == np.inf else f"{lo:.1f}..{hi:.1f}")
+            if lo == -np.inf:
+                lab = f"<{hi:.1f}"
+            print(f"    {lab:>10} {races:>9,} {n:>11,} {applied:>+9.4f} "
+                  f"{mr:>+9.4f} {se:>8.4f}")
+    except Exception as exc:                                 # noqa: BLE001
+        print(f"[joint] field strength by band: skipped ({type(exc).__name__}: {exc})")
+
+
 def sharedTermKwargs(args):
     """The 2026-09-11 terms, for EVERY buildDesign call site: a holdout
     scored on a design without them would score a different model."""
     return dict(sport_level=args.sport_level,
-                importance=not args.no_importance,
+                importance=("none" if args.no_importance else args.importance),
                 indoor=not args.no_indoor,
+                indoor_level=args.indoor_level,
                 dist_table=not args.no_dist_table)
 
 
@@ -829,13 +990,24 @@ def reportSharedTerms(out, D, pool_names):
               f"fall-to-spring change is in the form curve")
     imp = out.get("importance")
     labels = getattr(D, "imp_labels", [])
-    if imp is not None and labels:
-        share_sum = np.bincount(D.imp_idx, weights=D.imp_w, minlength=D.n_imp)
-        print("[joint] season-end taper, log-time per unit share, per (pool, "
-              "sport); negative = a field at the end of its season runs "
-              "faster than the same athletes mid-season. Fitted, prior mean "
-              "0. NOT in a rating; it keeps the championship-only venues "
-              "honest. (sum of share over rows in brackets)")
+    if imp is not None and labels and getattr(D, "n_imp", 0):
+        share_sum = np.bincount(D.imp_idx, weights=np.abs(D.imp_w),
+                                minlength=D.n_imp)
+        if getattr(D, "imp_kind", None) == "field":
+            print("[joint] field strength, log-time per unit of front strength "
+                  f"({js.FIELD_UNIT:g} rating points of the race's top "
+                  f"{js.FIELD_TOP_K} above the median race), per (pool, sport); "
+                  "negative = a stacked field runs faster than the same "
+                  "athletes in an ordinary one. Fitted, prior mean 0. NOT in "
+                  "a rating; it keeps the venues that host only stacked fields "
+                  f"honest. A healthy fit reads about {js.FIELD_EXPECTED:+.3f}. "
+                  "(sum of |strength| over rows in brackets)")
+        else:
+            print("[joint] season-end taper, log-time per unit share, per (pool, "
+                  "sport); negative = a field at the end of its season runs "
+                  "faster than the same athletes mid-season. Fitted, prior mean "
+                  "0. NOT in a rating; it keeps the championship-only venues "
+                  "honest. (sum of share over rows in brackets)")
         by_pool = {}
         for i, lab in enumerate(labels):
             p, s = lab.split(":")
@@ -845,12 +1017,15 @@ def reportSharedTerms(out, D, pool_names):
             if p in by_pool:
                 print(f"    {p:<10}" + "   ".join(by_pool[p]))
     ind = out.get("indoor")
-    if ind is not None and getattr(D, "n_ind", 0):
-        rows = np.bincount(D.ind_idx, weights=D.ind_w, minlength=D.n_ind)
-        names = pool_names if D.n_ind == len(pool_names) else ["all"]
-        print("[joint] indoor, log-time per pool (+ = an indoor track is "
-              "slower than the average outdoor one; inside delta, so it IS "
-              "in the rating and on the board): "
+    if ind is not None and getattr(D, "ind_w", None) is not None:
+        ind = np.asarray(ind, dtype=np.float64).ravel()
+        rows = np.bincount(D.ind_idx, weights=D.ind_w, minlength=ind.size)
+        names = pool_names if ind.size == len(pool_names) else ["all"]
+        how = "ASSERTED" if out.get("indoor_fixed") else "fitted"
+        print(f"[joint] indoor level {how}, log-time per pool (+ = an indoor "
+              "track is slower than the average outdoor one; inside delta, so "
+              "it IS in the rating and on the board; asserted, the indoor "
+              "cells' mean deviation from it is zero by construction): "
               + ", ".join(f"{n} {100 * float(v):+.2f}% ({int(r):,})"
                           for n, v, r in zip(names, ind, rows)))
 
@@ -1183,13 +1358,27 @@ def buildParser():
                          "Implies --no-sport-offset, --winter-gain 0, "
                          "--curve-gap 0 and drops --winter-gain-bands. "
                          "Unset: the level is estimated, as before")
+    ap.add_argument("--importance", choices=("field", "season-end", "none"),
+                    default="field",
+                    help="the taper / field term's covariate (issue #22): "
+                         "'field' (default) the race's front strength, the "
+                         "mean rating of its top five relative to the median "
+                         "race, from the model's own ratings; 'season-end' "
+                         "the share of the field at the end of their own "
+                         "season; 'none' no term")
     ap.add_argument("--no-importance", action="store_true",
-                    help="no season-end taper term (issue #22): the race's "
-                         "share of athletes at the end of their own season, "
-                         "from the pack's calendars, no meet names")
+                    help="the same as --importance none")
     ap.add_argument("--no-indoor", action="store_true",
-                    help="no shared indoor coefficient per pool; indoor "
-                         "cells carry the surface alone, as before")
+                    help="no indoor term at all; indoor cells carry the "
+                         "surface alone, as before 2026-09-11")
+    ap.add_argument("--indoor-level", default=str(js.IND_LEVEL_DEFAULT),
+                    metavar="G|fit",
+                    help="the indoor level, log-time, ASSERTED (default "
+                         f"{js.IND_LEVEL_DEFAULT}: an indoor oval is that much "
+                         "slower than the average outdoor track, the NCAA "
+                         "facility factors); indoor is season, so the data "
+                         "cannot identify it from the winter form. 'fit' "
+                         "estimates it as before")
     ap.add_argument("--no-dist-table", action="store_true",
                     help="event-offset classes the season-best pairs cannot "
                          "calibrate keep a zero prior instead of the "
@@ -1277,6 +1466,17 @@ def applyImplications(args, ap):
     #   could name.
     # ! PARSED INTO THE {group: cap} SHAPE solveJoint already takes for
     #   --tau-tf-max, so there is one mechanism rather than two.
+    # --indoor-level: a number asserts the indoor level; 'fit' estimates it
+    lvl = getattr(args, "indoor_level", None)
+    if isinstance(lvl, str):
+        if lvl.strip().lower() in ("fit", "free", "estimate"):
+            args.indoor_level = None
+        else:
+            try:
+                args.indoor_level = float(lvl)
+            except ValueError:
+                ap.error(f"--indoor-level wants a log-time number or 'fit', "
+                         f"not {lvl!r}")
     if args.tau_max:
         # ⚠ 'none' MEANS NO CAP AT ALL, and it needs to be sayable. An empty
         #   'XC,TF' parses to an empty dict, which silently fell through to
@@ -1489,6 +1689,7 @@ def main():
     reportLevelAndCurve(out, D, pool_names, old_gap)
     reportSharedTerms(out, D, pool_names)
     reportTiltByBand(out, D, y)
+    reportFieldByBand(out, D, y)
 
     save = dict(delta=delta, delta_anchored=anchored, mu=out["mu"],
                 cell_se=out["cell_se"], cell_var=out["cell_var"],
@@ -1520,9 +1721,13 @@ def main():
     if out.get("importance") is not None and getattr(D, "n_imp", 0):
         save["importance"] = out["importance"]
         save["importance_labels"] = np.array(getattr(D, "imp_labels", []))
-    if out.get("indoor") is not None and getattr(D, "n_ind", 0):
-        save["indoor"] = out["indoor"]
+        save["importance_kind"] = np.array([str(out.get("importance_kind"))])
+        if out.get("field_centre") is not None:
+            save["field_centre"] = np.asarray(out["field_centre"], dtype=np.float64)
+    if out.get("indoor") is not None and out.get("indoor_cell") is not None:
+        save["indoor"] = np.asarray(out["indoor"], dtype=np.float64)
         save["indoor_cell"] = out["indoor_cell"]
+        save["indoor_fixed"] = np.array([bool(out.get("indoor_fixed"))])
     if out.get("dist_offset") is not None and D.n_e:
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)

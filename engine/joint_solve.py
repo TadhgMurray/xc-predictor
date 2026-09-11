@@ -513,12 +513,46 @@ IMP_EXPECTED = -0.02                 # per unit share: what a healthy fit looks 
 #   first cut used 50) competed with that sum on a small world and halved
 #   the estimate. pen = sigma2 / SD^2 is a few row-units.
 IMP_PRIOR_SD = 0.02
+# ★★ THE FIELD-STRENGTH TERM (owner, 2026-09-11: "if there is a race that is
+#    very top-heavy, where people will run fast because there's more
+#    competition, those races should get some refund to their difficulty").
+#    The covariate is the race's FRONT: the mean rating of its top FIELD_TOP_K
+#    rows, from the model's own ratings each pass (like the tilt), centred at
+#    the median race of its (pool, sport) and in units of FIELD_UNIT rating
+#    points -- a dual meet sits a unit or two below zero, a national final
+#    three to five above. Constant within a race, so finishing order is
+#    untouched; identified across races by the same athletes in stronger
+#    and weaker fields, and by venues that host both. Untilted, zero prior,
+#    NOT in a rating: a fast time in a stacked field is a real performance,
+#    and the course keeps its difficulty (the "refund"). How much is the
+#    data's to say: FIELD_EXPECTED is what a healthy fit looks like, and
+#    run_joint.reportFieldByBand prints the residual by strength band so
+#    the shape can be read, not assumed. The default covariate since
+#    2026-09-11 (run_joint --importance field); the season-end share stays
+#    as --importance season-end.
+FIELD_TOP_K = 5
+FIELD_UNIT = 10.0
+FIELD_CLIP = (-4.0, 6.0)
+FIELD_EXPECTED = -0.005              # per unit: a few tenths of a percent
 # ★ THE INDOOR PRIOR: the NCAA facility factors (2012) and World Athletics'
 #   2025 short-track tables both put a 200 m oval 0.8-1.8% slower than
 #   outdoors for 800-5000, larger for the faster and the shorter. One
 #   number per pool, the data move it.
 IND_PRIOR_MEAN = 0.012
 IND_PRIOR_SD = 0.01
+# ★★ INDOOR IS SEASON (owner, 2026-09-11: "I think indoor might be off";
+#    the page read every indoor oval 2.4-3.8% EASIER than outdoors, which
+#    is backwards). No location hosts both an indoor and an outdoor track
+#    and nobody races indoors in May, so the form curve's Dec-Mar level and
+#    the indoor cells' mean are ONE free direction: the smooth curve
+#    interpolates the fall-to-spring gain through the winter and the indoor
+#    cells absorb the difference. Exactly the XC/TF problem one level down,
+#    with the same answer: the level is ASSERTED (the NCAA facility factors
+#    and the WA short-track tables), taken off y like mu_fixed, and the
+#    indoor cells are recentred to it every pass so they keep only their
+#    own deviation (a banked BU below it, a flat 200 m oval above). The
+#    fitted coefficient (--indoor-level fit) stays for the ladder.
+IND_LEVEL_DEFAULT = 0.012
 
 
 # Amplitude tilt: the season-form swing shrinks with ability
@@ -618,7 +652,8 @@ class Design:
                  dist_banded=False,
                  era_pairs=None, era_w=None, eras_per_base=None,
                  mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
-                 ind=None, e_table=None, alt_dist=None, imp_w=None):
+                 ind=None, e_table=None, alt_dist=None, imp_w=None,
+                 imp_kind=None, ind_fixed=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -805,12 +840,22 @@ class Design:
         #   time). Untilted. NOT in a rating: the tapered race is a real
         #   performance, exactly as the race-day term is left in.
         self.n_imp = 0
+        self.imp_kind = None
+        self.field_strength = None
+        self.field_centre = None
         if imp is not None:
             imp = np.asarray(imp, dtype=np.int64)
             self.imp_idx = np.maximum(imp, 0)
-            # the weight is 0/1 from the index, or a caller's continuous
-            # covariate (the race's season-end share, run_joint.seasonEndShare)
-            if imp_w is not None:
+            self.imp_mask = imp >= 0
+            # the weight is 0/1 from the index, a caller's continuous
+            # covariate (the race's season-end share), or -- "field" -- the
+            # race's front strength, recomputed from the model's own
+            # ratings each pass (fieldStrength): zero on the first pass and
+            # live from the second, like the tilt
+            self.imp_kind = imp_kind or ("share" if imp_w is not None else "flag")
+            if self.imp_kind == "field":
+                self.imp_w = np.zeros(self.n)
+            elif imp_w is not None:
                 w_ = np.asarray(imp_w, dtype=np.float64)
                 assert w_.size == self.n, "imp_w wants one weight per row"
                 self.imp_w = np.where(imp >= 0, w_, 0.0)
@@ -836,6 +881,7 @@ class Design:
         #   solveJoint folds the cell's mean indoor term into delta, so
         #   the go-live and the display see one course number.
         self.n_ind = 0
+        self.ind_fixed = None
         if ind is not None:
             ind = np.asarray(ind, dtype=bool)
             assert ind.size == self.n_cell, "ind wants one flag per cell"
@@ -847,6 +893,19 @@ class Design:
             else:
                 self.ind_idx = np.zeros(self.n, dtype=np.int64)
                 self.n_ind = 1 if ind.any() else 0
+            # ★ AN ASSERTED INDOOR LEVEL (IND_LEVEL_DEFAULT) is not a
+            #   parameter: solveJoint takes h * level off y (fixedOffset)
+            #   and recentreLevels holds the indoor cells' mean at zero, so
+            #   the level is the whole of it and the cells keep only their
+            #   own deviation
+            if ind_fixed is not None and ind.any():
+                lvl = np.asarray(ind_fixed, dtype=np.float64).ravel()
+                n_lvl = max(self.n_ind, 1)
+                if lvl.size == 1:
+                    lvl = np.full(n_lvl, float(lvl[0]))
+                assert lvl.size == n_lvl, "ind_fixed wants one level per pool"
+                self.ind_fixed = lvl
+                self.n_ind = 0
 
         # packing
         self.o_a = 0
@@ -864,6 +923,19 @@ class Design:
         self.o_imp = self.o_k + self.n_k
         self.o_ind = self.o_imp + self.n_imp
         self.n_total = self.o_ind + self.n_ind
+
+    def fixedOffset(self, h):
+        """The asserted parts of a row's prediction, tilted: the sport
+        level (mu_fixed) and the indoor level (ind_fixed). Off y before
+        the solve, back on after; zeros when neither is asserted."""
+        off = np.zeros(self.n)
+        mu_fixed = getattr(self, "mu_fixed", None)
+        if mu_fixed is not None:
+            off += mu_fixed[self.group_row]
+        ind_fixed = getattr(self, "ind_fixed", None)
+        if ind_fixed is not None:
+            off += self.ind_w * ind_fixed[self.ind_idx]
+        return h * off
 
     def rebandDist(self, rating_row):
         """Re-point every row's offset class at its athlete-season's
@@ -1654,6 +1726,45 @@ def ratingsFromAbility(a, athlete_pool, n_races, n_pool,
     return 100.0 * pm / ability
 
 
+def fieldStrength(r_row, race, n_race, imp_idx, mask, n_imp, k=FIELD_TOP_K,
+                  unit=FIELD_UNIT, clip=FIELD_CLIP, centre=None):
+    """Per race, the mean rating of its top k rows (its FRONT), centred at
+    the median race of its (pool, sport) group and in units of `unit`
+    rating points, clipped to `clip`. `centre` fixes the per-group centres
+    (a held-out design uses the training ones). Returns (per-row weight,
+    per-race strength, per-group centre)."""
+    r = np.nan_to_num(np.asarray(r_row, dtype=np.float64), nan=100.0)
+    race = np.asarray(race, dtype=np.int64)
+    mask = np.asarray(mask, dtype=bool)
+    n = r.size
+    cen = (np.full(max(n_imp, 1), np.nan) if centre is None
+           else np.asarray(centre, dtype=np.float64).copy())
+    if n == 0 or n_race == 0:
+        return np.zeros(n), np.zeros(n_race), cen
+    order = np.lexsort((-r, race))            # by race, then rating descending
+    rs = race[order]
+    starts = np.flatnonzero(np.r_[True, rs[1:] != rs[:-1]])
+    lengths = np.diff(np.r_[starts, n])
+    pos = np.arange(n) - np.repeat(starts, lengths)
+    top = pos < k
+    top_sum = np.bincount(rs[top], weights=r[order][top], minlength=n_race)
+    top_cnt = np.bincount(rs[top], minlength=n_race)
+    front = np.where(top_cnt > 0, top_sum / np.maximum(top_cnt, 1), np.nan)
+    race_imp = np.full(n_race, -1, dtype=np.int64)
+    race_imp[race[mask]] = np.asarray(imp_idx)[mask]
+    strength = np.zeros(n_race)
+    for g in range(n_imp):
+        m = (race_imp == g) & np.isfinite(front)
+        if not m.any():
+            continue
+        if not np.isfinite(cen[g]):
+            cen[g] = float(np.median(front[m]))
+        strength[m] = (front[m] - cen[g]) / unit
+    strength = np.clip(strength, clip[0], clip[1])
+    w = np.where(mask, strength[race], 0.0)
+    return w, strength, cen
+
+
 # ------------------------------------------------------------------ #
 # THE SPORT-OFFSET RECENTRE -- the one assumption the curve does not remove
 # ------------------------------------------------------------------ #
@@ -1827,9 +1938,25 @@ def recentreLevels(b, D, merge=False):
     merge=True drops those means instead of banking them in mu: the sports
     are held to one level and the difference becomes fitness."""
     g = D.group_of_cell
-    d_mean = (np.bincount(g, weights=b["d"], minlength=D.n_group)
-              / np.maximum(np.bincount(g, minlength=D.n_group), 1))
-    b["d"] = b["d"] - d_mean[g]
+    ind_cell = (getattr(D, "ind_cell", None)
+                if getattr(D, "ind_fixed", None) is not None else None)
+    if ind_cell is not None and ind_cell.any():
+        # ★ THE INDOOR CELLS DO NOT VOTE ON THE OUTDOOR ZERO, AND THEIR OWN
+        #   MEAN IS DISCARDED: the asserted level (ind_fixed) is the whole
+        #   of it, the outdoor mean is the sport's zero, and each indoor
+        #   cell keeps only its deviation from the level
+        outd = ~ind_cell
+        d_mean = (np.bincount(g[outd], weights=b["d"][outd], minlength=D.n_group)
+                  / np.maximum(np.bincount(g[outd], minlength=D.n_group), 1))
+        b["d"] = b["d"] - d_mean[g]
+        i_mean = (np.bincount(g[ind_cell], weights=b["d"][ind_cell],
+                              minlength=D.n_group)
+                  / np.maximum(np.bincount(g[ind_cell], minlength=D.n_group), 1))
+        b["d"] = np.where(ind_cell, b["d"] - i_mean[g], b["d"])
+    else:
+        d_mean = (np.bincount(g, weights=b["d"], minlength=D.n_group)
+                  / np.maximum(np.bincount(g, minlength=D.n_group), 1))
+        b["d"] = b["d"] - d_mean[g]
     if not merge:
         b["mu"] = b["mu"] + d_mean
 
@@ -2432,7 +2559,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                        ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2)
         diag = op.diag()
         # the asserted level comes off y, tilted like the estimated one
-        y_fit = y if mu_fixed is None else y - h * mu_fixed[D.group_row]
+        # the asserted level(s) come off y, tilted like the estimated ones
+        y_fit = y - D.fixedOffset(h)
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
             op.rhs(y_fit), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
@@ -2532,6 +2660,14 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             D.rebandDist(r_row)                    # the event offsets' bands
             if dist_cal:
                 n_cal = D.calibrateDist(y, r_row)  # ... and their prior means
+            # ★ THE FRONT OF EACH RACE from this pass's ratings, for the
+            #   next pass's field-strength weights -- not after the last,
+            #   so the published coefficient sits on the weights it was
+            #   fitted with (fieldStrength)
+            if (getattr(D, "imp_kind", None) == "field" and D.n_imp
+                    and outer < n_outer - 1):
+                D.imp_w, D.field_strength, D.field_centre = fieldStrength(
+                    r_row, D.race, D.n_race, D.imp_idx, D.imp_mask, D.n_imp)
         elif tilt and pool_mean_row is not None:
             h = tiltFromAbility(b["a"][D.athlete], np.asarray(pool_mean_row))
 
@@ -2595,9 +2731,14 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     #   term (per row it is the pool's coefficient) into delta, so the
     #   go-live tilts and applies one number and the board displays it.
     ind_cell = None
+    ind_coef = None
     if getattr(D, "n_ind", 0) and b.get("ind") is not None:
+        ind_coef = b["ind"]
+    elif getattr(D, "ind_fixed", None) is not None:
+        ind_coef = D.ind_fixed.copy()             # the asserted level
+    if ind_coef is not None:
         rows_c = np.maximum(np.bincount(D.cell, minlength=D.n_cell), 1)
-        ind_cell = (np.bincount(D.cell, weights=D.ind_w * b["ind"][D.ind_idx],
+        ind_cell = (np.bincount(D.cell, weights=D.ind_w * ind_coef[D.ind_idx],
                                 minlength=D.n_cell) / rows_c)
         delta = delta + ind_cell
     out = {
@@ -2606,7 +2747,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "d": b["d"], "mu": mu_full,
         "mu_fixed": None if mu_fixed is None else mu_fixed.copy(),
         "importance": b.get("imp"),
-        "indoor": b.get("ind"), "indoor_cell": ind_cell,
+        "indoor": ind_coef, "indoor_cell": ind_cell,
+        "indoor_fixed": getattr(D, "ind_fixed", None) is not None,
+        "importance_kind": getattr(D, "imp_kind", None),
+        "field_strength": getattr(D, "field_strength", None),
+        "field_centre": getattr(D, "field_centre", None),
         "race_effect": b["u"],
         "beta": b["beta"],
         "rust": b["r"],
@@ -2712,5 +2857,16 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     bb["u"] = u
     if getattr(D_train, "mu_fixed", None) is not None:
         bb["mu"] = D_train.mu_fixed          # the asserted level, off theta
+    # the field-strength weights of the held-out races, from the training
+    # ratings of their fields, centred where the training races were
+    if (getattr(D_test, "imp_kind", None) == "field"
+            and getattr(D_test, "n_imp", 0) and out.get("rating") is not None):
+        D_test.imp_w, D_test.field_strength, _ = fieldStrength(
+            out["rating"][D_test.athlete], D_test.race, D_test.n_race,
+            D_test.imp_idx, D_test.imp_mask, D_test.n_imp,
+            centre=out.get("field_centre"))
     pred = rowPrediction(bb, D_test, h, amp)
+    ind_fixed = getattr(D_train, "ind_fixed", None)
+    if ind_fixed is not None and getattr(D_test, "ind_w", None) is not None:
+        pred = pred + h * D_test.ind_w * ind_fixed[D_test.ind_idx]
     return pred, covered

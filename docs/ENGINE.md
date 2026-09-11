@@ -25,8 +25,8 @@ y  =  a[athlete-season]                      the ability. THIS IS THE RATING.
    +  e_w · e[distance class]                distance offsets (TF only)
    +  g[athlete] · lz                        per-athlete endurance slope
    +  k[group] · alt                         altitude, log-time per km
-   +  imp[pool, sport] · share               season-end taper, 2026-09-11 (share = fraction of the field ending its season here)
-   +  h · ind[pool] · is_indoor[cell]        indoor as a shared term, 2026-09-11
+   +  imp[pool, sport] · front               field strength, 2026-09-11 (front = the race's top-5 mean rating above the median race, per 10 points, from the model's own ratings)
+   +  h · ind_fixed[pool] · is_indoor[cell]  the indoor level, ASSERTED (+1.2%), 2026-09-11; --indoor-level fit estimates it
 ```
 
 Since 2026-09-11 `mu` can be **asserted** instead of estimated
@@ -104,12 +104,27 @@ deviation around *that cell's own mean*. If a venue hosts only championship
 races, "everyone tapered" is constant across all its races — `u` cannot see
 a constant, so the taper lands in `d` and the course reads easy. Foot
 Locker, state meets, nationals. The mirror case is a venue that only hosts
-early-season invitationals. The fix (issue #22, 2026-09-11) is a
-**season-end share** covariate estimated globally: per race, the fraction
-of its field for whom the race falls within two weeks of the last race of
-their own season (`run_joint.seasonEndShare`), read off the athletes'
-calendars and never off a meet name. Identified off venues that host a mix
-and off athletes who race both kinds of race.
+early-season invitationals. The fix (issue #22, 2026-09-11) is the
+**field-strength** covariate estimated globally: per race, its front (the
+mean rating of its top five above the median race of its pool and sport,
+per 10 points, from the model's own ratings each pass,
+`joint_solve.fieldStrength`). A stacked field runs fast because of the
+competition, and without the term the venue that hosts only stacked
+fields reads easy; with it the course keeps its difficulty (the owner's
+"refund") and the fast time stays a real performance in the rating.
+Identified off venues that host a mix and off athletes who race in both
+strong and weak fields. The season-end share (`--importance season-end`)
+is the calendar alternative, kept for the ladder.
+
+**Indoor is season.** No location hosts both an indoor and an outdoor
+track and nobody races indoors in May, so the curve's December-to-March
+level and the indoor cells' mean are one free direction: the smooth curve
+interpolates the fall-to-spring gain through the winter and the indoor
+cells absorb the difference (the page read every oval 2.4 to 3.8% EASIER
+than outdoors). The indoor level is therefore ASSERTED (`IND_LEVEL_DEFAULT`
++1.2%, the NCAA facility factors), off theta like `mu_fixed`, and the
+indoor cells are recentred to it every pass; `run_joint.indoorTransitionCheck`
+prints the last-indoor / first-outdoor pair measurement as a check.
 
 **Indoor vs outdoor.** Measured 2026-09-11: 1,574 indoor cells, 25,629
 outdoor, and **zero locations have both**. A `location_id` is one or the
@@ -150,8 +165,9 @@ Letting one-race cells vote on the priors collapses them.
 | `CURVE_SMOOTH` | 1.0 | a prior, explicitly **not** tunable by held-out error |
 | `WINTER_GAIN` | 0.0 | an identification assertion, not an estimate |
 | `DIST_BANDS` / `DIST_BAND_ANCHORS` | (105, 120, 135) / (90, 112, 127, 145) | four bands since 2026-09-11: the tables put the 800→1600 exponent higher at lower ability, and one band over 120 handed a 150-rated half-miler a 4:10 miler's relation |
-| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | 0 / 0.02 | one coefficient per (pool, sport) on the race's season-end share (`run_joint.seasonEndShare`: `SEASON_END_DAYS` 14, voters need `SEASON_END_MIN_RACES` 3 and a season closed `SEASON_CLOSED_DAYS` 21 before the pack date). Zero mean: no evidence, no taper. `IMP_EXPECTED` −0.02 per unit share is what a healthy fit shows (Bosquet 2007, Mujika & Padilla). A stated SD, never pseudo-rows. The name classes in `engine/meet_class.py` are a diagnostic cross-tab only |
-| `IND_PRIOR_MEAN` / `IND_PRIOR_SD` | +0.012 / 0.01 | NCAA facility factors 2012, WA short-track tables 2025 |
+| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | 0 / 0.02 | one coefficient per (pool, sport) on the race's FRONT (`FIELD_TOP_K` 5, `FIELD_UNIT` 10 rating points, `FIELD_CLIP` −4..+6; `joint_solve.fieldStrength`, recomputed from the model's ratings each pass, zero on the first). Zero mean: no evidence, no term. `FIELD_EXPECTED` −0.005 per unit is what a healthy fit looks like; `run_joint.reportFieldByBand` prints the residual by band. A stated SD, never pseudo-rows. `--importance season-end` swaps in the season-end share (`SEASON_END_DAYS` 14, `SEASON_END_MIN_RACES` 3, `SEASON_CLOSED_DAYS` 21); the name classes in `engine/meet_class.py` are a diagnostic only |
+| `IND_LEVEL_DEFAULT` | +0.012 | the indoor level ASSERTED (indoor is season, §3); the indoor cells' mean deviation is held at zero each pass, outdoor tracks are recentred without the ovals voting. `--indoor-level fit` estimates it with `IND_PRIOR_MEAN` / `IND_PRIOR_SD` +0.012 / 0.01 (NCAA facility factors 2012, WA short-track tables 2025) |
+| `ERA_YEARS_DEFAULT` / `ERA_DRIFT_SD` | 0 / 0.010 | `XCP_ERA_YEARS=2` splits each course into two-year eras tied by a random walk with this drift per era; the go-live publishes each venue's latest era under its bare key (`joint_golive.latestEraKeys`) |
 | `nested_var` | True | the E-step's conditional variance is the exact (cell + its races) arrowhead, not the information diagonal (§5) |
 
 ### Why `tau` is the OBSERVED spread and not the true one
@@ -399,8 +415,8 @@ level out of theta (`Design.mu_fixed`).
 
 Done 2026-09-11, unrun on the box (see `docs/RESEARCH-ENGINE-2026-09-11.md`
 Part III for what to read in the first log): #21 (three consumer-side
-defects, 9.12–9.14), #22 (the season-end taper term; the `meet_class`
-cross-check column needs a repack), indoor as a shared term, #9/#13 (the tables as the prior
+defects, 9.12–9.14), #22 (the field-strength term; the `meet_class`
+cross-check column needs a repack), the indoor level asserted, #9/#13 (the tables as the prior
 mean of an uncalibrated event offset), the E-step (§5), a fourth distance
 band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
 
@@ -422,6 +438,11 @@ band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
 7. **Read the tilt-by-band table.** If the 140+ bands' implied `h` sits
    off the applied line by more than its standard error across runs, fit
    the slope above 140 from that table rather than extrapolating.
+8. **Read the field-strength-by-band table and the indoor check.** A bend
+   in the residual by band is the shape the field term should take; an
+   indoor pair measurement far from +1.2% is the number to change.
+9. **Read the era-2 rung and Ultimook's eras** (`scripts/venue_check.py`
+   shows the `@e<k>` cells) before leaving `XCP_ERA_YEARS=2` on for good.
 
 ---
 

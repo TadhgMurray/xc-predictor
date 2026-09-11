@@ -140,3 +140,26 @@ def test_the_tilt_rails_match_the_solver():
     assert (lo, hi) == (cv._TILT_LO, cv._TILT_HI)
     # the line runs on past 140 (2026-09-11): a 160 is charged less than a 140
     assert cv._tilt(160.0) < cv._tilt(140.0) < cv._tilt(100.0) == 1.0
+
+
+def test_an_unnamed_track_is_the_zero_not_the_median_row():
+    """A track conversion with no venue uses difficulty 0.0 (the average
+    outdoor track, the display zero), not the median applied effect over
+    track rows; an XC conversion with no venue still uses its median."""
+    _stub()
+    sc = cv.engineScale("hs_m", "TF")
+    assert sc[1] != 0.0 and sc[2] != 0.0            # the stub tells them apart
+    e_none = cv.venueEffect("hs_m", "TF", 120.0, None, 3200.0)
+    e_zero = cv.venueEffect("hs_m", "TF", 120.0, 0.0, 3200.0)
+    assert abs(e_none - e_zero) < 1e-12
+    # and the time it produces is the 0.0% track's time
+    norm = cv._norm_from_rating(130.0, "hs_m", sport="TF")
+    t_none = cv.normalized_to_time(norm, {"distance": 3200.0, "pool": "hs_m",
+                                          "sport": "TF"})
+    t_zero = cv.normalized_to_time(norm, {"distance": 3200.0, "pool": "hs_m",
+                                          "sport": "TF", "difficulty": 0.0})
+    assert abs(t_none - t_zero) < 1e-9
+    xc_none = cv.venueEffect("hs_m", "XC", 120.0, None, 5000.0)
+    xc_sc = cv.engineScale("hs_m", "XC")
+    assert abs(xc_none - (xc_sc[1] + cv.distance_offset("hs_m", "XC", 5000.0, rating=120.0)
+                          + cv.sport_gain("hs_m", "XC", 120.0))) < 1e-12
