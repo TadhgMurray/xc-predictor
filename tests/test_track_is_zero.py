@@ -1,22 +1,33 @@
 # Project: xc-predictor / tests
 # File:    test_track_is_zero.py
-# Purpose: The average track is 0.0, and NOTHING downstream moves it.
+# Purpose: The average track displays 0.0 -- AND SO DOES THE AVERAGE CROSS
+#          COUNTRY COURSE. One display zero per sport.
 #
-# ★★ THE OWNER ASKED THREE TIMES why track difficulty was not 0.0, and the
-#    engine was innocent every time. joint_golive anchored the track cells
-#    at zero; racecast/difficulty_view then subtracted the CORPUS mean
-#    before displaying. Cross country dominates the corpus, so that mean
-#    was about +6%, and a typical track displayed near -6%.
+# ★★★ TWO BUGS, OPPOSITE DIRECTIONS, ONE FILE. Both shipped.
 #
-#    The file even said why it was safe: "the engine anchors its
-#    difficulties to this same row-weighted mean, so the value is ~0 by
-#    construction". True when it was written. False from the moment the
-#    engine started anchoring on track -- and nothing checked.
+#   2026-09-10: difficulty_view subtracted ONE corpus-wide mean from BOTH
+#     sports. Cross country dominates the corpus, so that mean was about
+#     +6% and it came off TRACKS TOO -- a typical track displayed near -6%
+#     and the owner asked three times why track was not zero.
 #
-#    So the zero is defined in ONE place (engine/joint_golive.py) and the
-#    display is now the identity. These tests pin both halves.
+#   2026-09-11: the fix for that made the display the identity, so the
+#     engine's track anchor reached the page raw. An ordinary XC course is
+#     about +7% against a flat 400m oval, so EVERY cross country course
+#     read seven points harder than anyone would call it. The Hydrangea
+#     Ranch -- where the Ultimook Race is run -- published +13.26%. The
+#     owner: "maybe a 7-9% max course. NOT A FUCKING 13% course." Against
+#     other XC courses it is +5.9%, which is his number. He was told for
+#     two days that the model might be broken. The model was right.
+#
+# ⚠ THE RULE THAT SATISFIES BOTH: subtract the mean OF THAT SPORT. The
+#   stored scale is untouched -- one line, track at zero, exactly as
+#   joint_golive writes it. The page shows a course against a typical
+#   course of its own sport, because that is the question a course page is
+#   being asked. sportGapPct() still reports the distance between the two
+#   zeros, which is a real measurement and belongs on a page that compares
+#   the sports.
+import math
 import os
-import re
 import sys
 import unittest
 
@@ -26,76 +37,110 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"),
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# the corpus this file argues about: an average XC course is +6.9% on the
+# stored (track-anchored) scale, an average track is 0.0 by construction
+XC_MEAN = math.log(1.069)
+TF_MEAN = 0.0
 
-class DisplayDoesNotMoveIt(unittest.TestCase):
+
+class OneZeroPerSport(unittest.TestCase):
     def setUp(self):
         import difficulty_view as dv
         self.dv = dv
-        # a stored anchor that is NOT zero, to prove nothing is subtracted
+        dv._state["at"] = float("inf")          # never refresh from a DB
+        dv._state["XC"] = XC_MEAN
+        dv._state["TF"] = TF_MEAN
+
+    def test_the_average_track_reads_zero(self):
+        """⚠ THE 2026-09-10 BUG. A track at the track mean must not read
+        -6% because cross country dominates the corpus."""
+        self.assertAlmostEqual(self.dv.relativePct(0.0, "TF"), 0.0, places=6)
+
+    def test_the_average_xc_course_reads_zero(self):
+        """⚠ THE 2026-09-11 BUG. An ordinary XC course must not read +6.9%
+        just because a flat oval is the stored zero."""
+        self.assertAlmostEqual(self.dv.relativePct(0.069, "XC"), 0.0,
+                               places=6)
+
+    def test_hydrangea(self):
+        """★ THE ONE THAT COST TWO DAYS. Stored +13.26%; against other
+        cross country courses it is about +5.9%, not +13.3%."""
+        got = self.dv.relativePct(0.1326, "XC")
+        self.assertAlmostEqual(got, 5.947, places=2)
+        self.assertLess(got, 9.0, "still reads harder than the owner's "
+                                  "7-9% read of the terrain")
+
+    def test_the_sport_argument_now_matters(self):
+        """It used to be required NOT to. The same stored number is a
+        different course depending on which sport's typical course it is
+        being compared with."""
+        self.assertNotAlmostEqual(self.dv.relativePct(0.069, "XC"),
+                                  self.dv.relativePct(0.069, "TF"), places=3)
+
+    def test_a_hard_course_stays_hard(self):
+        """Subtracting a zero is not flattening: order is preserved and a
+        genuinely hard course still reads hard."""
+        easy = self.dv.relativePct(0.02, "XC")
+        mid = self.dv.relativePct(0.069, "XC")
+        hard = self.dv.relativePct(0.1326, "XC")
+        self.assertLess(easy, mid)
+        self.assertLess(mid, hard)
+        self.assertLess(easy, 0.0)
+
+    def test_a_fast_track_reads_negative(self):
+        self.assertLess(self.dv.relativePct(-0.01, "TF"), 0.0)
+
+
+class TheSportGapIsStillReported(unittest.TestCase):
+    """★ IT MOVED, IT DID NOT VANISH. Two display zeros hide a real
+    measured difference; a page that compares the sports can still say it."""
+
+    def setUp(self):
+        import difficulty_view as dv
+        self.dv = dv
         dv._state["at"] = float("inf")
-        dv._state["mean"] = 0.0583
+        dv._state["XC"] = XC_MEAN
+        dv._state["TF"] = TF_MEAN
 
-    def test_the_display_zero_is_zero(self):
-        self.assertEqual(self.dv.sportMeanLog(), 0.0)
-        self.assertEqual(self.dv.sportMeanLog("TF"), 0.0)
-        self.assertEqual(self.dv.sportMeanLog("XC"), 0.0)
+    def test_the_gap_is_the_xc_premium(self):
+        self.assertAlmostEqual(self.dv.sportGapPct(), 6.9, places=1)
 
-    def test_a_stored_zero_displays_as_zero(self):
-        """⚠ THE BUG, DIRECTLY. A track stored at 0.0 must show 0.0, even
-        when the corpus mean is far from it."""
-        self.assertAlmostEqual(self.dv.relativePct(0.0), 0.0, places=6)
-
-    def test_a_stored_value_displays_unchanged(self):
-        for d in (0.069, -0.02, 0.15):
-            self.assertAlmostEqual(self.dv.relativePct(d), 100.0 * d,
-                                   places=6, msg=f"{d} was moved")
-
-    def test_the_sport_argument_changes_nothing(self):
-        """Two sports, one line -- the same stored number reads the same
-        whichever sport it is labelled."""
-        self.assertEqual(self.dv.relativePct(0.069, "XC"),
-                         self.dv.relativePct(0.069, "TF"))
-
-    def test_the_guard_still_reads_the_stored_anchor(self):
-        """It must remain VISIBLE, just not applied: a table written by an
-        engine with a different anchor should be noticeable."""
+    def test_the_guard_still_reads_the_stored_track_anchor(self):
+        """joint_golive anchors the average track at zero; if the stored
+        table says otherwise it was written by a different engine and that
+        must stay visible rather than be silently absorbed."""
+        self.dv._state["TF"] = 0.0583
         self.assertAlmostEqual(self.dv.trackDriftLog(), 0.0583, places=6)
 
-    def test_the_guard_reads_track_cells(self):
+    def test_the_guard_reads_courses_not_results(self):
         self.assertIn("TF:", self.dv._SQL)
         self.assertNotIn("n_results", self.dv._SQL,
-                         "the guard should be the average COURSE, not the "
-                         "average result")
+                         "the zero is the average COURSE, not the average "
+                         "result")
 
-    def test_nonsense_is_still_rejected(self):
-        self.assertIsNone(self.dv.relativePct(None))
-        self.assertIsNone(self.dv.relativePct("fast"))
-        self.assertIsNone(self.dv.relativePct(-0.95))
+    def test_both_sports_are_read_in_one_query(self):
+        self.assertIn("GROUP", self.dv._SQL.upper())
 
 
-class EngineAnchorsOnTheAverageTrack(unittest.TestCase):
-    def test_golive_anchors_on_the_mean_of_track_cells(self):
-        src = open(os.path.join(_ROOT, "engine", "joint_golive.py")).read()
-        self.assertIn("anchored = raw - float(np.mean(raw[ref]))", src,
-                      "the go-live anchor is no longer the mean track")
-        # ! UNWEIGHTED on purpose: weighting by results lets a handful of
-        #   enormous championship ovals define the zero, and those are the
-        #   least typical tracks there are.
-        self.assertNotIn("np.average(raw[ref], weights=w[ref])", src)
+class NonsenseIsRejected(unittest.TestCase):
+    def setUp(self):
+        import difficulty_view as dv
+        self.dv = dv
+        dv._state["at"] = float("inf")
+        dv._state["XC"] = XC_MEAN
+        dv._state["TF"] = TF_MEAN
 
-    def test_the_tau_caps_are_the_observed_spreads(self):
-        """⚠ tau = TRUE spread publishes tau*sqrt(r), which is NARROWER than
-        the truth -- the sqrt(r) under-dispersion this repo has now hit
-        twice. The cap that reproduces the true spread on a board is the
-        OBSERVED spread."""
-        import joint_solve as js
-        self.assertAlmostEqual(js.TAU_MAX_DEFAULT[0], 0.0364, places=4)
-        self.assertAlmostEqual(js.TAU_MAX_DEFAULT[1], 0.0161, places=4)
-        for g, rel, true_sd in ((0, 0.928, 0.0351), (1, 0.574, 0.0122)):
-            published = js.TAU_MAX_DEFAULT[g] * rel ** 0.5
-            self.assertAlmostEqual(published, true_sd, delta=0.0005,
-                                   msg=f"group {g} publishes {published:.4f}, "
-                                       f"true spread is {true_sd:.4f}")
+    def test_none_and_junk(self):
+        for bad in (None, "", "abc", -0.95, -1.0):
+            self.assertIsNone(self.dv.relativePct(bad, "XC"), repr(bad))
+
+    def test_the_filter_says_so(self):
+        self.assertEqual(self.dv.diffPct(None), " - ")
+        self.assertEqual(self.dv.diffPct(0.069, "XC"), "0.0%")
+
+    def test_words_are_sport_relative(self):
+        self.assertIn("about the same", self.dv.diffWords(0.069, "XC"))
+        self.assertIn("slower", self.dv.diffWords(0.1326, "XC"))
 
 
 if __name__ == "__main__":

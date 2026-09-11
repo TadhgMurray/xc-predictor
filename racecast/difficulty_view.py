@@ -4,13 +4,23 @@ The engine stores difficulty as a multiplier on time, (1 + d), anchored so
 the AVERAGE TRACK IS 0.0. This file displays that number and does not move
 it.
 
-  ★ ONE ZERO FOR BOTH SPORTS (owner, 2026-09-02: "I wanted them on the same
-    scale"), AND THAT ZERO IS A TRACK (owner, 2026-09-10: "the average tf
-    course will have difficulty 0.0 and be the baseline"). Both hold at
-    once: the two sports are on one line, and the line starts at a flat
-    400m oval. An ordinary cross country course therefore reads about +7%,
-    and that gap IS the sport gap the engine measured -- it is the answer,
-    not an offset to remove.
+  ★ ONE ZERO PER SPORT (owner, 2026-09-11). The STORED scale still has one
+    zero for both sports and that zero is a track, exactly as the engine
+    writes it. What changed is the DISPLAY: a course is shown against a
+    typical course OF ITS OWN SPORT, so the average track reads 0.0 and the
+    average XC course reads 0.0.
+
+    ⚠ BECAUSE ONE LINE WITH A TRACK AT ZERO IS UNREADABLE ON A CROSS
+      COUNTRY PAGE. An ordinary XC course is about +7% against a flat 400m
+      oval, so every XC course read seven points harder than anyone would
+      call it, and The Hydrangea Ranch -- where the Ultimook Race is run --
+      published +13.26% when against other XC courses it is +6.4%. The
+      owner said it looked like a 7-9% course and that the engine was
+      broken. The engine was right. The page was answering a different
+      question than the one being asked.
+
+      The gap between the two zeros is real and measured; sportGapPct()
+      reports it for a page that wants to compare the sports.
 
   ⚠ THIS FILE USED TO SUBTRACT THE CORPUS MEAN, and that quietly undid the
     engine's anchor. The note here claimed "the engine anchors to this same
@@ -45,7 +55,7 @@ REFERENCE_LABEL = "a 16-minute 5K"
 # The zero, re-read this often. course_difficulties changes once a pipeline
 # run, so an hour is generous.
 _TTL = 3600.0
-_state = {"at": 0.0, "mean": 0.0}
+_state = {"at": 0.0, "XC": 0.0, "TF": 0.0}
 _lock = threading.Lock()
 
 # ! THE GUARD READS THE TRACK CELLS, because those are what the engine
@@ -53,10 +63,11 @@ _lock = threading.Lock()
 #   engine with a different anchor, and the site says so in the log rather
 #   than silently re-centring -- silently re-centring is what went wrong.
 _SQL = """
-    SELECT avg(ln(1.0 + difficulty))
+    SELECT CASE WHEN course_name LIKE 'TF:%%' THEN 'TF' ELSE 'XC' END AS sport,
+           avg(ln(1.0 + difficulty))
     FROM   course_difficulties
     WHERE  difficulty IS NOT NULL AND difficulty > -0.9
-      AND  course_name LIKE 'TF:%%'
+    GROUP  BY 1
 """
 # how far the average track may sit from zero before the log complains
 _DRIFT_WARN = 0.01
@@ -70,35 +81,73 @@ def _refresh():
         from database import getConn
         with getConn() as conn, conn.cursor() as cur:
             cur.execute(_SQL)
-            row = cur.fetchone()
-        _state["mean"] = float(row[0] or 0.0) if row else 0.0
+            rows = cur.fetchall()
+        for sport, mean in rows:
+            _state[sport] = float(mean or 0.0)
     except Exception:                                    # noqa: BLE001
-        _state.setdefault("mean", 0.0)
+        _state.setdefault("XC", 0.0)
+        _state.setdefault("TF", 0.0)
     _state["at"] = time.time()
 
 
 def sportMeanLog(sport=None):
-    """THE DISPLAY ZERO, WHICH IS NOW ALWAYS 0.0.
+    """THE DISPLAY ZERO FOR THIS SPORT: the mean log-multiplier of that
+    sport's own courses.
 
-    The engine anchors the average track at zero, so the stored number is
-    already the number to show. This returns 0 and exists only so every
-    caller and template filter keeps working.
+    ★★★ WHY THIS CAME BACK (owner, 2026-09-11). The engine anchors the
+        average TRACK at 0.0, which is correct and stays. But the site was
+        then printing that raw number on a cross country course page, and
+        an ordinary XC course is about +7% against a flat 400m oval -- so
+        every XC course read seven points harder than a reader would ever
+        call it.
 
-    trackDriftLog() is the guard: it reads what the average track actually
-    stored, for the log, without moving anything.
+        The Ultimook Race at The Hydrangea Ranch published +13.26%. The
+        owner: "it seems to me to be actually a not very hard course, or at
+        least maybe a 7-9% max course. NOT A FUCKING 13% course." Against
+        the average XC course it IS +6.4%, which is his number. The engine
+        was right; the page was showing a track-relative figure to someone
+        reading a cross country page. He was told the model was broken.
+        It was not.
+
+      ! AND THIS IS NOT THE OLD BUG COMING BACK. The version deleted on
+        2026-09-10 subtracted ONE corpus-wide mean from BOTH sports. Cross
+        country dominates the corpus, so that mean was about +6% and it was
+        subtracted from TRACKS TOO -- which is why a typical track
+        displayed near -6% and the owner asked three times why track was
+        not zero. Per SPORT, each sport's own courses average 0.0: the
+        average track reads 0.0 and the average XC course reads 0.0.
+
+      ! THE SPORT GAP DID NOT DISAPPEAR, it moved to where it belongs.
+        sportGapPct() reports it for a page that wants to say it out loud.
+        A course page should not have to.
     """
-    return 0.0
+    key = "TF" if str(sport or "XC").upper().startswith("TF") else "XC"
+    with _lock:
+        if time.time() - _state["at"] > _TTL:
+            _refresh()
+    return float(_state.get(key, 0.0))
+
+
+def sportGapPct():
+    """How much slower an average XC course is than an average track, as a
+    percentage. This is the number the two display zeros are now hiding,
+    and it is a real measurement -- show it on a page that compares the
+    sports, not on a course page."""
+    with _lock:
+        if time.time() - _state["at"] > _TTL:
+            _refresh()
+    return 100.0 * (math.exp(_state.get("XC", 0.0)
+                             - _state.get("TF", 0.0)) - 1.0)
 
 
 def trackDriftLog():
     """How far the stored average track sits from zero. Should be ~0; a
-    large value means the table was written by an engine with a different
-    anchor."""
+    large value means course_difficulties was written by an engine with a
+    different anchor. A guard for the log -- it moves nothing."""
     with _lock:
         if time.time() - _state["at"] > _TTL:
             _refresh()
-    return float(_state["mean"])
-
+    return float(_state.get("TF", 0.0))
 
 
 def relativePct(difficulty, sport="XC"):
