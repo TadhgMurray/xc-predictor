@@ -244,6 +244,7 @@ REGION_REF_COUNTS_CSV = None
 # Column order from speed_ratings_db.COLUMNS.
 _RID, _PID, _NORM, _GRADE, _SRC, _SCHOOL, _DATE, _SPORT, _VENUE, _GENDER = range(10)
 _DIST = 10          # speed_ratings_db.COLUMNS: dist_m (issue 148)
+_MEETCLASS = 11     # speed_ratings_db.COLUMNS: meet_class (issue #22)
 
 
 # ------------------------------------------------------------------ #
@@ -937,6 +938,7 @@ def packResults(batches, today, merge=False):
     for rows in batches:
         rid, acode, vcode, norm, wt, scode, doys, yrs = [], [], [], [], [], [], [], []
         dists = []
+        mcls = []                                # meet_class per row (issue #22)
         for r in rows:
             # ⚠ DATE FIRST. The pool now depends on the SEASON, because a
             #   professional flag is per athlete-season. A row with an
@@ -1020,6 +1022,9 @@ def packResults(batches, today, merge=False):
             # the row's distance in metres, 0 when the loader had none
             dm = r[_DIST] if len(r) > _DIST else None
             dists.append(float(dm) if dm is not None and dm > 0 else 0.0)
+            # the meet's championship class, 0 when the loader has none
+            mc = r[_MEETCLASS] if len(r) > _MEETCLASS else None
+            mcls.append(int(mc) if mc is not None else 0)
             census["kept"] += 1
 
         census["tf_rollover_moved"] = _rollover.moved
@@ -1037,6 +1042,7 @@ def packResults(batches, today, merge=False):
 
                 np.asarray(yrs, dtype=np.int16),     # season year (rust/fitness)
                 np.asarray(dists, dtype=np.float32), # distance in metres, 0 = none
+                np.asarray(mcls, dtype=np.int8),     # meet class 0/1/2 (issue #22)
             ))
 
     if not chunks:
@@ -1050,6 +1056,7 @@ def packResults(batches, today, merge=False):
 
     year = np.concatenate([c[7] for c in chunks])
     dist_m = np.concatenate([c[8] for c in chunks])
+    meet_class = np.concatenate([c[9] for c in chunks])
     n_ath, n_crs = len(a_uniq), len(v_uniq)
 
     # Two decay curves from one day count, computed vectorised in float64.
@@ -1085,6 +1092,7 @@ def packResults(batches, today, merge=False):
     doy = doy[order]
     year = year[order]
     dist_m = dist_m[order]
+    meet_class = meet_class[order]
     w_ath = w_ath[order]
     w_crs_norm = w_crs_norm[order]
 
@@ -1142,6 +1150,7 @@ def packResults(batches, today, merge=False):
 
         "year":      year,           # season year per row (rust/fitness term)
         "dist_m":    dist_m,         # the row's distance, 0 = none (issue 148)
+        "meet_class": meet_class,    # 0 ordinary, 1 league-level, 2 state-level (#22)
         "athlete_keys": a_uniq,
         "course_keys":  v_uniq,
         "cell_days": cell_days,      # PER CELL: distinct race days, length n_crs
@@ -1157,7 +1166,7 @@ def packResults(batches, today, merge=False):
         "packResults: athlete column is not sorted -- kernels would be wrong"
     n_rows = len(out["athlete"])
     for k in ("result_id", "course", "norm", "weight", "cweight",
-              "days", "sport", "doy", "year", "dist_m"):
+              "days", "sport", "doy", "year", "dist_m", "meet_class"):
         assert len(out[k]) == n_rows, f"packResults: {k} length mismatch"
     # cell_days is indexed by CELL, so it gets its own check rather than
     # joining the row loop above -- a length bug here would surface as a

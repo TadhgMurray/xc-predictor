@@ -83,7 +83,8 @@ ok("SPLIT ABILITY" in RJ, "a run that carries it must say so")
 ok(RJ.count("split_ability=args.split_ability") == 3,
    f"all three buildDesign call sites must pass it, found "
    f"{RJ.count('split_ability=args.split_ability')}")
-ok("def buildDesign(" in RJ and "split_ability=False):" in RJ,
+_sig = RJ[RJ.index("def buildDesign("):RJ.index('"""', RJ.index("def buildDesign("))]
+ok("split_ability=False" in _sig,
    "buildDesign must take it as a parameter -- args is not in scope inside "
    "it, and reaching for args there is a NameError at run time")
 
@@ -121,6 +122,9 @@ ok('"--split-ability"' in RJ, "the flag must exist")
 PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
                encoding="utf-8").read()
 cmd = "\n".join(ln.split("#")[0] for ln in PIPE.splitlines())
+# an env-gated, off-by-default switch is not silent (the merge-sports test
+# makes the same allowance): strip it before searching for a bare flag
+cmd = cmd.replace("${XCP_SPLIT_ABILITY:+--split-ability}", "")
 ok("--split-ability" not in cmd,
    "the pipeline must not acquire it silently -- it changes what a rating is")
 

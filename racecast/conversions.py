@@ -143,9 +143,9 @@ _offset_lock = threading.Lock()
 # ! MUST MATCH engine/joint_solve.DIST_BANDS (tests/test_conversions_
 #   distance_offset.py pins it): the offsets are by the athlete's rating
 #   band since issue 167, three per (pool, event), the 1600 pinned in each.
-_DIST_BANDS = (105.0, 120.0)
-# the band anchors the offsets interpolate between (joint_solve.SPORT_GAIN_ANCHORS)
-_BAND_ANCHORS = (90.0, 112.0, 130.0)
+_DIST_BANDS = (105.0, 120.0, 135.0)
+# the band anchors the offsets interpolate between (joint_solve.DIST_BAND_ANCHORS)
+_BAND_ANCHORS = (90.0, 112.0, 127.0, 145.0)
 
 
 def _bandOf(rating):
@@ -348,17 +348,26 @@ def distance_offset(pool, sport, distance_meters, rating=None):
     bands = [m.get((_bare(pool), "TF", dm, b)) for b in range(len(_BAND_ANCHORS))]
     if all(v is None for v in bands):
         return 0.0
-    if any(v is None for v in bands):
-        key = (_bare(pool), "TF", dm, _bandOf(rating))
-        return m.get(key, m.get((_bare(pool), "TF", dm, 1), 0.0))
+    # ★ CONTINUOUS IN THE RATING, WHATEVER THE TABLE HOLDS (issue #21,
+    #   2026-09-11). A band the table lacks borrows its nearest present
+    #   band and the interpolation runs over all four anchors. This used to
+    #   fall back to a HARD step on _DIST_BANDS whenever any band was
+    #   missing -- and because the forward and the inverse legs evaluate
+    #   the offset at slightly different ratings, a rating near a band
+    #   edge took the step on one leg and not the other: one full
+    #   inter-band step of the 3200 offset, -3.34%, reproduced exactly.
+    have = [i for i, v in enumerate(bands) if v is not None]
+    vals = [v if v is not None
+            else bands[min(have, key=lambda j, i=i: abs(j - i))]
+            for i, v in enumerate(bands)]
     # interpolated by rating between the band anchors, as the go-live
-    # applies it (joint_solve.distOffsetRow): no step at 105 or 120
+    # applies it (joint_solve.distOffsetRow): no step at any band edge
     r = float(rating) if rating is not None else 100.0
     r = min(max(r, _BAND_ANCHORS[0]), _BAND_ANCHORS[-1])
-    for (a0, v0), (a1, v1) in zip(zip(_BAND_ANCHORS, bands), zip(_BAND_ANCHORS[1:], bands[1:])):
+    for (a0, v0), (a1, v1) in zip(zip(_BAND_ANCHORS, vals), zip(_BAND_ANCHORS[1:], vals[1:])):
         if a0 <= r <= a1:
             return v0 + (v1 - v0) * (r - a0) / (a1 - a0)
-    return bands[-1]
+    return vals[-1]
 
 
 def pool_mean(pool, sport=None):
@@ -605,23 +614,52 @@ def _norm_from_time(time_seconds, distance_meters, pool, difficulty=0.0,
     sc = engineScale(pool, sport)
     if norm is not None and sc is not None:
         # the engine's scale (177): divide the applied effect out, with the
-        # tilt and the band at the rating this time implies (two passes)
-        adjusted = norm
-        for _ in range(2):
-            est = 100.0 * sc[0] / adjusted
+        # tilt and the band at the rating this time implies.
+        # ★ A FIXED POINT, SOLVED (issue #21, 2026-09-11). adjusted =
+        #   norm / exp(eff(rating)) with rating = 100 pm / adjusted. Two
+        #   undamped passes returned an `adjusted` built from the effect at
+        #   the PREVIOUS iterate, while the rating the page then reports --
+        #   and the inverse evaluates the effect at -- is 100 pm / adjusted.
+        #   The round trip was therefore t * exp(eff(r3) - eff(r2)), and
+        #   with a band step between r2 and r3 that was -3.34% on a 3200.
+        #   Damped and iterated to 1e-10, then one plain step, so the
+        #   effect divided out IS the effect at the rating returned.
+        ln_norm = math.log(norm)
+        x = ln_norm
+        for _ in range(80):
+            est = 100.0 * sc[0] / math.exp(x)
             eff = venueEffect(pool, sport, est, chosen, distance_meters)
-            adjusted = norm / math.exp(eff)
+            x_new = ln_norm - eff
+            if abs(x_new - x) < 1e-10:
+                x = x_new
+                break
+            x = 0.5 * (x + x_new)
+        est = 100.0 * sc[0] / math.exp(x)
+        eff = venueEffect(pool, sport, est, chosen, distance_meters)
+        adjusted = norm / math.exp(eff)
         return adjusted
     if norm is not None and difficulty:
         norm = norm / (1.0 + difficulty)    # remove course difficulty
     if norm is not None:
-        # the band from the rating this time implies (middle band first,
-        # then the band that rating sits in)
+        # the band from the rating this time implies -- the same fixed
+        # point as above, so the inverse (which reads the rating AFTER the
+        # offset is out) evaluates the offset the forward divided out
         pm = pool_mean(pool, sport)
-        est = 100.0 * pm / norm if pm else None
-        off = distance_offset(pool, sport, distance_meters, rating=est)
-        if off:
-            norm = norm / math.exp(off)     # remove the event's own error
+        if pm:
+            ln_base = math.log(norm)
+            x = ln_base
+            for _ in range(80):
+                est = 100.0 * pm / math.exp(x)
+                off = distance_offset(pool, sport, distance_meters, rating=est)
+                x_new = ln_base - off
+                if abs(x_new - x) < 1e-10:
+                    x = x_new
+                    break
+                x = 0.5 * (x + x_new)
+            est = 100.0 * pm / math.exp(x)
+            off = distance_offset(pool, sport, distance_meters, rating=est)
+            if off:
+                norm = norm / math.exp(off)     # remove the event's own error
     return norm
 
 
@@ -715,20 +753,19 @@ def _norm_from_result(result_id, sport):
     norm, difficulty, dist, pool, rating = row[0], row[1], row[2], row[3], row[4]
     t, rating_pool, ev = row[5], row[6], row[7]
     pool = pool or (rating_pool or "").split("|")[0] or None
-    # ★ A FILLED ROW GOES THROUGH ITS TIME, NOT ITS RATING (issue 306,
-    #   2026-09-08). The fill (09b) prices a row the solve left unrated as
-    #   pool constant over normalized time: no venue, no distance term, no
-    #   shift, and it writes the bare pool name where the go-live writes
-    #   the sport inside it. Reading such a rating back as if it carried
-    #   every term turned a 9:01.10 at Arcadia into a 9:28 at its own
-    #   distance. The raw time through the same terms every other source
-    #   uses is the honest number for it.
-    filled = bool(rating_pool) and "|" not in rating_pool
-    if filled and t and dist and pool:
-        out = _norm_from_time(float(t), float(dist), pool, sport=sport,
-                              event_short=ev, chosen=difficulty)
-        if out:
-            return out
+    # ★ THE STORED RATING IS THE ANSWER FOR ANY ROW THAT HAS ONE
+    #   (2026-09-11, issue #21). This used to route a "filled" row (issue
+    #   306: priced by 09b as pool constant over normalized time, no venue
+    #   term) through its raw time instead, telling the two apart by the
+    #   '|' the go-live wrote into rating_pool. The go-live writes the BARE
+    #   pool now too, so that test was true of EVERY row and every stored
+    #   result was re-priced from its raw time with season=None -- era,
+    #   weather and altitude lost, and the issue-162 branch below dead.
+    #   Both kinds invert correctly through the rating: a solved one to its
+    #   own adjusted time exactly, a filled one (K / nt, K = 100 pm times
+    #   the pool's median venue factor) to nt over that typical-venue
+    #   factor, which is precisely what a target with no named venue puts
+    #   back. The time path stays for a row with no rating at all.
     # ★ A RATED ROW INVERTS ITS OWN RATING (issue 162). The engine's number
     #   is 100 * pool_mean / adjusted, with the tilt, the day and the event
     #   offset inside `adjusted`; re-deriving the neutral time from the
@@ -740,6 +777,13 @@ def _norm_from_result(result_id, sport):
         pm = pool_mean(pool, sport)
         if pm:
             return 100.0 * pm / float(rating)
+    # no rating at all: the raw time through the same terms every other
+    # source uses, else the cell path
+    if t and dist and pool:
+        out = _norm_from_time(float(t), float(dist), pool, sport=sport,
+                              event_short=ev, chosen=difficulty)
+        if out:
+            return out
     if difficulty is None:
         difficulty = default_difficulty(sport)
     out = norm / (1.0 + difficulty)

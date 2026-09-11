@@ -57,3 +57,76 @@ def test_tilt_matches_the_solver():
     js = io.open(os.path.join(ROOT, "engine", "joint_solve.py"), encoding="utf-8").read()
     k = float(re.search(r"^TILT_K = (-?[0-9.]+)", js, re.M).group(1))
     assert k == cv._TILT_K
+
+
+# ---------------------------------------------------------------------- #
+# issue #21 (2026-09-11): the round trip closes at every distance, with an
+# incomplete offset table, and at a rating that straddles a band edge --
+# the exact case that used to come back -3.34% on a 3200.
+# ---------------------------------------------------------------------- #
+
+def _stub_straddle():
+    cv._scale["map"] = {("hs_m", "XC"): (1247.6, -0.025, -0.0253),
+                        ("hs_m", "TF"): (1247.6, -0.055, -0.0253)}
+    cv._scale["at"] = 1e18
+    # band 0 and band 3 absent, bands 1/2 far apart: the old hard step
+    cv._offsets["map"] = {("hs_m", "TF", 3200, 1): 0.014,
+                          ("hs_m", "TF", 3200, 2): -0.020,
+                          ("hs_m", "TF", 800, 2): 0.030,
+                          ("hs_m", "TF", 1600, 1): 0.0,
+                          ("hs_m", "TF", 5000, 1): -0.012,
+                          ("hs_m", "TF", 5000, 3): 0.006,
+                          ("hs_m", "TF", 10000, 2): -0.030}
+    cv._offsets["at"] = 1e18
+
+
+def test_the_offset_is_continuous_with_missing_bands():
+    _stub_straddle()
+    # a missing band borrows its nearest neighbour; no step anywhere
+    prev = None
+    for r in [x / 4.0 for x in range(280, 640)]:
+        v = cv.distance_offset("hs_m", "TF", 3200, rating=r)
+        if prev is not None:
+            assert abs(v - prev) < 0.001, (r, v, prev)
+        prev = v
+    assert cv.distance_offset("hs_m", "TF", 3200, rating=80.0) == 0.014
+    assert cv.distance_offset("hs_m", "TF", 3200, rating=150.0) == -0.020
+    assert cv.distance_offset("hs_m", "TF", 800, rating=100.0) == 0.030
+
+
+def test_round_trip_closes_at_every_distance_and_a_straddling_rating():
+    _stub_straddle()
+    for dist, t in ((800.0, 118.0), (1600.0, 262.0), (3200.0, 598.0),
+                    (3200.0, 541.1), (5000.0, 930.0), (10000.0, 1900.0)):
+        ctx = {"distance": dist, "pool": "hs_m", "sport": "TF"}
+        for chosen in (None, -0.041, 0.03):
+            norm = cv._norm_from_time(t, dist, "hs_m", sport="TF", chosen=chosen)
+            c2 = dict(ctx) if chosen is None else dict(ctx, difficulty=chosen)
+            back = cv.normalized_to_time(norm, c2)
+            # normalizeTime rounds to 0.01 s on the forward leg, which is
+            # up to 6e-6 relative -- 0.003 s on a 3200; the model closes exactly
+            assert abs(back - t) < 0.01, (dist, t, chosen, back)
+            # and the rating the page reports is the one the effect was
+            # evaluated at: a second forward pass from `back` agrees
+            n2 = cv._norm_from_time(back, dist, "hs_m", sport="TF", chosen=chosen)
+            assert abs(n2 - norm) < 1e-6, (dist, t, chosen)
+
+
+def test_a_rating_converts_to_a_time_and_back_across_events():
+    _stub_straddle()
+    for r in (95.0, 104.9, 105.1, 119.9, 120.1, 134.9, 135.1, 150.0):
+        norm = cv._norm_from_rating(r, "hs_m", sport="TF")
+        for dist in (800.0, 1600.0, 3200.0, 5000.0, 10000.0):
+            t = cv.normalized_to_time(norm, {"distance": dist, "pool": "hs_m",
+                                             "sport": "TF"})
+            n2 = cv._norm_from_time(t, dist, "hs_m", sport="TF", chosen=None)
+            assert abs(cv.normalized_to_rating(n2, "hs_m", sport="TF") - r) < 0.01, (r, dist)
+
+
+def test_the_bands_and_anchors_match_the_solver():
+    import re, io
+    js = io.open(os.path.join(ROOT, "engine", "joint_solve.py"), encoding="utf-8").read()
+    bands = re.search(r"^DIST_BANDS = \(([^)]*)\)", js, re.M).group(1)
+    anchors = re.search(r"^DIST_BAND_ANCHORS = \(([^)]*)\)", js, re.M).group(1)
+    assert tuple(float(v) for v in bands.split(",") if v.strip()) == cv._DIST_BANDS
+    assert tuple(float(v) for v in anchors.split(",") if v.strip()) == cv._BAND_ANCHORS

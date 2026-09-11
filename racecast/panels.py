@@ -854,10 +854,14 @@ def _tilted(row):
     performance off the board.
     """
     raw = float(row["speed_rating"])
-    if _ratingFor is None:
-        return raw
-    d = row.get("difficulty")
-    return raw if d is None else float(_ratingFor(raw, d))
+    # ★ NO SECOND TILT (2026-09-11). The joint go-live folds h * delta into
+    #   every stored rating and says so ("do NOT run apply_tilt after
+    #   this"); tilting again here, with the DISPLAY-anchored difficulty
+    #   rather than the raw delta the engine tilted, ranked the home-page
+    #   boards on a number no page shows. The stored rating is the score.
+    #   tilt.ratingFor stays importable for the sequential engine's rows,
+    #   which carry no tilt -- but that engine is not the one that is live.
+    return raw
 
 
 def _fmtTime(seconds):

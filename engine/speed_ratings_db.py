@@ -107,7 +107,16 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   the event's for track. The joint solve fits one offset per
            #   (pool, track distance) from it; a pack without it runs with
            #   that block off.
-           "dist_m")
+           "dist_m",
+           # ★ THE MEET'S CHAMPIONSHIP CLASS (issue #22, 2026-09-11): 0 an
+           #   ordinary meet, 1 a league / conference / county / district
+           #   championship, 2 a section / region / state / national one
+           #   or its qualifier -- from the meet's NAME (MEET_CLASS_RX_*).
+           #   The joint solve fits one taper term per (pool, sport, class)
+           #   from it, so a venue that hosts only championships stops
+           #   reading as an easy course. A pack without it runs with the
+           #   term off.
+           "meet_class")
 
 
 # ------------------------------------------------------------------ #
@@ -481,6 +490,31 @@ def _placeholderSql() -> str:
 # LEFT JOINs everywhere. Every INNER JOIN in the old query was a silent tfrrs
 #   delete; anything dropped now is dropped on purpose. A row with no venue
 #   still informs its athlete's ability, it just votes on no course.
+# ★ THE CHAMPIONSHIP CLASS OF A MEET, FROM ITS NAME (issue #22). Two
+#   classes above the reference (an invitational, a dual, a relay meet):
+#   class 2 is the end-of-season series -- section, region, state, national
+#   (NXN, NXR, Foot Locker, Nike Cross) or a qualifier for it; class 1 a
+#   league, conference, county or district championship. Tested in that
+#   order, case-insensitively, as POSIX regexes (no `%`, no braces: the
+#   query is an f-string and psycopg2 scans for `%`). A misread name
+#   dilutes the class's coefficient a little; it cannot move a course.
+MEET_CLASS_RX_2 = ("(state|section|region|nation|nxn|nxr|foot ?locker|"
+                   "nike cross|super ?regional|qualif|ncaa|naia|njcaa)")
+MEET_CLASS_RX_1 = "(champ|conference|league|county|district|metro)"
+# an invitational is the reference class whatever else its name says
+# ("Golden State Invitational"), unless it is also a qualifier or a final
+MEET_CLASS_RX_INVITE = "invit"
+MEET_CLASS_RX_KEEP = "(qualif|champ|final)"
+
+
+def _meetClassSql(name_expr: str) -> str:
+    """A SELECT expression: 2, 1 or 0 for the meet name expression."""
+    return (f"CASE WHEN {name_expr} ~* '{MEET_CLASS_RX_INVITE}' "
+            f"AND {name_expr} !~* '{MEET_CLASS_RX_KEEP}' THEN 0 "
+            f"WHEN {name_expr} ~* '{MEET_CLASS_RX_2}' THEN 2 "
+            f"WHEN {name_expr} ~* '{MEET_CLASS_RX_1}' THEN 1 ELSE 0 END")
+
+
 def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
     return f"""
         SELECT r.result_id, r.person_id, r.normalized_time,
@@ -544,7 +578,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                         m.distance,
                         (mt.division_distances -> r.div_id::text
                            ->> 'distance')::real,
-                        mt.distance)::real AS dist_m
+                        mt.distance)::real AS dist_m,
+               {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')")} AS meet_class
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -659,7 +694,8 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   the owner's "5k/10k too low" on the college boards.
                --   Same parse the backfill uses, in SQL: digits, 'k' =
                --   thousands, 'mile' = 1609.34 each.
-               COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m
+               COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m,
+               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id

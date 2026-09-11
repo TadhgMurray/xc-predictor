@@ -204,8 +204,19 @@ RACE_DAY_CAP = 0.10
 #   bests). Each (pool, event) class is now three: by the athlete-season's
 #   own rating, refreshed every outer iteration like the tilt, with the
 #   1600 pinned in every band. Middle band until the first ratings exist.
-DIST_BANDS = (105.0, 120.0)
+DIST_BANDS = (105.0, 120.0, 135.0)
 DIST_N_BAND = len(DIST_BANDS) + 1
+# ★ A FOURTH BAND AT THE TOP (2026-09-11). The published equivalence tables
+#   (World Athletics 2025, Purdy, Mercier) all put the 800->1600 exponent
+#   HIGHER at lower ability and the population of "athletes who race both"
+#   is speed-selected at the 800; one band for everyone over 120 applied
+#   the relation of a 4:10 miler to a 1:48 half-miler rated 150. The top
+#   band now starts at 135, and the offsets interpolate between the
+#   representative rating of each band (flat beyond the outer ones).
+DIST_BAND_ANCHORS = (90.0, 112.0, 127.0, 145.0)
+# the winter-gain machinery (sportGainShift / SPORT_GAIN_ANCHORS) keeps its
+# own three bands: an operator passes three gains, and always has
+SPORT_GAIN_BANDS = (105.0, 120.0)
 # ★ THE EVENT RELATION FROM SEASON-BEST PAIRS (issues 109, 189, 190,
 #   2026-09-05). Fitted from every row, the banded 3200 offset came out
 #   SMALLER at the top than in the middle: a 9:01 rated 132.1, a 4:13
@@ -268,7 +279,7 @@ def distOffsetRow(D, e, rating_row):
     nb = D.n_e_base
     table = np.asarray(e).reshape(nb, DIST_N_BAND)          # class x band
     r = np.nan_to_num(np.asarray(rating_row, dtype=np.float64), nan=100.0)
-    anchors = np.asarray(SPORT_GAIN_ANCHORS)
+    anchors = np.asarray(DIST_BAND_ANCHORS)
     x = np.clip(r, anchors[0], anchors[-1])
     # piecewise-linear over the three anchors, vectorised per row
     j = np.clip(np.searchsorted(anchors, x, side="right") - 1, 0, DIST_N_BAND - 2)
@@ -336,7 +347,7 @@ def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
     both = (cnt_tf > 0) & (cnt_xc > 0) & np.isfinite(rating_ath) & (pool_ath >= 0)
     gap_ath = np.where(both, sum_tf / np.maximum(cnt_tf, 1)
                        - sum_xc / np.maximum(cnt_xc, 1), 0.0)
-    band = np.digitize(np.nan_to_num(rating_ath, nan=100.0), DIST_BANDS)
+    band = np.digitize(np.nan_to_num(rating_ath, nan=100.0), SPORT_GAIN_BANDS)
     key = np.clip(pool_ath, 0, None) * nb + band
     n = np.bincount(key[both], minlength=n_pool * nb).reshape(n_pool, nb)
     tot = np.bincount(key[both], weights=gap_ath[both],
@@ -431,6 +442,30 @@ ALT_PRIOR_PEN_FIT = 20.0        # row units: about sd 0.01 around it
 #   field at Flagstaff earns half, a sea-level field at a national meet
 #   at altitude earns all of it. altitudeCredit() is that number.
 ALT_ACCLIM = 0.5
+
+# ★ THE MEET-IMPORTANCE PRIOR (issue #22). Two classes above the reference
+#   (an invitational, a dual, a relay meet): class 1 is a league, conference,
+#   county or district championship; class 2 a section, region, state or
+#   national championship (NXN, NXR, Foot Locker) or its qualifier. The
+#   stated means are the taper literature's (a 2-week taper is worth about
+#   2-3%, Bosquet et al. 2007; Mujika & Padilla 2003): log-time, negative =
+#   faster. The penalty is in row units, so fifty pseudo-rows: the millions
+#   of real ones decide, the prior only holds a class nobody raced.
+IMP_PRIOR_MEAN = {1: -0.010, 2: -0.025}
+# ⚠ SIZED AS A PRIOR SD, LIKE DIST_PRIOR_SD, NOT AS PSEUDO-ROWS. The data
+#   cannot tell the importance term from the race-day terms of the
+#   championship races (within a race they are collinear); what separates
+#   them is this prior against the race-day prior over ALL championship
+#   races -- sigma_u2 per race, tens of thousands of them. A penalty stated
+#   in rows (a first cut used 50) competed with that sum on a small world
+#   and halved the estimate. pen = sigma2 / SD^2 is a few row-units.
+IMP_PRIOR_SD = 0.02
+# ★ THE INDOOR PRIOR: the NCAA facility factors (2012) and World Athletics'
+#   2025 short-track tables both put a 200 m oval 0.8-1.8% slower than
+#   outdoors for 800-5000, larger for the faster and the shorter. One
+#   number per pool, the data move it.
+IND_PRIOR_MEAN = 0.012
+IND_PRIOR_SD = 0.01
 
 
 # Amplitude tilt: the season-form swing shrinks with ability
@@ -528,7 +563,9 @@ class Design:
                  dist=None, n_e=None, lz=None, link=None, alt=None,
                  dist_ref=None, alt_home=None,
                  dist_banded=False,
-                 era_pairs=None, era_w=None, eras_per_base=None):
+                 era_pairs=None, era_w=None, eras_per_base=None,
+                 mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
+                 ind=None, e_table=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -551,6 +588,21 @@ class Design:
         self.n_mu = self.n_group - 1
         self.mu_idx = np.maximum(self.group_row - 1, 0)
         self.mu_w = (self.group_row > 0).astype(np.float64)
+        # ★ THE SPORT LEVEL, ASSERTED (2026-09-11). Sport is season, so the
+        #   between-sport level is a definition, not an estimate (see
+        #   XC_TRACK_GAP). With mu_fixed the level is NOT a parameter at
+        #   all: the block is empty and solveJoint subtracts h * mu_fixed
+        #   from y before every pass. --merge-sports used to leave mu in
+        #   theta unpenalised and merely refused to bank the cell means
+        #   into it, so CG parked whatever it liked there along the
+        #   near-null direction against the curve.
+        self.mu_fixed = (None if mu_fixed is None
+                         else np.asarray(mu_fixed, dtype=np.float64))
+        if self.mu_fixed is not None:
+            assert self.mu_fixed.size == self.n_group, \
+                "mu_fixed wants one level per group"
+            self.n_mu = 0
+            self.mu_w = np.zeros(self.n)
 
         # ★ THE RANDOM WALK OVER ERAS. era_pairs is (2, M): each column is
         #   an adjacent pair of era-cells belonging to the SAME course, and
@@ -639,6 +691,19 @@ class Design:
         self.e_mean = np.zeros(self.n_e)
         self.e_cal_n = np.zeros(self.n_e, dtype=np.int64)
         self.e_cal_via = np.full(self.n_e, -1, dtype=np.int64)   # the chain
+        # ★ THE PUBLISHED TABLES AS THE PRIOR MEAN (2026-09-11, issues 9/13).
+        #   Per class, the log-time offset the World Athletics / Purdy
+        #   equivalence implies for the event against the pool's reference
+        #   event, LESS what the distance potential already applied -- so a
+        #   class with too few season-best pairs to calibrate itself is
+        #   pulled toward a stated relation instead of toward "the curve's
+        #   tangent extension is right". NaN = no table for that class.
+        self.e_table = None
+        if e_table is not None and self.n_e:
+            t = np.asarray(e_table, dtype=np.float64)
+            assert t.size == self.n_e, "e_table wants one value per class"
+            self.e_table = t
+            self.e_mean[:] = np.where(np.isfinite(t), t, 0.0)
 
         # the endurance slope (SLOPE_RIDGE): per row the centred log distance
         self.has_slope = lz is not None
@@ -665,6 +730,59 @@ class Design:
             self.alt = self.alt_venue - ALT_ACCLIM * self.alt_home
             self.n_k = self.n_group
 
+        # ★ THE MEET-IMPORTANCE TERM (issue #22, 2026-09-11). Per row a
+        #   coefficient index (-1 = the reference class, an ordinary
+        #   invitational or dual) for the championship class of the meet
+        #   the row was run at, keyed by the caller (run_joint: per pool,
+        #   sport and class). A tapered, qualified, motivated field runs
+        #   2-3% faster than the same athletes mid-season (Bosquet 2007,
+        #   Mujika & Padilla 2003); without a shared term for that, a venue
+        #   that hosts ONLY championships books the taper as an easy course
+        #   (Foot Locker, NXN, every state meet), because u is a deviation
+        #   around the cell's own mean and cannot see a constant. The term
+        #   is identified globally: nearly every athlete races both kinds
+        #   of meet, and on venues that host a mix the course and the class
+        #   come apart. It is a level covariate, not a weight (an Elo
+        #   K-factor by tournament class fixes the update, not the expected
+        #   time). Untilted. NOT in a rating: the tapered race is a real
+        #   performance, exactly as the race-day term is left in.
+        self.n_imp = 0
+        if imp is not None:
+            imp = np.asarray(imp, dtype=np.int64)
+            self.imp_idx = np.maximum(imp, 0)
+            self.imp_w = (imp >= 0).astype(np.float64)
+            n_i = int(n_imp if n_imp is not None
+                      else (int(imp.max()) + 1 if imp.size and imp.max() >= 0
+                            else 0))
+            self.n_imp = max(n_i, 0)
+            self.imp_prior = (np.zeros(self.n_imp) if imp_prior is None
+                              else np.asarray(imp_prior, dtype=np.float64))
+            if self.n_imp:
+                assert self.imp_prior.size == self.n_imp
+        # ★ INDOOR AS A SHARED TERM (2026-09-11). 1,574 indoor cells and
+        #   25,629 outdoor ones, and no location hosts both, so each
+        #   indoor cell used to rediscover the surface from its own thin
+        #   evidence under a prior (tau[TF]) narrower than the effect
+        #   itself. One coefficient per pool (speed and sex decide the
+        #   curve cost: NCAA flat->banked factors run 1.4% at 800 to 1.1%
+        #   at 5000 for men, 0.8-1.2% for women), multiplied by the
+        #   cell's indoor flag, tilted like the course because it IS part
+        #   of the course. The cells keep only their deviation from it.
+        #   solveJoint folds the cell's mean indoor term into delta, so
+        #   the go-live and the display see one course number.
+        self.n_ind = 0
+        if ind is not None:
+            ind = np.asarray(ind, dtype=bool)
+            assert ind.size == self.n_cell, "ind wants one flag per cell"
+            self.ind_cell = ind
+            self.ind_w = ind[self.cell].astype(np.float64)
+            if self.pool_row is not None:
+                self.ind_idx = self.pool_row
+                self.n_ind = max(self.n_pool, 1) if ind.any() else 0
+            else:
+                self.ind_idx = np.zeros(self.n, dtype=np.int64)
+                self.n_ind = 1 if ind.any() else 0
+
         # packing
         self.o_a = 0
         self.o_d = self.n_ath
@@ -678,7 +796,9 @@ class Design:
         self.o_e = self.o_r + self.n_r
         self.o_g = self.o_e + self.n_e
         self.o_k = self.o_g + self.n_g
-        self.n_total = self.o_k + self.n_k
+        self.o_imp = self.o_k + self.n_k
+        self.o_ind = self.o_imp + self.n_imp
+        self.n_total = self.o_ind + self.n_ind
 
     def rebandDist(self, rating_row):
         """Re-point every row's offset class at its athlete-season's
@@ -699,7 +819,12 @@ class Design:
         event raced more often does not read faster only by being the
         min of more draws. Returns the number of calibrated classes. A
         no-op without the reference rows or the bands."""
-        self.e_mean[:] = 0.0
+        # the tables are the floor: a class the pairs cannot calibrate
+        # keeps the published relation, not zero (e_table)
+        if self.e_table is not None:
+            self.e_mean[:] = np.where(np.isfinite(self.e_table), self.e_table, 0.0)
+        else:
+            self.e_mean[:] = 0.0
         self.e_cal_n[:] = 0
         self.e_cal_via[:] = -1
         if not self.dist_banded or self.e_ref is None or not self.e_ref.any():
@@ -820,7 +945,8 @@ class Design:
         """Blocks as FULL arrays: mu over every group (0 for the reference),
         c over the full pool x knot grid (0 at the pinned knot)."""
         mu = np.zeros(self.n_group)
-        mu[1:] = theta[self.o_mu:self.o_beta]
+        if self.n_mu:                        # empty under mu_fixed
+            mu[1:] = theta[self.o_mu:self.o_beta]
         b = {"a": theta[self.o_a:self.o_d],
              "d": theta[self.o_d:self.o_u],
              "u": theta[self.o_u:self.o_mu],
@@ -835,7 +961,9 @@ class Design:
         b["r"] = theta[self.o_r:self.o_e] if self.n_r else None
         b["e"] = theta[self.o_e:self.o_g] if self.n_e else None
         b["g"] = theta[self.o_g:self.o_k] if self.n_g else None
-        b["k"] = theta[self.o_k:self.n_total] if self.n_k else None
+        b["k"] = theta[self.o_k:self.o_imp] if self.n_k else None
+        b["imp"] = theta[self.o_imp:self.o_ind] if self.n_imp else None
+        b["ind"] = theta[self.o_ind:self.n_total] if self.n_ind else None
         return b
 
 
@@ -872,6 +1000,10 @@ def _predictSlice(b, D, h, amp, sl, out):
         row += b["g"][ath] * D.lz[sl]
     if b.get("k") is not None and getattr(D, "n_k", 0):
         row += b["k"][grp] * D.alt[sl]
+    if b.get("imp") is not None and getattr(D, "n_imp", 0):
+        row += D.imp_w[sl] * b["imp"][D.imp_idx[sl]]
+    if b.get("ind") is not None and getattr(D, "n_ind", 0):
+        row += hs * D.ind_w[sl] * b["ind"][D.ind_idx[sl]]
     out[sl] = row
 
 
@@ -1003,8 +1135,16 @@ class _Operator:
                  lam_gap=None, gap_target=0.0, pen_dist=0.0,
                  ridge_slope=0.0, link_weight=0.0,
                  alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
-                 pen_era=0.0):
+                 pen_era=0.0, imp_prior_pen=None, ind_prior_pen=None):
         self.D, self.w, self.h, self.amp = D, w, h, amp
+        # the importance and indoor terms' priors, in row units: a few
+        # dozen pseudo-rows toward the stated mean, nothing against the
+        # millions of rows that carry each coefficient (IMP_PRIOR_PEN)
+        # (solveJoint passes sigma2 / IMP_PRIOR_SD^2; None = numerical only)
+        self.imp_prior_pen = (1e-6 if imp_prior_pen is None
+                              else float(imp_prior_pen))
+        self.ind_prior_pen = (1e-6 if ind_prior_pen is None
+                              else float(ind_prior_pen))
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
         # ★ tau IS A PRIOR ON A COURSE, NOT ON AN ERA. Split into eras and
@@ -1087,6 +1227,12 @@ class _Operator:
         if D.n_k:
             jobs.append(lambda: np.bincount(D.group_row, weights=wr * D.alt,
                                             minlength=D.n_group))
+        if D.n_imp:
+            jobs.append(lambda: np.bincount(D.imp_idx, weights=wr * D.imp_w,
+                                            minlength=D.n_imp))
+        if D.n_ind:
+            jobs.append(lambda: np.bincount(D.ind_idx, weights=wr * h * D.ind_w,
+                                            minlength=D.n_ind))
         return np.concatenate(self._reduce(jobs))
 
     def matvec(self, theta):
@@ -1119,7 +1265,11 @@ class _Operator:
         if D.n_g:
             out[D.o_g:D.o_k] += self.ridge_slope * b["g"]
         if D.n_k:
-            out[D.o_k:D.n_total] += (ALT_RIDGE + self.alt_prior_pen) * b["k"]
+            out[D.o_k:D.o_imp] += (ALT_RIDGE + self.alt_prior_pen) * b["k"]
+        if D.n_imp:
+            out[D.o_imp:D.o_ind] += self.imp_prior_pen * b["imp"]
+        if D.n_ind:
+            out[D.o_ind:D.n_total] += self.ind_prior_pen * b["ind"]
         if getattr(D, "has_link", False) and self.link_weight > 0:
             a = b["a"]
             d = self.link_weight * D.link_w * (a[D.link_k0] - a[D.link_k1])
@@ -1137,7 +1287,11 @@ class _Operator:
             for lg, g in self.gap:
                 out[D.o_c:D.o_r] += lg * self.gap_target * g
         if D.n_k:
-            out[D.o_k:D.n_total] += self.alt_prior_pen * self.alt_prior_mean
+            out[D.o_k:D.o_imp] += self.alt_prior_pen * self.alt_prior_mean
+        if D.n_imp:
+            out[D.o_imp:D.o_ind] += self.imp_prior_pen * D.imp_prior
+        if D.n_ind:
+            out[D.o_ind:D.n_total] += self.ind_prior_pen * IND_PRIOR_MEAN
         if D.n_e and getattr(D, "e_mean", None) is not None:
             out[D.o_e:D.o_g] += self.pen_dist * D.e_mean
         return out
@@ -1180,6 +1334,15 @@ class _Operator:
             jobs.append(lambda: np.bincount(D.group_row, weights=w * D.alt * D.alt,
                                             minlength=D.n_group)
                         + ALT_RIDGE + self.alt_prior_pen)
+        if D.n_imp:
+            jobs.append(lambda: np.bincount(D.imp_idx, weights=w * D.imp_w,
+                                            minlength=D.n_imp)
+                        + self.imp_prior_pen)
+        if D.n_ind:
+            jobs.append(lambda: np.bincount(D.ind_idx,
+                                            weights=w * h * h * D.ind_w,
+                                            minlength=D.n_ind)
+                        + self.ind_prior_pen)
         out = np.concatenate(self._reduce(jobs))
         if getattr(D, "has_link", False) and self.link_weight > 0:
             out[:D.n_ath] += self.link_weight * (
@@ -1632,7 +1795,8 @@ def recentreLevels(b, D, merge=False):
 
 def _pack(b, D):
 
-    parts = [b["a"], b["d"], b["u"], b["mu"][1:]]
+    parts = [b["a"], b["d"], b["u"],
+             b["mu"][1:] if D.n_mu else np.zeros(0)]     # empty under mu_fixed
     if D.n_beta:
         parts.append(b["beta"])
     if D.n_c:
@@ -1645,6 +1809,10 @@ def _pack(b, D):
         parts.append(b["g"])
     if D.n_k:
         parts.append(b["k"])
+    if getattr(D, "n_imp", 0):
+        parts.append(b["imp"])
+    if getattr(D, "n_ind", 0):
+        parts.append(b["ind"])
     return np.concatenate(parts)
 
 
@@ -1658,13 +1826,22 @@ def _pack(b, D):
 #   64 is a usable default for shrinkage weights; use several hundred before
 #   PUBLISHING a per-cell standard error.
 def cellPosteriorVar(matvec, diag, n_total, n_ath, n_cell, sigma2,
-                     n_probe=64, seed=0, tol=CG_TOL_PROBE, verbose=False):
-    # ★ NO PROBES: THE INFORMATION-DIAGONAL BOUND. sigma2 / A_ii is a lower
-    #   bound on the posterior variance (it ignores the off-diagonal
-    #   coupling), which is what the outer loop's own updates already use.
-    #   n_probe=0 is the fast path for a go-live run that does not need
-    #   per-cell standard errors that night; the probes are telemetry.
+                     n_probe=64, seed=0, tol=CG_TOL_PROBE, verbose=False,
+                     nested=None):
+    # ★ NO PROBES: THE NESTED BLOCK, ELSE THE INFORMATION-DIAGONAL BOUND.
+    #   sigma2 / A_ii is a lower bound on the posterior variance (it ignores
+    #   every off-diagonal coupling). `nested`, when the caller supplies it,
+    #   is nestedPosteriorVar's cell block: exact for the coupling that
+    #   dominates a thin cell (its own races) and still a lower bound for
+    #   the rest. n_probe=0 is the fast path for a go-live run that does not
+    #   need per-cell standard errors that night; the probes are telemetry.
     if not n_probe or n_probe <= 0:
+        if nested is not None:
+            if verbose:
+                print("  [joint] probes off: cell variance from the nested "
+                      "(cell + its races) block, abilities held",
+                      flush=True)
+            return np.maximum(np.asarray(nested, dtype=np.float64), 1e-12)
         d = diag[n_ath:n_ath + n_cell]
         if verbose:
             print("  [joint] probes off: cell variance from the information "
@@ -1998,6 +2175,67 @@ def checkPriors(tau2, sigma_u2, group_names=("XC", "TF")):
     return out
 
 
+def nestedPosteriorVar(D, w, h, pen_cell, pen_race, sigma2, era_deg=None,
+                       pen_era=0.0):
+    """Conditional posterior variance of every cell's d and every race's u,
+    with the (cell, its races) block inverted EXACTLY and everything else
+    held at its estimate. Returns (var_d[n_cell], var_u[n_race]).
+
+    ★★ WHY THE INFORMATION DIAGONAL WAS THE WRONG E-STEP (2026-09-11).
+       The EM update for tau2 is mean(d^2 + Var(d | y)); for sigma_u2 it is
+       mean(u^2 + Var(u | y)). Both variances were taken as sigma2 / A_ii --
+       the diagonal of the INFORMATION -- which ignores the one coupling
+       that matters here: within a cell, d and every u of its races load on
+       the SAME rows with the SAME h, so the block is an arrowhead
+
+           A_dd = P_c + sum_j n_j      A_dj = n_j      A_jj = n_j + P_u
+
+       with n_j = sum over race j's rows of w h^2, P_c = sigma2/tau2 and
+       P_u = sigma2/sigma_u2. Its inverse is closed form:
+
+           s        = P_c + sum_j n_j P_u / (n_j + P_u)
+           Var(d)   = sigma2 / s
+           Var(u_j) = sigma2 [ 1/(n_j + P_u) + (n_j/(n_j + P_u))^2 / s ]
+
+       In a one-race cell with many rows, sigma2/A_dd -> 0 while the truth
+       is sigma2/(P_c + P_u) = tau2 sigma_u2 / (tau2 + sigma_u2): the split
+       between the course and the day is NEVER resolved by more rows of
+       the same race, and the diagonal said it was. That is the mechanism
+       behind the sevenfold under-recovery of sigma_u noted above (a
+       planted 3% day came back 0.0041 on a few-races world), and behind
+       every "thin course keeps too much of one race" complaint: an
+       under-estimated sigma_u hands the course the day's noise.
+
+       This is the standard nested-design result (Searle, Casella &
+       McCulloch, Variance Components, ch. 3; Gelman & Hill ch. 12-13): the
+       conditional variance of a group effect given its subgroups is the
+       Schur complement of the arrowhead, not its diagonal entry. It costs
+       two bincounts per outer.
+
+    ! CONDITIONED ON THE ABILITIES. The athletes' block still couples the
+      cells to each other, and the probes (cellPosteriorVar) remain the
+      unbiased estimate of the full diag(A^-1). This is the cheap step that
+      runs every outer; the probes are the expensive one at the end."""
+    w = np.asarray(w, dtype=np.float64)
+    hh = np.asarray(h, dtype=np.float64)
+    wh2 = w * hh * hh if hh.shape else w * float(hh) ** 2
+    info_race = np.bincount(D.race, weights=wh2, minlength=D.n_race)
+    pr = np.broadcast_to(np.asarray(pen_race, dtype=np.float64),
+                         (D.n_race,))
+    tot = np.maximum(info_race + pr, 1e-12)
+    q = info_race / tot                          # n_j / (n_j + P_u)
+    cell_of = cellOfRace(D)
+    pc = np.array(np.broadcast_to(np.asarray(pen_cell, dtype=np.float64),
+                                  (D.n_cell,)), dtype=np.float64)
+    if era_deg is not None and pen_era > 0.0:
+        pc = pc + float(pen_era) * np.asarray(era_deg, dtype=np.float64)
+    s = pc + np.bincount(cell_of, weights=q * pr, minlength=D.n_cell)
+    s = np.maximum(s, 1e-12)
+    var_d = sigma2 / s
+    var_u = sigma2 * (1.0 / tot + q * q / s[cell_of])
+    return var_d, var_u
+
+
 def racesPerCell(D):
     """How many distinct races back each cell."""
     pair = D.cell * np.int64(D.n_race) + D.race
@@ -2032,12 +2270,23 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
-               ability_weight=False, top_frac=0.0):
+               ability_weight=False, top_frac=0.0, nested_var=True):
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
     n = y.size
     assert D.n == n, "design and response disagree on the row count"
+    # ★ AN ASSERTED SPORT LEVEL IS THE MERGE SEMANTICS WITH A NUMBER. The
+    #   level is not in theta; it is taken off y (tilted, so refreshed with
+    #   h every pass) and the per-sport means of d and u are DROPPED rather
+    #   than banked, exactly as --merge-sports does at zero.
+    mu_fixed = getattr(D, "mu_fixed", None)
+    if mu_fixed is not None:
+        merge_sports = True
+        if verbose:
+            print("[joint] sport level ASSERTED, not estimated: mu = "
+                  f"{np.round(mu_fixed, 5)} (log-time; a negative TF level "
+                  "means the track is faster)", flush=True)
 
     if isinstance(sigma_u_floor, str) and sigma_u_floor == "default":
         sigma_u_floor = dict(SIGMA_U_FLOOR)
@@ -2113,11 +2362,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
                        ridge_slope=ridge_slope, link_weight=link_weight,
-                       alt_prior_pen=alt_prior_pen, pen_era=pen_era)
+                       alt_prior_pen=alt_prior_pen, pen_era=pen_era,
+                       imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
+                       ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2)
         diag = op.diag()
+        # the asserted level comes off y, tilted like the estimated one
+        y_fit = y if mu_fixed is None else y - h * mu_fixed[D.group_row]
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
-            op.rhs(y), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
+            op.rhs(y_fit), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
             tol=CG_TOL if outer == n_outer - 1 else CG_TOL_OUTER)
         b = D.unpack(theta)
         bbar = 0.0
@@ -2126,7 +2379,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         b = recentreLevels(b, D, merge=merge_sports)
         theta = _pack(b, D)
 
-        resid = y - rowPrediction(b, D, h, amp)
+        resid = y_fit - rowPrediction(b, D, h, amp)
 
         # --- variance components ------------------------------------ #
 
@@ -2136,8 +2389,16 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         #   sigma2/A_ii -- a lower bound on the posterior variance, so tau2
         #   is still conservative, but no longer collapsing.
         sigma2 = float(np.average(resid ** 2, weights=w))
-        d_var = sigma2 / np.maximum(diag[D.o_d:D.o_u], 1e-12)
-        u_var = sigma2 / np.maximum(diag[D.o_u:D.o_mu], 1e-12)
+        if nested_var:
+            # ★ THE ARROWHEAD, NOT THE DIAGONAL. See nestedPosteriorVar:
+            #   within a cell d and its u's are collinear, and the
+            #   diagonal pretends more rows of one race resolve the split.
+            d_var, u_var = nestedPosteriorVar(
+                D, w, h, op.pen_cell, pen_race, sigma2,
+                era_deg=op._era_deg, pen_era=op.pen_era)
+        else:
+            d_var = sigma2 / np.maximum(diag[D.o_d:D.o_u], 1e-12)
+            u_var = sigma2 / np.maximum(diag[D.o_u:D.o_mu], 1e-12)
         # ! race_ok / cell_ok, NOT every race and cell. See racesPerCell.
         #   And PER GROUP, because the split between a course and a day is
         #   the priors' alone -- see SIGMA_U_FLOOR.
@@ -2229,6 +2490,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                           f"calibrated from season-best pairs")
             if D.n_k:
                 extra += f", altitude k {np.round(b['k'], 4)} /km"
+            if getattr(D, "n_imp", 0):
+                extra += (f", meet importance {np.round(b['imp'], 4)} "
+                          f"(log-time, negative = the field ran faster)")
+            if getattr(D, "n_ind", 0):
+                extra += f", indoor {np.round(b['ind'], 4)} per pool"
 
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
@@ -2245,16 +2511,37 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,
                    ridge_slope=ridge_slope, link_weight=link_weight,
-                   alt_prior_pen=alt_prior_pen, pen_era=pen_era)
+                   alt_prior_pen=alt_prior_pen, pen_era=pen_era,
+                   imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
+                   ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2)
     diag_final = op.diag()
+    nested_d, nested_u = (nestedPosteriorVar(
+        D, w, h, op.pen_cell, pen_race, sigma2,
+        era_deg=op._era_deg, pen_era=op.pen_era) if nested_var
+        else (None, None))
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
-                                D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)
+                                D.n_cell, sigma2, n_probe=n_probe, seed=seed,
+                                verbose=verbose, nested=nested_d)
 
     b = D.unpack(theta)
+    mu_full = b["mu"] if mu_fixed is None else mu_fixed.copy()
+    delta = mu_full[D.group_of_cell] + b["d"]
+    # ★ THE INDOOR TERM IS PART OF THE COURSE: fold each cell's mean indoor
+    #   term (per row it is the pool's coefficient) into delta, so the
+    #   go-live tilts and applies one number and the board displays it.
+    ind_cell = None
+    if getattr(D, "n_ind", 0) and b.get("ind") is not None:
+        rows_c = np.maximum(np.bincount(D.cell, minlength=D.n_cell), 1)
+        ind_cell = (np.bincount(D.cell, weights=D.ind_w * b["ind"][D.ind_idx],
+                                minlength=D.n_cell) / rows_c)
+        delta = delta + ind_cell
     out = {
         "ability": b["a"],
-        "delta": b["mu"][D.group_of_cell] + b["d"],   # the full difficulty
-        "d": b["d"], "mu": b["mu"],
+        "delta": delta,                                # the full difficulty
+        "d": b["d"], "mu": mu_full,
+        "mu_fixed": None if mu_fixed is None else mu_fixed.copy(),
+        "importance": b.get("imp"),
+        "indoor": b.get("ind"), "indoor_cell": ind_cell,
         "race_effect": b["u"],
         "beta": b["beta"],
         "rust": b["r"],
@@ -2265,6 +2552,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "slope": b["g"],
         "altitude_coef": b["k"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),
+        "cell_var_nested": nested_d, "race_var": nested_u,
         "sigma2": sigma2, "sigma_u2": sigma_u2, "tau2": tau2,
         "weights": w, "robust_scale": scale, "h": h, "amp": amp,
         "rating": rating, "n_races": n_races,
@@ -2357,5 +2645,7 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     u = np.where(r_cnt > 0, b["u"], 0.0)
     bb = dict(b)
     bb["u"] = u
+    if getattr(D_train, "mu_fixed", None) is not None:
+        bb["mu"] = D_train.mu_fixed          # the asserted level, off theta
     pred = rowPrediction(bb, D_test, h, amp)
     return pred, covered

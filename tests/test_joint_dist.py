@@ -104,7 +104,9 @@ def test_banded_offsets_follow_the_rating():
     top = free & (rating >= 120)
     assert (D.e_idx[top] == classes[top] * js.DIST_N_BAND + 2).all()
     assert (D.e_w[~free] == 0).all(), "the pinned event is pinned in every band"
-    assert rj.bandLabels(["p0:800"]) == ["p0:800:b0", "p0:800:b1", "p0:800:b2"]
+    # four bands since 2026-09-11 (a top band from 135, DIST_BANDS)
+    assert rj.bandLabels(["p0:800"]) == [f"p0:800:b{b}" for b in range(js.DIST_N_BAND)]
+    assert js.DIST_N_BAND == 4 and js.DIST_BANDS == (105.0, 120.0, 135.0)
     D0 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes,
                    n_e=len(labels))
     assert D0.n_e == len(labels) and not D0.dist_banded
@@ -280,17 +282,21 @@ def test_the_rating_interpolates_the_offset_between_band_anchors():
     nb = len(labels)
     e = np.zeros(nb * js.DIST_N_BAND)
     c = labels.index("p0:3200")
-    e[c * js.DIST_N_BAND:(c + 1) * js.DIST_N_BAND] = [0.018, 0.009, 0.000]
+    # four bands (2026-09-11): anchors 90 / 112 / 127 / 145, DIST_BAND_ANCHORS
+    assert js.DIST_BAND_ANCHORS == (90.0, 112.0, 127.0, 145.0)
+    e[c * js.DIST_N_BAND:(c + 1) * js.DIST_N_BAND] = [0.018, 0.009, 0.000, -0.006]
     rows = np.flatnonzero((classes == c))
     for r_in, want in ((80.0, 0.018), (90.0, 0.018), (101.0, 0.0135),
-                       (112.0, 0.009), (119.9, 0.009 - 0.009 * 7.9 / 18),
-                       (120.1, 0.009 - 0.009 * 8.1 / 18), (130.0, 0.0), (140.0, 0.0)):
+                       (112.0, 0.009), (119.9, 0.009 - 0.009 * 7.9 / 15),
+                       (120.1, 0.009 - 0.009 * 8.1 / 15), (127.0, 0.0),
+                       (136.0, -0.003), (145.0, -0.006), (150.0, -0.006)):
         got = js.distOffsetRow(D, e, np.full(len(y), r_in))
         assert abs(float(got[rows[0]]) - want) < 1e-9, (r_in, got[rows[0]], want)
-    # continuous across 120: a hair apart, not a point
-    a = js.distOffsetRow(D, e, np.full(len(y), 119.99))[rows[0]]
-    b = js.distOffsetRow(D, e, np.full(len(y), 120.01))[rows[0]]
-    assert abs(a - b) < 2e-5
+    # continuous across the band edges: a hair apart, not a point
+    for edge in js.DIST_BANDS:
+        a = js.distOffsetRow(D, e, np.full(len(y), edge - 0.01))[rows[0]]
+        b = js.distOffsetRow(D, e, np.full(len(y), edge + 0.01))[rows[0]]
+        assert abs(a - b) < 2e-5, edge
     # rows with no class carry nothing; an unbanded design gets its value
     assert (js.distOffsetRow(D, e, np.full(len(y), 110.0))[classes < 0] == 0).all()
     D0 = js.Design(ath, cel, rac, group_of_cell=group, dist=classes, n_e=nb)

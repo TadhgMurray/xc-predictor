@@ -1559,14 +1559,30 @@ def athlete(person_id):
         athlete["pool_words"] = poolWords(season_rating["pool"])
         athlete["rank_floor"] = floorLabel(season_rating["year"])
         try:
-            from conversions import _norm_from_rating
-            athlete["equiv_time"] = clockFor(_norm_from_rating(
-                float(athlete["rating"]), season_rating["pool"],
-                0.0, season_rating["sport"]))
+            # ★ THROUGH THE SAME INVERSE THE CONVERSIONS PAGE USES
+            #   (2026-09-11). 100 * pool_mean / rating is the ADJUSTED time
+            #   at a zero-effect venue, not a time anyone runs; the page put
+            #   it back at a typical venue with the event's terms. And it is
+            #   a time at the POOL'S anchor distance (normalize_distance.
+            #   targetFor: 5000 hs, 8000 college men, 6000 college women,
+            #   3200 middle school), so the label says which.
+            from conversions import _norm_from_rating, normalized_to_time
+            from normalize_distance import targetFor
+            _pool, _sport = season_rating["pool"], season_rating["sport"]
+            _dist = float(targetFor(_pool, _sport))
+            _norm = _norm_from_rating(float(athlete["rating"]), _pool, 0.0, _sport)
+            _secs = (normalized_to_time(_norm, {"distance": _dist, "pool": _pool,
+                                                "sport": _sport})
+                     if _norm else None)
+            athlete["equiv_time"] = clockFor(_secs)
+            athlete["equiv_dist"] = (f"{int(round(_dist / 1000.0))}K"
+                                     if abs(_dist / 1000.0 - round(_dist / 1000.0)) < 1e-6
+                                     else f"{int(round(_dist))}m")
         except Exception as exc:         # noqa: BLE001 -- a phrase, not a page
             print(f"athlete: equiv time failed ({type(exc).__name__}: {exc})",
                   flush=True)
             athlete["equiv_time"] = None
+            athlete["equiv_dist"] = None
         nation = next((e for e in (rank_line or [])
                        if e.get("label") == "Nation"), None)
         athlete["percentile"] = (percentileWords(nation["rank"],

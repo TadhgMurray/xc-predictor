@@ -25,7 +25,15 @@ y  =  a[athlete-season]                      the ability. THIS IS THE RATING.
    +  e_w · e[distance class]                distance offsets (TF only)
    +  g[athlete] · lz                        per-athlete endurance slope
    +  k[group] · alt                         altitude, log-time per km
+   +  imp[pool, sport, class]                meet importance (taper), 2026-09-11
+   +  h · ind[pool] · is_indoor[cell]        indoor as a shared term, 2026-09-11
 ```
+
+Since 2026-09-11 `mu` can be **asserted** instead of estimated
+(`--sport-level G` → `Design.mu_fixed = [0, −G]`): the block leaves theta
+and `h·mu` comes off `y` every pass. The two new terms, the E-step change
+and the conversion fixes are written up in
+`docs/RESEARCH-ENGINE-2026-09-11.md`, Part II.
 
 Everything is log-time and additive. A rating is a monotone transform of
 `a`; that is why "a 133 here and a 133 anywhere else are the same
@@ -131,6 +139,10 @@ Letting one-race cells vote on the priors collapses them.
 | `CURVE_N_KNOTS` | 13 @ 30 days | one season |
 | `CURVE_SMOOTH` | 1.0 | a prior, explicitly **not** tunable by held-out error |
 | `WINTER_GAIN` | 0.0 | an identification assertion, not an estimate |
+| `DIST_BANDS` / `DIST_BAND_ANCHORS` | (105, 120, 135) / (90, 112, 127, 145) | four bands since 2026-09-11: the tables put the 800→1600 exponent higher at lower ability, and one band over 120 handed a 150-rated half-miler a 4:10 miler's relation |
+| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | {1: −0.010, 2: −0.025} / 0.02 | the taper literature (Bosquet 2007, Mujika & Padilla); a stated SD, never pseudo-rows (it competes with `sigma_u²` summed over championship races) |
+| `IND_PRIOR_MEAN` / `IND_PRIOR_SD` | +0.012 / 0.01 | NCAA facility factors 2012, WA short-track tables 2025 |
+| `nested_var` | True | the E-step's conditional variance is the exact (cell + its races) arrowhead, not the information diagonal (§5) |
 
 ### Why `tau` is the OBSERVED spread and not the true one
 
@@ -166,7 +178,13 @@ Conjugate gradient on a symmetric positive-definite operator
 Each outer pass:
 
 1. CG solve for `theta` (all blocks at once), `CG_TOL = 1e-8`, max 600 iters
-2. update `sigma2` (residual), `tau2` per group, `sigma_u2` per group
+2. update `sigma2` (residual), `tau2` per group, `sigma_u2` per group —
+   each as `mean(estimate² + Var(estimate | y))`, with the variance from
+   `nestedPosteriorVar` (the exact inverse of each cell's `(d, u_1..u_m)`
+   arrowhead, abilities held). Until 2026-09-11 it was `sigma2 / A_ii`,
+   which for a one-race cell goes to zero with more rows while the truth
+   stays at `sigma2/(P_c + P_u)`: an under-stated `sigma_u`, and every
+   thin course keeping too much of one day
 3. robust reweight (Huber, asymmetric)
 4. recompute `h` from the current ratings
 
@@ -322,6 +340,36 @@ tolerance that grabbed the neighbouring distance cell, and ignored the
 tilt. All three made published numbers look wrong that weren't. Fixed; the
 lesson is that a diagnostic is code and gets the same scrutiny.
 
+**9.12 — `engine_scale.anchor_shift` was not the anchor.** The display
+moved to the unweighted mean over track cells (9.5, 9.9) and the shift the
+conversions page reads to undo it stayed the results-weighted mean over
+both sports, so every named-venue conversion carried the corpus-mix XC/TF
+gap as a phantom venue effect. Fixed 2026-09-11: one variable, both uses.
+
+**9.13 — The conversions page's forward map was two undamped passes of a
+fixed point**, returning an adjusted time built from the effect at the
+previous iterate; the inverse evaluated the effect at the rating that
+adjusted time implies. With a hard band step between the two ratings that
+was one inter-band step of the 3200 offset, −3.34%: the whole of #21.
+Fixed: solved to 1e-10, the offset continuous in the rating whatever the
+table holds.
+
+**9.14 — The home-page boards tilted an already-tilted rating.**
+`panels._tilted` re-applied `tilt.ratingFor` with the display-anchored
+difficulty. The go-live's own warning says not to. Removed.
+
+**9.15 — A prior sized in pseudo-rows.** The first cut of the importance
+term put 50 pseudo-rows on a coefficient that the data cannot separate
+from `sigma_u²` summed over every championship race; on a small world that
+halved it. Priors on shared terms are stated as an SD (`IMP_PRIOR_SD`),
+like `DIST_PRIOR_SD`, and `pen = sigma²/SD²` is recomputed each outer.
+
+**9.16 — `--merge-sports` never pinned `mu`.** It refused to bank the cell
+means into `mu` but left `mu` itself an unpenalised parameter, so CG parked
+whatever it liked there along the near-null direction against the curve;
+its test starts from `mu = 0` and never solves. `--sport-level` takes the
+level out of theta (`Design.mu_fixed`).
+
 ---
 
 ## 10. Traps that are not the engine's fault
@@ -339,19 +387,29 @@ lesson is that a diagnostic is code and gets the same scrutiny.
 
 ## 11. Open, in rough priority order
 
-1. **#21 conversion round-trip** — a 3200m input comes back 3.4% fast from
-   its own 3200m row. The gap is ~3.8× the entire fitted TF difficulty
-   spread, so course difficulty cannot account for it. 800m and 10k are
-   far worse. This is arithmetic, not argument — do it first.
-2. **#22 meet-importance covariate** — the championship/taper confound of
-   §3. Unblocks Foot Locker and the "easiest tracks are all state meets"
-   complaint.
-3. **Indoor as a shared term**, beside altitude, for the reason in §3.
+Done 2026-09-11, unrun on the box (see `docs/RESEARCH-ENGINE-2026-09-11.md`
+Part III for what to read in the first log): #21 (three consumer-side
+defects, 9.12–9.14), #22 (the importance term; needs a repack for
+`meet_class`), indoor as a shared term, #9/#13 (the tables as the prior
+mean of an uncalibrated event offset), the E-step (§5), a fourth distance
+band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
+
+1. **Score the new terms.** `08a_holdout` carries the same flags; give the
+   ladder rungs `no-importance`, `no-indoor`, `no-dist-table`, `diag-var`.
+2. **Hyperpriors on `tau` and `sigma_u`** (half-normal / PC, Gelman 2006,
+   Simpson 2017) instead of the observed-sd cap, once the nested E-step's
+   numbers have been read on the box.
+3. **Altitude per event** — the NCAA tables run ~1%/km at 800 and ~4%/km
+   at 5000; one coefficient per sport is the average of those.
 4. **#12 era drift is built but off.** Score it (`--era-years 2` on the
    holdout) before turning it on in `08_golive`.
-5. **#9 / #13 distance offsets** — centre them on published WA/Purdy
-   tables instead of on zero.
-6. **#18 per-cell posterior SD** back on.
+5. **#18 per-cell posterior SD** back on, and `n_results` beside every
+   published difficulty (every practical system flags thin evidence).
+6. **Rebuild the track curve on equal-quality pairs** with the level and
+   sex dependence inside it and retire the per-event offsets — the
+   principled end state; today's offsets and table prior are the bridge.
+7. **The championship class from a better source** than the meet name
+   (`meets_tfrrs.is_championship` exists for tfrrs meets).
 
 ---
 

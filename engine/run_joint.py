@@ -255,6 +255,45 @@ def logDistCentered(cols, keep, athlete, n_ath):
     return out
 
 
+def importanceClasses(cols, keep, pool_of_athlete, pool_names):
+    """Per row, the meet-importance coefficient index (issue #22):
+    (pool, sport, class) -> pool * 4 + sport * 2 + (class - 1), or -1 for
+    an ordinary meet (class 0). Returns (index per kept row, n_imp, the
+    prior mean per index from js.IMP_PRIOR_MEAN, labels)."""
+    mc = np.asarray(cols["meet_class"], dtype=np.int64)[keep]
+    sport = np.asarray(cols["sport"])[keep].astype(np.int64)
+    pool_row = pool_of_athlete[np.asarray(cols["athlete"])[keep]]
+    cls = np.clip(mc, 0, 2)
+    idx = np.where(cls > 0, pool_row * 4 + sport * 2 + (cls - 1), -1)
+    n_imp = len(pool_names) * 4
+    prior = np.zeros(n_imp)
+    labels = []
+    for p, name in enumerate(pool_names):
+        for s, sname in ((0, "XC"), (1, "TF")):
+            for c in (1, 2):
+                prior[p * 4 + s * 2 + (c - 1)] = js.IMP_PRIOR_MEAN[c]
+                labels.append(f"{name}:{sname}:c{c}")
+    n_rows = int((idx >= 0).sum())
+    print(f"[joint] meet importance: {n_rows:,} of {idx.size:,} rows at a "
+          f"championship-class meet (class 1: {int((cls == 1).sum()):,}, "
+          f"class 2: {int((cls == 2).sum()):,}); {n_imp} coefficients, "
+          f"prior means {js.IMP_PRIOR_MEAN} sd {js.IMP_PRIOR_SD}")
+    return idx.astype(np.int64), n_imp, prior, labels
+
+
+def indoorCells(course_keys):
+    """Per cell, is it an indoor track ('TF:loc:<id>:in', era suffix or
+    not)? None when no cell is."""
+    flags = np.array([str(k).split("@", 1)[0].endswith(":in")
+                      for k in course_keys], dtype=bool)
+    if not flags.any():
+        return None
+    print(f"[joint] indoor: {int(flags.sum()):,} of {flags.size:,} cells are "
+          f"indoor tracks; one shared coefficient per pool, prior "
+          f"{js.IND_PRIOR_MEAN:+.4f} sd {js.IND_PRIOR_SD}")
+    return flags
+
+
 def seasonLinks(athlete_raw, year, athlete, n_ath):
     """Consecutive athlete-seasons of one athlete key (person, pool):
     (k0, k1, 1 / years apart). Issue 154."""
@@ -364,10 +403,16 @@ def eraCells(course, year, years, n_cells, group, course_keys):
 
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
-                dist_bands=True, split_ability=False, era_years=0):
+                dist_bands=True, split_ability=False, era_years=0,
+                sport_level=None, importance=True, indoor=True,
+                dist_table=True):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
-    The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
+    The distance classes ride on the Design as `dist_labels` / `dist_refs`.
+
+    sport_level: None estimates the XC/TF level (mu), a number ASSERTS it
+    (log-time, the track this much faster: XC_TRACK_GAP). importance /
+    indoor / dist_table switch the 2026-09-11 shared terms."""
     athlete_raw = cols["athlete"][keep]
     year = cols["year"][keep]
     course = cols["course"][keep].astype(np.int64)
@@ -461,6 +506,33 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   f"above it); a resident's exposure is venue km - "
                   f"{js.ALT_ACCLIM:g} x home km (issue 192)")
 
+    # the asserted sport level (XC_TRACK_GAP): one level per group, XC 0
+    mu_fixed = None
+    if sport_level is not None:
+        if sport is None:
+            print("[joint] --sport-level needs a two-sport pack; ignored")
+        else:
+            mu_fixed = np.array([0.0, -float(sport_level)])
+    # the meet-importance classes (issue #22): from the pack's meet_class
+    imp_row, n_imp, imp_prior, imp_labels = None, None, None, []
+    if importance and "meet_class" in cols and sport is not None:
+        imp_row, n_imp, imp_prior, imp_labels = importanceClasses(
+            cols, keep, pool_of_athlete, pool_names)
+    elif importance and "meet_class" not in cols:
+        print("[joint] meet importance: OFF (pack has no meet_class -- "
+              "repack with --from 7)")
+    # indoor as a shared term: from the cell keys (':in')
+    ind_cell = indoorCells(course_keys) if indoor else None
+    # the published tables as the prior mean of an uncalibrated event
+    # offset (distance_tables): NaN where no curve is reachable
+    e_table = None
+    if dist_table and dist_row is not None and dist_labels and dist_bands:
+        import distance_tables as dtab
+        e_table = dtab.tablePrior(dist_labels, dist_refs, js.DIST_N_BAND)
+        if e_table is None:
+            print("[joint] distance tables: no reachable curve -- event "
+                  "offsets keep the zero prior")
+
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
@@ -470,8 +542,11 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   dist_banded=dist_bands, dist_ref=dist_ref_row,
                   alt_home=alt_home,
                   era_pairs=era_pairs, era_w=era_w,
-                  eras_per_base=eras_per_base)
+                  eras_per_base=eras_per_base,
+                  mu_fixed=mu_fixed, imp=imp_row, n_imp=n_imp,
+                  imp_prior=imp_prior, ind=ind_cell, e_table=e_table)
     D.course_keys = course_keys
+    D.imp_labels = imp_labels
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
                      else dist_labels)
     D.dist_refs = dist_refs
@@ -582,8 +657,8 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
         band = int(parts[2][1:]) if len(parts) > 2 else 1
         by_pool.setdefault(p, {}).setdefault(d, {})[band] = (float(e[i]), int(rows[i]))
     banded = getattr(D, "dist_banded", False)
-    bands_txt = (f", by rating band (<{js.DIST_BANDS[0]:.0f} / mid / "
-                 f">={js.DIST_BANDS[1]:.0f})" if banded else "")
+    bands_txt = (", by rating band (<" + " / ".join(f"{b:.0f}" for b in js.DIST_BANDS)
+                 + f" / >={js.DIST_BANDS[-1]:.0f})" if banded else "")
     print("[joint] track distance offsets, log-time vs the pool's reference "
           f"event (+ = that event was normalising slow){bands_txt}:")
     if banded and cal_n is not None and int((cal_n > 0).sum()):
@@ -626,6 +701,53 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                     pairs.append(f"{d}: " + "/".join(txt))
             if pairs:
                 print(f"    {'':<10} pairs      {'  '.join(pairs)}")
+
+
+def sharedTermKwargs(args):
+    """The 2026-09-11 terms, for EVERY buildDesign call site: a holdout
+    scored on a design without them would score a different model."""
+    return dict(sport_level=args.sport_level,
+                importance=not args.no_importance,
+                indoor=not args.no_indoor,
+                dist_table=not args.no_dist_table)
+
+
+def reportSharedTerms(out, D, pool_names):
+    """The asserted level, the meet-importance coefficients and the indoor
+    coefficients, for the log."""
+    if out.get("mu_fixed") is not None:
+        mu = out["mu_fixed"]
+        print(f"[joint] sport level ASSERTED at TF - XC = {mu[1] - mu[0]:+.5f} "
+              f"log-time (XC_TRACK_GAP {js.XC_TRACK_GAP:.4f} = ln 1.06): the "
+              f"average track is the zero, the average XC course reads "
+              f"{100 * np.expm1(mu[0] - mu[1]):+.2f}% by construction, and the "
+              f"fall-to-spring change is in the form curve")
+    imp = out.get("importance")
+    labels = getattr(D, "imp_labels", [])
+    if imp is not None and labels:
+        rows = np.bincount(D.imp_idx, weights=D.imp_w, minlength=D.n_imp)
+        print("[joint] meet importance, log-time per (pool, sport, class); "
+              "negative = the field ran faster than the same athletes at an "
+              "ordinary meet (c1 league/conference/district, c2 section/"
+              "region/state/national). NOT in a rating; it keeps the "
+              "championship-only venues honest:")
+        by_pool = {}
+        for i, lab in enumerate(labels):
+            p, s, c = lab.split(":")
+            by_pool.setdefault(p, []).append(
+                f"{s} {c} {100 * float(imp[i]):+.2f}% ({int(rows[i]):,})")
+        for p in pool_names:
+            if p in by_pool:
+                print(f"    {p:<10}" + "   ".join(by_pool[p]))
+    ind = out.get("indoor")
+    if ind is not None and getattr(D, "n_ind", 0):
+        rows = np.bincount(D.ind_idx, weights=D.ind_w, minlength=D.n_ind)
+        names = pool_names if D.n_ind == len(pool_names) else ["all"]
+        print("[joint] indoor, log-time per pool (+ = an indoor track is "
+              "slower than the average outdoor one; inside delta, so it IS "
+              "in the rating and on the board): "
+              + ", ".join(f"{n} {100 * float(v):+.2f}% ({int(r):,})"
+                          for n, v, r in zip(names, ind, rows)))
 
 
 # ★★ ONE PLACE THAT SAYS WHAT THE MODEL IS. The holdout used to pass a
@@ -685,14 +807,16 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                              link=args.link and not args.no_link,
                              dist_bands=not args.no_dist_bands,
                              split_ability=args.split_ability,
-                             era_years=args.era_years)
+                             era_years=args.era_years,
+                             **sharedTermKwargs(args))
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
                              link=args.link and not args.no_link,
                              dist_bands=not args.no_dist_bands,
                              split_ability=args.split_ability,
-                             era_years=args.era_years)
+                             era_years=args.era_years,
+                             **sharedTermKwargs(args))
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
                         **solveKwargs(args, athlete_pool, verbose=False))
@@ -937,6 +1061,32 @@ def buildParser():
                          "level, and the curve free to carry the season. "
                          "Implies --no-sport-offset, --winter-gain 0 and "
                          "--curve-gap 0.")
+    # ★ THE LEVEL AS A NUMBER (2026-09-11). Every practical rating system
+    #   that spans two surfaces states the conversion (Tully's speed-rating
+    #   to track chart, the NCAA facility factors, WMA's log-distance
+    #   interpolation); none estimates it from the results, because sport
+    #   is season and the data cannot. --merge-sports asserted ZERO; this
+    #   asserts the stated grass cost instead, and unlike merge it takes
+    #   the level OUT of theta (Design.mu_fixed) rather than leaving an
+    #   unpenalised mu for CG to park along the curve's null direction.
+    #   Implies everything --merge-sports implies.
+    ap.add_argument("--sport-level", type=float, default=None, metavar="G",
+                    help="ASSERT the XC/TF level: the track is G log-time "
+                         f"faster than the average XC course (the stated "
+                         f"grass cost is {js.XC_TRACK_GAP:.4f} = ln 1.06). "
+                         "Implies --no-sport-offset, --winter-gain 0, "
+                         "--curve-gap 0 and drops --winter-gain-bands. "
+                         "Unset: the level is estimated, as before")
+    ap.add_argument("--no-importance", action="store_true",
+                    help="no meet-importance (championship taper) term "
+                         "(issue #22); the pack's meet_class is ignored")
+    ap.add_argument("--no-indoor", action="store_true",
+                    help="no shared indoor coefficient per pool; indoor "
+                         "cells carry the surface alone, as before")
+    ap.add_argument("--no-dist-table", action="store_true",
+                    help="event-offset classes the season-best pairs cannot "
+                         "calibrate keep a zero prior instead of the "
+                         "published tables' relation (distance_tables)")
     ap.add_argument("--sport-gap-delta", type=float, default=0.0,
                     metavar="D",
                     help="add this to the solve's bbar every pass -- D from "
@@ -1075,6 +1225,29 @@ def applyImplications(args, ap):
               "        The two sports' mean course difficulty is held equal "
               "by construction,\n        so all autumn-to-spring movement "
               "is carried by the form curve.")
+    if args.sport_level is not None:
+        # the same five places --merge-sports settles, with a number in
+        # the level instead of zero (see Design.mu_fixed). After the merge
+        # block on purpose: given both, the number wins.
+        args.no_sport_offset = True
+        args.winter_gain = 0.0
+        args.curve_gap = 0.0
+        if args.sport_gap_delta:
+            print("[joint] --sport-gap-delta is meaningless with "
+                  "--sport-level (the level is asserted); ignoring it")
+            args.sport_gap_delta = 0.0
+        if args.winter_gain_bands:
+            print(f"[joint] --winter-gain-bands {args.winter_gain_bands} is "
+                  f"a post-solve shift of the track rows; with --sport-level "
+                  f"it would move the asserted level. Dropping it.")
+            args.winter_gain_bands = None
+        if getattr(args, "merge_sports", False):
+            print("[joint] --merge-sports and --sport-level both given; the "
+                  "level is the number, not zero")
+            args.merge_sports = False
+        print(f"[joint] SPORT LEVEL ASSERTED: TF - XC = {-args.sport_level:+.5f} "
+              f"log-time. No beta, no winter-gain pin, curve free: the "
+              f"fall-to-spring change is fitness.")
     return args
 
 
@@ -1113,7 +1286,8 @@ def main():
         link=args.link and not args.no_link, altitude=args.altitude,
         dist_bands=not args.no_dist_bands,
         split_ability=args.split_ability,
-        era_years=args.era_years)
+        era_years=args.era_years,
+        **sharedTermKwargs(args))
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -1202,6 +1376,7 @@ def main():
                     old_gap = float(old_delta[ok & is_tf].mean()
                                     - old_delta[ok & is_xc].mean())
     reportLevelAndCurve(out, D, pool_names, old_gap)
+    reportSharedTerms(out, D, pool_names)
 
     save = dict(delta=delta, delta_anchored=anchored, mu=out["mu"],
                 cell_se=out["cell_se"], cell_var=out["cell_var"],
@@ -1228,6 +1403,14 @@ def main():
     if out.get("altitude_coef") is not None and getattr(D, "n_k", 0):
         save["altitude_coef"] = out["altitude_coef"]
         save["altitude_floor_m"] = np.array([js.ALT_FLOOR_M])
+    if out.get("mu_fixed") is not None:
+        save["mu_fixed"] = out["mu_fixed"]
+    if out.get("importance") is not None and getattr(D, "n_imp", 0):
+        save["importance"] = out["importance"]
+        save["importance_labels"] = np.array(getattr(D, "imp_labels", []))
+    if out.get("indoor") is not None and getattr(D, "n_ind", 0):
+        save["indoor"] = out["indoor"]
+        save["indoor_cell"] = out["indoor_cell"]
     if out.get("dist_offset") is not None and D.n_e:
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)

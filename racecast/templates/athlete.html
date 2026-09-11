@@ -19,7 +19,7 @@
        ~ ((" for " ~ (athlete.school|school_label)) if athlete.school else "")
        ~ ((": speed rating " ~ ("%.1f"|format(athlete.rating))) if athlete.rating else "")
        ~ ((" (" ~ athlete.percentile ~ " of " ~ athlete.pool_words ~ ")") if athlete.percentile and athlete.pool_words else "")
-       ~ ((", about a " ~ athlete.equiv_time ~ " 5K") if athlete.equiv_time else "")
+       ~ ((", about a " ~ athlete.equiv_time ~ " " ~ (athlete.equiv_dist or "5K")) if athlete.equiv_time else "")
        ~ ". Every race, personal records and season ratings on one comparable scale." %}
     {% set meta_ld = {"@context": "https://schema.org", "@type": "Person",
                       "name": athlete.name,

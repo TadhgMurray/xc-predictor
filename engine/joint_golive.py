@@ -184,7 +184,17 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     tf_rows = np.bincount(D.cell, weights=(sport == 1).astype(np.float64),
                           minlength=D.n_cell)
     is_tf = tf_rows > (rows_per_cell * 0.5)
-    ref = solved & is_tf
+    # ★ THE ZERO IS THE AVERAGE OUTDOOR TRACK (2026-09-11). With the indoor
+    #   term inside delta an indoor oval reads about +1%, which is the
+    #   point; letting the 1,574 indoor cells vote on the zero would move
+    #   it by that much times their share and put every outdoor track a
+    #   hair under 0.0. Keys: 'TF:loc:<id>:in' (era suffix or not).
+    is_indoor = np.array([str(k).split("@", 1)[0].endswith(":in") for k in keys],
+                         dtype=bool)
+    ref = solved & is_tf & ~is_indoor
+    if not ref.any():
+        ref = solved & is_tf
+    anchor_used = 0.0                 # what was subtracted: engine_scale reads it
     if ref.any():
         # ★★ THE MEDIAN TRACK, NOT THE RESULTS-WEIGHTED MEAN TRACK (owner,
         #    2026-09-10: "that tf difficulty isn't super tight, also it's
@@ -212,7 +222,8 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         #  ! The median is printed beside it. On a distribution this tight
         #    the two agree to a rounding error, and if they ever stop
         #    agreeing that is worth seeing rather than discovering later.
-        anchored = raw - float(np.mean(raw[ref]))
+        anchor_used = float(np.mean(raw[ref]))
+        anchored = raw - anchor_used
         _med = float(np.median(anchored[ref]))
         print(f"[joint/live] track zero: mean 0.000, median "
               f"{100 * np.expm1(_med):+.3f}% over {int(ref.sum()):,} "
@@ -226,7 +237,12 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                   f"{100 * np.expm1(js.XC_TRACK_GAP):+.2f}% -- grass at the "
                   f"same distance)")
             off = xc_mean - js.XC_TRACK_GAP
-            if abs(off) > 0.03:
+            if out.get("mu_fixed") is not None:
+                print("[joint/live] (the level was ASSERTED this run, so the "
+                      "XC mean above is the definition, not a measurement; "
+                      "the falsifiable part is the SPREAD -- "
+                      "scripts/difficulty_spread.py)")
+            elif abs(off) > 0.03:
                 # ⚠ 3 POINTS IS A THIRD OF THE WHOLE LADDER (firm 3% to muddy
                 #   10%). Past that the scale is not measuring a surface.
                 print(f"[joint/live] ⚠ that is {100 * off:+.1f} points off "
@@ -239,7 +255,8 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         #   both-sports mean rather than dividing by nothing.
         print("[joint/live] no track cells in this pack -- difficulty "
               "anchored on all solved cells, as before")
-        anchored = raw - np.average(raw[solved], weights=w[solved])
+        anchor_used = float(np.average(raw[solved], weights=w[solved]))
+        anchored = raw - anchor_used
     difficulty = np.where(solved, np.expm1(anchored), 0.0)
     diffs = pg.buildDifficultyDict(keys, difficulty, D.cell, athlete_raw,
                                    solved)
@@ -315,7 +332,13 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                     out["race_effect"][seen_r].astype(np.float32),
                     race_n[seen_r], pack_date)
     scale_rows = []
-    shift = float(np.average(raw[solved], weights=w[solved]))
+    # ★ THE SHIFT IS THE ANCHOR THAT WAS APPLIED (2026-09-11, issue #21).
+    #   This was the results-weighted mean over BOTH sports while the
+    #   display had moved to the unweighted mean over track cells (above),
+    #   so engine_scale.anchor_shift no longer undid the display anchor and
+    #   every named-venue conversion carried the corpus-mix XC/TF gap, a
+    #   few percent, as a phantom venue effect. One variable, both uses.
+    shift = anchor_used
     pool_row = attrs["pool"][D.athlete]
     pm_row = pm_c[D.athlete]
     for p in np.unique(pool_row):
