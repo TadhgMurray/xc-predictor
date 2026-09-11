@@ -93,6 +93,29 @@ def otherKinds(cur):
                            AND div_id IS NOT NULL
                          GROUP BY meet_id, event_id, div_id) t""")
         kinds["races TF"] = int(cur.fetchone()[0])
+        # ★★ AND THE SAME COUNT WITHOUT FIELD EVENTS AND RELAYS. A track
+        #    meet is one meet_id and DOZENS of (event, division) pages --
+        #    shot put, discus, every hurdle, every relay leg -- and the
+        #    engine does not rate any of them (see check_race_monotone and
+        #    convert_probe, both COALESCE(is_field,0) = 0). Pages for
+        #    events the site has no rating for are the thinnest thing we
+        #    submit, and there are more of them than everything else on
+        #    the site put together.
+        cur.execute("""SELECT count(*) FROM (
+                         SELECT 1 FROM results_tf
+                         WHERE meet_id IS NOT NULL AND event_id IS NOT NULL
+                           AND div_id IS NOT NULL
+                           AND COALESCE(is_field, 0) = 0
+                         GROUP BY meet_id, event_id, div_id) t""")
+        kinds["races TF (track only)"] = int(cur.fetchone()[0])
+        cur.execute("""SELECT count(*) FROM (
+                         SELECT 1 FROM results_tf
+                         WHERE meet_id IS NOT NULL AND event_id IS NOT NULL
+                           AND div_id IS NOT NULL
+                           AND COALESCE(is_field, 0) = 0
+                           AND COALESCE(is_relay, 0) = 0
+                         GROUP BY meet_id, event_id, div_id) t""")
+        kinds["races TF (track, no relay)"] = int(cur.fetchone()[0])
     for table, label in (("meet_agg_xc", "meets XC"), ("meet_agg_tf", "meets TF")):
         if _exists(cur, table):
             cur.execute(f"SELECT count(*) FROM {table}")
@@ -124,11 +147,19 @@ def main():
             floors, total_athletes = athleteFloors(cur)
             kinds = otherKinds(cur)
 
-    other = sum(kinds.values())
+    # the narrowed TF counts are alternatives to "races TF", not additions
+    _tf_alt = [k for k in kinds if k.startswith("races TF (")]
+    other = sum(v for k, v in kinds.items() if k not in _tf_alt)
     print("\n  what the sitemap submits BESIDES athletes")
     for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]):
-        print(f"    {k:<12} {v:>12,}")
-    print(f"    {'TOTAL':<12} {other:>12,}")
+        star = "   <- alternative, not additional" if k in _tf_alt else ""
+        print(f"    {k:<28} {v:>12,}{star}")
+    print(f"    {'TOTAL (as submitted today)':<28} {other:>12,}")
+    if "races TF" in kinds and "races TF (track, no relay)" in kinds:
+        saved = kinds["races TF"] - kinds["races TF (track, no relay)"]
+        print(f"\n    dropping field events and relays from TF race pages "
+              f"removes {saved:,}\n    URLs -- {100.0 * saved / max(other, 1):.0f}% "
+              f"of everything the sitemap submits that is not an athlete.")
 
     print(f"\n  athlete pages by career races "
           f"({total_athletes:,} athletes with a rated race)")
