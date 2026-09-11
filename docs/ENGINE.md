@@ -140,7 +140,7 @@ Letting one-race cells vote on the priors collapses them.
 | `CURVE_SMOOTH` | 1.0 | a prior, explicitly **not** tunable by held-out error |
 | `WINTER_GAIN` | 0.0 | an identification assertion, not an estimate |
 | `DIST_BANDS` / `DIST_BAND_ANCHORS` | (105, 120, 135) / (90, 112, 127, 145) | four bands since 2026-09-11: the tables put the 800→1600 exponent higher at lower ability, and one band over 120 handed a 150-rated half-miler a 4:10 miler's relation |
-| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | {1: 0, 2: 0} / 0.02 | zero mean: no evidence, no taper. `IMP_EXPECTED` {1: −0.010, 2: −0.025} is what a healthy fit shows (Bosquet 2007, Mujika & Padilla). A stated SD, never pseudo-rows (it competes with `sigma_u²` summed over championship races). The class comes from `engine/meet_class.py` with an invitational guard, a season window and a one-race gate |
+| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | {1: 0, 2: 0, 3: 0} / 0.02 | three classes fitted apart (1 league, 2 qualifying round, 3 final), zero mean: no evidence, no taper, and a league meet never inherits a state meet's. `IMP_EXPECTED` {−0.005, −0.015, −0.025} is what a healthy fit shows (Bosquet 2007, Mujika & Padilla). A stated SD, never pseudo-rows (it competes with `sigma_u²` summed over the class's races). The class comes from `engine/meet_class.py` with an invitational guard, a season window and a one-race gate |
 | `IND_PRIOR_MEAN` / `IND_PRIOR_SD` | +0.012 / 0.01 | NCAA facility factors 2012, WA short-track tables 2025 |
 | `nested_var` | True | the E-step's conditional variance is the exact (cell + its races) arrowhead, not the information diagonal (§5) |
 

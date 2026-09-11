@@ -200,10 +200,13 @@ lower, and the sd of published difficulty across `n_results` buckets
 
 ### II.2 The meet-importance term (issue #22)
 
-Pack: `speed_ratings_db.COLUMNS` gains `meet_class` (0 ordinary; 1 league
-/ conference / county / district / metro championship; 2 section / region
-/ state / national / NXN / NXR / Foot Locker / qualifier), from
-`meet_name` through `MEET_CLASS_RX_1/2` in both queries. **Needs a repack
+Pack: `speed_ratings_db.COLUMNS` gains `meet_class` (0 ordinary; 1 a
+league / conference / county / metro championship; 2 a qualifying round:
+section / region / district / prelim / qualifier; 3 a final: the state
+meet, NXN / NXR / Foot Locker / Nike Cross, the NCAA meets, a state
+association's series), from `meet_name` and the tfrrs flag through
+`engine/meet_class.py` in both queries. Three classes fitted apart, so a
+league championship never inherits a state meet's taper. **Needs a repack
 (`--from 7`)**; an old pack runs with the term off and says so.
 
 Model: `row += imp[pool, sport, class]` (untilted), prior mean

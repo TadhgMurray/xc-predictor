@@ -261,10 +261,11 @@ def importanceClasses(cols, keep, pool_of_athlete, pool_names):
     an ordinary meet (class 0). Returns (index per kept row, n_imp, the
     prior mean per index from js.IMP_PRIOR_MEAN, labels)."""
     import meet_class as mcl
+    nc = mcl.N_CLASS
     mc = np.asarray(cols["meet_class"], dtype=np.int64)[keep]
     sport = np.asarray(cols["sport"])[keep].astype(np.int64)
     pool_row = pool_of_athlete[np.asarray(cols["athlete"])[keep]]
-    cls = np.clip(mc, 0, 2)
+    cls = np.clip(mc, 0, nc)
     labelled = cls > 0
     # ★ TWO GATES BETWEEN A LABEL AND A RATING (meet_class.py, "three
     #   things"). A misread name at a venue that hosts one race hands that
@@ -291,23 +292,27 @@ def importanceClasses(cols, keep, pool_of_athlete, pool_names):
     one_race = ok_cell & (races_per_cell[np.maximum(course, 0)] < 2)
     one_race |= ~ok_cell
     cls = np.where(out_of_season | one_race, 0, cls)
-    idx = np.where(cls > 0, pool_row * 4 + sport * 2 + (cls - 1), -1)
-    n_imp = len(pool_names) * 4
+    # one coefficient per (pool, sport, class): league, qualifier and final
+    # are fitted apart, so a league championship never inherits a state
+    # meet's taper (meet_class.py)
+    idx = np.where(cls > 0, (pool_row * 2 + sport) * nc + (cls - 1), -1)
+    n_imp = len(pool_names) * 2 * nc
     prior = np.zeros(n_imp)
     labels = []
     for p, name in enumerate(pool_names):
         for s, sname in ((0, "XC"), (1, "TF")):
-            for c in (1, 2):
-                prior[p * 4 + s * 2 + (c - 1)] = js.IMP_PRIOR_MEAN[c]
+            for c in range(1, nc + 1):
+                prior[(p * 2 + s) * nc + (c - 1)] = js.IMP_PRIOR_MEAN.get(c, 0.0)
                 labels.append(f"{name}:{sname}:c{c}")
     n_rows = int((idx >= 0).sum())
+    per_class = ", ".join(f"{mcl.CLASS_NAMES[c]} {int((cls == c).sum()):,}"
+                          for c in range(1, nc + 1))
     print(f"[joint] meet importance: {n_rows:,} of {idx.size:,} rows carry "
           f"the term (labelled {int(labelled.sum()):,}; dropped as out of "
           f"season {int((labelled & out_of_season).sum()):,}, at a one-race "
           f"venue {int((labelled & one_race & ~out_of_season).sum()):,}); "
-          f"class 1: {int((cls == 1).sum()):,}, class 2: "
-          f"{int((cls == 2).sum()):,}; {n_imp} coefficients, prior means "
-          f"{js.IMP_PRIOR_MEAN} sd {js.IMP_PRIOR_SD}")
+          f"{per_class}; {n_imp} coefficients, prior mean 0, sd "
+          f"{js.IMP_PRIOR_SD}; a healthy fit reads about {js.IMP_EXPECTED}")
     return idx.astype(np.int64), n_imp, prior, labels
 
 
@@ -762,9 +767,10 @@ def reportSharedTerms(out, D, pool_names):
         rows = np.bincount(D.imp_idx, weights=D.imp_w, minlength=D.n_imp)
         print("[joint] meet importance, log-time per (pool, sport, class); "
               "negative = the field ran faster than the same athletes at an "
-              "ordinary meet (c1 league/conference/district, c2 section/"
-              "region/state/national). NOT in a rating; it keeps the "
-              "championship-only venues honest:")
+              "ordinary meet (c1 league/conference, c2 a qualifying round: "
+              "section/region/district/prelim, c3 a final: state/national). "
+              "Each fitted from its own rows, prior mean 0. NOT in a rating; "
+              "it keeps the championship-only venues honest:")
         by_pool = {}
         for i, lab in enumerate(labels):
             p, s, c = lab.split(":")

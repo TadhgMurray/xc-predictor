@@ -1141,10 +1141,10 @@ def packResults(batches, today, merge=False):
     for s_code, s_name in ((0, "XC"), (1, "TF")):
         m = sport == s_code
         if m.any():
-            c = np.bincount(np.clip(meet_class[m].astype(np.int64), 0, 2),
-                            minlength=3)
+            c = np.bincount(np.clip(meet_class[m].astype(np.int64), 0, 3),
+                            minlength=4)
             print(f"[pack] meet_class {s_name}: ordinary {c[0]:,}  "
-                  f"league-level {c[1]:,}  state/national-level {c[2]:,} rows")
+                  f"league {c[1]:,}  qualifier {c[2]:,}  final {c[3]:,} rows")
 
     out = {
         "result_id": np.concatenate([c[0] for c in chunks])[order],

@@ -486,8 +486,11 @@ def altDistanceFactor(dist_m):
 #     EXPECT in the log, not a number to apply: a class the corpus has no
 #     evidence for carries no taper at all, and the big classes are decided
 #     by their tens of thousands of rows either way.
-IMP_PRIOR_MEAN = {1: 0.0, 2: 0.0}
-IMP_EXPECTED = {1: -0.010, 2: -0.025}        # what a healthy fit looks like
+#   THREE CLASSES (meet_class.py): 1 a league championship, 2 a qualifying
+#   round, 3 a final. Each is fitted from its own rows, so a league meet
+#   never inherits the state meet's taper.
+IMP_PRIOR_MEAN = {1: 0.0, 2: 0.0, 3: 0.0}
+IMP_EXPECTED = {1: -0.005, 2: -0.015, 3: -0.025}   # what a healthy fit looks like
 # ⚠ SIZED AS A PRIOR SD, LIKE DIST_PRIOR_SD, NOT AS PSEUDO-ROWS. The data
 #   cannot tell the importance term from the race-day terms of the
 #   championship races (within a race they are collinear); what separates

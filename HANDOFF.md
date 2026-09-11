@@ -124,12 +124,36 @@ between a label and a rating, all in `engine/meet_class.py`:
   the term is a relabel of the day; with one the course would take a
   share of it either way.
 
-The coefficient itself is fitted per (pool, sport, class) with a ZERO
-prior mean; the taper literature's minus one and minus two and a half
-percent are what a healthy fit should look like in the log
-(`IMP_EXPECTED`), not a number that is applied. `scripts/meet_class_census.py`
-prints the biggest meet names behind each class on the real corpus, and
-`--find preview` looks one name up; run it before trusting the class.
+**And nothing is blanketed (owner: "no one is tapering for their league
+championship, but they are for their state meet").** There are three
+classes, each with its own coefficient per pool and sport, each fitted
+from its own rows with a ZERO prior mean: 1 a league or conference
+championship, 2 a qualifying round (section, region, district, prelim,
+anything called a qualifier), 3 a final (the state meet, NXN, NXR, Foot
+Locker, the NCAA meets, a state association's own series). A league
+championship can only ever get the taper its own rows show, and if they
+show none it gets none. A meet's own deviation from its class goes to the
+race-day term, which a rating never removes. What a class average can
+still move is the difficulty of a venue that hosts only that one class,
+and the finer the class the smaller that error. `IMP_EXPECTED` records
+what a healthy fit should show (about −0.5%, −1.5%, −2.5%), not a number
+that is applied. `scripts/meet_class_census.py` prints the biggest meet
+names behind each class on the real corpus, and `--find preview` looks
+one name up; run it before trusting the class.
+
+**The clamp (owner: "what's with the clamp?").** The tilt `h = 1 −
+0.0031·(rating − 100)` is evaluated at the rating clipped to 70–140
+(`TILT_RATING_LO/HI`), because the slope was measured over that band and
+above it the fields are too thin and too elite-only to measure one (the
+golf-slope point: a field of scratch players cannot rate a slope). So a
+150 gets a 140's share of a course. Sized: on Mt. SAC (+5.9%) the clamp
+gives a 150 about 0.27 points more course credit than an unclamped tilt
+would, a 155 about 0.43, a 160 about 0.59; on a +10% course 0.47, 0.72
+and 0.99. Small, and in the direction of over-crediting the very top on
+hard courses. Raising `TILT_RATING_HI` to 155 is a one-line change and
+would take those tenths back; I left it, because the slope above 140 is
+an extrapolation and the all-time boards are exactly where a wrong
+extrapolation shows.
 
 Answers to the three questions asked on 2026-09-11, so they are on file:
 
