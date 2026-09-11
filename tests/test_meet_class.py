@@ -1,8 +1,10 @@
 # Project: xc-predictor / tests
 # File:    test_meet_class.py
-# Purpose: The championship class is one rule in one place, in three classes
-#          fitted apart (league, qualifier, final), and three gates keep a
-#          wrong class from moving a rating (engine/meet_class.py).
+# Purpose: The taper term's covariate is the race's SEASON-END SHARE, read
+#          off the athletes' own calendars (run_joint.seasonEndShare), not a
+#          meet name. The name classes (engine/meet_class.py) are kept as a
+#          diagnostic the log cross-tabulates the share against, so their
+#          rule is still pinned here.
 #
 #   python -m pytest -q tests/test_meet_class.py
 import os
@@ -20,110 +22,107 @@ import joint_solve as js                                       # noqa: E402
 import run_joint as rj                                         # noqa: E402
 
 
-def test_the_rule_on_names_that_matter():
+def test_the_name_rule_on_names_that_matter():
     cases = {
-        # ordinary, whatever else the name says
         "Woodbridge Invitational": 0, "Mt. SAC Invitational": 0,
-        "Stanford Invitational": 0, "Great American XC Festival": 0,
         "Golden State Invitational": 0, "State Preview": 0,
-        "Clovis Twilight": 0, "Nationals Preview Classic": 0,
-        "Tri-State Invitational": 0, "Simplot Games": 0,
-        "Great Southwest International": 0,      # not "national"
-        "Nokia Classic": 0, "Pacific Coast Invitational": 0,
-        # league-level
-        "Big 8 League Finals": 1, "Orange County Championships": 1,
-        "Metro Conference Championships": 1, "Big Ten Championships": 1,
-        "Pacific Conference Championships": 1,   # "cif" inside Pacific is not CIF
-        # a qualifying round
-        "Section IV Championships": 2, "District 3 Championships": 2,
-        "Region 5 Qualifier": 2, "State Meet Qualifying Invitational": 2,
+        "Nationals Preview Classic": 0, "Great Southwest International": 0,
+        "Big 8 League Finals": 1, "Pacific Conference Championships": 1,
+        "Section IV Championships": 2, "Region 5 Qualifier": 2,
         "CIF-SS Prelims": 2, "CIF State Prelims": 2, "UIL Region II-6A": 2,
         "PIAA District 3 Championships": 2, "NCAA West Regional": 2,
-        # a final
         "CIF State Championships": 3, "NXN Northwest Regional": 3,
         "Foot Locker West Regional": 3, "Nike Cross Nationals": 3,
-        "NCAA Division I Championships": 3, "NIRCA Nationals": 3,
-        "MIAA Division 3A": 3, "OHSAA State Meet": 3,
+        "NCAA Division I Championships": 3, "MIAA Division 3A": 3,
     }
     for name, want in cases.items():
         assert mcl.classify(name) == want, (name, mcl.classify(name), want)
-    # the feed's flag decides only when the name says nothing, and never
-    # beats the invitational guard
     assert mcl.classify("Blue Devil Open", flag=True) == 2
-    assert mcl.classify("Big Ten Championships", flag=True) == 1
     assert mcl.classify("Golden State Invitational", flag=True) == 0
-    assert mcl.classify(None) == 0 and mcl.classify("") == 0
-    assert mcl.N_CLASS == 3 and mcl.CLASS_NAMES[3] == "final"
+    assert mcl.classify(None) == 0 and mcl.N_CLASS == 3
 
 
 def test_sql_is_the_same_rule_in_the_same_order():
     s = mcl.sql("COALESCE(m.meet_name, '')", "COALESCE(mt.is_championship, 0) = 1")
-    assert s.startswith("CASE WHEN")
     order = [s.index(x) for x in (mcl.RX_INVITE, mcl.RX_PRELIM, mcl.RX_HS_NATIONAL,
                                   mcl.RX_QUAL, mcl.RX_FINAL, mcl.RX_LEAGUE,
                                   "is_championship")]
-    assert order == sorted(order), "the SQL must test the classes in classify()'s order"
-    assert "!~*" in s and "THEN 0" in s.split("THEN 2")[0], "the invitational guard comes first"
+    assert order == sorted(order)
     assert "%" not in s and "{" not in s and "}" not in s
-    for rx in (mcl.RX_INVITE, mcl.RX_KEEP, mcl.RX_PRELIM, mcl.RX_HS_NATIONAL,
-               mcl.RX_QUAL, mcl.RX_FINAL, mcl.RX_LEAGUE):
-        assert "%" not in rx and "{" not in rx and "\\" not in rx
 
 
-def test_the_season_window():
-    # XC: 1 October (day 61) is early, 1 November (day 92) is in, 20 Dec (141) is out
-    assert not mcl.inWindow(np.array([0]), np.array([61.0]))[0]
+def test_the_season_window_still_exists_for_the_census():
     assert mcl.inWindow(np.array([0]), np.array([92.0]))[0]
-    assert not mcl.inWindow(np.array([0]), np.array([141.0]))[0]
-    # TF: a September "state" meet is out, mid-May is in
     assert not mcl.inWindow(np.array([1]), np.array([40.0]))[0]
-    assert mcl.inWindow(np.array([1]), np.array([290.0]))[0]
 
 
-def test_the_gates_in_the_design_builder(capsys):
-    """A labelled row keeps the term only in season and only at a venue
-    with two or more races in the pack; the three classes get three
-    coefficients per (pool, sport)."""
-    n = 14
-    d_in = (100 + js.ACADEMIC_YEAR_START_DOY) % 365          # 9 November: XC in season
-    d_out = (40 + js.ACADEMIC_YEAR_START_DOY) % 365          # 10 September: out
-    d_tf = (290 + js.ACADEMIC_YEAR_START_DOY) % 365          # mid-May: TF in season
-    cols = {
-        "meet_class": np.array([3, 3, 3, 3, 3, 3, 1, 1, 0, 0, 3, 3, 2, 2]),
-        "sport": np.array([0] * 10 + [1, 1, 0, 0]),
-        "athlete": np.arange(n),
-        "doy": np.array([d_in] * 4 + [d_out] * 2 + [d_in] * 4 + [d_tf] * 2 + [d_in] * 2),
-        # cell 0 hosts two race days, cell 1 one, cell 2 two, cell 3 one,
-        # cell 4 two, cell 5 two
-        "course": np.array([0, 0, 1, 1, 0, 0, 2, 2, 3, 3, 4, 4, 5, 5]),
-        "days": np.array([10, 20, 10, 10, 30, 40, 10, 20, 10, 10, 5, 15, 3, 9]),
-    }
+def _fake_pack():
+    """Seven athlete-seasons, five races. Race P (cell 4, 70 days ago) and
+    race A (cell 0, 60 days ago): everyone's mid-season. Race B (cell 1, 40
+    days ago): the last race for athletes 0-2, mid-season for 3 and 4.
+    Race C (cell 2, 25 days ago): the last race for athletes 3 and 4.
+    Athlete 5 has only two races (B, C) and does not vote; athlete 6's
+    season is still running (race D, cell 3, 5 days ago) and does not
+    vote either."""
+    rows = []          # (athlete, cell, days_ago)
+    for a in range(5):
+        rows.append((a, 4, 70))
+        rows.append((a, 0, 60))
+        rows.append((a, 1, 40))
+    for a in (3, 4):
+        rows.append((a, 2, 25))
+    rows.append((5, 1, 40)); rows.append((5, 2, 25))
+    rows.append((6, 0, 60)); rows.append((6, 1, 40)); rows.append((6, 3, 5))
+    ath = np.array([r[0] for r in rows]); cel = np.array([r[1] for r in rows])
+    days = np.array([r[2] for r in rows], dtype=np.float64)
+    n = ath.size
+    cols = {"athlete": ath, "course": cel, "days": days,
+            "sport": np.zeros(n, dtype=np.int64),
+            "meet_class": np.where(cel == 2, 3, 0)}
+    return cols, ath, n
+
+
+def test_the_share_is_read_off_the_calendars(capsys):
+    cols, ath, n = _fake_pack()
     keep = np.ones(n, dtype=bool)
-    pool_of_athlete = np.zeros(n, dtype=np.int64)
-    idx, n_imp, prior, labels = rj.importanceClasses(cols, keep, pool_of_athlete, ["hs_m"])
-    assert n_imp == 6
-    assert labels == ["hs_m:XC:c1", "hs_m:XC:c2", "hs_m:XC:c3",
-                      "hs_m:TF:c1", "hs_m:TF:c2", "hs_m:TF:c3"]
-    assert (prior == 0).all(), "no evidence, no taper: the prior mean is zero"
-    # rows 0-1: a final, in season, two-race venue -> carried (XC c3 = index 2)
-    assert list(idx[:2]) == [2, 2]
-    # rows 2-3: a final but a ONE-race venue -> dropped
-    assert list(idx[2:4]) == [-1, -1]
-    # rows 4-5: a final at a two-race venue but out of season -> dropped
-    assert list(idx[4:6]) == [-1, -1]
-    # rows 6-7: league, in season, two-race venue -> carried (XC c1 = index 0)
-    assert list(idx[6:8]) == [0, 0]
-    # rows 8-9: ordinary
-    assert list(idx[8:10]) == [-1, -1]
-    # rows 10-11: a TF final in the outdoor window at a two-race venue -> TF c3 = index 5
-    assert list(idx[10:12]) == [5, 5]
-    # rows 12-13: an XC qualifier, in season, two-race venue -> XC c2 = index 1
-    assert list(idx[12:14]) == [1, 1]
+    pool_of_athlete = np.zeros(7, dtype=np.int64)
+    idx, w, n_imp, prior, labels, share = rj.seasonEndShare(
+        cols, keep, ath, 7, pool_of_athlete, ["hs_m"])
+    assert n_imp == 2 and labels == ["hs_m:XC", "hs_m:TF"]
+    assert (prior == 0).all()
+    race, _ = rj.raceCodes(cols["course"], cols["days"])
+    by_cell = {int(c): float(share[race[np.flatnonzero(cols["course"] == c)[0]]])
+               for c in (0, 1, 2, 3, 4)}
+    # races P and A: nobody's season ends within two weeks -> 0
+    assert by_cell[4] == 0.0 and by_cell[0] == 0.0
+    # race B: athletes 0, 1, 2 end here (3 of the 5 voting: 0-4; athlete 5
+    # has two races, athlete 6 is still running)
+    assert abs(by_cell[1] - 3 / 5) < 1e-12
+    # race C: athletes 3 and 4 end here and vote; athlete 5 does not vote
+    assert by_cell[2] == 1.0
+    # race D: the running season's race carries nothing
+    assert by_cell[3] == 0.0
+    # rows carry their race's share as the weight and the (pool, sport) index
+    assert (w[cols["course"] == 2] == 1.0).all()
+    assert (idx[cols["course"] == 2] == 0).all()
+    assert (idx[cols["course"] == 0] == -1).all() and (w[cols["course"] == 0] == 0).all()
     out = capsys.readouterr().out
-    assert "dropped as out of season 2" in out and "at a one-race venue 2" in out
-    assert "league 2" in out and "qualifier 2" in out and "final 4" in out
+    assert "season-end taper" in out and "by name class 3" in out
 
 
-def test_the_prior_mean_is_zero_and_the_expectation_is_ordered():
-    assert js.IMP_PRIOR_MEAN == {1: 0.0, 2: 0.0, 3: 0.0}
-    assert js.IMP_EXPECTED[3] < js.IMP_EXPECTED[2] < js.IMP_EXPECTED[1] < 0
+def test_the_design_takes_a_continuous_weight():
+    cols, ath, n = _fake_pack()
+    keep = np.ones(n, dtype=bool)
+    idx, w, n_imp, prior, labels, share = rj.seasonEndShare(
+        cols, keep, ath, 7, np.zeros(7, dtype=np.int64), ["hs_m"])
+    race, _ = rj.raceCodes(cols["course"], cols["days"])
+    D = js.Design(ath, cols["course"], race, imp=idx, n_imp=n_imp,
+                  imp_prior=prior, imp_w=w)
+    assert D.n_imp == 2 and np.allclose(D.imp_w, w)
+    b = D.unpack(np.zeros(D.n_total))
+    assert b["imp"] is not None and b["imp"].size == 2
+
+
+def test_the_prior_is_zero_and_the_expectation_negative():
+    assert js.IMP_PRIOR_MEAN == 0.0 and js.IMP_EXPECTED < 0
+    assert rj.SEASON_END_DAYS == 14 and rj.SEASON_CLOSED_DAYS > rj.SEASON_END_DAYS

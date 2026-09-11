@@ -1,12 +1,26 @@
 """
-meet_class.py -- the championship class of a meet, in ONE place.
+meet_class.py -- the championship class of a meet BY NAME, as a diagnostic.
 
-★ WHAT THE CLASS IS FOR (issue #22, 2026-09-11). The joint solve fits a
-  taper term per (pool, sport, class): a tapered, qualified field runs a
-  couple of percent faster than the same athletes mid-season, and without
-  a shared term for that a venue that hosts only championships books the
-  taper as an easy course. The class is read off the meet's NAME here, and
-  off the feed's own flag where it has one (meets_tfrrs.is_championship).
+★ WHAT THE CLASS IS FOR NOW (issue #22, 2026-09-11, second cut). The joint
+  solve's taper term no longer reads anything off a meet's name. Its
+  covariate is the race's SEASON-END SHARE (run_joint.seasonEndShare): the
+  fraction of the race's field, counting only athlete-seasons with three
+  or more races whose season has closed, for whom the race falls within
+  two weeks of the last race of their own season. A state final is a race
+  where nearly everyone's season ends; a mid-season invitational is one
+  where nearly nobody's does; a league meet sits wherever its own field
+  puts it. The owner's two objections to a name-based class both fall
+  away: nothing is blanketed (a league meet whose field mostly keeps
+  racing carries a small share, whatever its name says) and there is no
+  regex to misread ("Golden State Invitational" is an ordinary race
+  because its runners keep racing, not because a guard caught the word).
+
+  The name class below is kept as a CROSS-CHECK. The pack still carries
+  it (column meet_class), the solve prints the mean season-end share by
+  name class, and scripts/meet_class_census.py prints the names behind
+  each class. If the finals (3) do not show the highest share and the
+  ordinary meets (0) the lowest, something is wrong with the calendars
+  the share is read off, and that is the line that says so.
 
     0   an ordinary meet: an invitational, a dual, a preview, a relays
     1   a league, conference, county or metro championship
@@ -16,34 +30,11 @@ meet_class.py -- the championship class of a meet, in ONE place.
         Nike Cross, NCAA, NAIA, NJCAA, NIRCA), a state association's own
         series
 
-  ⚠ THREE CLASSES, NOT ONE, AND EACH FITTED ON ITS OWN (owner, 2026-09-11:
-    "no one is tapering for their league championship, but they are for
-    their state meet. I'm not really sure you can just blanket these").
-    Nothing is blanketed: each class's coefficient is fitted from its own
-    rows with a zero prior, so a league championship never inherits the
-    state meet's taper, and a class that shows no taper carries none. A
-    meet's own deviation from its class lands in the race-day term, which
-    a rating never removes. What a wrong class average can still move is
-    the difficulty of a venue that hosts ONLY that class -- which is why
-    the finer the classes, the smaller that error, and why
-    scripts/meet_class_census.py exists.
-
-★ THREE GUARDS KEEP A WRONG CLASS FROM MOVING A RATING. A misread name at
-  a venue that hosts only one race would hand that race's rows about two
-  thirds of the class's taper as extra credit (measured on a planted
-  world, 2026-09-11: +2.2% on the rows, +1 point on the course). So:
-
-    1. the invitational guard here: a name that says invitational,
-       preview, classic, festival, relays or dual is class 0 whatever else
-       it says ("Golden State Invitational"), unless it also says
-       qualifier, championship, final, prelim or semi
-    2. the season window (CHAMPIONSHIP_WINDOW): a championship-labelled
-       meet outside the weeks championships are actually run is class 0
-       (a "State Preview" in September, a "Regional" in March)
-    3. run_joint.importanceClasses applies the term only at venues with
-       two or more races: there the other races pin the course and the
-       term is a relabel of the day; at a one-race venue the course would
-       take a share of it whether or not the label was right
+  The rule keeps its guards (an invitational is class 0 whatever else its
+  name says unless it also says qualifier, championship, final, prelim or
+  semi; a championship-labelled meet outside CHAMPIONSHIP_WINDOW is class
+  0) so that the cross-check is as honest as a name can be. Nothing here
+  moves a rating.
 
 The SQL and the Python below are the same rule, in the same order.
 """

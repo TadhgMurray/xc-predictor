@@ -51,9 +51,11 @@ Lessons that transfer, in the order they mattered today:
    one-race share of 0.59 (XC) came from an EM E-step whose conditional
    variance ignored the race–course coupling and under-stated `sigma_u`.
    See Part II.1.
-2. **Championship is a class effect, never estimated from the venue.**
+2. **The taper is a field effect, never estimated from the venue.**
    Beyer's class pars and FIS's zero penalty at the top are both "the
-   level of this field is known from outside the venue". See Part II.2.
+   level of this field is known from outside the venue". Here the field's
+   state is read off its own calendars (the season-end share), not off a
+   label. See Part II.2.
 3. **The cross-surface scale is stated, never estimated.** Tully publishes
    a speed-rating → 1600/3200 chart; FIS pins; WMA interpolates in
    log-distance; the NCAA publishes facility factors. Nobody identifies
@@ -198,43 +200,61 @@ higher than run22's, the one-race share `tau²/(tau² + sigma_u²)` a little
 lower, and the sd of published difficulty across `n_results` buckets
 (`scripts/difficulty_spread.py` §2) should stop *falling* with evidence.
 
-### II.2 The meet-importance term (issue #22)
+### II.2 The season-end taper term (issue #22)
 
-Pack: `speed_ratings_db.COLUMNS` gains `meet_class` (0 ordinary; 1 a
-league / conference / county / metro championship; 2 a qualifying round:
-section / region / district / prelim / qualifier; 3 a final: the state
-meet, NXN / NXR / Foot Locker / Nike Cross, the NCAA meets, a state
-association's series), from `meet_name` and the tfrrs flag through
-`engine/meet_class.py` in both queries. Three classes fitted apart, so a
-league championship never inherits a state meet's taper. **Needs a repack
-(`--from 7`)**; an old pack runs with the term off and says so.
+**Second cut, same day.** The first cut read a championship class off
+the meet's name (three classes, each with its own coefficient, an
+invitational guard, a season window, a one-race gate). The owner's two
+objections were to the label itself: "no one is tapering for their
+league championship, but they are for their state meet; I'm not sure
+you can just blanket these things", and "it's so easy for it to go bad;
+some other system would be best". Both are right about any label, and
+no guard fixes a label. So the covariate is now measured, per race,
+from the athletes' own calendars:
 
-Model: `row += imp[pool, sport, class]` (untilted), prior mean
-`IMP_PRIOR_MEAN = {1: −0.010, 2: −0.025}` (the taper literature), prior sd
-`IMP_PRIOR_SD = 0.02`. Identified globally off venues that host a mix and
-off every athlete who races both kinds of meet. **Not in a rating**: a
-tapered race is a real performance, exactly as the race-day term is left
-in; it exists so the course stays honest. On the planted world the
-coefficient is recovered to ~1 race-day sd / √(mixed championship races)
-and the championship-only venues' rmse halves (`tests/test_shared_terms.py`).
+    share(race) = # voters in the race whose own season ends within
+                  SEASON_END_DAYS (14) of this race
+                  / # voters in the race
 
-One design note: a prior stated in pseudo-rows (a first cut used 50)
-competes with `sigma_u²` summed over all championship races and halved
-the estimate on a small world. The prior is now a stated SD, like
-`DIST_PRIOR_SD`, and its mean is zero: the literature's numbers are what
-a healthy fit should show, not an input.
+where a voter is an athlete-season with `SEASON_END_MIN_RACES` (3) or
+more races whose last race is more than `SEASON_CLOSED_DAYS` (21) before
+the pack date (a season still running has no last race yet, and without
+that rule this week's invitational would look like a season end). A
+state final's share is near 1, a September invitational's near 0, a
+league championship's is whatever its field says, which for most leagues
+is low because most of the field goes on. `run_joint.seasonEndShare`.
 
-**Where a wrong class does harm, measured.** At a venue with two or more
-races the class term is a relabel of the day: the other races pin the
-course, and a mislabelled race changes nothing about the rows' ratings.
-At a venue with ONE race the cell takes a share of the class taper
-whether or not the label is right: on a planted world a mislabelled
-ordinary one-race venue read a point too hard and its rows were
-over-rated by 2.2%. So the rule lives in `engine/meet_class.py` with an
-invitational guard, a season window, and a one-race gate in
-`run_joint.importanceClasses` that withholds the term from such venues.
-`scripts/meet_class_census.py` shows the rule's verdicts on the real
-names.
+Model: `row += imp[pool, sport] · share` (untilted), prior mean zero,
+prior sd `IMP_PRIOR_SD = 0.02`. Identified off venues that host races
+with different shares and off athletes who run both. **Not in a
+rating**: a tapered race is a real performance, exactly as the race-day
+term is left in; the term exists so the course stays honest. A healthy
+fit reads about −2% per unit share (`IMP_EXPECTED`; Bosquet 2007,
+Mujika & Padilla), which is recorded as an expectation, never applied.
+On the planted world the coefficient is recovered from a continuous
+share (`tests/test_shared_terms.py`) and the calendars of a fake pack
+give the shares by hand (`tests/test_meet_class.py`).
+
+Why this is safer than a label, in the owner's terms. Within a race
+every row carries the same share, so the term cannot move one athlete
+against another; across races it moves a race's rows together against
+the course, and the course is pinned by the venue's other races or, at
+a one-race venue, shrunk to the prior as it always was. A wrong share
+needs a wrong calendar, and a calendar is a fact about the athlete, not
+a reading of a name. The regression-to-the-mean warning (Hayes 1988:
+selection by a qualifying cut-off) still applies to the race-day term,
+which is why a qualifier's own deviation stays in `u`.
+
+Design note kept from the first cut: a prior stated in pseudo-rows (a
+first cut used 50) competes with `sigma_u²` summed over all the races
+that carry the covariate and halved the estimate on a small world. The
+prior is a stated SD, like `DIST_PRIOR_SD`.
+
+The name classes (`engine/meet_class.py`, pack column `meet_class`) are
+kept as a **diagnostic**: the solve prints the mean season-end share by
+name class, and the finals must show the highest share. If they do not,
+the calendars are wrong somewhere and that line says so.
+`scripts/meet_class_census.py` prints the names behind each class.
 
 ### II.3 The sport level: asserted, out of theta
 
@@ -290,7 +310,10 @@ indoor cells' rmse falls.
   `stated-level` rungs so every 2026-09-11 term is scored on held-out
   races by `08b`.
 - The XC pack reads `meets_tfrrs.is_championship` as class 2 before the
-  name regex; the invitational guard still wins.
+  name regex, for the `meet_class` cross-check column only.
+- The tilt runs on past 140 instead of clamping (`TILT_RATING_LO/HI` are
+  40/200, safety rails), and `run_joint.reportTiltByBand` prints the
+  applied against the implied `h` per rating band every run.
 
 ### II.6 The conversion round trip (#21) — three defects, all consumer-side
 
@@ -337,7 +360,9 @@ set -a; . /etc/xc-predictor.env; set +a
 XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 2>&1 | tee logs/run19.out
 ```
 
-`--from 7` because the pack gains `meet_class`. Then, if the owner wants
+`--from 7` because the pack gains the `meet_class` cross-check column
+(the taper term itself reads the calendars every pack has). Then, if the
+owner wants
 the stated scale rather than the estimated one:
 
 ```
@@ -347,10 +372,11 @@ XCP_SPORT_LEVEL=0.0583 XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 8 ...
 ### What to read in `08_golive.log`
 
 ```
-[joint] meet importance: N of M rows at a championship-class meet ...      # the pack carries it
+[joint] season-end taper: N of M rows carry a share ...                    # by name class: share must rise with class
 [joint] indoor: 1,574 of 74,366 cells are indoor tracks ...
 [joint] XC: race-day sd ... course prior ... a one-race course keeps 0.xx   # compare with run22
-[joint] meet importance, log-time per (pool, sport, class) ...             # expect c2 near -2%, c1 near -1%
+[joint] season-end taper, log-time per unit share ...                      # expect near -2%
+[joint] tilt by rating band ...                                            # 140+: implied h close to applied
 [joint] indoor, log-time per pool ...                                      # expect +0.5..+1.5%
 [joint/live] track zero: mean 0.000 ... over N track cells                 # outdoor cells now
 [joint/live] difficulty zero = the average TRACK. Cross country lands at   # the estimate, or the definition

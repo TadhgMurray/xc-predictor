@@ -25,7 +25,7 @@ y  =  a[athlete-season]                      the ability. THIS IS THE RATING.
    +  e_w · e[distance class]                distance offsets (TF only)
    +  g[athlete] · lz                        per-athlete endurance slope
    +  k[group] · alt                         altitude, log-time per km
-   +  imp[pool, sport, class]                meet importance (taper), 2026-09-11
+   +  imp[pool, sport] · share               season-end taper, 2026-09-11 (share = fraction of the field ending its season here)
    +  h · ind[pool] · is_indoor[cell]        indoor as a shared term, 2026-09-11
 ```
 
@@ -42,12 +42,19 @@ performance."
 ### The tilt `h`
 
 ```python
-h = clip(1 - AMP_TILT_PER_POINT * (rating - 100), 0.15, 1.80)
-AMP_TILT_PER_POINT = 0.01135
+h = 1 + TILT_K * (rating - 100) / 10          # TILT_K = -0.031: a 120 pays 94% of a course, a 140 88%
+rating evaluated inside TILT_RATING_LO..HI = 40..200   # safety rails only, since 2026-09-11
 ```
 
 A hard course costs a slow runner more than a fast one. `h` multiplies
 `mu`, `d` **and** `u` together — and that "and `u`" is not cosmetic. See §3.
+The slope was measured over ratings 70–140 and used to be held flat
+outside that band (a 150 was charged as a 140). It now extrapolates, and
+`run_joint.reportTiltByBand` prints, per rating band, the `h` applied
+against the `h` the residuals imply (residual regressed on the course
+effect), so the run itself says whether the line holds above 140.
+(`AMP_TILT_PER_POINT = 0.01135` is a different tilt: the season-form
+amplitude shrinking with ability, clipped to 0.15–1.80.)
 
 ---
 
@@ -97,9 +104,12 @@ deviation around *that cell's own mean*. If a venue hosts only championship
 races, "everyone tapered" is constant across all its races — `u` cannot see
 a constant, so the taper lands in `d` and the course reads easy. Foot
 Locker, state meets, nationals. The mirror case is a venue that only hosts
-early-season invitationals. Fix requires a **meet-importance covariate**
-estimated globally and identified off venues that host a *mix* (issue #22,
-not built).
+early-season invitationals. The fix (issue #22, 2026-09-11) is a
+**season-end share** covariate estimated globally: per race, the fraction
+of its field for whom the race falls within two weeks of the last race of
+their own season (`run_joint.seasonEndShare`), read off the athletes'
+calendars and never off a meet name. Identified off venues that host a mix
+and off athletes who race both kinds of race.
 
 **Indoor vs outdoor.** Measured 2026-09-11: 1,574 indoor cells, 25,629
 outdoor, and **zero locations have both**. A `location_id` is one or the
@@ -140,7 +150,7 @@ Letting one-race cells vote on the priors collapses them.
 | `CURVE_SMOOTH` | 1.0 | a prior, explicitly **not** tunable by held-out error |
 | `WINTER_GAIN` | 0.0 | an identification assertion, not an estimate |
 | `DIST_BANDS` / `DIST_BAND_ANCHORS` | (105, 120, 135) / (90, 112, 127, 145) | four bands since 2026-09-11: the tables put the 800→1600 exponent higher at lower ability, and one band over 120 handed a 150-rated half-miler a 4:10 miler's relation |
-| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | {1: 0, 2: 0, 3: 0} / 0.02 | three classes fitted apart (1 league, 2 qualifying round, 3 final), zero mean: no evidence, no taper, and a league meet never inherits a state meet's. `IMP_EXPECTED` {−0.005, −0.015, −0.025} is what a healthy fit shows (Bosquet 2007, Mujika & Padilla). A stated SD, never pseudo-rows (it competes with `sigma_u²` summed over the class's races). The class comes from `engine/meet_class.py` with an invitational guard, a season window and a one-race gate |
+| `IMP_PRIOR_MEAN` / `IMP_PRIOR_SD` | 0 / 0.02 | one coefficient per (pool, sport) on the race's season-end share (`run_joint.seasonEndShare`: `SEASON_END_DAYS` 14, voters need `SEASON_END_MIN_RACES` 3 and a season closed `SEASON_CLOSED_DAYS` 21 before the pack date). Zero mean: no evidence, no taper. `IMP_EXPECTED` −0.02 per unit share is what a healthy fit shows (Bosquet 2007, Mujika & Padilla). A stated SD, never pseudo-rows. The name classes in `engine/meet_class.py` are a diagnostic cross-tab only |
 | `IND_PRIOR_MEAN` / `IND_PRIOR_SD` | +0.012 / 0.01 | NCAA facility factors 2012, WA short-track tables 2025 |
 | `nested_var` | True | the E-step's conditional variance is the exact (cell + its races) arrowhead, not the information diagonal (§5) |
 
@@ -389,8 +399,8 @@ level out of theta (`Design.mu_fixed`).
 
 Done 2026-09-11, unrun on the box (see `docs/RESEARCH-ENGINE-2026-09-11.md`
 Part III for what to read in the first log): #21 (three consumer-side
-defects, 9.12–9.14), #22 (the importance term; needs a repack for
-`meet_class`), indoor as a shared term, #9/#13 (the tables as the prior
+defects, 9.12–9.14), #22 (the season-end taper term; the `meet_class`
+cross-check column needs a repack), indoor as a shared term, #9/#13 (the tables as the prior
 mean of an uncalibrated event offset), the E-step (§5), a fourth distance
 band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
 
@@ -409,8 +419,9 @@ band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
 6. **Rebuild the track curve on equal-quality pairs** with the level and
    sex dependence inside it and retire the per-event offsets — the
    principled end state; today's offsets and table prior are the bridge.
-7. **The championship class from a better source** than the meet name
-   (`meets_tfrrs.is_championship` exists for tfrrs meets).
+7. **Read the tilt-by-band table.** If the 140+ bands' implied `h` sits
+   off the applied line by more than its standard error across runs, fit
+   the slope above 140 from that table rather than extrapolating.
 
 ---
 

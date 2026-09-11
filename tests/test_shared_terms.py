@@ -332,3 +332,63 @@ def test_altitude_cost_scales_with_the_event():
     D0 = js.Design(ath, cel, rac, alt=alt)
     assert np.allclose(D0.alt, alt) and np.allclose(js.altitudeCredit(D0), alt)
     print("  altitude cost scales with the event .......................... OK")
+
+
+# ------------------------------------------------------------------ #
+# the taper as a CONTINUOUS covariate (2026-09-11): the race's season-end
+# share, not a label. Planted: rows run faster by taper * share.
+# ------------------------------------------------------------------ #
+
+def test_a_continuous_share_recovers_the_taper_and_frees_the_venues():
+    # Ten finals venues (every race a full peak, share 1), twenty mixed
+    # venues (shares 0 .. 1, the identifying variation), forty ordinary
+    # venues (share 0.05). The coefficient's standard error on this world is
+    # about race-day sd / (sd of the share * sqrt(mixed races)) = 0.02 /
+    # (0.37 * sqrt(400)) = 0.003; four seeds recovered -0.021 .. -0.024.
+    rng = np.random.default_rng(21)
+    n_ath, n_cell, per_athlete, taper = 1200, 70, 14, -0.025
+    true_d = rng.normal(0, 0.04, n_cell); true_d -= true_d.mean()
+    true_a = rng.normal(0, 0.2, n_ath)
+    race_cell, race_share = [], []
+    for c in range(n_cell):
+        if c < 10:                       # finals venues: every race a full peak
+            for _ in range(3):
+                race_cell.append(c); race_share.append(1.0)
+        elif c < 30:                     # mixed venues: shares all over
+            for _ in range(4):
+                for s in (0.0, 0.2, 0.5, 0.8, 1.0):
+                    race_cell.append(c); race_share.append(s)
+        else:                            # ordinary venues
+            for _ in range(4):
+                race_cell.append(c); race_share.append(0.05)
+    race_cell = np.array(race_cell); race_share = np.array(race_share)
+    race_u = rng.normal(0, 0.02, race_cell.size)
+    ath, cel, rac, y = [], [], [], []
+    for i in range(n_ath):
+        for _ in range(per_athlete):
+            j = rng.integers(0, race_cell.size)
+            c = race_cell[j]
+            ath.append(i); cel.append(c); rac.append(j)
+            y.append(true_a[i] + true_d[c] + race_u[j] + taper * race_share[j]
+                     + rng.normal(0, 0.02))
+    ath, cel, rac, y = map(np.array, (ath, cel, rac, y))
+    w = race_share[rac]
+    idx = np.where(w > 0, 0, -1)
+    with_t = js.solveJoint(y, design=js.Design(ath, cel, rac, imp=idx, n_imp=1,
+                                               imp_prior=[0.0], imp_w=w),
+                           n_outer=5, tilt=False, tau_max=None, n_probe=0)
+    without = js.solveJoint(y, design=js.Design(ath, cel, rac),
+                            n_outer=5, tilt=False, tau_max=None, n_probe=0)
+    got = float(with_t["importance"][0])
+    print(f"  season-end taper per unit share: planted {taper:+.4f}, recovered {got:+.4f}")
+    assert abs(got - taper) < 0.006, (got, taper)
+    finals = np.arange(n_cell) < 10
+
+    def err(o):
+        d = o["delta"] - o["delta"][~finals].mean() + true_d[~finals].mean()
+        return _rmse(d[finals], true_d[finals])
+
+    e_with, e_without = err(with_t), err(without)
+    print(f"  finals-only venues: rmse {e_with:.4f} with the share, {e_without:.4f} without")
+    assert e_with < 0.7 * e_without, (e_with, e_without)
+    print("  continuous share recovers the taper; finals venues honest ..... OK")

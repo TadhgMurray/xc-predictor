@@ -46,10 +46,12 @@ THE MEASUREMENT
 # Fitted over 51M rows in cells with degree >= 25. See ability_slope.py.
 TILT_K = -0.031
 
-# ⚠ CLAMPED. The tilt was fitted over ratings ~70-140. At 200 the raw formula
-#   gives h = -2.1 -- a course making an athlete FASTER the harder it is, which
-#   would invert the sign of every cell they touch. These are guard rails
-#   against extrapolation, not model features.
+# ⚠ RAILS, NOT A CLAMP AT 140. The tilt was fitted over ratings ~70-140 and
+#   the line runs on past that: h = 0.69 at a rating of 200, 0.60 at 229,
+#   1.50 at -61, so within any rating that exists these bounds never bind
+#   (the joint solver extrapolates the same way, TILT_RATING_LO/HI 40/200,
+#   and run_joint.reportTiltByBand measures the line per band each run).
+#   They only stop a garbage rating from inverting the sign of a course.
 H_MIN, H_MAX = 0.60, 1.50
 
 

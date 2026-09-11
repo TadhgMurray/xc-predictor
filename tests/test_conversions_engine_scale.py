@@ -130,3 +130,13 @@ def test_the_bands_and_anchors_match_the_solver():
     anchors = re.search(r"^DIST_BAND_ANCHORS = \(([^)]*)\)", js, re.M).group(1)
     assert tuple(float(v) for v in bands.split(",") if v.strip()) == cv._DIST_BANDS
     assert tuple(float(v) for v in anchors.split(",") if v.strip()) == cv._BAND_ANCHORS
+
+
+def test_the_tilt_rails_match_the_solver():
+    import re, io
+    js = io.open(os.path.join(ROOT, "engine", "joint_solve.py"), encoding="utf-8").read()
+    lo = float(re.search(r"^TILT_RATING_LO = ([0-9.]+)", js, re.M).group(1))
+    hi = float(re.search(r"^TILT_RATING_HI = ([0-9.]+)", js, re.M).group(1))
+    assert (lo, hi) == (cv._TILT_LO, cv._TILT_HI)
+    # the line runs on past 140 (2026-09-11): a 160 is charged less than a 140
+    assert cv._tilt(160.0) < cv._tilt(140.0) < cv._tilt(100.0) == 1.0

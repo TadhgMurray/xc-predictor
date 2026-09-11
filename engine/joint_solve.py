@@ -91,8 +91,15 @@ HUBER_SLOW = 2.5          # positive residuals, in robust scales
 HUBER_FAST = 1.5          # negative residuals
 
 TILT_K = -0.031           # per 10 rating points; matches racecast/tilt.py
-TILT_RATING_LO = 70.0     # h is clamped to the band the tilt was fitted over
-TILT_RATING_HI = 140.0
+# ★ THE LINE RUNS ON (owner, 2026-09-11: "I'd prefer to extrapolate rather
+#   than remain constant"). The slope was measured over ratings 70-140 and
+#   used to be held flat outside that band, so a 150 was charged for a
+#   course as a 140. It now extrapolates; these are safety rails only (h
+#   stays inside 0.69 .. 1.19). run_joint.reportTiltByBand measures the
+#   tilt the corpus actually shows per band, including above 140, every
+#   run, so the extrapolation is checked rather than assumed.
+TILT_RATING_LO = 40.0
+TILT_RATING_HI = 200.0
 
 # The sport-offset ridge, in row units exactly as pair_engine.demeanWithinSport
 # uses it (beta = sum(sc*v) / (sum(sc^2) + K)). Issue #70's optimum.
@@ -473,31 +480,38 @@ def altDistanceFactor(dist_m):
         out[known] = np.interp(np.log(d[known]), xs, ys)
     return out
 
-# ★ THE MEET-IMPORTANCE PRIOR (issue #22). Two classes above the reference
-#   (an invitational, a dual, a relay meet): class 1 is a league, conference,
-#   county or district championship; class 2 a section, region, state or
-#   national championship (NXN, NXR, Foot Locker) or its qualifier. The
-#   stated means are the taper literature's (a 2-week taper is worth about
-#   2-3%, Bosquet et al. 2007; Mujika & Padilla 2003): log-time, negative =
-#   faster. The penalty is in row units, so fifty pseudo-rows: the millions
-#   of real ones decide, the prior only holds a class nobody raced.
-#   ⚠ THE PRIOR MEAN IS ZERO (2026-09-11, the owner: "I could see that
-#     going very wrong"). The taper literature's -1% / -2.5% is the size to
-#     EXPECT in the log, not a number to apply: a class the corpus has no
-#     evidence for carries no taper at all, and the big classes are decided
-#     by their tens of thousands of rows either way.
-#   THREE CLASSES (meet_class.py): 1 a league championship, 2 a qualifying
-#   round, 3 a final. Each is fitted from its own rows, so a league meet
-#   never inherits the state meet's taper.
-IMP_PRIOR_MEAN = {1: 0.0, 2: 0.0, 3: 0.0}
-IMP_EXPECTED = {1: -0.005, 2: -0.015, 3: -0.025}   # what a healthy fit looks like
-# ⚠ SIZED AS A PRIOR SD, LIKE DIST_PRIOR_SD, NOT AS PSEUDO-ROWS. The data
-#   cannot tell the importance term from the race-day terms of the
-#   championship races (within a race they are collinear); what separates
-#   them is this prior against the race-day prior over ALL championship
-#   races -- sigma_u2 per race, tens of thousands of them. A penalty stated
-#   in rows (a first cut used 50) competed with that sum on a small world
-#   and halved the estimate. pen = sigma2 / SD^2 is a few row-units.
+# ★ THE SEASON-END TAPER TERM (issue #22). A tapered, qualified field runs
+#   a couple of percent faster than the same athletes mid-season (a 2-week
+#   taper is worth about 2-3%: Bosquet et al. 2007; Mujika & Padilla
+#   2003), and a venue that hosts only such fields would otherwise book the
+#   taper as an easy course. The term is a shared coefficient per (pool,
+#   sport), log-time per unit of the row's race covariate, untilted, and
+#   it is never applied in a rating: a tapered race is a real performance.
+#   ★★ NOT FROM MEET NAMES (owner, 2026-09-11: "no one is tapering for
+#      their league championship, but they are for their state meet";
+#      "it's so easy for it to go bad. Some other system would be best").
+#      The covariate is the race's SEASON-END SHARE: the fraction of its
+#      voting field for whom this race falls within two weeks of the last
+#      race of their own season (run_joint.seasonEndShare; a voter has
+#      three or more races and a season that has closed). A state final is
+#      a race where nearly everyone's season ends; a mid-season
+#      invitational is one where nearly nobody's does; a league meet sits
+#      wherever its own field puts it. Read off the athletes' calendars in
+#      the pack, so it needs no label and cannot misread a name. The name
+#      classes (meet_class.py) are kept only as a diagnostic the log
+#      cross-tabulates the share against.
+#   ⚠ THE PRIOR MEAN IS ZERO (the owner: "I could see that going very
+#     wrong"). The literature's -2% is the size to EXPECT in the log, not a
+#     number to apply: a corpus that shows no taper carries none.
+IMP_PRIOR_MEAN = 0.0
+IMP_EXPECTED = -0.02                 # per unit share: what a healthy fit looks like
+# ⚠ SIZED AS A PRIOR SD, LIKE DIST_PRIOR_SD, NOT AS PSEUDO-ROWS. Within a
+#   race the term and the race-day term are collinear; what separates them
+#   is this prior against the race-day prior over ALL the races that carry
+#   a share -- sigma_u2 per race, tens of thousands of them -- and the
+#   venues whose races carry different shares. A penalty stated in rows (a
+#   first cut used 50) competed with that sum on a small world and halved
+#   the estimate. pen = sigma2 / SD^2 is a few row-units.
 IMP_PRIOR_SD = 0.02
 # ★ THE INDOOR PRIOR: the NCAA facility factors (2012) and World Athletics'
 #   2025 short-track tables both put a 200 m oval 0.8-1.8% slower than
@@ -604,7 +618,7 @@ class Design:
                  dist_banded=False,
                  era_pairs=None, era_w=None, eras_per_base=None,
                  mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
-                 ind=None, e_table=None, alt_dist=None):
+                 ind=None, e_table=None, alt_dist=None, imp_w=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -794,7 +808,14 @@ class Design:
         if imp is not None:
             imp = np.asarray(imp, dtype=np.int64)
             self.imp_idx = np.maximum(imp, 0)
-            self.imp_w = (imp >= 0).astype(np.float64)
+            # the weight is 0/1 from the index, or a caller's continuous
+            # covariate (the race's season-end share, run_joint.seasonEndShare)
+            if imp_w is not None:
+                w_ = np.asarray(imp_w, dtype=np.float64)
+                assert w_.size == self.n, "imp_w wants one weight per row"
+                self.imp_w = np.where(imp >= 0, w_, 0.0)
+            else:
+                self.imp_w = (imp >= 0).astype(np.float64)
             n_i = int(n_imp if n_imp is not None
                       else (int(imp.max()) + 1 if imp.size and imp.max() >= 0
                             else 0))

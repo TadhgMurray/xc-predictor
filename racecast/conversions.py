@@ -178,7 +178,7 @@ def _bandOf(rating):
 #   none. The same context forward and back cancels exactly. A database
 #   without the table falls back to the old (1 + difficulty) arithmetic.
 _TILT_K = -0.031            # must match joint_solve.TILT_K (pinned by test)
-_TILT_LO, _TILT_HI = 70.0, 140.0
+_TILT_LO, _TILT_HI = 40.0, 200.0     # must match joint_solve.TILT_RATING_LO/HI (pinned by test)
 _scale = {"at": 0.0, "map": {}}
 
 

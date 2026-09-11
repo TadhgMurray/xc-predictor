@@ -108,14 +108,14 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   (pool, track distance) from it; a pack without it runs with
            #   that block off.
            "dist_m",
-           # ★ THE MEET'S CHAMPIONSHIP CLASS (issue #22, 2026-09-11): 0 an
-           #   ordinary meet, 1 a league / conference / county / district
-           #   championship, 2 a section / region / state / national one
-           #   or its qualifier -- from the meet's NAME (MEET_CLASS_RX_*).
-           #   The joint solve fits one taper term per (pool, sport, class)
-           #   from it, so a venue that hosts only championships stops
-           #   reading as an easy course. A pack without it runs with the
-           #   term off.
+           # ★ THE MEET'S CHAMPIONSHIP CLASS BY NAME (issue #22, 2026-09-11):
+           #   0 ordinary, 1 league, 2 qualifying round, 3 final, from the
+           #   meet's NAME and the tfrrs flag through engine/meet_class.py.
+           #   A DIAGNOSTIC ONLY: the joint solve's taper term reads the
+           #   athletes' own calendars (run_joint.seasonEndShare) and never
+           #   a name; it cross-tabulates that share against this class so
+           #   the log can say whether the finals show the highest share.
+           #   A pack without it runs without the cross-tab.
            "meet_class")
 
 
@@ -490,14 +490,16 @@ def _placeholderSql() -> str:
 # LEFT JOINs everywhere. Every INNER JOIN in the old query was a silent tfrrs
 #   delete; anything dropped now is dropped on purpose. A row with no venue
 #   still informs its athlete's ability, it just votes on no course.
-# ★ THE CHAMPIONSHIP CLASS OF A MEET, FROM ITS NAME (issue #22). Two
-#   classes above the reference (an invitational, a dual, a relay meet):
-#   class 2 is the end-of-season series -- section, region, state, national
-#   (NXN, NXR, Foot Locker, Nike Cross) or a qualifier for it; class 1 a
-#   league, conference, county or district championship. Tested in that
-#   order, case-insensitively, as POSIX regexes (no `%`, no braces: the
-#   query is an f-string and psycopg2 scans for `%`). A misread name
-#   dilutes the class's coefficient a little; it cannot move a course.
+# ★ THE CHAMPIONSHIP CLASS OF A MEET, FROM ITS NAME (issue #22), AS A
+#   DIAGNOSTIC. 0 ordinary, 1 a league / conference / county / metro
+#   championship, 2 a qualifying round (section, region, district, prelim,
+#   the tfrrs is_championship flag), 3 a final (the state meet, NXN, NXR,
+#   Foot Locker, the NCAA meets). POSIX regexes, case-insensitive (no `%`,
+#   no braces: the query is an f-string and psycopg2 scans for `%`). The
+#   joint solve's taper term does NOT read this column: its covariate is
+#   the season-end share from the athletes' own calendars
+#   (run_joint.seasonEndShare). The solve cross-tabulates that share
+#   against this class in the log, so a misread name can move nothing.
 #   The rule lives in engine/meet_class.py (one place, with a Python twin
 #   the tests and scripts/meet_class_census.py run); this is its SQL.
 from meet_class import sql as _meetClassSql          # noqa: E402

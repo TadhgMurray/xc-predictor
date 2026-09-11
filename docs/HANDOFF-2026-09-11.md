@@ -17,7 +17,7 @@ runs here; the first live log decides.
 | where | what | why |
 |---|---|---|
 | `joint_solve.nestedPosteriorVar` | the EM E-step's `Var(d)`, `Var(u)` are the exact (cell + its races) block, not `sigma²/A_ii` | the diagonal goes to zero with more rows of ONE race; the truth does not. `sigma_u` was under-stated and every thin course kept too much of one day |
-| `joint_solve` + `run_joint` + `speed_ratings_db`/`speed_ratings` | meet-importance term `imp[pool, sport, class]` from a new pack column `meet_class` (meet name → 0/1/2) | a championship-only venue booked the taper as an easy course (Foot Locker, state meets). Beyer's class pars, FIS's zero penalty: a class effect, never a venue's |
+| `joint_solve` + `run_joint` | season-end taper term `imp[pool, sport] · share`, the share being the fraction of a race's field for whom the race falls within two weeks of the end of their own season (`run_joint.seasonEndShare`); no name is read | a championship-only venue booked the taper as an easy course (Foot Locker, state meets). Beyer's class pars, FIS's zero penalty: a class effect, never a venue's |
 | `joint_solve` + `run_joint` | indoor as one coefficient per pool, folded into `delta` | 1,574 indoor cells each rediscovered a ~1% effect under a 1.6% prior; no location hosts both |
 | `joint_solve.Design.mu_fixed`, `run_joint --sport-level G` | the XC/TF level ASSERTED and taken out of theta | sport is season; nobody identifies this from results (Tully, NCAA, WMA all state it). `--merge-sports` left `mu` free and unpenalised |
 | `joint_solve.DIST_BANDS` (4 bands), `engine/distance_tables.py` | a top band from 135; the World Athletics / Purdy relation as the prior mean of an event offset the pairs cannot calibrate | the exponent rises as ability falls; the tangent extension beyond 3200 is unfounded (college 10k rode four pairs) |
@@ -27,7 +27,8 @@ runs here; the first live log decides.
 | `deploy/run_pipeline.sh` | `XCP_SPORT_LEVEL`, `XCP_NO_IMPORTANCE`, `XCP_NO_INDOOR`, `XCP_NO_DIST_TABLE`, on 08 and 08a | the holdout must score the shipped model |
 | `joint_solve.altDistanceFactor`, `run_joint` | altitude exposure and credit scaled by the event's share of the 5000's cost (800 a fifth, 10k a bit more) | NCAA tables: one coefficient per sport over-credited the 800 and under-credited the 10k |
 | `scripts/ablation_ladder.py`, `run_joint --diag-var` | rungs `diag-var`, `no-importance`, `no-indoor`, `no-dist-table`, `stated-level` | every new term is scored on held-out races by 08b |
-| `speed_ratings_db` | `meets_tfrrs.is_championship` marks class 2 for tfrrs XC meets, before the name regex | the feed's own flag beats a name |
+| `speed_ratings_db`/`speed_ratings`, `engine/meet_class.py` | a pack column `meet_class` (meet name → 0/1/2/3, tfrrs flag → 2) kept as a DIAGNOSTIC only: the solve cross-tabulates the season-end share against it | if the finals do not show the highest share, the calendars the share is read off are wrong, and that line says so |
+| `joint_solve.TILT_RATING_LO/HI`, `run_joint.reportTiltByBand` | the tilt extrapolates past 140 instead of clamping (rails 40/200 are safety only), and every run prints the tilt the residuals imply per rating band | owner: "measure further; extrapolate rather than remain constant" |
 
 Tests added: `tests/test_nested_variance.py`, `tests/test_shared_terms.py`,
 round-trip cases in `tests/test_conversions_engine_scale.py`. Updated for
@@ -37,7 +38,8 @@ the new behaviour: `tests/test_joint_dist.py` (four bands),
 
 ## 2. THE NEXT RUN
 
-The pack needs `meet_class`, so from 7:
+The taper term reads the athletes' own calendars, which every pack has;
+the `meet_class` cross-check column needs a repack, so from 7:
 
 ```
 cd /srv/xc-predictor && git pull
@@ -45,8 +47,8 @@ set -a; . /etc/xc-predictor.env; set +a
 XCP_ALTITUDE=1 bash deploy/run_pipeline.sh --from 7 2>&1 | tee logs/run19.out
 ```
 
-That is today's shipped model plus the E-step, the importance term, the
-indoor term, the table prior and the fourth band, with the level still
+That is today's shipped model plus the E-step, the season-end taper term,
+the indoor term, the table prior and the fourth band, with the level still
 **estimated**. To apply the stated scale instead (the owner's definition:
 track is the zero, an average XC course is +6%), add `XCP_SPORT_LEVEL=0.0583`.
 Both are the owner's call; the research doc (Part I.3, I.4) says why the
@@ -55,10 +57,11 @@ level cannot be measured and what every other system does.
 ## 3. WHAT TO READ FIRST IN `08_golive.log`
 
 ```
-[joint] meet importance: N of M rows at a championship-class meet        # pack carries it (else: repack)
+[joint] season-end taper: N of M rows carry a share (median share ...)   # then: by name class 0..3, share must RISE with class
 [joint] indoor: 1,574 of 74,366 cells are indoor tracks
 [joint] XC: race-day sd ... course prior ... a one-race course keeps 0.xx  # vs run22: sigma_u a little up, share a little down
-[joint] meet importance, log-time per (pool, sport, class)               # c2 near -2%, c1 near -1%
+[joint] season-end taper, log-time per unit share, per (pool, sport)     # near -2% (a whole field at its season's end)
+[joint] tilt by rating band: applied h against implied h                 # 140+ rows: implied close to applied = extrapolation holds
 [joint] indoor, log-time per pool                                        # +0.5 .. +1.5%
 [joint/live] track zero: mean 0.000 ... over N track cells               # outdoor cells
 [joint/live] difficulty zero = the average TRACK. Cross country lands at # the estimate, or "ASSERTED"
@@ -106,60 +109,68 @@ display choice.
 
 **Is the championship help to a course's difficulty automatic and
 always applied? (owner, 2026-09-11: "I could see that going very
-wrong.")** It is not automatic, and after the fourth commit it is gated.
-Measured on a planted world: a genuinely one-race ordinary venue
-mislabelled as a championship had its rows over-rated by 2.2% and its
-course read one point too hard, because the cell takes a share of the
-class's taper whether or not the label is right. Three guards now stand
-between a label and a rating, all in `engine/meet_class.py`:
+wrong.")** Not any more, and not from a name. The first cut read a class
+off the meet's name and applied one taper per class; the owner's two
+objections ("no one is tapering for their league championship, but they
+are for their state meet"; "it's so easy for it to go bad") are both
+objections to a label, and no guard on a label answers them. So the
+label is gone from the model. The term's covariate is now the race's
+**season-end share** (`run_joint.seasonEndShare`): of the athletes in the
+race whose season has closed and who ran three or more races, the
+fraction for whom this race falls within 14 days of the last race of
+their own season. A state final is a race where nearly everyone's season
+ends, so its share is near 1; a September invitational is near 0; a
+league championship sits wherever its own field puts it, which for most
+leagues is low because most of the field goes on to the section meet.
+Nothing is blanketed and nothing is read off a name. One coefficient per
+(pool, sport), zero prior mean, prior sd 0.02, fitted from the
+difference between races with high and low shares at the same venues
+and by the same athletes. A healthy fit reads about −2% per unit share
+(`IMP_EXPECTED`, the taper literature); the coefficient is not applied
+anywhere, it is estimated, and if the corpus shows no taper it is zero.
 
-- the invitational guard: a name that says invitational, preview,
-  classic, festival, relays or dual is ordinary whatever else it says,
-  unless it also says qualifier, championship, final or prelim;
-- the season window: a championship-labelled meet outside the weeks
-  championships are run (XC mid-October to mid-December, track February
-  to the start of July) is ordinary;
-- the one-race gate: the term is not applied to rows at a venue with one
-  race in the pack. With two or more races the others pin the course and
-  the term is a relabel of the day; with one the course would take a
-  share of it either way.
+Two safeguards are built into the share itself. A season that is still
+running has no last race yet, so every recent race would look like a
+season end; an athlete-season whose last race is within 21 days of the
+pack date does not vote and its rows carry no share (a current
+championship at a venue with history is handled by the day term, as
+before). And rows at a venue with one race are treated like everyone
+else's, because within a race every row carries the same share: the
+term cannot move one athlete against another, only a race's rows
+together against the course, and the course is pinned by the venue's
+other races or, at a one-race venue, shrunk to the prior as it always
+was.
 
-**And nothing is blanketed (owner: "no one is tapering for their league
-championship, but they are for their state meet").** There are three
-classes, each with its own coefficient per pool and sport, each fitted
-from its own rows with a ZERO prior mean: 1 a league or conference
-championship, 2 a qualifying round (section, region, district, prelim,
-anything called a qualifier), 3 a final (the state meet, NXN, NXR, Foot
-Locker, the NCAA meets, a state association's own series). A league
-championship can only ever get the taper its own rows show, and if they
-show none it gets none. A meet's own deviation from its class goes to the
-race-day term, which a rating never removes. What a class average can
-still move is the difficulty of a venue that hosts only that one class,
-and the finer the class the smaller that error. `IMP_EXPECTED` records
-what a healthy fit should show (about −0.5%, −1.5%, −2.5%), not a number
-that is applied. `scripts/meet_class_census.py` prints the biggest meet
-names behind each class on the real corpus, and `--find preview` looks
-one name up; run it before trusting the class.
+The name classes stay in the pack (`meet_class`) as a **cross-check**
+only. The log prints the mean season-end share by name class; finals
+must show the highest share and ordinary meets the lowest, or the
+calendars are wrong. `scripts/meet_class_census.py` still prints the
+names behind each class.
 
-**The clamp (owner: "what's with the clamp?").** The tilt `h = 1 −
-0.0031·(rating − 100)` is evaluated at the rating clipped to 70–140
-(`TILT_RATING_LO/HI`), because the slope was measured over that band and
-above it the fields are too thin and too elite-only to measure one (the
-golf-slope point: a field of scratch players cannot rate a slope). So a
-150 gets a 140's share of a course. Sized: on Mt. SAC (+5.9%) the clamp
-gives a 150 about 0.27 points more course credit than an unclamped tilt
-would, a 155 about 0.43, a 160 about 0.59; on a +10% course 0.47, 0.72
-and 0.99. Small, and in the direction of over-crediting the very top on
-hard courses. Raising `TILT_RATING_HI` to 155 is a one-line change and
-would take those tenths back; I left it, because the slope above 140 is
-an extrapolation and the all-time boards are exactly where a wrong
-extrapolation shows.
+**The clamp (owner: "what are you actually tilting?", "why not just
+measure further? I'd prefer to extrapolate rather than remain
+constant").** What is tilted is the course: a row's model is `a + h ·
+(mu + d + u) + ...`, and `h = 1 − 0.0031 · (rating − 100)` is the share
+of the course's difficulty (and of the sport level and the race day,
+which are course-shaped) that a runner of that rating pays. A 100 pays
+all of it, a 120 pays 94%, a 140 pays 88%. Until today `h` was evaluated
+at the rating clipped to 70–140, so a 150 was charged for a course as a
+140 would be. That is gone: the line now runs on (`TILT_RATING_LO/HI`
+are 40 and 200, safety rails that keep `h` inside 0.69–1.19 and nothing
+else), so a 150 pays 84.5% and a 160 pays 81.4%. On Mt. SAC that is
+about 0.27 and 0.59 rating points less course credit than the clamp
+gave. And the extrapolation is measured rather than assumed:
+`run_joint.reportTiltByBand` regresses each rating band's residuals on
+the course effect and prints the applied `h` against the implied one,
+including for the bands above 140. If the 140+ rows show an implied `h`
+well off the line, that is the next thing to change, with numbers.
 
 Answers to the three questions asked on 2026-09-11, so they are on file:
 
 - **Faster runners get less of a course's difficulty.** Yes, and it was
   already so: the tilt `h = 1 − 0.0031·(rating − 100)` multiplies the
-  course, the sport level and the day, clamped to ratings 70–140. The new
+  course, the sport level and the day, and since today runs on past 140
+  instead of clamping (checked per band in the log). The new
   indoor term is tilted the same way; the distance offsets, altitude and
   the taper term are not, because those are costs of the event, the air
   and the field, not of the ground. The tilt is one global slope, not one
@@ -169,7 +180,7 @@ Answers to the three questions asked on 2026-09-11, so they are on file:
   construction: the form curve and the opener rust are fitted jointly with
   the cells, so a course that hosts only November races is not charged
   with the season's form. The taper was the piece that was still landing
-  in the course, and the importance term is its home now.
+  in the course, and the season-end term is its home now.
 - **Altitude depends on where the runner comes from.** In the solve, yes:
   a row's exposure is the venue's altitude less half the athlete-season's
   home altitude (`ALT_ACCLIM`), so residents' abilities are their

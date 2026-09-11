@@ -255,65 +255,81 @@ def logDistCentered(cols, keep, athlete, n_ath):
     return out
 
 
-def importanceClasses(cols, keep, pool_of_athlete, pool_names):
-    """Per row, the meet-importance coefficient index (issue #22):
-    (pool, sport, class) -> pool * 4 + sport * 2 + (class - 1), or -1 for
-    an ordinary meet (class 0). Returns (index per kept row, n_imp, the
-    prior mean per index from js.IMP_PRIOR_MEAN, labels)."""
-    import meet_class as mcl
-    nc = mcl.N_CLASS
-    mc = np.asarray(cols["meet_class"], dtype=np.int64)[keep]
+SEASON_END_DAYS = 14          # a race in the last two weeks of the athlete's season
+SEASON_END_MIN_RACES = 3      # athlete-seasons that vote on a race's share
+SEASON_CLOSED_DAYS = 21       # a season whose last race is more recent may still be running
+
+
+def seasonEndShare(cols, keep, athlete, n_ath, pool_of_athlete, pool_names):
+    """Per row, the meet-importance covariate WITHOUT LABELS (issue #22;
+    owner, 2026-09-11: the name-based classes were "so easy to go bad").
+
+    The covariate is the race's SEASON-END SHARE: the fraction of the
+    race's field (athlete-seasons with SEASON_END_MIN_RACES or more races)
+    for whom this race falls within SEASON_END_DAYS of the last race of
+    their own season. A state final is a race where nearly everyone's
+    season ends, a mid-season invitational one where nearly nobody's does,
+    a league meet sits wherever its field puts it -- and none of it is read
+    off a name. Everyone in a race carries the same share, so within a race
+    there is no selection; across races the share is what identifies the
+    term.
+
+    ⚠ A SEASON STILL RUNNING HAS NO LAST RACE YET. Every recent race of the
+      current season would look like a season end, and the term would hand
+      this week's invitational a taper. So an athlete-season whose last race
+      is within SEASON_CLOSED_DAYS of the pack's date does not vote and its
+      rows carry no share; a current championship at a venue with history
+      is handled by the day term, as before.
+
+    Returns (index per kept row: pool * 2 + sport; weight per row: the
+    share; n_imp; the prior mean per coefficient, zero; labels; and the
+    per-race share for the log)."""
+    days = np.asarray(cols["days"])[keep].astype(np.float64)       # days ago
     sport = np.asarray(cols["sport"])[keep].astype(np.int64)
-    pool_row = pool_of_athlete[np.asarray(cols["athlete"])[keep]]
-    cls = np.clip(mc, 0, nc)
-    labelled = cls > 0
-    # ★ TWO GATES BETWEEN A LABEL AND A RATING (meet_class.py, "three
-    #   things"). A misread name at a venue that hosts one race hands that
-    #   race's rows about two thirds of the class's taper as extra credit,
-    #   and the rating cannot tell a wrong label from a right one there.
-    #   (a) the season window: a championship-labelled meet outside the
-    #       weeks championships are run is an ordinary meet
-    #   (b) venues with ONE race in the pack: the term is not applied to
-    #       their rows at all. With two or more races the others pin the
-    #       course and the term is a relabel of the day; with one the
-    #       course would take a share of it either way. The term is still
-    #       identified off every venue that hosts a mix.
-    if "doy" in cols:
-        aday = js.academicDay(np.asarray(cols["doy"])[keep])
-        out_of_season = labelled & ~mcl.inWindow(sport, aday)
-    else:
-        out_of_season = np.zeros(cls.size, dtype=bool)
     course = np.asarray(cols["course"])[keep].astype(np.int64)
-    days = np.asarray(cols["days"])[keep].astype(np.int64)
-    ok_cell = course >= 0
-    pair = np.unique(course[ok_cell] * np.int64(1_000_000) + days[ok_cell])
-    races_per_cell = np.bincount((pair // 1_000_000).astype(np.int64),
-                                 minlength=int(course.max()) + 1)
-    one_race = ok_cell & (races_per_cell[np.maximum(course, 0)] < 2)
-    one_race |= ~ok_cell
-    cls = np.where(out_of_season | one_race, 0, cls)
-    # one coefficient per (pool, sport, class): league, qualifier and final
-    # are fitted apart, so a league championship never inherits a state
-    # meet's taper (meet_class.py)
-    idx = np.where(cls > 0, (pool_row * 2 + sport) * nc + (cls - 1), -1)
-    n_imp = len(pool_names) * 2 * nc
-    prior = np.zeros(n_imp)
-    labels = []
-    for p, name in enumerate(pool_names):
-        for s, sname in ((0, "XC"), (1, "TF")):
-            for c in range(1, nc + 1):
-                prior[(p * 2 + s) * nc + (c - 1)] = js.IMP_PRIOR_MEAN.get(c, 0.0)
-                labels.append(f"{name}:{sname}:c{c}")
-    n_rows = int((idx >= 0).sum())
-    per_class = ", ".join(f"{mcl.CLASS_NAMES[c]} {int((cls == c).sum()):,}"
-                          for c in range(1, nc + 1))
-    print(f"[joint] meet importance: {n_rows:,} of {idx.size:,} rows carry "
-          f"the term (labelled {int(labelled.sum()):,}; dropped as out of "
-          f"season {int((labelled & out_of_season).sum()):,}, at a one-race "
-          f"venue {int((labelled & one_race & ~out_of_season).sum()):,}); "
-          f"{per_class}; {n_imp} coefficients, prior mean 0, sd "
-          f"{js.IMP_PRIOR_SD}; a healthy fit reads about {js.IMP_EXPECTED}")
-    return idx.astype(np.int64), n_imp, prior, labels
+    pool_row = pool_of_athlete[np.asarray(cols["athlete"])[keep]]
+    athlete = np.asarray(athlete, dtype=np.int64)
+    n_ath = int(n_ath)
+    # the athlete-season's last race (fewest days ago) and its race count
+    last = np.full(n_ath, np.inf)
+    np.minimum.at(last, athlete, days)
+    n_races = np.bincount(athlete, minlength=n_ath)
+    closed = last > SEASON_CLOSED_DAYS
+    votes = (n_races >= SEASON_END_MIN_RACES) & closed
+    ending = (days - last[athlete] <= SEASON_END_DAYS) & votes[athlete]
+    # the race: (cell, day) as raceCodes keys it
+    race, n_race = raceCodes(course, days)
+    n_vote = np.bincount(race, weights=votes[athlete].astype(np.float64),
+                         minlength=n_race)
+    n_end = np.bincount(race, weights=ending.astype(np.float64), minlength=n_race)
+    share = np.where(n_vote > 0, n_end / np.maximum(n_vote, 1), 0.0)
+    w = share[race]
+    w = np.where(course >= 0, w, 0.0)
+    idx = np.where(w > 0, pool_row * 2 + sport, -1)
+    n_imp = len(pool_names) * 2
+    prior = np.full(n_imp, float(js.IMP_PRIOR_MEAN))
+    labels = [f"{name}:{sname}" for name in pool_names
+              for sname in ("XC", "TF")]
+    seen = n_vote > 0
+    print(f"[joint] season-end taper: {int((w > 0).sum()):,} of {w.size:,} rows "
+          f"carry a share (median share over races {np.median(share[seen]):.2f}, "
+          f"races with share >= 0.8: {int((share[seen] >= 0.8).sum()):,} of "
+          f"{int(seen.sum()):,}); {int(votes.sum()):,} closed athlete-seasons "
+          f"with {SEASON_END_MIN_RACES}+ races vote; {n_imp} coefficients, "
+          f"prior mean 0, sd {js.IMP_PRIOR_SD}; a healthy fit reads about "
+          f"{js.IMP_EXPECTED:+.3f} per unit share")
+    # the diagnostic cross-tab: what the NAME classes say about the same
+    # races, so the two can be checked against each other in the log
+    if "meet_class" in cols:
+        import meet_class as mcl
+        mc = np.clip(np.asarray(cols["meet_class"])[keep].astype(np.int64), 0, mcl.N_CLASS)
+        for c in range(mcl.N_CLASS + 1):
+            m = (mc == c) & (course >= 0) & (n_vote[race] > 0)
+            if m.any():
+                print(f"        by name class {c} ({mcl.CLASS_NAMES[c]:>9}): "
+                      f"{int(m.sum()):>10,} rows, mean season-end share "
+                      f"{float(w[m].mean()):.2f}")
+    return idx.astype(np.int64), w, n_imp, prior, labels, share
 
 
 def indoorCells(course_keys):
@@ -549,13 +565,10 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
         else:
             mu_fixed = np.array([0.0, -float(sport_level)])
     # the meet-importance classes (issue #22): from the pack's meet_class
-    imp_row, n_imp, imp_prior, imp_labels = None, None, None, []
-    if importance and "meet_class" in cols and sport is not None:
-        imp_row, n_imp, imp_prior, imp_labels = importanceClasses(
-            cols, keep, pool_of_athlete, pool_names)
-    elif importance and "meet_class" not in cols:
-        print("[joint] meet importance: OFF (pack has no meet_class -- "
-              "repack with --from 7)")
+    imp_row, imp_w, n_imp, imp_prior, imp_labels = None, None, None, None, []
+    if importance and sport is not None and "days" in cols:
+        imp_row, imp_w, n_imp, imp_prior, imp_labels, _share = seasonEndShare(
+            cols, keep, athlete, n_ath, pool_of_athlete, pool_names)
     # indoor as a shared term: from the cell keys (':in')
     ind_cell = indoorCells(course_keys) if indoor else None
     # the published tables as the prior mean of an uncalibrated event
@@ -579,7 +592,8 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   era_pairs=era_pairs, era_w=era_w,
                   eras_per_base=eras_per_base,
                   mu_fixed=mu_fixed, imp=imp_row, n_imp=n_imp,
-                  imp_prior=imp_prior, ind=ind_cell, e_table=e_table,
+                  imp_prior=imp_prior, imp_w=imp_w, ind=ind_cell,
+                  e_table=e_table,
                   # the event's share of the 5000's altitude cost (an 800 a
                   # fifth, a 10k a bit more), 1.0 without a distance
                   alt_dist=(js.altDistanceFactor(cols["dist_m"][keep])
@@ -742,6 +756,58 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
                 print(f"    {'':<10} pairs      {'  '.join(pairs)}")
 
 
+TILT_REPORT_BANDS = (70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0, 140.0,
+                     150.0, 160.0)
+
+
+def reportTiltByBand(out, D, y):
+    """★ MEASURE THE TILT THE CORPUS SHOWS, PER RATING BAND (owner,
+    2026-09-11: "why not just measure further?"). The solve applies
+    h(rating) * delta to every row. Within a band, regressing the residual
+    on the row's raw course effect gives how much steeper or flatter the
+    band's true multiplier is than the one applied: implied h = applied h
+    + slope. Printed for every band including those above 140, where the
+    line used to be clamped and is now extrapolated -- so the next run
+    says whether the extrapolation holds. Read-only; nothing feeds back."""
+    if out.get("rating") is None or out.get("theta") is None:
+        return
+    try:
+        b = D.unpack(out["theta"])
+        pred = js.rowPrediction(b, D, out["h"], out["amp"])
+        if out.get("mu_fixed") is not None:
+            pred = pred + out["h"] * out["mu_fixed"][D.group_row]
+        resid = np.asarray(y, dtype=np.float64) - pred
+        x = out["delta"][D.cell]
+        r = out["rating"][D.athlete]
+        h = np.asarray(out["h"], dtype=np.float64)
+        w = np.asarray(out["weights"], dtype=np.float64)
+        edges = (-np.inf,) + TILT_REPORT_BANDS + (np.inf,)
+        print("[joint] tilt by rating band: the applied course multiplier h "
+              "against the one the residuals imply (implied = applied + "
+              "slope of residual on the course effect; a line past 140 "
+              "means the extrapolation holds)")
+        print(f"    {'band':>10} {'rows':>11} {'applied h':>10} {'implied h':>10} {'se':>7}")
+        for lo, hi in zip(edges, edges[1:]):
+            m = (r >= lo) & (r < hi) & (np.abs(x) > 1e-9)
+            n = int(m.sum())
+            if n < 2000:
+                continue
+            xm = x[m] - np.average(x[m], weights=w[m])
+            rm = resid[m] - np.average(resid[m], weights=w[m])
+            sxx = float(np.sum(w[m] * xm * xm))
+            if sxx <= 0:
+                continue
+            slope = float(np.sum(w[m] * xm * rm) / sxx)
+            res2 = float(np.sum(w[m] * (rm - slope * xm) ** 2) / max(n - 2, 1))
+            se = float(np.sqrt(res2 / sxx))
+            ha = float(np.average(h[m], weights=w[m]))
+            lab = (f"<{hi:.0f}" if lo == -np.inf else
+                   f"{lo:.0f}+" if hi == np.inf else f"{lo:.0f}-{hi:.0f}")
+            print(f"    {lab:>10} {n:>11,} {ha:>10.3f} {ha + slope:>10.3f} {se:>7.3f}")
+    except Exception as exc:                                 # noqa: BLE001
+        print(f"[joint] tilt by band: skipped ({type(exc).__name__}: {exc})")
+
+
 def sharedTermKwargs(args):
     """The 2026-09-11 terms, for EVERY buildDesign call site: a holdout
     scored on a design without them would score a different model."""
@@ -764,18 +830,17 @@ def reportSharedTerms(out, D, pool_names):
     imp = out.get("importance")
     labels = getattr(D, "imp_labels", [])
     if imp is not None and labels:
-        rows = np.bincount(D.imp_idx, weights=D.imp_w, minlength=D.n_imp)
-        print("[joint] meet importance, log-time per (pool, sport, class); "
-              "negative = the field ran faster than the same athletes at an "
-              "ordinary meet (c1 league/conference, c2 a qualifying round: "
-              "section/region/district/prelim, c3 a final: state/national). "
-              "Each fitted from its own rows, prior mean 0. NOT in a rating; "
-              "it keeps the championship-only venues honest:")
+        share_sum = np.bincount(D.imp_idx, weights=D.imp_w, minlength=D.n_imp)
+        print("[joint] season-end taper, log-time per unit share, per (pool, "
+              "sport); negative = a field at the end of its season runs "
+              "faster than the same athletes mid-season. Fitted, prior mean "
+              "0. NOT in a rating; it keeps the championship-only venues "
+              "honest. (sum of share over rows in brackets)")
         by_pool = {}
         for i, lab in enumerate(labels):
-            p, s, c = lab.split(":")
+            p, s = lab.split(":")
             by_pool.setdefault(p, []).append(
-                f"{s} {c} {100 * float(imp[i]):+.2f}% ({int(rows[i]):,})")
+                f"{s} {100 * float(imp[i]):+.2f}% ({share_sum[i]:,.0f})")
         for p in pool_names:
             if p in by_pool:
                 print(f"    {p:<10}" + "   ".join(by_pool[p]))
@@ -1119,8 +1184,9 @@ def buildParser():
                          "--curve-gap 0 and drops --winter-gain-bands. "
                          "Unset: the level is estimated, as before")
     ap.add_argument("--no-importance", action="store_true",
-                    help="no meet-importance (championship taper) term "
-                         "(issue #22); the pack's meet_class is ignored")
+                    help="no season-end taper term (issue #22): the race's "
+                         "share of athletes at the end of their own season, "
+                         "from the pack's calendars, no meet names")
     ap.add_argument("--no-indoor", action="store_true",
                     help="no shared indoor coefficient per pool; indoor "
                          "cells carry the surface alone, as before")
@@ -1422,6 +1488,7 @@ def main():
                                     - old_delta[ok & is_xc].mean())
     reportLevelAndCurve(out, D, pool_names, old_gap)
     reportSharedTerms(out, D, pool_names)
+    reportTiltByBand(out, D, y)
 
     save = dict(delta=delta, delta_anchored=anchored, mu=out["mu"],
                 cell_se=out["cell_se"], cell_var=out["cell_var"],
