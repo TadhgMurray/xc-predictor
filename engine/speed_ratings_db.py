@@ -507,10 +507,15 @@ MEET_CLASS_RX_INVITE = "invit"
 MEET_CLASS_RX_KEEP = "(qualif|champ|final)"
 
 
-def _meetClassSql(name_expr: str) -> str:
-    """A SELECT expression: 2, 1 or 0 for the meet name expression."""
+def _meetClassSql(name_expr: str, flag_expr: str = None) -> str:
+    """A SELECT expression: 2, 1 or 0 for the meet name expression.
+    flag_expr, when given, is a boolean SQL expression that marks the meet
+    a championship from the feed itself (meets_tfrrs.is_championship):
+    it outranks the name, but not the invitational guard."""
+    flag = f"WHEN {flag_expr} THEN 2 " if flag_expr else ""
     return (f"CASE WHEN {name_expr} ~* '{MEET_CLASS_RX_INVITE}' "
             f"AND {name_expr} !~* '{MEET_CLASS_RX_KEEP}' THEN 0 "
+            f"{flag}"
             f"WHEN {name_expr} ~* '{MEET_CLASS_RX_2}' THEN 2 "
             f"WHEN {name_expr} ~* '{MEET_CLASS_RX_1}' THEN 1 ELSE 0 END")
 
@@ -579,7 +584,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                         (mt.division_distances -> r.div_id::text
                            ->> 'distance')::real,
                         mt.distance)::real AS dist_m,
-               {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')")} AS meet_class
+               {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
+                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source

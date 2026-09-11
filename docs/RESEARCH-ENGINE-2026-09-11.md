@@ -260,6 +260,22 @@ indoor cells' rmse falls.
   the curve already agrees. Level- and sex-dependent exponents from
   Part I.3. `--no-dist-table` restores the zero prior.
 
+### II.5b Altitude per event, and the rungs (second commit)
+
+- `ALT_DIST_KNOTS` / `altDistanceFactor`: the row's altitude exposure in
+  the solve and its credit in the rating are scaled by the event's share
+  of the 5000's cost (NCAA Albuquerque tables: 800 0.21, mile 0.83, 3000
+  0.93, 5000 1.00; 10k 1.05 from Hamlin). A row without a distance and
+  every XC row read 1.0, so the old designs are exact. The acclimatisation
+  logic is untouched: the field's home altitude comes off first, then the
+  share applies.
+- `--diag-var` restores the old E-step for the ladder, and the ladder gains
+  `diag-var`, `no-importance`, `no-indoor`, `no-dist-table` and
+  `stated-level` rungs so every 2026-09-11 term is scored on held-out
+  races by `08b`.
+- The XC pack reads `meets_tfrrs.is_championship` as class 2 before the
+  name regex; the invitational guard still wins.
+
 ### II.6 The conversion round trip (#21) — three defects, all consumer-side
 
 1. `conversions._norm_from_time` ran an undamped two-pass fixed point and
@@ -332,22 +348,29 @@ before), and `scripts/convert_probe.py --tf --person 29603086 --seconds
 
 ### Open, in priority order
 
-1. **Score it.** `08a_holdout` carries the same flags; the ladder
-   (`scripts/ablation_ladder.py`) should gain rungs `no-importance`,
-   `no-indoor`, `no-dist-table`, `diag-var` so each earns its keep on
-   held-out races.
-2. **Hyperpriors on `tau` and `sigma_u`** (half-normal / PC) instead of the
-   observed-sd cap, once the nested E-step's numbers are read.
-3. **Altitude per event** (NCAA: ~1%/km at 800, ~4%/km at 5000) instead of
-   one coefficient per sport.
-4. **Era drift** (`--era-years 2`) is built and unscored.
-5. **Publish `n_results` and the posterior sd beside every difficulty**
-   (Timeform's `p`, PY's data classes).
-6. **Rebuild the track curve on equal-quality pairs** with the level
+1. **Read the ladder.** `08b` now scores `diag-var`, `no-importance`,
+   `no-indoor`, `no-dist-table` and `stated-level` against base on
+   held-out races. A term that does not beat base on that number is
+   decoration and should come out; the level rung cannot be scored on the
+   level itself (sport is season) and is read for what the free curve does
+   to everything else.
+2. **Era drift** (`--era-years 2`) is built and unscored.
+3. **Publish `n_results` and the posterior sd beside every difficulty**
+   (Timeform's `p`, PY's data classes). `cell_var` is in the npz; the
+   `course_difficulties` table has no column for it yet.
+4. **Rebuild the track curve on equal-quality pairs** with the level
    dependence of Part I.3 inside it, retiring the per-event offsets — the
    principled end state; today's offsets and table prior are the bridge.
-7. **The championship class from a better source** than the meet name
-   (`meets_tfrrs.is_championship` exists for tfrrs meets).
+5. **A per-course tilt with a tight prior** (golf's slope) only if the
+   data ask for it after the importance term is in: Ultimook-type mud
+   courses cost slow runners more than the global tilt says, elite-only
+   fields cannot estimate one at all, and a free per-cell slope is how the
+   `(d = +c, u = −c)` exploit of issue 156 happened.
+
+Not worth doing, on reflection: a hyperprior on `tau` / `sigma_u`. With
+44k identified cells and 540k races voting, any half-normal or PC prior is
+inert on the estimate; the observed-sd cap is a display choice (§4 of
+`ENGINE.md`) and stays one.
 
 ### Sources
 

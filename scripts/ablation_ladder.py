@@ -87,6 +87,24 @@ LADDER = [
     ("venue-day", ["--altitude", "--race-key", "venue"],
      "pool the race-day effect across every distance raced at a venue that "
      "day, instead of one per (venue, distance) cell"),
+
+    # ---- the 2026-09-11 terms: each has to earn its keep ---------------- #
+    ("diag-var", ["--altitude", "--diag-var"],
+     "the old variance E-step (information diagonal) instead of the exact "
+     "cell + races block -- does the honest posterior variance help?"),
+    ("no-importance", ["--altitude", "--no-importance"],
+     "no meet-importance (championship taper) term -- needs a pack with "
+     "meet_class, else this equals base"),
+    ("no-indoor", ["--altitude", "--no-indoor"],
+     "no shared indoor coefficient; every indoor cell carries the surface "
+     "alone"),
+    ("no-dist-table", ["--altitude", "--no-dist-table"],
+     "uncalibrated event offsets keep the zero prior instead of the "
+     "published tables' relation"),
+    ("stated-level", ["--altitude", "--sport-level", "0.0583"],
+     "the XC/TF level ASSERTED at the stated grass cost instead of "
+     "estimated. Sport is season, so a held-out RACE cannot score the level "
+     "itself -- read this rung for what the free curve does to the rest"),
 ]
 
 

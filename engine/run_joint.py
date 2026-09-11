@@ -544,7 +544,11 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   era_pairs=era_pairs, era_w=era_w,
                   eras_per_base=eras_per_base,
                   mu_fixed=mu_fixed, imp=imp_row, n_imp=n_imp,
-                  imp_prior=imp_prior, ind=ind_cell, e_table=e_table)
+                  imp_prior=imp_prior, ind=ind_cell, e_table=e_table,
+                  # the event's share of the 5000's altitude cost (an 800 a
+                  # fifth, a 10k a bit more), 1.0 without a distance
+                  alt_dist=(js.altDistanceFactor(cols["dist_m"][keep])
+                            if alt is not None and "dist_m" in cols else None))
     D.course_keys = course_keys
     D.imp_labels = imp_labels
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
@@ -781,6 +785,7 @@ def solveKwargs(args, athlete_pool, verbose):
         sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
         ability_weight=args.ability_weight,
         top_frac=args.top_frac,
+        nested_var=not args.diag_var,
     )
 
 
@@ -1118,6 +1123,10 @@ def buildParser():
     ap.add_argument("--top-frac", type=float, default=0.0, metavar="F",
                     help="keep only the fastest F of each race (Slaney's "
                          "top-25%% filter is 0.25); 0 keeps everyone")
+    ap.add_argument("--diag-var", action="store_true",
+                    help="the variance E-step from the information diagonal "
+                         "(sigma2 / A_ii) instead of the exact cell + races "
+                         "block -- the pre-2026-09-11 behaviour, a ladder rung")
     ap.add_argument("--priors-from-all-cells", action="store_true",
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "

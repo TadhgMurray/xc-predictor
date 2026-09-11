@@ -297,3 +297,38 @@ def test_table_prior_holds_a_class_the_pairs_cannot_calibrate():
     e0 = out0["dist_offset"].reshape(1, js.DIST_N_BAND)
     assert (np.abs(e0[0, [0, 2, 3]]) < 1e-6).all(), "no rows, zero prior -> zero"
     print("  table prior holds an uncalibrated class ..................... OK")
+
+
+# ------------------------------------------------------------------ #
+# altitude per event (2026-09-11): the 800 earns a fifth of the 5000's credit
+# ------------------------------------------------------------------ #
+
+def test_altitude_cost_scales_with_the_event():
+    f = js.altDistanceFactor(np.array([0.0, 600.0, 800.0, 1600.0, 3000.0,
+                                       5000.0, 8000.0, 10000.0, 12000.0]))
+    assert f[0] == 1.0                                   # no distance: as before
+    assert f[1] == f[2] == 0.21                          # held below the first knot
+    assert abs(f[3] - 0.83) < 1e-12 and abs(f[5] - 1.0) < 1e-12
+    assert 0.83 < f[4] < 1.0 and 1.0 < f[6] < 1.05 and f[7] == f[8] == 1.05
+    assert (np.diff(f[1:]) >= 0).all()                   # monotone in distance
+    # on a design: exposure and credit both carry it, home altitude too
+    n = 6
+    ath = np.arange(n); cel = np.zeros(n, int); rac = np.zeros(n, int)
+    alt = np.full(n, 1.5)                                # 1.5 km above the floor
+    dist = np.array([800.0, 1600.0, 5000.0, 10000.0, 0.0, 5000.0])
+    D = js.Design(ath, cel, rac, alt=alt, alt_dist=js.altDistanceFactor(dist))
+    assert np.allclose(D.alt, 1.5 * js.altDistanceFactor(dist))
+    assert abs(D.alt[0] / D.alt[2] - 0.21) < 1e-12
+    credit = js.altitudeCredit(D)
+    assert np.allclose(credit, D.alt)
+    # residents at the same race: the field's home altitude comes off first,
+    # then the event's share applies
+    home = np.full(n, 1.0)
+    D2 = js.Design(ath, cel, rac, alt=alt, alt_home=home,
+                   alt_dist=js.altDistanceFactor(dist))
+    c2 = js.altitudeCredit(D2)
+    assert np.allclose(c2, (1.5 - js.ALT_ACCLIM * 1.0) * js.altDistanceFactor(dist))
+    # the old designs are untouched: no alt_dist means a factor of one
+    D0 = js.Design(ath, cel, rac, alt=alt)
+    assert np.allclose(D0.alt, alt) and np.allclose(js.altitudeCredit(D0), alt)
+    print("  altitude cost scales with the event .......................... OK")

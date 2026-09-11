@@ -394,13 +394,14 @@ defects, 9.12–9.14), #22 (the importance term; needs a repack for
 mean of an uncalibrated event offset), the E-step (§5), a fourth distance
 band, and `--sport-level` as the way to apply `XC_TRACK_GAP`.
 
-1. **Score the new terms.** `08a_holdout` carries the same flags; give the
-   ladder rungs `no-importance`, `no-indoor`, `no-dist-table`, `diag-var`.
-2. **Hyperpriors on `tau` and `sigma_u`** (half-normal / PC, Gelman 2006,
-   Simpson 2017) instead of the observed-sd cap, once the nested E-step's
-   numbers have been read on the box.
-3. **Altitude per event** — the NCAA tables run ~1%/km at 800 and ~4%/km
-   at 5000; one coefficient per sport is the average of those.
+1. **Read the ladder.** `08b` scores `diag-var`, `no-importance`,
+   `no-indoor`, `no-dist-table` and `stated-level` against base; a term
+   that does not beat base on held-out races comes out.
+2. **Not a hyperprior.** With 44k identified cells a half-normal or PC
+   prior on `tau`/`sigma_u` is inert; the observed-sd cap is a display
+   choice (§4) and stays one.
+3. **Altitude per event is in** (`altDistanceFactor`: the 800 a fifth of
+   the 5000's cost). What is still one number is the coefficient itself.
 4. **#12 era drift is built but off.** Score it (`--era-years 2` on the
    holdout) before turning it on in `08_golive`.
 5. **#18 per-cell posterior SD** back on, and `n_results` beside every

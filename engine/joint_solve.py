@@ -297,11 +297,16 @@ def altitudeCredit(D):
     if not getattr(D, "n_k", 0):
         return None
     home = getattr(D, "alt_home", None)
+    dist_f = getattr(D, "alt_dist", None)
+    if dist_f is None:
+        dist_f = np.ones(D.n)
     if home is None or not np.any(home):
         return D.alt
     field = (np.bincount(D.race, weights=home, minlength=D.n_race)
              / np.maximum(np.bincount(D.race, minlength=D.n_race), 1))
-    return np.maximum(D.alt_venue - ALT_ACCLIM * field[D.race], 0.0)
+    # the event's share of the cost rides on the credit as it does on the
+    # exposure (ALT_DIST_KNOTS): an 800 at altitude earns a fifth of a 5000's
+    return np.maximum(D.alt_venue - ALT_ACCLIM * field[D.race], 0.0) * dist_f
 
 
 def homeAltitude(alt_row, known_row, athlete, n_ath):
@@ -442,6 +447,31 @@ ALT_PRIOR_PEN_FIT = 20.0        # row units: about sd 0.01 around it
 #   field at Flagstaff earns half, a sea-level field at a national meet
 #   at altitude earns all of it. altitudeCredit() is that number.
 ALT_ACCLIM = 0.5
+# ★ ALTITUDE COSTS THE 800 A FIFTH OF WHAT IT COSTS THE 5000 (2026-09-11).
+#   The NCAA conversion tables at Albuquerque (1,511 m) are purely
+#   multiplicative and run 800 -0.56%, mile -2.18%, 3000 -2.46%, 5000 -2.64%
+#   (Hamlin et al. 2015: 4-6% for 5k-10k at altitude); Peronnet 1991 puts
+#   the aerobic share past half at about 100 s of racing, and it is the
+#   aerobic share that thin air taxes. One coefficient per sport was the
+#   average of those, so the 800 was over-credited and the 10k under. The
+#   row's exposure is scaled by the event's share of the 5000's cost,
+#   piecewise-linear in log distance; an XC row (5 km or so) reads 1.0 and
+#   a row with no distance reads 1.0, exactly as before.
+ALT_DIST_KNOTS = ((800.0, 0.21), (1600.0, 0.83), (3000.0, 0.93),
+                  (5000.0, 1.00), (10000.0, 1.05))
+
+
+def altDistanceFactor(dist_m):
+    """Per row, the event's altitude cost as a share of the 5000's;
+    1.0 where the distance is unknown (0 or negative)."""
+    d = np.asarray(dist_m, dtype=np.float64)
+    known = d > 0
+    xs = np.log([k for k, _v in ALT_DIST_KNOTS])
+    ys = np.array([v for _k, v in ALT_DIST_KNOTS])
+    out = np.ones(d.shape)
+    if known.any():
+        out[known] = np.interp(np.log(d[known]), xs, ys)
+    return out
 
 # ★ THE MEET-IMPORTANCE PRIOR (issue #22). Two classes above the reference
 #   (an invitational, a dual, a relay meet): class 1 is a league, conference,
@@ -565,7 +595,7 @@ class Design:
                  dist_banded=False,
                  era_pairs=None, era_w=None, eras_per_base=None,
                  mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
-                 ind=None, e_table=None):
+                 ind=None, e_table=None, alt_dist=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -725,9 +755,14 @@ class Design:
             self.alt_venue = np.asarray(alt, dtype=np.float64)
             self.alt_home = (np.zeros(self.n) if alt_home is None
                              else np.asarray(alt_home, dtype=np.float64))
+            # the event's share of the 5000's altitude cost (ALT_DIST_KNOTS):
+            # 1.0 where the caller passes none, so the old designs are exact
+            self.alt_dist = (np.ones(self.n) if alt_dist is None
+                             else np.asarray(alt_dist, dtype=np.float64))
             # the solve's exposure (ALT_ACCLIM): the venue's km less the
-            # share of home km an acclimatised athlete has recovered
-            self.alt = self.alt_venue - ALT_ACCLIM * self.alt_home
+            # share of home km an acclimatised athlete has recovered, scaled
+            # by the event's share of the cost
+            self.alt = (self.alt_venue - ALT_ACCLIM * self.alt_home) * self.alt_dist
             self.n_k = self.n_group
 
         # ★ THE MEET-IMPORTANCE TERM (issue #22, 2026-09-11). Per row a

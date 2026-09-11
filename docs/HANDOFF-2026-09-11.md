@@ -25,6 +25,9 @@ runs here; the first live log decides.
 | `engine/joint_golive.py` | `engine_scale.anchor_shift` = the anchor applied; zero = the average OUTDOOR track | the shift had not followed the display anchor; every named-venue conversion carried the XC/TF gap |
 | `racecast/panels.py`, `racecast/app.py`, `athlete.html` | no second tilt on the home boards; the athlete header's equivalence goes through the page's inverse and names the pool's distance | tilting twice; "about a 12:40 5K" for a college man was an 8000 m time |
 | `deploy/run_pipeline.sh` | `XCP_SPORT_LEVEL`, `XCP_NO_IMPORTANCE`, `XCP_NO_INDOOR`, `XCP_NO_DIST_TABLE`, on 08 and 08a | the holdout must score the shipped model |
+| `joint_solve.altDistanceFactor`, `run_joint` | altitude exposure and credit scaled by the event's share of the 5000's cost (800 a fifth, 10k a bit more) | NCAA tables: one coefficient per sport over-credited the 800 and under-credited the 10k |
+| `scripts/ablation_ladder.py`, `run_joint --diag-var` | rungs `diag-var`, `no-importance`, `no-indoor`, `no-dist-table`, `stated-level` | every new term is scored on held-out races by 08b |
+| `speed_ratings_db` | `meets_tfrrs.is_championship` marks class 2 for tfrrs XC meets, before the name regex | the feed's own flag beats a name |
 
 Tests added: `tests/test_nested_variance.py`, `tests/test_shared_terms.py`,
 round-trip cases in `tests/test_conversions_engine_scale.py`. Updated for
@@ -94,7 +97,32 @@ and `'Glendoveer'` (championship venues read harder than before);
 
 ## 5. OPEN
 
-`docs/ENGINE.md` §11, rewritten today: score the new terms on the ladder,
-hyperpriors instead of the observed-sd cap, altitude per event, era drift,
-posterior sd and `n_results` on the page, the curve rebuilt on
-equal-quality pairs, the championship class from `is_championship`.
+`docs/ENGINE.md` §11, rewritten today: read the ladder (every new term now
+has a rung), era drift, posterior sd and `n_results` on the page, the
+curve rebuilt on equal-quality pairs, and a per-course tilt only if the
+data ask for it. A hyperprior on `tau`/`sigma_u` is not worth building:
+with 44k identified cells it is inert, and the observed-sd cap is a
+display choice.
+
+Answers to the three questions asked on 2026-09-11, so they are on file:
+
+- **Faster runners get less of a course's difficulty.** Yes, and it was
+  already so: the tilt `h = 1 − 0.0031·(rating − 100)` multiplies the
+  course, the sport level and the day, clamped to ratings 70–140. The new
+  indoor term is tilted the same way; the distance offsets, altitude and
+  the taper term are not, because those are costs of the event, the air
+  and the field, not of the ground. The tilt is one global slope, not one
+  per course, on purpose: an elite-only field cannot estimate a slope and a
+  free per-cell slope is how the issue-156 exploit happened.
+- **Fitness and rust are out of a course's difficulty.** Yes, by
+  construction: the form curve and the opener rust are fitted jointly with
+  the cells, so a course that hosts only November races is not charged
+  with the season's form. The taper was the piece that was still landing
+  in the course, and the importance term is its home now.
+- **Altitude depends on where the runner comes from.** In the solve, yes:
+  a row's exposure is the venue's altitude less half the athlete-season's
+  home altitude (`ALT_ACCLIM`), so residents' abilities are their
+  sea-level speed and the cell is terrain, not the visitors' penalty. In a
+  rating the credit is per race, the venue less half the field's mean home
+  altitude, so everyone in one race keeps their finish order. Today added
+  the event's share of the cost (an 800 a fifth of a 5000).
