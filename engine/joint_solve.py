@@ -527,7 +527,8 @@ class Design:
                  n_knot=CURVE_N_KNOTS, knot_days=CURVE_KNOT_DAYS,
                  dist=None, n_e=None, lz=None, link=None, alt=None,
                  dist_ref=None, alt_home=None,
-                 dist_banded=False):
+                 dist_banded=False,
+                 era_pairs=None, era_w=None, eras_per_base=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -550,6 +551,25 @@ class Design:
         self.n_mu = self.n_group - 1
         self.mu_idx = np.maximum(self.group_row - 1, 0)
         self.mu_w = (self.group_row > 0).astype(np.float64)
+
+        # ★ THE RANDOM WALK OVER ERAS. era_pairs is (2, M): each column is
+        #   an adjacent pair of era-cells belonging to the SAME course, and
+        #   era_w is 1/(era gap) so a course that skipped four years is tied
+        #   more loosely than one measured back to back -- a random walk's
+        #   variance grows with elapsed time.
+        self.era_pairs = (None if era_pairs is None
+                          else np.asarray(era_pairs, dtype=np.int64))
+        self.era_w = (None if era_w is None
+                      else np.asarray(era_w, dtype=np.float64))
+        self.n_era_pair = 0 if self.era_pairs is None else self.era_pairs.shape[1]
+        # ⚠ HOW MANY ERAS EACH COURSE WAS SPLIT INTO, so the tau prior can be
+        #   divided by it. tau is a prior on a COURSE's level; applied whole
+        #   to each of eight eras it would shrink an eight-era course eight
+        #   times as hard as a one-era course toward the sport's mean, which
+        #   is a shrinkage that depends on how long a venue has existed.
+        self.eras_per_base = (np.ones(self.n_cell) if eras_per_base is None
+                              else np.asarray(eras_per_base,
+                                              dtype=np.float64))
 
         self.sc = None if sc is None else np.asarray(sc, dtype=np.float64)
 
@@ -982,10 +1002,27 @@ class _Operator:
     def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
                  lam_gap=None, gap_target=0.0, pen_dist=0.0,
                  ridge_slope=0.0, link_weight=0.0,
-                 alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED):
+                 alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
+                 pen_era=0.0):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         self.pen_cell, self.pen_race, self.ridge, self.lam = (
             pen_cell, pen_race, ridge, lam)
+        # ★ tau IS A PRIOR ON A COURSE, NOT ON AN ERA. Split into eras and
+        #   applied whole to each, it would shrink a long-lived venue harder
+        #   than a new one purely for having existed longer. Divided by the
+        #   course's era count, the total pull toward the sport's level is
+        #   what it was before the split.
+        if getattr(D, "n_era_pair", 0):
+            self.pen_cell = np.asarray(pen_cell, dtype=np.float64) \
+                / np.maximum(D.eras_per_base, 1.0)
+        self.pen_era = float(pen_era)
+        # incident weight per era-cell, for the diagonal
+        self._era_deg = None
+        if getattr(D, "n_era_pair", 0) and self.pen_era > 0.0:
+            a, b_ = D.era_pairs
+            self._era_deg = (
+                np.bincount(a, weights=D.era_w, minlength=D.n_cell)
+                + np.bincount(b_, weights=D.era_w, minlength=D.n_cell))
         # the event offsets' prior: pen_dist per class; where the season-
         # best pairs calibrated a class (Design.calibrateDist) the penalty
         # is DIST_CAL_SHARE of its own row information instead, toward a
@@ -1057,6 +1094,18 @@ class _Operator:
         b = D.unpack(theta)
         out = self.adjoint(self.w * rowPrediction(b, D, self.h, self.amp))
         out[D.o_d:D.o_u] += self.pen_cell * b["d"]
+        # ★★ THE RANDOM WALK BETWEEN ERAS. The penalty is
+        #    0.5 * pen_era * sum_pairs w * (d[a] - d[b])^2, so its gradient
+        #    pushes adjacent eras of ONE course together and says nothing
+        #    about their common level -- that is still tau's job. This is
+        #    what lets a well-measured venue move between eras while a thin
+        #    one stays one number.
+        if self._era_deg is not None:
+            a, b_ = D.era_pairs
+            c = self.pen_era * D.era_w * (b["d"][a] - b["d"][b_])
+            out[D.o_d:D.o_u] += (np.bincount(a, weights=c, minlength=D.n_cell)
+                                 - np.bincount(b_, weights=c,
+                                               minlength=D.n_cell))
         out[D.o_u:D.o_mu] += self.pen_race * b["u"]
         if D.n_beta:
             out[D.o_beta:D.o_c] += self.ridge * b["beta"]
@@ -1097,7 +1146,9 @@ class _Operator:
         D, w, h, amp = self.D, self.w, self.h, self.amp
         jobs = [lambda: np.bincount(D.athlete, weights=w, minlength=D.n_ath),
                 lambda: np.bincount(D.cell, weights=w * h * h,
-                                    minlength=D.n_cell) + self.pen_cell,
+                                    minlength=D.n_cell) + self.pen_cell
+                + (0.0 if self._era_deg is None
+                   else self.pen_era * self._era_deg),
                 lambda: np.bincount(D.race, weights=w * h * h,
                                     minlength=D.n_race)
                 + self.pen_race,
@@ -1868,6 +1919,36 @@ SIGMA_U_FLOOR = {0: 0.0, 1: 0.0}            # 0 = XC, 1 = TF
 #     `free-tau` rung measures what either costs.
 TAU_MAX_DEFAULT = {0: 0.0364, 1: 0.0161}         # 0 = XC, 1 = TF
 
+# ★★★ COURSES CHANGE, AND UNTIL NOW ONE NUMBER HAD TO COVER EVERY YEAR THEY
+#     EXISTED (owner, asked three times: "difficulty per every couple years",
+#     "courses do change. For example Mt. SAC started crazily cleaning their
+#     course b4 the meet each year, making it faster", "I think yearly (well
+#     not yearly yearly but a couple years) course difficulties could be
+#     better").
+#
+#     A cell is now (course, era) with eras ERA_YEARS wide, and consecutive
+#     eras of the same course are tied by a RANDOM WALK: the penalty is on
+#     the DIFFERENCE between adjacent eras, not on each era's value. That is
+#     the same device as Coulom's Whole-History Rating, where a player's
+#     strength is a random walk and each rating is informed by its
+#     neighbours in time, and as a state-space/Kalman smoother generally.
+#
+#     What it buys, and why a per-era cell ALONE would not: a venue with
+#     thousands of races gets genuinely separate era values, while a thin
+#     one collapses back toward one number because the walk prior holds its
+#     eras together. Splitting cells without the walk would just shatter
+#     every thin course into noise -- which is the failure this avoids.
+#
+#  ! THE DRIFT IS STATED, NOT FITTED. ERA_DRIFT_SD is how far a course may
+#    move between adjacent eras, as log-time. 0.01 says a course drifts
+#    about 1% per era on its own; a course with evidence of more will still
+#    move more, because the prior is a spring and not a clamp. Fitting it by
+#    EM is possible and is deliberately not done yet: one new estimated
+#    variance interacting with tau and sigma_u is how the last three
+#    regressions happened.
+ERA_YEARS_DEFAULT = 0            # 0 = off, one difficulty for all time
+ERA_DRIFT_SD = 0.010             # log-time drift allowed per era step
+
 # The true (reproducing) course spread each sport was MEASURED to have, by
 # splitting every venue's races in half on different days -- which a
 # race-day effect cannot fake. checkPriors reads the solve against these.
@@ -1947,6 +2028,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max="default", alt_prior_pen=ALT_PRIOR_PEN_FIXED,
+               era_drift_sd=ERA_DRIFT_SD,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
@@ -2023,12 +2105,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
+        # the walk's stiffness: sigma2 over the drift variance per era step
+        pen_era = (sigma2 / max(era_drift_sd, 1e-9) ** 2
+                   if getattr(D, "n_era_pair", 0) else 0.0)
         pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
         pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
                        ridge_slope=ridge_slope, link_weight=link_weight,
-                       alt_prior_pen=alt_prior_pen)
+                       alt_prior_pen=alt_prior_pen, pen_era=pen_era)
         diag = op.diag()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
@@ -2153,12 +2238,14 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 
     # --- posterior variance, and the shrinkage it licenses ----------- #
     pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
+    pen_era = (sigma2 / max(era_drift_sd, 1e-9) ** 2
+               if getattr(D, "n_era_pair", 0) else 0.0)
     pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
     pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,
                    ridge_slope=ridge_slope, link_weight=link_weight,
-                   alt_prior_pen=alt_prior_pen)
+                   alt_prior_pen=alt_prior_pen, pen_era=pen_era)
     diag_final = op.diag()
     cell_var = cellPosteriorVar(op.matvec, diag_final, D.n_total, D.n_ath,
                                 D.n_cell, sigma2, n_probe=n_probe, seed=seed, verbose=verbose)

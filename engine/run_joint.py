@@ -306,9 +306,65 @@ def bandLabels(base_labels):
     return [f"{lab}:b{b}" for lab in base_labels for b in range(js.DIST_N_BAND)]
 
 
+# ★★★ COURSES CHANGE. Mt. SAC started grooming before the meet and got
+#     faster; Morley's route was altered; a groundsman moves a turn. One
+#     difficulty for every year a venue ever existed averages those together
+#     and is wrong in both directions at once.
+#
+#     eraCells splits each cell into (cell, era) with eras `years` wide and
+#     hands back the adjacency the solver needs to tie them together. The
+#     tying is the point: see joint_solve.ERA_DRIFT_SD. Splitting alone
+#     would shatter every thin course into noise.
+#
+#  ! ONLY PAIRS THAT EXIST. A venue with races in 2014 and 2024 and nothing
+#    between gets ONE pair spanning five era-steps, weighted 1/5 -- a random
+#    walk's variance grows with elapsed time, so a decade of silence should
+#    tie the two ends loosely, not pretend they are neighbours.
+def eraCells(course, year, years, n_cells, group, course_keys):
+    """(new_course_row, n_new, group_new, keys_new, era_pairs, era_w,
+        eras_per_base).
+
+    course: per-row cell id (-1 where the row has no cell). year: per row.
+    """
+    course = np.asarray(course, dtype=np.int64)
+    year = np.asarray(year, dtype=np.int64)
+    ok = course >= 0
+    if not years or not ok.any():
+        return (course, n_cells, group, course_keys, None, None, None)
+
+    base_year = int(year[ok].min())
+    era = np.zeros_like(course)
+    era[ok] = (year[ok] - base_year) // int(years)
+    # one id per (cell, era) that actually occurs
+    key = np.where(ok, course * 10_000 + np.clip(era, 0, 9_999), -1)
+    seen = np.unique(key[ok])
+    remap = {int(k): i for i, k in enumerate(seen)}
+    new = np.full(course.shape, -1, dtype=np.int64)
+    new[ok] = np.array([remap[int(k)] for k in key[ok]], dtype=np.int64)
+
+    base_of = (seen // 10_000).astype(np.int64)
+    era_of = (seen % 10_000).astype(np.int64)
+    n_new = seen.size
+    group_new = np.asarray(group, dtype=np.int64)[base_of]
+    keys_new = [f"{course_keys[b]}@e{e}" for b, e in zip(base_of, era_of)]
+
+    # adjacency: consecutive eras of one base cell, in era order
+    order = np.lexsort((era_of, base_of))
+    bs, es = base_of[order], era_of[order]
+    same = bs[1:] == bs[:-1]
+    a = order[:-1][same]
+    b = order[1:][same]
+    gap = (es[1:] - es[:-1])[same].astype(np.float64)
+    era_pairs = np.vstack([a, b]) if a.size else None
+    era_w = 1.0 / np.maximum(gap, 1.0) if a.size else None
+    eras_per_base = np.bincount(base_of, minlength=int(base_of.max()) + 1
+                                )[base_of].astype(np.float64)
+    return (new, n_new, group_new, keys_new, era_pairs, era_w, eras_per_base)
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
-                dist_bands=True, split_ability=False):
+                dist_bands=True, split_ability=False, era_years=0):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`."""
@@ -348,6 +404,21 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                                None if sport is None
                                else cols["sport"][cols["course"] >= 0],
                                n_cells)
+    # ★ ERA SPLIT, BEFORE ANYTHING READS n_cells. Done over ALL rows (not
+    #   just `keep`) so a subset design keeps the same cell ids as the full
+    #   one -- the holdout compares the two.
+    era_pairs = era_w = eras_per_base = None
+    course_keys = list(cols["course_keys"])
+    if era_years:
+        (_all_new, n_cells, group, course_keys,
+         era_pairs, era_w, eras_per_base) = eraCells(
+            cols["course"], cols["year"], era_years,
+            n_cells, group, course_keys)
+        course = _all_new[keep]
+        print(f"[joint] eras: {era_years}-year cells -> {n_cells:,} "
+              f"(course, era) cells, {0 if era_pairs is None else era_pairs.shape[1]:,} "
+              f"adjacent pairs tied by a random walk "
+              f"(drift sd {js.ERA_DRIFT_SD:g}/era)")
 
     sc = (pe.sportCentered(sport, athlete, n_ath)
           if sport_offset and sport is not None else None)
@@ -397,7 +468,10 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
                   else None, lz=lz, link=links, alt=alt,
                   dist_banded=dist_bands, dist_ref=dist_ref_row,
-                  alt_home=alt_home)
+                  alt_home=alt_home,
+                  era_pairs=era_pairs, era_w=era_w,
+                  eras_per_base=eras_per_base)
+    D.course_keys = course_keys
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
                      else dist_labels)
     D.dist_refs = dist_refs
@@ -580,6 +654,7 @@ def solveKwargs(args, athlete_pool, verbose):
         sport_gap_delta=args.sport_gap_delta,
         merge_sports=args.merge_sports,
         centre_curve=args.centre_curve,
+        era_drift_sd=args.era_drift,
         identified_priors=not args.priors_from_all_cells,
         sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
         ability_weight=args.ability_weight,
@@ -609,13 +684,15 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                              dist=not args.no_dist, slope=not args.no_slope,
                              link=args.link and not args.no_link,
                              dist_bands=not args.no_dist_bands,
-                             split_ability=args.split_ability)
+                             split_ability=args.split_ability,
+                             era_years=args.era_years)
     D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
                              not args.no_curve, not args.no_rust,
                              dist=not args.no_dist, slope=not args.no_slope,
                              link=args.link and not args.no_link,
                              dist_bands=not args.no_dist_bands,
-                             split_ability=args.split_ability)
+                             split_ability=args.split_ability,
+                             era_years=args.era_years)
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
                         **solveKwargs(args, athlete_pool, verbose=False))
@@ -694,6 +771,19 @@ def buildParser():
     ap.add_argument("--holdout-kind", default="race",
                     choices=list(pv_kinds()),
                     help="what to hold out together (default race)")
+    # ★★ TIME-VARYING COURSE DIFFICULTY (owner, asked three times). 0 keeps
+    #    one difficulty for all time; 2 or 3 splits each course into eras
+    #    that width and ties adjacent ones with a random walk. See
+    #    joint_solve.ERA_DRIFT_SD for the tying, which is the whole point:
+    #    a well-measured venue moves between eras, a thin one does not.
+    ap.add_argument("--era-years", type=int, default=js.ERA_YEARS_DEFAULT,
+                    metavar="N",
+                    help="split each course into N-year eras tied by a "
+                         "random walk (0 = one difficulty for all time)")
+    ap.add_argument("--era-drift", type=float, default=js.ERA_DRIFT_SD,
+                    metavar="SD",
+                    help="log-time drift allowed between adjacent eras "
+                         f"(default {js.ERA_DRIFT_SD:g})")
     ap.add_argument("--holdout", action="store_true",
                     help="also fit on 90%% of rows and score the rest")
     # ★ A REPORT STEP MUST NOT WRITE THE THING IT REPORTS ON. Without this,
@@ -1022,7 +1112,8 @@ def main():
         not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
         link=args.link and not args.no_link, altitude=args.altitude,
         dist_bands=not args.no_dist_bands,
-        split_ability=args.split_ability)
+        split_ability=args.split_ability,
+        era_years=args.era_years)
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
