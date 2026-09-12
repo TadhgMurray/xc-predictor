@@ -108,17 +108,25 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
     want = [m.lower() for m in match]
     base_ids = [i for i, k in enumerate(keys) if any(m in k.lower() for m in want)]
     out = {}
-    order = np.lexsort((days, season))            # rows by athlete-season, then day
-    starts = np.flatnonzero(np.r_[True, season[order][1:] != season[order][:-1]])
+    # rows by athlete-season, then day; each season's run is [start, end)
+    # ! ARRAYS, NOT A DICT BUILT IN A LOOP. The first cut indexed the full
+    #   51M-row array inside a comprehension over every athlete-season and
+    #   never finished (2026-09-12).
+    order = np.lexsort((days, season))
+    so = season[order]
+    starts = np.flatnonzero(np.r_[True, so[1:] != so[:-1]])
     ends = np.r_[starts[1:], order.size]
-    first_of = {int(season[order][s]): (s, e) for s, e in zip(starts, ends)}
+    start_of = np.zeros(n_season, dtype=np.int64)
+    end_of = np.zeros(n_season, dtype=np.int64)
+    start_of[so[starts]] = starts
+    end_of[so[starts]] = ends
     for b in base_ids:
         rows = np.flatnonzero(course == b)
         if rows.size == 0:
             continue
         br = np.full(rows.size, np.nan)
         for j, r in enumerate(rows):
-            s, e = first_of[int(season[r])]
+            s, e = int(start_of[season[r]]), int(end_of[season[r]])
             idx_o = order[s:e]
             m = ((np.abs(days[idx_o] - days[r]) <= window) & (course[idx_o] != b)
                  & (course[idx_o] >= 0))

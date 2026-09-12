@@ -62,3 +62,31 @@ def test_the_bracket_tracks_the_planted_course_and_its_drift(capsys):
     cb.report(res, top=0.3)
     text = capsys.readouterr().out
     assert "bracket trend" in text and "XC:100:d5000" in text
+
+
+def test_the_bracket_scales_like_a_sort_not_a_square():
+    """★ THE BUG OF 2026-09-12: the first cut copied the whole row array once
+    per athlete-season and never finished on the corpus. Two million rows
+    and 300,000 athlete-seasons here; a sort finishes in seconds, a square
+    never does."""
+    import time
+    rng = np.random.default_rng(9)
+    n_ath, n_year, per = 60_000, 5, 7                 # 300k athlete-seasons
+    n_cell, n_days = 400, 12
+    ath = np.repeat(np.arange(n_ath), n_year * per)
+    year = np.tile(np.repeat(np.arange(2019, 2019 + n_year), per), n_ath)
+    n = ath.size
+    course = rng.integers(0, n_cell, n)
+    days = (2025 - year) * 365.0 + rng.integers(0, n_days, n) * 14.0
+    norm = np.exp(rng.normal(0, 0.05, n) + 0.0005 * course)
+    cols = {"athlete": ath, "year": year, "course": course, "days": days,
+            "sport": np.zeros(n, dtype=np.int64), "norm": norm,
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
+            "course_keys": [f"XC:{100 + c}:d5000" for c in range(n_cell)]}
+    npz = {"delta": np.zeros(n_cell), "course_keys": np.array(cols["course_keys"])}
+    t0 = time.time()
+    res = cb.bracket(cols, npz, ["XC:100:", "XC:101:"], window=45)
+    took = time.time() - t0
+    assert set(res) == {"XC:100:d5000", "XC:101:d5000"}
+    assert all(len(r["races"]) > 0 for r in res.values())
+    assert took < 60, took
