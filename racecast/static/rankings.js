@@ -139,10 +139,20 @@ function maybeLink(href, inner, cls) {
               : `<td${c}>${inner}</td>`;
 }
 
-function schoolCell(school, state) {
+/* ★ THE CREST COMES FROM THE ROW, NOT FROM A GUESS (305). The browser
+   cannot ask whether a crest exists without fetching it, and a broken
+   <img> on every school without one is worse than no crests at all -- so
+   the API stamps r.crest onto the rows that have one (app.stampCrests)
+   and this draws a mark only when it is there. */
+function crestMark(url) {
+  return url ? `<img class="school-mark" src="${esc(url)}" alt=""`
+             + ` width="18" height="18" loading="lazy" decoding="async">` : "";
+}
+
+function schoolCell(school, state, crest) {
   const st = state ? ` <span class="state">${esc(state)}</span>` : "";
   if (!school) return `<td> - ${st}</td>`;
-  return `<td><a href="/school/${encodeURIComponent(school)}">`
+  return `<td>${crestMark(crest)}<a href="/school/${encodeURIComponent(school)}">`
        + `${esc(school)}</a>${st}</td>`;
 }
 
@@ -1184,7 +1194,7 @@ function renderAbility(rows) {
     <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       <td>${academicLabel(r.year)}</td>
@@ -1218,7 +1228,7 @@ function renderPerformance(rows) {
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
@@ -1260,7 +1270,7 @@ function renderPr(rows) {
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(r.race_date)}</td>
@@ -1437,7 +1447,7 @@ function renderTeams(rows, span) {
       <td class="rank${r.rank <= 3 ? " top3" : ""}"${r.board_rank
         ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
           `on ${r.board_points} points"` : ""}>${r.rank}</td>
-      <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td>${crestMark(r.crest)}<a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${academicLabel(r.year)}</td>
       <td class="rating">${r.points}</td>
@@ -1461,7 +1471,7 @@ function renderTeamsCourse(rows) {
   const body = rows.map((r, i) => `
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
-      <td><a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td>${crestMark(r.crest)}<a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${r.distance}m</td>
       <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>

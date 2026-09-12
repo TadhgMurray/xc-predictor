@@ -274,12 +274,6 @@ def renderAthleteCard(d, photo_path=None):
         sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#6b6b66")
         img.paste(slot, (px, py), mask)
 
-    # ★ THE TEAM'S CREST ON THE CORNER OF THE SLOT (305). Beside the
-    #   initials, overhanging the slot the way a badge does, so it reads as
-    #   the team rather than as part of the picture. Absent for most
-    #   schools, and absent changes nothing.
-    _crest(img, d.get("crest"), px + PHOTO - 74, py + PHOTO - 74, size=88)
-
     # the wordmark top right, the tagline under it
     tag = "Every result on one comparable scale"
     ft = _font(False, 20)
@@ -295,10 +289,24 @@ def renderAthleteCard(d, photo_path=None):
     dr.text((CARD_W - M - dr.textlength(tag, font=ft), M + 40), tag, font=ft, fill=DARK_MUTED)
 
     # name and team
+    #
+    # ★ THE TEAM'S CREST SITS BESIDE THE NAME (owner, 2026-09-12: "an image
+    #   next to the name, the way athletic.net does it"). Its width comes
+    #   out of the name's room BEFORE the name is fitted, so a long name
+    #   shrinks by exactly the crest rather than running under it, and the
+    #   crest is centred on the name's own glyph box whatever size that
+    #   name ended up at. No crest, no room taken, and the card is the one
+    #   it was.
     tx = M + PHOTO + 40
     TEXT_W = CARD_W - M - tx
-    f, name = _fit(dr, d["name"], True, 76, TEXT_W - 40, 40)
+    NAME_CREST = 72
+    room = TEXT_W - 40 - ((NAME_CREST + 24) if d.get("crest") else 0)
+    f, name = _fit(dr, d["name"], True, 76, room, 40)
     dr.text((tx, M + 76), name, font=f, fill="#ffffff")
+    if d.get("crest"):
+        _l, _t, _r, _b = dr.textbbox((tx, M + 76), name, font=f)
+        _crest(img, d["crest"], _r + 24, (_t + _b) / 2 - NAME_CREST / 2,
+               size=NAME_CREST, radius=14)
     sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
     f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
     dr.text((tx, M + 172), sub, font=f, fill=DARK_MUTED)

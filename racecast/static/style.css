@@ -4500,6 +4500,17 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .school-crest { width: 44px; height: 44px; object-fit: contain;
                 vertical-align: -0.35em; margin-right: 0.5rem;
                 background: #fff; border-radius: 6px; }
+/* ★ THE SAME MARK BESIDE EVERY MENTION OF A SCHOOL (305): a results table,
+   a team standing, a board, the directory. Small enough that a row's
+   height does not change -- an 18px box on a line that is already taller
+   than that -- and flex-free, so it drops into any cell as an inline
+   image. Most schools have no crest and emit no tag at all, so a table
+   must read as well ragged as it does complete: hence a fixed box and a
+   small right margin rather than a column of its own. */
+.school-mark { width: 18px; height: 18px; object-fit: contain;
+               vertical-align: -0.22em; margin-right: 0.3rem;
+               background: #fff; border-radius: 3px; }
+li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .share-box { display: inline-flex; align-items: center; gap: 0.45rem;
              border: 1px solid #c8c8c4; border-radius: 6px; background: #fff;
              color: #222; padding: 0.4rem 0.85rem 0.4rem 0.7rem; font: inherit;

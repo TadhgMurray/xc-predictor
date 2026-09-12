@@ -74,10 +74,53 @@ and compares it byte for byte with a card that has no crest at all.
 | `scripts/build_school_websites.py` | step 1: which school lives at which address, from a public directory export and/or Wikidata, into `school_website` |
 | `scripts/scrape_school_logos.py` | steps 2 and 3: one visit per school, the best icon it declares, normalised to a 512 px PNG, into `school_logo` and `XCP_LOGO_DIR` |
 | `racecast/school_logo.py` | the site's read side: a path, or None for every kind of failure |
-| `racecast/app.py` | step 4: `GET /img/school/<name>.png?state=`, 404 when there is none |
-| `racecast/templates/school.html`, `static/style.css` | the crest in the school page's `<h1>`, inside the heading so it stays with the name when the row wraps |
-| `racecast/cards.py` | the crest left of the title on the school share card, and as a badge on the corner of the athlete card's photo slot |
-| `tests/test_school_logos.py` | 65 tests, no network, no database, Pillow optional |
+| `racecast/app.py` | step 4: `GET /img/school/<name>.png?state=&px=`, 404 when there is none; the start-up cache; `crest()` for templates and `stampCrests()` for the boards |
+| `racecast/templates/*.html`, `static/style.css` | a crest beside **every** mention of a school -- see the list below |
+| `racecast/static/rankings.js`, `search.js` | the same mark on the boards and the search rows the browser draws |
+| `racecast/cards.py` | the crest left of the title on the school share card, and beside the athlete's name on the athlete card |
+| `tests/test_school_logos.py` | 81 tests, no network, no database, Pillow optional |
+
+## Where a crest appears
+
+The school's own pages wear a 44 px crest in the `<h1>` (`school.html`,
+`school_prs.html`). Everywhere a school is *named*, an 18 px mark goes
+before the name:
+
+race results and team standings (`race.html`), compiled meet pages
+(`compiled.html`, `compiled_tf.html`), the track meet page and its team
+points (`meet_tf.html`, `_tf_points.html`), all five course-page tables
+(`course.html`), the athlete page header and every season line
+(`athlete.html`), the home page, the landing pages, the compare page, the
+recruiting profile, the state directory (`schools.html`), the search
+results, and the three boards the browser draws (`rankings.js`).
+
+Two rules make that affordable and safe:
+
+- **One query, at start-up.** `school_logo.loadCrests` reads which
+  `(school, state)` rows serve into memory, next to where
+  `school_identity.loadLabels` reads the labels and for the same reason: a
+  race page names forty schools and every one of them must know whether
+  there IS a crest *before* it writes an `<img>`, because a tag that 404s
+  is worse than no tag. Restart the site after a scrape to pick up new
+  crests, exactly as the labels want a restart after a pipeline.
+- **`?px=` for the small ones.** An 18 px mark has no use for a 512 px
+  file, so the route resizes on demand into a cache the site's own user can
+  write (`XCP_LOGO_CACHE`, default `/var/tmp/racecast-logo-thumbs`) and
+  serves the full file if anything about that fails.
+
+The boards are drawn by the browser, which cannot ask whether a crest
+exists without fetching it, so `/api/rankings` and `/api/teams` stamp a
+`crest` field onto the rows that have one. The athlete board keys off
+`school_state`, not `state`: a result row's state is the VENUE's, and a
+travel state would fetch a different school's crest.
+
+A school without a crest emits no tag at all, so its name simply sits
+where it always did. Until coverage is high a table therefore reads a
+little ragged -- some names indented by a mark, some not. That is
+deliberate: reserving the space on every row would indent every table on
+the site for a crest most rows do not have. If the ragged look wins out
+over the empty look once the real hit rate is known, it is one line in
+`school_logo.crestImg` (return a spacer instead of `""`).
 
 ## The runbook
 
@@ -111,6 +154,10 @@ whoever runs the scraper and readable by the site's user -- the same
 split the share cards learnt with `XCP_CARD_DIR`. Set it in
 `/etc/xc-predictor.env` and in the service unit, or both sides will
 disagree about where the files are and every crest will 404.
+
+**Restart the site after a scrape.** The crest cache is read once per
+worker at start-up; without a restart the new crests are on disk and
+served by `/img/school/...`, but no page knows to ask for them.
 
 ## What changed against the plan above
 

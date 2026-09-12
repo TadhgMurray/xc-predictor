@@ -29,6 +29,11 @@ import school_logo as SL                                          # noqa: E402
 import scrape_school_logos as S                                   # noqa: E402
 import build_school_websites as W                                 # noqa: E402
 
+try:                    # the box has Pillow; this sandbox may not
+    from PIL import Image
+except ImportError:                                          # pragma: no cover
+    Image = None
+
 
 def read(*p):
     with io.open(os.path.join(_ROOT, *p), encoding="utf-8") as fh:
@@ -563,30 +568,182 @@ class Degrades(unittest.TestCase):
         self.assertIsNotNone(SL.logoRow(cur, "X", "CA"))
 
 
-class Wiring(unittest.TestCase):
-    """The three places the plan says a crest goes, and the rule that a
-    school without one is unchanged."""
+# ===================================================================== #
+#  THE MENTION: ONE CREST BESIDE EVERY SCHOOL'S NAME                    #
+# ===================================================================== #
 
-    def test_the_route_exists_and_takes_a_path(self):
+class Mentions(unittest.TestCase):
+    """crestUrl and its helpers answer from the start-up cache and never
+    query: they are called once per row of every table on the site."""
+
+    def setUp(self):
+        SL._CRESTS.update(loaded=True, map={
+            "Jesuit": ["CA"],
+            "Highland": ["UT", "CA"],          # two real schools, one name
+            "Nameless": [""],                  # stored under no state
+        })
+        self.addCleanup(SL._CRESTS.update, {"loaded": False, "map": {}})
+
+    def test_a_school_with_a_crest_gets_a_url_with_no_query(self):
+        self.assertEqual(SL.crestUrl("Jesuit", "CA"),
+                         "/img/school/Jesuit.png?state=CA")
+        self.assertEqual(SL.crestUrl("Jesuit", "CA", 64),
+                         "/img/school/Jesuit.png?state=CA&px=64")
+
+    def test_a_school_with_none_gets_nothing_at_all(self):
+        self.assertIsNone(SL.crestUrl("Nobody", "CA"))
+        self.assertEqual(SL.crestImg("Nobody", "CA"), "")
+
+    def test_a_name_two_schools_share_needs_a_state(self):
+        self.assertEqual(SL.crestState("Highland", "UT"), "UT")
+        self.assertIsNone(SL.crestState("Highland", None),
+                          "a coin toss here is the WRONG crest on a real page")
+        self.assertIsNone(SL.crestState("Highland", "NY"))
+
+    def test_one_row_answers_without_a_state_and_a_stateless_row_answers_for_any(self):
+        self.assertEqual(SL.crestState("Jesuit", None), "CA")
+        self.assertEqual(SL.crestState("Nameless", "TX"), "")
+        self.assertEqual(SL.crestUrl("Nameless", "TX"), "/img/school/Nameless.png")
+
+    def test_the_markup_escapes_a_scraped_name(self):
+        """School names are free text: 'Smith & "Jones"' is the kind of
+        thing that breaks a page written with an f-string."""
+        SL._CRESTS["map"]['Smith & "Jones"'] = ["CA"]
+        img = str(SL.crestImg('Smith & "Jones"', "CA"))
+        self.assertIn("%26", img)                  # the & is encoded in the URL
+        self.assertIn("&amp;px=64", img)           # and the separator escaped
+        self.assertNotIn('"Jones"', img)
+        self.assertIn('alt=""', img)               # decorative: the name follows
+        self.assertIn('loading="lazy"', img)
+
+    def test_the_board_rows_are_stamped_only_where_there_is_one(self):
+        rows = [{"school": "Jesuit", "state": "CA"},
+                {"school": "Nobody", "state": "CA"},
+                {"school": None, "state": None}]
+        SL.stampCrests(rows)
+        self.assertEqual(rows[0]["crest"], "/img/school/Jesuit.png?state=CA&px=64")
+        self.assertNotIn("crest", rows[1])
+        self.assertNotIn("crest", rows[2])
+
+    def test_a_search_hit_is_read_back_off_its_link(self):
+        self.assertEqual(SL.crestUrlForLink("/school/Highland?state=UT"),
+                         "/img/school/Highland.png?state=UT&px=64")
+        self.assertEqual(SL.crestUrlForLink("/school/Jesuit"),
+                         "/img/school/Jesuit.png?state=CA&px=64")
+        self.assertIsNone(SL.crestUrlForLink("/school/Highland"))
+        for junk in ("/athlete/12", "", None, "/schools/ca", "https://x/school/Y"):
+            self.assertIsNone(SL.crestUrlForLink(junk), junk)
+
+    def test_an_empty_cache_is_an_empty_site(self):
+        SL._CRESTS.update({"loaded": True, "map": {}})
+        self.assertIsNone(SL.crestUrl("Jesuit", "CA"))
+        self.assertEqual(SL.crestImg("Jesuit", "CA"), "")
+        self.assertEqual(SL.stampCrests([{"school": "Jesuit"}]), [{"school": "Jesuit"}])
+
+
+class Thumbs(unittest.TestCase):
+    """A results table names forty schools; none of them wants 512 px."""
+
+    def test_a_size_we_do_not_offer_serves_the_file_itself(self):
+        self.assertEqual(SL.thumbPath("/x/a.png", None), "/x/a.png")
+        self.assertEqual(SL.thumbPath("/x/a.png", 999), "/x/a.png")
+
+    def test_an_unwritable_cache_serves_the_file_itself(self):
+        self.assertEqual(SL.thumbPath("/no/such/file.png", 64), "/no/such/file.png")
+
+    @unittest.skipIf(Image is None, "Pillow is not installed in this sandbox")
+    def test_a_thumb_is_drawn_once_and_reused(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        big = os.path.join(d, "a" * 16 + ".png")
+        Image.new("RGBA", (512, 512), (1, 2, 3, 255)).save(big)
+        old_dir, SL.THUMB_DIR = SL.THUMB_DIR, os.path.join(d, "thumbs")
+        self.addCleanup(setattr, SL, "THUMB_DIR", old_dir)
+        small = SL.thumbPath(big, 64)
+        self.assertNotEqual(small, big)
+        self.assertEqual(Image.open(small).size, (64, 64))
+        self.assertLess(os.path.getsize(small), os.path.getsize(big))
+        self.assertEqual(SL.thumbPath(big, 64), small)          # reused
+
+
+class Wiring(unittest.TestCase):
+    """Every place a school is named, and the rule that a school without a
+    crest is unchanged."""
+
+    def test_the_route_exists_takes_a_path_and_a_size(self):
         app = read("racecast", "app.py")
         self.assertIn('@app.route("/img/school/<path:school_name>.png")', app)
         self.assertIn("school_logo.logoPath(cur, school_name, state)", app)
+        self.assertIn('school_logo.thumbPath(path, request.args.get("px"', app)
 
-    def test_the_page_asks_before_it_draws(self):
-        """No crest, no <img>: the school page must not emit a tag that
-        404s, because most schools have no crest."""
+    def test_the_cache_is_loaded_at_start_up_beside_the_labels(self):
+        """Every mention has to know whether there IS a crest before it
+        writes an <img>; one query at start-up answers all of them."""
         app = read("racecast", "app.py")
-        self.assertIn("if school_logo.logoPath(cur, school_name, crest_state)", app)
-        html = read("racecast", "templates", "school.html")
-        i = html.index("school-crest")
-        self.assertIn("{% if crest %}", html[max(0, i - 200):i])
-        self.assertIn(".school-crest", read("racecast", "static", "style.css"))
+        i = app.index("school_logo.loadCrests(getConn)")
+        self.assertIn("school_identity.loadLabels(getConn)", app[max(0, i - 800):i])
+        self.assertIn('app.jinja_env.globals["crest"] = school_logo.crestImg', app)
+
+    def test_no_template_writes_the_image_url_by_hand(self):
+        """A hand-written /img/school/ tag is one that cannot know whether
+        the file exists, so it 404s for most schools. Everything goes
+        through crest(), which returns nothing when there is nothing --
+        except the two search rows, which read a flag the server stamped."""
+        import glob
+        for f in glob.glob(os.path.join(_ROOT, "racecast", "templates", "*.html")):
+            with io.open(f, encoding="utf-8") as fh:
+                html = fh.read()
+            for line in html.splitlines():
+                if "/img/school/" in line:
+                    self.fail(f"{os.path.basename(f)}: {line.strip()[:80]}")
+            if "school-mark" in html and "crest(" not in html:
+                self.assertIn("r.crest", html, os.path.basename(f))
+
+    def test_the_school_pages_wear_their_own_crest(self):
+        for name in ("school.html", "school_prs.html"):
+            html = read("racecast", "templates", name)
+            self.assertIn('cls="school-crest"', html, name)
+        css = read("racecast", "static", "style.css")
+        self.assertIn(".school-crest", css)
+        self.assertIn(".school-mark", css)
+
+    def test_every_table_that_names_schools_marks_them(self):
+        """The mention sites, named one by one: a template dropped off this
+        list is a page where schools quietly stopped having crests."""
+        for name in ("race.html", "compiled.html", "compiled_tf.html",
+                     "course.html", "meet_tf.html", "athlete.html",
+                     "landing.html", "home.html", "compare.html",
+                     "recruit.html", "schools.html", "_tf_points.html",
+                     "school.html", "school_prs.html"):
+            self.assertIn("crest(", read("racecast", "templates", name), name)
+
+    def test_the_boards_the_browser_draws_are_stamped_server_side(self):
+        app = read("racecast", "app.py")
+        self.assertGreaterEqual(app.count("stampCrests(rows"), 3,
+                                "the athlete board and both team boards")
+        self.assertIn('stampCrests(rows, state_key="school_state")', app,
+                      "a result row's `state` is the VENUE's, not the school's")
+        js = read("racecast", "static", "rankings.js")
+        self.assertIn("function crestMark(url)", js)
+        self.assertIn("r.crest", js)
 
     def test_both_cards_carry_one(self):
         cards = read("racecast", "cards.py")
         self.assertIn('badge=d.get("crest")', cards)          # the school card
-        self.assertIn('_crest(img, d.get("crest")', cards)    # the athlete card
+        self.assertIn('_crest(img, d["crest"], _r + 24', cards)   # the athlete card
         self.assertIn("crestPath(cur, school", cards)
+
+    def test_the_athlete_card_puts_it_beside_the_name(self):
+        """Owner, 2026-09-12: next to the name, the way athletic.net does
+        it -- not overlapping the photo slot's corner."""
+        cards = read("racecast", "cards.py")
+        i = cards.index('_crest(img, d["crest"], _r + 24')
+        before = cards[max(0, i - 700):i]
+        self.assertIn("textbbox", before, "centred on the name's own glyph box")
+        self.assertIn("NAME_CREST + 24", before,
+                      "the room comes out of the name BEFORE it is fitted")
+        self.assertNotIn("px + PHOTO - 74", cards, "the old corner badge is gone")
 
     def test_the_pipeline_does_not_run_the_scraper(self):
         """The plan's rule: a job that talks to twenty thousand strangers
@@ -600,12 +757,6 @@ class Wiring(unittest.TestCase):
 # ===================================================================== #
 #  THE IMAGE ITSELF (only where Pillow is installed -- the box, not here)#
 # ===================================================================== #
-
-try:
-    from PIL import Image
-except ImportError:                                          # pragma: no cover
-    Image = None
-
 
 @unittest.skipIf(Image is None, "Pillow is not installed in this sandbox")
 class Normalise(unittest.TestCase):

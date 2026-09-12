@@ -31,6 +31,15 @@ LOGO_DIR = os.environ.get("XCP_LOGO_DIR", "/var/lib/racecast/logos")
 # the served size; the scraper writes exactly this
 LOGO_PX = 512
 
+# ★ INLINE CRESTS ARE TINY AND THERE ARE HUNDREDS OF THEM. A results table
+#   names forty schools; handing each of them a 512 px PNG is a megabyte
+#   for forty marks eighteen pixels wide. The route resizes on demand into
+#   a cache the SITE can write (the logo directory belongs to the scraper's
+#   user -- the same split cards.py learnt), and serves the full file if
+#   anything about that fails.
+THUMB_PX = (64, 128)
+THUMB_DIR = os.environ.get("XCP_LOGO_CACHE", "/var/tmp/racecast-logo-thumbs")
+
 _NAME_RE = re.compile(r"^[0-9a-f]{16}\.png$")
 
 # ★ THE TABLE MAY NOT EXIST YET, AND ASKING COSTS A ROUND TRIP. Cached per
@@ -39,6 +48,15 @@ _NAME_RE = re.compile(r"^[0-9a-f]{16}\.png$")
 #   logo it has not got.
 _HAVE = {"at": 0.0, "ok": False}
 _HAVE_TTL = 300
+
+# ★ THE SITE-WIDE CACHE, THE ONE school_identity ALREADY USES. A school
+#   name is mentioned hundreds of times on a busy page -- a race result, a
+#   meet's standings, a board -- and every one of them has to know whether
+#   there is a crest BEFORE it writes an <img>, because a tag that 404s is
+#   worse than no tag. One query at start-up answers all of them: which
+#   (school, state) rows serve. A few hundred kilobytes, loaded like the
+#   labels, refreshed by a restart after the scraper runs.
+_CRESTS = {"loaded": False, "map": {}}
 
 
 def fileFor(school, state=None):
@@ -73,6 +91,133 @@ def tableExists(cur, force=False):
         _HAVE["ok"] = False
     _HAVE["at"] = now
     return _HAVE["ok"]
+
+
+def loadCrests(conn_factory, force=False):
+    """Fill the site-wide cache: {school: [state, ...]} for every row that
+    would serve. Safe to call always -- a missing table loads an empty map
+    and no page draws a crest."""
+    if _CRESTS["loaded"] and not force:
+        return
+    got = {}
+    try:
+        with conn_factory() as conn:
+            with conn.cursor() as cur:
+                if tableExists(cur, force=True):
+                    cur.execute("""
+                        SELECT school, state FROM school_logo
+                        WHERE  path IS NOT NULL
+                          AND  COALESCE(lower(override), '') <> 'none'
+                          AND  (NOT shared OR override IS NOT NULL)
+                    """)
+                    for school, state in cur.fetchall():
+                        got.setdefault(school, []).append((state or "").upper())
+    except Exception:                              # noqa: BLE001 -- optional
+        got = {}
+    _CRESTS["map"] = got
+    _CRESTS["loaded"] = True
+
+
+def crestState(school, state=None):
+    """The state whose crest answers for this mention, or None when none
+    does. The cache's version of pickRow, and it keeps pickRow's rule: a
+    name two real schools wear answers only when the caller says which."""
+    rows = _CRESTS["map"].get(school)
+    if not rows:
+        return None
+    st = (state or "").upper()
+    if st and st in rows:
+        return st
+    if "" in rows:
+        return ""
+    return rows[0] if len(rows) == 1 else None
+
+
+def crestUrl(school, state=None, px=None):
+    """The <img src> for a mention of this school, or None -- with NO
+    query, from the start-up cache, because this is called once per row of
+    every table on the site."""
+    st = crestState(school, state)
+    if st is None:
+        return None
+    url = logoUrl(school, st or None)
+    if px:
+        url += ("&" if "?" in url else "?") + f"px={int(px)}"
+    return url
+
+
+def crestImg(school, state=None, px=64, size=18, cls="school-mark"):
+    """The little crest that goes before a school's name, or "" (305). The
+    template global `crest`.
+
+    ★ CALLED ONCE PER ROW OF EVERY TABLE ON THE SITE, so it costs a dict
+      lookup and nothing else. "" is the normal answer and renders as
+      nothing at all, which is why this can be dropped anywhere a school is
+      named without the template having to ask a question first.
+
+    ⚠ IT RETURNS MARKUP, SO EVERYTHING IN IT IS ESCAPED HERE. School names
+      are scraped free text and genuinely contain quotes and ampersands.
+    """
+    url = crestUrl(school, state, px)
+    if not url:
+        return ""
+    from markupsafe import Markup, escape
+    return Markup(f'<img class="{escape(cls)}" src="{escape(url)}" alt="" '
+                  f'width="{int(size)}" height="{int(size)}" '
+                  f'loading="lazy" decoding="async">')
+
+
+def stampCrests(rows, school_key="school", state_key="state", px=64):
+    """Give each row its crest URL, for the boards the BROWSER draws: JS
+    cannot ask whether a crest exists without fetching it, and a broken
+    <img> per school is worse than no crests. No query -- the answer is in
+    the start-up cache -- and a school without one gets no key at all."""
+    for r in rows or []:
+        url = crestUrl(r.get(school_key), r.get(state_key), px)
+        if url:
+            r["crest"] = url
+    return rows
+
+
+def crestUrlForLink(link, px=64):
+    """The crest for a "/school/<name>?state=ST" link, or None.
+
+    ! FOR THE SEARCH INDEX ONLY. That table stores a rendered link and a
+      rendered label rather than the (school, state) pair every other
+      caller already holds, so this is the one place the pair is read back
+      out of a URL. Anything else should pass the pair."""
+    from urllib.parse import unquote, urlsplit, parse_qs
+    if not link or not str(link).startswith("/school/"):
+        return None
+    parts = urlsplit(str(link))
+    name = unquote(parts.path[len("/school/"):])
+    if name.endswith("/prs"):
+        name = name[:-4]
+    state = (parse_qs(parts.query).get("state") or [None])[0]
+    return crestUrl(name, state, px) if name else None
+
+
+def thumbPath(path, px):
+    """A small copy of a stored crest, drawn once and cached. Falls back to
+    the full-size file for any reason at all: a px we do not offer, no
+    Pillow, a cache directory the site cannot write."""
+    if px not in THUMB_PX:
+        return path
+    try:
+        name = f"{os.path.basename(path)[:-4]}-{px}.png"
+        small = os.path.join(THUMB_DIR, name)
+        if os.path.exists(small) and os.path.getmtime(small) >= os.path.getmtime(path):
+            return small
+        from PIL import Image
+        os.makedirs(THUMB_DIR, exist_ok=True)
+        im = Image.open(path).convert("RGBA")
+        im.thumbnail((px, px), Image.LANCZOS)
+        tmp = small + ".tmp"
+        im.save(tmp, format="PNG", optimize=True)
+        os.replace(tmp, small)
+        return small
+    except Exception:                              # noqa: BLE001
+        return path
 
 
 def logoRow(cur, school, state=None):

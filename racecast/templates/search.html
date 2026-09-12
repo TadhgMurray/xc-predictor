@@ -17,10 +17,14 @@
         <td>{{ r.sublabel or ' - ' }}</td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'school' %}
-        <td>{{ r.label }}</td>
+        {# the crest is stamped onto school rows by _run_search; a school
+           without one has no key and this renders the label alone #}
+        <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
+                 width="18" height="18" loading="lazy" decoding="async">{% endif %}{{ r.label }}</td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% else %}  {# all: mixed kinds, uniform columns #}
-        <td>{{ r.label }}</td>
+        <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
+                 width="18" height="18" loading="lazy" decoding="async">{% endif %}{{ r.label }}</td>
         <td>{{ r.kind }}</td>
         <td>{{ r.sublabel or ' - ' }}</td>
     {% endif %}
