@@ -125,6 +125,7 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
         if rows.size == 0:
             continue
         br = np.full(rows.size, np.nan)
+        ref = np.full(rows.size, np.nan)      # the model's board + day of the OTHER races
         for j, r in enumerate(rows):
             s, e = int(start_of[season[r]]), int(end_of[season[r]])
             idx_o = order[s:e]
@@ -133,13 +134,17 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             if same_sport:
                 m &= sport[idx_o] == sport[r]
             if m.any():
-                br[j] = ln[r] - ln[idx_o[m]].mean()
+                o = idx_o[m]
+                br[j] = ln[r] - ln[o].mean()
+                ref[j] = float(np.mean(delta[cell[o]] + (u[race[o]] if u is not None else 0.0)))
         races = []
         for rid in np.unique(race[rows]):
             in_race = rows[race[rows] == rid]
             if in_race.size < min_rows:
                 continue
-            bj = br[np.isin(rows, in_race)]
+            sel = np.isin(rows, in_race)
+            bj = br[sel]
+            rj_ = ref[sel]
             got = np.isfinite(bj)
             rr = rating[season[in_race]] if rating is not None else None
             front = np.nan
@@ -152,6 +157,10 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                    "front": front,
                    "depth": float(np.mean(rr)) if rr is not None else np.nan,
                    "bracket": float(bj[got].mean()) if got.any() else np.nan,
+                   # what the model booked for the races the bracket is
+                   # measured against: bracket + ref is the bracket on the
+                   # board's own scale, to read against board + day
+                   "ref": float(rj_[got].mean()) if got.any() else np.nan,
                    "bracket_top": np.nan,
                    "board": float(delta[int(cell[in_race[0]])]),
                    "day": float(u[rid]) if u is not None else np.nan,
@@ -172,6 +181,7 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             n = sum(r["n_bracketed"] for r in rs)
             by_year.append({"year": yr, "races": len(rs), "n": n,
                             "bracket": sum(r["bracket"] * r["n_bracketed"] for r in rs) / max(n, 1),
+                            "implied": sum((r["bracket"] + r["ref"]) * r["n_bracketed"] for r in rs) / max(n, 1),
                             "board": sum(r["board"] * r["n"] for r in rs) / max(sum(r["n"] for r in rs), 1),
                             "day": (sum(r["day"] * r["n"] for r in rs) / max(sum(r["n"] for r in rs), 1)
                                     if u is not None else np.nan)})
@@ -196,6 +206,7 @@ def report(result, names=None, top=0.0):
         print(f"  {'year':>5} {'days ago':>9} {'era':>5} {'rows':>6} {'brkt':>6} "
               f"{'front':>6} {'depth':>6} "
               f"{'bracket':>8} {'top' + (f'{int(100 * top)}%' if top else ''):>7} "
+              f"{'ref':>7} {'implied':>8} "
               f"{'board':>7} {'day':>7} {'field':>7} {'board+day':>10}")
         for r in sorted(res["races"], key=lambda r: -r["days_ago"]):
             era = r["cell_key"].rpartition("@e")[2] if "@e" in r["cell_key"] else "-"
@@ -204,23 +215,30 @@ def report(result, names=None, top=0.0):
             print(f"  {r['year']:>5} {r['days_ago']:>9.0f} {era:>5} {r['n']:>6,} "
                   f"{r['n_bracketed']:>6,} {fr} {dp} "
                   f"{_pct(r['bracket']):>8} {_pct(r['bracket_top']):>7} "
+                  f"{_pct(r['ref']):>7} {_pct(r['bracket'] + r['ref']):>8} "
                   f"{_pct(r['board']):>7} {_pct(r['day']):>7} {_pct(r['field']):>7} "
                   f"{_pct(r['board'] + (r['day'] if np.isfinite(r['day']) else 0.0)):>10}")
         if res["by_year"]:
             print(f"  by year:   {'year':>5} {'races':>6} {'rows':>7} {'bracket':>8} "
-                  f"{'board':>7} {'day':>7}")
+                  f"{'implied':>8} {'board':>7} {'day':>7} {'board+day':>10}")
             for b in res["by_year"]:
                 print(f"             {b['year']:>5} {b['races']:>6} {b['n']:>7,} "
-                      f"{_pct(b['bracket']):>8} {_pct(b['board']):>7} {_pct(b['day']):>7}")
+                      f"{_pct(b['bracket']):>8} {_pct(b['implied']):>8} "
+                      f"{_pct(b['board']):>7} {_pct(b['day']):>7} "
+                      f"{_pct(b['board'] + (b['day'] if np.isfinite(b['day']) else 0.0)):>10}")
             if np.isfinite(res["slope_per_year"]):
                 print(f"  bracket trend: {100 * res['slope_per_year']:+.2f}% per year "
                       f"(+ = the venue is getting slower relative to its runners' "
                       f"other races)")
         print("  read: bracket = slower here than the same people's other races in "
-              "the window (log %, + = harder); board + day is what the model "
-              "booked for the day; a stacked day's bracket sits below it by "
-              "about the field term, which is not in a rating. front = mean "
-              "rating of the day's top five, depth = mean rating of the field.")
+              "the window (log %, + = harder). Those other races have their own "
+              "difficulty: ref is the board + day the model gave them, and "
+              "implied = bracket + ref is the bracket on the board's scale. Read "
+              "implied against board + day; the gap between them is what the "
+              "model and the runners disagree about for that day (the field "
+              "term is not in a rating, so a stacked day's implied can sit "
+              "below board + day by about it). front = mean rating of the day's "
+              "top five, depth = mean rating of the field.")
 
 
 def main():

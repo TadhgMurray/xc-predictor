@@ -50,6 +50,12 @@ def test_the_bracket_tracks_the_planted_course_and_its_drift(capsys):
     # both sides are noisy at 15-30 rows a race; the planted spread is ~1.5%
     assert np.corrcoef(b, m)[0, 1] > 0.5
     assert abs(float((b - m).mean())) < 0.02
+    # bracket + ref is the bracket on the board's scale: it sits on board +
+    # day, and closer than the raw bracket does
+    imp = np.array([x["bracket"] + x["ref"] for x in races])
+    assert np.isfinite(imp).all()
+    assert abs(float((imp - m).mean())) < 0.01
+    assert float(np.abs(imp - m).mean()) <= float(np.abs(b - m).mean()) + 1e-9
     assert all(np.isfinite(x["bracket_top"]) for x in races)
     assert all(np.isfinite(x["front"]) and x["front"] >= x["depth"] for x in races)
     # the venue was planted to get 5% harder over seven years
