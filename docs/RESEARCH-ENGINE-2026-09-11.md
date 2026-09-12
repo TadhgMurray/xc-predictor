@@ -482,3 +482,149 @@ et al. 2002; NCAA Facility Indexing Conversion Summary 2012; Taboga & Kram
 2019; Hamlin, Hopkins & Hollings 2015; Wehrlin & Hallén 2006; NCAA
 altitude adjustment tables (UNM booklet); Oldham 1962; Bland & Altman
 1995; Hayes 1988.
+
+---
+
+## Part IV. The three venues, physically (2026-09-12)
+
+Gathered from the web after run 20 (owner: "this is real and physical and
+I have the stats for it, so you have to look beyond, onto the internet
+too"). Sources are given per fact; results pages were reachable only as
+search-index snippets, so verify a number before quoting it.
+
+### IV.1 NXN at Glendoveer versus Foot Locker at Balboa Park
+
+Glendoveer (Portland, golf course, 5 km) since 2014; Portland Meadows
+before that; no race in 2020 or 2021. Balboa Park / Morley Field (San
+Diego, 5 km, two trips up the Upas St. hill): Foot Locker through 2019,
+Eastbay 2021, Champs Sports 2022, Foot Locker 2023-24, Brooks XC 2025.
+
+Winning times, boys / girls:
+
+| year | NXN boys | NXN girls | NXN day | Balboa boys | Balboa girls |
+|---|---|---|---|---|---|
+| 2015 | 15:03 | 16:57 | | 14:56 | 17:10 |
+| 2016 | 15:28 | 17:10 | | 15:02 | 17:04 |
+| 2017 | 15:04 | 16:45 | slick, showers | 15:20 | 17:03 |
+| 2018 | 14:58 | 16:38 | firm | 15:14 | 17:00 |
+| 2019 | 14:52 | 17:18 | driving rain | 15:09 | 16:45 |
+| 2022 | 14:45 | 16:41 | sunny, windy | 14:57 | 16:49 |
+| 2023 | 15:17 | 17:10 | mud, standing water | 15:07 | 16:51 |
+| 2024 | 15:28 | 16:33 | rain, "mud pit" | 15:24 | 17:31 |
+| 2025 | 15:01 | 16:50 | muddy | 15:11 | 16:56 |
+
+The same athlete a week apart, NXN then Balboa: Hocker 2018 +12.8 s,
+Methner 2019 (rain at NXN) +2.7 s, Mathison 2022 (dry) +1.1 s, Leachman
+2023 (mud) −62.9 s, Leachman 2024 (mud) +18 s, Spencer 2025 +9.6 s, Van
+Meerten 2025 +17.9 s, Leonard 2025 +14.7 s, Mantecon 2025 +5.3 s, N.
+Dudek 2025 +5.4 s. Tully Runners' 2019 comparison put Glendoveer 6 s
+faster than Balboa overall for the boys with a −48 s Balboa adjustment,
+and the girls' Glendoveer 21 s slower than the boys' as the rain worsened.
+
+**What it says.** Balboa is about 0.5 to 1.5% slower than a DRY
+Glendoveer, and a WET Glendoveer is at least as slow as Balboa. The two
+courses are within a couple of percent of each other; NXN's variance is
+weather, which is a race-day term. Any pair of published numbers where
+NXN sits many points above Balboa is wrong about at least one of them.
+Grass-versus-track for these athletes (spring 3200 or 5000 PR against
+the December race): 7% on a dry Glendoveer (Tuohy), 10 to 13% in mud or
+at Balboa (Hedengren, Griffith, Vause), against the corpus-average grass
+cost of 6% asserted as the sport level: national courses are hard
+courses, and their mud days are hard days.
+
+Sources: milesplit.com/articles/137430, oregonmetro.gov (Glendoveer);
+letsrun.com recaps 2015-2023; milesplit.com/articles/353975, /353972
+(2024), /354125 (FL 2024); runblogrun.com 2025 NXN results;
+flotrack.org Brooks XC 2025; tullyrunners.com/articles/Footlocker_NXN_2019.htm
+and /articles/BalboaParkSpeed.htm; tullyrunners.com/XC2023/NXN2023.htm,
+/XC2024/FootLockerNats2024.htm.
+
+### IV.2 Ultimook (Hydrangea Ranch, Tillamook)
+
+A 5 km with a thigh-deep mud pit, two river crossings, a mile of wood
+chips and half a mile of gravel; the organisers' own words are "times
+will not be fast". The course has CHANGED: 2015 removed "a super steep
+hill"; **2024 cut "the historical hill climb and the segment between
+corn rows", making it "shorter and faster"**; 2026 adds a corn maze and
+was a mud year ("like racing on ice skates").
+
+| year | 6A/5A boys | 6A/5A girls | note |
+|---|---|---|---|
+| 2018 | 16:20 (4A-1A, "course record") | | |
+| 2021 | 16:05 | 17:49 | |
+| 2022 | 15:55 | 19:29 | |
+| 2023 | 15:58 | 17:54 | |
+| 2024 | ~16:12 | | course shortened |
+| 2025 | 15:11 (4A-1A 15:00) | 18:49 | |
+| 2026 | 16:57 | 19:47 | mud |
+
+Same athlete, Ultimook against Lane or Nike Portland the same season:
++1.9% (Peters 2021), +5.9% (Maiorano 2021), +4.7% (Wisniewski 2023),
++5.3% (Johnson-Hess 2025), ~+3% (Smart 2025), **+0.5% (Warner 2025, on
+the shortened course)**; Johnson-Hess 2025 to 2026 on the same course
++57 s (mud).
+
+**What it says.** Before 2024 Ultimook cost about 4 to 6% over a fast
+Oregon course; after the 2024 reroute roughly 1%; a mud day adds 5%
+again. That is a genuine era case (a documented reroute), on top of
+weather that is a race-day term. The owner's "I have a feeling recently
+is a lot faster than previously" is the 2024 reroute.
+
+Sources: ultimookrunningcamp.oregoncoastalflowers.com (race page, 2022
+and 2026 coach information); clevelandclarion.com 2015;
+runoregonblog.com 2024-08-07; osaa.org/today articles 2211, 2396, 3386,
+3524, 3940, 4474, 4627, 4656, 5082; philomathnews.com; columbian.com
+scoreboards 2017-2019; camaspostrecord.com 2015, 2016.
+
+### IV.3 How much a strong field is worth
+
+| source | finding | size |
+|---|---|---|
+| Pugh 1971 | air resistance ~7.5% of energy cost at 6 m/s; 1 m behind cuts drag ~80% | ~6.5% of energy |
+| Kyle 1979 | running in a group saves 2-4% energy | ~1.5-2% of time |
+| Hoogkamer 2018; Marro 2023 | optimal drafting formations at 2-hour marathon pace | 3-4.6% |
+| do Carmo 2020; Corbett 2012 | head-to-head against a time trial, 10 km and 2 km | ~2-2.3% |
+| Hopkins & Hewson 2001 | within-athlete race-to-race CV, fast quartile | 1.2-1.9% |
+| 2012 Olympic 5000 final; Hanley 2024 | championship finals slower than heats; tactical | negative on the track |
+| Tully Runners | "as the quality of the race increases the slope decreases" | per-race quality slope |
+
+**What it says.** The competition effect on grass saturates near 2%: a
+pack to draft in and someone to race is worth that much, and a field
+that is stronger still is not worth more. On the track a stacked
+championship final is often SLOWER, not faster. A term linear in the
+front of the race, extrapolated to a national final's front at +5 or +6
+units, can credit the field with two or three times what the physics
+allows; on the track its sign is not even settled.
+
+### IV.4 The mechanisms these facts point at, in order
+
+1. **The field term is not in a rating, and that is asymmetric.** At a
+   venue whose rows are mostly stacked fields (Glendoveer: NXN and the
+   Northwest regional), the term's credit lands in the cell, the course
+   reads harder, and the athletes' ratings at it rise with the course.
+   At a venue where the stacked race is a small share of the rows
+   (Balboa: the section championship and local meets dwarf Foot Locker),
+   the cell stays where the locals put it, the term takes the fast times
+   as "competition", the day term is left near zero, and the Foot Locker
+   finalists are rated against a local course with no day credit. The
+   same athlete then rates several points higher at NXN than at Balboa
+   for a physically equal performance. The season-end share had the same
+   structure, which is why "the championship thing drove NXN up". The
+   bracket diagnostic shows this directly: at Balboa the bracket sits
+   near +1% and board + day sits well below it.
+2. **The linear front covariate overshoots at the extreme.** NXN and
+   Foot Locker sit at the clip (+6 units); with a coefficient near
+   −0.01 per unit the term credits the field with 5-6%, three times the
+   saturated physical effect. The by-band table's top rows say whether:
+   a positive residual there means the rows were slower than the term
+   predicted.
+3. **Eras publish "muddy Glendoveer".** The published number is the
+   2024-25 era, and both NXNs and both Northwest regionals in it were
+   mud. That part of the rise is real for those days, but as the
+   venue's number for conversions it is the weather of two Decembers.
+4. **Ultimook is a real reroute the walk cannot follow.** A 4 to 5%
+   change at a venue with two or three race days per era is booked into
+   its day terms at a 1% drift (Part III of the handoff), so the
+   latest era still shows the old course, and the 2024-25 days show as
+   fast days. `XCP_ERA_DRIFT=0.03` follows it; the bracket's by-year
+   table shows the step either way.
