@@ -191,32 +191,50 @@ race's difficulty is the mean over the top fraction of its field; a
 (course, era) cell is the vote-weighted mean of its races pulled toward
 the course's history by twenty votes; the level is pinned per sport and
 era; iterated to a fixed point in a handful of passes. No race-day term,
-no field term, no taper. `scripts/bracket_holdout.py` scores it on the
-SAME athlete sample and held-out races as the ladder's base rung, so
-the two engines are compared with one number; `--full` fits every row
-and writes `engine/data/bracket_difficulty.npz`. The comparison is the
-open question, and it has to be run:
+no field term, no taper. It is scored on the SAME athlete sample and
+held-out races as the ladder's base rung, so the two engines are
+compared with one number. The comparison is the open question.
+
+**Run every diagnostic in one process (2026-09-12, "5 mins max, all of
+them together").** `scripts/diagnose.py` loads the pack and the solve
+file once, numbers the athlete-seasons, races and the solve file's cells
+once (`engine/bracket.packCodes`), and runs the venue brackets, indoor
+against outdoor, why tracks differ, and the bracket engine's holdout on
+that, each on its own rows; each report lands in `logs/<stage>.txt` and
+stdout carries a timing table. Pipeline step 08d runs the three stages
+that need no names every run.
 
 ```
-$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2
-$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --top 0.25
-grep "error sd" engine/data/ladder_logs/base.log
+$PY scripts/diagnose.py --era-years 2 --out-dir logs \
+    --venue "Foot Locker" --venue Champs --venue Brooks --venue Glendoveer
+cat logs/bracket_venues.txt logs/indoor.txt logs/tracks.txt logs/bracket_holdout.txt
+grep "error sd" engine/data/ladder_logs/base.log    # the joint model, same split
 ```
 
-Three diagnostics read the pack and the solve file, no rerun: the
-same-athlete bracket per race day at a named venue
-(`scripts/course_bracket.py --venue NAME`, with `ref` and `implied` to
-read against the board), indoor against outdoor for the same athlete at
-the same distance (`scripts/indoor_outdoor_check.py`), and why outdoor
-tracks differ (`scripts/track_variance.py --era-years 2`: the board
-beside the bracket, the mix each track hosts, and the within-track
-bracket by meet class and by front). All three share
-`engine/bracket.py`, one vectorised bracket with the curve taken out,
-tested against a brute-force loop and at two million rows. Two silent
-failures of the era split in my own code were found by these runs: the
-go-live took the pack's keys for the design's cells, and the in-run
-indoor check indexed era cells by base id and returned nothing; both
-fixed and tested.
+Measured, not estimated, on a ten-million-row synthetic pack shaped like
+the corpus (2.5M athlete-seasons, 1.3M races, 75k era cells; one core
+of a small sandbox, pack in the page cache): load 4.9 s, codes 7.9 s,
+venues 3.9 s, indoor 1.5 s, tracks 8.9 s, holdout 4.6 s, total 31.6 s,
+peak memory 2 GB. Everything in it is a sort or a gather, so the
+51-million-row corpus is about five and a half times that: roughly three
+minutes and ten gigabytes, plus whatever the disk adds to the load if the
+pack is not cached. `tests/test_diagnose.py` runs all four stages on two
+million rows against a clock so a quadratic cannot creep back in. The
+four scripts still run alone and take the same shared codes.
+
+What made the earlier scripts slow, all fixed: `run_joint.raceCodes`
+numbered races with `np.unique(axis=0)` on a stacked pair (19 s per ten
+million rows, ninety on the corpus, in every script and in the solve's
+own holdout split; now one composite key, same numbering, under 2 s);
+each script loaded the corpus and recomputed the codes; the bracket
+engine ran every pass over all 51M rows for a 15% sample, and mapped era
+cells to base courses with `list.index` (eight billion string compares);
+the sample helpers used a sort-based `np.isin` where a dense mask is one
+gather. And the failure the owner saw, "the solve file's cells do not
+match the pack with this --era-years": `track_variance` rebuilt era cells
+from the sampled rows; every diagnostic now maps (course, era) through
+the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
+so any subset of rows lands on the file's cells.
 
 **Ultimook, and "recently is a lot faster than previously" (owner).**
 The era split was built (`--era-years`) and never wired into the

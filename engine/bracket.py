@@ -145,18 +145,26 @@ def bracketRows(cols, npz=None, window=21, use_curve=True, season=None,
     dict(bracket, n_other, z, season, n_season, curve)."""
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
     year = np.asarray(cols["year"]).astype(np.int64)
+    if season is None and "_season" in cols:
+        season = cols["_season"]                  # packCodes' whole-pack codes
+    given = n_season is not None
     if season is None:
         season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+        given = True
     else:
         season = np.asarray(season, dtype=np.int64)
-        n_season = int(n_season if n_season is not None else season.max() + 1)
+        n_season = int(n_season if given else season.max() + 1)
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     curve = np.zeros(ln.size)
     if use_curve and npz is not None and "curve" in npz and "doy" in cols:
         pool_of_raw, _names = _poolCodes(cols["athlete_keys"])
         rating = None
-        if "rating" in npz and np.asarray(npz["rating"]).size == n_season:
-            rating = np.asarray(npz["rating"], dtype=np.float64)[season]
+        if "rating" in npz:
+            r = np.asarray(npz["rating"], dtype=np.float64)
+            # whole-pack codes: the file's ratings index them exactly; on a
+            # subset without the count, the file must at least reach them
+            if (r.size == n_season) if given else (r.size > int(season.max())):
+                rating = r[season]
         curve = curveOnRows(npz, pool_of_raw[ath_raw], cols["doy"], rating)
     z = ln - curve
     sport = np.asarray(cols["sport"]).astype(np.int64) if "sport" in cols else np.zeros(ln.size, np.int64)
@@ -171,31 +179,180 @@ def _poolCodes(athlete_keys):
 
 
 # ------------------------------------------------------------------ #
+# THE CODES, ONCE. Every diagnostic needs the same three per-row ids --
+# athlete-season, race, and the solve file's cell -- numbered over the
+# WHOLE pack, so that a subset of rows still indexes the solve file's
+# ratings, race-day terms and difficulties. packCodes computes them once
+# (twenty-odd seconds on the corpus) and hangs them on the pack as
+# `_season`, `_race`, `_cell`; subsetCols slices them with the rest.
+# ------------------------------------------------------------------ #
+
+PACK_COLUMNS = ("athlete", "course", "norm", "days", "sport", "doy", "year",
+                "dist_m", "meet_class")
+
+
+def loadInputs(pack_path, npz_path=None, only=PACK_COLUMNS):
+    """The pack (the diagnostics' columns only) and the solve file, as a
+    dict, or None when there is no file at `npz_path`."""
+    import os
+    cols = pe.loadPack(pack_path, only=list(only) if only is not None else None)
+    npz = None
+    if npz_path and os.path.exists(npz_path):
+        npz = dict(np.load(npz_path, allow_pickle=False))
+    return cols, npz
+
+
+def cellsFromKeys(course, year, keys, npz_keys, era_years=0, era_base_year=None):
+    """Per row, the SOLVE FILE's cell id: the base course itself without
+    eras, else the (course, era) cell the file keys `<key>@e<k>`; -1 for a
+    row without a cell or a (course, era) the file never keyed. Vectorised
+    through a (base, era) table, so a subset of rows maps to the same cells
+    the full pack did. Returns (cell, cell_keys, base_of_cell)."""
+    course = np.asarray(course, dtype=np.int64)
+    keys = [str(k) for k in keys]
+    n_base = len(keys)
+    if not era_years:
+        if npz_keys is not None and [str(k) for k in npz_keys] != keys:
+            raise ValueError(f"the solve file has {len(npz_keys):,} cells and the "
+                             f"pack {n_base:,} base courses; pass the era width "
+                             f"the solve used")
+        return course.copy(), keys, np.arange(n_base)
+    if npz_keys is None:
+        raise ValueError("era cells need the solve file's cell keys")
+    npz_keys = [str(k) for k in npz_keys]
+    key_to_base = {k: i for i, k in enumerate(keys)}
+    base_of = np.empty(len(npz_keys), dtype=np.int64)
+    era_of = np.empty(len(npz_keys), dtype=np.int64)
+    for i, k in enumerate(npz_keys):
+        b, tag, e = k.rpartition("@e")
+        if not tag or b not in key_to_base:
+            raise ValueError(f"the solve file's cell {k!r} is not an era cell of "
+                             f"this pack; pass the era width the solve used")
+        base_of[i] = key_to_base[b]
+        era_of[i] = int(e)
+    year = np.asarray(year, dtype=np.int64)
+    ok = course >= 0
+    if era_base_year is None:
+        era_base_year = int(year[ok].min()) if ok.any() else 0
+    era = np.zeros(course.size, dtype=np.int64)
+    era[ok] = (year[ok] - int(era_base_year)) // int(era_years)
+    n_era = int(max(era_of.max() + 1 if era_of.size else 1, era[ok].max() + 1 if ok.any() else 1))
+    table = np.full((n_base, n_era), -1, dtype=np.int64)
+    table[base_of, era_of] = np.arange(len(npz_keys))
+    cell = np.full(course.size, -1, dtype=np.int64)
+    ok &= (era >= 0) & (era < n_era)
+    cell[ok] = table[course[ok], era[ok]]
+    return cell, npz_keys, base_of
+
+
+def packCodes(cols, npz=None, era_years=0, cells=True):
+    """(cols with `_season`, `_race`, `_cell` per row; codes). codes:
+    n_season, n_race, n_cell, cell_keys, base_of_cell, era_years,
+    era_base_year, pool_of_raw, pool_names, n_base, keys. The cells are
+    the solve file's when it has keys (era cells under era_years), else
+    the pack's base courses, else eraCells over the whole pack; a caller
+    that needs no cells (the indoor check) passes cells=False and gets the
+    base courses without the file being checked."""
+    import run_joint as rj
+    ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
+    year = np.asarray(cols["year"]).astype(np.int64)
+    course = np.asarray(cols["course"]).astype(np.int64)
+    keys = [str(k) for k in cols["course_keys"]]
+    season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+    race, n_race = rj.raceCodes(course, cols["days"])
+    npz_keys = ([str(k) for k in npz["course_keys"]]
+                if npz is not None and "course_keys" in npz else None)
+    era_base_year = None
+    if npz is not None and "era_base_year" in npz:
+        era_base_year = int(np.asarray(npz["era_base_year"]).reshape(-1)[0])
+    if cells and era_years and npz is not None and "era_years" in npz:
+        got = int(np.asarray(npz["era_years"]).reshape(-1)[0])
+        if got != int(era_years):
+            raise ValueError(f"the solve file used --era-years {got}, not {era_years}")
+    if not cells:
+        cell, cell_keys, base_of_cell = course.copy(), keys, np.arange(len(keys))
+        n_cell = len(keys)
+    elif era_years and (npz_keys is None or not any("@e" in k for k in npz_keys)):
+        # no solved era cells to line up with: the pack's own, over all rows
+        (cell, n_cell, _g, cell_keys, _p, _w, _e) = rj.eraCells(
+            course, year, era_years, len(keys), np.zeros(len(keys), dtype=np.int64), keys)
+        cell_keys = [str(k) for k in cell_keys]
+        key_to_base = {k: i for i, k in enumerate(keys)}
+        base_of_cell = np.array([key_to_base[k.rpartition("@e")[0]] for k in cell_keys],
+                                dtype=np.int64)
+        if era_base_year is None and (course >= 0).any():
+            era_base_year = int(year[course >= 0].min())
+    else:
+        cell, cell_keys, base_of_cell = cellsFromKeys(course, year, keys, npz_keys,
+                                                      era_years, era_base_year)
+        n_cell = len(cell_keys)
+        if era_years and era_base_year is None and (course >= 0).any():
+            era_base_year = int(year[course >= 0].min())
+    pool_of_raw, pool_names = rj.poolCodes(cols["athlete_keys"])
+    out = dict(cols)
+    out["_season"] = season
+    out["_race"] = race
+    out["_cell"] = cell
+    codes = dict(n_season=n_season, n_race=n_race, n_cell=n_cell, cell_keys=cell_keys,
+                 base_of_cell=base_of_cell, era_years=int(era_years or 0),
+                 era_base_year=era_base_year, pool_of_raw=pool_of_raw,
+                 pool_names=pool_names, n_base=len(keys), keys=keys)
+    return out, codes
+
+
+def ratingOnRows(cols, npz, codes=None):
+    """The solve file's rating per row (None without one), through the
+    whole-pack season codes."""
+    if npz is None or "rating" not in npz:
+        return None
+    season = np.asarray(cols["_season"]).astype(np.int64) if "_season" in cols else None
+    n_season = codes["n_season"] if codes else None
+    if season is None:
+        season, n_season = pe.athleteSeasonCodes(
+            np.asarray(cols["athlete"]).astype(np.int64),
+            np.asarray(cols["year"]).astype(np.int64))
+    r = np.asarray(npz["rating"], dtype=np.float64)
+    if r.size != n_season:
+        return None
+    return r[season]
+
+
+# ------------------------------------------------------------------ #
 # SMALLER INPUTS. A diagnostic does not need the corpus, it needs the
 # athletes it is about, with ALL of their rows (a bracket is within an
 # athlete-season). These keep course and athlete ids as they are, so the
 # keys, the solve file's cells and the ratings still line up.
+#
+# ! DENSE MASKS, NOT np.isin. Athlete codes and season codes are dense
+#   0..N-1, so "is this row's athlete picked" is one gather; np.isin sorts
+#   fifty million keys to answer the same question (2026-09-12).
 # ------------------------------------------------------------------ #
 
 def athleteSample(cols, pct, seed=11):
-    """A row mask keeping every row of a random `pct` percent of athletes."""
+    """A row mask keeping every row of a random `pct` percent of athletes
+    (run_joint's draw: np.unique of the athlete codes, one uniform each)."""
     ath = np.asarray(cols["athlete"]).astype(np.int64)
     if pct is None or pct >= 100:
         return np.ones(ath.size, dtype=bool)
     uniq = np.unique(ath)
     rng = np.random.default_rng(seed)
     picked = uniq[rng.random(uniq.size) < pct / 100.0]
-    return np.isin(ath, picked)
+    m = np.zeros(int(ath.max()) + 1 if ath.size else 0, dtype=bool)
+    m[picked] = True
+    return m[ath]
 
 
 def rowsOfSeasons(cols, rows):
     """A row mask keeping every row of every athlete-season that has a row
     in `rows` (a mask or an index array)."""
-    ath = np.asarray(cols["athlete"]).astype(np.int64)
-    year = np.asarray(cols["year"]).astype(np.int64)
-    key = ath * 10_000 + year
-    want = np.unique(key[rows])
-    return np.isin(key, want)
+    if "_season" in cols:
+        season = np.asarray(cols["_season"]).astype(np.int64)
+    else:
+        season, _n = pe.athleteSeasonCodes(np.asarray(cols["athlete"]).astype(np.int64),
+                                           np.asarray(cols["year"]).astype(np.int64))
+    m = np.zeros(int(season.max()) + 1 if season.size else 0, dtype=bool)
+    m[season[rows]] = True
+    return m[season]
 
 
 def subsetCols(cols, mask):
@@ -203,9 +360,8 @@ def subsetCols(cols, mask):
     n = np.asarray(cols["athlete"]).size
     out = {}
     for k, v in cols.items():
-        if k in ("athlete_keys", "course_keys"):
+        if k in ("athlete_keys", "course_keys") or not isinstance(v, np.ndarray):
             out[k] = v
             continue
-        a = np.asarray(v)
-        out[k] = a[mask] if a.shape[:1] == (n,) else v
+        out[k] = v[mask] if v.shape[:1] == (n,) else v
     return out

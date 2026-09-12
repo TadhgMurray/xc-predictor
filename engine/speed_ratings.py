@@ -865,7 +865,10 @@ def saveCols(cols, path):
     print(f"[cache] wrote {path} ({size:.2f} GB, {len(arrays)} arrays)")
 
 
-def loadCols(path):
+def loadCols(path, only=None):
+    """The packed columns. `only`: the row arrays to read (the key lists and
+    the scalars always come); a diagnostic that needs nine of the twelve
+    arrays skips a quarter of the read."""
     import ast
     import time
 
@@ -875,8 +878,10 @@ def loadCols(path):
         print(f"[cache] ⚠ THIS CACHE IS {ageHours:.0f} HOURS OLD. If the "
               f"database or the queries changed, delete it.")
 
+    want = None if only is None else set(only) | {"athlete_keys", "course_keys"}
     with np.load(path, allow_pickle=False) as data:
-        cols = {k: data[k] for k in data.files if k != "__scalars__"}
+        cols = {k: data[k] for k in data.files
+                if k != "__scalars__" and (want is None or k in want)}
         if "__scalars__" in data.files:
             cols.update(ast.literal_eval(str(data["__scalars__"][0])))
 

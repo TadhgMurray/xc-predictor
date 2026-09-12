@@ -110,11 +110,23 @@ def venueOfCell(course_keys):
 
 
 def raceCodes(course, day, venue_of_cell=None):
+    """Dense id per (cell or venue, day), numbered in (unit, day) order.
+
+    ! ONE COMPOSITE int64 KEY (2026-09-12). np.unique(axis=0) on the stacked
+      pair took 19 s per ten million rows, ninety on the corpus, in every
+      script that needed a race id. The composite key takes under two and
+      numbers the races identically (unit first, then day), so the
+      holdout split, which draws by race id, is the same split."""
     unit = (np.asarray(course).astype(np.int64) if venue_of_cell is None
             else np.asarray(venue_of_cell)[np.asarray(course).astype(np.int64)])
-    key = np.stack([unit, np.asarray(day).astype(np.int64)], axis=1)
-    _, inv = np.unique(key, axis=0, return_inverse=True)
-    return inv.astype(np.int64), int(inv.max()) + 1
+    d = np.asarray(day).astype(np.int64)
+    if d.size == 0:
+        return np.zeros(0, dtype=np.int64), 0
+    d0 = int(d.min())
+    span = int(d.max()) - d0 + 1
+    _, inv = np.unique(unit * span + (d - d0), return_inverse=True)
+    inv = inv.reshape(-1).astype(np.int64)
+    return inv, int(inv.max()) + 1
 
 
 # Purpose:   one shrinkage group per CELL. XC is group 0 -- the REFERENCE

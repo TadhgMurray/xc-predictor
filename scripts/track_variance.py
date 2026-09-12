@@ -33,81 +33,70 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine")):
 
 import bracket as bk                                            # noqa: E402
 import joint_solve as js                                        # noqa: E402
-import pair_engine as pe                                        # noqa: E402
 import run_joint as rj                                          # noqa: E402
 
 
 def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True,
-            sample_pct=100.0, seed=11):
-    # athlete-season codes over the WHOLE pack, so the sample still indexes
-    # the solve file's ratings
-    season_full, n_season_full = pe.athleteSeasonCodes(
-        np.asarray(cols["athlete"]).astype(np.int64),
-        np.asarray(cols["year"]).astype(np.int64))
-    cols = dict(cols); cols["_season"] = season_full
+            sample_pct=100.0, seed=11, codes=None):
+    """codes: bracket.packCodes' whole-pack codes (computed here when not
+    given). The board number per base course, the fronts of the races and
+    the rows per cell are read off the WHOLE pack; only the bracket runs
+    on the athlete sample, and on its track rows."""
+    if codes is None or "_cell" not in cols:
+        try:
+            cols, codes = bk.packCodes(cols, npz, era_years)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+    keys, n_base = codes["keys"], codes["n_base"]
+    cell_keys = [str(k) for k in codes["cell_keys"]]
+    n_cell = len(cell_keys)
+    base_of_cell = np.asarray(codes["base_of_cell"], dtype=np.int64)
+    is_out = np.array([k.startswith("TF:") and k.endswith(":out") for k in keys], dtype=bool)
+    delta = np.asarray(npz["delta_anchored"] if "delta_anchored" in npz else npz["delta"],
+                       dtype=np.float64)
+    if delta.size != n_cell:
+        raise SystemExit(f"the solve file has {delta.size:,} difficulties and the pack "
+                         f"maps to {n_cell:,} cells; pass the era width the solve used")
+    # ★ THE PUBLISHED NUMBER PER BASE COURSE: its latest solved era with
+    #   rows, counted over the whole pack (a sample would miss thin eras)
+    cell_all = np.asarray(cols["_cell"]).astype(np.int64)
+    rows_per_cell = np.bincount(cell_all[cell_all >= 0], minlength=n_cell)
+    era_of_cell = np.array([int(k.rpartition("@e")[2]) if "@e" in k else 0 for k in cell_keys],
+                           dtype=np.int64)
+    board = np.full(n_base, np.nan)
+    has = np.flatnonzero(rows_per_cell > 0)
+    if has.size:
+        order = np.lexsort((era_of_cell[has], base_of_cell[has]))
+        hs = has[order]
+        bs = base_of_cell[hs]
+        last = np.flatnonzero(np.r_[bs[1:] != bs[:-1], True])
+        board[bs[last]] = delta[hs[last]]
+    # the front of every race from the WHOLE field (a sample's top five is
+    # not the race's), through the solve's ratings; one sort of the pack
+    race_all = np.asarray(cols["_race"]).astype(np.int64)
+    rating_all = bk.ratingOnRows(cols, npz, codes)
+    front_race = (js.raceFront(rating_all, race_all, codes["n_race"])
+                  if rating_all is not None else np.full(codes["n_race"], np.nan))
+    cols = dict(cols); cols["_front"] = front_race[race_all]
     if sample_pct < 100:
         keep = bk.athleteSample(cols, sample_pct, seed)
         print(f"[tracks] {int(keep.sum()):,} rows of {keep.size:,}: {sample_pct:g}% of "
               f"athletes, whole athletes", flush=True)
         cols = bk.subsetCols(cols, keep)
-    keys = [str(k) for k in cols["course_keys"]]
-    n_base = len(keys)
-    is_out = np.array([k.startswith("TF:") and k.split("@", 1)[0].endswith(":out")
-                       for k in keys], dtype=bool)
-    course = np.asarray(cols["course"]).astype(np.int64)
-    year = np.asarray(cols["year"]).astype(np.int64)
-    # the published number per base cell: its latest solved era
-    group = np.zeros(n_base, dtype=np.int64)
-    if era_years:
-        (cell, _n, _g, cell_keys, _p, _w, _e) = rj.eraCells(course, year, era_years,
-                                                             n_base, group, keys)
-    else:
-        cell, cell_keys = course, keys
-    cell_keys = [str(k) for k in cell_keys]
-    if "course_keys" in npz and [str(k) for k in npz["course_keys"]] != cell_keys:
-        raise SystemExit("the solve file's cells do not match the pack with this "
-                         "--era-years; pass the width the solve used")
-    delta = np.asarray(npz["delta_anchored"] if "delta_anchored" in npz else npz["delta"],
-                       dtype=np.float64)
-    rows_per_cell = np.bincount(cell[cell >= 0], minlength=len(cell_keys))
-    board = np.full(n_base, np.nan)
-    base_of = np.array([int(k.partition("@e")[2]) if "@e" in k else -1 for k in cell_keys])
-    bmap = {}
-    for i, k in enumerate(cell_keys):
-        if rows_per_cell[i] == 0:
-            continue
-        b = k.partition("@e")[0]
-        e = base_of[i]
-        if b not in bmap or e > bmap[b][0]:
-            bmap[b] = (e, i)
-    key_to_base = {k: i for i, k in enumerate(keys)}
-    for b, (_e, i) in bmap.items():
-        if b in key_to_base:
-            board[key_to_base[b]] = delta[i]
     # the bracket per row: track rows only (the bracket is within a sport)
-    sport_all = np.asarray(cols["sport"]).astype(np.int64)
-    tf = sport_all == 1
-    print(f"[tracks] {int(tf.sum()):,} track rows of {tf.size:,}; bracketing them "
-          f"(two sorts, a minute or two)", flush=True)
-    sub = {k: (np.asarray(v)[tf] if k not in ("athlete_keys", "course_keys")
-               and np.asarray(v).shape[:1] == (tf.size,) else v)
-           for k, v in cols.items()}
-    res_tf = bk.bracketRows(sub, npz, window=window, use_curve=use_curve,
-                            season=sub["_season"], n_season=n_season_full)
-    br = np.full(tf.size, np.nan); br[tf] = res_tf["bracket"]
-    season = np.asarray(cols["_season"]).astype(np.int64)
-    # the front per race, from the solve's ratings
-    race, n_race = rj.raceCodes(course, cols["days"])
-    rating = None
-    if "rating" in npz and np.asarray(npz["rating"]).size == n_season_full:
-        rating = np.asarray(npz["rating"], dtype=np.float64)[season]
+    tf = np.asarray(cols["sport"]).astype(np.int64) == 1
+    print(f"[tracks] {int(tf.sum()):,} track rows of {tf.size:,}; bracketing them",
+          flush=True)
+    cols = bk.subsetCols(cols, tf)
+    res_tf = bk.bracketRows(cols, npz, window=window, use_curve=use_curve,
+                            season=cols["_season"], n_season=codes["n_season"])
+    br = res_tf["bracket"]
+    course = np.asarray(cols["course"]).astype(np.int64)
     print("[tracks] fronts, classes and the per-track table", flush=True)
-    front_race = js.raceFront(rating, race, n_race) if rating is not None else np.full(n_race, np.nan)
-    front_row = front_race[race]
+    front_row = np.asarray(cols["_front"], dtype=np.float64)
     mclass = (np.asarray(cols["meet_class"]).astype(np.int64) if "meet_class" in cols
               else np.zeros(course.size, dtype=np.int64))
-    sport = np.asarray(cols["sport"]).astype(np.int64)
-    sel = (course >= 0) & is_out[np.maximum(course, 0)] & (sport == 1) & np.isfinite(br)
+    sel = (course >= 0) & is_out[np.maximum(course, 0)] & np.isfinite(br)
     cnt = np.bincount(course[sel], minlength=n_base)
     big = np.flatnonzero((cnt >= min_rows) & is_out & np.isfinite(board))
     if big.size == 0:
@@ -123,7 +112,8 @@ def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True,
     # within-track deviations, pooled
     dev = br - mean_br[np.maximum(course, 0)]
     fdev = np.nan_to_num(front_row, nan=100.0) - mean_front[np.maximum(course, 0)]
-    m_big = sel & np.isin(course, big)
+    big_mask = np.zeros(n_base, dtype=bool); big_mask[big] = True
+    m_big = sel & big_mask[np.maximum(course, 0)]
     by_class = {}
     for c in range(4):
         m = m_big & (mclass == c)
@@ -211,8 +201,9 @@ def main():
                     help="percent of athletes (whole athletes; default 25)")
     ap.add_argument("--seed", type=int, default=11)
     args = ap.parse_args()
-    cols = pe.loadPack(args.pack)
-    npz = dict(np.load(args.npz, allow_pickle=False))
+    cols, npz = bk.loadInputs(args.pack, args.npz)
+    if npz is None:
+        sys.exit(f"no solve file at {args.npz}")
     print(f"[tracks] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
     r = analyse(cols, npz, era_years=args.era_years, min_rows=args.min_rows,
                 window=args.window, use_curve=not args.no_curve,

@@ -603,13 +603,17 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
       ${XCP_LADDER_ALL:+--all} \
       ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
-  # ★ THE SECOND ENGINE, SCORED ON THE SAME HELD-OUT RACES (2026-09-12).
-  #   scripts/bracket_holdout.py is the owner's method as a solve; it uses
-  #   the ladder's athlete sample and race split, so its "error sd" and the
-  #   base rung's are one question asked of two engines. Minutes, not a
-  #   solve. XCP_BRACKET=0 skips it.
+  # ★ THE SECOND ENGINE AND THE PACK DIAGNOSTICS, ONE PROCESS (2026-09-12).
+  #   scripts/diagnose.py loads the pack and the solve file once and runs
+  #   the bracket engine on the ladder's athlete sample and race split (so
+  #   its "error sd" and the base rung's are one question asked of two
+  #   engines), indoor against outdoor, and why tracks differ. Reports go
+  #   to $LOGDIR/{bracket_holdout,indoor,tracks}.txt; the venue brackets
+  #   need names from the database and are run by hand (--venue). Three
+  #   minutes on the corpus, measured. XCP_BRACKET=0 skips it.
   if [ "${XCP_BRACKET:-1}" != "0" ]; then
-    step 08d_bracket      "$PY" -u scripts/bracket_holdout.py \
+    step 08d_diagnose     "$PY" -u scripts/diagnose.py \
+        --only indoor,tracks,holdout --out-dir "$LOGDIR" \
         --pct "${XCP_LADDER_PCT:-15}" --seed 11 \
         ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} || true
   fi

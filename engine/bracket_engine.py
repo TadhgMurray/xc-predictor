@@ -44,9 +44,15 @@ import run_joint as rj
 
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=1.0, prior_rows=20.0, min_voters=5, tilt=True,
-        use_curve=True, tol=1e-5, verbose=False):
+        use_curve=True, tol=1e-5, verbose=False, codes=None):
     """Fit on the rows where `train` is True (all rows when None); every
-    row, held out or not, gets its local level and a prediction."""
+    row, held out or not, gets its local level and a prediction.
+
+    codes: bracket.packCodes' codes, with the pack carrying `_season`,
+    `_race`, `_cell` numbered over the WHOLE pack. Then `cols` may be any
+    subset of rows (the holdout's athlete sample) and its ratings, races
+    and cells still line up with the solve file; without codes they are
+    computed here over the rows given."""
     keys = [str(k) for k in cols["course_keys"]]
     n_base = len(keys)
     course = np.asarray(cols["course"]).astype(np.int64)
@@ -56,19 +62,34 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     sport = (np.asarray(cols["sport"]).astype(np.int64) if "sport" in cols
              else np.zeros(n, dtype=np.int64))
     train = np.ones(n, dtype=bool) if train is None else np.asarray(train, dtype=bool)
-    # cells: (course, era) under era_years, as the joint solve keys them
-    if era_years:
-        (cell, n_cell, _g, cell_keys, _p, _w, _e) = rj.eraCells(
-            course, year, era_years, n_base, np.zeros(n_base, dtype=np.int64), keys)
-    else:
-        cell, n_cell, cell_keys = course, n_base, list(keys)
-    cell_keys = [str(k) for k in cell_keys]
-    base_of_cell = np.array([keys.index(k.partition("@e")[0]) if "@e" in k else i
-                             for i, k in enumerate(cell_keys)], dtype=np.int64) \
-        if era_years else np.arange(n_cell)
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
-    season, n_season = pe.athleteSeasonCodes(ath_raw, year)
-    race, n_race = rj.raceCodes(course, days)
+    pool_of_raw = None
+    if codes is not None and "_cell" in cols:
+        cell = np.asarray(cols["_cell"]).astype(np.int64)
+        n_cell = int(codes["n_cell"])
+        cell_keys = [str(k) for k in codes["cell_keys"]]
+        base_of_cell = np.asarray(codes["base_of_cell"], dtype=np.int64)
+        season = np.asarray(cols["_season"]).astype(np.int64)
+        n_season = int(codes["n_season"])
+        race = np.asarray(cols["_race"]).astype(np.int64)
+        n_race = int(codes["n_race"])
+        pool_of_raw = codes.get("pool_of_raw")
+        era_years = int(codes.get("era_years", era_years) or 0)
+    else:
+        # cells: (course, era) under era_years, as the joint solve keys them
+        if era_years:
+            (cell, n_cell, _g, cell_keys, _p, _w, _e) = rj.eraCells(
+                course, year, era_years, n_base, np.zeros(n_base, dtype=np.int64), keys)
+        else:
+            cell, n_cell, cell_keys = course, n_base, list(keys)
+        cell_keys = [str(k) for k in cell_keys]
+        # ! A DICT, NOT list.index: 220k era cells against 74k keys by linear
+        #   scan is eight billion string compares (2026-09-12)
+        key_to_base = {k: i for i, k in enumerate(keys)}
+        base_of_cell = (np.array([key_to_base[k.rpartition("@e")[0]] for k in cell_keys],
+                                 dtype=np.int64) if era_years else np.arange(n_cell))
+        season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+        race, n_race = rj.raceCodes(course, days)
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     # the athlete's rating (for the voters and the tilt) and curve point
     rating = None
@@ -76,7 +97,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         rating = np.asarray(npz["rating"], dtype=np.float64)[season]
     curve = np.zeros(n)
     if use_curve and npz is not None and "curve" in npz and "doy" in cols:
-        pool_of_raw, _names = rj.poolCodes(cols["athlete_keys"])
+        if pool_of_raw is None:
+            pool_of_raw, _names = rj.poolCodes(cols["athlete_keys"])
         curve = bk.curveOnRows(npz, pool_of_raw[ath_raw], cols["doy"], rating)
     z = ln - curve
     h = np.ones(n)

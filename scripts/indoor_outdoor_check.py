@@ -39,7 +39,6 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine")):
 
 import bracket as bk                                            # noqa: E402
 import joint_solve as js                                        # noqa: E402
-import pair_engine as pe                                        # noqa: E402
 import run_joint as rj                                          # noqa: E402
 
 
@@ -54,21 +53,21 @@ def _stats(d):
 
 
 def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
-            use_curve=True, sample_pct=100.0, seed=11):
+            use_curve=True, sample_pct=100.0, seed=11, codes=None):
     """Returns {(pool, window, dist or 'all'): {'transition': (n, median,
     trimmed), 'pairs': (n, median, trimmed)}} plus the same without the
-    curve under the key ('raw', ...)."""
+    curve under the key ('raw', ...). codes: bracket.packCodes' whole-pack
+    codes, computed here when not given (only the season codes are used)."""
     keys = [str(k) for k in cols["course_keys"]]
     base_in = np.array([k.split("@", 1)[0].endswith(":in") for k in keys], dtype=bool)
     base_tf = np.array([k.startswith("TF:") for k in keys], dtype=bool)
     # ! ONLY THE ATHLETE-SEASONS WITH AN INDOOR ROW, all their rows, and a
     #   sample of them: the comparison is within an athlete-season, so the
     #   rest of the corpus cannot change it (2026-09-12: "way too long")
+    if codes is None or "_season" not in cols:
+        cols, codes = bk.packCodes(cols, npz, 0, cells=False)
+    n_season = int(codes["n_season"])
     course0 = np.asarray(cols["course"]).astype(np.int64)
-    season_full, n_season = pe.athleteSeasonCodes(
-        np.asarray(cols["athlete"]).astype(np.int64),
-        np.asarray(cols["year"]).astype(np.int64))
-    cols = dict(cols); cols["_season"] = season_full
     has_in = (course0 >= 0) & base_in[np.maximum(course0, 0)]
     keep = bk.rowsOfSeasons(cols, has_in) & bk.athleteSample(cols, sample_pct, seed)
     print(f"[indoor] {int(keep.sum()):,} rows of {keep.size:,}: the athlete-seasons "
@@ -79,14 +78,12 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
     dist = np.asarray(cols["dist_m"], dtype=np.float64)
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
     season = np.asarray(cols["_season"]).astype(np.int64)
-    pool_of_raw, pool_names = rj.poolCodes(cols["athlete_keys"])
+    pool_of_raw, pool_names = codes["pool_of_raw"], codes["pool_names"]
     pool = pool_of_raw[ath_raw]
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     curve = np.zeros(ln.size)
     if use_curve and npz is not None and "curve" in npz and "doy" in cols:
-        rating = None
-        if "rating" in npz and np.asarray(npz["rating"]).size == n_season:
-            rating = np.asarray(npz["rating"], dtype=np.float64)[season]
+        rating = bk.ratingOnRows(cols, npz, codes)
         curve = bk.curveOnRows(npz, pool, cols["doy"], rating)
     ok = (course >= 0) & base_tf[np.maximum(course, 0)] & np.isfinite(ln) & np.isfinite(dist) & (dist > 0)
     flag = np.zeros(ln.size, dtype=bool)
@@ -200,11 +197,8 @@ def main():
     args = ap.parse_args()
     windows = tuple(int(x) for x in args.windows.split(","))
     dists = tuple(int(x) for x in args.dists.split(","))
-    cols = pe.loadPack(args.pack)
-    npz = None
-    if os.path.exists(args.npz):
-        npz = dict(np.load(args.npz, allow_pickle=False))
-    else:
+    cols, npz = bk.loadInputs(args.pack, args.npz)
+    if npz is None:
         print(f"(no solve file at {args.npz}: raw log times only)")
     print(f"[indoor] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
     res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve,

@@ -49,10 +49,10 @@ import numpy as np
 # loadPack
 # Purpose:   the packed arrays speed_ratings already builds.
 # Detail:    imports loadCols so there is ONE reader for the .npz layout.
-def loadPack(path):
+def loadPack(path, only=None):
     sys.path.insert(0, os.path.dirname(os.path.abspath(path)) or ".")
     from speed_ratings import loadCols
-    return loadCols(path)
+    return loadCols(path, only=only) if only is not None else loadCols(path)
 
 
 # buildResponse
