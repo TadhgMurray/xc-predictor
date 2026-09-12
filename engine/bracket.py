@@ -68,8 +68,10 @@ def windowSumsAt(key_ref, days_ref, z_ref, key_q, days_q, window):
     z_ref = np.asarray(z_ref, dtype=np.float64)
     key_q = np.asarray(key_q, dtype=np.int64)
     days_q = np.round(np.asarray(days_q, dtype=np.float64)).astype(np.int64)
-    order = np.lexsort((days_ref, key_ref))
-    k_s = key_ref[order] * _BIG + days_ref[order]
+    # one composite key, one sort: several times faster than a two-key lexsort
+    comp = key_ref * _BIG + days_ref
+    order = np.argsort(comp, kind="stable")
+    k_s = comp[order]
     lo = np.searchsorted(k_s, key_q * _BIG + days_q - int(window), side="left")
     hi = np.searchsorted(k_s, key_q * _BIG + days_q + int(window), side="right")
     P = np.r_[0.0, np.cumsum(z_ref[order])]
@@ -92,8 +94,9 @@ class WindowIndex:
         days_ref = np.round(np.asarray(days_ref, dtype=np.float64)).astype(np.int64)
         key_q = np.asarray(key_q, dtype=np.int64)
         days_q = np.round(np.asarray(days_q, dtype=np.float64)).astype(np.int64)
-        self.order = np.lexsort((days_ref, key_ref))
-        k_s = key_ref[self.order] * _BIG + days_ref[self.order]
+        comp = key_ref * _BIG + days_ref
+        self.order = np.argsort(comp, kind="stable")
+        k_s = comp[self.order]
         self.lo = np.searchsorted(k_s, key_q * _BIG + days_q - int(window), side="left")
         self.hi = np.searchsorted(k_s, key_q * _BIG + days_q + int(window), side="right")
         self.count = (self.hi - self.lo).astype(np.int64)
@@ -133,13 +136,20 @@ def windowBracket(z, season, sport, cell, days, window):
     return out, n_other
 
 
-def bracketRows(cols, npz=None, window=21, use_curve=True):
+def bracketRows(cols, npz=None, window=21, use_curve=True, season=None,
+                n_season=None):
     """The bracket for every row of a pack, curve-corrected when the solve
-    file carries a curve and ratings. Returns dict(bracket, n_other, z,
-    season, n_season, curve)."""
+    file carries a curve and ratings. `season` / `n_season`: athlete-season
+    codes numbered over the WHOLE pack, so a subset of rows still indexes
+    the solve file's ratings; computed here when not given. Returns
+    dict(bracket, n_other, z, season, n_season, curve)."""
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
     year = np.asarray(cols["year"]).astype(np.int64)
-    season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+    if season is None:
+        season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+    else:
+        season = np.asarray(season, dtype=np.int64)
+        n_season = int(n_season if n_season is not None else season.max() + 1)
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     curve = np.zeros(ln.size)
     if use_curve and npz is not None and "curve" in npz and "doy" in cols:
@@ -158,3 +168,44 @@ def bracketRows(cols, npz=None, window=21, use_curve=True):
 def _poolCodes(athlete_keys):
     import run_joint as rj
     return rj.poolCodes(athlete_keys)
+
+
+# ------------------------------------------------------------------ #
+# SMALLER INPUTS. A diagnostic does not need the corpus, it needs the
+# athletes it is about, with ALL of their rows (a bracket is within an
+# athlete-season). These keep course and athlete ids as they are, so the
+# keys, the solve file's cells and the ratings still line up.
+# ------------------------------------------------------------------ #
+
+def athleteSample(cols, pct, seed=11):
+    """A row mask keeping every row of a random `pct` percent of athletes."""
+    ath = np.asarray(cols["athlete"]).astype(np.int64)
+    if pct is None or pct >= 100:
+        return np.ones(ath.size, dtype=bool)
+    uniq = np.unique(ath)
+    rng = np.random.default_rng(seed)
+    picked = uniq[rng.random(uniq.size) < pct / 100.0]
+    return np.isin(ath, picked)
+
+
+def rowsOfSeasons(cols, rows):
+    """A row mask keeping every row of every athlete-season that has a row
+    in `rows` (a mask or an index array)."""
+    ath = np.asarray(cols["athlete"]).astype(np.int64)
+    year = np.asarray(cols["year"]).astype(np.int64)
+    key = ath * 10_000 + year
+    want = np.unique(key[rows])
+    return np.isin(key, want)
+
+
+def subsetCols(cols, mask):
+    """The pack restricted to the rows of `mask`; the key lists untouched."""
+    n = np.asarray(cols["athlete"]).size
+    out = {}
+    for k, v in cols.items():
+        if k in ("athlete_keys", "course_keys"):
+            out[k] = v
+            continue
+        a = np.asarray(v)
+        out[k] = a[mask] if a.shape[:1] == (n,) else v
+    return out

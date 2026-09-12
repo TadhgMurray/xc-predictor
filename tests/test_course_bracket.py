@@ -96,3 +96,30 @@ def test_the_bracket_scales_like_a_sort_not_a_square():
     assert set(res) == {"XC:100:d5000", "XC:101:d5000"}
     assert all(len(r["races"]) > 0 for r in res.values())
     assert took < 60, took
+
+
+def test_the_venue_subset_changes_nothing_but_the_time():
+    """The bracket is within an athlete-season, so keeping only the seasons
+    that raced the venue gives the same numbers as the whole pack."""
+    cols, keep, keys, sport_of_course = _era_pack()
+    with contextlib.redirect_stdout(io.StringIO()):
+        D, athlete_pool, pool_names = rj.buildDesign(
+            cols, keep, sport_offset=False, curve=False, rust=False, dist=False,
+            slope=False, link=False, altitude=False, era_years=2,
+            importance="none", indoor=True, dist_table=False)
+        y = np.log(cols["norm"][keep])
+        out = js.solveJoint(y, design=D, athlete_pool=athlete_pool, n_outer=2,
+                            tilt=False, n_probe=0)
+    npz = {"delta": out["delta"], "race_effect": out["race_effect"],
+           "rating": out["rating"], "course_keys": np.array(D.course_keys)}
+    full = cb.bracket(cols, npz, ["XC:101:"], window=60, era_years=2, subset=False)
+    small = cb.bracket(cols, npz, ["XC:101:"], window=60, era_years=2, subset=True)
+    a = full["XC:101:d5000"]["races"]; b = small["XC:101:d5000"]["races"]
+    assert len(a) == len(b) > 0
+    # race ids are renumbered inside the subset; match days, not ids
+    key = lambda r: (r["year"], r["days_ago"])
+    for x, y_ in zip(sorted(a, key=key), sorted(b, key=key)):
+        assert key(x) == key(y_) and x["n"] == y_["n"]
+        assert abs(x["bracket"] - y_["bracket"]) < 1e-12
+        assert abs(x["ref"] - y_["ref"]) < 1e-12 and x["cell_key"] == y_["cell_key"]
+        assert np.isfinite(x["board"]) and x["board"] == y_["board"]

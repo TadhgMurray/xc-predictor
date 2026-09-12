@@ -1744,6 +1744,12 @@ def main():
         save["altitude_floor_m"] = np.array([js.ALT_FLOOR_M])
     if out.get("mu_fixed") is not None:
         save["mu_fixed"] = out["mu_fixed"]
+    if args.era_years:
+        # the readers (course_bracket, track_variance) rebuild (course, era)
+        # ids from this, not from whatever subset of rows they hold
+        _c = np.asarray(cols["course"]); _y = np.asarray(cols["year"])
+        save["era_years"] = np.array([int(args.era_years)])
+        save["era_base_year"] = np.array([int(_y[_c >= 0].min())])
     if out.get("importance") is not None and getattr(D, "n_imp", 0):
         save["importance"] = out["importance"]
         save["importance_labels"] = np.array(getattr(D, "imp_labels", []))

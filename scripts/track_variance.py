@@ -37,7 +37,19 @@ import pair_engine as pe                                        # noqa: E402
 import run_joint as rj                                          # noqa: E402
 
 
-def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True):
+def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True,
+            sample_pct=100.0, seed=11):
+    # athlete-season codes over the WHOLE pack, so the sample still indexes
+    # the solve file's ratings
+    season_full, n_season_full = pe.athleteSeasonCodes(
+        np.asarray(cols["athlete"]).astype(np.int64),
+        np.asarray(cols["year"]).astype(np.int64))
+    cols = dict(cols); cols["_season"] = season_full
+    if sample_pct < 100:
+        keep = bk.athleteSample(cols, sample_pct, seed)
+        print(f"[tracks] {int(keep.sum()):,} rows of {keep.size:,}: {sample_pct:g}% of "
+              f"athletes, whole athletes", flush=True)
+        cols = bk.subsetCols(cols, keep)
     keys = [str(k) for k in cols["course_keys"]]
     n_base = len(keys)
     is_out = np.array([k.startswith("TF:") and k.split("@", 1)[0].endswith(":out")
@@ -80,19 +92,15 @@ def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True):
     sub = {k: (np.asarray(v)[tf] if k not in ("athlete_keys", "course_keys")
                and np.asarray(v).shape[:1] == (tf.size,) else v)
            for k, v in cols.items()}
-    res_tf = bk.bracketRows(sub, npz, window=window, use_curve=use_curve)
+    res_tf = bk.bracketRows(sub, npz, window=window, use_curve=use_curve,
+                            season=sub["_season"], n_season=n_season_full)
     br = np.full(tf.size, np.nan); br[tf] = res_tf["bracket"]
-    season = np.zeros(tf.size, dtype=np.int64); season[tf] = res_tf["season"]
-    res = {"n_season": res_tf["n_season"]}
+    season = np.asarray(cols["_season"]).astype(np.int64)
     # the front per race, from the solve's ratings
     race, n_race = rj.raceCodes(course, cols["days"])
     rating = None
-    if "rating" in npz:
-        # ratings are per athlete-season coded over the WHOLE pack
-        season_all, n_season_all = pe.athleteSeasonCodes(
-            np.asarray(cols["athlete"]).astype(np.int64), year)
-        if np.asarray(npz["rating"]).size == n_season_all:
-            rating = np.asarray(npz["rating"], dtype=np.float64)[season_all]
+    if "rating" in npz and np.asarray(npz["rating"]).size == n_season_full:
+        rating = np.asarray(npz["rating"], dtype=np.float64)[season]
     print("[tracks] fronts, classes and the per-track table", flush=True)
     front_race = js.raceFront(rating, race, n_race) if rating is not None else np.full(n_race, np.nan)
     front_row = front_race[race]
@@ -194,16 +202,21 @@ def main():
     ap.add_argument("--pack", default=d.get_default("pack"))
     ap.add_argument("--npz", default=d.get_default("out"))
     ap.add_argument("--era-years", type=int, default=0)
-    ap.add_argument("--min-rows", type=int, default=300)
+    ap.add_argument("--min-rows", type=int, default=100,
+                    help="bracketed rows a track needs (in the sample)")
     ap.add_argument("--window", type=float, default=21.0)
     ap.add_argument("--no-curve", action="store_true")
     ap.add_argument("--show", type=int, default=15)
+    ap.add_argument("--sample-pct", type=float, default=25.0,
+                    help="percent of athletes (whole athletes; default 25)")
+    ap.add_argument("--seed", type=int, default=11)
     args = ap.parse_args()
     cols = pe.loadPack(args.pack)
     npz = dict(np.load(args.npz, allow_pickle=False))
     print(f"[tracks] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
     r = analyse(cols, npz, era_years=args.era_years, min_rows=args.min_rows,
-                window=args.window, use_curve=not args.no_curve)
+                window=args.window, use_curve=not args.no_curve,
+                sample_pct=args.sample_pct, seed=args.seed)
     report(r, show=args.show)
 
 

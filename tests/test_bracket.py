@@ -127,3 +127,20 @@ def test_bracket_rows_takes_the_curve_out_and_scales_like_a_sort():
     late = np.arange(n_cell) >= 2 * (n_cell // 3)
     assert e0[late].mean() < -0.004, e0[late].mean()
     assert abs(e1[late].mean()) < 0.003, e1[late].mean()
+
+
+def test_the_subset_helpers_keep_whole_athlete_seasons():
+    cols = {"athlete": np.array([1, 1, 2, 2, 3, 3, 3]),
+            "year": np.array([2024, 2025, 2024, 2024, 2024, 2024, 2025]),
+            "course": np.array([0, 1, 0, 2, 2, 1, 0]),
+            "norm": np.ones(7), "athlete_keys": [(0, "hs_m")] * 4,
+            "course_keys": ["a", "b", "c"]}
+    m = bk.rowsOfSeasons(cols, np.array([0, 4]))          # rows at course 0 and 2
+    assert m.tolist() == [True, False, False, False, True, True, False]
+    s = bk.subsetCols(cols, m)
+    assert s["athlete"].tolist() == [1, 3, 3] and s["course_keys"] is cols["course_keys"]
+    a = bk.athleteSample(cols, 100)
+    assert a.all()
+    a = bk.athleteSample(cols, 50, seed=1)
+    for ath in (1, 2, 3):
+        assert len(set(a[cols["athlete"] == ath])) == 1     # whole athletes

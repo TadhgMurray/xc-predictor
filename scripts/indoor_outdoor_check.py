@@ -54,18 +54,31 @@ def _stats(d):
 
 
 def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
-            use_curve=True):
+            use_curve=True, sample_pct=100.0, seed=11):
     """Returns {(pool, window, dist or 'all'): {'transition': (n, median,
     trimmed), 'pairs': (n, median, trimmed)}} plus the same without the
     curve under the key ('raw', ...)."""
     keys = [str(k) for k in cols["course_keys"]]
     base_in = np.array([k.split("@", 1)[0].endswith(":in") for k in keys], dtype=bool)
     base_tf = np.array([k.startswith("TF:") for k in keys], dtype=bool)
+    # ! ONLY THE ATHLETE-SEASONS WITH AN INDOOR ROW, all their rows, and a
+    #   sample of them: the comparison is within an athlete-season, so the
+    #   rest of the corpus cannot change it (2026-09-12: "way too long")
+    course0 = np.asarray(cols["course"]).astype(np.int64)
+    season_full, n_season = pe.athleteSeasonCodes(
+        np.asarray(cols["athlete"]).astype(np.int64),
+        np.asarray(cols["year"]).astype(np.int64))
+    cols = dict(cols); cols["_season"] = season_full
+    has_in = (course0 >= 0) & base_in[np.maximum(course0, 0)]
+    keep = bk.rowsOfSeasons(cols, has_in) & bk.athleteSample(cols, sample_pct, seed)
+    print(f"[indoor] {int(keep.sum()):,} rows of {keep.size:,}: the athlete-seasons "
+          f"with an indoor race ({sample_pct:g}% of athletes)", flush=True)
+    cols = bk.subsetCols(cols, keep)
     course = np.asarray(cols["course"]).astype(np.int64)
     days = np.round(np.asarray(cols["days"], dtype=np.float64)).astype(np.int64)
     dist = np.asarray(cols["dist_m"], dtype=np.float64)
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
-    season, n_season = pe.athleteSeasonCodes(ath_raw, np.asarray(cols["year"]).astype(np.int64))
+    season = np.asarray(cols["_season"]).astype(np.int64)
     pool_of_raw, pool_names = rj.poolCodes(cols["athlete_keys"])
     pool = pool_of_raw[ath_raw]
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
@@ -181,6 +194,9 @@ def main():
     ap.add_argument("--windows", default="21,35,49")
     ap.add_argument("--dists", default="800,1600,3200,5000")
     ap.add_argument("--no-curve", action="store_true")
+    ap.add_argument("--sample-pct", type=float, default=30.0,
+                    help="percent of athletes (whole athletes; default 30)")
+    ap.add_argument("--seed", type=int, default=11)
     args = ap.parse_args()
     windows = tuple(int(x) for x in args.windows.split(","))
     dists = tuple(int(x) for x in args.dists.split(","))
@@ -191,7 +207,8 @@ def main():
     else:
         print(f"(no solve file at {args.npz}: raw log times only)")
     print(f"[indoor] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
-    res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve)
+    res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve,
+                              sample_pct=args.sample_pct, seed=args.seed)
     report(res, pool_names, windows, dists)
 
 

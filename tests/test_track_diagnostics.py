@@ -116,3 +116,7 @@ def test_the_track_diagnostic_blames_the_meets_not_the_tracks(capsys):
     tv.report(r, show=3)
     out = capsys.readouterr().out
     assert "WITHIN a track" in out and "easiest" in out
+    # a sample of athletes still indexes the ratings, so the fronts exist
+    r2 = tv.analyse(cols, npz, era_years=0, min_rows=50, window=21, use_curve=False,
+                    sample_pct=50, seed=3)
+    assert r2["by_terc"] and r2["across"]["n_tracks"] == 30

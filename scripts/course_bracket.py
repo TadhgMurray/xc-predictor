@@ -55,7 +55,7 @@ import run_joint as rj                                          # noqa: E402
 
 
 def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
-            same_sport=True, min_rows=5, use_curve=True):
+            same_sport=True, min_rows=5, use_curve=True, subset=True):
     """Per race day at every base cell whose key contains one of `match`
     (case-insensitive): the bracket measurement and the model's terms.
     The bracket is engine/bracket.py's: the same athlete-season's other
@@ -63,31 +63,61 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
     form curve taken out of every row when the solve file has one.
     Returns {base key: {"races": [row dicts], "by_year": [...]}}."""
     keys = [str(k) for k in cols["course_keys"]]
+    want = [m.lower() for m in match]
+    base_ids = [i for i, k in enumerate(keys) if any(m in k.lower() for m in want)]
+    # the era index counts from the FIRST YEAR IN THE WHOLE PACK (eraCells):
+    # take it before any subset changes what the first year is
+    _c0 = np.asarray(cols["course"]).astype(np.int64)
+    _y0 = np.asarray(cols["year"]).astype(np.int64)
+    era_base_year = int(_y0[_c0 >= 0].min()) if (_c0 >= 0).any() else 0
+    if "era_base_year" in npz:
+        era_base_year = int(np.asarray(npz["era_base_year"]).ravel()[0])
+    # race ids as the solve numbered them, over the WHOLE pack, so the
+    # solve file's race-day terms still line up after a subset
+    race_full, n_race_full = rj.raceCodes(_c0, np.asarray(cols["days"]))
+    season_full, n_season_full = pe.athleteSeasonCodes(
+        np.asarray(cols["athlete"]).astype(np.int64), _y0)
+    cols = dict(cols); cols["_race"] = race_full; cols["_season"] = season_full
+    if subset and base_ids:
+        # ! ONLY THE ATHLETE-SEASONS THAT RACED THE VENUE, with all their rows:
+        #   a bracket is within an athlete-season, so nothing else in the
+        #   corpus can change it, and the sorts below run on thousands of
+        #   rows instead of fifty million (2026-09-12: "way too long").
+        at_venue = np.isin(np.asarray(cols["course"]).astype(np.int64), base_ids)
+        cols = bk.subsetCols(cols, bk.rowsOfSeasons(cols, at_venue))
     course = np.asarray(cols["course"]).astype(np.int64)
     days = np.asarray(cols["days"]).astype(np.float64)
     year = np.asarray(cols["year"]).astype(np.int64)
     sport = np.asarray(cols["sport"]).astype(np.int64)
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
-    rows_all = bk.bracketRows(cols, npz, window=window, use_curve=use_curve)
+    rows_all = bk.bracketRows(cols, npz, window=window, use_curve=use_curve,
+                              season=cols["_season"], n_season=n_season_full)
     ln = rows_all["z"]                    # log time less the athlete's curve point
     season, n_season = rows_all["season"], rows_all["n_season"]
-    race, n_race = rj.raceCodes(course, days)
-    # the solve's cells: (course, era) under --era-years
+    race, n_race = np.asarray(cols["_race"]).astype(np.int64), n_race_full
+    # the solve's cells: (course, era) under --era-years. The era ids are
+    # keyed off the solve file's own cell keys, so a subset of rows maps to
+    # the same cells the full pack did.
     n_cells = len(keys)
-    group = np.zeros(n_cells, dtype=np.int64)
+    npz_keys = [str(k) for k in npz["course_keys"]] if "course_keys" in npz else None
     if era_years:
-        ok = course >= 0
-        group[np.unique(course[ok])] = 0
-        (cell, _n_new, _g, cell_keys, _p, _w, _e) = rj.eraCells(
-            course, year, era_years, n_cells, group, keys)
+        if npz_keys is None:
+            raise SystemExit("--era-years needs the solve file's cell keys")
+        cell_keys = npz_keys
+        lookup = {k: i for i, k in enumerate(cell_keys)}
+        era = np.where(course >= 0, (year - era_base_year) // era_years, 0)
+        cell = np.array([lookup.get(f"{keys[c]}@e{e}", -1) if c >= 0 else -1
+                         for c, e in zip(course, era)], dtype=np.int64)
+        if (cell[course >= 0] < 0).any():
+            n_bad = int((cell[course >= 0] < 0).sum())
+            print(f"  ({n_bad:,} rows fall in a (course, era) the solve did not "
+                  f"key; they carry no board number)")
     else:
         cell, cell_keys = course, keys
-    cell_keys = [str(k) for k in cell_keys]
-    npz_keys = [str(k) for k in npz["course_keys"]] if "course_keys" in npz else None
-    if npz_keys is not None and npz_keys != cell_keys:
-        raise SystemExit(f"the npz has {len(npz_keys):,} cells and the pack "
-                         f"gives {len(cell_keys):,} with --era-years "
-                         f"{era_years}; pass the era width the solve used")
+        if npz_keys is not None and npz_keys != cell_keys:
+            raise SystemExit(f"the npz has {len(npz_keys):,} cells and the pack "
+                             f"gives {len(cell_keys):,}; pass --era-years if the "
+                             f"solve used it")
     delta = np.asarray(npz["delta_anchored"] if "delta_anchored" in npz
                        else npz["delta"], dtype=np.float64)
     u = (np.asarray(npz["race_effect"], dtype=np.float64)
@@ -110,8 +140,6 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                                      idx >= 0, coef.size, centre=centre)
         field_row = np.where(idx >= 0, w * coef[np.maximum(idx, 0)], 0.0)
 
-    want = [m.lower() for m in match]
-    base_ids = [i for i, k in enumerate(keys) if any(m in k.lower() for m in want)]
     out = {}
     # rows by athlete-season, then day; each season's run is [start, end)
     # ! ARRAYS, NOT A DICT BUILT IN A LOOP. The first cut indexed the full
@@ -141,7 +169,11 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             if m.any():
                 o = idx_o[m]
                 br[j] = ln[r] - ln[o].mean()      # == rows_all["bracket"][r] when same_sport
-                ref[j] = float(np.mean(delta[cell[o]] + (u[race[o]] if u is not None else 0.0)))
+                oc = cell[o]
+                ok_o = oc >= 0
+                if ok_o.any():
+                    ref[j] = float(np.mean(delta[oc[ok_o]]
+                                           + (u[race[o][ok_o]] if u is not None else 0.0)))
         races = []
         for rid in np.unique(race[rows]):
             in_race = rows[race[rows] == rid]
@@ -155,9 +187,10 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             front = np.nan
             if rr is not None:
                 front = float(np.sort(rr)[::-1][:js.FIELD_TOP_K].mean())
+            c0 = int(cell[in_race[0]])
             rec = {"race": int(rid), "year": int(year[in_race[0]]),
                    "days_ago": float(days[in_race[0]]),
-                   "cell_key": cell_keys[int(cell[in_race[0]])],
+                   "cell_key": cell_keys[c0] if c0 >= 0 else keys[b],
                    "n": int(in_race.size), "n_bracketed": int(got.sum()),
                    "front": front,
                    "depth": float(np.mean(rr)) if rr is not None else np.nan,
@@ -167,7 +200,7 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                    # board's own scale, to read against board + day
                    "ref": float(rj_[got].mean()) if got.any() else np.nan,
                    "bracket_top": np.nan,
-                   "board": float(delta[int(cell[in_race[0]])]),
+                   "board": float(delta[c0]) if c0 >= 0 else np.nan,
                    "day": float(u[rid]) if u is not None else np.nan,
                    "field": (float(field_row[in_race].mean())
                              if field_row is not None else np.nan)}

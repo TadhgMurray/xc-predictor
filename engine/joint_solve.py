@@ -1734,7 +1734,10 @@ def raceFront(r_row, race, n_race, k=FIELD_TOP_K):
     n = r.size
     if n == 0 or n_race == 0:
         return np.full(n_race, np.nan)
-    order = np.lexsort((-r, race))            # by race, then rating descending
+    # by race, then rating descending: one composite float key (ratings
+    # are clipped to 0..1e4 for the key only), one sort
+    rk = np.clip(r, 0.0, 1e4)
+    order = np.argsort(race.astype(np.float64) * 1e4 + (1e4 - rk), kind="stable")
     rs = race[order]
     starts = np.flatnonzero(np.r_[True, rs[1:] != rs[:-1]])
     lengths = np.diff(np.r_[starts, n])
