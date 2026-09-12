@@ -590,8 +590,13 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} || true
+  # ! 21 RUNGS IS 21 SOLVES (2026-09-12: "08b takes over 6 hours"). Each
+  #   rung is a full solve on XCP_LADDER_PCT of the athletes, the era rungs
+  #   on three times the cells. XCP_LADDER_ONLY=base,no-importance,era-2
+  #   runs a named subset; unset runs them all.
   step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
-      --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" || true
+      --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
+      ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
 
   # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
   #   row's normalized_time on the pool it is RATED in and reports the ones
