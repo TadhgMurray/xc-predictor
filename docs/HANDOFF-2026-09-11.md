@@ -216,9 +216,12 @@ the corpus (2.5M athlete-seasons, 1.3M races, 75k era cells; one core
 of a small sandbox, pack in the page cache): load 4.9 s, codes 7.9 s,
 venues 3.9 s, indoor 1.5 s, tracks 8.9 s, holdout 4.6 s, total 31.6 s,
 peak memory 2 GB. Everything in it is a sort or a gather, so the
-51-million-row corpus is about five and a half times that: roughly three
-minutes and ten gigabytes, plus whatever the disk adds to the load if the
-pack is not cached. `tests/test_diagnose.py` runs all four stages on two
+63-million-row corpus is about six and a half times that: roughly three
+and a half minutes and thirteen gigabytes, plus whatever the disk adds
+to the load if the pack is not cached. Run it as
+`/srv/venv/bin/python scripts/diagnose.py ...` or with `$PY` set; an
+unset `$PY` runs the shebang's system python3, which has no numpy, and
+the script now re-executes itself under the venv when that happens. `tests/test_diagnose.py` runs all four stages on two
 million rows against a clock so a quadratic cannot creep back in. The
 four scripts still run alone and take the same shared codes.
 

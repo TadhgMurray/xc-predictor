@@ -40,7 +40,17 @@ import sys
 import time
 import traceback
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    # ! RUN UNDER THE VENV, WHATEVER SHELL THIS IS (2026-09-12: `$PY` unset,
+    #   the shebang found the system python3, "No module named numpy").
+    #   The pipeline's own rule: XCP_PYTHON, else /srv/venv/bin/python.
+    _venv = os.environ.get("XCP_PYTHON", "/srv/venv/bin/python")
+    if os.path.exists(_venv) and os.path.realpath(_venv) != os.path.realpath(sys.executable):
+        os.execv(_venv, [_venv] + sys.argv)
+    sys.exit(f"numpy is not installed for {sys.executable}; run this with the "
+             f"venv's python (XCP_PYTHON or /srv/venv/bin/python)")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
