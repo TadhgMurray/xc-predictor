@@ -182,6 +182,42 @@ cell count before anything else runs, and `tests/test_era_publish.py`
 runs the go-live on an era-split design end to end. Rerun from 8 with
 the same command.**
 
+**The second engine and the diagnostics (2026-09-12, after run 20).**
+The owner's method is built as a second solve, `engine/bracket_engine.py`:
+every row's log time less its point on the joint solve's form curve,
+compared with the same athlete-season's other rows within a window
+(21 days) each less the difficulty of the course they were run on; a
+race's difficulty is the mean over the top fraction of its field; a
+(course, era) cell is the vote-weighted mean of its races pulled toward
+the course's history by twenty votes; the level is pinned per sport and
+era; iterated to a fixed point in a handful of passes. No race-day term,
+no field term, no taper. `scripts/bracket_holdout.py` scores it on the
+SAME athlete sample and held-out races as the ladder's base rung, so
+the two engines are compared with one number; `--full` fits every row
+and writes `engine/data/bracket_difficulty.npz`. The comparison is the
+open question, and it has to be run:
+
+```
+$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2
+$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --top 0.25
+grep "error sd" engine/data/ladder_logs/base.log
+```
+
+Three diagnostics read the pack and the solve file, no rerun: the
+same-athlete bracket per race day at a named venue
+(`scripts/course_bracket.py --venue NAME`, with `ref` and `implied` to
+read against the board), indoor against outdoor for the same athlete at
+the same distance (`scripts/indoor_outdoor_check.py`), and why outdoor
+tracks differ (`scripts/track_variance.py --era-years 2`: the board
+beside the bracket, the mix each track hosts, and the within-track
+bracket by meet class and by front). All three share
+`engine/bracket.py`, one vectorised bracket with the curve taken out,
+tested against a brute-force loop and at two million rows. Two silent
+failures of the era split in my own code were found by these runs: the
+go-live took the pack's keys for the design's cells, and the in-run
+indoor check indexed era cells by base id and returned nothing; both
+fixed and tested.
+
 **Ultimook, and "recently is a lot faster than previously" (owner).**
 The era split was built (`--era-years`) and never wired into the
 pipeline, and turning it on would have broken the page: the solve keys

@@ -82,6 +82,27 @@ def _windowSums(key, days, z, window):
     return windowSumsAt(key, days, z, key, days, window)
 
 
+class WindowIndex:
+    """windowSumsAt with the sort and the searches done once: the bracket
+    engine iterates on the values but never on the geometry. `sums(z_ref)`
+    returns (sum, count) per query over the reference rows in the window."""
+
+    def __init__(self, key_ref, days_ref, key_q, days_q, window):
+        key_ref = np.asarray(key_ref, dtype=np.int64)
+        days_ref = np.round(np.asarray(days_ref, dtype=np.float64)).astype(np.int64)
+        key_q = np.asarray(key_q, dtype=np.int64)
+        days_q = np.round(np.asarray(days_q, dtype=np.float64)).astype(np.int64)
+        self.order = np.lexsort((days_ref, key_ref))
+        k_s = key_ref[self.order] * _BIG + days_ref[self.order]
+        self.lo = np.searchsorted(k_s, key_q * _BIG + days_q - int(window), side="left")
+        self.hi = np.searchsorted(k_s, key_q * _BIG + days_q + int(window), side="right")
+        self.count = (self.hi - self.lo).astype(np.int64)
+
+    def sums(self, z_ref):
+        P = np.r_[0.0, np.cumsum(np.asarray(z_ref, dtype=np.float64)[self.order])]
+        return P[self.hi] - P[self.lo], self.count
+
+
 def windowBracket(z, season, sport, cell, days, window):
     """Per row: z minus the mean z of the same (season, sport)'s other rows
     within +-window days at a different base cell; NaN where there are
