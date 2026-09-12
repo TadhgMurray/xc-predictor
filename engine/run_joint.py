@@ -1140,6 +1140,21 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                                   tilt=not args.no_tilt)
     y_te = y_all[keep_te]
     err = y_te[cov] - pred[cov]
+    # ★ THE HELD-OUT ROWS, PREDICTION BY PREDICTION (2026-09-12), so another
+    #   engine can be scored on exactly these rows: the bracket engine
+    #   covers 59% of them and the joint model 89%, and two error sds on
+    #   different rows are not a comparison. The ladder sets the path per
+    #   rung (ladder_logs/<rung>_holdout.npz); scripts/bracket_holdout.py
+    #   reads the base rung's.
+    dump = os.environ.get("XCP_HOLDOUT_DUMP")
+    if dump:
+        os.makedirs(os.path.dirname(dump) or ".", exist_ok=True)
+        np.savez(dump, row=idx[te_local].astype(np.int64), pred=pred.astype(np.float64),
+                 covered=cov.astype(bool), y=y_te.astype(np.float64),
+                 kind=np.array([kind]), sample_pct=np.array([float(args.sample_pct)]),
+                 sample_seed=np.array([int(args.sample_seed)]))
+        print(f"[joint] held-out predictions -> {dump} ({int(cov.sum()):,} covered "
+              f"of {cov.size:,})")
     # ⚠ SAY WHICH RUNG. "error sd 0.044" means nothing without it: holding
     #   out rows scores interpolation, holding out races scores prediction,
     #   and the two are not comparable numbers.

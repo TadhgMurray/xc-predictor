@@ -84,3 +84,38 @@ def test_the_holdout_split_is_the_runners_and_the_engine_predicts_it():
     # and the training rows' own residuals are smaller than the raw spread
     mt = train & cov
     assert (y[mt] - pred[mt]).std() < 0.5 * y[mt].std()
+
+
+def test_an_island_of_two_cells_settles_instead_of_swapping():
+    """★ THE CORPUS RUN OF 2026-09-12: max change 0.161 from pass 4 to pass
+    30. Two cells whose runners' only other races are at each other are an
+    island: a full step swaps their difficulties for ever. A half step
+    settles them, and the island's sum stays at its prior (zero)."""
+    rng = np.random.default_rng(7)
+    n_ath = 300
+    rows = []
+    for i in range(n_ath):
+        # every athlete races cell 0 on day 10 and cell 1 on day 20, nothing else
+        rows.append((i, 0, 10.0)); rows.append((i, 1, 20.0))
+    ath = np.array([r[0] for r in rows]); course = np.array([r[1] for r in rows])
+    days = np.array([r[2] for r in rows])
+    a = rng.normal(0, 0.1, n_ath)
+    y = a[ath] + np.where(course == 1, 0.08, 0.0) + rng.normal(0, 0.01, ath.size)
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course,
+            "days": days, "sport": np.zeros(ath.size, dtype=np.int64), "norm": np.exp(y),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
+            "course_keys": ["XC:100:d5000", "XC:101:d5000"]}
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        f1 = be.fit(cols, None, window=30, top=1.0, damping=1.0, n_iter=40, verbose=True)
+    lines1 = [ln for ln in log.getvalue().splitlines() if "iteration" in ln]
+    assert len(lines1) == 40, "a full step never converges on an island"
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True)
+    D = f["D"]
+    assert abs(D[1] - D[0] - 0.08) < 0.01, D
+    assert abs(D[0] + D[1]) < 1e-6, D          # the island's sum stays at its prior
+    # and the default damping converged well inside the passes allowed
+    with contextlib.redirect_stdout(log2 := io.StringIO()):
+        be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True)
+    assert len([ln for ln in log2.getvalue().splitlines() if "iteration" in ln]) < 40

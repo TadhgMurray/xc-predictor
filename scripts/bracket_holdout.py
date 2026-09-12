@@ -63,9 +63,11 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_rows=20.0, iters=30, tilt=True, use_curve=True,
-          verbose=True):
+          verbose=True, joint_dump=None):
     """Fit on the sample's training rows, score its held-out races.
-    Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line)."""
+    Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
+    same_rows). joint_dump: the joint model's per-row held-out predictions
+    (run_joint.holdout's file; default the ladder's base rung)."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
         cols, codes = bk.packCodes(cols, npz, era_years)
@@ -113,7 +115,60 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
         print("        compare: the ladder's base rung (engine/data/ladder_logs/base.log; "
               "run `scripts/ablation_ladder.py --only base` if it is not there), "
               "same sample, same split, same question")
+    out["same_rows"] = sameRows(sub, both, test_s, cov, pred, y, joint_dump)
     return out
+
+
+def sameRows(sub, both, test_s, cov, pred, y, dump_path=None):
+    """★ ONE SET OF ROWS FOR BOTH ENGINES (2026-09-12). The bracket engine
+    covers a held-out row only when its athlete has other races within
+    the window, 59% of the corpus's held-out rows; the joint model covers
+    89%. The rows the bracket engine can score are the easy ones, so its
+    headline sd is not comparable with the joint model's. The ladder's
+    base rung writes its per-row predictions (run_joint.holdout,
+    XCP_HOLDOUT_DUMP); here both engines are scored on the rows BOTH
+    cover. Returns dict(n, sd_bracket, sd_joint, by_sport) or None."""
+    path = dump_path or os.path.join(_ROOT, "engine", "data", "ladder_logs",
+                                     "base_holdout.npz")
+    if not os.path.exists(path):
+        print(f"        (no per-row joint predictions at {path}; the next ladder "
+              f"run writes them, then this prints both engines on the same rows)")
+        return None
+    d = np.load(path, allow_pickle=False)
+    rows_j = np.asarray(d["row"], dtype=np.int64)
+    pred_j = np.asarray(d["pred"], dtype=np.float64)
+    cov_j = np.asarray(d["covered"], dtype=bool)
+    n_pack = both.size
+    joint = np.full(n_pack, np.nan)
+    okj = cov_j & (rows_j >= 0) & (rows_j < n_pack)
+    joint[rows_j[okj]] = pred_j[okj]
+    held_j = np.zeros(n_pack, dtype=bool)
+    held_j[rows_j[(rows_j >= 0) & (rows_j < n_pack)]] = True
+    pack_rows = np.flatnonzero(both)
+    test_pack = np.zeros(n_pack, dtype=bool); test_pack[pack_rows[test_s]] = True
+    overlap = float((held_j & test_pack).sum() / max(test_pack.sum(), 1))
+    jp = joint[pack_rows]
+    m = test_s & cov & np.isfinite(jp)
+    if m.sum() < 100:
+        print(f"        the joint file's held-out rows overlap {overlap:.1%} of these; "
+              f"too few in common to compare")
+        return None
+    e_b = y[m] - pred[m]
+    e_j = y[m] - jp[m]
+    res = dict(n=int(m.sum()), sd_bracket=float(e_b.std()), sd_joint=float(e_j.std()),
+               overlap=overlap, by_sport={})
+    print(f"\n[bracket] SAME ROWS, BOTH ENGINES: {res['n']:,} held-out rows both cover "
+          f"(the joint file's held-out rows match {overlap:.1%} of this split)")
+    print(f"        bracket engine {res['sd_bracket']:.6f}   joint model {res['sd_joint']:.6f}")
+    if "sport" in sub:
+        sport = np.asarray(sub["sport"])
+        for code, name in ((0, "XC"), (1, "TF")):
+            mm = m & (sport == code)
+            if mm.sum() > 1000:
+                sb, sj = float((y[mm] - pred[mm]).std()), float((y[mm] - jp[mm]).std())
+                res["by_sport"][name] = (sb, sj, int(mm.sum()))
+                print(f"        {name}: bracket {sb:.6f}   joint {sj:.6f}  ({int(mm.sum()):,} rows)")
+    return res
 
 
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,

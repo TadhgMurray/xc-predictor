@@ -43,7 +43,7 @@ import run_joint as rj
 
 
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
-        n_iter=60, damping=1.0, prior_rows=20.0, min_voters=5, tilt=True,
+        n_iter=60, damping=0.5, prior_rows=20.0, min_voters=5, tilt=True,
         use_curve=True, tol=1e-5, verbose=False, codes=None):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
@@ -179,10 +179,23 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         for g in np.unique(cell_group[w_c > 0]):
             m_g = (cell_group == g) & (w_c > 0)
             D_new[m_g] -= np.average(D_new[m_g], weights=w_c[m_g])
-        step = float(np.max(np.abs(D_new - D))) if n_cell else 0.0
+        # ! DAMPING 0.5, NOT 1.0 (corpus, 2026-09-12: "max change 0.161" from
+        #   pass 4 to pass 30, never converging). Two cells whose runners'
+        #   only other races are at each other form an island: D_A = c + D_B
+        #   and D_B = D_A - c, so a full step swaps them back and forth for
+        #   ever, period two. A half step keeps the island's sum where it
+        #   started (the group mean, its prior) and lets the difference
+        #   settle. The step is judged on cells with votes, and how many
+        #   are still moving is printed, so a stuck island is visible.
+        moved = np.abs(damping * (D_new - D))
+        has_votes = w_c > 0
+        step = float(moved[has_votes].max()) if has_votes.any() else 0.0
+        n_moving = int((moved[has_votes] > tol).sum())
+        rms = float(np.sqrt(np.mean(moved[has_votes] ** 2))) if has_votes.any() else 0.0
         D = D + damping * (D_new - D)
         if verbose:
-            print(f"[bracket] iteration {it + 1}: max change {step:.6f}, "
+            print(f"[bracket] iteration {it + 1}: max change {step:.6f} "
+                  f"({n_moving:,} cells over {tol:g}, rms {rms:.2e}), "
                   f"{int(ok_race.sum()):,} races with {min_voters}+ voters", flush=True)
         if step < tol:
             break

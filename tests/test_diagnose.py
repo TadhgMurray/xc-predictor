@@ -199,3 +199,55 @@ def test_the_four_stages_finish_on_two_million_rows_against_a_clock(tmp_path):
     # everything is a sort or a gather, so the budget of 300 s holds with
     # room (measured: see docs/HANDOFF-2026-09-11.md)
     assert took < 90, times
+
+
+def test_both_engines_are_scored_on_the_rows_both_cover(tmp_path, capsys):
+    """The joint model's held-out predictions, row by row, meet the bracket
+    engine on the same split; a fake file with a known error says whether
+    the rows line up."""
+    import bracket_holdout as bh
+    cols, npz = _big_pack(n_ath=60_000)            # ~20 rows a race: enough voters
+    full, codes = bk.packCodes(cols, npz, 2)
+    train, test = bh.sampleAndSplit(full, pct=100, seed=11)
+    rows = np.flatnonzero(test)
+    y = np.log(np.asarray(cols["norm"], dtype=np.float64))
+    rng = np.random.default_rng(3)
+    pred = y[rows] + rng.normal(0, 0.02, rows.size)          # a "joint" model with sd 0.02
+    cov = rng.random(rows.size) < 0.9
+    path = tmp_path / "base_holdout.npz"
+    np.savez(path, row=rows, pred=pred, covered=cov, y=y[rows], kind=np.array(["race"]),
+             sample_pct=np.array([100.0]), sample_seed=np.array([11]))
+    res = bh.score(full, npz, codes=codes, pct=100, seed=11, era_years=2, iters=10,
+                   verbose=False, joint_dump=str(path))
+    same = res["same_rows"]
+    assert same is not None and same["overlap"] > 0.99
+    assert abs(same["sd_joint"] - 0.02) < 0.003, same
+    assert 100 <= same["n"] < int(test.sum())
+    out = capsys.readouterr().out
+    assert "SAME ROWS, BOTH ENGINES" in out
+    # without the file it says so and still returns the engine's own score
+    res2 = bh.score(full, npz, codes=codes, pct=100, seed=11, era_years=2, iters=5,
+                    verbose=False, joint_dump=str(tmp_path / "missing.npz"))
+    assert res2["same_rows"] is None and np.isfinite(res2["sd"])
+
+
+def test_the_joint_holdout_writes_its_predictions_row_by_row(tmp_path, monkeypatch):
+    cols, keep, keys, sport_of_course = _era_pack()
+    args = rj.buildParser().parse_args(["--holdout-only", "--no-curve", "--no-rust",
+                                        "--no-dist", "--no-slope", "--no-link",
+                                        "--no-sport-offset", "--outer", "2", "--probes", "0",
+                                        "--importance", "none", "--era-years", "2"])
+    path = tmp_path / "base_holdout.npz"
+    monkeypatch.setenv("XCP_HOLDOUT_DUMP", str(path))
+    with contextlib.redirect_stdout(io.StringIO()):
+        D, athlete_pool, pool_names = rj.buildDesign(
+            cols, keep, sport_offset=False, curve=False, rust=False, dist=False,
+            slope=False, link=False, altitude=False, era_years=2,
+            importance="none", indoor=True, dist_table=False)
+        rj.holdout(cols, keep, args, athlete_pool, D)
+    d = np.load(path, allow_pickle=False)
+    rows = d["row"]; pred = d["pred"]; cov = d["covered"]; y = d["y"]
+    assert rows.size == pred.size == cov.size == y.size > 100
+    assert np.array_equal(np.log(cols["norm"][rows]), y)
+    assert cov.mean() > 0.8 and (y[cov] - pred[cov]).std() < 0.06
+    assert str(d["kind"][0]) == "race"

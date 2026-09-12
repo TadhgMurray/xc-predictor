@@ -164,9 +164,13 @@ def runRung(name, flags, args):
         # ! ITS OWN PROCESS GROUP, so a timeout kills the solve's worker
         #   processes too; killing the python alone leaves them holding the
         #   pipe open and the read below would wait on them
+        # the rung's held-out predictions, row by row, for the bracket
+        # engine's comparison on the same rows (run_joint.holdout)
+        env = dict(os.environ)
+        env["XCP_HOLDOUT_DUMP"] = os.path.join(log_dir, f"{name}_holdout.npz")
         p = subprocess.Popen(cmd, cwd=_ROOT, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True, bufsize=1,
-                             start_new_session=True)
+                             start_new_session=True, env=env)
         next_beat = t0 + args.heartbeat
         try:
             import selectors

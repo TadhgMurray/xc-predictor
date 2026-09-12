@@ -239,6 +239,67 @@ from the sampled rows; every diagnostic now maps (course, era) through
 the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
 so any subset of rows lands on the file's cells.
 
+**What the diagnostics said on run 20's file (2026-09-12, 150 s on the
+corpus, 79 s of it the disk load).** Read `logs/*.txt` before deciding
+run 21; the numbers are the corpus's, not a model's.
+
+- *Indoor is barely harder than outdoor.* Same athlete-season, same
+  distance, raw times inside 21 days: HS boys +0.46%, HS girls +0.29%,
+  college about +0.03%; with the solve's form curve taken out, HS boys
+  +0.12% (800 m +0.4%, 1600 m +0.1%, 3200 m about 0), HS girls and
+  college about zero. The asserted +1.2% (`IND_LEVEL_DEFAULT`) credits
+  an indoor mark about 0.9% too much. Run 21: `XCP_INDOOR_LEVEL=0.003`.
+  Fitting it is not an option: with a free winter curve the level and
+  the curve are collinear on every indoor row (issue 143 again), which
+  is why it is asserted; and the curve-corrected number is partly
+  circular for the same reason, so the raw short-window numbers are the
+  evidence. The literature's +0.8 to +1.8% is flat 200 m ovals; the
+  corpus's indoor rows are mostly banked, fast facilities.
+- *Outdoor tracks: the meet mix is not why they differ.* Across 8,207
+  tracks the board spread is 0.98% sd, the same-athlete bracket spread
+  0.69%, correlation +0.43; front, championship share and league share
+  explain 4% of the board (R2 0.04). Within a track, championship-class
+  rows run 0.25% FASTER than ordinary rows (peaked, not tactical) and a
+  field 13 rating points stronger runs 0.5% faster: real, small, and not
+  the spread. The bottom of the board is not fast tracks: cells at -6 to
+  -12% whose runners' brackets are within 1% of zero (a cluster of ids
+  TF:loc:994xx:out, and TF:loc:88489 at -12.5%) are a distance that lies,
+  most likely a 1500/3000 booked as a 1600/3200 (6.8%). Look them up with
+  `scripts/meet_cells.py --tf-loc 99426 --tf-loc 88489`. Physics says a
+  400 m track differs from another by half a percent (surface, wind,
+  timing); a stated prior of that width on TF cells would shrink the
+  scatter the brackets do not support. Not done; a decision for run 21.
+- *Glendoveer is consistent with its runners.* Its cell is NXN (one race
+  a year, front 150). The runners run +3.5% slower there than at their
+  regionals three weeks before; those regionals sit at +5 to +7 on the
+  board; bracket + ref lands within 1% of board + day every year
+  (+7.2..+11.7 against +6.5..+11.5). If NXN still reads too high on the
+  site, the question is the level of the championship cluster it is
+  measured against, not Glendoveer alone.
+- *Foot Locker is keyed in pieces.* `XC:22029` (Foot Locker Western
+  Regional) holds three race days in twelve years; the rest of the
+  regional and the national final are under other canonical ids (Mt.
+  SAC's course, Balboa/Morley Field), each a thin cell answering a
+  different question. `scripts/meet_cells.py --meet "Foot Locker" --meet
+  "Champs Sports" --meet Eastbay` lists every cell those meets vote in,
+  by year. Merge or key them before reading their boards.
+- *Two data faults the day term absorbed:* Brookside Reservation 3200 m
+  2024 at -20.7% bracket (a short course; day -11%), and one 12-row
+  Brooks City Base 3200 m day at +31%. Without a day term on the site,
+  the ratings from those days are wrong by that much.
+- *The bracket engine's headline is not yet a comparison.* Error sd
+  0.0428 on the 59% of held-out rows it covers, against the joint
+  model's 0.0515 on 89%: the rows it covers are the easy ones. The
+  ladder now writes each rung's per-row held-out predictions
+  (`run_joint.holdout`, `XCP_HOLDOUT_DUMP`, `ladder_logs/<rung>_holdout.npz`),
+  and `bracket_holdout` scores both engines on the rows both cover
+  (`SAME ROWS, BOTH ENGINES`). That line exists after the next ladder
+  run; until then the two numbers are not comparable. The engine's
+  passes also stopped converging on the corpus (max change 0.161 from
+  pass 4 to 30): two cells whose runners only race each other swap
+  under a full step; damping is 0.5 now and the count of cells still
+  moving is printed.
+
 **Ultimook, and "recently is a lot faster than previously" (owner).**
 The era split was built (`--era-years`) and never wired into the
 pipeline, and turning it on would have broken the page: the solve keys
