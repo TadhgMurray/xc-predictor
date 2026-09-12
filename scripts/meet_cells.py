@@ -48,7 +48,7 @@ _MEET_SQL = """
         WHERE  COALESCE(m.meet_name, mt.meet_name) ILIKE %(pat)s
     )
     SELECT canonical_id, min(canonical_name), course_name,
-           extract(year FROM date)::int AS yr, count(*) AS n,
+           substr(date::text, 1, 4) AS yr, count(*) AS n,
            count(DISTINCT meet_id || '/' || div_id::text) AS divisions,
            min(meet_name)
     FROM   rows
@@ -66,7 +66,7 @@ def meets(cur, text):
     print(f"  {'cell':>10} {'year':>5} {'rows':>7} {'divs':>5}  canonical name | course name | a meet name")
     for cid, cname, course, yr, n, divs, mname in rows:
         key = f"XC:{cid}:" if cid is not None else "NO CELL"
-        print(f"  {key:>10} {yr:>5} {n:>7,} {divs:>5}  {cname or '-'} | {course or '-'} | {mname}")
+        print(f"  {key:>10} {str(yr):>5} {n:>7,} {divs:>5}  {cname or '-'} | {course or '-'} | {mname}")
     cells = {}
     for cid, cname, course, yr, n, divs, mname in rows:
         cells.setdefault(cid, [0, set(), cname])[0] += n
@@ -74,7 +74,9 @@ def meets(cur, text):
     print("  by cell:")
     for cid, (n, yrs, cname) in sorted(cells.items(), key=lambda t: -t[1][0]):
         key = f"XC:{cid}:" if cid is not None else "NO CELL"
-        print(f"    {key:>10} {n:>8,} rows  {min(yrs)}-{max(yrs)} ({len(yrs)} years)  {cname or '-'}")
+        yrs = {str(y) for y in yrs if y}
+        span = f"{min(yrs)}-{max(yrs)}" if yrs else "?"
+        print(f"    {key:>10} {n:>8,} rows  {span} ({len(yrs)} years)  {cname or '-'}")
     print("  read: the cell key is what scripts/diagnose.py --key takes. Rows with "
           "NO CELL carry no venue and vote nowhere.")
 
@@ -93,7 +95,7 @@ def track(cur, loc):
     sel = ", ".join(f"min({c}::text)" for c in namecols) if namecols else "NULL"
     indoor = ("COALESCE(is_indoor, 0)" if "is_indoor" in have else "0")
     cur.execute(f"""
-        SELECT extract(year FROM date)::int AS yr, {indoor} AS indoor,
+        SELECT substr(meet_date::text, 1, 4) AS yr, {indoor} AS indoor,
                count(DISTINCT meet_id) AS meets, min(meet_name), max(meet_name), {sel}
         FROM   meets_tf
         WHERE  location_id = %(loc)s
@@ -108,7 +110,7 @@ def track(cur, loc):
               + " | ".join(str(v) for v in rows[0][5:]))
     print(f"  {'year':>5} {'in':>3} {'meets':>6}  first meet name .. last meet name")
     for r in rows:
-        print(f"  {r[0]:>5} {r[1]:>3} {r[2]:>6}  {r[3]} .. {r[4]}")
+        print(f"  {str(r[0]):>5} {r[1]:>3} {r[2]:>6}  {r[3]} .. {r[4]}")
     # the events raced there: distance, rows, median seconds per metre
     rcols = _columns(cur, "results_tf")
     dist_expr = ("m.distance_meters" if "distance_meters" in have else "NULL")

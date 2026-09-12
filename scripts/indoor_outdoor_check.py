@@ -115,6 +115,13 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
             has = n_out > 0
             diff_row = np.full(indoor.sum(), np.nan)
             diff_row[has] = z[indoor][has] - s_out[has] / n_out[has]
+            # the gap in days from the indoor race to its outdoor rows, so
+            # the difference can be read at a gap of zero (see report)
+            s_day, _n = bk.windowSumsAt(pid[outdoor], days[outdoor],
+                                        days[outdoor].astype(np.float64),
+                                        pid[indoor], days[indoor], W)
+            gap_row = np.full(indoor.sum(), np.nan)
+            gap_row[has] = np.abs(days[indoor][has] - s_day[has] / n_out[has])
             # one number per athlete-season, then the median over them
             sea_in = season[indoor]
             p_in = pool[indoor]
@@ -144,11 +151,15 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
                     if mm.any():
                         u, inv = np.unique(sea_in[mm], return_inverse=True)
                         per = np.bincount(inv, weights=diff_row[mm]) / np.bincount(inv)
+                        per_gap = np.bincount(inv, weights=gap_row[mm]) / np.bincount(inv)
                     else:
-                        per = np.zeros(0)
+                        per = np.zeros(0); per_gap = np.zeros(0)
+                    mt = m & np.isfinite(trans)
                     out[(variant, pname, W, dlab)] = {
                         "pairs": _stats(per),
-                        "transition": _stats(trans[m & np.isfinite(trans)])}
+                        "transition": _stats(trans[mt]),
+                        "gap": (float(np.median(per_gap)) if per_gap.size else np.nan,
+                                float(np.median(gap[mt])) if mt.any() else np.nan)}
     return out, pool_names
 
 
@@ -174,6 +185,43 @@ def report(res, pool_names, windows, dists, min_n=100):
                     f = lambda v: "      " if not np.isfinite(v) else f"{100 * v:+6.2f}"
                     print(f"  {pname:<10} {dlab:>5} {W:>6} | {n1:>13,} {f(m1):>8} {f(t1):>8} "
                           f"| {n2:>14,} {f(m2):>8} {f(t2):>8}")
+    # ★ THE NUMBER AT A GAP OF ZERO (owner, 2026-09-12: "can you justify the
+    #   indoor number?"). The raw difference grows with the window because
+    #   the outdoor race is later and the athlete fitter; the solve's curve
+    #   would take that out but was fit with the asserted level in it, so
+    #   it is not independent evidence. This is: the raw median against the
+    #   median gap in days, one point per window, a line through them, read
+    #   at zero days. That is what indoor costs the same athlete on the same
+    #   day, with no model in it.
+    zero = {}
+    for k, r in res.items():
+        variant, pname, W, dlab = k
+        if variant != "raw" or "gap" not in r:
+            continue
+        for design, j in (("pairs", 0), ("transition", 1)):
+            n, med, _t = r[design]
+            g = r["gap"][j]
+            if n >= min_n and np.isfinite(g) and np.isfinite(med):
+                zero.setdefault((pname, dlab, design), []).append((g, med, n))
+    if zero:
+        print("\n== read at a gap of zero days (raw medians against the median gap, "
+              "one point per window) ==")
+        print(f"  {'pool':<10} {'dist':>5} {'design':<11} {'points':>6} "
+              f"{'gap range':>11} {'at 0 days':>10} {'per week':>9}")
+        for (pname, dlab, design), pts in sorted(zero.items()):
+            if len(pts) < 2:
+                continue
+            g = np.array([p[0] for p in pts]); m = np.array([p[1] for p in pts])
+            w = np.sqrt(np.array([p[2] for p in pts], dtype=float))
+            if np.ptp(g) < 1.0:
+                continue
+            b, a = np.polyfit(g, m, 1, w=w)
+            print(f"  {pname:<10} {dlab:>5} {design:<11} {len(pts):>6} "
+                  f"{g.min():5.1f}-{g.max():<5.1f} {100 * a:+9.2f}% {100 * 7 * b:+8.2f}%")
+        print("  read: 'at 0 days' is the indoor penalty with the fitness gain "
+              "between the two races removed by extrapolation instead of by the "
+              "solve's curve; 'per week' is that gain. Both designs should agree; "
+              "the pairs design has more rows, the transition design a cleaner gap.")
     print("\n  read: 'all pairs' is one number per athlete-season (their indoor rows "
           "against their outdoor rows at that distance inside the window), then "
           "the median over athlete-seasons; 'transition' is each athlete-season's "
