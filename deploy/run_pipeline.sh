@@ -590,12 +590,18 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} || true
-  # ! 21 RUNGS IS 21 SOLVES (2026-09-12: "08b takes over 6 hours"). Each
-  #   rung is a full solve on XCP_LADDER_PCT of the athletes, the era rungs
-  #   on three times the cells. XCP_LADDER_ONLY=base,no-importance,era-2
-  #   runs a named subset; unset runs them all.
+  # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
+  #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era
+  #   rungs on three times the cells, and until today nothing was printed
+  #   while one ran. The ladder now runs its CORE set (seven rungs) by
+  #   default, streams each rung to engine/data/ladder_logs/<rung>.log with
+  #   a heartbeat in this log, and kills a rung past XCP_RUNG_TIMEOUT
+  #   seconds (default 7200). XCP_LADDER_ALL=1 runs every rung;
+  #   XCP_LADDER_ONLY=base,no-importance runs a named subset.
   step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
       --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
+      --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
+      ${XCP_LADDER_ALL:+--all} \
       ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
 
   # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each

@@ -45,6 +45,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -120,6 +121,15 @@ LADDER = [
 ]
 
 
+# ★ THE RUNGS A RUN NEEDS (2026-09-12, owner: "08b is slow as f and gets
+#   stuck"). Twenty-one rungs is twenty-one solves, each a quarter of an hour
+#   or more, the era rungs on three times the cells: eight hours, with
+#   nothing printed while a rung runs. By default the ladder runs these;
+#   --all runs every rung, --only names any subset.
+CORE = ("base", "no-importance", "fit-indoor", "no-indoor", "era-2",
+        "era-2-loose", "stated-level")
+
+
 def runRung(name, flags, args):
     cmd = [args.python, "-u", os.path.join("engine", "run_joint.py"),
            # ! --holdout-only. With plain --holdout every rung scores its
@@ -138,12 +148,69 @@ def runRung(name, flags, args):
         print("  " + " ".join(cmd))
         return None
     t0 = time.time()
-    p = subprocess.run(cmd, cwd=_ROOT, capture_output=True, text=True)
-    out = p.stdout + p.stderr
+    # ★ STREAMED, LOGGED, TIMED OUT. The child's lines go to a per-rung log
+    #   as they arrive, a heartbeat with the last [joint] line is printed
+    #   every few minutes so a silent quarter-hour is visibly a solve and
+    #   not a hang, and a rung past --rung-timeout is killed and recorded
+    #   rather than holding the whole ladder.
+    log_dir = os.path.join(os.path.dirname(args.out) or ".", "ladder_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"{name}.log")
+    lines = []
+    last_joint = ""
+    timed_out = False
+    print(f"  > {name}: started, log {log_path}", flush=True)
+    with open(log_path, "w") as log:
+        # ! ITS OWN PROCESS GROUP, so a timeout kills the solve's worker
+        #   processes too; killing the python alone leaves them holding the
+        #   pipe open and the read below would wait on them
+        p = subprocess.Popen(cmd, cwd=_ROOT, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, bufsize=1,
+                             start_new_session=True)
+        next_beat = t0 + args.heartbeat
+        try:
+            import selectors
+            sel = selectors.DefaultSelector()
+            sel.register(p.stdout, selectors.EVENT_READ)
+            while True:
+                ready = sel.select(timeout=5.0)
+                if ready:
+                    line = p.stdout.readline()
+                    if line == "":
+                        break
+                    lines.append(line)
+                    log.write(line)
+                    if line.startswith("[joint"):
+                        last_joint = line.strip()
+                now = time.time()
+                if now >= next_beat:
+                    print(f"    … {name} running {now - t0:.0f}s"
+                          + (f"; last: {last_joint[:110]}" if last_joint else ""),
+                          flush=True)
+                    next_beat = now + args.heartbeat
+                if args.rung_timeout and now - t0 > args.rung_timeout:
+                    timed_out = True
+                    try:
+                        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        p.kill()
+                    break
+        finally:
+            if not timed_out:
+                rest = p.stdout.read() if p.stdout else ""
+                if rest:
+                    lines.append(rest)
+                    log.write(rest)
+            p.wait()
+    out = "".join(lines)
+    print(f"  < {name}: {'TIMED OUT' if timed_out else 'exit ' + str(p.returncode)} "
+          f"after {time.time() - t0:.0f}s", flush=True)
+    if timed_out:
+        return {"name": name, "error": f"timed out after {args.rung_timeout}s"}
     if p.returncode != 0:
         tail = "\n      ".join(out.strip().split("\n")[-6:])
         print(f"  ! {name} FAILED (exit {p.returncode})\n      {tail}")
-        return {"name": name, "error": out.strip().split("\n")[-1]}
+        return {"name": name, "error": out.strip().split("\n")[-1] if out.strip() else "no output"}
     m = re.search(r"error sd ([0-9.]+)\s+covered ([0-9.]+)%", out)
     if not m:
         print(f"  ! {name}: no score in the output")
@@ -220,13 +287,20 @@ def main():
                     choices=["row", "race", "athlete", "course"])
     ap.add_argument("--outer", type=int, default=5)
     ap.add_argument("--only", help="comma list of rung names")
+    ap.add_argument("--all", action="store_true",
+                    help=f"every rung; the default is the core set {', '.join(CORE)}")
+    ap.add_argument("--rung-timeout", type=float, default=7200.0,
+                    help="seconds a rung may run before it is killed and "
+                         "recorded (default 7200; 0 = no limit)")
+    ap.add_argument("--heartbeat", type=float, default=180.0,
+                    help="seconds between progress lines while a rung runs")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--out", default=os.path.join(_ROOT, "engine", "data",
                                                   "ablation_ladder.json"))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    rungs = LADDER
+    rungs = LADDER if args.all else [r for r in LADDER if r[0] in CORE]
     if args.only:
         want = {s.strip() for s in args.only.split(",")}
         rungs = [r for r in LADDER if r[0] in want]

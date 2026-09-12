@@ -156,3 +156,21 @@ class VenueDayKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoreSet(unittest.TestCase):
+    """The default ladder is the core set, every name of which is a rung."""
+
+    def test_core_names_are_rungs_and_base_leads(self):
+        src = open(os.path.join(_ROOT, "scripts", "ablation_ladder.py")).read()
+        tree = ast.parse(src)
+        core = None
+        for node in tree.body:
+            if (isinstance(node, ast.Assign)
+                    and getattr(node.targets[0], "id", None) == "CORE"):
+                core = ast.literal_eval(node.value)
+        self.assertIsNotNone(core)
+        names = [r[0] for r in _rungs()]
+        self.assertTrue(set(core) <= set(names), set(core) - set(names))
+        self.assertEqual(core[0], "base")
+        self.assertLess(len(core), len(names))
