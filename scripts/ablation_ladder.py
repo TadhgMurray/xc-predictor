@@ -106,7 +106,10 @@ LADDER = [
      "indoor is season, so read this rung with the winter curve in mind"),
     ("era-2", ["--altitude", "--era-years", "2"],
      "each course split into two-year eras tied by a random walk (drift sd "
-     "1%/era): a venue that changed gets to move, a thin one does not"),
+     "1%/era): a venue raced often moves, a once-a-year one holds still"),
+    ("era-2-loose", ["--altitude", "--era-years", "2", "--era-drift", "0.03"],
+     "the same eras with a 3% walk: a once-a-year venue can follow a real "
+     "change, and also the weather mean of its few days"),
     ("no-dist-table", ["--altitude", "--no-dist-table"],
      "uncalibrated event offsets keep the zero prior instead of the "
      "published tables' relation"),

@@ -61,7 +61,14 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               race_effect_sports=()):
     import pair_golive as pg
 
-    keys = [str(k) for k in cols["course_keys"]]
+    # ★ THE DESIGN'S CELL KEYS, NOT THE PACK'S (2026-09-12). Under
+    #   --era-years the design has one cell per (course, era), keyed
+    #   '<key>@e<k>' (run_joint.eraCells), and every per-cell array here is
+    #   that long; the pack's keys are the base courses. Reading the pack's
+    #   list cost run 20 its three-hour solve at this line.
+    keys = [str(k) for k in getattr(D, "course_keys", None) or cols["course_keys"]]
+    assert len(keys) == D.n_cell, \
+        f"{len(keys):,} cell keys for {D.n_cell:,} cells (era-split design?)"
     athlete_raw = np.asarray(cols["athlete"][keep])
     year = np.asarray(cols["year"][keep])
     norm = np.asarray(cols["norm"][keep], dtype=np.float64)

@@ -1696,7 +1696,10 @@ def main():
                 race_effect=out["race_effect"], sigma2=out["sigma2"],
                 sigma_u2=out["sigma_u2"], tau2=out["tau2"],
                 rows_per_cell=rows_per_cell,
-                course_keys=np.array([str(k) for k in cols["course_keys"]]),
+                # the design's keys: one per (course, era) cell under --era-years
+                course_keys=np.array([str(k) for k in
+                                      (getattr(D, "course_keys", None)
+                                       or cols["course_keys"])]),
                 ability=out["ability"].astype(np.float32),
                 athlete_pool=athlete_pool.astype(np.int16),
                 n_races=out["n_races"].astype(np.int32),

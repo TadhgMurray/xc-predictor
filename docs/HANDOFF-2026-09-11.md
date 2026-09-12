@@ -173,6 +173,15 @@ message whose 1:54 indoor 800 rated 130 will rate about 135, above the
 1:56 outdoor at 131, which is the right order. `--indoor-level fit`
 restores the fitted coefficient, and the ladder has a `fit-indoor` rung.
 
+**Run 20 crashed in the go-live under `XCP_ERA_YEARS=2` (2026-09-12),
+three hours in, at `ref = solved & is_tf & ~is_indoor`: the go-live took
+its cell keys from the pack (74,366 base courses) while the era-split
+design has 219,715 (course, era) cells. Fixed: `buildLive` and the npz
+save read the design's keys, an assertion checks the count against the
+cell count before anything else runs, and `tests/test_era_publish.py`
+runs the go-live on an era-split design end to end. Rerun from 8 with
+the same command.**
+
 **Ultimook, and "recently is a lot faster than previously" (owner).**
 The era split was built (`--era-years`) and never wired into the
 pipeline, and turning it on would have broken the page: the solve keys
@@ -182,11 +191,30 @@ the go-live wrote the suffixed keys. Now `XCP_ERA_YEARS=2` reaches 08 and
 key (`joint_golive.latestEraKeys`; the venue-key splitter drops the
 suffix for the race-day table too), every row's own rating uses its own
 era, and the ladder has an `era-2` rung. Adjacent eras are tied by a
-random walk with a stated drift of 1% per era: a venue with evidence
-moves, a thin one does not. If Ultimook's recent eras come out faster,
-that is the course that changed; if every era reads the same, the
-craziness is elsewhere (its fields, which the field term now sees, or
-mud days, which are race-day terms).
+random walk with a stated drift of 1% per era (`XCP_ERA_DRIFT` sets
+it). **What an era can and cannot tell you, measured on a planted world
+(`tests/test_era_publish.py`, checked term by term against the truth).**
+The era cells track their rows faithfully. What no data can do is
+separate an era's course change from the mean weather of the days in
+it: an era-wide shift can sit in the era's difficulty or in its days'
+race-day terms, the rows are indifferent, and only the priors split it.
+The walk costs about `sigma2 / drift²` per era step; the days cost
+`n_days · sigma2 / sigma_u²`. In XC, `sigma_u` is about 4%, so at the 1%
+default the walk is the stiffer of the two until a venue has about
+sixteen race days per era: a school course raced weekly moves freely,
+while a once-a-year invitational with two to four days per era has any
+real change booked into its day terms and its era barely moves. At 3%
+the balance flips: such an era follows a real change, and also follows
+the weather mean of its few days, which for four days is about 2%. That
+is the whole tradeoff, and it is Ultimook's exact case. So read
+Ultimook two ways after the run: its era cells (`scripts/venue_check.py
+--venue Ultimook` lists the `@e<k>` cells) and its recent race-day terms.
+Eras flat and recent day terms all negative is a course that changed
+under a walk too stiff to follow it: run again with `XCP_ERA_DRIFT=0.03`
+and read the `era-2-loose` rung against `era-2` and base. Eras flat and
+day terms two-sided is a course that did not change, and the craziness
+is elsewhere: its fields, which the field term now sees, or mud days,
+which are race-day terms and stay so.
 
 **The track conversion default (owner: "not using 0.0 difficulty for the
 track conversions, which is now the default").** Right: a conversion

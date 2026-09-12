@@ -535,7 +535,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   offsets are ON; XCP_NO_IMPORTANCE=1, XCP_NO_INDOOR=1,
   #   XCP_NO_DIST_TABLE=1 switch each off. XCP_ERA_YEARS=2 splits every
   #   course into two-year eras tied by a random walk (the go-live
-  #   publishes each venue's latest era under its bare key). The holdout
+  #   publishes each venue's latest era under its bare key);
+  #   XCP_ERA_DRIFT sets the walk's step (log-time sd per era, default
+  #   0.01): with a few race days per era that number, against
+  #   sigma_u / sqrt(days), decides how far a venue can move. The holdout
   #   carries the same.
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
@@ -545,6 +548,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_NO_INDOOR:+--no-indoor} \
       ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
+      ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_MERGE_SPORTS:+--merge-sports} \
       ${XCP_CENTRE_CURVE:+--centre-curve} \
@@ -584,6 +588,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_NO_INDOOR:+--no-indoor} \
       ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
+      ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} || true
   step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
       --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" || true
