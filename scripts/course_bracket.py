@@ -221,9 +221,12 @@ def main():
     defaults = rj.buildParser()
     ap.add_argument("--pack", default=defaults.get_default("pack"))
     ap.add_argument("--npz", default=defaults.get_default("out"))
-    ap.add_argument("--key", action="append", required=True,
+    ap.add_argument("--key", action="append", default=[],
                     help="substring of a cell key (XC:<canonical id> or "
-                         "TF:loc:<id>); repeatable. venue_check --search finds ids")
+                         "TF:loc:<id>); repeatable")
+    ap.add_argument("--venue", action="append", default=[],
+                    help="part of a canonical course NAME (needs the database "
+                         "for the name list); repeatable. 'Glendoveer', 'Balboa'")
     ap.add_argument("--window", type=float, default=28.0,
                     help="days either side for the same athlete's other races")
     ap.add_argument("--top", type=float, default=0.0,
@@ -235,19 +238,33 @@ def main():
     ap.add_argument("--names", action="store_true",
                     help="look canonical ids up in the database for display")
     args = ap.parse_args()
-    cols = pe.loadPack(args.pack)
-    npz = dict(np.load(args.npz, allow_pickle=False))
+    if not args.key and not args.venue:
+        ap.error("give --key or --venue")
     names = None
-    if args.names:
+    if args.names or args.venue:
         try:
             from speed_ratings_db import loadCanonicalNames
-            names = loadCanonicalNames()
+            names = loadCanonicalNames()          # {canonical id as text: name}
         except Exception as exc:                                 # noqa: BLE001
+            if args.venue:
+                sys.exit(f"--venue needs the database for the name list: "
+                         f"{type(exc).__name__}: {exc}")
             print(f"(no names: {type(exc).__name__}: {exc})")
-    res = bracket(cols, npz, args.key, window=args.window, top=args.top,
+    match = list(args.key)
+    for text in args.venue:
+        hits = [cid for cid, nm in (names or {}).items()
+                if text.lower() in str(nm).lower()]
+        if not hits:
+            sys.exit(f"no canonical course name contains {text!r}")
+        for cid in hits:
+            print(f"  --venue {text!r}: {names[cid]}  ->  XC:{cid}:")
+            match.append(f"XC:{cid}:")
+    cols = pe.loadPack(args.pack)
+    npz = dict(np.load(args.npz, allow_pickle=False))
+    res = bracket(cols, npz, match, window=args.window, top=args.top,
                   era_years=args.era_years, same_sport=not args.any_sport)
     if not res:
-        sys.exit("no cell key matched; try scripts/venue_check.py --search NAME")
+        sys.exit("no cell key matched")
     report(res, names, top=args.top)
 
 

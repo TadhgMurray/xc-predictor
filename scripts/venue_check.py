@@ -281,10 +281,11 @@ def main():
                 # ! course_name, NOT venue. `meets` has no venue column --
                 #   _PASS_A above matches on course_name and this query
                 #   guessed a different name for the same thing.
+                # ! `meets` has no date column (2026-09-12: this query
+                #   raised on every search). The dates live on results;
+                #   the count of meet rows is enough to find the name.
                 cur.execute("""
-                    SELECT course_name, count(*) AS races,
-                           min(substr(date::text, 1, 4)) AS first,
-                           max(substr(date::text, 1, 4)) AS last
+                    SELECT course_name, count(*) AS races
                     FROM   meets
                     WHERE  course_name ILIKE %(pat)s
                     GROUP  BY course_name
@@ -292,18 +293,39 @@ def main():
                     LIMIT  40
                 """, {"pat": f"%{args.search}%"})
                 rows = cur.fetchall()
+                # and the canonical ids, which course_bracket.py keys on
+                canon = []
+                cur.execute("SELECT to_regclass('public.course_canonical') IS NOT NULL")
+                if cur.fetchone()[0]:
+                    cur.execute("""
+                        SELECT canonical_id, canonical_name,
+                               count(DISTINCT course_name) AS names
+                        FROM   course_canonical
+                        WHERE  canonical_name ILIKE %(pat)s
+                           OR  course_name ILIKE %(pat)s
+                        GROUP  BY canonical_id, canonical_name
+                        ORDER  BY names DESC
+                        LIMIT  40
+                    """, {"pat": f"%{args.search}%"})
+                    canon = cur.fetchall()
+        if canon:
+            print(f"\n  canonical courses matching '{args.search}' "
+                  f"(the cell key is XC:<id>:<distance>):")
+            for cid, cname, n_names in canon:
+                print(f"    XC:{cid}:   {cname}   ({n_names} provider name"
+                      f"{'s' if n_names != 1 else ''})")
         if not rows:
             print(f"\n  nothing in `meets` matching '{args.search}'.")
             print("  Try a shorter fragment -- the provider's name for a "
                   "venue is\n  often longer than the one people say out "
                   "loud.")
             return
-        print(f"\n  venues matching '{args.search}'")
-        print(f"    {'races':>7}  {'years':<11}  venue")
-        for venue, races, first, last in rows:
-            span = f"{first}-{last}" if first != last else str(first)
-            print(f"    {races:>7,}  {span:<11}  {venue}")
-        print(f"\n  then: --venue \"<the name above>\"")
+        print(f"\n  provider names in `meets` matching '{args.search}'")
+        print(f"    {'meets':>7}  venue")
+        for venue, races in rows:
+            print(f"    {races:>7,}  {venue}")
+        print(f"\n  then: --venue \"<the name above>\", or "
+              f"course_bracket.py --key XC:<id>:")
         return
 
     pats = [f"%{v}%" for v in args.venue]

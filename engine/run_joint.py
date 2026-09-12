@@ -260,6 +260,22 @@ SEASON_END_MIN_RACES = 3      # athlete-seasons that vote on a race's share
 SEASON_CLOSED_DAYS = 21       # a season whose last race is more recent may still be running
 
 
+def groupExtreme(group, value, n, largest=False):
+    """Per group, the smallest (or largest) value; +inf (-inf) for a group
+    with no rows. A sort and a first-of-run, not ufunc.at, which is many
+    times slower on tens of millions of rows."""
+    group = np.asarray(group, dtype=np.int64)
+    value = np.asarray(value, dtype=np.float64)
+    out = np.full(n, -np.inf if largest else np.inf)
+    if group.size == 0:
+        return out
+    order = np.lexsort((-value if largest else value, group))
+    g = group[order]
+    first = np.flatnonzero(np.r_[True, g[1:] != g[:-1]])
+    out[g[first]] = value[order][first]
+    return out
+
+
 def seasonEndShare(cols, keep, athlete, n_ath, pool_of_athlete, pool_names):
     """Per row, the meet-importance covariate WITHOUT LABELS (issue #22;
     owner, 2026-09-11: the name-based classes were "so easy to go bad").
@@ -291,8 +307,7 @@ def seasonEndShare(cols, keep, athlete, n_ath, pool_of_athlete, pool_names):
     athlete = np.asarray(athlete, dtype=np.int64)
     n_ath = int(n_ath)
     # the athlete-season's last race (fewest days ago) and its race count
-    last = np.full(n_ath, np.inf)
-    np.minimum.at(last, athlete, days)
+    last = groupExtreme(athlete, days, n_ath)          # fewest days ago
     n_races = np.bincount(athlete, minlength=n_ath)
     closed = last > SEASON_CLOSED_DAYS
     votes = (n_races >= SEASON_END_MIN_RACES) & closed
@@ -384,10 +399,9 @@ def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names,
         if not indoor.any() or not outdoor.any():
             return
         n_ath = int(athlete.max()) + 1
-        last_in = np.full(n_ath, np.inf)               # fewest days ago
-        np.minimum.at(last_in, athlete[indoor], days[indoor])
-        first_out = np.full(n_ath, -np.inf)            # most days ago
-        np.maximum.at(first_out, athlete[outdoor], days[outdoor])
+        last_in = groupExtreme(athlete[indoor], days[indoor], n_ath)      # fewest days ago
+        first_out = groupExtreme(athlete[outdoor], days[outdoor], n_ath,
+                                 largest=True)                            # most days ago
         gap = last_in - first_out                      # indoor before outdoor
         pair = (np.isfinite(last_in) & np.isfinite(first_out) & (gap > 0)
                 & (gap <= max_gap_days))
@@ -520,10 +534,11 @@ def eraCells(course, year, years, n_cells, group, course_keys):
     era[ok] = (year[ok] - base_year) // int(years)
     # one id per (cell, era) that actually occurs
     key = np.where(ok, course * 10_000 + np.clip(era, 0, 9_999), -1)
-    seen = np.unique(key[ok])
-    remap = {int(k): i for i, k in enumerate(seen)}
+    # ! VECTORISED (2026-09-12). The first cut remapped through a Python
+    #   dict, one lookup per row: 51M rows, twice per holdout rung.
+    seen, inv = np.unique(key[ok], return_inverse=True)
     new = np.full(course.shape, -1, dtype=np.int64)
-    new[ok] = np.array([remap[int(k)] for k in key[ok]], dtype=np.int64)
+    new[ok] = inv.astype(np.int64)
 
     base_of = (seen // 10_000).astype(np.int64)
     era_of = (seen % 10_000).astype(np.int64)
