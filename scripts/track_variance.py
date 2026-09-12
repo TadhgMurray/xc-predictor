@@ -162,10 +162,11 @@ def report(r, names=None, show=15):
     print(f"\n  the {show} easiest and {show} hardest tracks on the board:")
     print(f"    {'board':>7} {'bracket':>8} {'front':>6} {'champ':>6} {'rows':>8}  track")
     rows = r["per_track"]
-    for key, n, b, br, fr, ch in rows[:show] + [None] + rows[-show:]:
-        if key is None:
+    for item in rows[:show] + [None] + rows[-show:]:
+        if item is None:
             print("    ...")
             continue
+        key, n, b, br, fr, ch = item
         name = (names or {}).get(key.split(":")[2] if key.startswith("TF:loc:") else "", "")
         print(f"    {pct(b)} {pct(br)} {fr:6.1f} {100 * ch:5.0f}% {n:>8,}  {key}  {name}")
     print("\n  read: if the within-track rows by class and by front are flat, the "
