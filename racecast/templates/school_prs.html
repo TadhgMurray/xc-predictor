@@ -86,7 +86,9 @@
 {%- endmacro %}
 
 <main class="page-wide">
-    <h1>{{ school }} <span class="dist-note">School PRs{% if data.state %} · {{ data.state }}{% endif %}</span></h1>
+    {# the crest, as on the school page itself (305): this is the same
+       programme's page, so it wears the same mark #}
+    <h1>{{ crest(school, data.state, px=128, size=44, cls="school-crest") }}{{ school }} <span class="dist-note">School PRs{% if data.state %} · {{ data.state }}{% endif %}</span></h1>
     <p class="meta">Best mark per athlete, every event the school has
        contested. A year narrows to that season's bests{% if sport == 'XC' %};
        a course narrows to bests run there{% endif %}.
@@ -104,7 +106,7 @@
     {% set others = state_chips|rejectattr("state", "equalto", data.state)|list %}
     {% if others %}
     <p class="meta">Different schools share this name -
-        {% for c in others %}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% for c in others %}{{ crest(school, c.state) }}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
     </p>
     {% endif %}
     {% endif %}

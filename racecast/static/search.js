@@ -36,6 +36,18 @@ document.addEventListener('DOMContentLoaded', function () {
         tr.innerHTML = cells.map(function (c) {
             return '<td>' + esc(c == null || c === 0 ? ' - ' : c) + '</td>';
         }).join('');
+        // the school crest (305), into the first cell only, and only when
+        // the server said there is one -- the page's own rows are built the
+        // same way in search.html's result_row macro
+        if (r.crest && tr.cells.length) {
+            var img = document.createElement('img');
+            img.className = 'school-mark';
+            img.src = r.crest;
+            img.alt = '';
+            img.width = img.height = 18;
+            img.loading = 'lazy';
+            tr.cells[0].insertBefore(img, tr.cells[0].firstChild);
+        }
         return tr;
     }
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }

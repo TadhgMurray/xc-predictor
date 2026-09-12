@@ -44,7 +44,13 @@
 {% include "_topbar.html" %}
 <main class="page-wide">
     <div class="hdr-row">
-      <h1>{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+      {# the crest (305): INSIDE the h1, so it stays with the name when the
+         header row wraps on a phone, and drawn by the same helper every
+         other mention of a school on the site uses -- it returns nothing at
+         all when there is no crest, so there is never a broken image here.
+         header.state, not state: the route settles the identity there, so a
+         page reached without ?state still gets its own school's crest. #}
+      <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
       <button type="button" class="share-box share-btn" data-share-title="{{ school }} on Racecast"
               data-share-url="{{ site_origin }}/school/{{ school|urlencode }}{% if state %}?state={{ state }}{% endif %}" title="Share this page; the preview is its card">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
@@ -67,7 +73,7 @@
     {% set others = state_chips|rejectattr("state", "equalto", state)|list %}
     {% if others %}
     <p class="meta">Different schools share this name -
-        {% for c in others %}<a href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% for c in others %}{{ crest(school, c.state) }}<a href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
     </p>
     {% endif %}
     {% endif %}

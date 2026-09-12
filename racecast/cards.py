@@ -118,9 +118,13 @@ def athleteCardData(cur, person_id):
                 ranks.append(f"{e['label']} #{e['rank']:,}")
     except Exception:                                 # noqa: BLE001
         cur.connection.rollback()
+    from school_identity import teamState
     return {
         "name": a.get("name") or "Unknown",
         "school": schoolLabelFor(school, pool, (season or {}).get("state")) if school else "",
+        # their team's crest (305), a badge on the corner of the photo slot
+        "crest": crestPath(cur, school, teamState(school, pool,
+                                                  (season or {}).get("state"))),
         "grade": gradeLabel((season or {}).get("grade"), pool) or "",
         "units": [u["label"] for u in units][:4],   # kept for a later use; not drawn
         "rating": (season or {}).get("mean_rating"),
@@ -182,6 +186,56 @@ def _logoLight(logo):
     return Image.merge("RGBA", (white, white, white, a))
 
 
+CREST = 96              # the school crest on a card, a rounded square
+
+
+def _crest(img, path, x, y, size=CREST, radius=18):
+    """The school's own crest (305) at (x, y), on a WHITE rounded tile.
+
+    ★ THE TILE IS NOT DECORATION. School logos are overwhelmingly dark ink
+      on a transparent ground -- pasted straight onto this card they are a
+      black square on black. The tile is the same white the page's CSS puts
+      behind the same file.
+
+    Returns True when something was drawn. Every failure -- no path, a file
+    the disk lost, a Pillow that will not read it -- returns False and the
+    caller lays the card out as if there were no crest, which is the normal
+    case for most schools."""
+    if not path or not os.path.exists(path):
+        return False
+    from PIL import Image, ImageDraw
+    try:
+        crest = Image.open(path).convert("RGBA")
+    except Exception:                              # noqa: BLE001
+        return False
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(tile).rounded_rectangle((0, 0, size - 1, size - 1),
+                                           radius=radius, fill="#ffffff")
+    pad = max(6, size // 10)
+    inner = size - 2 * pad
+    crest.thumbnail((inner, inner), Image.LANCZOS)
+    tile.paste(crest, (pad + (inner - crest.width) // 2,
+                       pad + (inner - crest.height) // 2), crest)
+    img.paste(tile, (int(x), int(y)), tile)
+    return True
+
+
+def crestPath(cur, school, state=None):
+    """The school's crest file, or None. Never raises: a card is drawn on
+    a live request and a missing logo table must not cost a preview."""
+    if not school:
+        return None
+    try:
+        import school_logo
+        return school_logo.logoPath(cur, school, state)
+    except Exception:                              # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                          # noqa: BLE001
+            pass
+        return None
+
+
 def renderAthleteCard(d, photo_path=None):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
@@ -235,10 +289,24 @@ def renderAthleteCard(d, photo_path=None):
     dr.text((CARD_W - M - dr.textlength(tag, font=ft), M + 40), tag, font=ft, fill=DARK_MUTED)
 
     # name and team
+    #
+    # ★ THE TEAM'S CREST SITS BESIDE THE NAME (owner, 2026-09-12: "an image
+    #   next to the name, the way athletic.net does it"). Its width comes
+    #   out of the name's room BEFORE the name is fitted, so a long name
+    #   shrinks by exactly the crest rather than running under it, and the
+    #   crest is centred on the name's own glyph box whatever size that
+    #   name ended up at. No crest, no room taken, and the card is the one
+    #   it was.
     tx = M + PHOTO + 40
     TEXT_W = CARD_W - M - tx
-    f, name = _fit(dr, d["name"], True, 76, TEXT_W - 40, 40)
+    NAME_CREST = 72
+    room = TEXT_W - 40 - ((NAME_CREST + 24) if d.get("crest") else 0)
+    f, name = _fit(dr, d["name"], True, 76, room, 40)
     dr.text((tx, M + 76), name, font=f, fill="#ffffff")
+    if d.get("crest"):
+        _l, _t, _r, _b = dr.textbbox((tx, M + 76), name, font=f)
+        _crest(img, d["crest"], _r + 24, (_t + _b) / 2 - NAME_CREST / 2,
+               size=NAME_CREST, radius=14)
     sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
     f, sub = _fit(dr, sub, False, 32, TEXT_W, 22)
     dr.text((tx, M + 172), sub, font=f, fill=DARK_MUTED)
@@ -323,9 +391,13 @@ def _pills(dr, x0, y, items, width, max_rows, h=44):
     return y + h
 
 
-def _frame(title, sub, dr, img):
+def _frame(title, sub, dr, img, badge=None):
     """The dark card's shared frame: the gold band, the wordmark and tagline
-    top right, a title and a sub line top left. Returns the y under them."""
+    top right, a title and a sub line top left. Returns the y under them.
+
+    `badge`: a school crest for the slot left of the title (305). When
+    there is none the title starts where it always did, so a card for a
+    school without a crest is byte-for-byte the card it was."""
     from PIL import Image
     M = 64
     dr.rectangle((0, 0, CARD_W, BAND), fill=GOLD)
@@ -341,9 +413,11 @@ def _frame(title, sub, dr, img):
         fw = _font(True, 30)
         dr.text((CARD_W - M - dr.textlength("racecast.co", font=fw), M - 6), "racecast.co", font=fw, fill="#ffffff")
     dr.text((CARD_W - M - dr.textlength(tag, font=ft), M + 40), tag, font=ft, fill=DARK_MUTED)
+    drawn = _crest(img, badge, M, M - 2)
+    x0 = M + (CREST + 24 if drawn else 0)
     # the title wraps onto a second line before it shrinks: a meet's name
     # is long, and cutting "Invitational" to "Invitati" is not allowed
-    width = CARD_W - 2 * M - 420       # stops short of the wordmark and its tagline
+    width = CARD_W - M - x0 - 420      # stops short of the wordmark and its tagline
 
     def wrap(size):
         f = _font(True, size)
@@ -369,12 +443,13 @@ def _frame(title, sub, dr, img):
         lines = [one]
     yy = M + 2
     for ln in lines:
-        dr.text((M, yy), ln, font=f, fill="#ffffff")
+        dr.text((x0, yy), ln, font=f, fill="#ffffff")
         yy += int(f.size * 1.18)
     yy = max(yy, M + 60)
-    f, sb = _fit(dr, sub, False, 26, CARD_W - 2 * M, 18)
-    dr.text((M, yy + 8), sb, font=f, fill=DARK_MUTED)
-    return yy + 66
+    f, sb = _fit(dr, sub, False, 26, CARD_W - M - x0, 18)
+    dr.text((x0, yy + 8), sb, font=f, fill=DARK_MUTED)
+    # a crest is taller than a one-line title: the body starts under both
+    return max(yy + 66, (M + CREST + 30) if drawn else 0)
 
 
 def raceCardData(cur, sport, meet_id, div_id, event_id=None):
@@ -486,7 +561,9 @@ def schoolCardData(cur, school, state=None):
     label = year + 1 if sport == "TF" else year
     from grade_label import gradeLabel
     ranks = teamRanks(cur, school, state, sport, year, top[0]["pool"] if top else None)
+    from school_identity import teamState
     return {"ranks": ranks,
+            "crest": crestPath(cur, school, state or teamState(school)),
             "title": schoolLabel(school) if not state else f"{school} ({state})",
             "sub": f"{label} {'cross country' if sport == 'XC' else 'track'} · top seven by season rating",
             "team": team, "athletes": len(rows),
@@ -568,7 +645,7 @@ def renderSchoolCard(d):
     img = Image.new("RGB", (CARD_W, CARD_H), DARK)
     dr = ImageDraw.Draw(img)
     M = 64
-    y = _frame(d["title"], d["sub"], dr, img)
+    y = _frame(d["title"], d["sub"], dr, img, badge=d.get("crest"))
     # the team number, left; the seven, right
     dr.text((M, y), "TEAM RATING", font=_font(False, 20), fill=DARK_MUTED)
     big = f"{d['team']:.1f}" if d["team"] is not None else "-"

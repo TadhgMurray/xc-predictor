@@ -216,8 +216,18 @@ app.logger.addHandler(_err_handler)
 #   process; restart after a pipeline to pick up fresh labels. Missing
 #   table (old database, mid-rebuild) = plain names, never an error.
 import school_identity
+# the school crest (305): a read-only lookup that answers None for every
+# failure, so a site with no logo table renders exactly as it did before
+import school_logo
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
+# ★ THE CRESTS, LOADED LIKE THE LABELS AND FOR THE SAME REASON. A school
+#   name is mentioned hundreds of times on a race page, and every mention
+#   has to know whether there is a crest BEFORE it writes an <img> -- a tag
+#   that 404s is worse than no tag. One query here answers all of them.
+#   Restart after the scraper runs to pick up new crests, exactly as the
+#   labels want a restart after a pipeline.
+school_logo.loadCrests(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
 # one spelling for a grade, by the row's pool (owner, 2026-09-06)
 import grade_label as _grade_label
@@ -225,6 +235,11 @@ app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
 app.template_filter("school_label_in")(school_identity.schoolLabelIn)
 app.template_filter("school_label_for")(school_identity.schoolLabelFor)
+
+# the crest beside a school's name, everywhere one is named (305). Both
+# live in school_logo so they can be tested without importing the app.
+app.jinja_env.globals["crest"] = school_logo.crestImg
+stampCrests = school_logo.stampCrests
 
 
 def _mdy(value):
@@ -4538,6 +4553,39 @@ def card_school(school_name):
                       lambda cur: cards.cachedSchoolCard(cur, school_name, state))
 
 
+@app.route("/img/school/<path:school_name>.png")
+def img_school(school_name):
+    """A school's crest, 512 px, transparent ground (305,
+    docs/IMAGES-PLAN.md): scraped from the school's own site by
+    scripts/scrape_school_logos.py, served here or not at all.
+
+    ★ 404 IS THE NORMAL ANSWER, not an error. Most schools have no crest
+      yet and some never will, so nothing on the site draws this tag
+      without asking school_logo first -- the 404 is for a stale page and
+      for anyone typing the URL.
+
+    ! <path:>, like the school and card routes: school names contain
+      slashes ("Chisago Lakes/Rush City").
+    """
+    from flask import send_file
+    state = (request.args.get("state") or "").strip().upper()[:2] or None
+    path = None
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                path = school_logo.logoPath(cur, school_name, state)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"logo: {school_name} failed ({type(exc).__name__}: {exc})", flush=True)
+    if path is None:
+        abort(404)
+    # ?px= for the inline mentions: a mark eighteen pixels wide has no use
+    # for a 512 px file, and a race page names forty schools
+    path = school_logo.thumbPath(path, request.args.get("px", type=int))
+    # a crest changes about once a decade; the scraper's quarterly refresh
+    # rewrites the same URL, so a long cache is safe and the file is small
+    return send_file(path, mimetype="image/png", max_age=7 * 24 * 3600)
+
+
 @app.route("/card/board/<sport>/<pool>.png")
 @app.route("/card/board/<sport>/<pool>/<state>.png")
 def card_board(sport, pool, state=None):
@@ -5670,6 +5718,18 @@ def _run_search(q, kind, year_filter, offset):
             """, yparams)
             years = [r["sort_year"] for r in cur.fetchall()]
 
+    # ★ THE CREST ON A SCHOOL HIT (305). The search index stores a link and
+    #   a label, not a (school, state) pair, so the pair is read back off
+    #   the link -- the one place on the site where it has to be. No query:
+    #   the answer is in the start-up cache, and a school with no crest gets
+    #   no key at all, so the template and the Load More JS both just see a
+    #   row without one.
+    for _r in results:
+        if (_r.get("kind") if isinstance(_r, dict) else None) != "school":
+            continue
+        url = school_logo.crestUrlForLink(_r.get("link"))
+        if url:
+            _r["crest"] = url
     return results, counts, years
 
 PAGE_SIZE = 30
@@ -5991,6 +6051,9 @@ def api_rankings():
     #   has nothing to say.
     for _r in rows:
         _r["school_state"] = school_identity.primaryState(_r.get("school"))
+    # the crest keys off school_state, not `state`: a result row's state is
+    # the VENUE's, and a travel state would fetch the wrong school's crest
+    stampCrests(rows, state_key="school_state")
 
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not
@@ -6064,6 +6127,7 @@ def api_teams():
         # rather than the representative one.
         hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),
                                     pool=f.get("pool"), sport="XC")
+        stampCrests(rows)
         return jsonify({"filters": f, "count": len(rows),
                         "course_mode": True,
                         # One venue: everyone was measured on the same
@@ -6109,6 +6173,7 @@ def api_teams():
                                                    "fifth_rating"),
                                 pool=f.get("pool"), sport=f.get("sport"))
 
+    stampCrests(rows)
     return jsonify({"filters": f, "count": len(rows),
                     "board_scope": f["board_scope"],
                     "national_bias": f["board_scope"] == "usa",

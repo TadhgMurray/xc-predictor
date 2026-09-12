@@ -104,7 +104,7 @@
                                dead end that looks like a live one. #}
                             <div class="cell c-school">
                                 {% if r.school %}
-                                    <a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label }}</a>
+                                    {{ crest(r.school) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label }}</a>
                                 {% else %} - {% endif %}
                             </div>
                             <div class="cell c-rating">{{ rv(r.rating, r.hs_rating) }}</div>
