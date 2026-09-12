@@ -37,8 +37,14 @@ def curveOnRows(npz, pool_row, doy, rating=None):
     if c.ndim == 1:
         c = c.reshape(-1, js.CURVE_N_KNOTS)
     n_pool, n_knot = c.shape
-    kd = float(np.atleast_1d(np.asarray(npz.get("curve_knot_days", js.CURVE_KNOT_DAYS),
-                                        dtype=np.float64))[0])
+    # ! `curve_knot_days` in the solve file is the knot POSITIONS in academic
+    #   days (0, 30, 60, ...), not the spacing; reading its first entry as
+    #   the spacing divided by zero (2026-09-12). The spacing is the step.
+    kp = np.atleast_1d(np.asarray(npz.get("curve_knot_days", js.CURVE_KNOT_DAYS),
+                                  dtype=np.float64))
+    kd = float(kp[1] - kp[0]) if kp.size >= 2 else float(kp[0])
+    if not np.isfinite(kd) or kd <= 0:
+        kd = float(js.CURVE_KNOT_DAYS)
     pool = np.asarray(pool_row, dtype=np.int64)
     t = js.academicDay(np.asarray(doy, dtype=np.float64))
     k0 = np.minimum((t // kd).astype(np.int64), n_knot - 2)

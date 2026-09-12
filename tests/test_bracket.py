@@ -57,13 +57,19 @@ def test_the_curve_on_rows_matches_the_design():
     doy = rng.integers(1, 366, n)
     c = rng.normal(0, 0.03, (n_pool, n_knot))
     c[:, js.CURVE_REF_KNOT] = 0.0
-    npz = {"curve": c, "curve_knot_days": np.array([js.CURVE_KNOT_DAYS])}
+    # the solve file stores the knot POSITIONS (0, 30, 60, ...), as the
+    # solve writes them; the first cut read entry 0 as the spacing
+    npz = {"curve": c, "curve_knot_days": np.arange(n_knot) * js.CURVE_KNOT_DAYS}
     ath = np.arange(n); cell = np.zeros(n, int); race = np.zeros(n, int)
     D = js.Design(ath, cell, race, pool_row=pool, day=doy, n_pool=n_pool)
     grid = c.reshape(-1)
     want = D.w0 * grid[D.k0] + D.w1 * grid[D.k1]
     got = bk.curveOnRows(npz, pool, doy)
     assert np.allclose(got, want, atol=1e-12)
+    # a scalar spacing, or none at all, reads the same
+    assert np.allclose(bk.curveOnRows({"curve": c, "curve_knot_days": js.CURVE_KNOT_DAYS},
+                                      pool, doy), want, atol=1e-12)
+    assert np.allclose(bk.curveOnRows({"curve": c}, pool, doy), want, atol=1e-12)
     rating = rng.uniform(80, 150, n)
     got_a = bk.curveOnRows(npz, pool, doy, rating)
     assert np.allclose(got_a, want * js.amplitudeFromRating(rating), atol=1e-12)
