@@ -289,12 +289,17 @@ def main():
         hits = [cid for cid, nm in (names or {}).items()
                 if text.lower() in str(nm).lower()]
         if not hits:
-            sys.exit(f"no canonical course name contains {text!r}")
+            print(f"  --venue {text!r}: no canonical course name contains it; skipped")
+            continue
         for cid in hits:
             print(f"  --venue {text!r}: {names[cid]}  ->  XC:{cid}:")
             match.append(f"XC:{cid}:")
+    if not match:
+        sys.exit("nothing to look up: no --key and no --venue matched")
     cols = pe.loadPack(args.pack)
     npz = dict(np.load(args.npz, allow_pickle=False))
+    print(f"[bracket] {np.asarray(cols['norm']).size:,} rows loaded; sorting the "
+          f"corpus once for the window (a minute or two)", flush=True)
     res = bracket(cols, npz, match, window=args.window, top=args.top,
                   era_years=args.era_years, same_sport=not args.any_sport,
                   use_curve=not args.no_curve)

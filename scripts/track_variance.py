@@ -72,14 +72,28 @@ def analyse(cols, npz, era_years=0, min_rows=300, window=21, use_curve=True):
     for b, (_e, i) in bmap.items():
         if b in key_to_base:
             board[key_to_base[b]] = delta[i]
-    # the bracket per row
-    res = bk.bracketRows(cols, npz, window=window, use_curve=use_curve)
-    br = res["bracket"]; season = res["season"]
+    # the bracket per row: track rows only (the bracket is within a sport)
+    sport_all = np.asarray(cols["sport"]).astype(np.int64)
+    tf = sport_all == 1
+    print(f"[tracks] {int(tf.sum()):,} track rows of {tf.size:,}; bracketing them "
+          f"(two sorts, a minute or two)", flush=True)
+    sub = {k: (np.asarray(v)[tf] if k not in ("athlete_keys", "course_keys")
+               and np.asarray(v).shape[:1] == (tf.size,) else v)
+           for k, v in cols.items()}
+    res_tf = bk.bracketRows(sub, npz, window=window, use_curve=use_curve)
+    br = np.full(tf.size, np.nan); br[tf] = res_tf["bracket"]
+    season = np.zeros(tf.size, dtype=np.int64); season[tf] = res_tf["season"]
+    res = {"n_season": res_tf["n_season"]}
     # the front per race, from the solve's ratings
     race, n_race = rj.raceCodes(course, cols["days"])
     rating = None
-    if "rating" in npz and np.asarray(npz["rating"]).size == res["n_season"]:
-        rating = np.asarray(npz["rating"], dtype=np.float64)[season]
+    if "rating" in npz:
+        # ratings are per athlete-season coded over the WHOLE pack
+        season_all, n_season_all = pe.athleteSeasonCodes(
+            np.asarray(cols["athlete"]).astype(np.int64), year)
+        if np.asarray(npz["rating"]).size == n_season_all:
+            rating = np.asarray(npz["rating"], dtype=np.float64)[season_all]
+    print("[tracks] fronts, classes and the per-track table", flush=True)
     front_race = js.raceFront(rating, race, n_race) if rating is not None else np.full(n_race, np.nan)
     front_row = front_race[race]
     mclass = (np.asarray(cols["meet_class"]).astype(np.int64) if "meet_class" in cols
@@ -187,6 +201,7 @@ def main():
     args = ap.parse_args()
     cols = pe.loadPack(args.pack)
     npz = dict(np.load(args.npz, allow_pickle=False))
+    print(f"[tracks] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
     r = analyse(cols, npz, era_years=args.era_years, min_rows=args.min_rows,
                 window=args.window, use_curve=not args.no_curve)
     report(r, show=args.show)

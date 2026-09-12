@@ -81,17 +81,27 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
     indoor = ok & flag
     outdoor = ok & ~flag
     dcode = np.round(dist / 100.0).astype(np.int64)              # 800 -> 8
+    # ! COMPACT IDS FOR (athlete-season, distance). The first cut sized
+    #   arrays by n_season * 1000 -- ten billion entries on the corpus -- and
+    #   the kernel killed it (2026-09-12). Only the pairs that occur get an id.
+    both = indoor | outdoor
+    pair_key = season * 1000 + dcode
+    uniq_pair, pair_id_all = np.unique(pair_key[both], return_inverse=True)
+    n_pair = uniq_pair.size
+    pid = np.full(ln.size, -1, dtype=np.int64)
+    pid[both] = pair_id_all
+    print(f"[indoor] {int(indoor.sum()):,} indoor and {int(outdoor.sum()):,} outdoor "
+          f"track rows, {n_pair:,} (athlete-season, distance) pairs", flush=True)
     out = {}
     for variant, z in (("curve", ln - curve), ("raw", ln)):
         if variant == "curve" and not use_curve:
             continue
         for W in windows:
+            print(f"[indoor] {variant}, window {W} days", flush=True)
             # ---- all pairs: indoor rows against outdoor rows, same season
             #      and distance, within W days ------------------------------
-            key_ref = season[outdoor] * 1000 + dcode[outdoor]
-            key_q = season[indoor] * 1000 + dcode[indoor]
-            s_out, n_out = bk.windowSumsAt(key_ref, days[outdoor], z[outdoor],
-                                           key_q, days[indoor], W)
+            s_out, n_out = bk.windowSumsAt(pid[outdoor], days[outdoor], z[outdoor],
+                                           pid[indoor], days[indoor], W)
             has = n_out > 0
             diff_row = np.full(indoor.sum(), np.nan)
             diff_row[has] = z[indoor][has] - s_out[has] / n_out[has]
@@ -100,21 +110,18 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
             p_in = pool[indoor]
             d_in = dcode[indoor]
             # ---- transition: last indoor vs first outdoor, same distance --
-            last_in = rj.groupExtreme(season[indoor] * 1000 + dcode[indoor], days[indoor],
-                                      n_season * 1000)
-            first_out = rj.groupExtreme(season[outdoor] * 1000 + dcode[outdoor], days[outdoor],
-                                        n_season * 1000, largest=True)
-            kq = sea_in * 1000 + d_in
+            last_in = rj.groupExtreme(pid[indoor], days[indoor], n_pair)
+            first_out = rj.groupExtreme(pid[outdoor], days[outdoor], n_pair, largest=True)
+            kq = pid[indoor]
             is_last = days[indoor] == last_in[kq]
             gap = last_in[kq] - first_out[kq]
             pair_ok = is_last & np.isfinite(first_out[kq]) & (gap > 0) & (gap <= W)
-            # the outdoor row at first_out for that key: mean z there
-            kref = season[outdoor] * 1000 + dcode[outdoor]
+            # the outdoor row(s) at first_out for that pair: mean z there
+            kref = pid[outdoor]
             at_first = days[outdoor] == first_out[kref]
-            z_first = np.full(n_season * 1000, np.nan)
-            cnt = np.bincount(kref[at_first], minlength=n_season * 1000)
-            sm = np.bincount(kref[at_first], weights=z[outdoor][at_first], minlength=n_season * 1000)
-            z_first[cnt > 0] = sm[cnt > 0] / cnt[cnt > 0]
+            cnt = np.bincount(kref[at_first], minlength=n_pair)
+            sm = np.bincount(kref[at_first], weights=z[outdoor][at_first], minlength=n_pair)
+            z_first = np.where(cnt > 0, sm / np.maximum(cnt, 1), np.nan)
             trans = np.full(indoor.sum(), np.nan)
             trans[pair_ok] = z[indoor][pair_ok] - z_first[kq[pair_ok]]
             for p_i, pname in enumerate(pool_names):
@@ -183,6 +190,7 @@ def main():
         npz = dict(np.load(args.npz, allow_pickle=False))
     else:
         print(f"(no solve file at {args.npz}: raw log times only)")
+    print(f"[indoor] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
     res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve)
     report(res, pool_names, windows, dists)
 

@@ -603,6 +603,16 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
       ${XCP_LADDER_ALL:+--all} \
       ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
+  # ★ THE SECOND ENGINE, SCORED ON THE SAME HELD-OUT RACES (2026-09-12).
+  #   scripts/bracket_holdout.py is the owner's method as a solve; it uses
+  #   the ladder's athlete sample and race split, so its "error sd" and the
+  #   base rung's are one question asked of two engines. Minutes, not a
+  #   solve. XCP_BRACKET=0 skips it.
+  if [ "${XCP_BRACKET:-1}" != "0" ]; then
+    step 08d_bracket      "$PY" -u scripts/bracket_holdout.py \
+        --pct "${XCP_LADDER_PCT:-15}" --seed 11 \
+        ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} || true
+  fi
 
   # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
   #   row's normalized_time on the pool it is RATED in and reports the ones

@@ -113,8 +113,20 @@ def main():
             if mm.sum() > 1000:
                 e = y[mm] - pred[mm]
                 print(f"        {name}: {e.std():.6f}  ({int(mm.sum()):,} rows)")
-    print("        compare: the ladder's base rung in engine/data/ladder_logs/base.log, "
-          "same sample, same split, same question")
+    base_log = os.path.join(_ROOT, "engine", "data", "ladder_logs", "base.log")
+    line = None
+    if os.path.exists(base_log):
+        with open(base_log, errors="replace") as fh:
+            for ln in fh:
+                if "error sd" in ln and "covered" in ln:
+                    line = ln.strip()
+    if line:
+        print(f"        the joint model on the same sample and split (ladder base rung):\n"
+              f"        {line}")
+    else:
+        print("        compare: the ladder's base rung (engine/data/ladder_logs/base.log; "
+              "run `scripts/ablation_ladder.py --only base` if it is not there), "
+              "same sample, same split, same question")
 
 
 if __name__ == "__main__":
