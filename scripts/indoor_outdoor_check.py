@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+indoor_outdoor_check.py -- is an indoor track slower than an outdoor one, in
+this corpus, for the same people? From the pack and the solve file; no
+database and no rerun.
+
+    scripts/indoor_outdoor_check.py
+    scripts/indoor_outdoor_check.py --windows 21,35,49 --no-curve
+
+Two measurements, both same-athlete-season, same distance, log time
+indoor minus outdoor (+ = indoor slower), with the season form curve taken
+out of both rows when the solve file carries one (owner, 2026-09-12: "use
+the fitness curve to make 21 days more clean"):
+
+  transition   the athlete's LAST indoor race against their FIRST outdoor
+               race, within the window: the NCAA facility study's design.
+               A peaked last indoor race biases it down, fitness gained in
+               between biases it up; the curve removes the second.
+  all pairs    every indoor row against the mean of the athlete's outdoor
+               rows at the same distance within the window, either side;
+               one number per athlete-season, then the median over them,
+               so a prolific racer does not outvote the rest.
+
+Per pool, per window, and per distance. The asserted level in the solve
+is +1.2% (joint_solve.IND_LEVEL_DEFAULT); the literature says +0.8 to
++1.8% for 800-5000 on a 200 m oval.
+"""
+import argparse
+import os
+import sys
+
+import numpy as np
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for _p in (_ROOT, os.path.join(_ROOT, "engine")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import bracket as bk                                            # noqa: E402
+import joint_solve as js                                        # noqa: E402
+import pair_engine as pe                                        # noqa: E402
+import run_joint as rj                                          # noqa: E402
+
+
+def _stats(d):
+    d = np.asarray(d, dtype=np.float64)
+    d = d[np.isfinite(d)]
+    if d.size == 0:
+        return 0, np.nan, np.nan
+    lo, hi = np.percentile(d, [10, 90])
+    t = d[(d >= lo) & (d <= hi)]
+    return d.size, float(np.median(d)), float(t.mean()) if t.size else np.nan
+
+
+def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
+            use_curve=True):
+    """Returns {(pool, window, dist or 'all'): {'transition': (n, median,
+    trimmed), 'pairs': (n, median, trimmed)}} plus the same without the
+    curve under the key ('raw', ...)."""
+    keys = [str(k) for k in cols["course_keys"]]
+    base_in = np.array([k.split("@", 1)[0].endswith(":in") for k in keys], dtype=bool)
+    base_tf = np.array([k.startswith("TF:") for k in keys], dtype=bool)
+    course = np.asarray(cols["course"]).astype(np.int64)
+    days = np.round(np.asarray(cols["days"], dtype=np.float64)).astype(np.int64)
+    dist = np.asarray(cols["dist_m"], dtype=np.float64)
+    ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
+    season, n_season = pe.athleteSeasonCodes(ath_raw, np.asarray(cols["year"]).astype(np.int64))
+    pool_of_raw, pool_names = rj.poolCodes(cols["athlete_keys"])
+    pool = pool_of_raw[ath_raw]
+    ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
+    curve = np.zeros(ln.size)
+    if use_curve and npz is not None and "curve" in npz and "doy" in cols:
+        rating = None
+        if "rating" in npz and np.asarray(npz["rating"]).size == n_season:
+            rating = np.asarray(npz["rating"], dtype=np.float64)[season]
+        curve = bk.curveOnRows(npz, pool, cols["doy"], rating)
+    ok = (course >= 0) & base_tf[np.maximum(course, 0)] & np.isfinite(ln) & np.isfinite(dist) & (dist > 0)
+    flag = np.zeros(ln.size, dtype=bool)
+    flag[ok] = base_in[course[ok]]
+    indoor = ok & flag
+    outdoor = ok & ~flag
+    dcode = np.round(dist / 100.0).astype(np.int64)              # 800 -> 8
+    out = {}
+    for variant, z in (("curve", ln - curve), ("raw", ln)):
+        if variant == "curve" and not use_curve:
+            continue
+        for W in windows:
+            # ---- all pairs: indoor rows against outdoor rows, same season
+            #      and distance, within W days ------------------------------
+            key_ref = season[outdoor] * 1000 + dcode[outdoor]
+            key_q = season[indoor] * 1000 + dcode[indoor]
+            s_out, n_out = bk.windowSumsAt(key_ref, days[outdoor], z[outdoor],
+                                           key_q, days[indoor], W)
+            has = n_out > 0
+            diff_row = np.full(indoor.sum(), np.nan)
+            diff_row[has] = z[indoor][has] - s_out[has] / n_out[has]
+            # one number per athlete-season, then the median over them
+            sea_in = season[indoor]
+            p_in = pool[indoor]
+            d_in = dcode[indoor]
+            # ---- transition: last indoor vs first outdoor, same distance --
+            last_in = rj.groupExtreme(season[indoor] * 1000 + dcode[indoor], days[indoor],
+                                      n_season * 1000)
+            first_out = rj.groupExtreme(season[outdoor] * 1000 + dcode[outdoor], days[outdoor],
+                                        n_season * 1000, largest=True)
+            kq = sea_in * 1000 + d_in
+            is_last = days[indoor] == last_in[kq]
+            gap = last_in[kq] - first_out[kq]
+            pair_ok = is_last & np.isfinite(first_out[kq]) & (gap > 0) & (gap <= W)
+            # the outdoor row at first_out for that key: mean z there
+            kref = season[outdoor] * 1000 + dcode[outdoor]
+            at_first = days[outdoor] == first_out[kref]
+            z_first = np.full(n_season * 1000, np.nan)
+            cnt = np.bincount(kref[at_first], minlength=n_season * 1000)
+            sm = np.bincount(kref[at_first], weights=z[outdoor][at_first], minlength=n_season * 1000)
+            z_first[cnt > 0] = sm[cnt > 0] / cnt[cnt > 0]
+            trans = np.full(indoor.sum(), np.nan)
+            trans[pair_ok] = z[indoor][pair_ok] - z_first[kq[pair_ok]]
+            for p_i, pname in enumerate(pool_names):
+                for dsel, dlab in [(None, "all")] + [(d, str(d)) for d in dists]:
+                    m = (p_in == p_i) if dsel is None else ((p_in == p_i) & (d_in == round(dsel / 100)))
+                    if not m.any():
+                        continue
+                    # per athlete-season mean of the all-pairs diff
+                    mm = m & np.isfinite(diff_row)
+                    if mm.any():
+                        u, inv = np.unique(sea_in[mm], return_inverse=True)
+                        per = np.bincount(inv, weights=diff_row[mm]) / np.bincount(inv)
+                    else:
+                        per = np.zeros(0)
+                    out[(variant, pname, W, dlab)] = {
+                        "pairs": _stats(per),
+                        "transition": _stats(trans[m & np.isfinite(trans)])}
+    return out, pool_names
+
+
+def report(res, pool_names, windows, dists, min_n=100):
+    print(f"\nindoor minus outdoor, log-time %, same athlete-season and distance "
+          f"(+ = indoor slower). Asserted level {100 * js.IND_LEVEL_DEFAULT:+.2f}%; "
+          f"literature +0.8 to +1.8%.")
+    for variant in ("curve", "raw"):
+        if not any(k[0] == variant for k in res):
+            continue
+        print(f"\n== {'with the form curve taken out' if variant == 'curve' else 'raw log times'} ==")
+        print(f"  {'pool':<10} {'dist':>5} {'window':>6} | {'all pairs: n':>13} {'median':>8} {'trim':>8} "
+              f"| {'transition: n':>14} {'median':>8} {'trim':>8}")
+        for pname in pool_names:
+            for dlab in ["all"] + [str(d) for d in dists]:
+                for W in windows:
+                    r = res.get((variant, pname, W, dlab))
+                    if r is None:
+                        continue
+                    (n1, m1, t1), (n2, m2, t2) = r["pairs"], r["transition"]
+                    if n1 < min_n and n2 < min_n:
+                        continue
+                    f = lambda v: "      " if not np.isfinite(v) else f"{100 * v:+6.2f}"
+                    print(f"  {pname:<10} {dlab:>5} {W:>6} | {n1:>13,} {f(m1):>8} {f(t1):>8} "
+                          f"| {n2:>14,} {f(m2):>8} {f(t2):>8}")
+    print("\n  read: 'all pairs' is one number per athlete-season (their indoor rows "
+          "against their outdoor rows at that distance inside the window), then "
+          "the median over athlete-seasons; 'transition' is each athlete-season's "
+          "last indoor race against its first outdoor one. A peaked last indoor "
+          "race pulls transition down; a longer window lets more fitness in, which "
+          "the curve variant removes. If both sit near +1%, the assertion stands.")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    d = rj.buildParser()
+    ap.add_argument("--pack", default=d.get_default("pack"))
+    ap.add_argument("--npz", default=d.get_default("out"))
+    ap.add_argument("--windows", default="21,35,49")
+    ap.add_argument("--dists", default="800,1600,3200,5000")
+    ap.add_argument("--no-curve", action="store_true")
+    args = ap.parse_args()
+    windows = tuple(int(x) for x in args.windows.split(","))
+    dists = tuple(int(x) for x in args.dists.split(","))
+    cols = pe.loadPack(args.pack)
+    npz = None
+    if os.path.exists(args.npz):
+        npz = dict(np.load(args.npz, allow_pickle=False))
+    else:
+        print(f"(no solve file at {args.npz}: raw log times only)")
+    res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve)
+    report(res, pool_names, windows, dists)
+
+
+if __name__ == "__main__":
+    main()

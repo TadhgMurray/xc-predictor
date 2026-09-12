@@ -1726,6 +1726,25 @@ def ratingsFromAbility(a, athlete_pool, n_races, n_pool,
     return 100.0 * pm / ability
 
 
+def raceFront(r_row, race, n_race, k=FIELD_TOP_K):
+    """Per race, the mean rating of its top k rows (NaN for a race with no
+    rows): the FRONT of the race. One sort, no per-race Python."""
+    r = np.nan_to_num(np.asarray(r_row, dtype=np.float64), nan=100.0)
+    race = np.asarray(race, dtype=np.int64)
+    n = r.size
+    if n == 0 or n_race == 0:
+        return np.full(n_race, np.nan)
+    order = np.lexsort((-r, race))            # by race, then rating descending
+    rs = race[order]
+    starts = np.flatnonzero(np.r_[True, rs[1:] != rs[:-1]])
+    lengths = np.diff(np.r_[starts, n])
+    pos = np.arange(n) - np.repeat(starts, lengths)
+    top = pos < k
+    top_sum = np.bincount(rs[top], weights=r[order][top], minlength=n_race)
+    top_cnt = np.bincount(rs[top], minlength=n_race)
+    return np.where(top_cnt > 0, top_sum / np.maximum(top_cnt, 1), np.nan)
+
+
 def fieldStrength(r_row, race, n_race, imp_idx, mask, n_imp, k=FIELD_TOP_K,
                   unit=FIELD_UNIT, clip=FIELD_CLIP, centre=None):
     """Per race, the mean rating of its top k rows (its FRONT), centred at
@@ -1741,15 +1760,7 @@ def fieldStrength(r_row, race, n_race, imp_idx, mask, n_imp, k=FIELD_TOP_K,
            else np.asarray(centre, dtype=np.float64).copy())
     if n == 0 or n_race == 0:
         return np.zeros(n), np.zeros(n_race), cen
-    order = np.lexsort((-r, race))            # by race, then rating descending
-    rs = race[order]
-    starts = np.flatnonzero(np.r_[True, rs[1:] != rs[:-1]])
-    lengths = np.diff(np.r_[starts, n])
-    pos = np.arange(n) - np.repeat(starts, lengths)
-    top = pos < k
-    top_sum = np.bincount(rs[top], weights=r[order][top], minlength=n_race)
-    top_cnt = np.bincount(rs[top], minlength=n_race)
-    front = np.where(top_cnt > 0, top_sum / np.maximum(top_cnt, 1), np.nan)
+    front = raceFront(r, race, n_race, k)
     race_imp = np.full(n_race, -1, dtype=np.int64)
     race_imp[race[mask]] = np.asarray(imp_idx)[mask]
     strength = np.zeros(n_race)

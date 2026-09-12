@@ -48,24 +48,29 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import bracket as bk                                            # noqa: E402
 import joint_solve as js                                        # noqa: E402
 import pair_engine as pe                                        # noqa: E402
 import run_joint as rj                                          # noqa: E402
 
 
 def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
-            same_sport=True, min_rows=5):
+            same_sport=True, min_rows=5, use_curve=True):
     """Per race day at every base cell whose key contains one of `match`
     (case-insensitive): the bracket measurement and the model's terms.
+    The bracket is engine/bracket.py's: the same athlete-season's other
+    rows in the sport within the window at other base cells, with the
+    form curve taken out of every row when the solve file has one.
     Returns {base key: {"races": [row dicts], "by_year": [...]}}."""
     keys = [str(k) for k in cols["course_keys"]]
     course = np.asarray(cols["course"]).astype(np.int64)
     days = np.asarray(cols["days"]).astype(np.float64)
     year = np.asarray(cols["year"]).astype(np.int64)
     sport = np.asarray(cols["sport"]).astype(np.int64)
-    ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     ath_raw = np.asarray(cols["athlete"]).astype(np.int64)
-    season, n_season = pe.athleteSeasonCodes(ath_raw, year)
+    rows_all = bk.bracketRows(cols, npz, window=window, use_curve=use_curve)
+    ln = rows_all["z"]                    # log time less the athlete's curve point
+    season, n_season = rows_all["season"], rows_all["n_season"]
     race, n_race = rj.raceCodes(course, days)
     # the solve's cells: (course, era) under --era-years
     n_cells = len(keys)
@@ -135,7 +140,7 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                 m &= sport[idx_o] == sport[r]
             if m.any():
                 o = idx_o[m]
-                br[j] = ln[r] - ln[o].mean()
+                br[j] = ln[r] - ln[o].mean()      # == rows_all["bracket"][r] when same_sport
                 ref[j] = float(np.mean(delta[cell[o]] + (u[race[o]] if u is not None else 0.0)))
         races = []
         for rid in np.unique(race[rows]):
@@ -261,6 +266,9 @@ def main():
                     help="the era width the solve used (XCP_ERA_YEARS), if any")
     ap.add_argument("--any-sport", action="store_true",
                     help="bracket against the athlete's other races in either sport")
+    ap.add_argument("--no-curve", action="store_true",
+                    help="compare raw log times; by default the solve file's form "
+                         "curve is taken out of every row first")
     ap.add_argument("--names", action="store_true",
                     help="look canonical ids up in the database for display")
     args = ap.parse_args()
@@ -288,7 +296,8 @@ def main():
     cols = pe.loadPack(args.pack)
     npz = dict(np.load(args.npz, allow_pickle=False))
     res = bracket(cols, npz, match, window=args.window, top=args.top,
-                  era_years=args.era_years, same_sport=not args.any_sport)
+                  era_years=args.era_years, same_sport=not args.any_sport,
+                  use_curve=not args.no_curve)
     if not res:
         sys.exit("no cell key matched")
     report(res, names, top=args.top)

@@ -392,11 +392,19 @@ def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names,
         sport = np.asarray(cols["sport"])[keep].astype(np.int64)
         athlete = np.asarray(athlete, dtype=np.int64)
         ok = (course >= 0) & (sport == 1) & np.isfinite(y) & np.isfinite(dist)
+        # ! FLAGS PER BASE COURSE, from the pack's own keys. `course` here is
+        #   the pack's base id; under --era-years the design's flags are per
+        #   (course, era) cell and indexing them by base id read every row
+        #   as outdoor, and this check returned without a word (run 20).
+        base_flag = np.array([str(k).split("@", 1)[0].endswith(":in")
+                              for k in cols["course_keys"]], dtype=bool)
         flag = np.zeros(ok.size, dtype=bool)
-        flag[ok] = np.asarray(ind_cell, dtype=bool)[course[ok]]
+        flag[ok] = base_flag[course[ok]]
         indoor = ok & flag
         outdoor = ok & ~flag
         if not indoor.any() or not outdoor.any():
+            print(f"[joint] indoor check: {int(indoor.sum()):,} indoor and "
+                  f"{int(outdoor.sum()):,} outdoor track rows -- nothing to pair")
             return
         n_ath = int(athlete.max()) + 1
         last_in = groupExtreme(athlete[indoor], days[indoor], n_ath)      # fewest days ago
