@@ -216,6 +216,9 @@ app.logger.addHandler(_err_handler)
 #   process; restart after a pipeline to pick up fresh labels. Missing
 #   table (old database, mid-rebuild) = plain names, never an error.
 import school_identity
+# the school crest (305): a read-only lookup that answers None for every
+# failure, so a site with no logo table renders exactly as it did before
+import school_logo
 from capped import fetchCapped
 school_identity.loadLabels(getConn)
 app.template_filter("school_label")(school_identity.schoolLabel)
@@ -4295,6 +4298,14 @@ def school_page(school_name):
                             header["athletes"] = c["n"]
             units = unitsFor(cur, school_name, state or primary_state,
                              sport, long=True)
+            # the crest, when the scraper has found one (305). Asked here
+            # rather than in the template so a school without one draws no
+            # broken <img>; the identity is already settled above, so the
+            # crest belongs to the school on screen, not to the namesake.
+            crest_state = state or primary_state
+            crest = (school_logo.logoUrl(school_name, crest_state)
+                     if school_logo.logoPath(cur, school_name, crest_state)
+                     else None)
 
             years = schoolYears(cur, school_name)
 
@@ -4368,7 +4379,7 @@ def school_page(school_name):
              for g, c in pool_counts.items()}
 
     return render_template("school.html", school=school_name, header=header,
-                           units=units,
+                           units=units, crest=crest,
                            state_chips=chips, state=state,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),
@@ -4536,6 +4547,36 @@ def card_school(school_name):
     state = (request.args.get("state") or "").strip().upper()[:2] or None
     return _serveCard(f"school {school_name}",
                       lambda cur: cards.cachedSchoolCard(cur, school_name, state))
+
+
+@app.route("/img/school/<path:school_name>.png")
+def img_school(school_name):
+    """A school's crest, 512 px, transparent ground (305,
+    docs/IMAGES-PLAN.md): scraped from the school's own site by
+    scripts/scrape_school_logos.py, served here or not at all.
+
+    ★ 404 IS THE NORMAL ANSWER, not an error. Most schools have no crest
+      yet and some never will, so nothing on the site draws this tag
+      without asking school_logo first -- the 404 is for a stale page and
+      for anyone typing the URL.
+
+    ! <path:>, like the school and card routes: school names contain
+      slashes ("Chisago Lakes/Rush City").
+    """
+    from flask import send_file
+    state = (request.args.get("state") or "").strip().upper()[:2] or None
+    path = None
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                path = school_logo.logoPath(cur, school_name, state)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"logo: {school_name} failed ({type(exc).__name__}: {exc})", flush=True)
+    if path is None:
+        abort(404)
+    # a crest changes about once a decade; the scraper's quarterly refresh
+    # rewrites the same URL, so a long cache is safe and the file is small
+    return send_file(path, mimetype="image/png", max_age=7 * 24 * 3600)
 
 
 @app.route("/card/board/<sport>/<pool>.png")

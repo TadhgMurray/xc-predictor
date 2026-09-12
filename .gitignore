@@ -104,6 +104,9 @@ scripts/UNSAFE_raw_*.txt
 scripts/triage_*.tsv
 scripts/*_worklist_*.tsv
 scripts/scored_row_*.tsv
+# the school logo job's review file (305): one line per unmatched school,
+# tens of thousands of them, regenerated on every run
+scripts/school_website_unmatched.tsv
 
 override_proposals.csv
 distance_proposals.csv
