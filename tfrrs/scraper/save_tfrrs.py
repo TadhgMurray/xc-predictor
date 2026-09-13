@@ -234,6 +234,10 @@ def buildTFRRSResultRow(parsed: dict, meet_meta: dict,
         # school — TFRRS gives team_name; mirror anet's "Unknown" fallback so the
         # (athlete_id, school) composite FK still has a value to key on.
         "school":        parsed.get("team_name") or "Unknown",
+        # team_slug — the team page's filename, e.g. "CT_college_f_Conn_College".
+        # A real school id: state, level, gender and name in one stable token.
+        # The parser has always read it; before this it was dropped here.
+        "team_slug":     parsed.get("team_slug"),
     }
  
  
@@ -356,6 +360,7 @@ def _rowToTuple(row: dict, scraped_at) -> tuple:
         row["wind"],
         scraped_at,
         splits_value,
+        row.get("team_slug"),
     )
  
  
@@ -394,7 +399,7 @@ def saveTFRRSResultsBulk(conn, rows: list) -> None:
             result_id, athlete_id, person_id, source, id_system, native_id,
             athlete_name, meet_id, event_id, event_short, time_seconds, mark,
             result_kind, is_field, grade, date, is_relay, school,
-            place, score, wind, scraped_at, splits_json
+            place, score, wind, scraped_at, splits_json, team_slug
         )
         VALUES %s
         ON CONFLICT (result_id) DO UPDATE SET
@@ -408,7 +413,10 @@ def saveTFRRSResultsBulk(conn, rows: list) -> None:
             athlete_name  = COALESCE(EXCLUDED.athlete_name, results_tf.athlete_name),
             school        = COALESCE(EXCLUDED.school, results_tf.school),
             scraped_at    = EXCLUDED.scraped_at,
-            splits_json   = EXCLUDED.splits_json
+            splits_json   = EXCLUDED.splits_json,
+            -- COALESCE, not a straight refresh: a re-scrape of an old page
+            -- that has no team link must not wipe a slug we already have.
+            team_slug     = COALESCE(EXCLUDED.team_slug, results_tf.team_slug)
     """, tuples)
 
 # saveTFRRSMeetMeta
@@ -526,6 +534,7 @@ def _rowToTupleXC(row: dict, scraped_at) -> tuple:
         has_splits,
         scraped_at,
         splits_value,
+        row.get("team_slug"),        # the tfrrs team-page key, NULL if unlinked
     )
  
  
@@ -565,7 +574,7 @@ def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
                 result_id, athlete_id, person_id, source, id_system, native_id,
                 athlete_name, meet_id, div_id, time_seconds, grade, date,
                 school, school_source, place, score, has_splits,
-                scraped_at, splits_json
+                scraped_at, splits_json, team_slug
             )
             VALUES %s
             ON CONFLICT (result_id) DO UPDATE SET
@@ -584,7 +593,10 @@ def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
                 school        = COALESCE(EXCLUDED.school, results.school),
                 school_source = COALESCE(EXCLUDED.school_source, results.school_source),
                 scraped_at    = EXCLUDED.scraped_at,
-                splits_json   = EXCLUDED.splits_json
+                splits_json   = EXCLUDED.splits_json,
+                -- COALESCE for the same reason as the TF saver: an old page
+                -- with no team link must not null a slug already stored.
+                team_slug     = COALESCE(EXCLUDED.team_slug, results.team_slug)
         """, tuples)
     except Exception as e:
         # `results` may constrain athlete_id (NOT NULL / FK) differently from

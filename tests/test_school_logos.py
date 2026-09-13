@@ -2326,5 +2326,126 @@ class Normalise(unittest.TestCase):
         self.assertIn("unreadable", why)
 
 
+# ===================================================================== #
+#  THE SCHOOL ID TFRRS HAS BEEN HANDING US ALL ALONG                    #
+# ===================================================================== #
+
+class _Cell:
+    """The three methods _extractTFTeam asks of a soup tag. bs4 is a scraper
+    dependency and is not installed where these tests run."""
+
+    def __init__(self, text, href=None):
+        self.text, self.href = text, href
+
+    def find(self, _tag):
+        return _Cell(self.text, self.href) if self.href is not None else None
+
+    def get(self, _attr, default=""):
+        return self.href if self.href is not None else default
+
+    def get_text(self):
+        return self.text
+
+
+class TeamSlug(unittest.TestCase):
+    """tfrrs names every team page after a stable key -- state, level, gender
+    and school in one token. The parser read it and the saver dropped it."""
+
+    def test_the_xc_parser_still_reads_it(self):
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_xc
+        self.assertEqual(
+            parse_xc._teamSlugFromHref(
+                "https://www.tfrrs.org/teams/xc/CT_college_f_Conn_College.html"),
+            "CT_college_f_Conn_College")
+
+    def test_the_tf_parser_now_reads_it_too(self):
+        """It used to throw the slug away and return the bare string 'tfrrs'."""
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_tf
+        cell = _Cell("Tufts", href="/teams/tf/MA_college_m_Tufts.html")
+        name, native, system, slug = parse_tf._extractTFTeam(cell)
+        self.assertEqual((name, system, slug),
+                         ("Tufts", "tfrrs", "MA_college_m_Tufts"))
+
+    def test_an_unlinked_tf_team_has_no_slug(self):
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_tf
+        self.assertEqual(parse_tf._extractTFTeam(_Cell("Unattached"))[3], None)
+
+    def test_the_build_half_carries_it(self):
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn('"team_slug":     parsed.get("team_slug")', save)
+
+    def test_both_savers_write_it(self):
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn("scraped_at, splits_json, team_slug", save)
+        self.assertIn("place, score, wind, scraped_at, splits_json, team_slug",
+                      save)
+        self.assertEqual(save.count('row.get("team_slug")'), 2)
+
+    def test_a_rescrape_without_a_link_cannot_null_a_stored_slug(self):
+        """The old pages have no team <a> at all; a straight refresh would
+        wipe the slug the newer scrape found."""
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn(
+            "team_slug     = COALESCE(EXCLUDED.team_slug, results_tf.team_slug)",
+            save)
+        self.assertIn(
+            "team_slug     = COALESCE(EXCLUDED.team_slug, results.team_slug)",
+            save)
+
+    def test_the_column_is_added_to_both_tables_and_registered(self):
+        db = read("scripts", "database.py")
+        self.assertIn("def _migrateResultsAddTeamSlug(cursor):", db)
+        self.assertIn("_migrateResultsAddTeamSlug(cursor)\n", db)
+        self.assertIn('for table in ("results", "results_tf"):', db)
+        self.assertIn("ADD COLUMN IF NOT EXISTS team_slug TEXT", db)
+
+    def test_the_migration_is_idempotent(self):
+        """Every statement it runs is IF NOT EXISTS -- run it twice, nothing
+        happens the second time."""
+        db = read("scripts", "database.py")
+        body = db.split("def _migrateResultsAddTeamSlug(cursor):")[1]
+        body = body.split("\ndef ")[0]
+        for stmt in ("ALTER TABLE", "CREATE INDEX"):
+            for line in body.splitlines():
+                if stmt in line:
+                    self.assertIn("IF NOT EXISTS", line)
+
+
+class TeamIdZero(unittest.TestCase):
+    """anet writes TeamID 0 for unattached. Zero is not an id."""
+
+    def test_zero_and_rubbish_become_none(self):
+        # database.py opens a connection pool at import, so read the one
+        # function out of the source instead of importing the module.
+        src = read("scripts", "database.py")
+        body = src.split("def _teamIdOrNone(value):")[1].split("\n\n")[0]
+        ns = {}
+        exec("def _teamIdOrNone(value):" + body, ns)                # noqa: S102
+        f = ns["_teamIdOrNone"]
+        self.assertIsNone(f(0))
+        self.assertIsNone(f("0"))
+        self.assertIsNone(f(None))
+        self.assertIsNone(f(""))
+        self.assertIsNone(f("unattached"))
+        self.assertEqual(f(21480), 21480)
+        self.assertEqual(f("21480"), 21480)
+
+    def test_both_anet_writers_go_through_it(self):
+        db = read("scripts", "database.py")
+        self.assertIn('_teamIdOrNone(resultData.get("TeamID"))', db)
+        self.assertIn('_teamIdOrNone(result.get("TeamID"))', db)
+        self.assertNotIn('\n            resultData.get("TeamID"),', db)
+        self.assertNotIn('\n            result.get("TeamID"),', db)
+
+    def test_the_anet_worklist_will_not_take_zero_as_a_modal_id(self):
+        """One unattached row could otherwise become a school's modal team
+        and send the whole scrape to team 0."""
+        teams = read("scripts", "anet_teams.py")
+        self.assertEqual(teams.count("team_id IS NOT NULL AND team_id <> 0"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

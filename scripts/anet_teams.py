@@ -133,11 +133,14 @@ def teams(cur, limit=None, state=None, redo=False):
     lim = "LIMIT %(limit)s" if limit else ""
     cur.execute(f"""
         WITH t AS (
+            -- team_id 0 is anet's unattached sentinel, not an id. Rows
+            -- written before database._teamIdOrNone still carry it, and one
+            -- of them as a school's modal id would fetch team 0 for everyone.
             SELECT school, team_id, person_id FROM results
-            WHERE  team_id IS NOT NULL AND school IS NOT NULL
+            WHERE  team_id IS NOT NULL AND team_id <> 0 AND school IS NOT NULL
             UNION ALL
             SELECT school, team_id, person_id FROM results_tf
-            WHERE  team_id IS NOT NULL AND school IS NOT NULL
+            WHERE  team_id IS NOT NULL AND team_id <> 0 AND school IS NOT NULL
         ), counted AS (
             SELECT t.school, {state_expr} AS state, t.team_id, count(*) AS n
             FROM   t {home}

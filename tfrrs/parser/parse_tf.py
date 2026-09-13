@@ -7,7 +7,8 @@
  
 import re
 from parse_time import parseTimeToSeconds
-from parse_xc import _cellText, _toIntOrNone, _firstIntInPath
+from parse_xc import (_cellText, _toIntOrNone, _firstIntInPath,
+                      _teamSlugFromHref)
  
 # ------------------------------------------------------------------ #
 # HOW TFRRS HIDES THE REAL TIME  (verified against raw HTML)
@@ -114,7 +115,8 @@ def parseTFRow(row, hidden_classes, result_kind):
  
     # [3] team — the raw team text (TF often has unattached/club names with no
     # link; we keep the text and the link/id when present).
-    team_name, team_native_id, team_id_system = _extractTFTeam(cells[3])
+    (team_name, team_native_id, team_id_system,
+     team_slug) = _extractTFTeam(cells[3])
  
     # The ONE real result cell (decoder picks the non-hidden column). Its meaning
     # depends on result_kind: a TIME (running), a MARK (field), or a POINTS total
@@ -153,6 +155,9 @@ def parseTFRow(row, hidden_classes, result_kind):
         "team_name":         team_name,
         "team_native_id":    team_native_id,
         "team_id_system":    team_id_system,
+        # The tfrrs team page's own filename, the same stable key the XC parser
+        # reads. None for the unlinked club/unattached rows TF is full of.
+        "team_slug":         team_slug,
         "result_kind":       result_kind,
         "time_seconds":      time_seconds,   # set for running; None otherwise
         "mark_metres":       mark_metres,    # set for field; None otherwise
@@ -281,7 +286,7 @@ def _extractTFAthlete(cell):
 #          id and namespace. TF teams are often clubs/unattached with no link.
 # Arguments:
 #           cell: the team <td>.
-# Output:   (team_name, team_native_id, team_id_system).
+# Output:   (team_name, team_native_id, team_id_system, team_slug).
 def _extractTFTeam(cell):
 
     # Finds the <a> section in the team cell with the url. 
@@ -290,7 +295,7 @@ def _extractTFTeam(cell):
 
     if link is None:
         # Unlinked team (e.g. "Unattached", "Athletics TX") — just the text.
-        return _cellText(cell), None, None
+        return _cellText(cell), None, None, None
     
     # Gets href from the url. href is the URL the link points to
     # It also contains the text between the tags that is presented to the user.
@@ -300,9 +305,12 @@ def _extractTFTeam(cell):
     # directathletics teams: /teams/track/<id>. tfrrs teams: /teams/tf/<slug>
     # (slug, not numeric). We capture the numeric directathletics id when present.
     if "directathletics.com/teams/track/" in href:
-        return team_name, _firstIntInPath(href, marker="/teams/track/"), "directathletics"
-    
-    return team_name, None, "tfrrs"
+        return (team_name, _firstIntInPath(href, marker="/teams/track/"),
+                "directathletics", None)
+
+    # A tfrrs team href has no numeric id — the slug IS the id, and it carries
+    # state, level, gender and name. Keep it; the saver stores it.
+    return team_name, None, "tfrrs", _teamSlugFromHref(href)
 
 # _parseMarkMetres
 # Purpose: Parse a field-event mark like "8.28m" into a float of metres.

@@ -300,6 +300,22 @@ def _toReal(value):
     except (ValueError, TypeError):
         return None
     
+# _teamIdOrNone
+# Purpose: anet writes TeamID 0 for an unattached / no-team entry. Zero is not
+#          an id, and anything that reads team_id as "which school is this"
+#          must not see one -- a rule the pool and school-identity work leans
+#          on, so it is enforced at the write instead of at every read.
+# Arguments:
+#           value: the raw TeamID from an anet payload.
+# Output:   the int id, or None for 0 / missing / unparseable.
+def _teamIdOrNone(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n or None
+
+
 # _resolveSchool
 # Purpose: The single source of truth for "what school is this row?". Both the
 #          athlete insert and the result insert must use this so their school
@@ -337,6 +353,7 @@ def createTables():
             _migrateMeetQueueCompositeKey(cursor)
             _migrateMeetQueueAddSource(cursor)
             _migrateMeetExtrasAddSource(cursor)
+            _migrateResultsAddTeamSlug(cursor)
             _createMeetsTFMetaTable(cursor)
             _createIndexes(cursor)
             conn.commit()
@@ -534,6 +551,32 @@ def _createRecoveryTable(cursor):
 # later, not by the existing engine join.
  
  
+# _migrateResultsAddTeamSlug
+# Purpose: Add `team_slug` to results and results_tf. TFRRS links every result
+#          row to a team page whose filename IS a stable school key --
+#          "CT_college_f_Conn_College" -- state, level, gender and name in one
+#          token. The parser has always read it (parse_xc.py _extractTeam) and
+#          the saver has always dropped it, so every downstream question about
+#          "is this the same school?" has had to be answered from the display
+#          name plus inference. Keeping the slug means the college half of the
+#          corpus carries a real id.
+#
+# ! ONLY NEW AND RE-SCRAPED ROWS GET A VALUE. This is additive on purpose: the
+#   column is NULL for everything already stored, and nothing may treat NULL
+#   as "different school" -- absent is absent, not a distinguishing fact.
+#
+# Arguments:
+#           cursor: open psycopg2 cursor.
+# Output:   None. Idempotent.
+def _migrateResultsAddTeamSlug(cursor):
+    for table in ("results", "results_tf"):
+        cursor.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS team_slug TEXT")
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_team_slug "
+            f"ON {table} (team_slug) WHERE team_slug IS NOT NULL")
+
+
 # _createMeetsTFMetaTable
 # Purpose: Create meets_tf_meta if missing. One row per TF meet_id. Idempotent
 #          (CREATE TABLE IF NOT EXISTS), so safe to call from createTables every
@@ -1239,7 +1282,7 @@ def saveResultsBulk(conn, results: list):
             resultData.get("Score"),                           # 0 = non-scoring / displaced
             _flag(resultData.get("Exhibition")),
             _flag(resultData.get("Official")),
-            resultData.get("TeamID"),
+            _teamIdOrNone(resultData.get("TeamID")),
             _flag(resultData.get("isPr")),
             _flag(resultData.get("isSr")),
             _flag(resultData.get("hasSplitsSeries")),
@@ -1410,7 +1453,7 @@ def saveResultsTFBulk(conn, results: list):
             _flag(result.get("hasSplitsSeries")),
             is_field,
             mark,
-            result.get("TeamID"),
+            _teamIdOrNone(result.get("TeamID")),
             result.get("EventTypeID"),
             _videoCount(result.get("MediaCount")),
             _toReal(result.get("AgeGrade")),
