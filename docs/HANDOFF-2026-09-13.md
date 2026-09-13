@@ -243,3 +243,191 @@ when it moved). Tests before every push, checking pytest's exit code,
 never through `tail`. Commit trailers as in the log. No model
 identifiers in files. The pipeline takes one lock; `tmux kill-server`
 does not release it if a child survived.
+
+---
+
+## 8. 2026-09-13, SECOND SESSION: THE RUN-22 COMPLAINTS, DIAGNOSED
+
+Nothing here ran against the database or a pack; every fix is code with
+a planted-world test, and each one names the command that shows it on
+the box. In the order the owner raised them.
+
+### 8.1 "TF difficulty weirder now, too much variance; shrink outdoor, let indoor keep its difficulty"
+
+**Mechanism.** The bracket engine pulled every course toward its
+sport's average with ONE race's worth of prior, sized for grass, where a
+course's day-to-day spread (3.05%) and the course-to-course spread
+(3.64%) are alike. On an outdoor track they are not: day sd 1.45%
+against a course spread of 0.89%, so a one-race track kept half of one
+day when the arithmetic says a quarter, and the TF board's scatter was
+weather and fields, not tracks. Indoors the differences are real (banked
+against flat, 160 against 300) and the weather is not.
+
+**Fix** (`engine/bracket_engine.py`): the prior is per group -- XC,
+outdoor track, indoor track -- and is the ratio of the two variances,
+FITTED from the courses with 2+ races after six warm-up passes on the
+stated values (`PRIOR_GROUP_BY = XC 1.0, TF:out 2.5, TF:in 1.0`), clipped
+to 0.25-8 races, printed with both variances. Each group is pulled
+toward ITS OWN average, so a thin oval sits at the indoor level, not the
+outdoor zero. `XCP_BRACKET_PRIOR` states it instead (`fit`, one number,
+or `XC=1,TF:out=2.5,TF:in=1`). Planted worlds: grass at the corpus'
+numbers fits about one race; a track world fits several and its board
+lands nearer the truth than one race does; the once-raced oval sits with
+the other ovals. The run's log prints one line per group under
+`[joint] bracket prior:`; read those three numbers first.
+
+### 8.2 Foot Locker against Glendoveer; "the hardest venues seem overstated"; "we built diagnostics and aren't using them"
+
+**What the engine does with a bracket, and why the two venues part.**
+A race's reading is `bracket / h + the board of the races it was
+measured against`. Glendoveer's runners are read against NXR and state
+courses the board has at +5 to +7; Balboa's against the Foot Locker
+regionals (McAlpine fast, Van Cortlandt and Mt. SAC hard) -- a different
+reference set, so equal raw brackets do not mean equal published
+numbers. Then the priors: Glendoveer is twenty race days under one key
+and keeps ~95% of its reading; Foot Locker's national final is split
+across canonical ids with one to three race days each, and a cell with
+one race keeps about 60% of it (era prior 2 races toward a history that
+is itself shrunk). Merging the ids (`scripts/meet_cells.py --meet "Foot
+Locker"`, open item 5 of section 5) is still the fix for that half.
+
+**The tilt is the suspect for the hardest venues.** Every reading is
+divided by the applied tilt h(rating); the national and sectional
+courses are read almost entirely through 140-160 rated voters, and h
+there is EXTRAPOLATED from a slope measured at 70-140 (a 150 pays 84.5%
+of a course). If the true line is flatter above 140, every course read
+by the elite is inflated by the same ratio, and the hard ones show it
+most -- exactly the list (Mt. SAC, Crystal Springs, Glendoveer). The
+run now measures it: `[joint] bracket tilt by band` regresses each
+voter's own untilted bracket on the course's fitted D per sport and
+rating band (`bracket_engine.tiltByBand`), beside the h applied. Implied
+below applied at 140+ means the elite pay less of a course than charged;
+the fix is then `TILT_K` above 140 (a second slope), not the courses.
+
+**The diagnostics are now the engine's own arithmetic.** Under
+`--difficulty bracket` the solve file carries, per cell, the era's raw
+vote-mean, the course's history after the group prior and its votes,
+the (sport, era) pin, the recentring and the published number
+(`bracket_cell_raw`, `bracket_base`, `bracket_base_votes`, `bracket_pin`,
+`bracket_shift`, `bracket_cell_fit`, `bracket_prior_group`), and
+`scripts/course_bracket.py` (so `diagnose.py --venue`) prints, per race
+day, the engine's voters, the tilt applied and its reading beside the
+raw bracket, then the chain raw -> history -> era -> pin -> recentre ->
+published per cell. `tests/test_course_bracket.py` proves the chain
+rebuilds the published number and the readings match the engine's.
+
+```
+/srv/venv/bin/python scripts/diagnose.py --era-years 2 --out-dir logs \
+    --venue Glendoveer --venue "Foot Locker" --venue Balboa --venue "Mt. SAC"
+```
+
+### 8.3 "TF underrated" (the cross-sport level)
+
+Still an assertion (`XCP_SPORT_LEVEL=0.0583`), and nothing in the
+bracket engine can measure it: references never cross sports (an
+athlete-season's key is sport-specific) and November to March is beyond
+any window. Two things move an elite athlete's XC and TF ratings apart
+by band without the level changing: the tilt (an elite pays h x 0.0583
+for the sport level, less than a 100 does, so if h is over-tilted above
+140 the elite's TF sits low against their XC), and the 800/1600 offsets.
+Read the tilt table (8.2) before the level.
+
+### 8.4 The 200s (Leo and Lex Young), "still happening"
+
+**Mechanism.** `rating = 100 x pool_mean / normalized_time`; those rows
+were normalised as hs_m (5000 m scale) and rated as college_m (8000 m
+pool mean): x1.61. `engine/anchor_repair.py` rewrites the DATABASE
+column toward the pool the LAST go-live rated the row in, at step 5 --
+which never reaches a pack built earlier, and every run since 19 has
+been `--from 8` on the run-19 pack.
+
+**Fix** (`engine/speed_ratings.py::rescaleToPool`, the loader now
+carries `time_seconds`): the pack itself puts every row on the scale of
+the pool it decides for that row, in memory, by the same arithmetic as
+the repair (the stored value's scale identified within 3%, only the pool
+factor swapped, corrections kept; unidentified rows left alone and
+counted). The pack's census prints `rescaled` and `scale_not_identified`.
+Takes effect at the next pack (`--from 7`), which the next full run
+does; `--from 8` cannot see it.
+
+### 8.5 Distance normalization: it IS off, at the long end
+
+`scripts/distance_curve_check.py` prints the shipped curve's local
+exponent between events. Read from the artifact today: college_m|XC
+8000->10000 at **0.92**, elem_m|XC past 3200 at **0.98** -- a runner
+whose pace speeds up with distance, which no runner does, and the "10k
+too low" symptom on the college boards (a 30:35 10k read as a worse 8k
+than the runner's own 24:00). Same-athlete XC pairs do not cancel the
+calendar (the 10k is the November championship) or the course. The
+fitter (`engine/fit_distance_exponent.py`) now holds every curve to a
+local exponent of at least `MIN_LOCAL_EXP = 1.04` (`--min-exponent`;
+the health line says which segments it raised). The shipped pickle is
+unchanged until refitted:
+
+```
+/srv/venv/bin/python engine/fit_distance_exponent.py            # rewrites engine/data/distance_spline.pkl
+/srv/venv/bin/python scripts/distance_curve_check.py           # 0 segments flagged
+bash deploy/run_pipeline.sh --from 5                            # backfill both sports, repack, solve
+```
+
+The TF short end (800->1000 at 1.15-1.18, 1600->3200 at 1.10-1.13) is
+a population relation that the solve's per-band event offsets sit on
+top of; that is the "800s/1600s overrated" question (section 5, item 3)
+and is not changed here.
+
+### 8.6 Search results landing on the wrong meet (NXN -> NXN South -> Hudson Valley Sportsdome)
+
+The anet and tfrrs meet ids collide (15,096 ids in `results`), the
+search index keyed on `meet_id` alone with `min(meet_name)` across both
+meets, and its bare link resolved on the meet page to whichever meet had
+more rows. Now `meet_agg_xc/tf` are keyed `(meet_id, source)`, named as
+the page names them (`meets_tfrrs` for tfrrs), each link carries the
+page's own `?alt=` (ranked exactly as `app.meet_sources` ranks: biggest
+first, `source` as the tie-break, which it lacked), the XC race page
+resolves the same `alt` and filters its header and results by source
+(both meets' finishers were merged into one table before), the meet
+page's division links and the race page's meet link carry it, and the
+sitemap lists both meets. Rebuilds at `13c_search_index`.
+
+### 8.7 "New images make page loads super slow" / "parts of the pipeline make the website super slow"
+
+Pipeline, the must-fix: `build_school_units` DROPPED the live
+`school_unit` and rebuilt it with ten index builds inside one
+transaction, so every filtered board request queued behind the DROP
+for the build and died on its 5 s lock_timeout as a 500;
+`build_course_rank` built three indexes on the live name after the
+rename; `build_course_boards`, `build_team_season`, `build_meet_units`
+and the search index's meet aggregates swapped with no lock_timeout
+(one long bot read, and every later reader queues). All six swap through
+`dbfast.swapTable` now: shadow built and indexed with the live table
+untouched, then one short transaction under `SET LOCAL lock_timeout
+'5s'`, retried 24 times. And every pipeline step runs under `nice -n 10
+ionice -c2 -n7` with BLAS capped at cores-2 threads
+(`XCP_NICE`, `XCP_THREADS`) -- the solve competed with gunicorn as an
+equal for hours. Not done, worth doing: the site's
+`XCP_DB_STATEMENT_TIMEOUT_MS=55000` is what lets one reader hold a
+table long enough for the swap siege to reach its terminate phase; 10-15 s
+would let the polite rounds win.
+
+Images: the home page shipped 8.6 MB of PNG because the template
+preferred `.webp` files that did not exist -- they exist now
+(`racecast/static/m1..m9.webp`, 528 KB in all, stamped and immutable
+through `static_v`). Every crest was a request into a sync worker that
+opened a pooled connection and ran a query before sending the file;
+`/img/school/` now answers from the start-up cache (`school_logo.
+crestPath`, no query), the cache skips a row whose PNG the disk no
+longer has (each such row used to draw a tag that 404'd, uncached, on
+every page naming the school), a 404 is cacheable for five minutes, a
+`?v=` crest is immutable for a year, and `/img/` is exempt from the
+maintenance 503. Still open: serve `/img/school/` from nginx (an alias
+onto the logo directory) so Python never sees a crest at all.
+
+### 8.8 Tests
+
+`tests/test_bracket_engine.py` (priors, the oval, the spec),
+`test_bracket_golive.py` (the chain rebuilds the published number),
+`test_course_bracket.py` (the engine block), `test_pack_scale.py`,
+`test_search_meet_alt.py`, `test_distance_curve_floor.py`, plus the
+existing bracket, diagnose, era, track, logo, sitemap and guard files:
+314 pass. `test_board_build_streams_the_sports_in_parallel` and the
+`test_page_cache_headers` order-dependence fail on the unchanged tree too.

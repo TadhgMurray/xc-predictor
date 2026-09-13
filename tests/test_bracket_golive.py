@@ -52,6 +52,21 @@ def test_the_swap_lands_on_the_solves_scale_and_the_go_live_publishes_it(capsys)
     assert delta_b.shape == delta_joint.shape and np.isfinite(delta_b).all()
     assert out["difficulty_source"] == "bracket"
     assert np.array_equal(out["delta_joint"], delta_joint)
+    # ★ THE TRACE'S ARITHMETIC IS THE ENGINE'S: for a cell with votes,
+    #   published = (raw * votes + prior_races * course history) / (votes
+    #   + prior_races) - the recentring, plus the sport level
+    votes = out["bracket_votes"]
+    raw, base = out["bracket_cell_raw"], out["bracket_base"]
+    pin, shift, fit = out["bracket_pin"], out["bracket_shift"], out["bracket_cell_fit"]
+    mu_cell = out["mu"][np.asarray(D.group_of_cell)]
+    m = votes > 0
+    assert np.isfinite(raw[m]).all() and np.isfinite(base).all()
+    rebuilt = (raw[m] * votes[m] + be.PRIOR_RACES * base[m]) / (votes[m] + be.PRIOR_RACES)
+    assert np.allclose(rebuilt - pin[m], fit[m], atol=1e-12)
+    # the fitted total is the published one to within the iteration's
+    # tolerance (the engine returns its damped iterate), plus the level
+    assert np.abs(fit[m] - shift[m] + mu_cell[m] - delta_b[m]).max() < 2e-4
+    assert out["bracket_prior_group"].shape == (len(be.PRIOR_GROUP_NAMES),)
     # the two engines measure the same planted world: the numbers agree
     # course by course, and the sport level (the planted -5% on track) is
     # the joint solve's, carried over untouched

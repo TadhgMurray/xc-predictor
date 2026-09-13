@@ -24,7 +24,7 @@ import psycopg2.extras
 #   import side effect for an exception class in an except clause is a
 #   NameError at the worst possible moment.
 import psycopg2.errors
-from flask import Flask, render_template, abort, redirect, url_for
+from flask import Flask, render_template, abort, redirect, url_for, make_response
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
@@ -436,7 +436,11 @@ def _headers(resp):
     says so), so a plain-http dev server is not pinned. A CSP is NOT set
     here: the pages carry inline scripts and styles, and a wrong CSP is a
     blank site."""
-    if request.path.startswith("/static/") and request.args.get("v"):
+    # ! AND THE CRESTS, whose URL carries the image's own hash (school_logo.
+    #   crestUrl): a new picture is a new URL, so the old one can be held
+    #   for a year at the edge and in the browser (2026-09-13)
+    if (request.path.startswith(("/static/", "/img/")) and request.args.get("v")
+            and resp.status_code == 200):
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif request.path.startswith("/static/"):
         resp.headers.setdefault("Cache-Control", "public, max-age=86400")
@@ -563,7 +567,9 @@ def _maintenance():
     """While the flag file exists AND IS FRESH (the pipeline drops it around
     a table swap) every page is a 503 with Retry-After, never a half-built
     page. A stale flag is a killed process, not a swap: serve the site."""
-    if request.path.startswith("/static/"):
+    # ! IMAGES TOO: a crest is a file, and a 503 on forty of them per page
+    #   is forty template renders per view during a swap (2026-09-13)
+    if request.path.startswith(("/static/", "/img/")):
         return None
     if _inMaintenance():
         return render_template("error.html", code=503), 503, {"Retry-After": "120"}
@@ -2573,8 +2579,13 @@ def _merge_cross_source(races):
 #  XC RACE
 # ===================================================================== #
 
-def get_race_header(cur, meet_id, div_id):
+def get_race_header(cur, meet_id, div_id, source=None):
     """Meet/course info for one XC race, plus the field's gender.
+
+    ⚠ `source` picks WHICH meet when two share the id (the anet and tfrrs
+      id spaces overlap, app.meet_sources): without it the header came
+      from whichever row LIMIT 1 found and the results table below merged
+      both meets' finishers (2026-09-13).
 
     ★ DRIVEN FROM `results`, NOT `meets`. `meets` is anet-only, so selecting
       FROM it returned no row for a tfrrs race and the route called abort(404).
@@ -2612,10 +2623,12 @@ def get_race_header(cur, meet_id, div_id):
                   {_athlete_lateral('r2')}
                  WHERE r2.meet_id = %(meet)s
                    AND r2.div_id  = %(div)s
+                   AND (%(src)s::text IS NULL OR r2.source = %(src)s)
                ) AS gender
         FROM (SELECT DISTINCT meet_id, div_id, source
                 FROM results
-               WHERE meet_id = %(meet)s AND div_id = %(div)s) r
+               WHERE meet_id = %(meet)s AND div_id = %(div)s
+                 AND (%(src)s::text IS NULL OR source = %(src)s)) r
         LEFT JOIN meets m
                ON m.meet_id = r.meet_id
               AND m.div_id  = r.div_id
@@ -2631,8 +2644,9 @@ def get_race_header(cur, meet_id, div_id):
                ON cd.canonical_id = cc.canonical_id
               AND cd.distance_m   =
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC, r.source
         LIMIT 1
-    """, {"meet": meet_id, "div": div_id, "divtext": str(div_id)})
+    """, {"meet": meet_id, "div": div_id, "divtext": str(div_id), "src": source})
     return cur.fetchone()
 
 
@@ -2682,8 +2696,9 @@ def raceExtras(cur, meet_id, div_id, source):
     return out
 
 
-def get_race_results(cur, meet_id, div_id):
-    """Every athlete's result in one XC race, fastest first."""
+def get_race_results(cur, meet_id, div_id, source=None):
+    """Every athlete's result in one XC race, fastest first; `source`
+    keeps a colliding meet's finishers out (see get_race_header)."""
     cur.execute(f"""
         SELECT r.result_id,
                r.person_id,
@@ -2699,9 +2714,10 @@ def get_race_results(cur, meet_id, div_id):
         {_athlete_lateral('r')}
         WHERE r.meet_id = %(meet)s
           AND r.div_id  = %(div)s
+          AND (%(src)s::text IS NULL OR r.source = %(src)s)
           AND r.time_seconds IS NOT NULL
         ORDER BY r.time_seconds ASC
-    """, {"meet": meet_id, "div": div_id})
+    """, {"meet": meet_id, "div": div_id, "src": source})
     return cur.fetchall()
 
 
@@ -2868,8 +2884,15 @@ def race_xc(meet_id, div_id):
     hl_school = (request.args.get("school") or "").strip() or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header  = get_race_header(cur, meet_id, div_id)
-            results = get_race_results(cur, meet_id, div_id)
+            # ★ WHICH MEET, when two share the id: the same ?alt= the meet
+            #   page uses, resolved over the same size-ordered list, so the
+            #   division link from a meet page lands on that meet's race
+            #   and not on the colliding one's rows merged in (2026-09-13)
+            sources = meet_sources(cur, "results", meet_id)
+            src, alt_idx, other_sources = pick_source(
+                sources, request.args.get("alt"))
+            header  = get_race_header(cur, meet_id, div_id, source=src)
+            results = get_race_results(cur, meet_id, div_id, source=src)
             published = publishedScores(cur, meet_id)
             extras = (raceExtras(cur, meet_id, div_id, header.get("source"))
                       if header else {"withheld": False, "weather": None})
@@ -2992,7 +3015,8 @@ def race_xc(meet_id, div_id):
                            day_effect=day_effect,
                            scores=scores,
                            corrected=corrected,
-                           extras=extras)
+                           extras=extras,
+                           alt_idx=alt_idx, other_sources=other_sources)
 
 
 # ===================================================================== #
@@ -3092,11 +3116,14 @@ def meet_sources(cur, table, meet_id):
     the census verified clean (the div_id<100 folklore holds for XC and is
     REVERSED for TF, which is why the column and not the folklore is used).
     """
+    # ! source AS THE TIE-BREAK (2026-09-13): count alone is not an order,
+    #   and the search index and sitemap store the ?alt= index this list
+    #   defines (search_index.meetAltIndex ranks the same way)
     cur.execute(f"""
         SELECT source, count(*) AS n
         FROM   {table}
         WHERE  meet_id = %(meet)s AND source IS NOT NULL
-        GROUP  BY source ORDER BY count(*) DESC
+        GROUP  BY source ORDER BY count(*) DESC, source
     """, {"meet": meet_id})
     return cur.fetchall()
 
@@ -4659,15 +4686,29 @@ def img_school(school_name):
     """
     from flask import send_file
     state = (request.args.get("state") or "").strip().upper()[:2] or None
-    path = None
-    try:
-        with getConn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                path = school_logo.logoPath(cur, school_name, state)
-    except Exception as exc:                          # noqa: BLE001
-        print(f"logo: {school_name} failed ({type(exc).__name__}: {exc})", flush=True)
+    # ★ FROM THE START-UP CACHE, NO DATABASE (2026-09-13: "new images make
+    #   some page loads super slow"). Every crest on a page was a request
+    #   into a sync worker that opened a pooled connection and ran a query
+    #   before sending a file; forty schools on a race page held forty
+    #   workers' worth of that while the HTML requests queued behind them.
+    #   The template already draws the tag from this cache, so the same
+    #   cache answers the request; the query is the fallback for a process
+    #   whose cache never loaded.
+    path = school_logo.crestPath(school_name, state)
+    if path is None and not school_logo.crestLoaded():
+        try:
+            with getConn() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    path = school_logo.logoPath(cur, school_name, state)
+        except Exception as exc:                          # noqa: BLE001
+            print(f"logo: {school_name} failed ({type(exc).__name__}: {exc})", flush=True)
     if path is None:
-        abort(404)
+        # a stale page's tag: let the browser and the edge stop asking for
+        # a while rather than paying a worker per view (no-store is the
+        # default for a 404)
+        resp = make_response(render_template("error.html", code=404), 404)
+        resp.headers["Cache-Control"] = "public, max-age=300"
+        return resp
     # ?px= for the inline mentions: a mark eighteen pixels wide has no use
     # for a 512 px file, and a race page names forty schools
     path = school_logo.thumbPath(path, request.args.get("px", type=int))

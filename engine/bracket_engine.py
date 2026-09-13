@@ -19,12 +19,13 @@ bracket_engine.py -- course difficulty the owner's way, as a second solve.
   difficulty of the course it was run on. h_i is the tilt (a fast runner
   pays less of a course), from the joint file's rating when present.
   Every race's difficulty is the mean of (z_i - a_s) / h_i over its voters,
-  the top fraction of its field by rating; a (course, era) cell is the
-  vote-weighted mean of its races, pulled toward the course's all-era
-  mean by `prior_rows` votes (20: an era with 30 votes keeps 60% of its
-  own number, one with 200 keeps 90%) so a two-race era is not one
-  strange race. On the planted era world the engine follows a course
-  that changed as far as the joint solve does at that pull.
+  the top fraction of its field by rating; a race weighs n/(n+RACE_SAT)
+  voters; a course is the weighted mean of its races pulled toward its
+  group's average course by a prior in races (fitted per group: XC,
+  outdoor track, indoor track -- see PRIOR_GROUP_BY); a (course, era)
+  cell is pulled toward the course's history by PRIOR_RACES races, so a
+  two-race era is not one strange race. On the planted era world the
+  engine follows a course that changed as far as the joint solve does.
 
   The reference races have their own difficulties, so this is a fixed
   point: iterate D -> a_s -> D with damping until it stops moving. That
@@ -65,16 +66,140 @@ RACE_SAT = 5.0
 PRIOR_GROUP = 1.0
 PRIOR_RACES = 2.0
 
+# ★ THE PRIOR IS PER GROUP, AND IT IS THE RATIO OF TWO VARIANCES (owner,
+#   2026-09-13: "TF difficulty weirder now, I think too much just variance.
+#   Maybe we should shrink variance for outdoor courses and let indoor keep
+#   its difficulty"). One race's worth of prior is right where the day-to-
+#   day spread of a course equals the course-to-course spread: on grass
+#   they are (the joint solve fits race-day sd 3.05% against a course
+#   prior of 3.64%). On an outdoor track they are not: race-day sd 1.45%
+#   against a course spread of 0.89%, so a one-race track kept half of one
+#   day when it should keep a quarter, and the board's scatter was days,
+#   not tracks. The prior in races is sigma_day^2 / tau^2 -- the number of
+#   readings whose average is as informative as "it is an ordinary
+#   course". Indoors the surface differences are real (banked against
+#   flat, 160 m against 300 m) and the weather is not, so the oval keeps
+#   more of its own number; and each group is pulled toward ITS OWN
+#   average, so a thin oval sits at the indoor level, not the outdoor one.
+#
+#   "fit" (the default) estimates the two variances per group from the
+#   courses with two or more races -- pooled within-course variance of the
+#   race readings against the between-course variance of their means, the
+#   same identified-priors idea as the joint solve's -- after PRIOR_FIT_WARMUP
+#   passes on the stated values, then holds them. The stated values are
+#   the fallback for a group with too few multi-race courses, and can be
+#   given whole (`prior_group=2.0`, every group) or per group
+#   (`{"XC": 1.0, "TF:out": 2.5, "TF:in": 1.0}`, or the string
+#   "XC=1,TF:out=2.5,TF:in=1"). Whatever is used is printed.
+PRIOR_GROUP_BY = {"XC": 1.0, "TF:out": 2.5, "TF:in": 1.0}
+PRIOR_GROUP_NAMES = ("XC", "TF:out", "TF:in")
+PRIOR_FIT = "fit"
+PRIOR_FIT_WARMUP = 6           # passes on the stated priors before the estimate
+PRIOR_FIT_RANGE = (0.25, 8.0)  # races; outside it the estimate is not believed
+PRIOR_FIT_MIN_COURSES = 30     # multi-race courses a group needs to be fitted
+
+
+def parsePrior(spec):
+    """A prior spec from the command line: 'fit', a number (every group),
+    or 'XC=1,TF:out=2.5,TF:in=1' (a group left out keeps its stated
+    value). Returns what fit() takes."""
+    if spec is None:
+        return PRIOR_FIT
+    if isinstance(spec, (int, float, dict)):
+        return spec
+    s = str(spec).strip()
+    if s.lower() == PRIOR_FIT:
+        return PRIOR_FIT
+    if "=" not in s:
+        return float(s)
+    out = dict(PRIOR_GROUP_BY)
+    for part in s.split(","):
+        k, _, v = part.partition("=")
+        k = k.strip()
+        if k not in PRIOR_GROUP_NAMES:
+            raise ValueError(f"unknown prior group {k!r}; one of {PRIOR_GROUP_NAMES}")
+        out[k] = float(v)
+    return out
+
+
+def priorGroupOfKeys(cell_keys):
+    """Per cell: 0 XC, 1 outdoor track, 2 indoor track, from the key."""
+    out = np.zeros(len(cell_keys), dtype=np.int64)
+    for i, k in enumerate(cell_keys):
+        if k.startswith("TF:"):
+            out[i] = 2 if k.split("@", 1)[0].endswith(":in") else 1
+    return out
+
+
+def _statedPriors(prior_group):
+    """The stated prior per group (an array over PRIOR_GROUP_NAMES) and
+    whether the groups are to be fitted."""
+    if isinstance(prior_group, str):
+        if prior_group.lower() != PRIOR_FIT:
+            return _statedPriors(parsePrior(prior_group))
+        return np.array([PRIOR_GROUP_BY[g] for g in PRIOR_GROUP_NAMES], dtype=np.float64), True
+    if isinstance(prior_group, dict):
+        d = dict(PRIOR_GROUP_BY); d.update(prior_group)
+        return np.array([float(d[g]) for g in PRIOR_GROUP_NAMES], dtype=np.float64), False
+    return np.full(len(PRIOR_GROUP_NAMES), float(prior_group)), False
+
+
+def fitPriors(D_race, w_race, ok_race, race_base, base_pg, n_base,
+              stated, lo=PRIOR_FIT_RANGE[0], hi=PRIOR_FIT_RANGE[1],
+              min_courses=PRIOR_FIT_MIN_COURSES):
+    """Per prior group: (prior in races, sigma_day, tau, n multi-race
+    courses). The within-course variance of the race readings (weighted
+    as the engine weights them) against the between-course variance of
+    the courses' means, on courses with two or more races; the prior is
+    their ratio, clipped to [lo, hi]; a group with fewer than min_courses
+    such courses keeps its stated value (n reported, sigma and tau NaN)."""
+    n_g = len(stated)
+    r = np.flatnonzero(ok_race)
+    b = race_base[r]
+    w = w_race[r]
+    d = D_race[r]
+    sw = np.bincount(b, weights=w, minlength=n_base)
+    sw2 = np.bincount(b, weights=w * w, minlength=n_base)
+    n_r = np.bincount(b, minlength=n_base)
+    mean_b = np.where(sw > 0, np.bincount(b, weights=w * d, minlength=n_base) / np.maximum(sw, 1e-12), 0.0)
+    dev2 = (d - mean_b[b]) ** 2
+    ss_b = np.bincount(b, weights=w * dev2, minlength=n_base)
+    df_b = np.where(sw > 0, sw - sw2 / np.maximum(sw, 1e-12), 0.0)   # weighted degrees of freedom
+    multi = n_r >= 2
+    out = []
+    for g in range(n_g):
+        m = multi & (base_pg == g)
+        n_c = int(m.sum())
+        if n_c < min_courses:
+            out.append((float(stated[g]), np.nan, np.nan, n_c))
+            continue
+        s_w2 = float(ss_b[m].sum() / max(df_b[m].sum(), 1e-12))
+        means = mean_b[m]
+        # the between-course variance, less what the readings' own noise
+        # puts into the means (each mean is s_w2 / effective races)
+        eff = sw[m] ** 2 / np.maximum(sw2[m], 1e-12)
+        tau2 = float(means.var() - np.mean(s_w2 / np.maximum(eff, 1e-12)))
+        if not np.isfinite(s_w2) or s_w2 <= 0:
+            out.append((float(stated[g]), np.nan, np.nan, n_c))
+            continue
+        k = hi if tau2 <= 0 else s_w2 / tau2
+        k = float(np.clip(k, lo, hi))
+        out.append((k, float(np.sqrt(s_w2)), float(np.sqrt(max(tau2, 0.0))), n_c))
+    return out
+
 
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
-        n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_GROUP,
+        n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
-        verbose=False, codes=None, prior_rows=None, z=None, h_row=None):
+        verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
+        prior_warmup=PRIOR_FIT_WARMUP):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
-    prior_races / prior_group / race_sat: see the note above; prior_rows
-    is the old name of prior_races and still accepted. min_voters: a race
+    prior_races / prior_group / race_sat: see the notes above; prior_group
+    is "fit" (per group, estimated after prior_warmup passes), one number
+    for every group, or a dict / "XC=1,TF:out=2.5,TF:in=1" per group;
+    prior_rows is the old name of prior_races and still accepted. min_voters: a race
     with fewer voters casts no vote (3: with top=0.5 a race of six counts,
     at weight 3/8 of a full race; a course with no such race sits at its
     sport's average). z: the response per
@@ -195,36 +320,71 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     cell_era = np.array([int(k.rpartition("@e")[2]) if "@e" in k else 0
                          for k in cell_keys], dtype=np.int64)
     cell_group = cell_sport * 100_000 + cell_era
-    for it in range(n_iter):
-        v = z - h * D[np.maximum(cell, 0)]
-        s, _c = W.sums(v[ref])
-        s = s - np.where(self_ref, v[q], 0.0)
-        a_q = np.where(has, s / np.maximum(n_other, 1), np.nan)
-        a_local[:] = np.nan
-        a_local[q] = a_q
-        # each race's difficulty from its voters with a level to compare to
-        vote = voters & np.isfinite(a_local)
-        r_i = (z - a_local) / h
-        num = np.bincount(race[vote], weights=r_i[vote], minlength=n_race)
-        cnt = np.bincount(race[vote], minlength=n_race).astype(np.float64)
-        ok_race = cnt >= min_voters
-        D_race = np.where(ok_race, num / np.maximum(cnt, 1), 0.0)
+    vote = np.zeros(n, dtype=bool)
+    # the prior groups: XC, outdoor track, indoor track, per cell and course
+    cell_pg = priorGroupOfKeys(cell_keys)
+    base_pg = np.zeros(n_base, dtype=np.int64)
+    base_pg[base_of_cell] = cell_pg
+    prior_stated, fit_priors = _statedPriors(prior_group)
+    prior_g = prior_stated.copy()
+    prior_report = None
+
+    def levels(D_now):
+        """The athletes' local levels against the courses D_now."""
+        v = z - h * D_now[np.maximum(cell, 0)]
+        s_, _c = W.sums(v[ref])
+        s_ = s_ - np.where(self_ref, v[q], 0.0)
+        a = np.full(n, np.nan)
+        a[q] = np.where(has, s_ / np.maximum(n_other, 1), np.nan)
+        return a
+
+    def cellStep(a, k_g):
+        """From the local levels: every race's reading, the course history
+        after the group prior k_g, the era cell after the era prior, and
+        the (sport, era) pin. Returns a dict of the pieces; D_new is the
+        full step."""
+        vote_ = voters & np.isfinite(a)
+        r_i = (z - a) / h
+        num = np.bincount(race[vote_], weights=r_i[vote_], minlength=n_race)
+        cnt = np.bincount(race[vote_], minlength=n_race).astype(np.float64)
+        ok = cnt >= min_voters
+        D_r = np.where(ok, num / np.maximum(cnt, 1), 0.0)
         # a race's weight saturates in its voters: one reading, many witnesses
-        w_race = np.where(ok_race, cnt / (cnt + race_sat), 0.0)
-        # the course's history, shrunk toward the average course by one
-        # race's worth of prior; then each era cell pulled toward that
-        num_c = np.bincount(race_cell, weights=w_race * D_race, minlength=n_cell)
-        w_c = np.bincount(race_cell, weights=w_race, minlength=n_cell)
-        num_b = np.bincount(base_of_cell, weights=num_c, minlength=n_base)
-        w_b = np.bincount(base_of_cell, weights=w_c, minlength=n_base)
-        D_base = np.where(w_b > 0, num_b / np.maximum(w_b + prior_group, 1e-9), 0.0)
-        D_new = np.where(w_c + prior_races > 0,
-                         (num_c + prior_races * D_base[base_of_cell]) / (w_c + prior_races),
+        w_r = np.where(ok, cnt / (cnt + race_sat), 0.0)
+        # the course's history, shrunk toward ITS GROUP's average course by
+        # the group's prior (in races); then each era cell pulled toward that
+        num_c_ = np.bincount(race_cell, weights=w_r * D_r, minlength=n_cell)
+        w_c_ = np.bincount(race_cell, weights=w_r, minlength=n_cell)
+        num_b_ = np.bincount(base_of_cell, weights=num_c_, minlength=n_base)
+        w_b_ = np.bincount(base_of_cell, weights=w_c_, minlength=n_base)
+        g_num = np.bincount(base_pg, weights=num_b_, minlength=len(k_g))
+        g_w = np.bincount(base_pg, weights=w_b_, minlength=len(k_g))
+        g_mean_ = np.where(g_w > 0, g_num / np.maximum(g_w, 1e-12), 0.0)
+        k_b = k_g[base_pg]
+        D_base_ = np.where(w_b_ > 0,
+                           (num_b_ + k_b * g_mean_[base_pg]) / np.maximum(w_b_ + k_b, 1e-9), 0.0)
+        D_pre = np.where(w_c_ + prior_races > 0,
+                         (num_c_ + prior_races * D_base_[base_of_cell]) / (w_c_ + prior_races),
                          0.0)
-        D_new = np.where(w_b[base_of_cell] > 0, D_new, 0.0)
-        for g in np.unique(cell_group[w_c > 0]):
-            m_g = (cell_group == g) & (w_c > 0)
-            D_new[m_g] -= np.average(D_new[m_g], weights=w_c[m_g])
+        D_pre = np.where(w_b_[base_of_cell] > 0, D_pre, 0.0)
+        pin = np.zeros(n_cell)
+        for g in np.unique(cell_group[w_c_ > 0]):
+            m_g = (cell_group == g) & (w_c_ > 0)
+            pin[m_g] = np.average(D_pre[m_g], weights=w_c_[m_g])
+        return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
+                    w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
+                    D_pre=D_pre, pin=pin, D_new=D_pre - pin)
+
+    for it in range(n_iter):
+        a_local = levels(D)
+        st = cellStep(a_local, prior_g)
+        if fit_priors and prior_report is None and it >= prior_warmup:
+            race_base = base_of_cell[race_cell]
+            prior_report = fitPriors(st["D_race"], st["w_race"], st["ok_race"], race_base,
+                                     base_pg, n_base, prior_stated)
+            prior_g = np.array([p[0] for p in prior_report], dtype=np.float64)
+            st = cellStep(a_local, prior_g)
+        D_new, w_c, ok_race = st["D_new"], st["w_c"], st["ok_race"]
         # ! DAMPING 0.5, NOT 1.0 (corpus, 2026-09-12: "max change 0.161" from
         #   pass 4 to pass 30, never converging). Two cells whose runners'
         #   only other races are at each other form an island: D_A = c + D_B
@@ -243,30 +403,129 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             print(f"[bracket] iteration {it + 1}: max change {step:.6f} "
                   f"({n_moving:,} cells over {tol:g}, rms {rms:.2e}), "
                   f"{int(ok_race.sum()):,} races with {min_voters}+ voters", flush=True)
-        if step < tol:
+        # ! NOT BEFORE THE PRIORS ARE FITTED: a small world settles in
+        #   fewer passes than the warm-up, and stopping there would leave
+        #   the stated priors in place with the log saying they were fitted
+        if step < tol and not (fit_priors and prior_report is None):
             break
-    # the final local levels against the final D
-    v = z - h * D[np.maximum(cell, 0)]
-    s, _c = W.sums(v[ref])
-    s = s - np.where(self_ref, v[q], 0.0)
-    a_local[:] = np.nan
-    a_local[q] = np.where(has, s / np.maximum(n_other, 1), np.nan)
+    # the final local levels against the final D, and the engine's
+    # arithmetic evaluated there: every piece of the trace rebuilds
+    # D_fit = D_new of this pass, which is D itself to within the tolerance
+    a_local = levels(D)
+    st = cellStep(a_local, prior_g)
+    vote, D_race, w_race, ok_race = st["vote"], st["D_race"], st["w_race"], st["ok_race"]
+    num_c, w_c, w_b, g_mean, D_base = st["num_c"], st["w_c"], st["w_b"], st["g_mean"], st["D_base"]
     races_per_cell = np.bincount(race_cell[ok_race], minlength=n_cell)
     races_per_base = np.bincount(base_of_cell, weights=races_per_cell,
                                  minlength=n_base).astype(np.int64)
+    prior_lines = priorReport(prior_g, prior_stated, prior_report, fit_priors,
+                              races_per_base, w_b, base_pg)
+    # the engine's arithmetic per cell, for the trace (scripts/course_bracket):
+    # the era's own vote-mean, the course's shrunk history and its votes,
+    # the (sport, era) pin, and the total they rebuild
+    D_cell_raw = np.where(w_c > 0, num_c / np.maximum(w_c, 1e-12), np.nan)
+    tilt_bands = tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport)
     if verbose:
-        thin = int(((races_per_base == 1) & (w_b > 0)).sum())
-        print(f"[bracket] priors: a race weighs n/(n+{race_sat:g}) voters; a course is "
-              f"pulled to its sport's average by {prior_group:g} race, an era to the "
-              f"course's history by {prior_races:g}; {thin:,} courses rest on one race "
-              f"and keep about {100 * (1 / (1 + prior_group)):.0f}% of it", flush=True)
+        print(f"[bracket] priors: a race weighs n/(n+{race_sat:g}) voters; an era is "
+              f"pulled to the course's history by {prior_races:g} races; a course to "
+              f"its group's average course by (in races):", flush=True)
+        for ln in prior_lines:
+            print("        " + ln, flush=True)
     return dict(D=D, votes=w_c, D_race=D_race, votes_race=w_race, race=race,
                 cell=cell, cell_keys=cell_keys, base_of_cell=base_of_cell,
                 races_per_cell=races_per_cell, races_per_base=races_per_base,
                 a_local=a_local, h=h, z=z, curve=curve, season=season,
                 n_season=n_season, train=train, voters=voters, window=window,
                 top=top, era_years=era_years, prior_races=prior_races,
-                prior_group=prior_group, race_sat=race_sat)
+                prior_group=prior_g, prior_group_names=PRIOR_GROUP_NAMES,
+                prior_group_stated=prior_stated, prior_group_fitted=fit_priors,
+                prior_report=prior_report, prior_lines=prior_lines,
+                cell_prior_group=cell_pg, race_sat=race_sat,
+                D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
+                group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,
+                pin=st["pin"], D_fit=st["D_new"])
+
+
+TILT_BANDS = (100.0, 120.0, 130.0, 140.0, 150.0, 160.0)
+
+
+def tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport, bands=TILT_BANDS,
+               min_rows=2000, min_course=0.02):
+    """★ THE TILT THE BRACKETS IMPLY, PER RATING BAND AND SPORT (owner,
+    2026-09-13: the hardest venues -- Mt. SAC, Crystal Springs, Glendoveer
+    -- "seem overstated"). Those venues are read through elite runners,
+    and every reading is divided by the applied tilt h(rating): if the
+    line is too steep above 140, every course measured by 140s and 150s
+    is inflated by the same fraction, and the ones that are ALSO hard
+    show it most. Here each voter's untilted reading b = z - a_local is
+    regressed through the origin on the course's fitted D within the
+    band (courses within +-min_course excluded, they carry no signal):
+    implied h = sum(D b) / sum(D^2), against the h applied. A line past
+    140 means the extrapolation holds; implied below applied there means
+    the elite pay less of a course than charged and the hard venues are
+    overstated by the ratio. Returns rows (sport, band, n, applied,
+    implied, se) or None without ratings."""
+    if rating is None:
+        return None
+    b = z - a_local
+    d = D[np.maximum(cell, 0)]
+    r = np.nan_to_num(np.asarray(rating, dtype=np.float64), nan=100.0)
+    sp = cell_sport[np.maximum(cell, 0)]
+    edges = (-np.inf,) + tuple(bands) + (np.inf,)
+    rows = []
+    base = vote & np.isfinite(b) & (np.abs(d) >= min_course)
+    for s_code, s_name in ((0, "XC"), (1, "TF")):
+        for lo, hi in zip(edges, edges[1:]):
+            m = base & (sp == s_code) & (r >= lo) & (r < hi)
+            n = int(m.sum())
+            if n < min_rows:
+                continue
+            sxx = float(np.sum(d[m] * d[m]))
+            if sxx <= 0:
+                continue
+            implied = float(np.sum(d[m] * b[m]) / sxx)
+            res = b[m] - implied * d[m]
+            se = float(np.sqrt(np.sum(res * res) / max(n - 1, 1) / sxx))
+            lab = (f"<{hi:.0f}" if lo == -np.inf else
+                   f"{lo:.0f}+" if hi == np.inf else f"{lo:.0f}-{hi:.0f}")
+            rows.append((s_name, lab, n, float(h[m].mean()), implied, se))
+    return rows
+
+
+def tiltLines(rows):
+    """The tilt-by-band rows as printable lines."""
+    if not rows:
+        return []
+    out = [f"{'sport':<6}{'band':>9}{'voters':>10}{'applied h':>11}{'implied h':>11}{'se':>7}"
+           "   (implied < applied: the band pays less of a course than charged)"]
+    for s_name, lab, n, ha, hi_, se in rows:
+        out.append(f"{s_name:<6}{lab:>9}{n:>10,}{ha:>11.3f}{hi_:>11.3f}{se:>7.3f}")
+    return out
+
+
+def priorReport(prior_g, stated, report, fitted, races_per_base, w_b, base_pg):
+    """One line per group: the prior used, where it came from, and what a
+    one-race course keeps of its one reading."""
+    lines = []
+    for g, name in enumerate(PRIOR_GROUP_NAMES):
+        k = float(prior_g[g])
+        n_courses = int(((w_b > 0) & (base_pg == g)).sum())
+        thin = int(((races_per_base == 1) & (w_b > 0) & (base_pg == g)).sum())
+        if n_courses == 0:
+            continue
+        keep = 100.0 / (1.0 + k)
+        src = f"stated {stated[g]:g}"
+        if fitted and report is not None:
+            _k, s_day, tau, n_c = report[g]
+            if np.isfinite(s_day):
+                src = (f"FITTED on {n_c:,} courses with 2+ races: race-day sd "
+                       f"{100 * s_day:.2f}%, course sd {100 * tau:.2f}%, ratio "
+                       f"{s_day ** 2 / max(tau ** 2, 1e-12):.2f} (stated {stated[g]:g})")
+            else:
+                src = f"stated {stated[g]:g} ({n_c:,} courses with 2+ races, too few to fit)"
+        lines.append(f"{name:<7} {k:5.2f} races  [{src}]; {n_courses:,} courses, "
+                     f"{thin:,} on one race keeping about {keep:.0f}% of it")
+    return lines
 
 
 def predict(f):

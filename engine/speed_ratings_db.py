@@ -116,7 +116,14 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   a name; it cross-tabulates that share against this class so
            #   the log can say whether the finals show the highest share.
            #   A pack without it runs without the cross-tab.
-           "meet_class")
+           "meet_class",
+           # ★ THE RAW TIME (2026-09-13): with it the pack can tell which
+           #   pool's scale a stored normalized_time is on and move the row
+           #   onto the pool it is RATED in (speed_ratings.rescaleToPool).
+           #   The 230 ratings were rows normalised as hs_m and rated as
+           #   college_m; the DB repair (anchor_repair) runs at step 5 and
+           #   never reaches a pack built earlier or a pool decided later.
+           "time_seconds")
 
 
 # ------------------------------------------------------------------ #
@@ -570,7 +577,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                            ->> 'distance')::real,
                         mt.distance)::real AS dist_m,
                {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
-                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class
+                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class,
+               r.time_seconds::real AS time_seconds
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -686,7 +694,8 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   Same parse the backfill uses, in SQL: digits, 'k' =
                --   thousands, 'mile' = 1609.34 each.
                COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m,
-               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class
+               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class,
+               r.time_seconds::real AS time_seconds
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id

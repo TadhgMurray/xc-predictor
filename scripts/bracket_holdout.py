@@ -62,7 +62,7 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 
 
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
-          top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_GROUP, iters=30,
+          top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
           tilt=True, use_curve=True, verbose=True, joint_dump=None):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
@@ -211,7 +211,7 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
 
 
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
-           prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_GROUP, iters=30, tilt=True,
+           prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
            use_curve=True):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
@@ -226,7 +226,9 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
              base_of_cell=f["base_of_cell"],
              window=np.array([window]), top=np.array([top]),
              era_years=np.array([era_years]), prior_races=np.array([prior_races]),
-             prior_group=np.array([prior_group]), race_sat=np.array([f["race_sat"]]))
+             prior_group=np.asarray(f["prior_group"], dtype=np.float64),
+             prior_group_names=np.array(list(f["prior_group_names"])),
+             race_sat=np.array([f["race_sat"]]))
     print(f"[bracket] wrote {out_path}: {int((f['votes'] > 0).sum()):,} cells with votes "
           f"in {time.time() - t0:.0f}s")
     return f
@@ -248,7 +250,7 @@ def main():
     ap.add_argument("--top", type=float, default=0.5)
     ap.add_argument("--prior-races", type=float, default=be.PRIOR_RACES,
                     help="races' worth of pull of an era toward its course's history")
-    ap.add_argument("--prior-group", type=float, default=be.PRIOR_GROUP,
+    ap.add_argument("--prior-group", type=be.parsePrior, default=be.PRIOR_FIT,
                     help="races' worth of pull of a course toward its sport's average")
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--no-tilt", action="store_true")

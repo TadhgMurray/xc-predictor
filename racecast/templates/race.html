@@ -62,7 +62,7 @@
     </p>
     {% endif %}
 
-    <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
+    <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">View full meet →</a></p>
 
 {% if scores is not defined or scores is none %}
     {# ⚠ THE ROUTE DID NOT PASS scores. Almost always app.py not reloaded --

@@ -152,7 +152,7 @@ def test_a_course_seen_once_keeps_half_of_what_the_day_showed():
             "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
             "course_keys": [f"XC:{100 + c}:d5000" for c in range(n_ord + 2)]}
     with contextlib.redirect_stdout(io.StringIO()):
-        f = be.fit(cols, None, window=21, top=1.0)
+        f = be.fit(cols, None, window=21, top=1.0, prior_group=1.0)   # the stated prior
     D = f["D"]
     assert f["races_per_base"][n_ord + 1] == 1 and f["races_per_base"][n_ord] == 30
     # the once-raced course: about half of +17% (the prior is one race)
@@ -163,3 +163,119 @@ def test_a_course_seen_once_keeps_half_of_what_the_day_showed():
     with contextlib.redirect_stdout(io.StringIO()):
         f0 = be.fit(cols, None, window=21, top=1.0, prior_group=0.0)
     assert f0["D"][n_ord + 1] > 0.14, f0["D"][n_ord + 1]
+
+
+def _priorWorld(tau, sig, n_c=80, r=6, n_v=20, seed=1, keys=None):
+    """n_c courses whose true difficulties have sd `tau`, each raced r
+    times with a race-day effect of sd `sig`, n_v runners a race, individual
+    noise 3%."""
+    rng = np.random.default_rng(seed)
+    n_ath = 4000
+    a = rng.normal(0, 0.12, n_ath)
+    d = rng.normal(0, tau, n_c)
+    rows = []
+    day = 0
+    for c in range(n_c):
+        for _k in range(r):
+            u = rng.normal(0, sig)
+            day += 1
+            for i in rng.choice(n_ath, n_v, replace=False):
+                rows.append((i, c, day % 60 + 7 * (day // 60), d[c] + u))
+    rows = np.array(rows, dtype=float)
+    ath = rows[:, 0].astype(int); course = rows[:, 1].astype(int)
+    days = rows[:, 2]; eff = rows[:, 3]
+    y = a[ath] + eff + rng.normal(0, 0.03, ath.size)
+    keys = keys or [f"XC:{100 + c}:d5000" for c in range(n_c)]
+    sport = 1 if keys[0].startswith("TF:") else 0
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course, "days": days,
+            "sport": np.full(ath.size, sport), "norm": np.exp(y),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)], "course_keys": keys}
+    return cols, d
+
+
+def test_the_prior_is_fitted_per_group_from_the_two_variances():
+    """★ OWNER, 2026-09-13: "shrink variance for outdoor courses and let
+    indoor keep its difficulty". The prior in races is the race-day
+    variance over the course variance, read from the courses with 2+
+    races. Grass at the corpus' numbers (course sd 3.5%, day sd 3%) fits
+    about one race, as stated; an outdoor track world (course sd 0.9%,
+    day sd 1.45%) fits several, and its board is shrunk harder; a world
+    with no day effect fits under one."""
+    cols, d = _priorWorld(0.035, 0.03)
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0)
+    assert f["prior_group_fitted"]
+    k_xc = f["prior_group"][0]
+    assert 0.6 < k_xc < 1.6, f["prior_lines"]
+    assert np.corrcoef(f["D"], d)[0, 1] > 0.9
+    cols, d = _priorWorld(0.009, 0.0145, keys=[f"TF:loc:{c}:out" for c in range(80)])
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0)
+        f1 = be.fit(cols, None, window=21, top=1.0, prior_group=1.0)
+    k_out = f["prior_group"][1]
+    assert k_out > 2.5, f["prior_lines"]
+    assert f["prior_group"][0] == be.PRIOR_GROUP_BY["XC"]       # no XC courses: stated
+    # the fitted prior shrinks the track board harder than one race does,
+    # and lands nearer the truth
+    assert np.std(f["D"]) < np.std(f1["D"])
+    assert np.abs(f["D"] - d).mean() < np.abs(f1["D"] - d).mean()
+    cols, d = _priorWorld(0.03, 0.0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0)
+    assert f["prior_group"][0] < 0.6, f["prior_lines"]
+
+
+def test_a_thin_oval_sits_at_the_indoor_level_not_the_outdoor_one():
+    """Each group is pulled toward ITS OWN average: an indoor oval raced
+    once is shrunk toward the indoor level, not toward the outdoor zero."""
+    rng = np.random.default_rng(5)
+    n_ath = 3000
+    a = rng.normal(0, 0.12, n_ath)
+    rows = []
+    # 20 outdoor tracks at 0, 6 races each; 5 ovals at +1.5%, 6 races each;
+    # one oval at +1.5% raced once, in the same window as the others
+    for c in range(20):
+        for k in range(6):
+            for i in rng.choice(n_ath, 25, replace=False):
+                rows.append((i, c, 100 + 3 * k + c % 3, 0.0))
+    for c in range(20, 25):
+        for k in range(6):
+            for i in rng.choice(n_ath, 25, replace=False):
+                rows.append((i, c, 85 + 3 * k + c % 3, 0.015))
+    for i in rng.choice(n_ath, 25, replace=False):
+        rows.append((i, 25, 95, 0.015))
+    # the ovals' days end where the tracks' begin, so the indoor level is
+    # read through athletes with both inside one window (the March seam)
+    rows = np.array(rows, dtype=float)
+    ath = rows[:, 0].astype(int); course = rows[:, 1].astype(int)
+    days = rows[:, 2]; eff = rows[:, 3]
+    y = a[ath] + eff + rng.normal(0, 0.02, ath.size)
+    keys = [f"TF:loc:{c}:out" for c in range(20)] + [f"TF:loc:{c}:in" for c in range(20, 26)]
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course, "days": days,
+            "sport": np.ones(ath.size, dtype=np.int64), "norm": np.exp(y),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)], "course_keys": keys}
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0, prior_group={"TF:in": 1.0, "TF:out": 2.5})
+    D = f["D"]
+    lvl = D[20:25].mean() - D[:20].mean()
+    assert lvl > 0.010, lvl                        # the ovals' level is read
+    # the once-raced oval sits with the other ovals, not halfway to outdoor
+    assert D[25] - D[:20].mean() > 0.7 * lvl, (D[25], lvl)
+
+
+def test_the_prior_spec_parses():
+    assert be.parsePrior(None) == be.PRIOR_FIT
+    assert be.parsePrior("fit") == be.PRIOR_FIT
+    assert be.parsePrior("2.5") == 2.5
+    got = be.parsePrior("TF:out=3, XC=0.8")
+    assert got == {"XC": 0.8, "TF:out": 3.0, "TF:in": be.PRIOR_GROUP_BY["TF:in"]}
+    stated, fitted = be._statedPriors("XC=2")
+    assert list(stated) == [2.0, be.PRIOR_GROUP_BY["TF:out"], be.PRIOR_GROUP_BY["TF:in"]] and not fitted
+    stated, fitted = be._statedPriors(0.0)
+    assert list(stated) == [0.0, 0.0, 0.0] and not fitted
+    try:
+        be.parsePrior("TF=1")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown group must be refused")

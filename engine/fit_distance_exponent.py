@@ -1644,6 +1644,49 @@ def _sampleClamped(coeffs, knots, lo, hi, s_hi_override=None):
     return [float(v) for v in values]
 
 
+# ★ A DISTANCE EXPONENT UNDER 1.0 IS NOT A LAW, IT IS A CONFOUND (owner,
+#   2026-09-13: "the distance normalization might be off"). The shipped
+#   artifact's college_m|XC curve ran 8000->10000 at a local exponent of
+#   0.92 and elem_m|XC past 3200 at 0.98: a runner whose PACE gets faster
+#   as the race gets longer. No athlete does that. What the pairs carry
+#   is the calendar and the course -- a college 10k is the November
+#   championship at peak fitness against an October 8k, an elementary 5k
+#   is the strong kids' race -- and a same-athlete pair does not cancel
+#   either. The symptom on the site was "10k too low": a 30:35 10k read as
+#   a worse 8k than the runner's own 24:00. So the sampled curve is held
+#   to a floor on its local exponent, in the direction of longer
+#   distance: no segment may rise slower than MIN_LOCAL_EXP. 1.04 is the
+#   flattest fade a very strong aerobic runner shows (Riegel's band is
+#   1.06-1.10); a curve that needed the floor is printed as such.
+#   --min-exponent 0 turns it off; scripts/distance_curve_check.py reads
+#   the shipped artifact's local exponents so the effect can be seen
+#   before and after a refit.
+MIN_LOCAL_EXP = 1.04
+
+
+def _floorLocalExponent(knots, values, k_min):
+    """The sampled g held to a local exponent of at least k_min between
+    consecutive knots (g is log-time against log-distance, so its slope
+    IS the exponent). Returns (values, segments raised)."""
+    if not k_min or k_min <= 0 or len(values) < 2:
+        return list(values), 0
+    # ! SLOPES, THEN REBUILD. A segment under the floor is set to the
+    #   floor and everything past it shifts up by the difference; the
+    #   segments that were fine keep their own slope (clamping each value
+    #   against the raised one before it would flatten them all to the
+    #   floor, which is a different curve from the one the pairs drew).
+    out = [float(values[0])]
+    raised = 0
+    for i in range(1, len(values)):
+        step = float(knots[i]) - float(knots[i - 1])
+        slope = (float(values[i]) - float(values[i - 1])) / step if step > 0 else float(k_min)
+        if slope < float(k_min) - 1e-12:
+            raised += 1
+            slope = float(k_min)
+        out.append(out[-1] + slope * step)
+    return out, raised
+
+
 # The beyond-span testimony has to be a population, not an anecdote, and
 # its verdict has to be a physical exponent. Outside the band, the tangent
 # (which the health gates already police) is the safer liar.
@@ -1745,9 +1788,12 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
     # _extensionSlopeHigh. None -> the boundary tangent, as before.
     ext_slope, n_ext = _extensionSlopeHigh(pairs, coeffs, lo, hi)
     knots = _knotGrid(edges)
+    values, floored = _floorLocalExponent(
+        knots, _sampleClamped(coeffs, knots, lo, hi, s_hi_override=ext_slope),
+        MIN_LOCAL_EXP)
     return {"knots": [float(k) for k in knots],
-            "values": _sampleClamped(coeffs, knots, lo, hi,
-                                     s_hi_override=ext_slope),
+            "values": values,
+            "floored_segments": floored, "min_local_exp": float(MIN_LOCAL_EXP or 0.0),
             "n_edges": n_trans, "degree": degree,
             "coeffs": [float(c) for c in coeffs],
             "span": (float(math.exp(lo)), float(math.exp(hi))),
@@ -1785,7 +1831,10 @@ def _healthNote(entry):
     tag = "" if _isHealthy(entry) else \
           "  <<< UNPHYSICAL — do not trust this curve"
     lo, hi = _curveHealth(entry)
-    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}"
+    fl = entry.get("floored_segments") or 0
+    floor = (f"; {fl} segment{'s' if fl != 1 else ''} held to the "
+             f"{entry.get('min_local_exp', MIN_LOCAL_EXP):.2f} floor" if fl else "")
+    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}{floor}"
 
 
 # _isHealthy
@@ -2408,6 +2457,7 @@ def _spotCheck(entry, reference_time):
 
 def main():
     import argparse
+    global MIN_LOCAL_EXP
     parser = argparse.ArgumentParser(
         description="Fit the per-pool distance splines")
     parser.add_argument("--fresh", action="store_true",
@@ -2420,14 +2470,22 @@ def main():
                              "100m distance rung, paired across rungs "
                              "(issue #109: equal-quality, not same-month). "
                              "XC pairs are unchanged. Own pair cache.")
+    parser.add_argument("--min-exponent", type=float, default=MIN_LOCAL_EXP,
+                        help="the floor on every curve's local distance "
+                             "exponent (default %(default)s; 0 turns it off). "
+                             "See MIN_LOCAL_EXP.")
     parser.add_argument("--min-per-rung", type=int, default=1,
                         help="with --season-best: a rung needs this many "
                              "races before its best counts (2 tightens the "
                              "order-statistic bias toward the more-raced "
                              "distance)")
     args = parser.parse_args()
+    MIN_LOCAL_EXP = float(args.min_exponent or 0.0)
 
     print("=== fit_distance_exponent.py (rewrite) ===\n")
+    print(f"LOCAL EXPONENT FLOOR: {MIN_LOCAL_EXP:g} (--min-exponent; a curve "
+          "whose pairs say a longer race is run at a faster pace is held to "
+          "it, and says so in its health line)\n")
     if args.season_best:
         print("TF SAMPLE: season bests per rung (--season-best"
               f"{f', --min-per-rung {args.min_per_rung}' if args.min_per_rung > 1 else ''})."

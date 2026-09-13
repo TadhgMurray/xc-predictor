@@ -22,6 +22,21 @@ PY="${XCP_PYTHON:-/srv/venv/bin/python}"
 #   /srv/wxvenv, not in $PY's venv. Absent, step 04e says so and the run
 #   goes on without new weather (as every run before it did).
 WXPY="${XCP_WXPYTHON:-/srv/wxvenv/bin/python}"
+
+# ★ THE PIPELINE YIELDS TO THE SITE (owner, 2026-09-13: "some parts of
+#   pipeline make website super slow (this is a must fix)"). Every step
+#   runs under nice and, where it exists, ionice idle-ish, so gunicorn and
+#   Postgres win the CPU and the disk when a page is being served; and the
+#   numpy solve's BLAS is capped at XCP_THREADS (cores less two) instead of
+#   one thread per core, which starved the eight workers for hours.
+#   XCP_NICE=0 XCP_THREADS=<n> override both.
+XCP_NICE="${XCP_NICE:-10}"
+NICE="nice -n $XCP_NICE"
+if command -v ionice >/dev/null 2>&1; then NICE="$NICE ionice -c2 -n7"; fi
+_cores=$(nproc 2>/dev/null || echo 4)
+XCP_THREADS="${XCP_THREADS:-$(( _cores > 3 ? _cores - 2 : 1 ))}"
+export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
+       MKL_NUM_THREADS="$XCP_THREADS" NUMEXPR_NUM_THREADS="$XCP_THREADS"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -183,7 +198,7 @@ step() {
   t0=$(date +%s)
   # ! -u SO PYTHON DOES NOT BUFFER. Without it a four-hour step shows nothing
   #   until it finishes, and you cannot tell a slow step from a hung one.
-  if "$@" 2>&1 | tee "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
+  if $NICE "$@" 2>&1 | tee "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
     echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
@@ -217,9 +232,9 @@ steps2() {
   echo "  $nameA + $nameB    $(date +%H:%M:%S)   (in parallel)"
   echo "======================================================================"
   t0=$(date +%s)
-  sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
+  $NICE sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
   pa=$!
-  sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
+  $NICE sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
   pb=$!
   wait "$pa"; ra=$?
   wait "$pb"; rb=$?
@@ -261,7 +276,7 @@ stepsN() {
   t0=$(date +%s)
   names=""; pids=""
   while [ $# -ge 2 ]; do
-    sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
+    $NICE sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
     pids="$pids $!"; names="$names $1"; shift 2
   done
   rcs=""
@@ -302,7 +317,7 @@ shards() {
   pids=""
   k=0
   while [ "$k" -lt "$n" ]; do
-    "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
+    $NICE "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
     pids="$pids $!"
     k=$((k + 1))
   done
@@ -540,6 +555,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   0.01): with a few race days per era that number, against
   #   sigma_u / sqrt(days), decides how far a venue can move. The holdout
   #   carries the same.
+  # ★ XCP_BRACKET_PRIOR: the bracket engine's course prior in races, per
+  #   group (XC, outdoor track, indoor track). Default "fit": read from
+  #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
+  #   states them; one number states every group (bracket_engine.parsePrior).
   # ★ XCP_DIFFICULTY=bracket publishes the bracket engine's course numbers
   #   (run_joint.bracketDifficulties): the solve still fits everything
   #   else, the courses come from the owner's method, the abilities are
@@ -548,6 +567,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
+      ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \

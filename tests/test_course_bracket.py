@@ -123,3 +123,58 @@ def test_the_venue_subset_changes_nothing_but_the_time():
         assert abs(x["bracket"] - y_["bracket"]) < 1e-12
         assert abs(x["ref"] - y_["ref"]) < 1e-12 and x["cell_key"] == y_["cell_key"]
         assert np.isfinite(x["board"]) and x["board"] == y_["board"]
+
+
+def test_the_engine_block_rebuilds_the_published_number_and_the_readings_match(capsys):
+    """★ OWNER, 2026-09-13: the venue diagnostic and the engine must agree
+    -- "we made diagnostics that capture course difficulty and then we
+    aren't using it". Under --difficulty bracket the solve file carries
+    the engine's per-cell arithmetic; the venue report shows each race's
+    engine reading (bracket / h + the references' board) and the chain
+    raw -> history -> era -> pin -> recentre -> published, and the chain
+    lands on the published number."""
+    cols, keep, keys, sport_of_course = _era_pack()
+    with contextlib.redirect_stdout(io.StringIO()):
+        D, athlete_pool, pool_names = rj.buildDesign(
+            cols, keep, sport_offset=False, curve=False, rust=False, dist=False,
+            slope=False, link=False, altitude=False, era_years=2,
+            importance="none", indoor=True, dist_table=False)
+        y = np.log(cols["norm"][keep])
+        out = js.solveJoint(y, design=D, athlete_pool=athlete_pool, n_outer=3,
+                            tilt=False, n_probe=0)
+        rj.bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
+                               window=60, top=0.5)
+    import bracket_engine as be
+    npz = {"delta": out["delta"], "race_effect": out["race_effect"],
+           "rating": out["rating"], "course_keys": np.array(D.course_keys),
+           "mu": out["mu"], "bracket_prior_races": np.array([be.PRIOR_RACES]),
+           "bracket_race_sat": np.array([be.RACE_SAT]),
+           "bracket_prior_group_names": np.array(list(be.PRIOR_GROUP_NAMES))}
+    for k in ("bracket_cell_raw", "bracket_votes", "bracket_races_per_cell", "bracket_base",
+              "bracket_base_votes", "bracket_pin", "bracket_shift", "bracket_cell_fit",
+              "bracket_prior_group"):
+        npz[k] = np.asarray(out[k])
+    res = cb.bracket(cols, npz, ["XC:100:"], window=60, top=0.5, era_years=2)
+    r = res["XC:100:d5000"]
+    eng = r["engine"]
+    assert len(eng) == 4                      # four two-year eras
+    for e in eng:
+        assert e["races"] >= 10 and e["votes"] > 4
+        # the chain lands on the published number (the engine's iterate is
+        # within its tolerance of the exact fixed-point step)
+        assert abs(e["fit"] - e["pin"] * 0 - (e["era"] - e["pin"])) < 1e-12
+        assert abs(e["fit"] - e["shift"] + e["level"] - e["published"]) < 2e-4
+    # the races' engine readings, vote-weighted per era, are the era's raw
+    by_cell = {}
+    for x in r["races"]:
+        if np.isfinite(x["reading"]) and x["race_weight"] > 0:
+            s_, w_ = by_cell.get(x["cell_key"], (0.0, 0.0))
+            by_cell[x["cell_key"]] = (s_ + x["race_weight"] * x["reading"], w_ + x["race_weight"])
+    for e in eng:
+        s_, w_ = by_cell[e["cell_key"]]
+        # the diagnostic's readings are the engine's to a few tenths of a
+        # percent: same references, same tilt, same voters up to ties
+        assert abs(s_ / w_ - e["raw"]) < 0.004, (e["cell_key"], s_ / w_, e["raw"])
+    cb.report(res, None, top=0.5)
+    text = capsys.readouterr().out
+    assert "the engine's arithmetic" in text and "reading" in text

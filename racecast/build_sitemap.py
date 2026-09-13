@@ -190,10 +190,18 @@ def collect(conn):
             by_kind["courses"] = [("/course/" + quote(n, safe=""), None)
                                   for n in sorted(seen) if n]
         meets = []
-        for table, fmt in (("meet_agg_xc", "/meet/xc/{}"), ("meet_agg_tf", "/meet/tf/{}")):
+        # ★ BOTH MEETS UNDER A COLLIDING ID (2026-09-13): the aggregates
+        #   are keyed (meet_id, source) and the second meet lives at ?alt=N,
+        #   the index the page resolves it under (search_index.meetAltIndex)
+        from search_index import meetAltIndex, meetLink
+        for table, fmt in (("meet_agg_xc", "/meet/xc/{mid}"), ("meet_agg_tf", "/meet/tf/{mid}")):
             if _exists(cur, table):
-                cur.execute(f"SELECT meet_id FROM {table}")
-                meets += [(fmt.format(r[0]), None) for r in cur.fetchall()]
+                cur.execute(f"SELECT meet_id, source, n_rank FROM {table}")
+                rows = [{"meet_id": r[0], "source": r[1], "n_rank": r[2]}
+                        for r in cur.fetchall()]
+                alt_of = meetAltIndex(rows)
+                meets += [(meetLink(fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]), None)
+                          for r in rows]
         if meets:
             by_kind["meets"] = meets
         # ★ RACE PAGES TOO (owner, 2026-09-05): a race page is where a

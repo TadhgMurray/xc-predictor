@@ -80,7 +80,7 @@
             <tr>
                 <td>{{ "Boys" if d.gender == 'M' else "Girls" if d.gender == 'F' else " - " }}</td>
                 <td>
-                    <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
+                    <a href="/race/xc/{{ header.meet_id }}/{{ d.div_id }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}">
                         {{ d.division if d.division else "Division " ~ d.div_id }}
                     </a>
                     {% if school and d.div_id in school_divs %}<span class="school-ran" title="{{ school }} raced this division">· {{ school|school_label }}</span>{% endif %}

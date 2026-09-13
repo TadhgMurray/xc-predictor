@@ -1511,6 +1511,11 @@ def buildParser():
                          "residual (bracketDifficulties)")
     ap.add_argument("--bracket-window", type=float, default=21.0)
     ap.add_argument("--bracket-top", type=float, default=0.5)
+    ap.add_argument("--bracket-prior", default="fit",
+                    help="the bracket engine's course prior in races: 'fit' (per "
+                         "group -- XC, outdoor track, indoor track -- from the "
+                         "courses with 2+ races), one number for every group, or "
+                         "'XC=1,TF:out=2.5,TF:in=1' (bracket_engine.parsePrior)")
     ap.add_argument("--golive", action="store_true")
     ap.add_argument("--golive-dry", action="store_true")
     ap.add_argument("--anchor", default="career",
@@ -1669,7 +1674,7 @@ def applyImplications(args, ap):
 #   the races behind the cell plus the prior, which is what the engine
 #   averaged.
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                        window=21.0, top=0.5, verbose=True):
+                        window=21.0, top=0.5, verbose=True, prior_group="fit"):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1710,18 +1715,20 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                  pool_names=list(pool_names), n_base=len(keys), keys=keys)
     npz_like = {"rating": out["rating"]} if out.get("rating") is not None else None
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
-               h_row=h, verbose=verbose)
+               h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group))
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
     # recentre as recentreLevels centres d: the outdoor cells' unweighted
     # mean per sport is the zero; indoor cells keep their level
     g = np.asarray(D.group_of_cell)
     is_indoor = np.array([k.split("@", 1)[0].endswith(":in") for k in cell_keys], dtype=bool)
+    shift_cell = np.zeros(D.n_cell)
     for gg in range(int(g.max()) + 1):
         m = (g == gg) & ~is_indoor
         if not m.any():
             m = g == gg
         if m.any():
-            D_b[g == gg] -= float(D_b[m].mean())
+            shift_cell[g == gg] = float(D_b[m].mean())
+    D_b = D_b - shift_cell
     delta_b = mu_full[g] + D_b
     # abilities given the new courses: the solve's own weighted means
     w = np.asarray(out["weights"], dtype=np.float64)
@@ -1744,10 +1751,26 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     sig_u2 = np.atleast_1d(np.asarray(out["sigma_u2"], dtype=np.float64))
     su2 = sig_u2[g] if sig_u2.size == int(g.max()) + 1 else np.full(D.n_cell, float(sig_u2.mean()))
     votes = np.asarray(f["votes"], dtype=np.float64)
-    out["cell_var"] = su2 / (votes + float(f["prior_races"]))
+    k_cell = np.asarray(f["prior_group"], dtype=np.float64)[np.asarray(f["cell_prior_group"])]
+    out["cell_var"] = su2 / (votes + k_cell)
+    out["bracket_prior_group"] = np.asarray(f["prior_group"], dtype=np.float64)
     out["cell_se"] = np.sqrt(out["cell_var"])
     out["bracket_votes"] = votes
     out["bracket_races_per_cell"] = np.asarray(f["races_per_cell"])
+    # ★ THE ENGINE'S ARITHMETIC, KEPT (owner, 2026-09-13: "it kind of seems
+    #   like we made diagnostics that capture course difficulty and then we
+    #   aren't using it"). Per cell: the era's own vote-mean of its races,
+    #   the course's history after the group prior, the history's votes,
+    #   and the recentring taken off -- so scripts/course_bracket.py can
+    #   print, race by race and step by step, how a venue's bracket became
+    #   its published number (Foot Locker against Glendoveer).
+    b_of = np.asarray(f["base_of_cell"], dtype=np.int64)
+    out["bracket_cell_raw"] = np.asarray(f["D_cell_raw"], dtype=np.float64)
+    out["bracket_base"] = np.asarray(f["D_base"], dtype=np.float64)[b_of]
+    out["bracket_base_votes"] = np.asarray(f["base_votes"], dtype=np.float64)[b_of]
+    out["bracket_pin"] = np.asarray(f["pin"], dtype=np.float64)
+    out["bracket_shift"] = shift_cell
+    out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
     # the report: what moved
     solved = np.bincount(D.cell, minlength=D.n_cell) > 0
@@ -1761,6 +1784,15 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                 p95_move=float(np.percentile(np.abs(move), 95)) if m.any() else np.nan,
                 ability_corr=float(np.corrcoef(a_new, a_joint)[0, 1]),
                 ability_shift=float(np.median(np.abs(a_new - a_joint))))
+    for ln in f.get("prior_lines", []):
+        print(f"[joint] bracket prior: {ln}")
+    tl = be.tiltLines(f.get("tilt_bands"))
+    if tl:
+        print("[joint] bracket tilt by band: the course multiplier the voters' own "
+              "brackets imply against the one applied (a hard venue read by a band "
+              "whose implied h is below its applied h is overstated by the ratio):")
+        for ln in tl:
+            print("        " + ln)
     print(f"[joint] difficulty = BRACKET ENGINE (--difficulty bracket): {info['n_voted']:,} of "
           f"{info['n_cells']:,} cells with votes in {info['seconds']:.0f}s; {info['n_no_votes']:,} "
           f"cells without a race of 3+ voters sit at their sport's average. Against the "
@@ -2008,7 +2040,8 @@ def main():
     if getattr(args, "difficulty", "joint") == "bracket":
         try:
             bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                                window=args.bracket_window, top=args.bracket_top)
+                                window=args.bracket_window, top=args.bracket_top,
+                                prior_group=getattr(args, "bracket_prior", "fit"))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()
@@ -2073,6 +2106,15 @@ def main():
         save["delta_joint"] = out["delta_joint"]
         save["bracket_votes"] = out["bracket_votes"]
         save["bracket_races_per_cell"] = out["bracket_races_per_cell"]
+        import bracket_engine as be
+        for k in ("bracket_cell_raw", "bracket_base", "bracket_base_votes",
+                  "bracket_pin", "bracket_shift", "bracket_cell_fit",
+                  "bracket_prior_group"):
+            if out.get(k) is not None:
+                save[k] = np.asarray(out[k], dtype=np.float64)
+        save["bracket_prior_group_names"] = np.array(list(be.PRIOR_GROUP_NAMES))
+        save["bracket_prior_races"] = np.array([float(be.PRIOR_RACES)])
+        save["bracket_race_sat"] = np.array([float(be.RACE_SAT)])
     if out.get("rating") is not None:
         save["rating"] = out["rating"].astype(np.float32)
     if out.get("beta") is not None:

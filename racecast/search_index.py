@@ -9,6 +9,7 @@ import time
 
 sys.path.insert(0, "scripts")
 from database import getConn
+from dbfast import swapTable
 
 FETCH_BATCH = 20000
 SANE_YEAR   = r'^(19|20)[0-9]{2}'
@@ -397,34 +398,56 @@ def _load_courses(conn):
 #   and dating per meet_id from the results table ALONE is one parallel
 #   scan; the name comes from the meets table alone; the two aggregates
 #   join on meet_id, a few hundred thousand rows each.
+# ★ ONE ROW PER (meet_id, source), NOT PER meet_id (owner, 2026-09-13:
+#   "some meets in search results go to different pages than they say.
+#   NXN -> NXN South regional -> Hudson Valley Sportsdome"). The anet and
+#   tfrrs id spaces overlap -- one meet_id holds two different real-world
+#   meets 15,096 times in `results` (app.meet_sources) -- and this index
+#   keyed on meet_id alone: min(meet_name) across BOTH meets under the id
+#   ("NXN" sorts before "NXN South Regional") on a bare link that the meet
+#   page resolves to whichever of the two has more rows. The label came
+#   from one meet and the page from the other. Now each (meet_id, source)
+#   is its own entry, named the way the page names it (meets for anet,
+#   meets_tfrrs for tfrrs), and the link carries the page's own ?alt=
+#   index (app.pick_source: biggest first, source as the tie-break).
 _MEET_AGG = {
     "meet_agg_xc": """
         WITH c AS (
-            SELECT meet_id, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
+            SELECT meet_id, source, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
             FROM   results
-            WHERE  meet_id IS NOT NULL
-            GROUP  BY meet_id),
+            WHERE  meet_id IS NOT NULL AND source IS NOT NULL
+            GROUP  BY meet_id, source),
         nm AS (
-            SELECT meet_id, min(meet_name) AS meet_name
+            SELECT meet_id, source, min(meet_name) AS meet_name
             FROM   meets
-            WHERE  meet_name IS NOT NULL
+            WHERE  meet_name IS NOT NULL AND source IS NOT NULL
+            GROUP  BY meet_id, source),
+        tn AS (
+            SELECT meet_id, min(COALESCE(meet_name, venue_name)) AS meet_name
+            FROM   meets_tfrrs
+            WHERE  sport = 'XC' AND COALESCE(meet_name, venue_name) IS NOT NULL
             GROUP  BY meet_id)
-        SELECT c.meet_id, nm.meet_name, c.yr, c.n_ath
-        FROM   c JOIN nm USING (meet_id)
+        SELECT c.meet_id, c.source,
+               COALESCE(nm.meet_name, tn.meet_name) AS meet_name,
+               c.yr, c.n_ath, c.n_ath AS n_rank
+        FROM   c
+        LEFT   JOIN nm ON nm.meet_id = c.meet_id AND nm.source = c.source
+        LEFT   JOIN tn ON tn.meet_id = c.meet_id AND c.source = 'tfrrs'
+        WHERE  COALESCE(nm.meet_name, tn.meet_name) IS NOT NULL
     """,
     "meet_agg_tf": """
         WITH c AS (
-            SELECT meet_id, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
+            SELECT meet_id, source, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
             FROM   results_tf
-            WHERE  meet_id IS NOT NULL
-            GROUP  BY meet_id),
+            WHERE  meet_id IS NOT NULL AND source IS NOT NULL
+            GROUP  BY meet_id, source),
         nm AS (
-            SELECT meet_id, min(meet_name) AS meet_name
+            SELECT meet_id, source, min(meet_name) AS meet_name, count(*) AS n_rank
             FROM   meets_tf
-            WHERE  meet_name IS NOT NULL
-            GROUP  BY meet_id)
-        SELECT c.meet_id, nm.meet_name, c.yr, c.n_ath
-        FROM   c JOIN nm USING (meet_id)
+            WHERE  meet_name IS NOT NULL AND source IS NOT NULL
+            GROUP  BY meet_id, source)
+        SELECT c.meet_id, c.source, nm.meet_name, c.yr, c.n_ath, nm.n_rank
+        FROM   c JOIN nm ON nm.meet_id = c.meet_id AND nm.source = c.source
     """,
 }
 
@@ -437,13 +460,38 @@ def _ensure_meet_agg(conn):
         for table, sql in _MEET_AGG.items():
             cur.execute(f"DROP TABLE IF EXISTS {table}_new")
             cur.execute(f"CREATE TABLE {table}_new AS {sql}")
-            cur.execute(f"ALTER TABLE {table}_new ADD PRIMARY KEY (meet_id)")
-            cur.execute(f"DROP TABLE IF EXISTS {table}")
-            cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
-            cur.execute(f"ANALYZE {table}")
+            cur.execute(f"ALTER TABLE {table}_new ADD CONSTRAINT {table}_new_pkey "
+                        f"PRIMARY KEY (meet_id, source)")
             conn.commit()
+            # ! THE SWAP WAITS FIVE SECONDS AT A TIME, NOT FOREVER (dbfast.
+            #   swapTable): DROP needs ACCESS EXCLUSIVE, a sitemap or budget
+            #   read in flight holds ACCESS SHARE, and a bare DROP queued
+            #   every later reader behind it (2026-09-13).
+            swapTable(conn, table, renames=[(f"{table}_new_pkey", f"{table}_pkey")])
             cur.execute(f"SELECT count(*) FROM {table}")
             print(f"  {table}: {cur.fetchone()[0]:,} meets (rebuilt)")
+
+
+def meetAltIndex(rows):
+    """Per (meet_id, source) row: the ?alt= index the meet page resolves it
+    under -- rows of one meet_id ranked by n_rank descending, source
+    ascending, exactly app.meet_sources' order (results rows for XC,
+    meets_tf rows for TF). Returns {(meet_id, source): alt}."""
+    by_meet = {}
+    for r in rows:
+        by_meet.setdefault(r["meet_id"], []).append(r)
+    out = {}
+    for mid, rs in by_meet.items():
+        rs.sort(key=lambda r: (-(r.get("n_rank") or 0), str(r["source"])))
+        for i, r in enumerate(rs):
+            out[(mid, r["source"])] = i
+    return out
+
+
+def meetLink(fmt, meet_id, alt):
+    """The meet page's URL: bare for the biggest source, ?alt=N for another."""
+    link = fmt.format(mid=meet_id)
+    return link if not alt else f"{link}?alt={alt}"
 
 
 def _load_meets(conn):
@@ -453,16 +501,18 @@ def _load_meets(conn):
     wr  = conn.cursor()
 
     def _meet_rows(table, link_fmt):
-        cur.execute(f"SELECT meet_id, meet_name, yr, n_ath FROM {table}")
+        cur.execute(f"SELECT meet_id, source, meet_name, yr, n_ath, n_rank FROM {table}")
+        rows = cur.fetchall()
+        alt_of = meetAltIndex(rows)
         out = []
-        for r in cur.fetchall():
+        for r in rows:
             clean = _strip_year(r["meet_name"])
             if not clean:
                 continue
             yr = r["yr"] or 0
             out.append((
                 "meet", clean, str(yr) if yr else "",
-                link_fmt.format(mid=r["meet_id"]),
+                meetLink(link_fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]),
                 clean.lower(), clean.lower(),
                 yr, r["n_ath"] or 0,
             ))

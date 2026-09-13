@@ -39,6 +39,7 @@ sys.path.insert(0, "racecast")
 import psycopg2.extras                                  # noqa: E402
 
 from database import getConn                            # noqa: E402
+from dbfast import swapTable                            # noqa: E402
 import check_school_units as C                          # noqa: E402
 import school_unit_overrides as OV                      # noqa: E402
 
@@ -52,9 +53,15 @@ _COLS = ("league", "section", "section_div", "district", "county",
          "conference", "division", "area")
 
 
+# ★ A SHADOW TABLE AND ONE SWAP (2026-09-13). This used to DROP the live
+#   school_unit, reload it and build ten indexes in ONE transaction: every
+#   filtered board request (rankings._whereClauses reads school_unit) queued
+#   behind the DROP for the length of the build and died on its lock_timeout
+#   as a 500. The shadow is built and indexed with the live table untouched;
+#   dbfast.swapTable renames it in under a bounded lock.
 _DDL = """
-DROP TABLE IF EXISTS school_unit;
-CREATE TABLE school_unit (
+DROP TABLE IF EXISTS school_unit_new;
+CREATE TABLE school_unit_new (
     school      text    NOT NULL,
     state       text    NOT NULL,
     sport       text    NOT NULL,
@@ -75,7 +82,7 @@ CREATE TABLE school_unit (
     conflict    boolean NOT NULL DEFAULT false,
     votes       integer NOT NULL DEFAULT 0,
     asof        text,
-    PRIMARY KEY (school, state, sport)
+    CONSTRAINT school_unit_new_pkey PRIMARY KEY (school, state, sport)
 )"""
 
 
@@ -253,14 +260,16 @@ def main():
         cur.execute(_DDL)
         psycopg2.extras.execute_values(
             cur,
-            "INSERT INTO school_unit (school, state, sport, " +
+            "INSERT INTO school_unit_new (school, state, sport, " +
             ", ".join(_COLS) +
             ", is_college, conflict, votes, asof) VALUES %s "
             "ON CONFLICT (school, state, sport) DO NOTHING",
             rows, page_size=5000)
         # the pages look a school up by name, and by name+state
-        cur.execute("CREATE INDEX idx_school_unit_school "
-                    "ON school_unit (school)")
+        cur.execute("CREATE INDEX idx_school_unit_new_school "
+                    "ON school_unit_new (school)")
+        renames = [("school_unit_new_pkey", "school_unit_pkey"),
+                   ("idx_school_unit_new_school", "idx_school_unit_school")]
 
         # ★ AND THE RANKINGS FILTERS READ IT THE OTHER WAY ROUND.
         #   rankings._whereClauses does
@@ -286,9 +295,11 @@ def main():
                      "state_div", "class", "section", "section_div",
                      "league", "area"):
 
-            cur.execute(f'CREATE INDEX idx_school_unit_{_col} '
-                        f'ON school_unit ("{_col}", school)')
+            cur.execute(f'CREATE INDEX idx_school_unit_new_{_col} '
+                        f'ON school_unit_new ("{_col}", school)')
+            renames.append((f"idx_school_unit_new_{_col}", f"idx_school_unit_{_col}"))
         conn.commit()
+        swapTable(conn, "school_unit", renames=renames)
     print(f"  school_unit: {len(rows):,} rows written.")
 
 

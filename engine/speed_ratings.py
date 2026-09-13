@@ -245,6 +245,92 @@ REGION_REF_COUNTS_CSV = None
 _RID, _PID, _NORM, _GRADE, _SRC, _SCHOOL, _DATE, _SPORT, _VENUE, _GENDER = range(10)
 _DIST = 10          # speed_ratings_db.COLUMNS: dist_m (issue 148)
 _MEETCLASS = 11     # speed_ratings_db.COLUMNS: meet_class (issue #22)
+_TIME = 12          # speed_ratings_db.COLUMNS: time_seconds (the raw time)
+
+
+# ------------------------------------------------------------------ #
+# CHUNK 0a -- THE ROW ON THE SCALE OF THE POOL IT IS RATED IN
+# ------------------------------------------------------------------ #
+#
+# ★ THE 230 RATINGS (Leo and Lex Young, 2023 HS mile final: six seniors at
+#   141-144 and the twins at 230-232 on the same times). A rating is
+#   100 * pool_mean / normalized_time, and the pool mean is the pool's --
+#   hs_m on a 5000 m scale, college_m on 8000 m. The backfill normalised
+#   those rows as hs_m (its season verdict was not unanimous, so grade 12
+#   -> hs_m) and the pack resolved the season college_m, so the row's
+#   number was on one scale and its pool mean on another: x1.61 for free.
+#
+# ★ THE PACK IS WHERE THE RATED POOL IS DECIDED, SO THE PACK IS WHERE THE
+#   SCALE HAS TO FOLLOW IT. engine/anchor_repair.py rewrites the column in
+#   the database toward the pool the LAST go-live rated the row in, at step
+#   5; a pack built before that repair, or a pool that resolves differently
+#   this run, still reaches the solve mismatched, and every --from 8 run
+#   reuses an old pack. Here the check is on the pool decided this run, in
+#   memory, for every row, and the pack is consistent by construction.
+#
+#   Same arithmetic as anchor_repair: the stored value is t * factor(d,
+#   pool_it_was_on) * (everything else the backfill applied). Only the pool
+#   factor is swapped -- new = stored * factor(d, rated) / factor(d, was) --
+#   so weather, geometry and era corrections survive untouched. A row whose
+#   stored value no pool reproduces within IDENTIFY_TOL is left alone and
+#   counted (census 'scale_not_identified'): a guess is not a repair.
+_SCALE_TOL = 0.10          # anchor_check.TOLERANCE: off by this much is wrong
+_SCALE_IDENTIFY_TOL = 0.03 # anchor_repair.IDENTIFY_TOL: this close names the scale
+_SCALE_POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "hs_m", "hs_f",
+                "college_m", "college_f", "pro_m", "pro_f")
+_scaleFactorCache = {}
+
+
+def _scaleFactor(dist, pool, sport):
+    """normalizeTime's bare multiplier for (distance, pool, sport), cached
+    on the rounded distance: no season, weather, geometry or course."""
+    key = (int(round(dist)), pool, sport)
+    f = _scaleFactorCache.get(key, False)
+    if f is False:
+        from normalize_distance import normalizeTime
+        try:
+            got = normalizeTime(1000.0, float(dist), pool, sport=sport)
+        except Exception:                                    # noqa: BLE001
+            got = None
+        f = (got / 1000.0) if got else None
+        _scaleFactorCache[key] = f
+    return f
+
+
+def rescaleToPool(norm, time_s, dist, pool, sport):
+    """(normalized_time on `pool`'s scale, tag). tag: None when the stored
+    value already is (or cannot be checked), 'rescaled' when it was moved
+    from another pool's identified scale, 'scale_not_identified' when it
+    is off and no pool reproduces it."""
+    try:
+        t = float(time_s) if time_s is not None else 0.0
+        d = float(dist) if dist is not None else 0.0
+        nt = float(norm)
+    except (TypeError, ValueError):
+        return norm, None
+    if t <= 0 or d <= 0 or nt <= 0:
+        return norm, None
+    f_to = _scaleFactor(d, pool, sport)
+    if not f_to:
+        return norm, None
+    ratio = nt / (t * f_to)
+    if abs(ratio - 1.0) <= _SCALE_TOL:
+        return norm, None
+    # which scale is it on? the sport's own pools first, then the other
+    best, best_off = None, None
+    for sp in (sport, "XC" if sport == "TF" else "TF"):
+        for p in _SCALE_POOLS:
+            f = _scaleFactor(d, p, sp)
+            if not f:
+                continue
+            off = abs(nt / (t * f) - 1.0)
+            if best_off is None or off < best_off:
+                best, best_off = f, off
+        if best_off is not None and best_off <= _SCALE_IDENTIFY_TOL:
+            break
+    if best is None or best_off > _SCALE_IDENTIFY_TOL:
+        return norm, "scale_not_identified"
+    return nt * f_to / best, "rescaled"
 
 
 # ------------------------------------------------------------------ #
@@ -964,8 +1050,16 @@ def packResults(batches, today, merge=False):
             # ! THE SANITY BAND, NOW THAT THE POOL IS KNOWN. The loader's band
             #   is garbage-only; this is the real one, and it could not run
             #   earlier because the SQL has no idea which pool a row lands in.
+            # ★ ON THE RATED POOL'S SCALE FIRST (the 230 ratings, above):
+            #   the band and the solve both read the number in this pool
+            nt = r[_NORM]
+            if len(r) > _TIME and r[_TIME]:
+                dm_row = r[_DIST] if len(r) > _DIST else None
+                nt, tag = rescaleToPool(nt, r[_TIME], dm_row, pool, r[_SPORT])
+                if tag:
+                    census[tag] += 1
             lo, hi = poolBand(pool)
-            if not lo <= r[_NORM] <= hi:
+            if not lo <= nt <= hi:
                 census["outside_pool_band"] += 1
                 continue
             days = (today - d).days
@@ -989,7 +1083,7 @@ def packResults(batches, today, merge=False):
                     vc = len(v_uniq); v_lookup[vkey] = vc; v_uniq.append(vkey)
 
             rid.append(r[_RID]); acode.append(ac); vcode.append(vc)
-            norm.append(r[_NORM]); wt.append(days)
+            norm.append(nt); wt.append(days)
             scode.append(0 if r[_SPORT] == "XC" else 1)   # for the merged result split
             doys.append(doy)
 
