@@ -2041,6 +2041,57 @@ class BoardOutline(unittest.TestCase):
         self.assertIn(".board-grid .head { border-top: none; }", css)
 
 
+class RatingRecordFlag(unittest.TestCase):
+    """★ THE SAME BADGE BESIDE THE RATING (owner, 2026-09-13). Not the same
+    fact as the time badge: a time PR is bound to a distance because a 5k
+    and an 8k are not comparable, while a rating IS comparable across
+    distances and courses -- that is what it is for. So a row can carry SR
+    on its time and PR on its rating, and banding the rating query would
+    only throw evidence away."""
+
+    def src(self):
+        return read("racecast", "app.py")
+
+    def test_the_rating_query_is_not_distance_banded(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        body = src[i:src.index("\ndef ", i + 1)]
+        self.assertNotIn("distance", body,
+                         "a rating compares across distances by design")
+        self.assertIn("max(speed_rating)", body, "higher is better, not lower")
+        self.assertIn("race_date < %(day)s", body,
+                      "the badge is a claim about the day it was run")
+
+    def test_pr_wins_and_a_row_is_never_both(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        body = src[i:src.index("\ndef ", i + 1)]
+        self.assertIn('row["rating_sr"] = (not row["rating_pr"]', body)
+
+    def test_a_debut_is_a_personal_best(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        self.assertIn('best is None or float(v) > float(best)',
+                      src[i:i + 2600])
+
+    def test_both_race_pages_stamp_and_render_it(self):
+        src = self.src()
+        self.assertIn('stampRatingFlags(cur, "XC", results', src)
+        self.assertIn('stampRatingFlags(cur, "TF", results', src)
+        for page in ("race.html", "race_tf.html"):
+            html = read("racecast", "templates", page)
+            self.assertIn("ratflag(row)", html, page)
+            self.assertIn("import recflag, ratflag", html, page)
+
+    def test_the_two_badges_say_different_things(self):
+        """Same pill, different tooltip -- or the reader cannot tell which
+        record they are being shown."""
+        m = read("racecast", "templates", "_recflag.html")
+        self.assertIn("Personal Record", m)
+        self.assertIn("Personal Best rating", m)
+        self.assertIn("Their highest rating in any race", m)
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

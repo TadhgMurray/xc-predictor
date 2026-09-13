@@ -2763,6 +2763,58 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
                         and (season is None or float(t) < float(season)))
 
 
+# ★ THE SAME BADGE FOR THE RATING (owner, 2026-09-13). A time PR is a
+#   distance-and-course-bound fact; the RATING is the whole point of this
+#   site, and "best rating they had ever run" is the claim a reader
+#   actually wants -- it survives a slow course and a fast one.
+#
+# ! DELIBERATELY NOT stampRecordFlags WITH ANOTHER COLUMN. That one is
+#   keyed on a distance band, because a 5k time and an 8k time are not
+#   comparable. A rating IS comparable across distances and courses -- that
+#   is what it is for -- so the band would only throw away evidence.
+def stampRatingFlags(cur, sport, rows, race_date):
+    """Stamp rating_pr / rating_sr, the rating twin of stampRecordFlags.
+
+    PR: no earlier rated race by that athlete scored higher, in any sport.
+    SR: none this season did. PR wins; a row is never both. Same tense --
+    "when this race was run" -- so a rating beaten later still reads PR."""
+    if not race_date:
+        return
+    pids = [r["person_id"] for r in rows
+            if r.get("person_id") and r.get("speed_rating") is not None]
+    if not pids:
+        return
+    yr = seasonYearFromIso(sport, race_date)
+    try:
+        cur.execute("""
+            SELECT person_id,
+                   max(speed_rating)                                AS best_before,
+                   max(speed_rating) FILTER (WHERE year = %(yr)s)   AS season_before
+            FROM   ranking_results
+            WHERE  person_id = ANY(%(pids)s)
+              AND  race_date < %(day)s
+              AND  speed_rating IS NOT NULL
+            GROUP  BY person_id
+        """, {"pids": pids, "day": race_date, "yr": yr})
+        prior = {r["person_id"]: r for r in cur.fetchall()}
+    except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
+        cur.connection.rollback()
+        print(f"stampRatingFlags: {sport} {race_date} skipped: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+        return
+
+    for row in rows:
+        v = row.get("speed_rating")
+        if not row.get("person_id") or v is None:
+            continue
+        p = prior.get(row["person_id"])
+        best = p["best_before"] if p else None
+        season = p["season_before"] if p else None
+        row["rating_pr"] = best is None or float(v) > float(best)
+        row["rating_sr"] = (not row["rating_pr"]
+                            and (season is None or float(v) > float(season)))
+
+
 def raceDayEffect(cur, sport, header, race_date):
     """The solve's race-day term for this race (the hover on the
     difficulty), or None: no table yet, no date, or the cell was not in
@@ -2821,6 +2873,7 @@ def race_xc(meet_id, div_id):
                 stampRecordFlags(cur, "XC", results,
                                  header.get("distance"),
                                  results[0].get("date"))
+                stampRatingFlags(cur, "XC", results, results[0].get("date"))
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
@@ -3517,6 +3570,7 @@ def race_tf(meet_id, event_id, div_id):
                     dist = parseEventShort(header.get("event_short")).get("meters")
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
+                stampRatingFlags(cur, "TF", results, results[0].get("date"))
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
             # Points come from scoring the WHOLE meet, not this page's rows:

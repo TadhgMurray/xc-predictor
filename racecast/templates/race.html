@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
-{% from "_recflag.html" import recflag %}
+{% from "_recflag.html" import recflag, ratflag %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -182,7 +182,7 @@
                 <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
                 <td>{% if row.school and row.school|is_team %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label_in(header.state) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
-                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
+                <td class="no-break">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
                 <td>{{ row.score_place if row.score_place else " - " }}</td>
             </tr>
             {% endfor %}
