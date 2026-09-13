@@ -161,3 +161,29 @@ def test_the_go_live_runs_on_an_era_split_design_and_publishes_bare_keys():
     # a course that held still publishes about the same number from any era
     eras1 = [i for i, k in enumerate(D.course_keys) if k.startswith(keys[1] + "@e")]
     assert np.ptp(out["delta"][eras1]) < 0.02, np.ptp(out["delta"][eras1])
+
+
+def test_the_pair_engine_report_reads_the_designs_keys_and_never_raises(tmp_path, capsys):
+    """★ RUN 21's GO-LIVE (2026-09-13): the report against the sequential
+    engine's file took the pack's 74,366 base keys against 219,715 era
+    cells and died after 9,306 s of solve. The keys are the design's, the
+    sizes are checked, and a report that fails cannot kill the save."""
+    import run_joint as rj
+    n_base, n_cell = 4, 12
+    keys = [f"{'XC' if b < 2 else 'TF'}:{b}:x@e{e}" for b in range(n_base) for e in range(3)]
+    solved = np.ones(n_cell, dtype=bool)
+    path = tmp_path / "pair_difficulty.npz"
+    raw = np.r_[np.full(6, 0.05), np.full(6, -0.01)]
+    np.savez(path, difficulty_raw=raw)
+    gap = rj.pairEngineGap(str(path), solved, keys)
+    assert gap is not None and abs(gap - (np.log1p(-0.01) - np.log1p(0.05))) < 1e-9
+    # the pack's base keys against era cells: skipped, said so, not raised
+    base_keys = [f"XC:{b}:x" for b in range(n_base)]
+    assert rj.pairEngineGap(str(path), solved, base_keys) is None
+    assert "skipped" in capsys.readouterr().out
+    assert rj.pairEngineGap(str(tmp_path / "none.npz"), solved, keys) is None
+    # a report that raises is printed, not raised
+    def boom():
+        raise ValueError("operands could not be broadcast together")
+    assert rj.guardedReport("boom", boom) is False
+    assert "FAILED" in capsys.readouterr().out

@@ -1612,6 +1612,48 @@ def applyImplications(args, ap):
     return args
 
 
+def guardedReport(name, fn):
+    """Run a report; a failure is printed, never raised (a solve is hours)."""
+    import traceback
+    try:
+        fn()
+        return True
+    except Exception:                                            # noqa: BLE001
+        print(f"[joint] report '{name}' FAILED (the solve is unaffected):")
+        traceback.print_exc()
+        return False
+
+
+def pairEngineGap(old_path, solved, keys):
+    """The sequential engine's TF-minus-XC level, for the level report;
+    None when its file is absent, keyed differently, or one-sided.
+
+    ! keys ARE THE DESIGN'S CELL KEYS, one per (course, era) under
+      --era-years, the same length as `solved`. The pack's base keys are
+      a third as many and broadcast against `solved` killed run 21's
+      go-live (2026-09-13)."""
+    if not os.path.exists(old_path):
+        return None
+    try:
+        with np.load(old_path, allow_pickle=False) as old:
+            if "difficulty_raw" not in old.files:
+                return None
+            old_delta = np.log1p(old["difficulty_raw"])
+        solved = np.asarray(solved, dtype=bool)
+        if old_delta.size != solved.size or len(keys) != solved.size:
+            print(f"[joint] vs pair_difficulty: skipped, {old_delta.size:,} cells in the "
+                  f"old file, {solved.size:,} solved cells, {len(keys):,} keys")
+            return None
+        is_xc = np.array([str(k).startswith("XC:") for k in keys])
+        is_tf = np.array([str(k).startswith("TF:") for k in keys])
+        ok = np.isfinite(old_delta) & (old_delta != 0) & solved
+        if (ok & is_xc).any() and (ok & is_tf).any():
+            return float(old_delta[ok & is_tf].mean() - old_delta[ok & is_xc].mean())
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[joint] vs pair_difficulty: skipped ({type(exc).__name__}: {exc})")
+    return None
+
+
 def main():
     ap = buildParser()
     args = applyImplications(ap.parse_args(), ap)
@@ -1712,34 +1754,17 @@ def main():
           f"p95 {np.percentile(out['cell_se'], 95):.4f}")
 
     old_gap = None
-    old_path = os.path.join(os.path.dirname(args.out), "pair_difficulty.npz")
-    old_delta = None
-    if os.path.exists(old_path):
-        with np.load(old_path, allow_pickle=False) as old:
-            if "difficulty_raw" in old.files:
-                old_delta = np.log1p(old["difficulty_raw"])
-                # ! A REPORT MUST NEVER KILL A SOLVE. The sequential
-                #   engine's file is keyed by the pack's cells as they were
-                #   when it ran; a repack with a different cell count (the
-                #   2026-09-05 run: 74,805 vs 74,834) makes the comparison
-                #   meaningless, and it cost two hours of solve by crashing
-                #   here before anything was written.
-                if old_delta.size != solved.size:
-                    print(f"[joint] vs pair_difficulty: skipped, {old_delta.size:,} "
-                          f"cells in the old file vs {solved.size:,} in this pack")
-                    old_delta = None
-            if old_delta is not None:
-                keys = [str(k) for k in cols["course_keys"]]
-                is_xc = np.array([k.startswith("XC:") for k in keys])
-                is_tf = np.array([k.startswith("TF:") for k in keys])
-                ok = np.isfinite(old_delta) & (old_delta != 0) & solved
-                if (ok & is_xc).any() and (ok & is_tf).any():
-                    old_gap = float(old_delta[ok & is_tf].mean()
-                                    - old_delta[ok & is_xc].mean())
-    reportLevelAndCurve(out, D, pool_names, old_gap)
-    reportSharedTerms(out, D, pool_names)
-    reportTiltByBand(out, D, y)
-    reportFieldByBand(out, D, y)
+    old_gap = pairEngineGap(os.path.join(os.path.dirname(args.out), "pair_difficulty.npz"),
+                            solved, [str(k) for k in (getattr(D, "course_keys", None)
+                                                      or cols["course_keys"])])
+    # ! A REPORT MUST NEVER KILL A SOLVE (run 20: the go-live's keys; run
+    #   21: this report's keys, 2.6 hours each). Every report runs guarded;
+    #   one that fails prints its traceback and the save still happens.
+    for _name, _fn in (("level and curve", lambda: reportLevelAndCurve(out, D, pool_names, old_gap)),
+                       ("shared terms", lambda: reportSharedTerms(out, D, pool_names)),
+                       ("tilt by band", lambda: reportTiltByBand(out, D, y)),
+                       ("field by band", lambda: reportFieldByBand(out, D, y))):
+        guardedReport(_name, _fn)
 
     save = dict(delta=delta, delta_anchored=anchored, mu=out["mu"],
                 cell_se=out["cell_se"], cell_var=out["cell_var"],

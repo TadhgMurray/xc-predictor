@@ -239,6 +239,14 @@ from the sampled rows; every diagnostic now maps (course, era) through
 the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
 so any subset of rows lands on the file's cells.
 
+**Run 21 crashed in a report, after the solve (2026-09-13).** The go-live's
+comparison against the sequential engine's file took the pack's base
+keys against the design's era cells, the same shape mismatch as run 20
+in a different line, 9,306 s in. `pairEngineGap` now takes the design's
+keys and checks every size; all four post-solve reports run under
+`guardedReport`, which prints a failure and lets the save happen. Rerun
+from 8 with the same command.
+
 **What the diagnostics said on run 20's file (2026-09-12, 150 s on the
 corpus, 79 s of it the disk load).** Read `logs/*.txt` before deciding
 run 21; the numbers are the corpus's, not a model's.
