@@ -338,6 +338,11 @@ def applyCollegeDirectory(cur):
 #   underneath every school page on the site. This is additive: absent,
 #   everything behaves exactly as it did. Promote it into the key once it
 #   has been read against real data.
+# most of a level's athletes belonging somewhere else makes it a holding
+# pen rather than a school. Set high on purpose: a real school does lose
+# the odd transfer, and calling a school a bucket deletes it from the page.
+BUCKET_SHARE = 0.60
+
 _LEVEL_DDL = """
 CREATE TABLE school_level_new AS
 WITH seasons AS (
@@ -355,22 +360,56 @@ per_person AS (
     SELECT DISTINCT ON (school, person_id) school, person_id, level
     FROM   seasons ORDER BY school, person_id, n DESC, level
 ),
+-- ★ WHOSE SCHOOL IS THIS REALLY? (owner, 2026-09-13: "Arkansas having
+--   college and hs, when it should just be college and Arkansas is just
+--   for indiv ppl at state"). At a state meet an unattached runner's team
+--   cell is the STATE NAME, so "Arkansas" collects a few hundred high
+--   schoolers who each belong to a real high school -- and the University
+--   of Arkansas ends up sharing a page with them.
+--
+--   The tell is not the count and not the share: it is that every one of
+--   those athletes races under a DIFFERENT name the rest of the time.
+--   Amherst Regional Middle School's athletes race as "Amherst" always;
+--   the state-meet crowd races as "Arkansas" once. So per athlete, at
+--   THIS level, which school do they mostly run for?
+--
+-- ! AT THIS LEVEL, not overall. A college freshman has four high-school
+--   seasons behind them, so their career-modal school is their high
+--   school and every college in the country would look like a bucket.
+--   Within a level the question is the right one -- and it makes the
+--   phantom "hs" row a mis-pooled college athlete leaves behind read as
+--   a bucket too, which it is.
+belongs AS (
+    SELECT DISTINCT ON (person_id, level) person_id, level, school
+    FROM  (SELECT person_id, level, school, sum(n) AS n
+           FROM seasons GROUP BY 1, 2, 3) x
+    ORDER BY person_id, level, n DESC, school
+),
 clusters AS (
     SELECT p.school, COALESCE(a.state, ph.state) AS state, p.level,
-           count(*) AS n_athletes
+           count(*) AS n_athletes,
+           count(*) FILTER (
+               WHERE b.school IS DISTINCT FROM p.school) AS n_elsewhere
     FROM   per_person p
     JOIN   person_home_state_new ph USING (person_id)
+    LEFT   JOIN belongs b
+           ON b.person_id = p.person_id AND b.level = p.level
     -- follow the same state folding the identity table did, so the two
     -- agree on which cluster a school is in
     LEFT   JOIN school_state_alias_new a
            ON a.school = p.school AND a.home_state = ph.state
     GROUP  BY 1, 2, 3
 )
-SELECT school, state, level, n_athletes,
+SELECT school, state, level, n_athletes, n_elsewhere,
        round(n_athletes::numeric
              / sum(n_athletes) OVER (PARTITION BY school, state), 4) AS share,
+       -- ! A BUCKET IS NEVER THE PRIMARY LEVEL, however big it is. The
+       --   state-meet crowd outnumbers the university, and the primary
+       --   level is what everything downstream calls the school.
        (row_number() OVER (PARTITION BY school, state
-            ORDER BY n_athletes DESC, level) = 1) AS is_primary
+            ORDER BY (n_elsewhere >= {bucket} * n_athletes),
+                     n_athletes DESC, level) = 1)            AS is_primary,
+       (n_elsewhere >= {bucket} * n_athletes)                AS is_bucket
 FROM   clusters
 """
 
@@ -384,21 +423,23 @@ def buildSchoolLevel(cur):
     tell them apart."""
     t0 = time.time()
     cur.execute("DROP TABLE IF EXISTS school_level_new")
-    cur.execute(_LEVEL_DDL)
+    cur.execute(_LEVEL_DDL.format(bucket=BUCKET_SHARE))
     cur.execute("CREATE INDEX school_level_new_idx ON school_level_new (school, state)")
     from school_identity import MIN_ATHLETES, MIN_SHARE
     cur.execute("""
         SELECT count(*) FROM (
             SELECT school, state FROM school_level_new
-            WHERE n_athletes >= %s AND share >= %s
+            WHERE n_athletes >= %s AND share >= %s AND NOT is_bucket
             GROUP BY school, state HAVING count(*) >= 2
         ) x
     """, (MIN_ATHLETES, MIN_SHARE))
     split = cur.fetchone()[0]
-    cur.execute("SELECT count(*) FROM school_level_new")
-    n = cur.fetchone()[0]
+    cur.execute("SELECT count(*), count(*) FILTER (WHERE is_bucket) "
+                "FROM school_level_new")
+    n, buckets = cur.fetchone()
     print(f"  school_level: {n:,} (school, state, level) rows, "
-          f"{split:,} schools cover more than one institution "
+          f"{split:,} schools cover more than one institution, "
+          f"{buckets:,} levels are holding pens (the state-meet unattached) "
           f"in {time.time() - t0:.0f}s", flush=True)
 
 

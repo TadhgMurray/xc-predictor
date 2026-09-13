@@ -18,6 +18,7 @@
 import io
 import json
 import os
+import re
 import sys
 import time
 import unittest
@@ -1525,7 +1526,7 @@ class Csv(unittest.TestCase):
         rows = W.readCsv(path)
         self.assertEqual(rows, [{"name": "Piedmont High School", "state": "CA",
                                  "url": "http://www.piedmont.k12.ca.us/",
-                                 "source": "csv"}])
+                                 "source": "csv", "level": None}])
 
     def test_the_private_survey_spelling_and_a_tab_file(self):
         path = self._write("PINST\tPSTABB\tURL\nSaint Ignatius\tCA\thttps://si.org\n",
@@ -1878,9 +1879,10 @@ class LevelSplit(unittest.TestCase):
     def test_the_split_uses_the_same_thresholds_as_the_state_split(self):
         src = read("racecast", "school_identity.py")
         i = src.index("def levelChips")
-        self.assertIn("MIN_ATHLETES", src[i:i + 900])
-        self.assertIn("MIN_SHARE", src[i:i + 900])
-        self.assertIn("if len(rows) < 2", src[i:i + 1400],
+        body = src[i:src.index("def levelOf")]
+        self.assertIn("MIN_ATHLETES", body)
+        self.assertIn("MIN_SHARE", body)
+        self.assertIn("len(rows) < 2", body,
                       "one institution is not a split")
 
     def test_it_is_a_separate_table_not_a_new_key(self):
@@ -1896,7 +1898,8 @@ class LevelSplit(unittest.TestCase):
     def test_a_missing_table_changes_nothing(self):
         src = read("racecast", "school_identity.py")
         i = src.index("def levelChips")
-        self.assertIn('_tableExists(cur, "school_level")', src[i:i + 400])
+        self.assertIn('_tableExists(cur, "school_level")',
+                      src[i:src.index("def levelOf")])
 
     def test_the_page_scopes_and_keeps_an_unpooled_row(self):
         """Dropping a row because we failed to infer its pool would hide a
@@ -2445,6 +2448,168 @@ class TeamIdZero(unittest.TestCase):
         and send the whole scrape to team 0."""
         teams = read("scripts", "anet_teams.py")
         self.assertEqual(teams.count("team_id IS NOT NULL AND team_id <> 0"), 2)
+
+
+# ===================================================================== #
+#  A HOLDING PEN IS NOT A SCHOOL                                        #
+# ===================================================================== #
+
+class Buckets(unittest.TestCase):
+    """★ "Arkansas having college and hs, when it should just be college
+    and Arkansas is just for indiv ppl at state" (owner, 2026-09-13). At a
+    state meet an unattached runner's team cell is the STATE NAME, so the
+    university shares a page with a few hundred of its own visitors."""
+
+    def test_the_tell_is_where_the_athletes_belong_the_rest_of_the_time(self):
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("belongs AS (", src)
+        self.assertIn("b.school IS DISTINCT FROM p.school", src)
+        self.assertIn("AS n_elsewhere", src)
+        self.assertIn("AS is_bucket", src)
+
+    def test_it_asks_within_the_level_not_across_a_career(self):
+        """A college freshman has four high-school seasons behind them, so
+        their career-modal school is their high school -- every college in
+        the country would read as a bucket."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("DISTINCT ON (person_id, level)", src)
+        self.assertIn("b.person_id = p.person_id AND b.level = p.level", src)
+
+    def test_the_threshold_is_high_because_the_verdict_deletes_a_school(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        src = read("racecast", "build_school_identity.py")
+        i = src.index("BUCKET_SHARE = ")
+        share = float(src[i:].split("=")[1].split("\n")[0].strip())
+        self.assertGreaterEqual(share, 0.5)
+        self.assertLess(share, 1.0)
+
+    def test_a_bucket_is_never_the_primary_level(self):
+        """The state-meet crowd outnumbers the university, and everything
+        downstream calls the school by its primary level."""
+        src = read("racecast", "build_school_identity.py")
+        order = src[src.index("AS is_primary") - 400:src.index("AS is_primary")]
+        self.assertIn("ORDER BY (n_elsewhere >= {bucket} * n_athletes)", order)
+
+    def test_the_ddl_formats_with_the_threshold_and_nothing_else(self):
+        """It is a .format() template now; a stray brace would raise at
+        build time, hours in."""
+        src = read("racecast", "build_school_identity.py")
+        ddl = src.split('_LEVEL_DDL = """')[1].split('"""')[0]
+        self.assertEqual(sorted(set(re.findall(r"\{[^}]*\}", ddl))),
+                         ["{bucket}"])
+        self.assertIn("0.6", ddl.format(bucket=0.6))
+        self.assertIn("_LEVEL_DDL.format(bucket=BUCKET_SHARE)", src)
+
+    def test_the_chips_leave_buckets_out(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        self.assertIn("AND NOT is_bucket", src[i:i + 1200])
+
+    def test_but_an_older_table_still_gets_chips(self):
+        """is_bucket did not exist last build; losing every chip because a
+        column is missing is worse than an unfiltered chip row."""
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        body = src[i:src.index("def levelOf")]
+        self.assertIn('for clause in (" AND NOT is_bucket", "")', body)
+        self.assertIn("rollback()", body)
+
+
+# ===================================================================== #
+#  A COLLEGE IS NEVER A HIGH SCHOOL, WHATEVER THE NAME SAYS             #
+# ===================================================================== #
+
+class WebsiteLevel(unittest.TestCase):
+    """★ "college Oregon gets hs Oregon's logo" (owner, 2026-09-13). The
+    wikidata query asked for universities AND secondary schools and threw
+    the class away, so the two were one row set and the matcher took
+    whichever the feed listed first."""
+
+    def test_the_query_now_selects_the_class(self):
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn("SELECT ?itemLabel ?site ?logo ?class WHERE", src)
+        self.assertIn('_WD_LEVEL = {"Q38723": "college", "Q159334": "hs"}', src)
+
+    def test_a_wikidata_row_carries_its_level(self):
+        self.assertEqual(W._WD_LEVEL["Q38723"], "college")
+        self.assertEqual(W._WD_LEVEL["Q159334"], "hs")
+
+    def test_a_contradicting_row_is_dropped(self):
+        hits = [{"name": "Oregon High School", "level": "hs"},
+                {"name": "University of Oregon", "level": "college"}]
+        self.assertEqual([r["name"] for r in W.levelOfRows(hits, "college")],
+                         ["University of Oregon"])
+        self.assertEqual([r["name"] for r in W.levelOfRows(hits, "hs")],
+                         ["Oregon High School"])
+
+    def test_an_unlabelled_row_is_kept_at_either_level(self):
+        """Most directory exports do not say what they are, and dropping
+        them all would cost far more crests than the collision does."""
+        hits = [{"name": "Oregon", "level": None}]
+        self.assertEqual(W.levelOfRows(hits, "college"), hits)
+        self.assertEqual(W.levelOfRows(hits, "hs"), hits)
+        self.assertEqual(W.levelOfRows(hits, None), hits)
+
+    def test_the_filter_never_returns_nothing(self):
+        hits = [{"name": "Oregon", "level": "hs"}]
+        self.assertEqual(W.levelOfRows(hits, "college"), hits,
+                         "no answer is worse than a badly labelled one")
+
+    def test_the_matcher_picks_the_college_row_over_the_high_school(self):
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, review = W.matchSchools(
+            [("Oregon", "OR")], source, colleges=set(),
+            levels={("Oregon", "OR"): "college"})
+        self.assertEqual([m["url"] for m in matched], ["http://uoregon.example"])
+        self.assertEqual(review, [])
+
+    def test_and_the_high_school_row_when_we_are_a_high_school(self):
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, _ = W.matchSchools([("Oregon", "OR")], source,
+                                    levels={("Oregon", "OR"): "hs"})
+        self.assertEqual([m["url"] for m in matched], ["http://ohs.example"])
+
+    def test_without_a_level_the_collision_is_still_ambiguous(self):
+        """Which is the honest answer, and the behaviour before this."""
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, review = W.matchSchools([("Oregon", "OR")], source)
+        self.assertEqual(matched, [])
+        self.assertEqual(review[0][2], "ambiguous")
+
+    def test_a_college_tries_the_directory_key_first(self):
+        """The permissive key exists BECAUSE a college's short name is not
+        its directory name; trying it second meant never reaching it."""
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn('if want == "college" and ckey and ckey in colleges', src)
+
+    def test_the_directory_outranks_the_inferred_level(self):
+        """school_level is inferred from the athletes' own pools -- the
+        thing the level is meant to check. A name the college directory
+        places is a college, full stop."""
+        src = read("scripts", "build_school_websites.py")
+        i = src.index("def ourLevels")
+        self.assertIn('out[(school, st)] = "college"', src[i:i + 1600])
+
+    def test_a_csv_can_declare_what_it_is(self):
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn("--csv-level", src)
+        self.assertIn("rows = readCsv(path, args.csv_level)", src)
+        self.assertIn('"source": "csv", "level": level', src)
+
+    def test_no_level_tables_means_the_old_behaviour_exactly(self):
+        source = [{"name": "Amherst", "state": "MA", "url": "http://a.example",
+                   "source": "csv"}]
+        matched, _ = W.matchSchools([("Amherst", "MA")], source)
+        self.assertEqual([m["url"] for m in matched], ["http://a.example"])
 
 
 if __name__ == "__main__":

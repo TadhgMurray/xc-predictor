@@ -286,21 +286,32 @@ _LEVEL_LABEL = {"college": "College", "hs": "High school",
 
 def levelChips(cur, school, state):
     """[{level, label, n, share}] widest first, or [] when this school is
-    one institution (which is nearly all of them)."""
+    one institution (which is nearly all of them).
+
+    ! NOT is_bucket: "Arkansas" at a state meet is a few hundred high
+      schoolers who each belong to a real high school, and a chip for them
+      puts the university on a page with its own visitors (owner,
+      2026-09-13; the rule is build_school_identity's BUCKET_SHARE)."""
     if not school or not _tableExists(cur, "school_level"):
         return []
-    try:
-        cur.execute("""
-            SELECT level, n_athletes, share FROM school_level
-            WHERE  school = %s AND state = %s
-              AND  n_athletes >= %s AND share >= %s
-            ORDER  BY n_athletes DESC
-        """, (school, state or "", MIN_ATHLETES, MIN_SHARE))
-        rows = cur.fetchall()
-    except Exception:                              # noqa: BLE001 -- optional
-        cur.connection.rollback()
-        return []
-    if len(rows) < 2:
+    sql = """
+        SELECT level, n_athletes, share FROM school_level
+        WHERE  school = %s AND state = %s
+          AND  n_athletes >= %s AND share >= %s{bucket}
+        ORDER  BY n_athletes DESC
+    """
+    args = (school, state or "", MIN_ATHLETES, MIN_SHARE)
+    rows = None
+    # a table built before is_bucket existed still answers the old query,
+    # and chips without the filter beat no chips at all
+    for clause in (" AND NOT is_bucket", ""):
+        try:
+            cur.execute(sql.format(bucket=clause), args)
+            rows = cur.fetchall()
+            break
+        except Exception:                          # noqa: BLE001 -- optional
+            cur.connection.rollback()
+    if not rows or len(rows) < 2:
         return []
     out = []
     for r in rows:
