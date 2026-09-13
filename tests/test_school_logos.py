@@ -1198,13 +1198,39 @@ class AnetUnits(unittest.TestCase):
         self.assertEqual(U.learn(self.obs, min_support=50), {})
         self.assertEqual(U.learn(self.obs, min_match=1.01), {})
 
-    def test_the_competitive_division_is_never_learned(self):
-        """anet does not carry D1/D2 or a class at all, so those columns
-        stay the inference's alone and must not appear here."""
-        for gone in ("state_div", "section_div", "class"):
-            self.assertNotIn(gone, U.COLUMNS)
-        self.assertFalse(any(v[0] in ("state_div", "section_div", "class")
-                             for v in self.learned.values()))
+    def test_a_state_that_puts_its_class_in_the_tree_gets_the_class(self):
+        """★ CALIFORNIA MISLED US. Its path carries no division at all --
+        US > HS > California > North Coast > Valley > East Bay Ath. -- so
+        the first version excluded class and the *_div columns outright.
+        Then the first real run named b=197 "4A" and b=698 "6A" and b=1694
+        "Division 1": Washington, Oregon and Michigan put the class or the
+        division IN the tree, and with no column to match they each fell
+        back to their parent and came out as the STATE. Which is wrong."""
+        obs = []
+
+        def school(name, units, path):
+            for depth, (b, nm) in enumerate(path):
+                obs.append((b, "xc", depth + 2, nm, name, "WA", units))
+
+        WA = ((196, "Washington"),)
+        for i in range(9):        # 4A schools, two leagues
+            school(f"A{i}", {"state_unit": "WA", "class": "4A",
+                             "league": "KingCo" if i < 5 else "NPSL"},
+                   WA + ((197, "4A"), (900 if i < 5 else 901, "L")))
+        for i in range(8):        # 3A schools
+            school(f"B{i}", {"state_unit": "WA", "class": "3A",
+                             "league": "Metro"},
+                   WA + ((198, "3A"), (902, "Metro")))
+        learned = U.learn(obs)
+        self.assertEqual(learned[(196, "xc")][:2], ("state_unit", "WA"))
+        self.assertEqual(learned[(197, "xc")][:2], ("class", "4A"),
+                         "not state_unit='WA', which is what it did before")
+        self.assertEqual(learned[(198, "xc")][:2], ("class", "3A"))
+
+    def test_california_still_comes_out_right(self):
+        """The state with no division in its path must not regress."""
+        self.assertEqual(self.name(278), ("state_unit", "CA"))
+        self.assertEqual(self.name(319), ("section", "NCS"))
 
     def test_the_report_runs_on_all_of_it(self):
         dis = U.disagreements(self.obs, self.learned)

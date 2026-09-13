@@ -573,3 +573,51 @@ to start is worse than a nullable column on old rows.
 
 A test asserts no script executes a bare `cur.execute(DDL)` any more, so
 the next added column cannot reintroduce this.
+
+
+## The first 200 teams (2026-09-13)
+
+```
+197 teams, 196 crests, 139 addresses, 2,659 unit rows, 3 missed, 10.1 min
+shared crests: 124 images worn by several schools
+```
+
+**Read the second line before the first.** 196 crest rows is not 196
+pictures: 124 of them are an image several schools share, which is what a
+source that serves a default mascot for logo-less teams looks like. The
+sweep caught it and the site skips those rows, so nothing wrong reaches a
+page -- but the honest crest count here is nearer 70 than 196. `--stats`
+now prints the DISTINCT image count and names the images worn by the most
+schools, because a row count says nothing about this.
+
+Even so: ~70 real crests in 200 schools beats the open web's 27%, and the
+addresses (139 of 197 carry `WebsiteSport`) are the bigger prize.
+
+### What the unit learner said, and what it got wrong
+
+37 of 579 ids named, 34 of them `state_unit`. Mostly that is **starvation,
+not error**: 200 schools spread nationally leave one or two per league,
+under `MIN_SUPPORT`. Density comes with the full run.
+
+But two real things fell out of it.
+
+**anet carries the class or the division -- in some states.** b=197 "4A",
+b=698 "6A", b=1694 "Division 1", and each was named `state_unit` because
+`class`, `state_div` and `section_div` had been excluded from `COLUMNS` on
+the strength of one California team. California genuinely has no division
+in its path; Washington, Oregon and Michigan put it right in the tree. All
+three columns are back, and a test pins both cases so neither state's shape
+can break the other.
+
+**And the disagreements are pointing at OUR data, not anet's.**
+
+```
+Marshall (CA) tf: we say section='LA CITY', anet's id says 'STATE T&F'
+Davis (CA)     tf: we say section='SJS',     anet's id says 'STATE T&F'
+```
+
+`section='STATE T&F'` is not a section. It looks like the attendance
+inference reading a meet named something like "CA State T&F" as a unit --
+which then matched anet's California id well enough to win. That is the
+cross-check earning its keep on the first run: the bug is in
+`check_school_units`'s parser, not in anything anet sent.

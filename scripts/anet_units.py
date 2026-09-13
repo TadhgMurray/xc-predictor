@@ -26,9 +26,9 @@ optionally a proposals table. Never touches school_unit.
       can fill, which is where the attendance inference has nothing
       because the school never went to a league championship.
 
-⚠ WHAT IT CANNOT DO. anet has no D1/D2 and no class, so state_div,
-  section_div and class are never learned or filled. Those stay the
-  inference's alone.
+⚠ WHAT IT CANNOT DO. It only ever proposes; nothing here writes to
+  school_unit. And a unit the inference has never seen anywhere stays
+  unnamed -- there is nothing to learn a name from.
 """
 import argparse
 import os
@@ -37,17 +37,30 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "scripts"))
 
-# the columns anet's hierarchy can speak to. No *_div and no class: anet
-# does not carry a competitive division.
-COLUMNS = ("league", "area", "district", "county", "section", "region",
-           "state_unit", "conference", "division")
+# ★ ANET DOES CARRY THE COMPETITIVE DIVISION -- IN SOME STATES (2026-09-13).
+#   The first version excluded state_div, section_div and class on the
+#   strength of one California team, whose path is US > HS > California >
+#   North Coast > Valley > East Bay Ath. with no division anywhere. But the
+#   first real run named b=197 "4A" and b=698 "6A" and b=1694 "Division 1"
+#   -- Washington, Oregon and Michigan put the class or the division IN the
+#   tree. With no division column to match, each of those fell back to its
+#   parent and came out as state_unit, which is simply wrong.
+#
+#   So every column anet's hierarchy can speak to, and it can speak to more
+#   than California suggested. What it still never carries is a section's
+#   OWN division where the state does not put one in the path.
+COLUMNS = ("league", "area", "district", "county", "section", "section_div",
+           "region", "state_unit", "state_div", "class", "conference",
+           "division")
 
 # widest to narrowest, HS then college. Only used to break a tie: when two
 # units contain exactly the same schools in our data they are the same
 # partition as far as we can see, and anet's own depth is then the only
 # thing that says which of them the id is.
-WIDTH = ("state_unit", "division", "region", "section", "county", "district",
-         "conference", "area", "league")
+# widest to narrowest, in the order school_units.py already draws the chips
+# ("CA D2, NCS D2, Tri-Valley, EBAL"), HS then college.
+WIDTH = ("state_unit", "state_div", "class", "division", "region", "section",
+         "section_div", "county", "district", "conference", "area", "league")
 
 MIN_SUPPORT = 5        # schools carrying the id before it can be named
 MIN_MATCH = 0.55       # ...and how well the two sets of schools coincide
