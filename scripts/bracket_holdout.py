@@ -115,11 +115,14 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
         print("        compare: the ladder's base rung (engine/data/ladder_logs/base.log; "
               "run `scripts/ablation_ladder.py --only base` if it is not there), "
               "same sample, same split, same question")
-    out["same_rows"] = sameRows(sub, both, test_s, cov, pred, y, joint_dump)
+    out["same_rows"] = sameRows(sub, both, test_s, cov, pred, y, joint_dump,
+                                full_ath=cols["athlete"], full_year=cols["year"],
+                                full_norm=cols["norm"])
     return out
 
 
-def sameRows(sub, both, test_s, cov, pred, y, dump_path=None):
+def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
+             full_year=None, full_norm=None):
     """★ ONE SET OF ROWS FOR BOTH ENGINES (2026-09-12). The bracket engine
     covers a held-out row only when its athlete has other races within
     the window, 59% of the corpus's held-out rows; the joint model covers
@@ -138,7 +141,24 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None):
     rows_j = np.asarray(d["row"], dtype=np.int64)
     pred_j = np.asarray(d["pred"], dtype=np.float64)
     cov_j = np.asarray(d["covered"], dtype=bool)
+    y_j = np.asarray(d["y"], dtype=np.float64)
     n_pack = both.size
+    if "row_space" not in d.files:
+        # ! A FILE WRITTEN BEFORE 2026-09-13 INDEXES THE SOLVE'S SORTED ROWS,
+        #   not the pack's: run_joint sorts by (athlete, year) first. The
+        #   sort is recomputed here and undone. Run 21's first comparison
+        #   read 35% overlap and a joint error of 0.0625 for this reason.
+        order = np.lexsort((np.asarray(full_year), np.asarray(full_ath)))
+        rows_j = order[rows_j]
+    # the dump's own times must land on the rows they came from; if they do
+    # not, the two engines are being compared on different rows and it stops
+    y_full = np.log(np.asarray(full_norm, dtype=np.float64))
+    inb = (rows_j >= 0) & (rows_j < n_pack)
+    match = np.isclose(y_full[rows_j[inb]], y_j[inb], atol=1e-6)
+    if match.mean() < 0.99:
+        print(f"        the joint file's held-out rows do not land on this pack "
+              f"({match.mean():.1%} of their times agree); no same-rows comparison")
+        return None
     joint = np.full(n_pack, np.nan)
     okj = cov_j & (rows_j >= 0) & (rows_j < n_pack)
     joint[rows_j[okj]] = pred_j[okj]

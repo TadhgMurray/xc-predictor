@@ -188,6 +188,9 @@ def sortRowsByAthlete(cols):
             out[k] = arr[order]
         else:
             out[k] = v
+    # the pack's own row number per sorted row, so anything written per
+    # row (the holdout's predictions) can be read back against the file
+    out["_row_order"] = order.astype(np.int64)
     return out
 
 
@@ -1149,10 +1152,18 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     dump = os.environ.get("XCP_HOLDOUT_DUMP")
     if dump:
         os.makedirs(os.path.dirname(dump) or ".", exist_ok=True)
-        np.savez(dump, row=idx[te_local].astype(np.int64), pred=pred.astype(np.float64),
+        rows_here = idx[te_local].astype(np.int64)
+        # ! ROWS IN THE PACK FILE'S ORDER. main() sorts the rows by athlete
+        #   and year before anything runs (sortRowsByAthlete), so an index
+        #   into these arrays is not a row of the file; the sort keeps the
+        #   file's row number per sorted row, and that is what is written.
+        orig = (np.asarray(cols["_row_order"])[rows_here] if "_row_order" in cols
+                else rows_here)
+        np.savez(dump, row=orig, pred=pred.astype(np.float64),
                  covered=cov.astype(bool), y=y_te.astype(np.float64),
                  kind=np.array([kind]), sample_pct=np.array([float(args.sample_pct)]),
-                 sample_seed=np.array([int(args.sample_seed)]))
+                 sample_seed=np.array([int(args.sample_seed)]),
+                 row_space=np.array(["file"]))
         print(f"[joint] held-out predictions -> {dump} ({int(cov.sum()):,} covered "
               f"of {cov.size:,})")
     # ⚠ SAY WHICH RUNG. "error sd 0.044" means nothing without it: holding

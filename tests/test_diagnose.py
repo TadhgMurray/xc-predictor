@@ -251,3 +251,64 @@ def test_the_joint_holdout_writes_its_predictions_row_by_row(tmp_path, monkeypat
     assert np.array_equal(np.log(cols["norm"][rows]), y)
     assert cov.mean() > 0.8 and (y[cov] - pred[cov]).std() < 0.06
     assert str(d["kind"][0]) == "race"
+
+
+def test_the_joint_dump_lands_on_the_packs_rows_even_after_the_solve_sorts_them(tmp_path, monkeypatch):
+    """★ RUN 21 (2026-09-13): the first same-rows line read 35% overlap and a
+    joint error of 0.0625 because run_joint sorts the pack by athlete and
+    year before the holdout and the dump indexed the sorted rows. The dump
+    carries the file's row numbers now; an old dump is translated; and a
+    dump whose times do not land on the pack is refused."""
+    import bracket_holdout as bh
+    cols, keep, keys, sport_of_course = _era_pack()
+    # a pack whose file order is NOT (athlete, year): shuffle it
+    rng = np.random.default_rng(11)
+    n = cols["norm"].size
+    perm = rng.permutation(n)
+    shuffled = {k: (v[perm] if isinstance(v, np.ndarray) and v.shape[:1] == (n,) else v)
+                for k, v in cols.items()}
+    args = rj.buildParser().parse_args(["--holdout-only", "--no-curve", "--no-rust",
+                                        "--no-dist", "--no-slope", "--no-link",
+                                        "--no-sport-offset", "--outer", "2", "--probes", "0",
+                                        "--importance", "none", "--era-years", "2"])
+    path = tmp_path / "base_holdout.npz"
+    monkeypatch.setenv("XCP_HOLDOUT_DUMP", str(path))
+    sorted_cols = rj.sortRowsByAthlete(shuffled)            # what main() does first
+    with contextlib.redirect_stdout(io.StringIO()):
+        D, athlete_pool, pool_names = rj.buildDesign(
+            sorted_cols, np.ones(n, dtype=bool), sport_offset=False, curve=False,
+            rust=False, dist=False, slope=False, link=False, altitude=False,
+            era_years=2, importance="none", indoor=True, dist_table=False)
+        rj.holdout(sorted_cols, np.ones(n, dtype=bool), args, athlete_pool, D)
+    d = np.load(path, allow_pickle=False)
+    assert str(d["row_space"][0]) == "file"
+    # the dump's rows are rows of the SHUFFLED pack, the file the diagnostics load
+    assert np.allclose(np.log(shuffled["norm"][d["row"]]), d["y"])
+    npz = {"course_keys": np.array(D.course_keys), "era_years": np.array([2]),
+           "era_base_year": np.array([int(shuffled["year"].min())])}
+    full, codes = bk.packCodes(shuffled, npz, 2)
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = bh.score(full, None, codes=codes, pct=100, seed=11, era_years=2, iters=10,
+                       verbose=False, joint_dump=str(path))
+    same = res["same_rows"]
+    assert same is not None and same["overlap"] > 0.95, same
+    assert same["sd_joint"] < 0.06
+    # an old-style dump (indices into the sorted rows, no row_space) is translated
+    order = np.lexsort((shuffled["year"], shuffled["athlete"]))
+    inv = np.empty(n, dtype=np.int64); inv[order] = np.arange(n)
+    old_path = tmp_path / "old_holdout.npz"
+    np.savez(old_path, row=inv[d["row"]], pred=d["pred"], covered=d["covered"], y=d["y"],
+             kind=d["kind"], sample_pct=d["sample_pct"], sample_seed=d["sample_seed"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        res2 = bh.score(full, None, codes=codes, pct=100, seed=11, era_years=2, iters=10,
+                        verbose=False, joint_dump=str(old_path))
+    assert res2["same_rows"] is not None and abs(res2["same_rows"]["sd_joint"] - same["sd_joint"]) < 1e-9
+    # a dump that does not land on this pack is refused, not compared
+    bad = tmp_path / "bad_holdout.npz"
+    np.savez(bad, row=d["row"], pred=d["pred"], covered=d["covered"], y=d["y"] + 0.5,
+             kind=d["kind"], sample_pct=d["sample_pct"], sample_seed=d["sample_seed"],
+             row_space=np.array(["file"]))
+    with contextlib.redirect_stdout(io.StringIO()):
+        res3 = bh.score(full, None, codes=codes, pct=100, seed=11, era_years=2, iters=10,
+                        verbose=False, joint_dump=str(bad))
+    assert res3["same_rows"] is None
