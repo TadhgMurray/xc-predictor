@@ -20,6 +20,7 @@ import os
 import sys
 import time
 import unittest
+import urllib.error
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_ROOT, os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
@@ -355,6 +356,105 @@ class Robots(unittest.TestCase):
         self.assertEqual(calls.count("https://x.org/robots.txt"), 1)
 
 
+class Reasons(unittest.TestCase):
+    """★ "URLError" WAS 1,886 OF THE FIRST RUN'S MISSES and said nothing.
+    DNS, a dead certificate and a refused connection all arrive as one
+    class, and only some of them are worth doing anything about."""
+
+    def test_each_kind_of_failure_is_named(self):
+        import socket
+        import ssl
+        cases = [
+            (urllib.error.URLError(socket.gaierror(-2, "Name or service not known")), "dns"),
+            (urllib.error.URLError(ssl.SSLCertVerificationError("expired")), "ssl"),
+            (urllib.error.URLError(ConnectionRefusedError()), "refused"),
+            (urllib.error.URLError(ConnectionResetError()), "reset"),
+            (TimeoutError(), "timeout"),
+        ]
+        for exc, want in cases:
+            self.assertEqual(S._reason(exc), want, exc)
+
+    def test_a_refusal_is_final_and_a_broken_address_is_not(self):
+        for final in ("school robots", "school HTTP 403", "school HTTP 429",
+                      "school HTTP 401", "page too big"):
+            self.assertFalse(S.retryable(final), final)
+        for worth in ("school HTTP 404", "school dns", "school ssl",
+                      "school HTTP 500", "school reset"):
+            self.assertTrue(S.retryable(worth), worth)
+
+
+class BrokenCertificates(unittest.TestCase):
+    """⚠ SCHOOL DISTRICT CERTIFICATES EXPIRE CONSTANTLY, and the school is
+    still the school. The verified attempt always happens first; only a
+    certificate failure earns a second, unverified one, and the hosts that
+    needed it are named at the end of the run."""
+
+    def setUp(self):
+        self._real = S.urllib.request.urlopen
+        self.addCleanup(setattr, S.urllib.request, "urlopen", self._real)
+
+    def _server(self, fail_with, secure_ok=False):
+        self.calls = []
+
+        def urlopen(req, timeout=None, context=None):
+            self.calls.append(context is not None)
+            if context is None and not secure_ok:
+                raise fail_with
+            return _Resp(b"<html>", "text/html")
+        return urlopen
+
+    def test_a_certificate_failure_earns_one_unverified_retry(self):
+        import ssl
+        S.urllib.request.urlopen = self._server(
+            urllib.error.URLError(ssl.SSLCertVerificationError("expired")))
+        m = S.Manners(rate=0)
+        body, _ct = m.get("https://chs.k12.ca.us/")
+        self.assertEqual(body, b"<html>")
+        self.assertEqual(self.calls, [False, False, True],
+                         "robots, then the verified try, then the unverified one")
+        self.assertIn("chs.k12.ca.us", m.insecureHosts)
+
+    def test_anything_else_is_never_retried_unverified(self):
+        import socket
+        S.urllib.request.urlopen = self._server(
+            urllib.error.URLError(socket.gaierror(-2, "nope")))
+        m = S.Manners(rate=0)
+        self.assertEqual(m.get("https://chs.k12.ca.us/"), (None, "dns"))
+        self.assertNotIn(True, self.calls)
+        self.assertEqual(m.insecureHosts, set())
+
+    def test_a_verified_fetch_never_reaches_the_fallback(self):
+        S.urllib.request.urlopen = self._server(None, secure_ok=True)
+        m = S.Manners(rate=0)
+        self.assertEqual(m.get("https://chs.k12.ca.us/")[0], b"<html>")
+        self.assertNotIn(True, self.calls)
+        self.assertEqual(m.insecureHosts, set())
+
+
+class Addresses(unittest.TestCase):
+    def test_the_spellings_a_directory_gets_wrong(self):
+        self.assertEqual(S.homeVariants("http://chs.k12.ca.us/pages/home.aspx"),
+                         ["http://chs.k12.ca.us/pages/home.aspx",
+                          "http://chs.k12.ca.us/",
+                          "https://chs.k12.ca.us/"])
+        self.assertEqual(S.homeVariants("https://www.foo.edu/"),
+                         ["https://www.foo.edu/", "http://www.foo.edu/",
+                          "https://foo.edu/"])
+        self.assertEqual(S.homeVariants("http://bar.org"),
+                         ["http://bar.org", "https://bar.org/",
+                          "http://www.bar.org/"])
+
+    def test_it_is_capped_and_never_repeats_itself(self):
+        for url in ("http://a.org/", "https://www.a.org/x?y=1", "http://a.org"):
+            got = S.homeVariants(url)
+            self.assertLessEqual(len(got), S.HOME_TRIES, url)
+            self.assertEqual(len(got), len(set(got)), url)
+
+    def test_rubbish_yields_nothing_to_try(self):
+        for junk in ("", "not a url", "mailto:x@y.z", "/relative"):
+            self.assertEqual(S.homeVariants(junk), [], junk)
+
+
 class Fetching(unittest.TestCase):
     """fetchLogo's decisions, with the image reader stubbed out: which site
     it prefers, which candidate it settles on, what it says when none work."""
@@ -471,7 +571,43 @@ class Fetching(unittest.TestCase):
     def test_a_page_that_is_not_html_is_not_parsed(self):
         m = self._M({"https://x.org/": (b"%PDF-1.4", "application/pdf")})
         self.assertEqual(S.fetchLogo(m, "https://x.org/")[3],
-                         "school application/pdf")
+                         "school application/pdf",
+                         "the reason reported is the address as GIVEN, not "
+                         "our own last guess at it")
+
+    def test_a_stale_deep_link_falls_back_to_the_site_root(self):
+        """★ 1,844 OF THE FIRST RUN'S MISSES were a 404: a directory's link
+        into a page that moved, while the site itself was fine."""
+        m = self._M({
+            "http://chs.org/pages/home.aspx": (None, "HTTP 404"),
+            "http://chs.org/": (b'<head><link rel="icon" sizes="128x128" href="/i.png">',
+                                "text/html"),
+            "http://chs.org/i.png": (b"square", "image/png")})
+        _png, _sha, kind, src = S.fetchLogo(m, "http://chs.org/pages/home.aspx")
+        self.assertEqual((kind, src), ("school:icon-sized", "http://chs.org/i.png"))
+
+    def test_http_falls_back_to_https(self):
+        m = self._M({
+            "http://chs.org/": (None, "reset"),
+            "https://chs.org/": (b'<head><link rel="icon" sizes="128x128" href="/i.png">',
+                                 "text/html"),
+            "https://chs.org/i.png": (b"square", "image/png")})
+        self.assertTrue(S.fetchLogo(m, "http://chs.org/")[0])
+
+    def test_a_refusal_is_never_re_asked_in_another_spelling(self):
+        """robots said no, or the server did: a different spelling of the
+        same address is the same refusal, and asking again is rude."""
+        for final in ("robots", "HTTP 403", "HTTP 429"):
+            m = self._M({"https://chs.org/": (None, final)})
+            _p, _s, _k, why = S.fetchLogo(m, "https://chs.org/")
+            self.assertEqual(why, f"school {final}")
+            self.assertEqual(m.asked, ["https://chs.org/"], final)
+
+    def test_a_broken_address_is_re_asked_at_most_three_ways(self):
+        m = self._M({})
+        S.fetchLogo(m, "http://chs.org/a/b.aspx")
+        self.assertEqual(m.asked, ["http://chs.org/a/b.aspx", "http://chs.org/",
+                                   "https://chs.org/"])
 
     def test_only_so_many_icons_are_tried_per_site(self):
         """A site that declares eight broken icons is a site with no crest,
@@ -587,6 +723,41 @@ class Worklist(unittest.TestCase):
         row = ("Jesuit", "CA", "https://x", None, None, None, None, None, "ok")
         cur = self._Cur(rows=[row])
         self.assertEqual(S.targets(cur), [row])
+
+
+class Redo(unittest.TestCase):
+    """⚠ THE CHEAP REFRESH IS WRONG AFTER THE PICKING CHANGES. A 304 keeps
+    the crest we already have, so every school holding its institutional
+    logo would keep it and never be offered the athletics one."""
+
+    ROW = ("Jesuit", "CA", "https://x.org/", None, None,
+           "https://x.org/old.png", '"etag"', None, "ok")
+
+    def setUp(self):
+        self.seen = []
+        real_re, real_fetch = S.refetch, S.fetchLogo
+        S.refetch = lambda *a, **k: (self.seen.append("refetch"), S.UNCHANGED)[1]
+        S.fetchLogo = lambda *a, **k: (self.seen.append("fetch"),
+                                       (b"PNG", "sha", "athletics:icon", "u"))[1]
+        self.addCleanup(setattr, S, "refetch", real_re)
+        self.addCleanup(setattr, S, "fetchLogo", real_fetch)
+
+    class _M:
+        etag = modified = None
+
+    def test_a_normal_run_takes_the_cheap_refresh(self):
+        res = S.workOne(self._M(), self.ROW)
+        self.assertEqual(self.seen, ["refetch"])
+        self.assertTrue(res.get("unchanged"))
+
+    def test_redo_rediscovers_from_the_home_page(self):
+        res = S.workOne(self._M(), self.ROW, rediscover=True)
+        self.assertEqual(self.seen, ["fetch"])
+        self.assertEqual(res["kind"], "athletics:icon")
+
+    def test_the_run_passes_the_flag_through(self):
+        self.assertIn("workOne(manners, r, args.redo)",
+                      read("scripts", "scrape_school_logos.py"))
 
 
 class Crashproof(unittest.TestCase):

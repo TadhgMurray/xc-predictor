@@ -306,3 +306,79 @@ Every failure's reason is stored on its row, so there is no need to guess:
 prints how many crests there are, where each came from, and a histogram of
 why the rest failed (sizes collapsed, so "too small" is one bucket rather
 than a hundred). That output decides what to fix next.
+
+
+---
+
+# READING THE SECOND RUN'S HISTOGRAM (2026-09-13)
+
+```
+2,603 crests of 9,600 tried (27.1%), 0 flagged as a district's
+addresses on file: 11,231
+```
+
+Sorted, the 6,997 misses say something very clear:
+
+| what | n | where it went |
+|---|---|---|
+| **never reached the site** | **~4,556** | 1,886 connection failures, 1,844 HTTP 404, 487 HTTP 403, 137 robots, and a tail of Cloudflare origin errors |
+| the site was fine, no usable icon | ~2,300 | 1,267 favicon 404, 666 too small or wrong shape, 358 unreadable |
+
+**Two thirds of the misses were the ADDRESS, not the picking.** That is
+where this round went.
+
+- **HTTP 404 (1,844)** is a directory's deep link into a page that moved
+  while the site itself is fine. `homeVariants` now tries the address as
+  given, then the host's own root, then the other scheme, then www
+  toggled -- at most three, and only while the failure is the kind a
+  different spelling could fix. A refusal (robots, 403, 429) is never
+  re-asked in another spelling.
+- **"URLError" (1,886)** was a useless label: DNS, a dead certificate and a
+  refused connection all arrive as one class. It now reports `dns`, `ssl`,
+  `refused`, `reset` or `timeout`, so the next histogram is actionable.
+- **`ssl`** gets one unverified retry. School district certificates expire,
+  go self-signed and lose their intermediates constantly, and the school is
+  still the school. The verified attempt always happens first; what is at
+  stake if this is ever abused is a wrong PNG beside a school's name, and
+  the hosts that needed it are named at the end of the run.
+- **HTTP 403 (487)** is a WAF rejecting a User-Agent that does not look
+  like a crawler it knows. The UA is now the conventional
+  `Mozilla/5.0 (compatible; racecast/1.0; +url; contact: ...)` -- the shape
+  Googlebot uses. It still names us and still carries a contact address.
+- **666 too small / wrong shape** and **358 unreadable** are the previous
+  round's fixes landing: the 48 px floor and SVG.
+
+`og` was the single biggest source of the crests that DID work (1,204 of
+2,603), which is worth knowing: schools really do put their logo in the
+Open Graph tag. It is no longer tried first (it is a banner as often as a
+logo, and trying it first cost a request per school), but it is still tried.
+
+## What --redo had to learn
+
+The quarterly refresh asks the file we kept last time and stops at a 304.
+That is right for a quarterly run and exactly wrong after the picking has
+changed: every school already holding its institutional logo would keep it
+and never be offered the athletics one. `--redo` now forces full
+rediscovery.
+
+## The number that actually matters
+
+`--stats` now also prints coverage among the biggest programmes:
+
+```
+coverage where it counts, by athlete count:
+  top 500      ... have a crest, ... have an address
+  top 2,000    ...
+  top 10,000   ...
+  all N        ...
+```
+
+"2,603 of 110,000" counts every middle school and club the corpus has ever
+seen equally with the programmes that appear on every other page. A crest
+is worth having where a school is NAMED. That table is also the order the
+scraper works in, so `--limit` reads straight off it.
+
+**And the ceiling is still the address book: 11,231 addresses.** No change
+to the scraper can crest a school it has no URL for. Only `--wikidata` was
+ever loaded. That is the next piece of work, and it is directory work, not
+crawler work.

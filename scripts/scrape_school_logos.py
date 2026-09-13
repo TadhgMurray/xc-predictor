@@ -64,7 +64,12 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
 
 from school_logo import LOGO_DIR, LOGO_PX, fileFor          # noqa: E402
 
-UA = ("racecast logo fetch (+https://racecast.co/about; "
+# ! THE CONVENTIONAL BOT SHAPE, not a disguise. "Mozilla/5.0 (compatible;
+#   <name>; +<url>)" is what Googlebot and every other well-behaved crawler
+#   sends, and a great many school WAFs 403 anything that does not start
+#   that way -- 487 of them in the first run. It still names us and still
+#   carries a contact address, which is the part that matters.
+UA = ("Mozilla/5.0 (compatible; racecast/1.0; +https://racecast.co/about; "
       "contact: tadhg.a.murray@gmail.com)")
 
 # ! THE FLOOR IS FOR A MARK, NOT A POSTER (owner: "coverage is atrocious").
@@ -89,6 +94,7 @@ TIMEOUT = 15
 SHARED_MIN = 4              # this many schools wearing one image = a district's
 REFRESH_DAYS = 90
 WORKERS = 24
+HOME_TRIES = 3              # spellings of one school's address before giving up
 
 # what a page may declare, best first. Manifest icons are the best of all
 # (192 and 512 px, square by convention) but cost a request to discover, so
@@ -310,6 +316,37 @@ def _absolute(href, base_url):
 #  MANNERS                                                              #
 # ===================================================================== #
 
+def _reason(exc):
+    """A failure worth reading. "URLError" was 1,886 of the first run's
+    misses and said nothing: DNS, a dead certificate and a refused
+    connection all arrive as one class, and only one of them is worth
+    doing anything about."""
+    import socket
+    import ssl
+    r = getattr(exc, "reason", exc)
+    if isinstance(r, (ssl.SSLError, ssl.CertificateError)):
+        return "ssl"
+    if isinstance(r, socket.gaierror):
+        return "dns"
+    if isinstance(r, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(r, ConnectionRefusedError):
+        return "refused"
+    if isinstance(r, ConnectionResetError):
+        return "reset"
+    return type(r).__name__
+
+
+# A refusal is final: robots said no, or the server did. Anything else is
+# the ADDRESS being wrong, and a different spelling of it is a different
+# request rather than a retry of the same one.
+_FINAL = ("robots", "HTTP 401", "HTTP 403", "HTTP 429", "too big")
+
+
+def retryable(reason):
+    return not any(reason.endswith(f) for f in _FINAL)
+
+
 class Manners:
     """Polite per HOST, concurrent across hosts, never retried.
 
@@ -331,6 +368,8 @@ class Manners:
         self._robots = {}
         self._robotLocks = {}
         self._local = threading.local()
+        self._insecure = None
+        self.insecureHosts = set()
 
     # -- the last response's validators, per thread (see refetch) --------
     @property
@@ -393,7 +432,25 @@ class Manners:
         except Exception:                                 # noqa: BLE001
             return True, 0.0
 
-    def get(self, url, max_bytes=MAX_BYTES, etag=None, modified=None):
+    def _ctx(self):
+        """⚠ A CONTEXT THAT DOES NOT VERIFY, USED ONLY AS A SECOND ATTEMPT
+        AFTER A CERTIFICATE FAILURE. School district certificates expire,
+        go self-signed and miss their intermediates constantly, and the
+        school is still the school. What is at stake if this is ever abused
+        is a wrong PNG beside a school's name -- no credential is sent, no
+        data is read, nothing is trusted downstream. The verified attempt
+        always happens first, and the hosts that needed this are listed at
+        the end of the run."""
+        if self._insecure is None:
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            self._insecure = ctx
+        return self._insecure
+
+    def get(self, url, max_bytes=MAX_BYTES, etag=None, modified=None,
+            insecure=False):
         """(bytes, content_type) or (None, reason). One attempt.
 
         `etag` / `modified`: the validators the last fetch of this URL came
@@ -412,8 +469,9 @@ class Manners:
             headers["If-Modified-Since"] = modified
         self._local.etag = self._local.modified = None
         req = urllib.request.Request(url, headers=headers)
+        kw = {"context": self._ctx()} if insecure else {}
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as fh:
+            with urllib.request.urlopen(req, timeout=self.timeout, **kw) as fh:
                 self._count()
                 self._local.etag = fh.headers.get("ETag")
                 self._local.modified = fh.headers.get("Last-Modified")
@@ -430,7 +488,11 @@ class Manners:
             return None, ("304" if exc.code == 304 else f"HTTP {exc.code}")
         except Exception as exc:                          # noqa: BLE001
             self._count()
-            return None, f"{type(exc).__name__}"
+            why = _reason(exc)
+            if why == "ssl" and not insecure:
+                self.insecureHosts.add(urllib.parse.urlsplit(url).netloc)
+                return self.get(url, max_bytes, etag, modified, insecure=True)
+            return None, why
 
 
 # ===================================================================== #
@@ -481,8 +543,8 @@ def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     try:
         im = Image.open(io.BytesIO(raw))
         im.load()
-    except Exception as exc:                              # noqa: BLE001
-        return None, None, f"unreadable ({type(exc).__name__})"
+    except Exception:                                     # noqa: BLE001
+        return None, None, f"unreadable {ctype or 'image'}"
     im = im.convert("RGBA")
     box = im.getbbox()                       # transparent margin off
     if box:
@@ -506,14 +568,52 @@ def normalise(raw, px=LOGO_PX, ctype="", kind=None):
 MAX_TRIES = 4               # image fetches per site before giving up on it
 
 
-def _fetchPage(manners, page_url, tag):
-    """(page_text, None) or (None, reason). One request."""
-    page, ctype = manners.get(page_url, max_bytes=2 * 1024 * 1024)
-    if page is None:
-        return None, f"{tag} {ctype}"
-    if ctype and "html" not in ctype:
-        return None, f"{tag} {ctype}"
-    return page.decode("utf-8", "replace"), None
+def homeVariants(url):
+    """The same school, spelled the ways a directory entry gets it wrong.
+
+    ★ HALF THE FIRST RUN'S MISSES NEVER REACHED A SITE AT ALL: 1,844 HTTP
+      404 (a directory's deep link into a page that moved -- the SITE is
+      fine, the path is not), and 1,886 connection failures of which the
+      http/https and www ones are just a different spelling. So: as given,
+      then the host's own root, then the other scheme, then www toggled.
+      At most HOME_TRIES of them, and only while the failure is the kind a
+      different spelling could fix -- a refusal is never re-asked."""
+    try:
+        p = urllib.parse.urlsplit(url)
+    except ValueError:
+        return []
+    if not p.netloc:
+        return []
+    out = [url]
+    def add(scheme, netloc):
+        u = urllib.parse.urlunsplit((scheme, netloc, "/", "", ""))
+        if u not in out:
+            out.append(u)
+    if (p.path or "/") != "/" or p.query:
+        add(p.scheme, p.netloc)                    # the site, not the page
+    add("https" if p.scheme == "http" else "http", p.netloc)
+    host = p.netloc
+    add(p.scheme, host[4:] if host.startswith("www.") else "www." + host)
+    return out[:HOME_TRIES]
+
+
+def _fetchPage(manners, page_url, tag, variants=False):
+    """(page_text, final_url, None) or (None, None, reason).
+
+    With `variants`, the school's address is tried in its several
+    spellings (homeVariants) until one answers or the failure turns out to
+    be a refusal."""
+    # the FIRST failure is the one worth reporting: it is the address as
+    # the directory has it, and the later ones are our own guesses at it
+    reason = None
+    for url in (homeVariants(page_url) if variants else [page_url]):
+        page, ctype = manners.get(url, max_bytes=2 * 1024 * 1024)
+        if page is not None and (not ctype or "html" in ctype):
+            return page.decode("utf-8", "replace"), url, None
+        reason = reason or f"{tag} {ctype}"
+        if page is None and not retryable(ctype):
+            break
+    return None, None, reason or f"{tag} no address"
 
 
 def _fromText(manners, text, page_url, tag):
@@ -566,18 +666,18 @@ def fetchLogo(manners, home_url, direct=None):
     if not home_url:
         return None, None, None, "no address"
 
-    text, why = _fetchPage(manners, home_url, "school")
+    text, home, why = _fetchPage(manners, home_url, "school", variants=True)
     if text is None:
         return None, None, None, why
 
-    ath_url = athleticsLink(text, home_url)
+    ath_url = athleticsLink(text, home)
     if ath_url:
-        ath_text, _why = _fetchPage(manners, ath_url, "athletics")
+        ath_text, ath, _why = _fetchPage(manners, ath_url, "athletics")
         if ath_text is not None:
-            got = _fromText(manners, ath_text, ath_url, "athletics")
+            got = _fromText(manners, ath_text, ath, "athletics")
             if got[0] is not None:
                 return got
-    return _fromText(manners, text, home_url, "school")
+    return _fromText(manners, text, home, "school")
 
 
 UNCHANGED = "unchanged"
@@ -763,18 +863,60 @@ def stats(cur):
         out.append(f"    {(w or '?').replace('none: ', '').strip():<34} {c:,}")
     if _tableExists(cur, "school_website"):
         cur.execute("SELECT count(*) FROM school_website")
-        addrs = cur.fetchone()
-        addrs = addrs[0] if not isinstance(addrs, dict) else list(addrs.values())[0]
+        addrs = _one(cur.fetchone())
         out.append(f"  addresses on file: {addrs:,} "
                    f"(build_school_websites.py; no address, no crest)")
+    out += coverageByImportance(cur)
     return "\n".join(out)
+
+
+def _one(row):
+    if row is None:
+        return 0
+    return row[0] if not isinstance(row, dict) else list(row.values())[0]
+
+
+def coverageByImportance(cur):
+    """★ THE NUMBER THAT ACTUALLY MATTERS. "2,603 of 110,000" is not the
+    site's coverage: it counts every middle school and club the corpus has
+    ever seen equally with the programmes that appear on every other page.
+    A crest is worth having where a school is NAMED, so the honest measure
+    is coverage among the biggest programmes -- which is also the order the
+    scraper works in, so --limit reads straight off this."""
+    if not _tableExists(cur, "school_identity"):
+        return ["  (school_identity is missing: no importance to weigh by)"]
+    out = ["  coverage where it counts, by athlete count:"]
+    cur.execute("SELECT count(*) FROM school_identity WHERE n_athletes >= 3")
+    total = _one(cur.fetchone())
+    for band in (500, 2000, 10000, None):
+        cur.execute("""
+            WITH top AS (SELECT school, state FROM school_identity
+                         WHERE n_athletes >= 3
+                         ORDER BY n_athletes DESC
+                         LIMIT %s)
+            SELECT count(*) FILTER (WHERE l.status = 'ok' AND NOT l.shared) AS ok,
+                   count(*) FILTER (WHERE w.school IS NOT NULL) AS addressed,
+                   count(*) AS n
+            FROM   top
+            LEFT   JOIN school_logo l ON l.school = top.school AND l.state = top.state
+            LEFT   JOIN school_website w ON w.school = top.school AND w.state = top.state
+        """, (band if band else total or 1,))
+        r = cur.fetchone()
+        ok, addressed, n = ((r["ok"], r["addressed"], r["n"])
+                            if isinstance(r, dict) else r)
+        label = f"top {band:,}" if band else f"all {n:,}"
+        out.append(f"    {label:<12} {ok:,} of {n:,} have a crest "
+                   f"({100.0 * ok / max(1, n):5.1f}%), "
+                   f"{addressed:,} have an address "
+                   f"({100.0 * addressed / max(1, n):5.1f}%)")
+    return out
 
 
 # ===================================================================== #
 #  RUN                                                                  #
 # ===================================================================== #
 
-def workOne(manners, row):
+def workOne(manners, row, rediscover=False):
     """One school, entirely in a worker thread: no database, no disk. The
     main thread does every write, because a psycopg2 connection is not
     thread-safe and a torn row is worse than a slow one.
@@ -782,17 +924,22 @@ def workOne(manners, row):
     ! IT CANNOT RAISE. One malformed page must not end a two-hour run, so
       anything unexpected becomes this school's failure reason."""
     try:
-        return _workOne(manners, row)
+        return _workOne(manners, row, rediscover)
     except Exception as exc:                              # noqa: BLE001
         return {"school": row[0], "state": row[1], "png": None,
                 "why": f"crashed {type(exc).__name__}"}
 
 
-def _workOne(manners, row):
+def _workOne(manners, row, rediscover=False):
     (school, state, url, direct, override,
      had_url, etag, modified, status0) = row
     override_url = override if (override or "").startswith("http") else None
-    if had_url and status0 == "ok" and not override_url:
+    # ⚠ --redo MUST NOT TAKE THE CHEAP PATH. The refresh asks the file we
+    #   kept last time and a 304 ends it -- which is right for a quarterly
+    #   run and exactly wrong after the PICKING has changed: every school
+    #   that already has its institutional logo would keep it, and never be
+    #   offered the athletics one.
+    if had_url and status0 == "ok" and not override_url and not rediscover:
         again = refetch(manners, had_url, etag, modified)
         if again is UNCHANGED:
             return {"school": school, "state": state, "unchanged": True}
@@ -867,7 +1014,7 @@ def main():
             t0 = time.time()
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
                 for i, res in enumerate(
-                        pool.map(lambda r: workOne(manners, r), todo), 1):
+                        pool.map(lambda r: workOne(manners, r, args.redo), todo), 1):
                     if res.get("unchanged"):
                         same += 1
                         if args.write:
@@ -901,6 +1048,10 @@ def main():
                 print(f"  shared crests: {n:,} images worn by {SHARED_MIN}+ schools")
             print(f"  done: {got:,} crests, {same:,} unchanged, {skipped:,} without, "
                   f"{manners.requests:,} requests in {(time.time() - t0) / 60:.1f} min")
+            if manners.insecureHosts:
+                print(f"  {len(manners.insecureHosts):,} hosts had a broken "
+                      f"certificate and were read unverified, e.g. "
+                      f"{', '.join(sorted(manners.insecureHosts)[:5])}")
 
 
 if __name__ == "__main__":
