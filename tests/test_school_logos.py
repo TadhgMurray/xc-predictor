@@ -2003,6 +2003,37 @@ class CollegeTeamNotShattered(unittest.TestCase):
         self.assertEqual(set(got), {f"Amherst{sep}MA"})
 
 
+class BoardOutline(unittest.TestCase):
+    """★ TWO DIFFERENT BOARDS, TWO DIFFERENT RULES (owner, 2026-09-13, and
+    it took two goes). /rankings draws a <table class="rk">; the HOME page
+    draws a CSS grid, .board-grid, which the table rule cannot reach. Both
+    needed a frame and each needed its own."""
+
+    def css(self):
+        return read("racecast", "static", "style.css")
+
+    def test_the_rankings_table_is_framed(self):
+        css = self.css()
+        i = css.index(".rankings-page table.rk {")
+        block = css[i:i + 400]
+        self.assertIn("border: 1px solid var(--rk-line)", block)
+        self.assertIn("border-collapse: separate", block,
+                      "under `collapse` a table's own border does not draw")
+
+    def test_the_home_grid_is_framed_too(self):
+        css = self.css()
+        i = css.index(".board-grid {")
+        block = css[i:i + 400]
+        self.assertIn("border: 1px solid #ddd", block)
+        self.assertIn("overflow: hidden", block)
+
+    def test_neither_frame_doubles_against_the_cells(self):
+        css = self.css()
+        self.assertIn(".rankings-page table.rk tbody tr:last-child td "
+                      "{ border-bottom: 0; }", css)
+        self.assertIn(".board-grid .head { border-top: none; }", css)
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

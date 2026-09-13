@@ -524,11 +524,22 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .board-grid .c-name a { color: #111; text-decoration: none; }
 .board-grid .c-name a:hover { text-decoration: underline; }
 
+/* ★ AN OUTLINE ROUND THE WHOLE BOARD (owner, 2026-09-13). The home page's
+   boards are a CSS GRID, not a table -- the rankings page's table.rk rule
+   does not reach them -- and their cells carry horizontal rules only, so
+   the rows bled off both edges with no frame at all. The grid takes the
+   frame; unlike a table, a grid clips its own corners, so the radius needs
+   nothing else. */
 .board-grid {
     min-width: 0;
     display: grid;
     grid-template-columns: var(--cols);
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
 }
+/* the head already draws its own top rule; against the frame it doubles */
+.board-grid .head { border-top: none; }
 .cell {
     /* remove: display: flex; align-items: center; */
     padding: 0.4rem 0.9rem;
