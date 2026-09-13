@@ -10,7 +10,7 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
 
   sitemap.xml                    the index: one <sitemap> per file below
   sitemap-pages.xml              the handful of fixed pages
-  sitemap-schools-N.xml          /school/<name>, primary state per school
+  sitemap-schools-N.xml.gz       /school/<name>, primary state per school
   sitemap-courses-N.xml          /course/<name>
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
@@ -66,12 +66,27 @@ def indexXml(files):
     return "\n".join(out) + "\n"
 
 
-def writeSitemaps(by_kind, out_dir, origin):
+# ⚠ GZIP, AND IT IS NOT A MICRO-OPTIMISATION (2026-09-13). Bing had made
+#   501 requests to this site: roughly 450 of them were these files at
+#   FOUR MEGABYTES each, and exactly one was a page. It had downloaded
+#   something like two gigabytes of XML and indexed nothing, because the
+#   sitemap WAS the crawl. Google's rate fell off a cliff over the same
+#   period. sitemaps.org has allowed gzip since the beginning and both
+#   engines take it; 4 MB becomes about 350 KB, so the same budget reaches
+#   ten times as many actual pages.
+#
+# ! .xml.gz IS SERVED AS-IS, not with Content-Encoding. That is the
+#   documented shape -- a gzipped sitemap file, which nginx already serves
+#   with the right type off the extension -- so this needs no server
+#   change and cannot be undone by one.
+def writeSitemaps(by_kind, out_dir, origin, gzipped=True):
     """by_kind: {kind: [(path, lastmod), ...]}. Writes the files and the
     index, replacing what is there. Returns the file names written."""
+    import gzip
     os.makedirs(out_dir, exist_ok=True)
     for old in os.listdir(out_dir):
-        if old.startswith("sitemap") and old.endswith(".xml"):
+        if old.startswith("sitemap") and (old.endswith(".xml")
+                                          or old.endswith(".xml.gz")):
             os.remove(os.path.join(out_dir, old))
     files = []
     for kind, entries in by_kind.items():
@@ -81,9 +96,20 @@ def writeSitemaps(by_kind, out_dir, origin):
                 continue
             name = (f"sitemap-{kind}.xml" if len(parts) == 1
                     else f"sitemap-{kind}-{i}.xml")
-            with open(os.path.join(out_dir, name), "w", encoding="utf-8") as fh:
-                fh.write(urlsetXml(part).replace("{ORIGIN}", origin))
+            body = urlsetXml(part).replace("{ORIGIN}", origin).encode("utf-8")
+            if gzipped:
+                name += ".gz"
+                # mtime=0: the same URLs produce the same bytes, so an
+                # unchanged sitemap keeps its ETag and is not re-fetched
+                with gzip.GzipFile(os.path.join(out_dir, name), "wb",
+                                   compresslevel=9, mtime=0) as fh:
+                    fh.write(body)
+            else:
+                with open(os.path.join(out_dir, name), "wb") as fh:
+                    fh.write(body)
             files.append(name)
+    # the INDEX stays uncompressed: robots.txt names it, it is small, and
+    # it is the one file a human ever opens
     with open(os.path.join(out_dir, "sitemap.xml"), "w", encoding="utf-8") as fh:
         fh.write(indexXml(files).replace("{ORIGIN}", origin))
     return files
