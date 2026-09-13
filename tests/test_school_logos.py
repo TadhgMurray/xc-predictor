@@ -841,6 +841,62 @@ class Anet(unittest.TestCase):
 
     # ---- the payload ---------------------------------------------------
 
+    NAV = json.dumps({
+        "team": {"ID": 21480, "Name": "Tufts", "Level": 8, "hasIndoor": True,
+                 "City": "Medford", "State": "MA", "ZipCode": "2155",
+                 "Mascot": "Jumbos", "MascotUrl": "//lh3.googleusercontent.com/9iUjQ"},
+        "divisions": [{"id": 85463, "b": 79, "name": "  United States", "gender": "x"},
+                      {"id": 85691, "b": 89, "name": "College", "gender": "x"},
+                      {"id": 85733, "b": 2583, "name": "NCAA", "gender": "x"},
+                      {"id": 85812, "b": 2587, "name": "DIII", "gender": "x"},
+                      {"id": 85849, "b": 2671, "name": "NESCAC", "gender": "x"}],
+        "customDivisions": [{"IDDivision": 89634, "DivName": "ECAC Div III"}],
+        "grades": [{"IDGrade": 21, "GradeDesc": "Freshman"}]}).encode()
+
+    def test_both_spellings_of_the_id_are_accepted(self):
+        """⚠ TeamNav/Team returns team.ID and GetTeamCore returns
+        team.IDTeam. Requiring IDTeam is what made the first real run
+        report "200 application/json" with nothing in it."""
+        self.assertEqual(A.parseTeam(self.NAV)["IDTeam"], 21480)
+        self.assertEqual(A.parseTeam(TUFTS)["IDTeam"], 21480)
+
+    def test_the_two_endpoints_are_merged_not_chosen_between(self):
+        """They carry different fields: divisions, mascot and colours are
+        TeamNav's; WebsiteSport, TeamCode and the season list are
+        GetTeamCore's."""
+        m = A.mergeTeams(A.parseTeam(self.NAV), A.parseTeam(TUFTS))
+        self.assertEqual(m["Mascot"], "Jumbos")                 # nav only
+        self.assertEqual(m["TeamCode"], "Tuft")                 # core only
+        self.assertEqual(m["WebsiteSport"], "https://gotuftsjumbos.com/")
+        self.assertEqual(m["IDTeam"], 21480)
+        self.assertTrue(m["hasIndoor"])
+
+    def test_a_merge_of_nothing_is_none(self):
+        self.assertIsNone(A.mergeTeams(None, {}))
+
+    def test_the_season_list_becomes_a_lifespan(self):
+        t = A.parseTeam(json.dumps({
+            "team": {"ID": 1}, "seasonInfo": {"seasons": [2026, 1949, 2024]}}).encode())
+        self.assertEqual((t["_seasons"][0], t["_seasons"][-1]), (1949, 2026))
+
+    def test_a_college_DOES_carry_its_division(self):
+        """★ THE OWNER'S "they do not have the division" IS A HIGH SCHOOL
+        fact. A college path is United States > College > NCAA > DIII >
+        NESCAC, so `division` and `conference` are both right there -- only
+        the HS side (no D1/D2 inside a section) is missing them."""
+        names = [n for _d, _b, _i, n, _g in A.parseDivisions(self.NAV)]
+        self.assertIn("DIII", names)
+        self.assertIn("NESCAC", names)
+
+    def test_a_custom_division_is_kept_but_flagged(self):
+        """"ECAC Div III" is a real affiliation hanging off the tree with
+        no depth of its own, so it is stored marked rather than as a rung."""
+        t = A.parseTeam(self.NAV)
+        self.assertEqual(t["_custom"], [{"IDDivision": 89634,
+                                         "DivName": "ECAC Div III"}])
+        src = read("scripts", "anet_teams.py")
+        self.assertIn("custom   boolean NOT NULL DEFAULT false", src)
+
     def test_the_team_object_is_read_out_of_the_nav_payload(self):
         t = A.parseTeam(TUFTS)
         self.assertEqual((t["Name"], t["City"], t["State"], t["ZipCode"]),

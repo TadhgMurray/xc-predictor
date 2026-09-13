@@ -67,9 +67,14 @@ CREATE TABLE IF NOT EXISTS anet_team (
     zip          text,
     country      text,
     region_id    int,
+    mascot       text,
     mascot_url   text,
     website      text,
     website_sport text,
+    has_indoor   boolean,
+    first_season int,
+    last_season  int,
+    n_seasons    int,
     fetched      date NOT NULL DEFAULT current_date)
 """
 
@@ -101,6 +106,7 @@ CREATE TABLE IF NOT EXISTS anet_division (
     depth    int,
     name     text,
     gender   text,
+    custom   boolean NOT NULL DEFAULT false,
     fetched  date NOT NULL DEFAULT current_date,
     PRIMARY KEY (team_id, sport, base_id))
 """
@@ -152,14 +158,48 @@ def teams(cur, limit=None, state=None, redo=False):
 
 
 def parseTeam(raw):
-    """The `team` object, or None. anet answers with the whole nav payload;
-    everything we want is one key down."""
+    """The `team` object plus the few things that ride beside it, or None.
+
+    ⚠ THE TWO ENDPOINTS NAME THE ID DIFFERENTLY. TeamNav/Team returns
+      team.ID, GetTeamCore returns team.IDTeam, and requiring IDTeam is
+      what made the first run report 200 application/json with nothing in
+      it. Both are normalised to IDTeam here.
+
+    They also carry different fields, which is why both are fetched and
+    merged: divisions, customDivisions, Mascot and colors are TeamNav's;
+    WebsiteSport, TeamCode, RegionID and the season list are GetTeamCore's.
+    """
     try:
         got = json.loads(raw.decode("utf-8", "replace"))
     except Exception:                                     # noqa: BLE001
         return None
     team = (got or {}).get("team")
-    return team if isinstance(team, dict) and team.get("IDTeam") else None
+    if not isinstance(team, dict):
+        return None
+    tid = _int(team.get("IDTeam")) or _int(team.get("ID"))
+    if not tid:
+        return None
+    team = dict(team, IDTeam=tid)
+    seasons = [y for y in ((got.get("seasonInfo") or {}).get("seasons") or [])
+               if _int(y)]
+    if seasons:
+        team["_seasons"] = sorted(_int(y) for y in seasons)
+    custom = [d for d in (got.get("customDivisions") or [])
+              if isinstance(d, dict) and _int(d.get("IDDivision"))]
+    if custom:
+        team["_custom"] = custom
+    return team
+
+
+def mergeTeams(*teams):
+    """One team from however many payloads answered; later ones fill gaps
+    rather than overwrite, since both endpoints agree where they overlap."""
+    out = {}
+    for t in teams:
+        for k, v in (t or {}).items():
+            if v is not None and v != "" and out.get(k) in (None, ""):
+                out[k] = v
+    return out or None
 
 
 def parseDivisions(raw):
@@ -185,17 +225,25 @@ def parseDivisions(raw):
     return out
 
 
-def storeDivisions(cur, team_id, sport, divs):
+def storeDivisions(cur, team_id, sport, divs, custom=()):
+    """The main tree, plus anet's `customDivisions` -- an extra affiliation
+    off the hierarchy ("ECAC Div III" for Tufts) that the tree misses. No
+    depth, so it is stored flagged rather than as a rung."""
+    rows = [(team_id, sport, b, i, d, n, g, False) for d, b, i, n, g in divs]
+    rows += [(team_id, sport, _int(c.get("IDDivision")),
+              _int(c.get("IDDivision")), None,
+              (c.get("DivName") or "").strip(), None, True)
+             for c in (custom or [])]
     cur.executemany("""
         INSERT INTO anet_division (team_id, sport, base_id, div_id, depth,
-                                   name, gender, fetched)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, current_date)
+                                   name, gender, custom, fetched)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, current_date)
         ON CONFLICT (team_id, sport, base_id) DO UPDATE
         SET div_id = EXCLUDED.div_id, depth = EXCLUDED.depth,
             name = EXCLUDED.name, gender = EXCLUDED.gender,
-            fetched = current_date
-    """, [(team_id, sport, b, i, d, n, g) for d, b, i, n, g in divs])
-    return len(divs)
+            custom = EXCLUDED.custom, fetched = current_date
+    """, rows)
+    return len(rows)
 
 
 def mascotUrls(team):
@@ -216,21 +264,32 @@ def storeTeam(cur, school, state, team):
     cur.execute("""
         INSERT INTO anet_team (team_id, school, state, name, team_code, level,
                                city, anet_state, zip, country, region_id,
-                               mascot_url, website, website_sport, fetched)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, current_date)
+                               mascot, mascot_url, website, website_sport,
+                               has_indoor, first_season, last_season, n_seasons,
+                               fetched)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, current_date)
         ON CONFLICT (team_id) DO UPDATE SET
             school = EXCLUDED.school, state = EXCLUDED.state,
             name = EXCLUDED.name, team_code = EXCLUDED.team_code,
             level = EXCLUDED.level, city = EXCLUDED.city,
             anet_state = EXCLUDED.anet_state, zip = EXCLUDED.zip,
             country = EXCLUDED.country, region_id = EXCLUDED.region_id,
-            mascot_url = EXCLUDED.mascot_url, website = EXCLUDED.website,
-            website_sport = EXCLUDED.website_sport, fetched = current_date
+            mascot = EXCLUDED.mascot, mascot_url = EXCLUDED.mascot_url,
+            website = EXCLUDED.website, website_sport = EXCLUDED.website_sport,
+            has_indoor = EXCLUDED.has_indoor,
+            first_season = EXCLUDED.first_season,
+            last_season = EXCLUDED.last_season, n_seasons = EXCLUDED.n_seasons,
+            fetched = current_date
     """, (team.get("IDTeam"), school, state, team.get("Name"),
           team.get("TeamCode"), _int(team.get("Level")), team.get("City"),
           team.get("State"), team.get("ZipCode"), team.get("Country"),
-          _int(team.get("RegionID")), team.get("MascotUrl"),
-          team.get("Website"), team.get("WebsiteSport")))
+          _int(team.get("RegionID")), team.get("Mascot"), team.get("MascotUrl"),
+          team.get("Website"), team.get("WebsiteSport"),
+          team.get("hasIndoor"),
+          (team.get("_seasons") or [None])[0],
+          (team.get("_seasons") or [None])[-1],
+          len(team.get("_seasons") or []) or None))
 
 
 def storeAddress(cur, school, state, team):
@@ -274,6 +333,9 @@ def main():
     ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
     ap.add_argument("--no-logos", action="store_true",
                     help="metadata and addresses only, fetch no images")
+    ap.add_argument("--no-core", action="store_true",
+                    help="skip GetTeamCore: one call per sport instead of "
+                         "two, but no WebsiteSport and no season list")
     ap.add_argument("--probe", type=int, default=None, metavar="TEAM",
                     help="print both endpoints' whole response for one team "
                          "and stop; no database, no writes")
@@ -313,7 +375,9 @@ def main():
             todo = teams(cur, args.limit, args.state, args.redo)
             conn.commit()
             print(f"  {len(todo):,} teams, biggest programme first, "
-                  f"{args.rate}s apart (~{len(todo) * len(sports) * args.rate / 3600:.1f} h)",
+                  f"{args.rate}s apart, "
+                  f"{len(sports) + (0 if args.no_core else 1)} calls each "
+                  f"(~{len(todo) * (len(sports) + (0 if args.no_core else 1)) * args.rate / 3600:.1f} h)",
                   flush=True)
 
             manners = Manners(rate=args.rate)
@@ -323,21 +387,34 @@ def main():
             meta = crests = addrs = units = missed = 0
             t0 = time.time()
             for i, (school, state, team_id) in enumerate(todo, 1):
-                team = None
+                # ★ BOTH ENDPOINTS, AND THEY CARRY DIFFERENT THINGS.
+                #   TeamNav/Team has the divisions, customDivisions, the
+                #   mascot and the crest, and its divisions are PER SPORT.
+                #   GetTeamCore has WebsiteSport -- the address book's fix
+                #   -- plus TeamCode, RegionID and the season list, none of
+                #   which vary by sport. So: nav once per sport, core once.
+                parts = []
                 for sport in sports:
                     raw, why = manners.get(
                         API.format(team=team_id, sport=sport, season=season),
                         max_bytes=512 * 1024, extra=HEADERS)
                     got = parseTeam(raw) if raw is not None else None
-                    team = team or got
+                    if got:
+                        parts.append(got)
                     divs = parseDivisions(raw) if raw is not None else []
-                    if not divs and got is not None:
-                        craw, _w = manners.get(
-                            CORE.format(team=team_id, sport=sport, season=season),
-                            max_bytes=512 * 1024, extra=HEADERS)
-                        divs = parseDivisions(craw) if craw is not None else []
-                    if divs and args.write:
-                        units += storeDivisions(cur, team_id, sport, divs)
+                    if (divs or got) and args.write:
+                        units += storeDivisions(cur, team_id, sport, divs,
+                                                (got or {}).get("_custom"))
+                if parts and not args.no_core:
+                    craw, cwhy = manners.get(
+                        CORE.format(team=team_id, sport=sports[0], season=season),
+                        max_bytes=512 * 1024, extra=HEADERS)
+                    core = parseTeam(craw) if craw is not None else None
+                    if core:
+                        parts.append(core)
+                    else:
+                        why = cwhy
+                team = mergeTeams(*parts)
                 if team is None:
                     missed += 1
                 else:

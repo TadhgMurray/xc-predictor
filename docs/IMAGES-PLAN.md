@@ -508,3 +508,47 @@ What it is worth, once run:
 /srv/venv/bin/python scripts/anet_units.py --report
 /srv/venv/bin/python scripts/anet_units.py --write --tsv /tmp/disagree.tsv
 ```
+
+
+## What the probe actually returned (2026-09-13)
+
+Both endpoints answer, and they carry **different** fields, so both are
+worth the call:
+
+| | TeamNav/Team | GetTeamCore |
+|---|---|---|
+| the id | `team.ID` | `team.IDTeam` |
+| crest | `MascotUrl` | `MascotUrl` |
+| `divisions`, `customDivisions` | yes, **per sport** | no |
+| `Mascot`, `hasIndoor`, `colors`, `grades` | yes | no |
+| `WebsiteSport`, `Website`, `TeamCode`, `RegionID` | no | yes |
+| `seasonInfo.seasons` (the programme's whole lifespan) | no | yes |
+
+⚠ **The id is spelled differently by the two of them**, and requiring
+`IDTeam` is what made the first real run report "200 application/json"
+with nothing in it. Both are normalised.
+
+So: TeamNav once per sport (its divisions vary by sport), GetTeamCore once
+(its fields do not). `--no-core` drops to one call per sport if the
+addresses are not wanted.
+
+### A college DOES carry its division
+
+Tufts:
+
+```
+United States (79) > College (89) > NCAA (2583) > DIII (2587) > NESCAC (2671)
+customDivisions: [{IDDivision: 89634, DivName: "ECAC Div III"}]
+```
+
+"They do not have the division" is a HIGH SCHOOL fact -- no D1/D2 inside a
+section. On the college side `division` (DIII) and `conference` (NESCAC)
+are both right there, which is most of `school_unit`'s college branch.
+`customDivisions` is a real affiliation hanging off the tree with no depth
+of its own, so it is stored flagged rather than as a rung.
+
+### Also now kept
+
+`Mascot` ("Jumbos"), `hasIndoor`, and the season list as first/last/count --
+a programme's lifespan without touching results, which would also catch a
+school that changed anet ids.
