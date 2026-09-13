@@ -119,41 +119,44 @@ def loadCrests(conn_factory, force=False):
     _CRESTS["loaded"] = True
 
 
-def crestState(school, state=None):
-    """(state, version) whose crest answers for this mention, or None. The
-    cache's version of pickRow, and it keeps pickRow's rule: a name two
-    real schools wear answers only when the caller says which."""
+def crestState(school, state=None, pool=None):
+    """(state, version) whose crest answers for this mention, or None.
+
+    ★ THE SAME RESOLVER THE LABEL USES, and that is the whole point (owner,
+      2026-09-13: a race page showed Hope (AR) wearing Hope (RI)'s crest).
+      The label, the link and the badge each worked the state out their own
+      way, so one row could answer three different questions. Now a mention
+      resolves ONCE -- through school_identity.teamState when a pool is
+      known (a season line, where a college's name beats its athletes' home
+      states) and contextState otherwise -- and the crest is looked up
+      under whatever that says.
+    """
     rows = _CRESTS["map"].get(school)
     if not rows:
         return None
-    st = (state or "").upper()
+    try:
+        from school_identity import contextState, teamState
+        st = (teamState(school, pool, state) if pool
+              else contextState(school, state))
+    except Exception:                              # noqa: BLE001
+        st = None
+    # ! AND THE CALLER'S OWN STATE IS THE FLOOR. The resolver answers None
+    #   for a name the identity cannot place -- correct for a LABEL, where
+    #   the alternative is printing the venue's state as if it were the
+    #   school's. But a caller that named a state has already decided, and
+    #   without this every crest on the site disappears whenever the label
+    #   cache is empty (mid-rebuild, a fresh process, an old database).
+    st = (st or state or "").upper()
     for row in rows:
         if st and row[0] == st:
             return row
     for row in rows:
         if not row[0]:
             return row
-    if len(rows) == 1:
-        return rows[0]
-    # ★ A SHARED NAME WITH NO STATE FOLLOWS THE LINK (owner, 2026-09-13: a
-    #   race page's team row showed Amherst's link going to the right
-    #   school and no crest beside it). Refusing to guess looked safe, but
-    #   the LINK is not refusing -- "/school/Amherst" with no state lands
-    #   on the primary cluster. So the crest has to land there too, or the
-    #   page shows a name pointing one way and a picture missing entirely.
-    #   Guessing differently from the link would be the actual bug.
-    try:
-        from school_identity import primaryState
-        primary = (primaryState(school) or "").upper()
-    except Exception:                              # noqa: BLE001
-        return None
-    for row in rows:
-        if primary and row[0] == primary:
-            return row
-    return None
+    return rows[0] if len(rows) == 1 else None
 
 
-def crestUrl(school, state=None, px=None):
+def crestUrl(school, state=None, px=None, pool=None):
     """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
     every table on the site.
@@ -166,7 +169,7 @@ def crestUrl(school, state=None, px=None):
       Two sizes are two URLs, which is exactly how one page can disagree
       with another. `v` is the image's own hash: new picture, new URL.
     """
-    got = crestState(school, state)
+    got = crestState(school, state, pool)
     if got is None:
         return None
     st, version = got
@@ -178,7 +181,8 @@ def crestUrl(school, state=None, px=None):
     return url
 
 
-def crestImg(school, state=None, px=64, size=18, cls="school-mark"):
+def crestImg(school, state=None, px=64, size=18, cls="school-mark",
+             pool=None):
     """The little crest that goes before a school's name, or "" (305). The
     template global `crest`.
 
@@ -190,7 +194,7 @@ def crestImg(school, state=None, px=64, size=18, cls="school-mark"):
     ⚠ IT RETURNS MARKUP, SO EVERYTHING IN IT IS ESCAPED HERE. School names
       are scraped free text and genuinely contain quotes and ampersands.
     """
-    url = crestUrl(school, state, px)
+    url = crestUrl(school, state, px, pool)
     if not url:
         return ""
     from markupsafe import Markup, escape

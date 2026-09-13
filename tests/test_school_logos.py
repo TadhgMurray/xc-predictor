@@ -2092,6 +2092,86 @@ class RatingRecordFlag(unittest.TestCase):
         self.assertIn("Their highest rating in any race", m)
 
 
+class OneResolver(unittest.TestCase):
+    """★ Hope (AR) WORE Hope (RI)'s CREST (owner, 2026-09-13). The label,
+    the link and the badge each worked out which school a mention meant
+    their own way, so one row could answer three different questions --
+    and the badge is the answer a reader sees. A mention now resolves
+    ONCE."""
+
+    def test_the_label_and_the_crest_share_a_resolver(self):
+        si = read("racecast", "school_identity.py")
+        self.assertIn("def contextState(", si)
+        i = si.index("def schoolLabelIn(")
+        self.assertIn("contextState(school, state)", si[i:i + 500],
+                      "the label must not have its own copy of the rule")
+        sl = read("racecast", "school_logo.py")
+        self.assertIn("from school_identity import contextState, teamState", sl)
+
+    def test_a_pooled_mention_goes_through_teamState(self):
+        """A season line knows its pool, and a college's own name beats its
+        athletes' home states -- which is exactly what teamState is for."""
+        sl = read("racecast", "school_logo.py")
+        i = sl.index("def crestState(")
+        self.assertIn("teamState(school, pool, state) if pool", sl[i:i + 900])
+
+    def test_no_context_state_leaks_in_as_an_identity(self):
+        """A row's state is the VENUE's. An unplaceable name must come back
+        None rather than wearing the state it happened to race in."""
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={}, clusters={})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        self.assertIsNone(SI.contextState("Nowhere High", "AR"))
+        self.assertEqual(SI.schoolLabelIn("Nowhere High", "AR"), "Nowhere High")
+
+    def test_the_context_wins_only_when_the_cluster_is_real(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Hope": "RI"},
+                          clusters={"Hope": {"RI": 0.8, "AR": 0.2}})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        self.assertEqual(SI.contextState("Hope", "AR"), "AR")
+        self.assertEqual(SI.contextState("Hope", None), "RI")
+        self.assertEqual(SI.contextState("Hope", "TX"), "RI",
+                         "a stray away meet is not a cluster")
+
+    def test_and_the_crest_follows_it(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Hope": "RI"},
+                          clusters={"Hope": {"RI": 0.8, "AR": 0.2}})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        SL._CRESTS.update(loaded=True,
+                          map={"Hope": [("RI", "aaaa1111"), ("AR", "bbbb2222")]})
+        self.addCleanup(SL._CRESTS.update, {"loaded": False, "map": {}})
+        self.assertEqual(SL.crestState("Hope", "AR")[1], "bbbb2222",
+                         "the Arkansas race must show the Arkansas crest")
+        self.assertEqual(SL.crestState("Hope", None)[1], "aaaa1111")
+
+    def test_every_crest_gets_the_context_its_label_gets(self):
+        """A crest called with less context than the label beside it is the
+        Hope bug waiting to happen again."""
+        import glob
+        import re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast", "templates",
+                                               "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "crest(" not in line:
+                    continue
+                m = re.search(r"school_label_(?:in|for)\(([^)]*)\)", line)
+                if not m:
+                    continue
+                where = f"{os.path.basename(f)}:{n}"
+                crest = re.search(r"crest\(([^)]*)\)", line).group(1)
+                # the crest may be MORE specific than the label -- a
+                # collision-split team row knows its own state where the
+                # label only has the meet's -- but never less
+                self.assertRegex(crest, r"[._]state\b|state=",
+                                 f"{where}: the label has a context and the "
+                                 f"crest does not")
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

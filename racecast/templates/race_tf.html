@@ -91,7 +91,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
-                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label_for('college' if college else none, header.state) }}</a>{% elif row.school %}{{ row.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
+                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool='college' if college else none) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label_for('college' if college else none, header.state) }}</a>{% elif row.school %}{{ row.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
                 <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
                 {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
                 <td class="no-break">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>

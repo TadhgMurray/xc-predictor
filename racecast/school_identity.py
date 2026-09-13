@@ -95,19 +95,37 @@ def schoolLabel(school):
 CONTEXT_MIN_SHARE = 0.03
 
 
-def schoolLabelIn(school, state):
-    """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
-    Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
-    labelled three Missouri schools WA, MI and CA). The name's cluster in
-    the context's state wins when it exists; else the primary label."""
+def contextState(school, state=None):
+    """WHICH school a mention means, given where the mention appears.
+
+    ★ THE ONE RESOLVER FOR A MENTION (owner, 2026-09-13: a race page showed
+      Hope (AR) wearing Hope (RI)'s crest). The label, the link and the
+      crest each used to work this out their own way, so one row could
+      answer three different questions -- and the badge is the answer that
+      shows. schoolLabelIn labels with this and school_logo picks with it,
+      so they cannot disagree.
+
+    The name's cluster in the context's state wins when it is real; else
+    the primary. None when the identity cannot place the name at all --
+    and NOT the context state, because a row's state is the VENUE's."""
     if not school:
-        return school
+        return None
     if state:
         clusters = _LABELS.get("clusters") or {}
         share = (clusters.get(school) or {}).get(state)
         if share is not None and share >= CONTEXT_MIN_SHARE:
-            return f"{school} ({state})"
-    return schoolLabel(school)
+            return state
+    return _LABELS["map"].get(school)
+
+
+def schoolLabelIn(school, state):
+    """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
+    Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
+    labelled three Missouri schools WA, MI and CA)."""
+    if not school:
+        return school
+    st = contextState(school, state)
+    return f"{school} ({st})" if st else school
 
 
 def _collegeState(school):
