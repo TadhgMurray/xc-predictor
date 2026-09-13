@@ -133,7 +133,24 @@ def crestState(school, state=None):
     for row in rows:
         if not row[0]:
             return row
-    return rows[0] if len(rows) == 1 else None
+    if len(rows) == 1:
+        return rows[0]
+    # ★ A SHARED NAME WITH NO STATE FOLLOWS THE LINK (owner, 2026-09-13: a
+    #   race page's team row showed Amherst's link going to the right
+    #   school and no crest beside it). Refusing to guess looked safe, but
+    #   the LINK is not refusing -- "/school/Amherst" with no state lands
+    #   on the primary cluster. So the crest has to land there too, or the
+    #   page shows a name pointing one way and a picture missing entirely.
+    #   Guessing differently from the link would be the actual bug.
+    try:
+        from school_identity import primaryState
+        primary = (primaryState(school) or "").upper()
+    except Exception:                              # noqa: BLE001
+        return None
+    for row in rows:
+        if primary and row[0] == primary:
+            return row
+    return None
 
 
 def crestUrl(school, state=None, px=None):

@@ -1675,11 +1675,27 @@ class Mentions(unittest.TestCase):
         self.assertIsNone(SL.crestUrl("Nobody", "CA"))
         self.assertEqual(SL.crestImg("Nobody", "CA"), "")
 
-    def test_a_name_two_schools_share_needs_a_state(self):
+    def test_a_name_two_schools_share_takes_the_state_it_is_given(self):
         self.assertEqual(SL.crestState("Highland", "UT")[0], "UT")
-        self.assertIsNone(SL.crestState("Highland", None),
-                          "a coin toss here is the WRONG crest on a real page")
         self.assertIsNone(SL.crestState("Highland", "NY"))
+
+    def test_and_with_no_state_it_follows_the_link(self):
+        """★ owner, 2026-09-13: a race page's team row showed Amherst's
+        link going to the right school and NO crest beside it. Refusing to
+        guess looked safe, but the link is not refusing -- /school/Amherst
+        with no state lands on the primary cluster, so the crest has to
+        land there too. Guessing DIFFERENTLY from the link is the bug;
+        guessing the same way is the fix."""
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Highland": "UT"})
+        self.addCleanup(SI._LABELS.update, {"loaded": False, "map": {}})
+        self.assertEqual(SL.crestState("Highland", None)[0], "UT")
+
+    def test_but_a_name_the_identity_cannot_place_still_shows_nothing(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={})
+        self.addCleanup(SI._LABELS.update, {"loaded": False, "map": {}})
+        self.assertIsNone(SL.crestState("Highland", None))
 
     def test_one_row_answers_without_a_state_and_a_stateless_row_answers_for_any(self):
         self.assertEqual(SL.crestState("Jesuit", None)[0], "CA")
