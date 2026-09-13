@@ -206,3 +206,103 @@ served by `/img/school/...`, but no page knows to ask for them.
 - **SVG-only sites are lost.** Pillow will not read one, so they are
   skipped rather than fetched. If they turn out to be a large share of
   the misses, `cairosvg` in the venv is the fix.
+
+
+---
+
+# WHAT THE FIRST REAL RUN TAUGHT (2026-09-12)
+
+The first full run reached about 40,000 of ~110,000 schools with an
+address, and got a crest for roughly a third of those. The owner's verdict
+was three things, and two of them were my design errors.
+
+## 1. "Way too slow" — the pace was global, and that was simply wrong
+
+One request a second **everywhere** is twenty-four hours for forty thousand
+schools. The reasoning behind it ("twenty thousand hosts means a per-host
+delay is no delay") had it backwards: what a server experiences is the gap
+between requests to **it**, and each school's server sees three requests in
+total. A global clock protects nobody and costs a day.
+
+Now: politeness is per host — a second between requests to the same server,
+robots.txt and its Crawl-delay obeyed, one attempt, no retry — and
+`--workers` (24 by default) of them run at once. Measured on twelve
+loopback servers in `tests/test_school_logos.py`: 1.0 s where the old code
+would have taken 14.
+
+And the work is ordered **by athlete count, descending**. Alphabetical
+spent the first hour on academies with four athletes. `--limit 2000` now
+means "the schools that appear on most pages", not "the ones that sort
+early".
+
+## 2. "The coverage is atrocious" — two separate causes
+
+**The picking was far too strict.** A 96 px floor and a 1.6:1 cap threw
+away most of what school sites actually publish: 64 px favicons, 48 px CMS
+icons, wide wordmarks. These are drawn at 18 px inline and 44 px in a
+header, so 48 px is real detail. The floor is now 48 px, and the aspect cap
+depends on **who declared the image** — because shape alone cannot separate
+a 1.9:1 social banner from a 3:1 wordmark, but the declaration can. A file
+a site names as its own icon is its mark whatever shape it is (up to 3:1);
+an `og:image` is a banner until proven otherwise (1.6:1).
+
+Three more sources of misses closed:
+
+- **The web manifest.** `<link rel="manifest">` → its `icons` array, which
+  on a modern CMS is 192 and 512 px and square. Kept as a second tier,
+  tried only when no declared icon worked, because discovering it costs a
+  request.
+- **SVG.** Skipped entirely before, which was pure lost coverage. Read now
+  when `cairosvg` is in the venv (`/srv/venv/bin/pip install cairosvg`);
+  without it, still skipped rather than crashing.
+- **og:image is no longer tried first.** The plan put it first; it is a
+  1200x630 banner on nearly every CMS, so every school spent a request on a
+  certain rejection. Declared icons go first, og is the fallback.
+
+**But the real ceiling is the address book, not the picking.** 70,000 of
+the 110,000 schools have no website on file at all, and no scraper can help
+that. `--wikidata` alone was the only source used. That is the number to
+attack next, with `--csv` and any directory export that carries a website
+column. It is also worth remembering that the denominator includes every
+middle school and club the site has ever seen: coverage weighted by how
+often a school actually appears on a page is a very different number, and
+the new priority ordering is what lets it be measured.
+
+## 3. "It didn't find the images I wanted" — MIT
+
+The owner's example: we scraped `web.mit.edu`'s icon, which is the
+institutional wordmark. What belongs beside a school in a results table is
+the **MIT Engineers** mark, which lives on `mitathletics.com`.
+
+This was a real conceptual miss, and the fix is cheap because the link is
+already on the page we fetch. The home page is now read for its athletics
+link **before any icon is fetched**, and if there is one, that site's icons
+are tried first:
+
+- a separate athletics domain wins outright (`mitathletics.com`,
+  `gobearcats.com`);
+- otherwise an `/athletics` path on the school's own site;
+- otherwise any link the page itself captions "Athletics" — which is the
+  case that matters most for colleges, because an athletics domain is very
+  often a nickname with no tell in it (`gopoets.com`, `rolltide.com`) and
+  the caption is the only thing that identifies it.
+
+Social links are never it, matched on the registrable domain so that
+`x.com` does not also match `phoenix.com`.
+
+`school_logo.kind` now records which site the crest came from —
+`athletics:apple-touch`, `school:manifest`, `direct` — so
+`scrape_school_logos.py --stats` says how much of the coverage is actually
+athletics marks.
+
+## Reading the damage
+
+Every failure's reason is stored on its row, so there is no need to guess:
+
+```
+/srv/venv/bin/python scripts/scrape_school_logos.py --stats
+```
+
+prints how many crests there are, where each came from, and a histogram of
+why the rest failed (sizes collapsed, so "too small" is one bucket rather
+than a hundred). That output decides what to fix next.

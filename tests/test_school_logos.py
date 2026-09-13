@@ -18,6 +18,7 @@
 import io
 import os
 import sys
+import time
 import unittest
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +51,7 @@ PAGE = """<!doctype html><html><head>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" href="data:image/png;base64,AAAA">
   <meta name="msapplication-TileImage" content="/tile.png">
+  <link rel="manifest" href="/site.webmanifest">
   <link rel="shortcut icon" href="/fav.ico">
 </head><body>
   <link rel="icon" href="/decoy-in-the-body.png">
@@ -58,12 +60,17 @@ PAGE = """<!doctype html><html><head>
 
 class Candidates(unittest.TestCase):
     def setUp(self):
-        self.got = S.iconCandidates(PAGE, "https://chs.k12.ca.us/home/index.html")
+        self.got, self.manifest = S.iconCandidates(
+            PAGE, "https://chs.k12.ca.us/home/index.html")
 
-    def test_the_plan_s_order(self):
-        """og, apple touch, a sized icon, the tile, the plain favicon."""
-        self.assertEqual([k for k, _u, _p in self.got][:5],
-                         ["og", "apple-touch", "icon-sized", "tile", "icon"])
+    def test_the_declared_icons_come_before_the_social_banner(self):
+        """★ THE ORDER CHANGED after the first real run. og:image was
+        first, per the plan, and it is a 1200x630 banner on nearly every
+        CMS -- so every school spent a request on a certain rejection."""
+        kinds = [k for k, _u, _p in self.got]
+        self.assertEqual(kinds[:5], ["apple-touch", "icon-sized", "tile",
+                                     "og", "icon"])
+        self.assertLess(kinds.index("apple-touch"), kinds.index("og"))
 
     def test_urls_are_absolute_against_the_page(self):
         by = {k: u for k, u, _p in self.got}
@@ -71,6 +78,12 @@ class Candidates(unittest.TestCase):
         self.assertEqual(by["apple-touch"], "https://cdn.example.org/at.png")
         # relative to the PAGE's directory, not to the host root
         self.assertEqual(by["icon-sized"], "https://chs.k12.ca.us/home/favicon-32.png")
+
+    def test_the_manifest_is_returned_separately(self):
+        """It is the best source of all and the only one that costs a
+        request to discover, so fetchLogo keeps it as a second tier."""
+        self.assertEqual(self.manifest, "https://chs.k12.ca.us/site.webmanifest")
+        self.assertNotIn("webmanifest", " ".join(u for _k, u, _p in self.got))
 
     def test_data_uris_and_body_tags_are_not_candidates(self):
         urls = " ".join(u for _k, u, _p in self.got)
@@ -82,44 +95,141 @@ class Candidates(unittest.TestCase):
                       [u for _k, u, _p in self.got])
 
     def test_a_page_that_declares_nothing_still_has_one_candidate(self):
-        got = S.iconCandidates("<html><head><title>x</title></head></html>",
-                               "https://x.org/")
+        got, manifest = S.iconCandidates(
+            "<html><head><title>x</title></head></html>", "https://x.org/")
         self.assertEqual([(k, u) for k, u, _p in got],
                          [("icon", "https://x.org/favicon.ico")])
+        self.assertIsNone(manifest)
 
     def test_the_biggest_declared_size_leads_its_kind(self):
         page = ('<head><link rel="apple-touch-icon" sizes="60x60" href="/s.png">'
                 '<link rel="apple-touch-icon" sizes="180x180" href="/b.png"></head>')
-        got = [u for k, u, _p in S.iconCandidates(page, "https://x.org/")
+        got = [u for k, u, _p in S.iconCandidates(page, "https://x.org/")[0]
                if k == "apple-touch"]
         self.assertEqual(got, ["https://x.org/b.png", "https://x.org/s.png"])
 
     def test_malformed_markup_still_yields_what_parsed(self):
         page = '<head><link rel="icon" sizes="64x64" href="/i.png"><p><div'
         self.assertIn("https://x.org/i.png",
-                      [u for _k, u, _p in S.iconCandidates(page, "https://x.org/")])
+                      [u for _k, u, _p in S.iconCandidates(page, "https://x.org/")[0]])
+
+
+class Manifest(unittest.TestCase):
+    """A web app manifest's icons are the best marks a modern site
+    publishes: square by convention, 192 or 512 px."""
+
+    def test_biggest_first_and_absolute(self):
+        raw = (b'{"name":"CHS","icons":[{"src":"i192.png","sizes":"192x192"},'
+               b'{"src":"/i512.png","sizes":"512x512"}]}')
+        self.assertEqual(S.manifestIcons(raw, "https://x.org/a/site.webmanifest"),
+                         [("manifest", "https://x.org/i512.png", 512),
+                          ("manifest", "https://x.org/a/i192.png", 192)])
+
+    def test_rubbish_is_no_icons_rather_than_an_exception(self):
+        for raw in (b"", b"<html>", b"[]", b'{"icons":"nope"}', b'{"icons":[1,2]}'):
+            self.assertEqual(S.manifestIcons(raw, "https://x.org/m.json"), [], raw)
+
+
+class Athletics(unittest.TestCase):
+    """★ THE WHOLE POINT OF THE SECOND PASS (owner, 2026-09-12). MIT's home
+    page gives the institutional wordmark; a results table wants the
+    Engineers mark, and it is one link away on the page we already have."""
+
+    MIT = ('<html><body>'
+           '<a href="https://www.facebook.com/MITAthletics">Facebook</a>'
+           '<a href="/education">Education</a>'
+           '<a href="https://mitathletics.com/">Athletics</a>'
+           '</body></html>')
+
+    def test_the_athletics_domain_is_found(self):
+        self.assertEqual(S.athleticsLink(self.MIT, "https://web.mit.edu/"),
+                         "https://mitathletics.com/")
+
+    def test_a_social_page_about_athletics_is_never_it(self):
+        page = ('<a href="https://www.facebook.com/CHSAthletics">CHS Athletics</a>'
+                '<a href="https://twitter.com/chsathletics">Athletics</a>')
+        self.assertIsNone(S.athleticsLink(page, "https://chs.org/"))
+
+    def test_a_separate_domain_beats_a_path_on_the_school_s_own_site(self):
+        page = ('<a href="/athletics">Athletics</a>'
+                '<a href="https://chsathletics.org/">Teams</a>')
+        self.assertEqual(S.athleticsLink(page, "https://chs.org/"),
+                         "https://chsathletics.org/")
+
+    def test_the_go_something_sports_pattern(self):
+        page = '<a href="https://gocougarsports.com/">Cougar Athletics</a>'
+        self.assertEqual(S.athleticsLink(page, "https://chs.org/"),
+                         "https://gocougarsports.com/")
+
+    def test_a_path_on_the_school_s_own_site_still_counts(self):
+        page = '<a href="/athletics/">Athletics</a><a href="/apply">Apply</a>'
+        self.assertEqual(S.athleticsLink(page, "https://chs.org/"),
+                         "https://chs.org/athletics/")
+
+    def test_a_page_with_no_athletics_says_so(self):
+        self.assertIsNone(S.athleticsLink(
+            '<a href="/apply">Apply</a><a href="/news">News</a>', "https://chs.org/"))
+
+    def test_a_nickname_domain_is_found_by_its_caption_alone(self):
+        """★ THE CASE THAT MATTERS MOST FOR COLLEGES. An athletics domain
+        is very often a nickname with no tell in it -- gopoets.com,
+        rolltide.com -- and the page's own caption is the only thing that
+        identifies it."""
+        for host in ("https://gopoets.com/", "https://rolltide.com/"):
+            self.assertEqual(
+                S.athleticsLink(f'<a href="{host}">Athletics</a>'
+                                '<a href="/apply">Apply</a>', "https://x.edu/"),
+                host)
+
+    def test_an_opaque_cms_url_captioned_athletics_is_followed(self):
+        """School CMSes give /page/1234. The caption is the signal, and
+        being wrong costs one request against a site we already have."""
+        self.assertEqual(S.athleticsLink('<a href="/page/1234">Athletics</a>',
+                                         "https://chs.org/"),
+                         "https://chs.org/page/1234")
+
+    def test_a_host_that_merely_contains_a_social_name_is_not_social(self):
+        """"x.com" as a substring also matches phoenix.com."""
+        self.assertEqual(S.athleticsLink('<a href="https://phoenix.com/x">Athletics</a>',
+                                         "https://chs.org/"),
+                         "https://phoenix.com/x")
 
 
 class Acceptable(unittest.TestCase):
-    """The plan's rule: at least 96 px and roughly square."""
+    """★ THE FLOOR AND THE CAP BOTH MOVED after the first real run: 96 px
+    and 1.6:1 threw away most of what school sites publish, and these are
+    drawn at 18 px and 44 px. What the rule still has to do is reject a
+    16 px favicon and a social banner."""
 
-    def test_an_open_graph_banner_is_not_a_crest(self):
+    def test_a_social_banner_is_never_a_crest(self):
+        self.assertFalse(S.acceptable(1200, 630, "og"))
         self.assertFalse(S.acceptable(1200, 630))
+        self.assertFalse(S.acceptable(1200, 630, "school:og"))
 
-    def test_a_favicon_is_too_small(self):
-        self.assertFalse(S.acceptable(32, 32))
-        self.assertFalse(S.acceptable(64, 64))
+    def test_a_tiny_favicon_is_still_too_small(self):
+        self.assertFalse(S.acceptable(32, 32, "icon"))
+        self.assertFalse(S.acceptable(16, 16, "icon"))
 
-    def test_a_touch_icon_is_exactly_what_we_want(self):
-        self.assertTrue(S.acceptable(180, 180))
-        self.assertTrue(S.acceptable(512, 512))
+    def test_the_sizes_school_sites_actually_publish_are_kept_now(self):
+        for px in (48, 64, 96, 180, 192, 512):
+            self.assertTrue(S.acceptable(px, px, "apple-touch"), px)
 
-    def test_the_floor_and_the_aspect_are_both_edges(self):
-        self.assertTrue(S.acceptable(96, 96))
-        self.assertFalse(S.acceptable(95, 95))
-        self.assertTrue(S.acceptable(160, 100))       # 1.60 exactly
-        self.assertFalse(S.acceptable(170, 100))      # 1.70
-        self.assertFalse(S.acceptable(0, 0))
+    def test_a_wordmark_is_a_mark_when_the_site_declared_it_an_icon(self):
+        """★ SHAPE ALONE CANNOT SEPARATE a 1.9:1 banner from a 3:1
+        wordmark -- the DECLARATION can. A file a site names as its own
+        icon is its mark whatever shape it is."""
+        self.assertTrue(S.acceptable(240, 90, "apple-touch"))
+        self.assertTrue(S.acceptable(240, 90, "school:manifest"))
+        self.assertFalse(S.acceptable(240, 90, "og"),
+                         "the same shape from an og tag is a banner")
+        self.assertFalse(S.acceptable(240, 90))
+
+    def test_the_edges(self):
+        self.assertTrue(S.acceptable(48, 48, "icon"))
+        self.assertFalse(S.acceptable(47, 47, "icon"))
+        self.assertTrue(S.acceptable(300, 100, "icon"))       # 3.0 exactly
+        self.assertFalse(S.acceptable(310, 100, "icon"))
+        self.assertFalse(S.acceptable(0, 0, "icon"))
 
 
 # ===================================================================== #
@@ -205,47 +315,132 @@ class Robots(unittest.TestCase):
         self.assertEqual(S.Manners(rate=0).get("https://x.org/big.png"),
                          (None, "too big"))
 
-    def test_the_pace_is_global(self):
-        """Twenty thousand schools are twenty thousand hosts, so a per-host
-        delay would be no delay: the clock is one clock."""
+    def test_one_host_is_paced_and_different_hosts_are_not(self):
+        """★ THE UNIT IS THE HOST, and the first version had it wrong. A
+        global one-a-second is not politeness when every school is a
+        different server -- it is just a day of waiting, and each server
+        still sees its three requests. What a server experiences is the
+        gap between requests to IT."""
         m = S.Manners(rate=0.05)
         t0 = S.time.time()
-        for host in ("a", "b", "c"):
-            m.wait()
-        self.assertGreaterEqual(S.time.time() - t0, 0.09)
+        for _ in range(3):
+            m.wait("one.org")
+        paced = S.time.time() - t0
+        self.assertGreaterEqual(paced, 0.09)
+        t0 = S.time.time()
+        for host in ("a.org", "b.org", "c.org", "d.org"):
+            m.wait(host)
+        self.assertLess(S.time.time() - t0, 0.04, "different hosts never wait")
+
+    def test_the_workers_do_not_serialise_on_each_other(self):
+        """Twenty-four schools at once means twenty-four different servers
+        at once; the run is an hour, not a day."""
+        import concurrent.futures as cf
+        m = S.Manners(rate=0.2)
+        t0 = S.time.time()
+        with cf.ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda i: m.wait(f"host{i}.org"), range(8)))
+        self.assertLess(S.time.time() - t0, 0.15)
+
+    def test_robots_is_read_once_per_host_even_under_load(self):
+        urlopen, calls = self._server({
+            "https://x.org/robots.txt": (b"User-agent: *\nAllow: /\n", "text/plain"),
+            "https://x.org/a": (b"A", "text/html")})
+        S.urllib.request.urlopen = urlopen
+        import concurrent.futures as cf
+        m = S.Manners(rate=0)
+        with cf.ThreadPoolExecutor(max_workers=8) as pool:
+            got = list(pool.map(lambda _i: m.get("https://x.org/a")[0], range(8)))
+        self.assertEqual(got, [b"A"] * 8)
+        self.assertEqual(calls.count("https://x.org/robots.txt"), 1)
 
 
 class Fetching(unittest.TestCase):
-    """fetchLogo's decisions, with the image reader stubbed out: which
-    candidate it settles on, and what it says when none works."""
+    """fetchLogo's decisions, with the image reader stubbed out: which site
+    it prefers, which candidate it settles on, what it says when none work."""
 
     class _M:
         def __init__(self, replies):
             self.replies, self.asked = replies, []
 
-        def get(self, url, max_bytes=None):
+        def get(self, url, max_bytes=None, etag=None, modified=None):
             self.asked.append(url)
             return self.replies.get(url, (None, "HTTPError"))
 
     def setUp(self):
         self._real = S.normalise
         # every fetched body is "wide" or "square"; only square normalises
-        S.normalise = lambda raw, px=512: (
+        S.normalise = lambda raw, px=512, ctype="", kind=None: (
             (b"PNG" + raw, "sha-" + raw.decode(), (512, 512))
             if raw == b"square" else (None, None, "1200x630"))
 
     def tearDown(self):
         S.normalise = self._real
 
-    def test_the_banner_loses_to_the_touch_icon_behind_it(self):
+    MIT = ('<head><link rel="apple-touch-icon" sizes="180x180" href="/mit.png">'
+           '</head><body><a href="https://mitathletics.com/">Athletics</a></body>')
+
+    def test_the_athletics_mark_beats_the_school_s_own(self):
+        """★ THE OWNER'S CASE. web.mit.edu has a perfectly good touch icon
+        -- the institutional wordmark -- and we take the Engineers mark
+        from mitathletics.com anyway, because that is the one a results
+        table wants."""
         m = self._M({
-            "https://x.org/": (PAGE.replace("chs.k12.ca.us", "x.org").encode(), "text/html"),
+            "https://web.mit.edu/": (self.MIT.encode(), "text/html"),
+            "https://web.mit.edu/mit.png": (b"square", "image/png"),
+            "https://mitathletics.com/": (
+                b'<head><link rel="apple-touch-icon" href="/eng.png"></head>',
+                "text/html"),
+            "https://mitathletics.com/eng.png": (b"square", "image/png")})
+        _png, _sha, kind, src = S.fetchLogo(m, "https://web.mit.edu/")
+        self.assertEqual(src, "https://mitathletics.com/eng.png")
+        self.assertEqual(kind, "athletics:apple-touch")
+
+    def test_the_school_s_own_is_kept_when_athletics_yields_nothing(self):
+        m = self._M({
+            "https://web.mit.edu/": (self.MIT.encode(), "text/html"),
+            "https://web.mit.edu/mit.png": (b"square", "image/png"),
+            "https://mitathletics.com/": (b"<head></head>", "text/html")})
+        _png, _sha, kind, src = S.fetchLogo(m, "https://web.mit.edu/")
+        self.assertEqual((kind, src), ("school:apple-touch",
+                                       "https://web.mit.edu/mit.png"))
+
+    def test_a_school_with_no_athletics_link_costs_no_extra_request(self):
+        m = self._M({
+            "https://x.org/": (b'<head><link rel="icon" sizes="256x256" href="/c.png">'
+                               b'</head><body><a href="/apply">Apply</a></body>',
+                               "text/html"),
+            "https://x.org/c.png": (b"square", "image/png")})
+        S.fetchLogo(m, "https://x.org/")
+        self.assertEqual(m.asked, ["https://x.org/", "https://x.org/c.png"])
+
+    def test_the_banner_loses_to_the_touch_icon(self):
+        m = self._M({
+            "https://x.org/": (PAGE.replace("chs.k12.ca.us", "x.org").encode(),
+                               "text/html"),
             "https://x.org/img/social-banner.jpg": (b"wide", "image/jpeg"),
             "https://cdn.example.org/at.png": (b"square", "image/png")})
-        png, sha, kind, src = S.fetchLogo(m, "https://x.org/")
-        self.assertEqual((kind, src), ("apple-touch", "https://cdn.example.org/at.png"))
+        _png, sha, kind, src = S.fetchLogo(m, "https://x.org/")
+        self.assertEqual((kind, src), ("school:apple-touch",
+                                       "https://cdn.example.org/at.png"))
         self.assertEqual(sha, "sha-square")
-        self.assertTrue(png)
+        self.assertNotIn("https://x.org/img/social-banner.jpg", m.asked,
+                         "the banner is not even fetched now: it sorts after")
+
+    def test_the_manifest_is_the_second_tier(self):
+        """Not fetched while a declared icon still works; fetched, and
+        preferred to nothing, when none does."""
+        page = (b'<head><link rel="icon" sizes="64x64" href="/f.png">'
+                b'<link rel="manifest" href="/m.json"></head>')
+        m = self._M({
+            "https://x.org/": (page, "text/html"),
+            "https://x.org/f.png": (b"wide", "image/png"),
+            "https://x.org/favicon.ico": (b"wide", "image/x-icon"),
+            "https://x.org/m.json": (b'{"icons":[{"src":"/i512.png","sizes":"512x512"}]}',
+                                     "application/json"),
+            "https://x.org/i512.png": (b"square", "image/png")})
+        _png, _sha, kind, src = S.fetchLogo(m, "https://x.org/")
+        self.assertEqual((kind, src), ("school:manifest", "https://x.org/i512.png"))
 
     def test_a_known_logo_file_costs_no_page_visit(self):
         m = self._M({"https://commons/logo.png": (b"square", "image/png")})
@@ -263,7 +458,7 @@ class Fetching(unittest.TestCase):
             "https://x.org/c.png": (b"square", "image/png")})
         _png, _sha, kind, _src = S.fetchLogo(m, "https://x.org/",
                                              direct="https://commons/gone.png")
-        self.assertEqual(kind, "icon-sized")
+        self.assertEqual(kind, "school:icon-sized")
 
     def test_nothing_usable_reports_why_and_stops(self):
         m = self._M({"https://x.org/": (b"<head></head>", "text/html"),
@@ -271,21 +466,21 @@ class Fetching(unittest.TestCase):
         png, sha, kind, why = S.fetchLogo(m, "https://x.org/")
         self.assertEqual((png, sha, kind), (None, None, None))
         self.assertIn("1200x630", why)
+        self.assertTrue(why.startswith("school"), why)
 
     def test_a_page_that_is_not_html_is_not_parsed(self):
         m = self._M({"https://x.org/": (b"%PDF-1.4", "application/pdf")})
-        self.assertEqual(S.fetchLogo(m, "https://x.org/")[3], "page application/pdf")
+        self.assertEqual(S.fetchLogo(m, "https://x.org/")[3],
+                         "school application/pdf")
 
-    def test_svg_is_skipped_rather_than_fed_to_pillow(self):
-        """Pillow cannot read one, and asking for it spends a request on a
-        certain failure."""
-        m = self._M({
-            "https://x.org/": (b'<head><link rel="icon" sizes="any" href="/l.svg">',
-                               "text/html"),
-            "https://x.org/favicon.ico": (b"square", "image/x-icon")})
-        _png, _sha, kind, src = S.fetchLogo(m, "https://x.org/")
-        self.assertEqual((kind, src), ("icon", "https://x.org/favicon.ico"))
-        self.assertNotIn("https://x.org/l.svg", m.asked)
+    def test_only_so_many_icons_are_tried_per_site(self):
+        """A site that declares eight broken icons is a site with no crest,
+        not eight requests."""
+        links = "".join(f'<link rel="icon" sizes="99x99" href="/i{i}.png">'
+                        for i in range(8))
+        m = self._M({"https://x.org/": (f"<head>{links}</head>".encode(), "text/html")})
+        S.fetchLogo(m, "https://x.org/")
+        self.assertLessEqual(len(m.asked), 1 + S.MAX_TRIES)
 
 
 class Refresh(unittest.TestCase):
@@ -305,7 +500,7 @@ class Refresh(unittest.TestCase):
 
     def setUp(self):
         self._real = S.normalise
-        S.normalise = lambda raw, px=512: (
+        S.normalise = lambda raw, px=512, ctype="", kind=None: (
             (b"PNG", "sha-" + raw.decode(), (512, 512))
             if raw == b"square" else (None, None, "1200x630"))
 
@@ -335,6 +530,212 @@ class Refresh(unittest.TestCase):
     def test_an_image_that_no_longer_qualifies_is_a_rediscovery_too(self):
         m = self._M({"https://x.org/crest.png": (b"wide", "image/png")})
         self.assertIsNone(S.refetch(m, "https://x.org/crest.png"))
+
+
+class Worklist(unittest.TestCase):
+    """★ THE ORDER IS THE POINT (owner: "way too slow"). Alphabetical spent
+    the first hour on academies with four athletes. Descending athlete
+    count means --limit 2000 covers the schools that appear on most pages
+    of the site, and the tail can run overnight or never."""
+
+    class _Cur:
+        def __init__(self, identity=True, rows=()):
+            self.identity, self.rows, self.sql, self.params = identity, rows, [], []
+
+        def execute(self, sql, params=None):
+            self.sql.append(sql)
+            self.params.append(params)
+
+        def fetchone(self):
+            return ["public.school_identity" if self.identity else None]
+
+        def fetchall(self):
+            return list(self.rows)
+
+    def test_the_biggest_programmes_come_first(self):
+        cur = self._Cur()
+        S.targets(cur)
+        sql = cur.sql[-1]
+        self.assertIn("ORDER  BY COALESCE(si.n_athletes, 0) DESC", sql)
+        self.assertIn("LEFT JOIN school_identity si", sql)
+
+    def test_it_still_works_before_school_identity_is_built(self):
+        cur = self._Cur(identity=False)
+        S.targets(cur)
+        sql = cur.sql[-1]
+        self.assertIn("ORDER  BY 0 DESC", sql)
+        self.assertNotIn("school_identity si", sql)
+
+    def test_the_filters_are_parameters_in_the_right_order(self):
+        cur = self._Cur()
+        S.targets(cur, refresh_days=30, only="Jesuit", state="ca", limit=50,
+                  retry_failed=True)
+        self.assertEqual(cur.params[-1], [30, True, "%Jesuit%", "CA", 50])
+        self.assertIn("w.school ILIKE %s", cur.sql[-1])
+        self.assertIn("LIMIT %s", cur.sql[-1])
+
+    def test_a_row_comes_back_in_the_shape_the_worker_unpacks(self):
+        row = ("Jesuit", "CA", "https://x", None, None, None, None, None, "ok")
+        cur = self._Cur(rows=[row])
+        self.assertEqual(S.targets(cur), [row])
+
+
+class Crashproof(unittest.TestCase):
+    """One malformed page must not end a two-hour run."""
+
+    def test_a_worker_turns_any_exception_into_that_school_s_failure(self):
+        def boom(*a, **k):
+            raise ValueError("something in a page")
+        real, S.fetchLogo = S.fetchLogo, boom
+        self.addCleanup(setattr, S, "fetchLogo", real)
+        row = ("Jesuit", "CA", "https://x", None, None, None, None, None, None)
+        res = S.workOne(None, row)
+        self.assertEqual((res["school"], res["png"]), ("Jesuit", None))
+        self.assertIn("crashed ValueError", res["why"])
+
+
+class Svg(unittest.TestCase):
+    """Skipping SVG was pure lost coverage; reading it needs cairosvg, and
+    not having cairosvg must stay a skip rather than a crash."""
+
+    def test_without_cairosvg_an_svg_is_a_reason_not_an_exception(self):
+        real = S._svgToPng
+        S._svgToPng = lambda raw, px: None
+        self.addCleanup(setattr, S, "_svgToPng", real)
+        png, sha, why = S.normalise(b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+        self.assertEqual((png, sha), (None, None))
+        self.assertIn("cairosvg", why)
+
+    @unittest.skipIf(Image is None, "Pillow is not installed in this sandbox")
+    def test_a_rasterised_svg_goes_through_the_normal_rules(self):
+        buf = io.BytesIO()
+        Image.new("RGBA", (256, 256), (9, 9, 9, 255)).save(buf, "PNG")
+        real = S._svgToPng
+        S._svgToPng = lambda raw, px: buf.getvalue()
+        self.addCleanup(setattr, S, "_svgToPng", real)
+        png, sha, size = S.normalise(b'<svg xmlns="http://www.w3.org/2000/svg"/>',
+                                     kind="icon")
+        self.assertEqual(size, (256, 256))
+        self.assertTrue(png and len(sha) == 64)
+
+
+# ===================================================================== #
+#  THE WHOLE THING, AGAINST A REAL SERVER ON LOOPBACK                   #
+# ===================================================================== #
+
+@unittest.skipIf(Image is None, "Pillow is not installed in this sandbox")
+class EndToEnd(unittest.TestCase):
+    """★ THE STUBS CANNOT CATCH EVERYTHING. Two of this job's three bugs
+    after the first run were in the seams -- robots and pacing and threads
+    and Pillow all at once -- so this stands up real HTTP servers on
+    loopback and runs the real code against them. No outside network.
+
+    The fixture IS the owner's case: a school site with a perfectly good
+    institutional icon that links to an athletics site with a different
+    one."""
+
+    INST, ENG = (20, 20, 90), (150, 20, 40)
+
+    def _png(self, size, colour):
+        b = io.BytesIO()
+        Image.new("RGBA", size, colour + (255,)).save(b, "PNG")
+        return b.getvalue()
+
+    def _serve(self, pages):
+        import http.server
+        import socketserver
+        import threading
+        outer = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                outer.hits.append(self.path)
+                got = pages.get(self.path)
+                if got is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body, ctype = got
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), H)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1]
+
+    ROBOTS = (b"User-agent: *\nAllow: /\n", "text/plain")
+
+    def setUp(self):
+        self.hits = []
+
+    def test_the_athletics_mark_wins_and_the_banner_is_never_fetched(self):
+        ath_port = self._serve({
+            "/robots.txt": self.ROBOTS,
+            "/": (b'<head><link rel="apple-touch-icon" href="/eng.png"></head>',
+                  "text/html"),
+            "/eng.png": (self._png((256, 256), self.ENG), "image/png")})
+        school_port = self._serve({
+            "/robots.txt": self.ROBOTS,
+            "/": (f'<head><meta property="og:image" content="/banner.jpg">'
+                  f'<link rel="apple-touch-icon" sizes="180x180" href="/inst.png">'
+                  f'</head><body><a href="http://127.0.0.1:{ath_port}/">Athletics</a>'
+                  f'</body>'.encode(), "text/html"),
+            "/inst.png": (self._png((180, 180), self.INST), "image/png"),
+            "/banner.jpg": (self._png((1200, 630), (0, 0, 0)), "image/png")})
+
+        png, sha, kind, src = S.fetchLogo(S.Manners(rate=0),
+                                          f"http://127.0.0.1:{school_port}/")
+        self.assertEqual(kind, "athletics:apple-touch")
+        self.assertTrue(src.endswith("/eng.png"))
+        im = Image.open(io.BytesIO(png))
+        self.assertEqual(im.size, (SL.LOGO_PX, SL.LOGO_PX))
+        self.assertEqual(im.convert("RGB").getpixel((256, 256)), self.ENG,
+                         "the crest on the card is the ENGINEERS mark")
+        self.assertEqual(len(sha), 64)
+        self.assertNotIn("/banner.jpg", self.hits)
+        self.assertNotIn("/inst.png", self.hits,
+                         "the athletics link is read BEFORE any icon is fetched")
+
+    def test_robots_is_obeyed_against_a_real_server(self):
+        port = self._serve({
+            "/robots.txt": (b"User-agent: *\nDisallow: /\n", "text/plain"),
+            "/": (b"<head></head>", "text/html")})
+        png, _sha, _kind, why = S.fetchLogo(S.Manners(rate=0),
+                                            f"http://127.0.0.1:{port}/")
+        self.assertIsNone(png)
+        self.assertIn("robots", why)
+        self.assertEqual(self.hits, ["/robots.txt"])
+
+    def test_many_hosts_at_once_do_not_wait_on_each_other(self):
+        """★ THE FIX FOR "way too slow". Twelve schools, a full second
+        between requests to any ONE of them, twelve workers: about a
+        second in total, not twelve."""
+        import concurrent.futures as cf
+        ports = [self._serve({
+            "/robots.txt": self.ROBOTS,
+            "/": (b'<head><link rel="icon" sizes="128x128" href="/i.png"></head>',
+                  "text/html"),
+            "/i.png": (self._png((128, 128), self.ENG), "image/png")})
+            for _ in range(12)]
+        manners = S.Manners(rate=0.4)
+        t0 = time.time()
+        with cf.ThreadPoolExecutor(max_workers=12) as pool:
+            out = list(pool.map(
+                lambda p: S.fetchLogo(manners, f"http://127.0.0.1:{p}/"), ports))
+        spent = time.time() - t0
+        self.assertTrue(all(o[0] for o in out), "every one of them got a crest")
+        # three requests per host at 0.4s = 1.2s whatever the width; one
+        # global clock would be 12 x 1.2 = 14s
+        self.assertLess(spent, 3.0,
+                        f"{spent:.1f}s for 12 hosts: the pace is serialising")
 
 
 # ===================================================================== #
