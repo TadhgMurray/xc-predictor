@@ -348,7 +348,8 @@ CREATE TABLE IF NOT EXISTS school_website (
 def store(cur, matched):
     """Upsert, never truncate: a run with one source must not delete what
     the other source found."""
-    cur.execute(DDL)
+    from scrape_school_logos import ensureTable
+    ensureTable(cur, DDL)
     cur.executemany("""
         INSERT INTO school_website (school, state, url, direct_logo, source, matched, seen)
         VALUES (%s, %s, %s, %s, %s, %s, current_date)
