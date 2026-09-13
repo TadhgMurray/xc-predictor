@@ -180,7 +180,7 @@
             {{ year }} {{ sport }}
             <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
-        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="/school/{{ season.school|urlencode }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %} · Grade {{ season.grade|grade_label(season.pool) }}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
+        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %} · Grade {{ season.grade|grade_label(season.pool) }}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
             <thead>
                 <tr>
@@ -280,7 +280,7 @@
         <span>Share</span>
       </button>
     </div>
-    <p class="meta">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="/school/{{ athlete.school|urlencode }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
+    <p class="meta">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="{{ school_href(athlete.school, athlete.header_state, pool=athlete.header_pool) }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a></p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the

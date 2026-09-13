@@ -10,7 +10,8 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
 
   sitemap.xml                    the index: one <sitemap> per file below
   sitemap-pages.xml              the handful of fixed pages
-  sitemap-schools-N.xml.gz       /school/<name>, primary state per school
+  sitemap-schools-N.xml.gz       /school/<name>?state=ST, one per cluster
+                                 the site treats as its own school
   sitemap-courses-N.xml          /course/<name>
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
@@ -150,17 +151,33 @@ def collect(conn):
         #   is that it needs no database.
         from courses import courseDisplayName
         from panels import isTeamName
+        # the same bar school_identity draws a second cluster at,
+        # read from the one place that defines it
+        from school_identity import (MIN_ATHLETES as _MIN_ATHLETES,
+                                     MIN_SHARE as _MIN_SHARE)
         cur.execute("SET work_mem = '1GB'")
         cur.execute("SET max_parallel_workers_per_gather = 4")
         # ⚠ "Unattached" IS NOT A PAGE. school_page 404s any name
         #   panels.isTeamName rejects, so listing them here hands the
         #   crawlers a sitemap full of 404s -- which costs crawl budget and
         #   the sitemap's own credibility (2026-09-13).
+        # ⚠ AND THE STATE IS PART OF THE URL (owner, 2026-09-14: the two
+        #   Oregons). This listed the bare name of PRIMARY clusters only,
+        #   so Oregon (IL) had no entry at all and Oregon (OR)'s entry did
+        #   not match the page's own canonical, which now carries ?state=.
+        #   A sitemap URL that canonicalises elsewhere is a URL the crawler
+        #   discards. Every cluster the site treats as its own school gets
+        #   its own line, spelled the way the page spells itself.
         if _exists(cur, "school_identity"):
-            cur.execute("""SELECT DISTINCT school FROM school_identity
-                           WHERE is_primary AND school IS NOT NULL""")
-            by_kind["schools"] = [("/school/" + quote(r[0], safe=""), None)
-                                  for r in cur.fetchall() if isTeamName(r[0])]
+            cur.execute("""SELECT school, state FROM school_identity
+                           WHERE school IS NOT NULL
+                             AND (is_primary
+                                  OR (n_athletes >= %s AND share >= %s))""",
+                        (_MIN_ATHLETES, _MIN_SHARE))
+            by_kind["schools"] = [
+                ("/school/" + quote(school, safe="")
+                 + (f"?state={quote(state, safe='')}" if state else ""), None)
+                for school, state in cur.fetchall() if isTeamName(school)]
         # ⚠ AND ONE COURSE IS ONE URL. course_difficulties is keyed
         #   "XC:<venue>", and under --era-years once per era as well, while
         #   the site links to the bare name -- so this listed a URL nothing

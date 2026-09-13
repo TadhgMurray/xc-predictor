@@ -30,6 +30,8 @@ Everything here degrades: tables missing (mid-rebuild, old database)
 means no chips, no splits, plain labels -- never an error.
 """
 
+import urllib.parse
+
 MIN_ATHLETES = 3
 MIN_SHARE = 0.10
 
@@ -195,6 +197,43 @@ def schoolLabelFor(school, pool, state=None):
         return school
     st = teamState(school, pool, state)
     return f"{school} ({st})" if st else school
+
+
+def schoolHref(school, state=None, pool=None, sport=None):
+    """The URL for a MENTION of a school -- the same school the label
+    names and the crest pictures.
+
+    ★ THE LINK WAS THE HALF THAT STAYED STATELESS (owner, 2026-09-14:
+      "Oregon (OR) and Oregon (IL) still go to same page with hs logo").
+      race.html labelled the row with schoolLabelIn(header.state) and,
+      after the crest fix, drew the crest with the same context -- and
+      then wrote a bare /school/Oregon under both. Two schools, one page,
+      and the page picked the bigger one. A mention now resolves ONCE and
+      the label, the crest and the href all come off that answer.
+
+    ! THE LEVEL RIDES ALONG WHEN THE POOL KNOWS IT. Amherst (MA) is a
+      NESCAC college and a regional middle school; a college row's link
+      says ?level=college so the page opens on the right institution
+      rather than on whichever has more athletes. The route drops a level
+      the school does not actually split on, so this is never wrong, only
+      sometimes redundant.
+    """
+    if not school:
+        return "#"
+    st = teamState(school, pool, state) if pool else contextState(school, state)
+    # ! quote(safe="/") is exactly what Jinja's |urlencode did here, and
+    #   the route is a <path:> converter -- a school string genuinely
+    #   contains a slash ("Chisago Lakes/Rush City").
+    q = []
+    if sport:
+        q.append(("sport", sport))
+    if st:
+        q.append(("state", st))
+    lvl = levelOf(pool)
+    if lvl:
+        q.append(("level", lvl))
+    url = "/school/" + urllib.parse.quote(str(school), safe="/")
+    return url + ("?" + urllib.parse.urlencode(q) if q else "")
 
 
 def stateFor(school, preferred=None):

@@ -23,6 +23,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {# the title says what the page is, as the athlete page's does (SEO,
        2026-09-06): a bare name did not win "<school> cross country" #}
+    {# ★ THE CANONICAL CARRIES THE IDENTITY (owner, 2026-09-14: the two
+       Oregons). _meta.html defaults to request.path, which drops the query
+       string -- so /school/Oregon?state=IL and ?state=OR canonicalised to
+       one URL and Google was told two schools are one page. header.state,
+       not state: the route settles the identity, so a page reached without
+       ?state points at its own resolved URL rather than at a third one.
+       The level rides along only where the name really is two institutions
+       (level_chips is empty for nearly every school), so an ordinary
+       school's canonical is unchanged. #}
+    {% set meta_path = "/school/" ~ (school|urlencode)
+       ~ ("?state=" ~ header.state if header.state else "")
+       ~ (("&" if header.state else "?") ~ "level=" ~ level
+          if (level_chips and level) else "") %}
     {% set meta_title = school ~ ((" (" ~ state ~ ")") if state else "")
        ~ " · XC & Track Results, Roster, Best Athletes" %}
     {% set meta_description = school ~ ((" (" ~ state ~ ")") if state else "")
@@ -30,7 +43,7 @@
        ~ "all-time best athletes and performances, school records and every meet raced." %}
     {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsOrganization",
                       "name": school, "sport": "Running",
-                      "url": site_origin ~ "/school/" ~ (school|urlencode),
+                      "url": site_origin ~ meta_path,
                       "address": ({"@type": "PostalAddress", "addressRegion": state,
                                    "addressCountry": "US"} if state else none)} %}
     {% set meta_image = site_origin ~ "/card/school/" ~ (school|urlencode) ~ ".png" ~ ("?state=" ~ state if state else "") %}
@@ -52,7 +65,7 @@
          page reached without ?state still gets its own school's crest. #}
       <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
       <button type="button" class="share-box share-btn" data-share-title="{{ school }} on Racecast"
-              data-share-url="{{ site_origin }}/school/{{ school|urlencode }}{% if state %}?state={{ state }}{% endif %}" title="Share this page; the preview is its card">
+              data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page; the preview is its card">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
         <span>Share</span>
       </button>

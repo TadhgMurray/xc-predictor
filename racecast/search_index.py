@@ -339,9 +339,13 @@ def _load_schools(conn):
                 ))
             continue
         st = clusters[0][0] if clusters else None
+        # ! THE STATE IS ON THE LINK EVEN WHEN THE NAME DOES NOT SPLIT
+        #   (owner, 2026-09-14). The school page's canonical carries it
+        #   now, so a bare link is a link to a URL that points somewhere
+        #   else -- and a hit that redirects is a hit Google discounts.
         rows.append((
             "school", f"{s} ({st})" if st else s, f"{r['n_ath']} athletes",
-            link,
+            f"{link}?state={st}" if st else link,
             f"{s} {st}".lower() if st else s.lower(), s.lower(),
             0, r["n_ath"] or 0,
         ))

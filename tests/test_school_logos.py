@@ -1788,7 +1788,7 @@ class NoDeadLinks(unittest.TestCase):
                         self.assertIn("is_team", line, f"{name}:{n}")
 
     def test_the_sitemap_and_the_search_index_both_filter(self):
-        self.assertIn("if isTeamName(r[0])", read("racecast", "build_sitemap.py"))
+        self.assertIn("if isTeamName(school)", read("racecast", "build_sitemap.py"))
         self.assertIn("if not s or not isTeamName(s)",
                       read("racecast", "search_index.py"))
 
@@ -2610,6 +2610,174 @@ class WebsiteLevel(unittest.TestCase):
                    "source": "csv"}]
         matched, _ = W.matchSchools([("Amherst", "MA")], source)
         self.assertEqual([m["url"] for m in matched], ["http://a.example"])
+
+
+# ===================================================================== #
+#  AND THE LINK RESOLVES WITH THE LABEL AND THE CREST                   #
+# ===================================================================== #
+
+class OneHref(unittest.TestCase):
+    """★ "Oregon (OR) and Oregon (IL) still go to same page with hs logo"
+    (owner, 2026-09-14). The crest fix made the badge agree with the
+    label; the HREF was still a bare /school/<name> under both, so two
+    schools shared a page and the page picked the bigger one."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        import school_identity as SI
+        self.SI = SI
+        self._saved = dict(SI._LABELS)
+        SI._LABELS.update({
+            "loaded": True,
+            "map": {"Oregon": "OR", "Amherst": "MA",
+                    "Chisago Lakes/Rush City": "MN"},
+            "clusters": {"Oregon": {"OR": 0.70, "IL": 0.20},
+                         "Amherst": {"MA": 1.0}}})
+
+    def tearDown(self):
+        self.SI._LABELS.clear()
+        self.SI._LABELS.update(self._saved)
+
+    def test_the_two_oregons_are_two_urls(self):
+        self.assertEqual(self.SI.schoolHref("Oregon", "IL"),
+                         "/school/Oregon?state=IL")
+        self.assertEqual(self.SI.schoolHref("Oregon", "OR"),
+                         "/school/Oregon?state=OR")
+
+    def test_a_travel_state_still_lands_on_the_real_school(self):
+        """A row's state is the VENUE's -- Oregon racing in Texas is not a
+        third Oregon."""
+        self.assertEqual(self.SI.schoolHref("Oregon", "TX"),
+                         "/school/Oregon?state=OR")
+
+    def test_the_href_agrees_with_the_label_and_the_crest(self):
+        """One mention, one answer: whatever schoolLabelIn says the school
+        is, the link goes there."""
+        for state in ("IL", "OR", "TX", None):
+            label = self.SI.schoolLabelIn("Oregon", state)
+            href = self.SI.schoolHref("Oregon", state)
+            st = label.split("(")[1].rstrip(")") if "(" in label else ""
+            self.assertIn(f"state={st}", href, f"context {state}")
+
+    def test_the_level_rides_along_when_the_pool_knows_it(self):
+        """Amherst (MA) is a NESCAC college and a regional middle school."""
+        self.assertEqual(self.SI.schoolHref("Amherst", "MA", pool="college_m"),
+                         "/school/Amherst?state=MA&level=college")
+
+    def test_a_school_the_identity_cannot_place_links_as_it_always_did(self):
+        self.assertEqual(self.SI.schoolHref("Nowhere Unknown", "VT"),
+                         "/school/Nowhere Unknown".replace(" ", "%20"))
+
+    def test_a_slash_in_a_school_name_survives_the_path_converter(self):
+        """The route is <path:school_name> and school strings really do
+        contain slashes."""
+        self.assertEqual(self.SI.schoolHref("Chisago Lakes/Rush City", "MN"),
+                         "/school/Chisago%20Lakes/Rush%20City?state=MN")
+
+    def test_no_school_is_not_a_link_to_the_school_index(self):
+        self.assertEqual(self.SI.schoolHref(None), "#")
+        self.assertEqual(self.SI.schoolHref(""), "#")
+
+    def test_it_is_registered_as_a_template_global(self):
+        app = read("racecast", "app.py")
+        self.assertIn('app.jinja_env.globals["school_href"] = '
+                      'school_identity.schoolHref', app)
+
+    def test_no_template_writes_a_bare_school_link_any_more(self):
+        """Every mention of a school links through the resolver. The
+        school page's own navigation (tabs, years, the state chips) is
+        exempt: it already holds the identity."""
+        import glob
+        allowed = {"school.html", "schools.html", "school_prs.html"}
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            if os.path.basename(f) in allowed:
+                continue
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                self.assertNotIn('href="/school/', line,
+                                 f"{os.path.basename(f)}:{n}: bare school "
+                                 f"link -- use school_href()")
+
+    def test_a_label_with_a_context_never_sits_on_a_link_without_one(self):
+        """The other half of the chain: label -> crest is checked by
+        OneResolver, crest -> link below. This closes it."""
+        import glob, re as _re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "school_href(" not in line:
+                    continue
+                if not _re.search(r"school_label_(?:in|for)\(", line):
+                    continue
+                href = _re.search(r"school_href\(([^)]*)\)", line).group(1)
+                self.assertRegex(
+                    href, r"[._]state\b|state=",
+                    f"{os.path.basename(f)}:{n}: the label has a context "
+                    f"and the link does not")
+
+    def test_every_crest_row_links_through_the_same_context(self):
+        """A row whose crest knows the state and whose link does not is
+        the bug this class exists for."""
+        import glob, re as _re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "crest(" not in line or "school_href(" not in line:
+                    continue
+                crest = _re.search(r"crest\(([^)]*)\)", line).group(1)
+                href = _re.search(r"school_href\(([^)]*)\)", line).group(1)
+                where = f"{os.path.basename(f)}:{n}"
+                if "state" in crest:
+                    self.assertIn("state", href,
+                                  f"{where}: the crest has a context and "
+                                  f"the link does not")
+                if "pool=" in crest:
+                    self.assertIn("pool=", href,
+                                  f"{where}: the crest knows the level and "
+                                  f"the link does not")
+
+
+class Canonical(unittest.TestCase):
+    """A sitemap URL that canonicalises somewhere else is a URL the
+    crawler discards, and a canonical shared by two schools tells Google
+    they are one page."""
+
+    def test_the_school_canonical_carries_the_state(self):
+        html = read("racecast", "templates", "school.html")
+        self.assertIn('{% set meta_path = "/school/" ~ (school|urlencode)',
+                      html)
+        self.assertIn('"?state=" ~ header.state if header.state', html)
+
+    def test_it_uses_the_resolved_state_not_the_query_parameter(self):
+        """A page reached without ?state must point at its own resolved
+        URL, not mint a third one."""
+        html = read("racecast", "templates", "school.html")
+        i = html.index("set meta_path")
+        expr = html[i:html.index("%}", i)]
+        self.assertIn("header.state", expr)
+        self.assertNotIn("~ state ", expr)
+
+    def test_the_level_only_when_the_name_really_is_two_schools(self):
+        html = read("racecast", "templates", "school.html")
+        i = html.index("set meta_path")
+        self.assertIn("level_chips and level", html[i:i + 400])
+
+    def test_the_share_url_and_the_json_ld_are_the_canonical(self):
+        html = read("racecast", "templates", "school.html")
+        self.assertIn('"url": site_origin ~ meta_path,', html)
+        self.assertIn('data-share-url="{{ site_origin }}{{ meta_path }}"', html)
+
+    def test_the_sitemap_lists_the_same_url_the_page_claims(self):
+        src = read("racecast", "build_sitemap.py")
+        self.assertIn("SELECT school, state FROM school_identity", src)
+        self.assertIn('f"?state={quote(state, safe=\'\')}" if state else ""', src)
+
+    def test_a_second_real_cluster_gets_its_own_line(self):
+        """Oregon (IL) had no sitemap entry at all: the query took primary
+        clusters only."""
+        src = read("racecast", "build_sitemap.py")
+        self.assertIn("OR (n_athletes >= %s AND share >= %s)", src)
+        self.assertIn("from school_identity import (MIN_ATHLETES", src)
 
 
 if __name__ == "__main__":

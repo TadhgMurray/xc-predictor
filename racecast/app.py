@@ -239,6 +239,10 @@ app.template_filter("school_label_for")(school_identity.schoolLabelFor)
 # the crest beside a school's name, everywhere one is named (305). Both
 # live in school_logo so they can be tested without importing the app.
 app.jinja_env.globals["crest"] = school_logo.crestImg
+# ★ AND THE LINK RESOLVES WITH THEM. A mention's label, crest and href are
+#   one answer about one school; the href used to be a bare /school/<name>
+#   and sent Oregon (IL) to Oregon (OR)'s page.
+app.jinja_env.globals["school_href"] = school_identity.schoolHref
 stampCrests = school_logo.stampCrests
 
 
@@ -1051,7 +1055,6 @@ def buildRankLine(cur, person_id, season):
     Returns None when there is nothing real to show (unrankable pool, or no
     scope produced a number): a line of nothing but "soon" is noise.
     """
-    from urllib.parse import quote
     from werkzeug.datastructures import MultiDict
 
     level = (season.get("pool") or "").split("_", 1)[0]
@@ -1251,8 +1254,13 @@ def buildRankLine(cur, person_id, season):
             if row:
                 entries.append({
                     "label": "Team", "rank": row["place"],
-                    "href": (f"/school/{quote(school, safe='')}"
-                             f"?sport={sport}&year={label_year}")})
+                    # through the resolver, so a team-rank chip cannot
+                    # open a different school of the same name than the
+                    # label beside it names
+                    "href": (school_identity.schoolHref(
+                                 school, state, pool=season.get("pool"),
+                                 sport=sport)
+                             + f"&year={label_year}")})
 
     if not any("rank" in e for e in entries):
         return None
