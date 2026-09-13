@@ -2023,9 +2023,16 @@ class BoardOutline(unittest.TestCase):
     def test_the_home_grid_is_framed_too(self):
         css = self.css()
         i = css.index(".board-grid {")
-        block = css[i:i + 400]
-        self.assertIn("border: 1px solid #ddd", block)
-        self.assertIn("overflow: hidden", block)
+        self.assertIn("border: 1px solid #ddd", css[i:i + 400])
+
+    def test_both_frames_have_square_corners(self):
+        """Owner, 2026-09-13: 90 degrees, no radius on either board."""
+        css = self.css()
+        for start in (".rankings-page table.rk {", ".board-grid {"):
+            i = css.index(start)
+            self.assertNotIn("border-radius", css[i:i + 400], start)
+        self.assertNotIn("table.rk thead tr:first-child th:first-child", css,
+                         "the corner-cell rules existed only for the radius")
 
     def test_neither_frame_doubles_against_the_cells(self):
         css = self.css()

@@ -528,15 +528,12 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
    boards are a CSS GRID, not a table -- the rankings page's table.rk rule
    does not reach them -- and their cells carry horizontal rules only, so
    the rows bled off both edges with no frame at all. The grid takes the
-   frame; unlike a table, a grid clips its own corners, so the radius needs
-   nothing else. */
+   frame. Square corners, like the rankings table. */
 .board-grid {
     min-width: 0;
     display: grid;
     grid-template-columns: var(--cols);
     border: 1px solid #ddd;
-    border-radius: 6px;
-    overflow: hidden;
 }
 /* the head already draws its own top rule; against the frame it doubles */
 .board-grid .head { border-top: none; }
@@ -1191,18 +1188,16 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
      table's own border is merged into the cells' and simply does not
      draw, and `overflow: hidden` does not clip a table -- so the first
      attempt rendered nothing at all. `separate` with zero spacing looks
-     identical and lets the border and the radius exist; the corners are
-     then put on the corner CELLS, since the table cannot clip them. */
+     identical and lets the border exist.
+   ! SQUARE CORNERS, 90 degrees (owner, 2026-09-13): no radius on either
+     board, and the corner-cell rules the radius needed are gone with it. */
 .rankings-page table.rk {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.875rem;
   border: 1px solid var(--rk-line);
-  border-radius: 6px;
 }
-.rankings-page table.rk thead tr:first-child th:first-child { border-top-left-radius: 5px; }
-.rankings-page table.rk thead tr:first-child th:last-child  { border-top-right-radius: 5px; }
 /* the last row's own rule would double up against the outline */
 .rankings-page table.rk tbody tr:last-child td { border-bottom: 0; }
 
