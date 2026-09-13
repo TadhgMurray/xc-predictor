@@ -1654,6 +1654,30 @@ def pairEngineGap(old_path, solved, keys):
     return None
 
 
+def pairEngineDelta(old_path, solved):
+    """The sequential engine's per-cell log difficulty, aligned to `solved`,
+    or None.
+
+    ⚠ WHY THIS EXISTS. pairEngineGap loads this array and returns only the
+      scalar gap, but the end-of-run comparison needs the array too -- and
+      after that refactor it was still reading an `old_delta` local that no
+      longer existed anywhere. NameError at the END of a 2.6-hour solve,
+      which is precisely what "a report must never kill a solve" was
+      written to stop. Both callers load through here now.
+    """
+    if not os.path.exists(old_path):
+        return None
+    try:
+        with np.load(old_path, allow_pickle=False) as old:
+            if "difficulty_raw" not in old.files:
+                return None
+            delta = np.log1p(old["difficulty_raw"])
+        return delta if delta.size == np.asarray(solved).size else None
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[joint] vs pair_difficulty: skipped ({type(exc).__name__}: {exc})")
+        return None
+
+
 def main():
     ap = buildParser()
     args = applyImplications(ap.parse_args(), ap)
@@ -1855,6 +1879,8 @@ def main():
 
     #   race-day term, the robust weights and the curve, and it should be
     #   biggest exactly where the old engine's SE was least trustworthy.
+    old_delta = pairEngineDelta(
+        os.path.join(os.path.dirname(args.out), "pair_difficulty.npz"), solved)
     if old_delta is not None:
         m = np.isfinite(old_delta) & (old_delta != 0) & solved
         if m.sum() > 100:
