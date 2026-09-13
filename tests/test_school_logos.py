@@ -1638,37 +1638,59 @@ class Mentions(unittest.TestCase):
 
     def setUp(self):
         SL._CRESTS.update(loaded=True, map={
-            "Jesuit": ["CA"],
-            "Highland": ["UT", "CA"],          # two real schools, one name
-            "Nameless": [""],                  # stored under no state
+            "Jesuit": [("CA", "ab12cd34")],
+            "Highland": [("UT", "d1"), ("CA", "d2")],   # two schools, one name
+            "Nameless": [("", "e5")],                   # stored under no state
         })
         self.addCleanup(SL._CRESTS.update, {"loaded": False, "map": {}})
 
     def test_a_school_with_a_crest_gets_a_url_with_no_query(self):
         self.assertEqual(SL.crestUrl("Jesuit", "CA"),
-                         "/img/school/Jesuit.png?state=CA")
+                         "/img/school/Jesuit.png?state=CA&v=ab12cd34")
         self.assertEqual(SL.crestUrl("Jesuit", "CA", 64),
-                         "/img/school/Jesuit.png?state=CA&px=64")
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
+
+    def test_every_size_of_one_crest_carries_the_same_version(self):
+        """★ THE BUG THIS EXISTS FOR (owner, 2026-09-13): Tufts showed the
+        new crest on a race page and the old one on its school page. Two
+        sizes are two URLs, the file's URL does not change when its
+        CONTENTS do, and the route hands out a week of cache -- so each URL
+        kept whatever it happened to fetch first."""
+        small = SL.crestUrl("Jesuit", "CA", 64)
+        big = SL.crestUrl("Jesuit", "CA", 128)
+        self.assertNotEqual(small, big)
+        self.assertTrue(small.endswith("v=ab12cd34"))
+        self.assertTrue(big.endswith("v=ab12cd34"))
+        SL._CRESTS["map"]["Jesuit"] = [("CA", "99999999")]
+        self.assertNotEqual(SL.crestUrl("Jesuit", "CA", 64), small,
+                            "a new picture must be a new URL")
+
+    def test_a_mention_with_no_state_resolves_the_same_as_the_page(self):
+        """A race row passes no state and the school page passes one; if
+        they resolved differently the two would show different crests."""
+        self.assertEqual(SL.crestUrl("Jesuit", None, 64),
+                         SL.crestUrl("Jesuit", "CA", 64))
 
     def test_a_school_with_none_gets_nothing_at_all(self):
         self.assertIsNone(SL.crestUrl("Nobody", "CA"))
         self.assertEqual(SL.crestImg("Nobody", "CA"), "")
 
     def test_a_name_two_schools_share_needs_a_state(self):
-        self.assertEqual(SL.crestState("Highland", "UT"), "UT")
+        self.assertEqual(SL.crestState("Highland", "UT")[0], "UT")
         self.assertIsNone(SL.crestState("Highland", None),
                           "a coin toss here is the WRONG crest on a real page")
         self.assertIsNone(SL.crestState("Highland", "NY"))
 
     def test_one_row_answers_without_a_state_and_a_stateless_row_answers_for_any(self):
-        self.assertEqual(SL.crestState("Jesuit", None), "CA")
-        self.assertEqual(SL.crestState("Nameless", "TX"), "")
-        self.assertEqual(SL.crestUrl("Nameless", "TX"), "/img/school/Nameless.png")
+        self.assertEqual(SL.crestState("Jesuit", None)[0], "CA")
+        self.assertEqual(SL.crestState("Nameless", "TX")[0], "")
+        self.assertEqual(SL.crestUrl("Nameless", "TX"),
+                         "/img/school/Nameless.png?v=e5")
 
     def test_the_markup_escapes_a_scraped_name(self):
         """School names are free text: 'Smith & "Jones"' is the kind of
         thing that breaks a page written with an f-string."""
-        SL._CRESTS["map"]['Smith & "Jones"'] = ["CA"]
+        SL._CRESTS["map"]['Smith & "Jones"'] = [("CA", "f0")]
         img = str(SL.crestImg('Smith & "Jones"', "CA"))
         self.assertIn("%26", img)                  # the & is encoded in the URL
         self.assertIn("&amp;px=64", img)           # and the separator escaped
@@ -1681,15 +1703,16 @@ class Mentions(unittest.TestCase):
                 {"school": "Nobody", "state": "CA"},
                 {"school": None, "state": None}]
         SL.stampCrests(rows)
-        self.assertEqual(rows[0]["crest"], "/img/school/Jesuit.png?state=CA&px=64")
+        self.assertEqual(rows[0]["crest"],
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
         self.assertNotIn("crest", rows[1])
         self.assertNotIn("crest", rows[2])
 
     def test_a_search_hit_is_read_back_off_its_link(self):
         self.assertEqual(SL.crestUrlForLink("/school/Highland?state=UT"),
-                         "/img/school/Highland.png?state=UT&px=64")
+                         "/img/school/Highland.png?state=UT&px=64&v=d1")
         self.assertEqual(SL.crestUrlForLink("/school/Jesuit"),
-                         "/img/school/Jesuit.png?state=CA&px=64")
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
         self.assertIsNone(SL.crestUrlForLink("/school/Highland"))
         for junk in ("/athlete/12", "", None, "/schools/ca", "https://x/school/Y"):
             self.assertIsNone(SL.crestUrlForLink(junk), junk)

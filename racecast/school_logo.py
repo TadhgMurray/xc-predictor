@@ -105,13 +105,14 @@ def loadCrests(conn_factory, force=False):
             with conn.cursor() as cur:
                 if tableExists(cur, force=True):
                     cur.execute("""
-                        SELECT school, state FROM school_logo
+                        SELECT school, state, sha FROM school_logo
                         WHERE  path IS NOT NULL
                           AND  COALESCE(lower(override), '') <> 'none'
                           AND  (NOT shared OR override IS NOT NULL)
                     """)
-                    for school, state in cur.fetchall():
-                        got.setdefault(school, []).append((state or "").upper())
+                    for school, state, sha in cur.fetchall():
+                        got.setdefault(school, []).append(
+                            ((state or "").upper(), (sha or "")[:8]))
     except Exception:                              # noqa: BLE001 -- optional
         got = {}
     _CRESTS["map"] = got
@@ -119,30 +120,44 @@ def loadCrests(conn_factory, force=False):
 
 
 def crestState(school, state=None):
-    """The state whose crest answers for this mention, or None when none
-    does. The cache's version of pickRow, and it keeps pickRow's rule: a
-    name two real schools wear answers only when the caller says which."""
+    """(state, version) whose crest answers for this mention, or None. The
+    cache's version of pickRow, and it keeps pickRow's rule: a name two
+    real schools wear answers only when the caller says which."""
     rows = _CRESTS["map"].get(school)
     if not rows:
         return None
     st = (state or "").upper()
-    if st and st in rows:
-        return st
-    if "" in rows:
-        return ""
+    for row in rows:
+        if st and row[0] == st:
+            return row
+    for row in rows:
+        if not row[0]:
+            return row
     return rows[0] if len(rows) == 1 else None
 
 
 def crestUrl(school, state=None, px=None):
-    """The <img src> for a mention of this school, or None -- with NO
+    """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
-    every table on the site."""
-    st = crestState(school, state)
-    if st is None:
+    every table on the site.
+
+    ⚠ THE VERSION IS NOT DECORATION (owner, 2026-09-13: Tufts showed the
+      new crest on a race page and the old one on its school page). The
+      file's URL does not change when its CONTENTS do, and the route hands
+      out a week of cache -- so a re-scrape leaves every viewer, and every
+      edge cache, holding whatever they happened to fetch first, per URL.
+      Two sizes are two URLs, which is exactly how one page can disagree
+      with another. `v` is the image's own hash: new picture, new URL.
+    """
+    got = crestState(school, state)
+    if got is None:
         return None
+    st, version = got
     url = logoUrl(school, st or None)
     if px:
         url += ("&" if "?" in url else "?") + f"px={int(px)}"
+    if version:
+        url += ("&" if "?" in url else "?") + f"v={version}"
     return url
 
 
