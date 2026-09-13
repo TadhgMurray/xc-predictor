@@ -42,7 +42,8 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
         sys.path.insert(0, _p)
 
 from scrape_school_logos import (            # noqa: E402
-    DDL, Manners, _tableExists, markShared, normalise, record, writeFile)
+    DDL, Manners, _tableExists, ensureTable, markShared, normalise, record,
+    writeFile)
 
 # ! THE CLIENT HEADER anet's OWN SITE SENDS, copied from scripts/scraper.py,
 #   which has worked against /api/v1/Meet/GetResultsData3 for a year. The
@@ -119,9 +120,8 @@ def teams(cur, limit=None, state=None, redo=False):
     Modal per (school, HOME STATE), not per school string: two real schools
     share the name "Kingston" and anet gives them two ids, which is the
     split school_identity already draws."""
-    cur.execute(DDL)
-    cur.execute(TEAM_DDL)
-    cur.execute(DIV_DDL)
+    for ddl in (DDL, TEAM_DDL, DIV_DDL):
+        ensureTable(cur, ddl)
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
     home = ("LEFT JOIN person_home_state h ON h.person_id = t.person_id"

@@ -669,6 +669,64 @@ class Refresh(unittest.TestCase):
         self.assertIsNone(S.refetch(m, "https://x.org/crest.png"))
 
 
+class Migrations(unittest.TestCase):
+    """⚠ "CREATE TABLE IF NOT EXISTS" NEVER ADDS A COLUMN, so a table made
+    by last week's run keeps last week's shape and the first INSERT with a
+    new column dies with UndefinedColumn -- on the server, mid-run, which
+    is exactly how this was found. The ALTERs are derived FROM the DDL so
+    they cannot drift from it."""
+
+    class _Cur:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, q, p=None):
+            self.sql.append(" ".join(q.split()))
+
+    def alters(self, ddl):
+        cur = self._Cur()
+        SL_ = __import__("scrape_school_logos")
+        SL_.ensureTable(cur, ddl)
+        return [q for q in cur.sql if q.startswith("ALTER")]
+
+    def test_every_column_in_the_ddl_gets_an_add_if_not_exists(self):
+        got = self.alters(S.DDL)
+        self.assertIn("ALTER TABLE school_logo ADD COLUMN IF NOT EXISTS "
+                      "shared boolean NOT NULL DEFAULT false", got)
+        self.assertEqual(len(got), 12)
+
+    def test_the_column_that_broke_the_server_run(self):
+        self.assertIn("ALTER TABLE anet_division ADD COLUMN IF NOT EXISTS "
+                      "custom boolean NOT NULL DEFAULT false",
+                      self.alters(A.DIV_DDL))
+
+    def test_a_not_null_with_no_default_is_relaxed(self):
+        """Postgres cannot add one to a table that already has rows, and
+        failing to start is worse than a nullable column on old rows."""
+        got = self.alters("CREATE TABLE IF NOT EXISTS t (a text NOT NULL, "
+                          "b int NOT NULL DEFAULT 0, PRIMARY KEY (a))")
+        self.assertEqual(got, ["ALTER TABLE t ADD COLUMN IF NOT EXISTS a text",
+                               "ALTER TABLE t ADD COLUMN IF NOT EXISTS b int "
+                               "NOT NULL DEFAULT 0"])
+
+    def test_constraints_are_not_mistaken_for_columns(self):
+        got = self.alters("CREATE TABLE IF NOT EXISTS t (a int PRIMARY KEY, "
+                          "b numeric(4,1), UNIQUE (b), CHECK (b > 0))")
+        self.assertEqual(got, ["ALTER TABLE t ADD COLUMN IF NOT EXISTS a int",
+                               "ALTER TABLE t ADD COLUMN IF NOT EXISTS b numeric(4,1)"],
+                         "an inline PRIMARY KEY is invalid on an ALTER, and "
+                         "numeric(4,1) must survive the comma split")
+
+    def test_no_script_executes_a_bare_create(self):
+        """One way in, or the next added column breaks the next run."""
+        import glob
+        for f in glob.glob(os.path.join(_ROOT, "scripts", "*.py")):
+            src = io.open(f, encoding="utf-8").read()
+            for name in ("DDL", "TEAM_DDL", "DIV_DDL", "MAP_DDL", "GAP_DDL"):
+                self.assertNotIn(f"cur.execute({name})", src,
+                                 f"{os.path.basename(f)}: use ensureTable")
+
+
 class Worklist(unittest.TestCase):
     """★ THE ORDER IS THE POINT (owner: "way too slow"). Alphabetical spent
     the first hour on academies with four athletes. Descending athlete

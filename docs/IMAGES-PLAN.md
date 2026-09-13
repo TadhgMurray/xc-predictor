@@ -552,3 +552,24 @@ of its own, so it is stored flagged rather than as a rung.
 `Mascot` ("Jumbos"), `hasIndoor`, and the season list as first/last/count --
 a programme's lifespan without touching results, which would also catch a
 school that changed anet ids.
+
+
+## "column custom does not exist" -- and why it will not happen again
+
+The second server run died mid-flight on `UndefinedColumn: column "custom"
+of relation "anet_division" does not exist`. The table had been created by
+the run before, and **`CREATE TABLE IF NOT EXISTS` never adds a column** --
+so a table made by last week's code keeps last week's shape for ever and
+the first INSERT naming a new column fails, on the server, in front of the
+owner, which is the only place it can fail.
+
+Every DDL in this job now goes through `scrape_school_logos.ensureTable`,
+which runs the CREATE and then an `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS` for each column **parsed out of the DDL itself**. Adding a column
+to the CREATE is therefore enough; the migration cannot drift from it
+because it is derived from it. A `NOT NULL` with no default is relaxed for
+the ALTER, since Postgres cannot add one to a populated table and failing
+to start is worse than a nullable column on old rows.
+
+A test asserts no script executes a bare `cur.execute(DDL)` any more, so
+the next added column cannot reintroduce this.

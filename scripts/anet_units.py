@@ -233,8 +233,9 @@ def report(observed, learned, dis, gap):
 
 
 def store(cur, learned, gap):
-    cur.execute(MAP_DDL)
-    cur.execute(GAP_DDL)
+    from scrape_school_logos import ensureTable
+    ensureTable(cur, MAP_DDL)
+    ensureTable(cur, GAP_DDL)
     cur.execute("TRUNCATE anet_unit_map")
     cur.execute("TRUNCATE anet_unit_gap")
     cur.executemany("""

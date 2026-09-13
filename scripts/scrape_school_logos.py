@@ -722,6 +722,65 @@ CREATE TABLE IF NOT EXISTS school_logo (
 """
 
 
+def ensureTable(cur, ddl):
+    """CREATE TABLE IF NOT EXISTS, and then add whatever columns the DDL
+    has grown since the table was first made.
+
+    ⚠ "IF NOT EXISTS" NEVER ADDS A COLUMN. A table created by last week's
+      run keeps last week's shape for ever, and the first INSERT with a new
+      column dies with UndefinedColumn -- on the server, mid-run, which is
+      exactly how this was found. The ALTERs are derived FROM THE DDL, so
+      they cannot drift from it: add a column to the CREATE and it appears
+      on old tables too.
+
+    ! A NOT NULL WITH NO DEFAULT IS RELAXED for the ALTER. Postgres cannot
+      add one to a table that already has rows, and failing to start is
+      worse than a nullable column on old rows."""
+    cur.execute(ddl)
+    table = re.search(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)", ddl, re.I)
+    body = re.search(r"\((.*)\)", ddl, re.S)
+    if not table or not body:
+        return
+    for col, spec in _ddlColumns(body.group(1)):
+        if "NOT NULL" in spec.upper() and "DEFAULT" not in spec.upper():
+            spec = re.sub(r"\s*NOT NULL\s*", " ", spec, flags=re.I).strip()
+        # an inline PRIMARY KEY / UNIQUE belongs to the CREATE, not to an
+        # ALTER adding the column to a table that already has one
+        spec = re.sub(r"\s*(PRIMARY KEY|UNIQUE)\s*", " ", spec, flags=re.I).strip()
+        if spec:
+            cur.execute(f"ALTER TABLE {table.group(1)} "
+                        f"ADD COLUMN IF NOT EXISTS {col} {spec}")
+
+
+_NOT_A_COLUMN = ("primary", "unique", "foreign", "check", "constraint", "exclude")
+
+
+def _ddlColumns(body):
+    """[(name, type-and-modifiers)] from the inside of a CREATE TABLE.
+    Splits on commas at bracket depth zero, so numeric(4,1) survives."""
+    parts, depth, cur_ = [], 0, ""
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur_)
+            cur_ = ""
+        else:
+            cur_ += ch
+    parts.append(cur_)
+    out = []
+    for part in parts:
+        bits = " ".join(part.split()).strip()
+        if not bits or bits.split()[0].lower() in _NOT_A_COLUMN:
+            continue
+        name, _, spec = bits.partition(" ")
+        if spec.strip():
+            out.append((name, spec.strip()))
+    return out
+
+
 def _tableExists(cur, name):
     cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
     row = cur.fetchone()
@@ -740,7 +799,7 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
     ⚠ A SCHOOL THAT YIELDED NOTHING IS NOT TRIED AGAIN until the refresh
       window is up: `fetched` is stamped on a failure too. --retry-failed
       (or --redo) when the picking has changed and it is worth re-asking."""
-    cur.execute(DDL)
+    ensureTable(cur, DDL)
     rank = ("COALESCE(si.n_athletes, 0)" if _tableExists(cur, "school_identity")
             else "0")
     join = ("LEFT JOIN school_identity si ON si.school = w.school "
@@ -838,7 +897,7 @@ def stats(cur):
     """Where the last run went: what worked, and what every failure was.
     This is the answer to "the coverage is atrocious" -- the reason is
     stored on every row."""
-    cur.execute(DDL)
+    ensureTable(cur, DDL)
     out = []
     cur.execute("""SELECT count(*) FILTER (WHERE status = 'ok') AS ok,
                           count(*) FILTER (WHERE shared) AS shared,
@@ -998,7 +1057,7 @@ def main():
                 print(stats(cur))
                 return
             if args.sweep_only:
-                cur.execute(DDL)
+                ensureTable(cur, DDL)
                 n = markShared(cur)
                 conn.commit()
                 print(f"  shared crests: {n:,} images worn by {SHARED_MIN}+ schools")
