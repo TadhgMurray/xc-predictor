@@ -621,3 +621,59 @@ inference reading a meet named something like "CA State T&F" as a unit --
 which then matched anet's California id well enough to win. That is the
 cross-check earning its keep on the first run: the bug is in
 `check_school_units`'s parser, not in anything anet sent.
+
+
+## Level, and why it is not really about crests (2026-09-13)
+
+Amherst (MA) was ONE page holding Amherst College -- eight NESCAC runners
+-- and Amherst Regional Middle School, seventeen seventh and eighth
+graders. Two institutions, one name, one state, so one page, one crest,
+and units that said NESCAC over a middle schooler.
+
+`school_level (school, state, level, n_athletes, share, is_primary)`, built
+beside `school_identity` at pipeline 10b, records which levels a name and
+state actually cover. Same thresholds as the state split, so it is one
+rule; `?level=` scopes the page exactly as `?state=` does; a school with
+one level -- nearly all of them -- gets no chips and no change.
+
+**A separate table, not a new key on `school_identity`, deliberately.**
+That table's key is (school, state) and two passes above collapse states
+into one row (the co-racing merge, the college directory). Re-keying it
+means rewriting both, untested, underneath every school page on the site.
+This is additive and degrades to nothing. Promote it into the key once it
+has been read against real data.
+
+### ★★ AND IT IS THE FIRST PIECE OF SETTLING POOLS ★★
+
+Recorded at the owner's request, and repeated in
+`build_school_identity.buildSchoolLevel` where the work will happen.
+
+The pool decides which ratings are comparable, which board an athlete
+lands on, which HS-equivalent factor applies, and how a season is
+normalised. It is inferred per ATHLETE-SEASON from grade and meet context,
+and it is wrong often enough to have its own diagnostics.
+
+A school's LEVEL is the missing constraint. A middle school has no college
+seniors; a NESCAC programme has no seventh graders. Once
+(school, state, level) is a real entity with its own roster, **a pool that
+disagrees with its school's level is a detectable error instead of an
+invisible one** -- and anet's `Level` (`anet_team.level`, one per team_id)
+is an INDEPENDENT witness to the same fact, so the two can be
+cross-examined without either being assumed correct.
+
+Not yet done, and the obvious next steps: units keyed per level (so NESCAC
+cannot land on the middle school), a crest per level, and the pool
+disagreement report itself.
+
+## Crests: anet overwrites (owner, 2026-09-13)
+
+anet's mascot replaces whatever was there. Its images are the athletics
+mark and they are the same shape for every school, so a corpus of them
+reads as one set rather than as whatever each CMS happened to publish.
+`--keep-better` restores ranked precedence (override > athletics site >
+anet > Wikidata > school site) for anyone who wants it.
+
+The one exception is not a precedence rule but arithmetic: an image four
+hundred schools already wear is hidden by the shared sweep, so installing
+it OVER a good crest does not swap one picture for another -- it leaves
+that school with none. `--replace` overrides even that.

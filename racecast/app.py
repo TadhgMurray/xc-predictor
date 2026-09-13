@@ -4311,6 +4311,21 @@ def school_page(school_name):
             units = unitsFor(cur, school_name, state or primary_state,
                              sport, long=True)
 
+            # ★ ONE NAME, ONE STATE, TWO INSTITUTIONS (owner, 2026-09-13):
+            #   Amherst (MA) is Amherst College AND Amherst Regional Middle
+            #   School, and the page showed both rosters under one header
+            #   with NESCAC written over the middle schoolers. The level
+            #   chips work exactly as the state chips do -- ?level= scopes
+            #   the page to one institution -- and a school with one level,
+            #   which is nearly all of them, gets no chips and no change.
+            from school_identity import levelChips, levelOf
+            lchips = levelChips(cur, school_name, state or primary_state)
+            level = (request.args.get("level") or "").strip().lower() or None
+            if level and not any(c["level"] == level for c in lchips):
+                level = None
+            if lchips and not level:
+                level = lchips[0]["level"]
+
             years = schoolYears(cur, school_name)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
@@ -4337,7 +4352,7 @@ def school_page(school_name):
             #   the ratings beside them are on different pools' scales.
             #   One table per level, HS first, only when more than one
             #   level has anyone; a single-level school reads as before.
-            roster_levels = rosterByLevel(roster)
+            roster_levels = rosterByLevel(roster)   # replaced below when scoped
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
                                  state=state, primary=primary_state)
             # deeper than the old 25: the tables reveal in place now, and
@@ -4346,6 +4361,18 @@ def school_page(school_name):
                                 state=state, primary=primary_state)
             top    = schoolTopAthletes(cur, school_name, sport, limit=100,
                                        state=state, primary=primary_state)
+
+    # ! SCOPED IN PYTHON, NOT IN SQL. Every row already carries its pool,
+    #   so the level filter is a predicate rather than another parameter
+    #   threaded through six queries -- and a row whose pool is missing is
+    #   KEPT, because dropping a row for a pool we failed to infer would
+    #   hide a real athlete to enforce a guess.
+    if level:
+        def _here(rows):
+            return [r for r in rows
+                    if levelOf(r.get("pool")) in (None, level)]
+        roster, best, top = _here(roster), _here(best), _here(top)
+        roster_levels = []
 
     # HS-equivalent view: rows carry their pool straight from
     # ranking_results / athlete_season, so no lookup is needed.
@@ -4384,6 +4411,7 @@ def school_page(school_name):
 
     return render_template("school.html", school=school_name, header=header,
                            units=units,
+                           level_chips=lchips, level=level,
                            state_chips=chips, state=state,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),

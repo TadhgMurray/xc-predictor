@@ -256,6 +256,48 @@ def _liveClusters(cur, school):
     return out
 
 
+# ★ WHICH INSTITUTION (305 / the Amherst split, 2026-09-13). A name and a
+#   state can cover two schools -- Amherst College and Amherst Regional
+#   Middle School are both "Amherst" in MA -- and only the level tells
+#   them apart. Same thresholds as the state split, so the rule is one
+#   rule; degrades to [] when school_level has not been built, and the
+#   page then reads exactly as it did before.
+_LEVEL_LABEL = {"college": "College", "hs": "High school",
+                "ms": "Middle school", "elem": "Elementary", "pro": "Pro"}
+
+
+def levelChips(cur, school, state):
+    """[{level, label, n, share}] widest first, or [] when this school is
+    one institution (which is nearly all of them)."""
+    if not school or not _tableExists(cur, "school_level"):
+        return []
+    try:
+        cur.execute("""
+            SELECT level, n_athletes, share FROM school_level
+            WHERE  school = %s AND state = %s
+              AND  n_athletes >= %s AND share >= %s
+            ORDER  BY n_athletes DESC
+        """, (school, state or "", MIN_ATHLETES, MIN_SHARE))
+        rows = cur.fetchall()
+    except Exception:                              # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return []
+    if len(rows) < 2:
+        return []
+    out = []
+    for r in rows:
+        lvl, n, share = ((r["level"], r["n_athletes"], r["share"])
+                         if isinstance(r, dict) else r)
+        out.append({"level": lvl, "label": _LEVEL_LABEL.get(lvl, (lvl or "").title()),
+                    "n": n, "share": float(share or 0)})
+    return out
+
+
+def levelOf(pool):
+    """The level a pool belongs to: "college_m" -> "college"."""
+    return (pool or "").split("|")[0].split("_")[0] or None
+
+
 def stateChips(cur, school):
     """(chips, primary_state). Chips only when a SECOND real cluster
     exists -- one-state schools get no chip row at all."""

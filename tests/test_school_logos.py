@@ -1814,6 +1814,67 @@ class CollegeDirectoryScope(unittest.TestCase):
         self.assertNotIn("s.school NOT IN (SELECT school FROM tmp_campus)", src)
 
 
+class LevelSplit(unittest.TestCase):
+    """★ Amherst (MA) IS TWO SCHOOLS: Amherst College (NESCAC) and Amherst
+    Regional Middle School. One name, one state, one page, one crest, and
+    NESCAC written over seventh graders. A home state cannot separate
+    them; the level can, and the pool carries it."""
+
+    def test_the_level_comes_off_the_pool(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        from school_identity import levelOf
+        self.assertEqual(levelOf("college_m"), "college")
+        self.assertEqual(levelOf("hs_f"), "hs")
+        self.assertEqual(levelOf("ms_m|something"), "ms")
+        self.assertIsNone(levelOf(""))
+        self.assertIsNone(levelOf(None))
+
+    def test_one_athlete_has_one_level(self):
+        """A single mis-pooled season must not mint an institution -- which
+        is the very error this table exists to detect."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("DISTINCT ON (school, person_id)", src)
+        self.assertIn("ORDER BY school, person_id, n DESC, level", src)
+
+    def test_the_split_uses_the_same_thresholds_as_the_state_split(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        self.assertIn("MIN_ATHLETES", src[i:i + 900])
+        self.assertIn("MIN_SHARE", src[i:i + 900])
+        self.assertIn("if len(rows) < 2", src[i:i + 1400],
+                      "one institution is not a split")
+
+    def test_it_is_a_separate_table_not_a_new_key(self):
+        """The identity table's key is (school, state) and two passes
+        collapse states into one row. Re-keying it means rewriting both,
+        untested, under every school page."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("CREATE TABLE school_level_new", src)
+        self.assertIn("school_level", src[src.index("for t in (\"person_home_state"):
+                                          src.index("for t in (\"person_home_state") + 200],
+                      "and it has to ride the same atomic swap")
+
+    def test_a_missing_table_changes_nothing(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        self.assertIn('_tableExists(cur, "school_level")', src[i:i + 400])
+
+    def test_the_page_scopes_and_keeps_an_unpooled_row(self):
+        """Dropping a row because we failed to infer its pool would hide a
+        real athlete to enforce a guess."""
+        app = read("racecast", "app.py")
+        self.assertIn("levelOf(r.get(\"pool\")) in (None, level)", app)
+        self.assertIn('request.args.get("level")', app)
+
+    def test_the_pool_note_is_recorded_where_it_will_be_found(self):
+        """The owner asked for this on the record: level is the missing
+        constraint on the pool, and anet's Level is a second witness."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("READ THIS BEFORE TOUCHING", src)
+        self.assertIn("anet_team.level", src)
+        self.assertIn("DETECTABLE error", src)
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

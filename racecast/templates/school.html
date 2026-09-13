@@ -67,6 +67,15 @@
         <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
     </p>
 
+    {# Same name and state, DIFFERENT INSTITUTIONS: Amherst (MA) is a
+       college and a middle school. Only shown when there really are two
+       (school_identity.levelChips), so a normal school sees nothing. #}
+    {% if level_chips %}
+    <p class="meta">This name covers more than one school here -
+        {% for c in level_chips %}<a href="/school/{{ school|urlencode }}?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}&amp;level={{ c.level }}"{% if c.level == level %} class="is-on"{% endif %}>{{ c.label }}</a> <span class="dir-n">{{ c.n }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+
     {# Same name, different schools: each is its OWN page now -- there is
        no merged view. This line is the only crossing between them. #}
     {% if state_chips %}

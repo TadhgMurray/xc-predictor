@@ -274,6 +274,109 @@ def applyCollegeDirectory(cur):
           f"matched names ({n_alias:,} home states folded)", flush=True)
 
 
+# ===================================================================== #
+#  LEVEL: WHICH INSTITUTION, NOT JUST WHICH STATE                       #
+# ===================================================================== #
+
+# ★★ LEVEL IS PART OF WHO A SCHOOL IS (owner, 2026-09-13). Amherst (MA)
+#    was ONE page holding Amherst COLLEGE -- eight NESCAC runners -- and
+#    Amherst Regional MIDDLE SCHOOL, seventeen seventh and eighth graders.
+#    Two institutions, one name, one state, and so one page, one crest,
+#    and a set of units that said NESCAC over a middle schooler. A home
+#    state cannot separate them. The level can, and the pool carries it.
+#
+# ★★ AND IT MATTERS FAR BEYOND THE PAGE -- READ THIS BEFORE TOUCHING
+#    ANYTHING ABOUT POOLS. ★★
+#
+#    The pool is the most load-bearing thing in the engine: it decides
+#    which ratings are comparable, which board an athlete lands on, which
+#    HS-equivalent factor applies, and how a season is normalised. It is
+#    inferred per ATHLETE-SEASON from grade and meet context, and it is
+#    wrong often enough to have its own diagnostics.
+#
+#    A school's LEVEL is the missing constraint. A middle school has no
+#    college seniors; a NESCAC programme has no seventh graders. Once
+#    (school, state, level) is a real entity with its own roster, a pool
+#    that disagrees with its school's level becomes a DETECTABLE error
+#    instead of an invisible one -- and anet's Level (anet_team.level, one
+#    per team_id, scripts/anet_teams.py) is an INDEPENDENT witness to the
+#    same fact, so the two can be cross-examined without either being
+#    assumed correct.
+#
+#    That is the road to settling pools once and for all. This table is
+#    the first piece of it. Do not drop it for looking cosmetic.
+#
+# ! A SEPARATE TABLE, NOT A COLUMN ON school_identity -- DELIBERATELY.
+#   The identity table's key is (school, state) and two passes above
+#   collapse states into one row (co-racing merge, college directory).
+#   Re-keying it on level means rewriting both of those, untested,
+#   underneath every school page on the site. This is additive: absent,
+#   everything behaves exactly as it did. Promote it into the key once it
+#   has been read against real data.
+_LEVEL_DDL = """
+CREATE TABLE school_level_new AS
+WITH seasons AS (
+    SELECT rr.school, rr.person_id,
+           split_part(COALESCE(NULLIF(rr.pool, ''), 'hs'), '_', 1) AS level,
+           count(*) AS n
+    FROM   ranking_results rr
+    WHERE  COALESCE(TRIM(rr.school), '') <> '' AND rr.person_id IS NOT NULL
+    GROUP  BY 1, 2, 3
+),
+-- ! ONE LEVEL PER ATHLETE, the one they raced most under. Without this a
+--   single mis-pooled season mints an institution, which is the exact
+--   failure this table exists to detect.
+per_person AS (
+    SELECT DISTINCT ON (school, person_id) school, person_id, level
+    FROM   seasons ORDER BY school, person_id, n DESC, level
+),
+clusters AS (
+    SELECT p.school, COALESCE(a.state, ph.state) AS state, p.level,
+           count(*) AS n_athletes
+    FROM   per_person p
+    JOIN   person_home_state_new ph USING (person_id)
+    -- follow the same state folding the identity table did, so the two
+    -- agree on which cluster a school is in
+    LEFT   JOIN school_state_alias_new a
+           ON a.school = p.school AND a.home_state = ph.state
+    GROUP  BY 1, 2, 3
+)
+SELECT school, state, level, n_athletes,
+       round(n_athletes::numeric
+             / sum(n_athletes) OVER (PARTITION BY school, state), 4) AS share,
+       (row_number() OVER (PARTITION BY school, state
+            ORDER BY n_athletes DESC, level) = 1) AS is_primary
+FROM   clusters
+"""
+
+
+def buildSchoolLevel(cur):
+    """school_level (school, state, level, n_athletes, share, is_primary).
+
+    A row per level a (school, state) has athletes at. Most schools have
+    one and nothing changes for them; a name covering two institutions has
+    two that both clear MIN_ATHLETES and MIN_SHARE, and readers can then
+    tell them apart."""
+    t0 = time.time()
+    cur.execute("DROP TABLE IF EXISTS school_level_new")
+    cur.execute(_LEVEL_DDL)
+    cur.execute("CREATE INDEX school_level_new_idx ON school_level_new (school, state)")
+    from school_identity import MIN_ATHLETES, MIN_SHARE
+    cur.execute("""
+        SELECT count(*) FROM (
+            SELECT school, state FROM school_level_new
+            WHERE n_athletes >= %s AND share >= %s
+            GROUP BY school, state HAVING count(*) >= 2
+        ) x
+    """, (MIN_ATHLETES, MIN_SHARE))
+    split = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM school_level_new")
+    n = cur.fetchone()[0]
+    print(f"  school_level: {n:,} (school, state, level) rows, "
+          f"{split:,} schools cover more than one institution "
+          f"in {time.time() - t0:.0f}s", flush=True)
+
+
 def main():
     t0 = time.time()
     with getConn() as conn:
@@ -341,6 +444,7 @@ def main():
 
         mergeCoRacingClusters(cur)
         applyCollegeDirectory(cur)
+        buildSchoolLevel(cur)
 
         # ---- the swap: old tables serve until the new ones are whole ----
         #
@@ -368,11 +472,13 @@ def main():
                             "IN ACCESS EXCLUSIVE MODE")
                 cur.execute("DROP TABLE IF EXISTS school_state_alias")
                 for t in ("person_home_state", "school_identity",
-                          "school_state_alias"):
+                          "school_state_alias", "school_level"):
                     cur.execute(f"DROP TABLE IF EXISTS {t}")
                     cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
                 cur.execute("ALTER INDEX school_identity_new_school_idx "
                             "RENAME TO school_identity_school_idx")
+                cur.execute("ALTER INDEX school_level_new_idx "
+                            "RENAME TO school_level_idx")
                 cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
                             "person_home_state_new_pkey TO "
                             "person_home_state_pkey")

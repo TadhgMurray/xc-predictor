@@ -42,8 +42,8 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
         sys.path.insert(0, _p)
 
 from scrape_school_logos import (            # noqa: E402
-    DDL, Manners, _tableExists, ensureTable, markShared, normalise, record,
-    writeFile)
+    DDL, SHA_INDEX, Manners, _tableExists, ensureTable, kindRank, markShared,
+    normalise, record, sharedAlready, storedKind, writeFile)
 
 # ! THE CLIENT HEADER anet's OWN SITE SENDS, copied from scripts/scraper.py,
 #   which has worked against /api/v1/Meet/GetResultsData3 for a year. The
@@ -122,6 +122,7 @@ def teams(cur, limit=None, state=None, redo=False):
     split school_identity already draws."""
     for ddl in (DDL, TEAM_DDL, DIV_DDL):
         ensureTable(cur, ddl)
+    cur.execute(SHA_INDEX)
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
     home = ("LEFT JOIN person_home_state h ON h.person_id = t.person_id"
@@ -333,6 +334,12 @@ def main():
     ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
     ap.add_argument("--no-logos", action="store_true",
                     help="metadata and addresses only, fetch no images")
+    ap.add_argument("--replace", action="store_true",
+                    help="install anet's mascot unconditionally, placeholders "
+                         "and all")
+    ap.add_argument("--keep-better", action="store_true",
+                    help="leave a crest alone where a better-ranked source "
+                         "(the school's own athletics site) already gave one")
     ap.add_argument("--no-core", action="store_true",
                     help="skip GetTeamCore: one call per sport instead of "
                          "two, but no WebsiteSport and no season list")
@@ -385,6 +392,7 @@ def main():
                 manners.allowed = lambda url: (True, 0.0)
                 print("  robots.txt IGNORED by --ignore-robots", flush=True)
             meta = crests = addrs = units = missed = 0
+            kept = placeholder = 0
             t0 = time.time()
             for i, (school, state, team_id) in enumerate(todo, 1):
                 # ★ BOTH ENDPOINTS, AND THEY CARRY DIFFERENT THINGS.
@@ -430,6 +438,27 @@ def main():
                         png, sha, why = normalise(img, ctype=ctype, kind="icon")
                         if png:
                             break
+                    # ★ ANET WINS (owner, 2026-09-13: "I want it to
+                    #   overwrite it"). Its mascot is the athletics mark and
+                    #   it is the same shape for every school, so a corpus
+                    #   of them looks like one set rather than whatever each
+                    #   school's CMS happened to publish. --keep-better
+                    #   restores the ranked behaviour.
+                    #
+                    # ⚠ THE ONE EXCEPTION IS A PLACEHOLDER, and it is not a
+                    #   precedence rule -- it is arithmetic. An image four
+                    #   hundred schools already wear is hidden by the shared
+                    #   sweep, so installing it OVER a good crest does not
+                    #   swap one picture for another: it leaves the school
+                    #   with none. --replace overrides even that.
+                    if png and args.write and not args.replace:
+                        if args.keep_better and kindRank("anet") > kindRank(
+                                storedKind(cur, school, state)):
+                            kept += 1
+                            png = None
+                        elif sharedAlready(cur, sha):
+                            placeholder += 1
+                            png = None
                     if png:
                         crests += 1
                         if args.write:
@@ -460,6 +489,9 @@ def main():
             print(f"  done: {meta:,} teams, {crests:,} crests, {addrs:,} addresses, "
                   f"{units:,} unit rows, {missed:,} missed, "
                   f"{(time.time() - t0) / 60:.1f} min")
+            print(f"  left alone: {kept:,} already had a better crest "
+                  f"(--keep-better), {placeholder:,} would have replaced a "
+                  f"crest with a picture several schools already wear")
             print("  next: scripts/anet_units.py --report  (learns what anet's "
                   "unit ids mean from the units we already infer)")
 
