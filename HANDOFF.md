@@ -239,6 +239,40 @@ from the sampled rows; every diagnostic now maps (course, era) through
 the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
 so any subset of rows lands on the file's cells.
 
+**The solve is the hours; everything after it is minutes (2026-09-13,
+"speed it up and make sure it won't fail first").** run_joint writes the
+solve's whole output to `engine/data/joint_difficulty_state.npz` the
+moment the solve ends, before any swap, report or go-live. `--from-state
+FILE` (pipeline: `XCP_FROM_STATE`) rebuilds the design from the pack and
+re-enters main() at that point: the bracket swap, the reports, the npz
+and the go-live run in minutes with no solve. The state is checked
+against the design (rows, athlete-seasons, cells) before anything runs,
+so a wrong sample or flag stops at once. The bracket swap itself is
+guarded: if it throws, the joint's courses are published so the run
+completes, the failure is printed, and the swap is redone from the state
+file after the fix. To see the bracket numbers on the site fastest, run
+08 alone and leave the holdout and the ladder for later:
+
+```
+XCP_SPORT_LEVEL=0.0583 XCP_ERA_YEARS=2 XCP_ALTITUDE=1 XCP_INDOOR_LEVEL=0.003 \
+XCP_IMPORTANCE=none XCP_DIFFICULTY=bracket \
+bash deploy/run_pipeline.sh --from 8 --skip 08a_holdout,08b_ladder
+# later, or after a change to the engine's knobs, without re-solving:
+XCP_FROM_STATE=engine/data/joint_difficulty_state.npz XCP_DIFFICULTY=bracket ... \
+bash deploy/run_pipeline.sh --from 8 --skip 08a_holdout,08b_ladder
+```
+
+The whole path (load, design, solve, state, swap, reports, save, dry
+go-live) was run end to end on the ten-million-row synthetic pack at a
+20% sample before run 22: 1.94M rows, solve 114 s at one outer pass,
+state file 200 MB, swap 8 s, corr 0.978 with the joint's courses, exit 0;
+then again with `--from-state`, which loaded the state, skipped the
+solve, reproduced the swap (corr 0.979) and finished, exit 0. At the
+corpus's 62.8M rows the state file is about a gigabyte and the swap
+about five minutes; a race needs three voters to count (a course whose
+races never reach that sits at its sport's average, and the swap prints
+how many).
+
 **The switch is built: `XCP_DIFFICULTY=bracket` (2026-09-13).** The owner:
 "the bracket engine could help ... specifically the course ordering, so
 we'd only have to worry about the cross-sport ordering and the distance

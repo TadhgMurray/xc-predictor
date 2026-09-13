@@ -548,6 +548,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
+      ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
       ${XCP_NO_IMPORTANCE:+--no-importance} \

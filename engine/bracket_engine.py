@@ -68,13 +68,16 @@ PRIOR_RACES = 2.0
 
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_GROUP,
-        race_sat=RACE_SAT, min_voters=5, tilt=True, use_curve=True, tol=1e-5,
+        race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
     prior_races / prior_group / race_sat: see the note above; prior_rows
-    is the old name of prior_races and still accepted. z: the response per
+    is the old name of prior_races and still accepted. min_voters: a race
+    with fewer voters casts no vote (3: with top=0.5 a race of six counts,
+    at weight 3/8 of a full race; a course with no such race sits at its
+    sport's average). z: the response per
     row, given instead of ln(norm) less the curve (run_joint hands in the
     joint solve's residual with every term but the course and the day
     taken off); h_row: the tilt per row, given instead of computed.

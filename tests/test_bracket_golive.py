@@ -133,3 +133,30 @@ def test_the_engine_takes_a_given_response_and_tilt():
         f3 = be.fit(cols, None, window=60, top=1.0, era_years=2, z=z3, h_row=h)
     cells1 = [i for i, k in enumerate(f3["cell_keys"]) if k.startswith(keys[1] + "@e")]
     assert 0.02 < float((f3["D"][cells1] - f2["D"][cells1]).mean()) < 0.035
+
+
+def test_the_solves_state_round_trips_and_is_checked_against_the_design(tmp_path):
+    cols, keep, keys, sport_of_course = _era_pack()
+    D, athlete_pool, pool_names, y, out = _solve(cols, keep)
+    path = str(tmp_path / "joint_state.npz")
+    rj.saveState(out, path)
+    back = rj.loadState(path)
+    for k, v in out.items():
+        if isinstance(v, np.ndarray):
+            assert k in back, k
+            tol = 1e-6 if k in rj._STATE_F32 else 0.0
+            assert np.allclose(back[k], v, atol=tol, equal_nan=True), k
+        elif v is None:
+            assert back.get(k) is None, k
+        else:
+            assert back[k] == v or (isinstance(v, float) and abs(back[k] - v) < 1e-12), k
+    rj.checkState(back, D)                                   # the same design: fine
+    # the swap runs from the loaded state exactly as from the live one
+    info = rj.bracketDifficulties(back, D, cols, keep, y, athlete_pool, pool_names,
+                                  window=60, top=1.0, verbose=False)
+    assert info["corr"] > 0.9 and np.isfinite(back["delta"]).all()
+    # a different design is refused before anything runs
+    import pytest
+    D2, *_ = _solve(cols, keep & (np.asarray(cols["course"]) != 0))[:1]
+    with pytest.raises(SystemExit):
+        rj.checkState(back, D2)

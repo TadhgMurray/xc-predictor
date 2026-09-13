@@ -388,7 +388,7 @@ def fieldTermRows(course, sport, pool_row, pool_names):
 INDOOR_PAIR_MAX_DAYS = 42
 
 
-def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names,
+def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names, level=None,
                           max_gap_days=INDOOR_PAIR_MAX_DAYS):
     """★ THE INDOOR LEVEL MEASURED THE NCAA WAY, AS A CHECK ON THE ASSERTED
     ONE (the 2012 facility-indexing study: same-athlete pairs close in
@@ -446,8 +446,9 @@ def indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row, pool_names,
               f"distance within {max_gap_days} days, log-time indoor minus "
               f"outdoor (+ = indoor slower; fitness gained in between biases "
               f"it up, a peaked last indoor race biases it down). The asserted "
-              f"level is {100 * js.IND_LEVEL_DEFAULT:+.2f}%; the literature "
-              f"says +0.8 to +1.8%")
+              f"level is {100 * (js.IND_LEVEL_DEFAULT if level is None else level):+.2f}%; "
+              f"the literature says +0.8 to +1.8%; the corpus's zero-gap reading "
+              f"(scripts/diagnose.py --only indoor) is the number to hold it to")
         for p, name in enumerate(pool_names):
             m = pool == p
             if m.sum() < 50:
@@ -721,7 +722,7 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
               f"winter")
         if sport is not None and "dist_m" in cols and "days" in cols:
             indoorTransitionCheck(cols, keep, athlete, ind_cell, pool_row,
-                                  pool_names)
+                                  pool_names, level=indoor_level)
     # the published tables as the prior mean of an uncalibrated event
     # offset (distance_tables): NaN where no curve is reachable
     e_table = None
@@ -1499,6 +1500,11 @@ def buildParser():
     #   athlete_ratings, results.speed_rating and pair_difficulty.npz from
     #   THIS solve, through joint_golive. --golive-dry builds all of it and
     #   writes only the npz, for a look before the irreversible part.
+    ap.add_argument("--from-state", default=None, metavar="FILE",
+                    help="skip the solve: load its output from <out>_state.npz "
+                         "written by an earlier run with the same pack, sample and "
+                         "flags, and run the swap, the reports, the save and the "
+                         "go-live from there")
     ap.add_argument("--difficulty", default="joint", choices=("joint", "bracket"),
                     help="whose course numbers the go-live publishes: the joint "
                          "solve's, or the bracket engine's fitted on the solve's "
@@ -1757,7 +1763,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                 ability_shift=float(np.median(np.abs(a_new - a_joint))))
     print(f"[joint] difficulty = BRACKET ENGINE (--difficulty bracket): {info['n_voted']:,} of "
           f"{info['n_cells']:,} cells with votes in {info['seconds']:.0f}s; {info['n_no_votes']:,} "
-          f"cells without a race of 5+ voters sit at their sport's average. Against the "
+          f"cells without a race of 3+ voters sit at their sport's average. Against the "
           f"joint solve's courses: corr {corr:.3f}, median |move| {100 * info['median_move']:.2f}%, "
           f"p95 {100 * info['p95_move']:.2f}%. Abilities recomputed: corr "
           f"{info['ability_corr']:.4f}, median |shift| {100 * info['ability_shift']:.2f}%.")
@@ -1769,6 +1775,81 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                   f"median |move| {100 * float(np.median(np.abs(delta_b[mm] - delta_joint[mm]))):.2f}%   "
                   f"sd of the number {100 * float(np.std(delta_b[mm])):.2f}% (joint {100 * float(np.std(delta_joint[mm])):.2f}%)")
     return info
+
+
+# ------------------------------------------------------------------ #
+# THE SOLVE'S STATE ON DISK (2026-09-13: "so I don't have to wait hours")
+# ------------------------------------------------------------------ #
+#
+# ★ THE SOLVE IS THE HOURS; EVERYTHING AFTER IT IS MINUTES. Twice in two
+#   days a report after the solve died and took 2.6 hours with it. Now the
+#   solve's whole output is written to <out>_state.npz the moment it
+#   exists, and `--from-state <file>` re-enters main() there: the design
+#   is rebuilt from the pack (minutes), the state is loaded in place of
+#   solveJoint, and the swap, the reports, the save and the go-live run
+#   as usual. A bracket-engine knob, a go-live fix, or a crash after the
+#   solve costs minutes, not a re-solve. The state must come from the same
+#   pack, flags and sample; the sizes are checked before anything runs.
+_STATE_F32 = ("weights", "h", "amp")          # per row; float32 keeps 1e-7 of them
+
+
+def saveState(out, path):
+    import json
+    arrays, meta = {}, {}
+    for k, v in out.items():
+        if v is None:
+            meta[k] = None
+        elif isinstance(v, np.ndarray):
+            arrays[k] = (v.astype(np.float32) if k in _STATE_F32 and v.dtype == np.float64
+                         else v)
+        elif isinstance(v, np.generic):
+            meta[k] = v.item()
+        elif isinstance(v, (bool, int, float, str)):
+            meta[k] = v
+        elif isinstance(v, (list, tuple)):
+            try:
+                arrays[k] = np.asarray(v)
+            except Exception:                                    # noqa: BLE001
+                meta[k] = list(v)
+        else:
+            meta[k] = str(v)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    np.savez(path, __meta__=np.array([json.dumps(meta)]), **arrays)
+    return path
+
+
+def loadState(path):
+    import json
+    with np.load(path, allow_pickle=False) as d:
+        out = {k: d[k] for k in d.files if k != "__meta__"}
+        meta = json.loads(str(d["__meta__"][0])) if "__meta__" in d.files else {}
+    for k in _STATE_F32:
+        if k in out:
+            out[k] = out[k].astype(np.float64)
+    for k, v in out.items():
+        if isinstance(v, np.ndarray) and v.ndim == 0:
+            out[k] = v.item() if v.dtype.kind in "biuf" else v
+    out.update(meta)
+    return out
+
+
+def checkState(out, D):
+    """The state must be this design's: same rows, athlete-seasons, cells."""
+    h = np.asarray(out.get("h"))
+    n_rows = h.size if h.ndim else None
+    n_ath = np.asarray(out["ability"]).size
+    n_cell = np.asarray(out["delta"]).size
+    problems = []
+    if n_rows not in (None, 1) and n_rows != D.n:
+        problems.append(f"{n_rows:,} rows in the state, {D.n:,} in this design")
+    if n_ath != D.n_ath:
+        problems.append(f"{n_ath:,} athlete-seasons in the state, {D.n_ath:,} here")
+    if n_cell != D.n_cell:
+        problems.append(f"{n_cell:,} cells in the state, {D.n_cell:,} here")
+    if problems:
+        raise SystemExit("[joint] --from-state does not match this pack, sample and flags: "
+                         + "; ".join(problems) + ". Use the same --sample-pct, --sample-seed, "
+                         "--era-years and term flags the solve ran with.")
 
 
 def guardedReport(name, fn):
@@ -1897,9 +1978,22 @@ def main():
         return
 
     t0 = time.time()
-    out = js.solveJoint(y, design=D, n_probe=args.probes,
-                        **solveKwargs(args, athlete_pool, verbose=True))
-    print(f"[joint] solved in {time.time() - t0:.0f}s")
+    state_path = os.path.splitext(args.out)[0] + "_state.npz"
+    if args.from_state:
+        out = loadState(args.from_state)
+        checkState(out, D)
+        print(f"[joint] --from-state {args.from_state}: the solve's output loaded "
+              f"({np.asarray(out['delta']).size:,} cells), no solve run")
+    else:
+        out = js.solveJoint(y, design=D, n_probe=args.probes,
+                            **solveKwargs(args, athlete_pool, verbose=True))
+        print(f"[joint] solved in {time.time() - t0:.0f}s")
+        try:
+            saveState(out, state_path)
+            print(f"[joint] solve state -> {state_path} (rerun the rest with "
+                  f"--from-state {state_path}: minutes, not a solve)")
+        except Exception as exc:                                 # noqa: BLE001
+            print(f"[joint] solve state NOT saved ({type(exc).__name__}: {exc}); carrying on")
     if args.sport_gap_delta:
         # ⚠ SAID OUT LOUD, EVERY RUN THAT CARRIES IT. A run with a gap
         #   correction and one without produce different all-time boards
@@ -1912,8 +2006,17 @@ def main():
               f"{abs(args.sport_gap_delta) * 75:.1f} at 150)")
 
     if getattr(args, "difficulty", "joint") == "bracket":
-        bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                            window=args.bracket_window, top=args.bracket_top)
+        try:
+            bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
+                                window=args.bracket_window, top=args.bracket_top)
+        except Exception:                                        # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            out["difficulty_source"] = "joint (bracket swap FAILED)"
+            print(f"[joint] ⚠⚠ THE BRACKET SWAP FAILED (above). The JOINT solve's courses "
+                  f"are published so the run completes; the solve is saved in "
+                  f"{state_path}. Fix, then rerun with --from-state {state_path} "
+                  f"--difficulty bracket --golive: minutes, no solve.")
     delta = out["delta"]
     rows_per_cell = np.bincount(D.cell, minlength=D.n_cell).astype(np.float64)
     solved = rows_per_cell > 0
