@@ -42,17 +42,47 @@ import pair_engine as pe
 import run_joint as rj
 
 
+# ★ A RACE IS THE UNIT OF EVIDENCE, NOT A ROW (owner, 2026-09-13: "a 10
+#   result venue should not have +17% difficulty"). Ten finishers on one
+#   day are one reading of the course with ten witnesses: they share the
+#   day's weather, field and tactics. So a race's weight saturates in its
+#   voters -- n / (n + RACE_SAT) -- and a race of two hundred counts about
+#   one, not twenty times a race of ten. The priors are then in RACES:
+#     PRIOR_GROUP  pulls a COURSE toward the average course of its sport
+#                  and era (zero, where the level is pinned) with the
+#                  weight of one race: a course seen once keeps about half
+#                  of what that day showed, seen three times about 75%,
+#                  seen ten times 90%. That is tau against the race-day
+#                  sd when the two are alike, which on this corpus they are.
+#     PRIOR_RACES  pulls an ERA of a course toward the course's own
+#                  (shrunk) history with the weight of two races, so one
+#                  tactical race does not move an era but a season of them
+#                  does.
+#   Both are stated, printed, and cheap to change; scripts/bracket_holdout.py
+#   prints the held-out error by the number of races behind a cell, which
+#   is where a wrong prior shows.
+RACE_SAT = 5.0
+PRIOR_GROUP = 1.0
+PRIOR_RACES = 2.0
+
+
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
-        n_iter=60, damping=0.5, prior_rows=20.0, min_voters=5, tilt=True,
-        use_curve=True, tol=1e-5, verbose=False, codes=None):
+        n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_GROUP,
+        race_sat=RACE_SAT, min_voters=5, tilt=True, use_curve=True, tol=1e-5,
+        verbose=False, codes=None, prior_rows=None):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
+
+    prior_races / prior_group / race_sat: see the note above; prior_rows
+    is the old name of prior_races and still accepted.
 
     codes: bracket.packCodes' codes, with the pack carrying `_season`,
     `_race`, `_cell` numbered over the WHOLE pack. Then `cols` may be any
     subset of rows (the holdout's athlete sample) and its ratings, races
     and cells still line up with the solve file; without codes they are
     computed here over the rows given."""
+    if prior_rows is not None:
+        prior_races = float(prior_rows)
     keys = [str(k) for k in cols["course_keys"]]
     n_base = len(keys)
     course = np.asarray(cols["course"]).astype(np.int64)
@@ -165,15 +195,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         cnt = np.bincount(race[vote], minlength=n_race).astype(np.float64)
         ok_race = cnt >= min_voters
         D_race = np.where(ok_race, num / np.maximum(cnt, 1), 0.0)
-        w_race = np.where(ok_race, cnt, 0.0)
-        # the course's all-era mean, then each era cell pulled toward it
+        # a race's weight saturates in its voters: one reading, many witnesses
+        w_race = np.where(ok_race, cnt / (cnt + race_sat), 0.0)
+        # the course's history, shrunk toward the average course by one
+        # race's worth of prior; then each era cell pulled toward that
         num_c = np.bincount(race_cell, weights=w_race * D_race, minlength=n_cell)
         w_c = np.bincount(race_cell, weights=w_race, minlength=n_cell)
         num_b = np.bincount(base_of_cell, weights=num_c, minlength=n_base)
         w_b = np.bincount(base_of_cell, weights=w_c, minlength=n_base)
-        D_base = np.where(w_b > 0, num_b / np.maximum(w_b, 1e-9), 0.0)
-        D_new = np.where(w_c + prior_rows > 0,
-                         (num_c + prior_rows * D_base[base_of_cell]) / (w_c + prior_rows),
+        D_base = np.where(w_b > 0, num_b / np.maximum(w_b + prior_group, 1e-9), 0.0)
+        D_new = np.where(w_c + prior_races > 0,
+                         (num_c + prior_races * D_base[base_of_cell]) / (w_c + prior_races),
                          0.0)
         D_new = np.where(w_b[base_of_cell] > 0, D_new, 0.0)
         for g in np.unique(cell_group[w_c > 0]):
@@ -205,11 +237,22 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     s = s - np.where(self_ref, v[q], 0.0)
     a_local[:] = np.nan
     a_local[q] = np.where(has, s / np.maximum(n_other, 1), np.nan)
+    races_per_cell = np.bincount(race_cell[ok_race], minlength=n_cell)
+    races_per_base = np.bincount(base_of_cell, weights=races_per_cell,
+                                 minlength=n_base).astype(np.int64)
+    if verbose:
+        thin = int(((races_per_base == 1) & (w_b > 0)).sum())
+        print(f"[bracket] priors: a race weighs n/(n+{race_sat:g}) voters; a course is "
+              f"pulled to its sport's average by {prior_group:g} race, an era to the "
+              f"course's history by {prior_races:g}; {thin:,} courses rest on one race "
+              f"and keep about {100 * (1 / (1 + prior_group)):.0f}% of it", flush=True)
     return dict(D=D, votes=w_c, D_race=D_race, votes_race=w_race, race=race,
                 cell=cell, cell_keys=cell_keys, base_of_cell=base_of_cell,
+                races_per_cell=races_per_cell, races_per_base=races_per_base,
                 a_local=a_local, h=h, z=z, curve=curve, season=season,
                 n_season=n_season, train=train, voters=voters, window=window,
-                top=top, era_years=era_years)
+                top=top, era_years=era_years, prior_races=prior_races,
+                prior_group=prior_group, race_sat=race_sat)
 
 
 def predict(f):

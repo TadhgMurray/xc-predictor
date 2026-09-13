@@ -107,15 +107,59 @@ def test_an_island_of_two_cells_settles_instead_of_swapping():
             "course_keys": ["XC:100:d5000", "XC:101:d5000"]}
     log = io.StringIO()
     with contextlib.redirect_stdout(log):
-        f1 = be.fit(cols, None, window=30, top=1.0, damping=1.0, n_iter=40, verbose=True)
+        f1 = be.fit(cols, None, window=30, top=1.0, damping=1.0, n_iter=40, verbose=True,
+                    prior_group=0.0)
     lines1 = [ln for ln in log.getvalue().splitlines() if "iteration" in ln]
     assert len(lines1) == 40, "a full step never converges on an island"
     with contextlib.redirect_stdout(io.StringIO()):
-        f = be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True)
+        f = be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True, prior_group=0.0)
     D = f["D"]
     assert abs(D[1] - D[0] - 0.08) < 0.01, D
     assert abs(D[0] + D[1]) < 1e-6, D          # the island's sum stays at its prior
     # and the default damping converged well inside the passes allowed
     with contextlib.redirect_stdout(log2 := io.StringIO()):
-        be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True)
+        be.fit(cols, None, window=30, top=1.0, n_iter=60, verbose=True, prior_group=0.0)
     assert len([ln for ln in log2.getvalue().splitlines() if "iteration" in ln]) < 40
+
+
+def test_a_course_seen_once_keeps_half_of_what_the_day_showed():
+    """★ OWNER, 2026-09-13: "a 10 result venue should not have +17%". A race
+    is one reading of a course; a course with one race keeps about half of
+    it, one with thirty races keeps nearly all. Planted: 40 ordinary
+    courses, one course raced once by 10 people on a day that ran +17%
+    slower (the course itself is ordinary), one course raced 30 times at a
+    real +8%."""
+    rng = np.random.default_rng(21)
+    n_ath = 3000
+    n_ord = 40
+    a = rng.normal(0, 0.12, n_ath)
+    rows = []                                          # (ath, course, day, effect)
+    for i in range(n_ath):
+        for k in range(8):                             # eight ordinary races a season
+            rows.append((i, rng.integers(0, n_ord), 10 + 7 * k + rng.integers(0, 3), 0.0))
+    # the well-raced hard course: 30 races, 25 runners each, +8%
+    for r in range(30):
+        for i in rng.choice(n_ath, 25, replace=False):
+            rows.append((i, n_ord, 12 + 2 * r, 0.08))
+    # the once-raced course: 10 runners, one day, +17% that day
+    for i in rng.choice(n_ath, 10, replace=False):
+        rows.append((i, n_ord + 1, 40, 0.17))
+    ath = np.array([r[0] for r in rows]); course = np.array([r[1] for r in rows])
+    days = np.array([r[2] for r in rows], dtype=np.float64); eff = np.array([r[3] for r in rows])
+    y = a[ath] + eff + rng.normal(0, 0.03, ath.size)
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course, "days": days,
+            "sport": np.zeros(ath.size, dtype=np.int64), "norm": np.exp(y),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
+            "course_keys": [f"XC:{100 + c}:d5000" for c in range(n_ord + 2)]}
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0)
+    D = f["D"]
+    assert f["races_per_base"][n_ord + 1] == 1 and f["races_per_base"][n_ord] == 30
+    # the once-raced course: about half of +17% (the prior is one race)
+    assert 0.06 < D[n_ord + 1] < 0.12, D[n_ord + 1]
+    # the well-raced course keeps its +8% within a percent
+    assert abs(D[n_ord] - 0.08) < 0.012, D[n_ord]
+    # and without the group prior the one-race course takes the whole day
+    with contextlib.redirect_stdout(io.StringIO()):
+        f0 = be.fit(cols, None, window=21, top=1.0, prior_group=0.0)
+    assert f0["D"][n_ord + 1] > 0.14, f0["D"][n_ord + 1]

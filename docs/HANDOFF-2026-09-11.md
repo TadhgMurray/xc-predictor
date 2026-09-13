@@ -239,6 +239,31 @@ from the sampled rows; every diagnostic now maps (course, era) through
 the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
 so any subset of rows lands on the file's cells.
 
+**Run 21's fair comparison, and shrinkage (2026-09-13).** On the 537,107
+held-out rows both engines cover, with the joint model's own per-row
+predictions aligned to the pack (100% overlap): bracket engine 0.0426,
+joint model 0.0472; XC 0.0467 against 0.0511, TF 0.0376 against 0.0421.
+The owner's method predicts a new race at a known course about 10%
+better than the joint solve in both sports, on the same rows. The owner
+wants it main; the go-live still needs the flag to publish its
+difficulties (not built yet).
+
+The owner's other complaint, "a 10 result venue should not have +17%
+difficulty", is a design fault both engines shared: a row was the unit
+of evidence, and with row noise and course spread both near 5% ten rows
+keep 90% of their reading. But ten results at a course are one race:
+one day, one field, ten witnesses. `engine/bracket_engine.py` now weighs
+a race by n/(n+5) voters, so a race of two hundred counts about one, and
+its priors are in races: a course is pulled to its sport's average by
+one race's worth (`PRIOR_GROUP`: seen once keeps about half, three
+times 75%, ten times 90%), an era of a course to the course's history
+by two (`PRIOR_RACES`). Both are stated and printed; `bracket_holdout`
+prints the same-rows error binned by the training races behind the
+course, which is where a wrong prior shows. The joint model's version
+of the same question is `SIGMA_U_FLOOR` against `TAU_MAX` in
+joint_solve.py: a course seen once keeps tau2/(tau2+sigma_u2) of its
+day, and with the floor at 0 that is whatever the fitted day sd allows.
+
 **Run 21 crashed in a report, after the solve (2026-09-13).** The go-live's
 comparison against the sequential engine's file took the pack's base
 keys against the design's era cells, the same shape mismatch as run 20
