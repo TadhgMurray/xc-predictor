@@ -954,6 +954,161 @@ class Anet(unittest.TestCase):
 
 
 # ===================================================================== #
+#  WHAT ANET'S UNIT IDS MEAN                                            #
+# ===================================================================== #
+
+import anet_units as U                                            # noqa: E402
+
+
+def _world():
+    """A slice of NCS and CCS as anet nests it, with our own units beside
+    it. Realistic in the one way that matters: some areas hold two leagues
+    and some hold one, because that difference is what decides whether a
+    unit can be told apart from its parent at all."""
+    obs = []
+
+    def school(name, units, path):
+        for depth, (b, nm) in enumerate(path):
+            obs.append((b, "xc", depth + 2, nm, name, "CA", units))
+
+    CA = ((278, "California"),)
+    NCS = CA + ((319, "North Coast"),)
+    TV = NCS + ((334, "Valley"),)
+    for i in range(10):                       # EBAL, inside Tri-Valley
+        school(f"E{i}", {"league": "EBAL", "area": "Tri-Valley Area",
+                         "section": "NCS", "state_unit": "CA"},
+               TV + ((337, "East Bay Ath."),))
+    school("Odd", {"league": "DFAL", "area": "Tri-Valley Area",   # mislabelled
+                   "section": "NCS", "state_unit": "CA"},
+           TV + ((337, "East Bay Ath."),))
+    school("Gap", {"area": "Tri-Valley Area", "section": "NCS",   # no league
+                   "state_unit": "CA"}, TV + ((337, "East Bay Ath."),))
+    for i in range(8):                        # DFAL, also inside Tri-Valley
+        school(f"F{i}", {"league": "DFAL", "area": "Tri-Valley Area",
+                         "section": "NCS", "state_unit": "CA"},
+               TV + ((338, "Diablo Foothill"),))
+    for i in range(9):                        # Marin: one league in one area
+        school(f"M{i}", {"league": "MCAL", "area": "Marin", "section": "NCS",
+                         "state_unit": "CA"},
+               NCS + ((400, "Marin"), (401, "Marin Co. Ath.")))
+    for i in range(7):                        # a second section entirely
+        school(f"S{i}", {"league": "WCAL", "area": "Bay", "section": "CCS",
+                         "state_unit": "CA"},
+               CA + ((500, "Central Coast"), (501, "Bay"), (502, "West Cath.")))
+    return obs
+
+
+class AnetUnits(unittest.TestCase):
+    """anet's names are truncated ("North Coast", "Valley", "East Bay
+    Ath.") and carry no competitive division, so we throw them away and
+    learn each id's meaning from the units we already infer."""
+
+    def setUp(self):
+        self.obs = _world()
+        self.learned = U.learn(self.obs)
+
+    def name(self, base):
+        got = self.learned.get((base, "xc"))
+        return (got[0], got[1]) if got else None
+
+    def test_each_rung_gets_its_own_unit(self):
+        self.assertEqual(self.name(278), ("state_unit", "CA"))
+        self.assertEqual(self.name(319), ("section", "NCS"))
+        self.assertEqual(self.name(334), ("area", "Tri-Valley Area"))
+        self.assertEqual(self.name(337), ("league", "EBAL"))
+        self.assertEqual(self.name(338), ("league", "DFAL"))
+
+    def test_a_league_is_not_named_after_its_section(self):
+        """★ THE TRAP, and the first version fell in it. Every EBAL school
+        is also an NCS school, so a plain majority vote inside b=337 elects
+        section='NCS' as easily as it does inside b=319. What separates
+        them is the other direction -- nearly every EBAL school carries
+        b=337, while only a fraction of NCS schools do."""
+        self.assertEqual(self.name(337), ("league", "EBAL"))
+        self.assertNotEqual(self.name(337), ("section", "NCS"))
+
+    def test_a_parent_with_one_child_is_split_by_anet_s_own_depth(self):
+        """Marin the area and MCAL the league hold exactly the same
+        schools; nothing in the data separates them, but the ids that
+        share a school set are the rungs of one path."""
+        self.assertEqual(self.name(400), ("area", "Marin"))
+        self.assertEqual(self.name(401), ("league", "MCAL"))
+        self.assertEqual(self.name(500), ("section", "CCS"))
+        self.assertEqual(self.name(501), ("area", "Bay"))
+        self.assertEqual(self.name(502), ("league", "WCAL"))
+
+    def test_and_says_when_it_could_not_actually_tell(self):
+        """The repo's own rule: conflict is recorded, not resolved."""
+        self.assertTrue(self.learned[(400, "xc")][6], "Marin was a coin toss")
+        self.assertFalse(self.learned[(337, "xc")][6], "EBAL was not")
+
+    def test_a_school_contradicting_its_own_id_is_flagged(self):
+        self.assertEqual(U.disagreements(self.obs, self.learned),
+                         [("Odd", "CA", "xc", "league", "DFAL", "EBAL")])
+
+    def test_a_school_with_no_league_is_a_gap_anet_can_fill(self):
+        self.assertEqual(U.gaps(self.obs, self.learned),
+                         [("Gap", "CA", "xc", "league", "EBAL", 337)])
+
+    def test_an_id_too_thin_or_too_scattered_is_left_unnamed(self):
+        self.assertEqual(U.learn(self.obs, min_support=50), {})
+        self.assertEqual(U.learn(self.obs, min_match=1.01), {})
+
+    def test_the_competitive_division_is_never_learned(self):
+        """anet does not carry D1/D2 or a class at all, so those columns
+        stay the inference's alone and must not appear here."""
+        for gone in ("state_div", "section_div", "class"):
+            self.assertNotIn(gone, U.COLUMNS)
+        self.assertFalse(any(v[0] in ("state_div", "section_div", "class")
+                             for v in self.learned.values()))
+
+    def test_the_report_runs_on_all_of_it(self):
+        dis = U.disagreements(self.obs, self.learned)
+        gap = U.gaps(self.obs, self.learned)
+        text = U.report(self.obs, self.learned, dis, gap)
+        self.assertIn("EBAL", text)
+        self.assertIn("AMBIGUOUS", text)
+        self.assertIn("we say league='DFAL'", text)
+
+    def test_nothing_here_writes_to_school_unit(self):
+        """The inference stays the source of truth; this is a proposal."""
+        src = read("scripts", "anet_units.py")
+        self.assertNotIn("UPDATE school_unit", src)
+        self.assertNotIn("INSERT INTO school_unit ", src)
+
+
+class AnetDivisions(unittest.TestCase):
+    def test_the_array_order_is_the_hierarchy(self):
+        raw = json.dumps({"divisions": [
+            {"id": 167952, "b": 79, "name": " United States", "gender": "x"},
+            {"id": 168416, "b": 2, "name": "High School", "gender": "x"},
+            {"id": 168546, "b": 278, "name": "California", "gender": "x"},
+            {"id": 168618, "b": 319, "name": "North Coast", "gender": "x"},
+            {"id": 168639, "b": 334, "name": "Valley", "gender": "x"},
+            {"id": 168642, "b": 337, "name": "East Bay Ath.", "gender": "x"},
+        ]}).encode()
+        got = A.parseDivisions(raw)
+        self.assertEqual([(d, b) for d, b, _i, _n, _g in got],
+                         [(0, 79), (1, 2), (2, 278), (3, 319), (4, 334), (5, 337)])
+        self.assertEqual(got[0][3], "United States", "the leading space is trimmed")
+
+    def test_a_row_with_no_stable_id_is_dropped(self):
+        raw = json.dumps({"divisions": [{"id": 1, "name": "no b"},
+                                        {"b": 5, "id": 2, "name": "ok"}]}).encode()
+        self.assertEqual([b for _d, b, _i, _n, _g in A.parseDivisions(raw)], [5])
+
+    def test_rubbish_is_no_divisions(self):
+        for raw in (b"", b"<html>", b"{}", b'{"divisions": null}',
+                    b'{"divisions": "nope"}', b'{"divisions": [1, 2]}'):
+            self.assertEqual(A.parseDivisions(raw), [], raw)
+
+    def test_both_sports_are_taken_because_they_disagree(self):
+        src = read("scripts", "anet_teams.py")
+        self.assertIn('ap.add_argument("--sports", default="xc,tf"', src)
+        self.assertIn("PRIMARY KEY (team_id, sport, base_id)", src)
+
+
+# ===================================================================== #
 #  THE WHOLE THING, AGAINST A REAL SERVER ON LOOPBACK                   #
 # ===================================================================== #
 

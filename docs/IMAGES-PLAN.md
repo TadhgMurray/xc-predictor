@@ -444,3 +444,67 @@ sudo systemctl restart xc-predictor
 `--no-logos` takes the metadata and addresses only. That is worth a thought
 on its own: with `WebsiteSport` in `school_website`, `scrape_school_logos.py`
 stops guessing at athletics sites entirely and works them directly.
+
+
+## anet's division hierarchy (owner, 2026-09-13)
+
+The same call carries a `divisions` array -- anet's unit tree for the team,
+widest first:
+
+```
+{id: 167952, b: 79,  name: " United States"}
+{id: 168416, b: 2,   name: "High School"}
+{id: 168546, b: 278, name: "California"}      -- our state_unit CA
+{id: 168618, b: 319, name: "North Coast"}     -- our section NCS
+{id: 168639, b: 334, name: "Valley"}          -- our area Tri-Valley Area
+{id: 168642, b: 337, name: "East Bay Ath."}   -- our league EBAL
+```
+
+That is `school_unit`'s geographic branch exactly, and the array order is
+the depth. Two things stop it being a source of truth:
+
+- **the names are truncated** in a way that loses the answer -- "Valley"
+  could be Tri-Valley, Central Valley or Sac-Joaquin Valley;
+- **there is no competitive division at all.** No D1/D2, no class. Half of
+  what "NCS D2" means on our pages is simply absent.
+
+So: **take the ids, throw away the names.** `b` looks stable across seasons
+while `id` is re-allocated, so a unit only ever has to be named once --
+and `scripts/anet_units.py` learns those names from the units we already
+infer rather than from anet. If the schools carrying b=337 are the schools
+`school_unit` calls league='EBAL', then b=337 IS league EBAL. Nothing is
+typed by hand and nothing anet spells badly ever reaches a page.
+
+⚠ **A PLAIN MAJORITY VOTE NAMES EVERY LEAGUE AFTER ITS SECTION.** Not
+hypothetical -- it is what the first version did. Every EBAL school is also
+an NCS school, so section='NCS' wins the vote inside b=337 (the league) as
+easily as inside b=319 (the section); purity cannot tell a unit from its
+parent. What separates them is the other direction: nearly every EBAL
+school carries b=337, while only a fraction of NCS schools do. So the score
+is how far the two sets of schools coincide BOTH ways, and the most
+specific unit that actually matches the id wins.
+
+⚠ **AND WHERE A PARENT HAS EXACTLY ONE CHILD, nothing in the data separates
+them.** "Marin the area" and "MCAL the league" hold the same schools. The
+ids that share a school set are the rungs of one path, so anet's own depth
+orders them -- and the result is marked `ambiguous`, because the repo's
+rule is that conflict is recorded, not resolved.
+
+**XC and TF disagree** (a team can be in an area for track and not for
+cross country), which is why `--sports xc,tf` takes both: `school_unit` is
+already keyed per sport, so this fits the model rather than fighting it.
+
+What it is worth, once run:
+
+- **a cross-check.** A school whose own unit contradicts the id it carries
+  is exactly the wrong-league bug that is otherwise invisible.
+- **a gap-filler.** The inference reads units off championship attendance,
+  so a school that never went to a league championship has nothing; anet's
+  id gives it one.
+- **never a replacement.** `state_div`, `section_div` and `class` stay the
+  inference's alone, and nothing here writes to `school_unit`.
+
+```bash
+/srv/venv/bin/python scripts/anet_units.py --report
+/srv/venv/bin/python scripts/anet_units.py --write --tsv /tmp/disagree.tsv
+```

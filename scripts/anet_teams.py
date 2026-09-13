@@ -45,6 +45,7 @@ from scrape_school_logos import (            # noqa: E402
     DDL, Manners, _tableExists, markShared, normalise, record, writeFile)
 
 API = "https://www.athletic.net/api/v1/TeamNav/Team?team={team}&sport={sport}&season={season}"
+CORE = "https://www.athletic.net/api/v1/TeamHome/GetTeamCore?teamId={team}&sport={sport}&year={season}"
 ABORT_AFTER = 20
 
 TEAM_DDL = """
@@ -66,6 +67,38 @@ CREATE TABLE IF NOT EXISTS anet_team (
     fetched      date NOT NULL DEFAULT current_date)
 """
 
+# ★ anet's UNIT HIERARCHY, one row per level, per sport.
+#
+#   [{id: 167952, b: 79,  name: " United States"},
+#    {id: 168416, b: 2,   name: "High School"},
+#    {id: 168546, b: 278, name: "California"},
+#    {id: 168618, b: 319, name: "North Coast"},   -- our NCS
+#    {id: 168639, b: 334, name: "Valley"},        -- our Tri-Valley Area
+#    {id: 168642, b: 337, name: "East Bay Ath."}] -- our EBAL
+#
+#   ⚠ THE NAMES ARE TRUNCATED AND THERE IS NO COMPETITIVE DIVISION. So
+#     this is not a replacement for school_unit, which infers both from
+#     championship attendance. What it IS is an exact, machine-readable
+#     structure -- and `b` looks like the id that survives a season while
+#     `id` is re-allocated, so a unit only ever has to be NAMED once.
+#     scripts/anet_units.py learns those names from the units we already
+#     have rather than parsing anet's; see its header.
+#
+#   XC and TF disagree (owner: a team can be in an area for track and not
+#   for cross country), so sport is in the key and the reader unions.
+DIV_DDL = """
+CREATE TABLE IF NOT EXISTS anet_division (
+    team_id  int  NOT NULL,
+    sport    text NOT NULL,
+    base_id  int  NOT NULL,
+    div_id   int,
+    depth    int,
+    name     text,
+    gender   text,
+    fetched  date NOT NULL DEFAULT current_date,
+    PRIMARY KEY (team_id, sport, base_id))
+"""
+
 
 def teams(cur, limit=None, state=None, redo=False):
     """[(school, state, team_id)] -- the anet team each school's athletes
@@ -76,6 +109,7 @@ def teams(cur, limit=None, state=None, redo=False):
     split school_identity already draws."""
     cur.execute(DDL)
     cur.execute(TEAM_DDL)
+    cur.execute(DIV_DDL)
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
     home = ("LEFT JOIN person_home_state h ON h.person_id = t.person_id"
@@ -120,6 +154,42 @@ def parseTeam(raw):
         return None
     team = (got or {}).get("team")
     return team if isinstance(team, dict) and team.get("IDTeam") else None
+
+
+def parseDivisions(raw):
+    """[(depth, base_id, div_id, name, gender)] from whichever payload
+    carries `divisions`. Array order is the hierarchy, widest first, so
+    the index is the depth."""
+    try:
+        got = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:                                     # noqa: BLE001
+        return []
+    divs = (got or {}).get("divisions")
+    if not isinstance(divs, list):
+        divs = ((got or {}).get("team") or {}).get("divisions")
+    out = []
+    for depth, d in enumerate(divs or []):
+        if not isinstance(d, dict):
+            continue
+        base = _int(d.get("b"))
+        if base is None:
+            continue
+        out.append((depth, base, _int(d.get("id")),
+                    (d.get("name") or "").strip(), d.get("gender")))
+    return out
+
+
+def storeDivisions(cur, team_id, sport, divs):
+    cur.executemany("""
+        INSERT INTO anet_division (team_id, sport, base_id, div_id, depth,
+                                   name, gender, fetched)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, current_date)
+        ON CONFLICT (team_id, sport, base_id) DO UPDATE
+        SET div_id = EXCLUDED.div_id, depth = EXCLUDED.depth,
+            name = EXCLUDED.name, gender = EXCLUDED.gender,
+            fetched = current_date
+    """, [(team_id, sport, b, i, d, n, g) for d, b, i, n, g in divs])
+    return len(divs)
 
 
 def mascotUrls(team):
@@ -190,7 +260,9 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--state", default=None)
     ap.add_argument("--season", type=int, default=None, help="default: this year")
-    ap.add_argument("--sport", default="xc", choices=("xc", "tf"))
+    ap.add_argument("--sports", default="xc,tf",
+                    help="which sports' division lists to take (default both: "
+                         "a team can be in an area for track and not for XC)")
     ap.add_argument("--rate", type=float, default=1.0,
                     help="seconds between requests to one host (default 1)")
     ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
@@ -203,6 +275,9 @@ def main():
     if not (args.write or args.dry_run):
         ap.error("pass --dry-run or --write")
     season = args.season or time.gmtime().tm_year
+    sports = [x.strip() for x in args.sports.split(",") if x.strip() in ("xc", "tf")]
+    if not sports:
+        ap.error("--sports takes xc, tf or xc,tf")
 
     from database import getConn
     with getConn() as conn:
@@ -210,20 +285,31 @@ def main():
             todo = teams(cur, args.limit, args.state, args.redo)
             conn.commit()
             print(f"  {len(todo):,} teams, biggest programme first, "
-                  f"{args.rate}s apart (~{len(todo) * args.rate / 3600:.1f} h)",
+                  f"{args.rate}s apart (~{len(todo) * len(sports) * args.rate / 3600:.1f} h)",
                   flush=True)
 
             manners = Manners(rate=args.rate)
             if args.ignore_robots:
                 manners.allowed = lambda url: (True, 0.0)
                 print("  robots.txt IGNORED by --ignore-robots", flush=True)
-            meta = crests = addrs = missed = 0
+            meta = crests = addrs = units = missed = 0
             t0 = time.time()
             for i, (school, state, team_id) in enumerate(todo, 1):
-                raw, why = manners.get(
-                    API.format(team=team_id, sport=args.sport, season=season),
-                    max_bytes=512 * 1024)
-                team = parseTeam(raw) if raw is not None else None
+                team = None
+                for sport in sports:
+                    raw, why = manners.get(
+                        API.format(team=team_id, sport=sport, season=season),
+                        max_bytes=512 * 1024)
+                    got = parseTeam(raw) if raw is not None else None
+                    team = team or got
+                    divs = parseDivisions(raw) if raw is not None else []
+                    if not divs and got is not None:
+                        craw, _w = manners.get(
+                            CORE.format(team=team_id, sport=sport, season=season),
+                            max_bytes=512 * 1024)
+                        divs = parseDivisions(craw) if craw is not None else []
+                    if divs and args.write:
+                        units += storeDivisions(cur, team_id, sport, divs)
                 if team is None:
                     missed += 1
                 else:
@@ -257,14 +343,17 @@ def main():
                 if i % 100 == 0 or args.dry_run:
                     rate = i / max(1e-9, time.time() - t0)
                     print(f"  [{i:,}/{len(todo):,}] {meta:,} teams, {crests:,} crests, "
-                          f"{addrs:,} addresses, {missed:,} missed · "
+                          f"{addrs:,} addresses, {units:,} unit rows, {missed:,} missed · "
                           f"{rate * 3600:,.0f}/h · last {school} ({state})", flush=True)
             if args.write:
                 n = markShared(cur)
                 conn.commit()
                 print(f"  shared crests: {n:,} images worn by several schools")
             print(f"  done: {meta:,} teams, {crests:,} crests, {addrs:,} addresses, "
-                  f"{missed:,} missed, {(time.time() - t0) / 60:.1f} min")
+                  f"{units:,} unit rows, {missed:,} missed, "
+                  f"{(time.time() - t0) / 60:.1f} min")
+            print("  next: scripts/anet_units.py --report  (learns what anet's "
+                  "unit ids mean from the units we already infer)")
 
 
 if __name__ == "__main__":
