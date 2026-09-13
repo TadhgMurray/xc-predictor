@@ -1,5 +1,14 @@
 # The engine, intimately
 
+> **2026-09-13.** The published course numbers can come from the bracket
+> engine (`engine/bracket_engine.py`, `run_joint.py --difficulty bracket`,
+> `XCP_DIFFICULTY=bracket`): the owner's same-athlete window method, fitted
+> on this solve's residual over this solve's cells, with a race as the unit
+> of evidence. This document describes the joint solve, which still fits
+> every other term. See `HANDOFF.md`.
+
+
+
 *Written 2026-09-11. This is the document I wish had existed two days ago.
 It is about `engine/joint_solve.py` and `engine/run_joint.py` — what the
 model is, what it can and cannot see, why every constant is the number it
