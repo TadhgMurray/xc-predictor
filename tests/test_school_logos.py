@@ -574,6 +574,15 @@ class Worklist(unittest.TestCase):
         self.assertIn("w.school ILIKE %s", cur.sql[-1])
         self.assertIn("LIMIT %s", cur.sql[-1])
 
+    def test_redo_does_not_skip_what_was_fetched_today(self):
+        """"fetched < today - 0" excludes today, which is exactly the row
+        you are redoing an hour after changing the rules."""
+        src = read("scripts", "scrape_school_logos.py")
+        self.assertIn("args.refresh_days, args.retry_failed = -1, True", src)
+        cur = self._Cur()
+        S.targets(cur, refresh_days=-1, retry_failed=True)
+        self.assertEqual(cur.params[-1][:2], [-1, True])
+
     def test_a_row_comes_back_in_the_shape_the_worker_unpacks(self):
         row = ("Jesuit", "CA", "https://x", None, None, None, None, None, "ok")
         cur = self._Cur(rows=[row])

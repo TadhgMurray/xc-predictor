@@ -836,7 +836,9 @@ def main():
                     help="re-run the shared-crest sweep and stop")
     args = ap.parse_args()
     if args.redo:
-        args.refresh_days, args.retry_failed = 0, True
+        # -1, not 0: "fetched < today - 0" skips everything fetched TODAY,
+        # which is exactly the row you are trying to redo an hour later
+        args.refresh_days, args.retry_failed = -1, True
     if not (args.write or args.dry_run or args.stats or args.sweep_only):
         ap.error("pass --stats, --dry-run, --write or --sweep-only")
 
