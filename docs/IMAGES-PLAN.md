@@ -388,41 +388,59 @@ crawler work.
 
 # ATHLETIC.NET (owner's call, 2026-09-13)
 
-`scripts/anet_school_logos.py`.
+`scripts/anet_teams.py`. The owner decided to take the crests from anet
+after the open-web routes capped out around 11,000 addresses. What the
+endpoint actually returns turned out to answer three problems, not one.
 
-The owner decided to take the crests from anet after the open-web routes
-capped out around 11,000 addresses. Two things about that are worth
-stating plainly, because they change what the job should look like.
+```
+GET /api/v1/TeamNav/Team?team=21480&sport=xc&season=2026
 
-**The logos are not anet's.** They are the schools' own marks; anet hosts
-them. So there is no copyright of anet's being taken. What is at stake is
-their terms of service and their bandwidth.
+team: {IDTeam: 21480, Name: "Tufts", TeamCode: "Tuft", Level: 8,
+       City: "Medford", State: "MA", ZipCode: "2155", RegionID: 2034,
+       MascotUrl: "//lh3.googleusercontent.com/9iUjQ...",
+       Website: "https://gotuftsjumbos.com/",
+       WebsiteSport: "https://gotuftsjumbos.com/"}
+```
 
-**And the bandwidth cost is almost nothing, because we already have the
-ids.** Every result row we have ever scraped carries anet's `TeamID`
-(`results.team_id` and `results_tf.team_id`), so there is no crawl: no team
-pages are read, no search is run, nothing is discovered. One image request
-per school, once, cached forever. One host, so one request a second and no
-concurrency -- roughly seven hours for twenty-five thousand schools, which
-is a rounding error against a site serving millions of pages, and it never
-repeats.
+| field | what it solves |
+|---|---|
+| `MascotUrl` | the crest -- and it is on **lh3.googleusercontent.com**, Google's bandwidth, not anet's, so the image itself costs them nothing |
+| `WebsiteSport` | **the athletics site, handed over.** This is exactly what `scrape_school_logos.athleticsLink()` reads home pages to guess at, and it is the address book's real fix: ~11k addresses from Wikidata against one per team here |
+| `City` / `State` / `ZipCode` / `RegionID` | where the school is -- elevation, and a second opinion for `school_identity` to check itself against |
+| `Level` | anet's own school level, beside `build_school_levels.py`'s |
 
-The team is the modal `team_id` per (school, HOME STATE), not per school
-string: two real schools share the name "Kingston" and anet gives them two
-ids, which is the same split `school_identity` already draws.
+**There is no crawl.** Every result row we have already carries anet's
+`TeamID` (`results.team_id`, `results_tf.team_id`), so the team list comes
+out of our own database: no team pages read, no search run, nothing
+discovered. One API call per school, once, and the images come from Google.
+One host, one request a second, biggest programme first so a partial run is
+still the useful part.
 
-It fills gaps by default and leaves a crest already scraped from a school's
-own site alone; `--replace` prefers the anet mark everywhere. An override of
-"none" is honoured here as everywhere. The shared-crest sweep runs
-afterwards as usual, which is what catches anet's own placeholder image if
-it serves one.
+The logos are the SCHOOLS' marks -- anet hosts them, it does not own them
+-- so there is no copyright of anet's here. What is left is their terms and
+their bandwidth, and the bandwidth is one JSON call per school.
 
-`--url` takes the image URL with `{team}` where the id goes. If the first
-twenty requests all fail the run stops, rolls back and says the template is
-wrong, rather than spending an evening on it.
+Two rails, both deliberate:
+
+- **robots.txt is obeyed by default.** If it disallows `/api/`, the run does
+  nothing and says so. `--ignore-robots` overrides it: a flag with no
+  default, because it is a decision about someone else's site rather than a
+  setting.
+- **Twenty calls with nothing back and the run rolls back and stops**, so a
+  changed endpoint costs a minute instead of an evening.
+
+**Athlete photos are not taken and will not be.** Most of the people in
+this corpus are minors; the plan said so at the top of this file and it has
+not changed. That slot is the athlete's or the coach's to fill (283), and a
+test asserts this script goes nowhere near `GetAthletes`.
 
 ```bash
-/srv/venv/bin/python scripts/anet_school_logos.py \
-    --url 'https://.../{team}...' --write --rate 1.0
+/srv/venv/bin/python scripts/anet_teams.py --write --rate 1.0 --limit 200
 sudo systemctl restart xc-predictor
+# then, once the first 200 look right:
+/srv/venv/bin/python scripts/anet_teams.py --write --rate 1.0
 ```
+
+`--no-logos` takes the metadata and addresses only. That is worth a thought
+on its own: with `WebsiteSport` in `school_website`, `scrape_school_logos.py`
+stops guessing at athletics sites entirely and works them directly.

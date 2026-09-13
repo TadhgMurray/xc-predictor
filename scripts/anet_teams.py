@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""
+anet_teams.py -- one call per team to Athletic.net's TeamNav/Team, which
+answers three separate problems at once (305, and the address book).
+
+    python scripts/anet_teams.py --write --rate 1.0
+
+    GET /api/v1/TeamNav/Team?team=<id>&sport=xc&season=<year>
+    -> team: {IDTeam, Name, TeamCode, Level, City, State, ZipCode, Country,
+              RegionID, MascotUrl, Website, WebsiteSport, ...}
+
+  MascotUrl     the crest. Hosted on lh3.googleusercontent.com -- GOOGLE's
+                bandwidth, not anet's -- so the image costs them nothing.
+  WebsiteSport  the ATHLETICS site, handed over directly. This is the thing
+                scrape_school_logos.py was reading home pages to guess at,
+                and it is the address book's real fix: ~11k addresses from
+                Wikidata against one per team here.
+  ZipCode/City/State/Level  where the school is, for elevation and for
+                school_identity to check itself against.
+
+No crawl and no search: every result row we have already carries anet's
+TeamID, so the team list comes from our own database. One API call per
+school, once. The images come from Google.
+
+⚠ ROBOTS. The default obeys anet's robots.txt like everything else here,
+  and if it disallows /api/ this job will do nothing and say so.
+  --ignore-robots overrides that. It is a deliberate flag with no default
+  because it is a decision about someone else's site, not a setting.
+
+Athlete photos are NOT taken and will not be: most of the people are
+minors. That slot is the athlete's or the coach's to fill (283).
+"""
+import argparse
+import json
+import os
+import sys
+import time
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from scrape_school_logos import (            # noqa: E402
+    DDL, Manners, _tableExists, markShared, normalise, record, writeFile)
+
+API = "https://www.athletic.net/api/v1/TeamNav/Team?team={team}&sport={sport}&season={season}"
+ABORT_AFTER = 20
+
+TEAM_DDL = """
+CREATE TABLE IF NOT EXISTS anet_team (
+    team_id      int PRIMARY KEY,
+    school       text,
+    state        text,
+    name         text,
+    team_code    text,
+    level        int,
+    city         text,
+    anet_state   text,
+    zip          text,
+    country      text,
+    region_id    int,
+    mascot_url   text,
+    website      text,
+    website_sport text,
+    fetched      date NOT NULL DEFAULT current_date)
+"""
+
+
+def teams(cur, limit=None, state=None, redo=False):
+    """[(school, state, team_id)] -- the anet team each school's athletes
+    actually raced under, biggest programme first.
+
+    Modal per (school, HOME STATE), not per school string: two real schools
+    share the name "Kingston" and anet gives them two ids, which is the
+    split school_identity already draws."""
+    cur.execute(DDL)
+    cur.execute(TEAM_DDL)
+    if not _tableExists(cur, "school_identity"):
+        raise SystemExit("school_identity is missing; run pipeline step 10b first")
+    home = ("LEFT JOIN person_home_state h ON h.person_id = t.person_id"
+            if _tableExists(cur, "person_home_state") else "")
+    state_expr = "COALESCE(h.state, '')" if home else "''"
+    done = "" if redo else "AND a.team_id IS NULL"
+    where_state = "AND si.state = %(state)s" if state else ""
+    lim = "LIMIT %(limit)s" if limit else ""
+    cur.execute(f"""
+        WITH t AS (
+            SELECT school, team_id, person_id FROM results
+            WHERE  team_id IS NOT NULL AND school IS NOT NULL
+            UNION ALL
+            SELECT school, team_id, person_id FROM results_tf
+            WHERE  team_id IS NOT NULL AND school IS NOT NULL
+        ), counted AS (
+            SELECT t.school, {state_expr} AS state, t.team_id, count(*) AS n
+            FROM   t {home}
+            GROUP  BY 1, 2, 3
+        ), modal AS (
+            SELECT DISTINCT ON (school, state) school, state, team_id
+            FROM   counted ORDER BY school, state, n DESC
+        )
+        SELECT si.school, si.state, modal.team_id
+        FROM   school_identity si
+        JOIN   modal ON modal.school = si.school AND modal.state = si.state
+        LEFT   JOIN anet_team a ON a.team_id = modal.team_id
+        WHERE  si.n_athletes >= 3 {done} {where_state}
+        ORDER  BY si.n_athletes DESC
+        {lim}
+    """, {"limit": limit, "state": (state or "").upper()})
+    return [tuple(r[k] for k in ("school", "state", "team_id"))
+            if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+
+
+def parseTeam(raw):
+    """The `team` object, or None. anet answers with the whole nav payload;
+    everything we want is one key down."""
+    try:
+        got = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:                                     # noqa: BLE001
+        return None
+    team = (got or {}).get("team")
+    return team if isinstance(team, dict) and team.get("IDTeam") else None
+
+
+def mascotUrls(team):
+    """The crest to try, best first. MascotUrl is protocol-relative, and
+    lh3.googleusercontent.com serves a sized copy for an =sN suffix -- so
+    ask for 512 and fall back to whatever the original is."""
+    url = (team.get("MascotUrl") or "").strip()
+    if not url:
+        return []
+    if url.startswith("//"):
+        url = "https:" + url
+    if not url.startswith("http"):
+        return []
+    return [f"{url}=s512", url] if "googleusercontent." in url else [url]
+
+
+def storeTeam(cur, school, state, team):
+    cur.execute("""
+        INSERT INTO anet_team (team_id, school, state, name, team_code, level,
+                               city, anet_state, zip, country, region_id,
+                               mascot_url, website, website_sport, fetched)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, current_date)
+        ON CONFLICT (team_id) DO UPDATE SET
+            school = EXCLUDED.school, state = EXCLUDED.state,
+            name = EXCLUDED.name, team_code = EXCLUDED.team_code,
+            level = EXCLUDED.level, city = EXCLUDED.city,
+            anet_state = EXCLUDED.anet_state, zip = EXCLUDED.zip,
+            country = EXCLUDED.country, region_id = EXCLUDED.region_id,
+            mascot_url = EXCLUDED.mascot_url, website = EXCLUDED.website,
+            website_sport = EXCLUDED.website_sport, fetched = current_date
+    """, (team.get("IDTeam"), school, state, team.get("Name"),
+          team.get("TeamCode"), _int(team.get("Level")), team.get("City"),
+          team.get("State"), team.get("ZipCode"), team.get("Country"),
+          _int(team.get("RegionID")), team.get("MascotUrl"),
+          team.get("Website"), team.get("WebsiteSport")))
+
+
+def storeAddress(cur, school, state, team):
+    """WebsiteSport into school_website, so scrape_school_logos can work the
+    athletics site directly instead of guessing at it from a home page.
+    Never overwrites an address a person set by hand."""
+    url = (team.get("WebsiteSport") or team.get("Website") or "").strip()
+    if not url.startswith("http"):
+        return False
+    cur.execute("""
+        INSERT INTO school_website (school, state, url, source, matched, seen)
+        VALUES (%s, %s, %s, 'anet', %s, current_date)
+        ON CONFLICT (school, state) DO UPDATE
+        SET url = EXCLUDED.url, source = 'anet', matched = EXCLUDED.matched,
+            seen = current_date
+        WHERE school_website.source IS DISTINCT FROM 'manual'
+    """, (school, state, url, team.get("Name")))
+    return True
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--write", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--state", default=None)
+    ap.add_argument("--season", type=int, default=None, help="default: this year")
+    ap.add_argument("--sport", default="xc", choices=("xc", "tf"))
+    ap.add_argument("--rate", type=float, default=1.0,
+                    help="seconds between requests to one host (default 1)")
+    ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
+    ap.add_argument("--no-logos", action="store_true",
+                    help="metadata and addresses only, fetch no images")
+    ap.add_argument("--ignore-robots", action="store_true",
+                    help="fetch even where anet's robots.txt disallows it")
+    ap.add_argument("--dir", default=None)
+    args = ap.parse_args()
+    if not (args.write or args.dry_run):
+        ap.error("pass --dry-run or --write")
+    season = args.season or time.gmtime().tm_year
+
+    from database import getConn
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            todo = teams(cur, args.limit, args.state, args.redo)
+            conn.commit()
+            print(f"  {len(todo):,} teams, biggest programme first, "
+                  f"{args.rate}s apart (~{len(todo) * args.rate / 3600:.1f} h)",
+                  flush=True)
+
+            manners = Manners(rate=args.rate)
+            if args.ignore_robots:
+                manners.allowed = lambda url: (True, 0.0)
+                print("  robots.txt IGNORED by --ignore-robots", flush=True)
+            meta = crests = addrs = missed = 0
+            t0 = time.time()
+            for i, (school, state, team_id) in enumerate(todo, 1):
+                raw, why = manners.get(
+                    API.format(team=team_id, sport=args.sport, season=season),
+                    max_bytes=512 * 1024)
+                team = parseTeam(raw) if raw is not None else None
+                if team is None:
+                    missed += 1
+                else:
+                    meta += 1
+                    if args.write:
+                        storeTeam(cur, school, state, team)
+                        addrs += 1 if storeAddress(cur, school, state, team) else 0
+                    png = sha = None
+                    for url in ([] if args.no_logos else mascotUrls(team)):
+                        img, ctype = manners.get(url)
+                        if img is None:
+                            continue
+                        png, sha, why = normalise(img, ctype=ctype, kind="icon")
+                        if png:
+                            break
+                    if png:
+                        crests += 1
+                        if args.write:
+                            name = writeFile(school, state, png, args.dir)
+                            record(cur, school, state, name,
+                                   mascotUrls(team)[0], "anet", sha, "ok")
+                if i == ABORT_AFTER and meta == 0:
+                    conn.rollback()
+                    raise SystemExit(
+                        f"  {ABORT_AFTER} calls, no team came back ({why}). "
+                        f"Nothing written. If that says 'robots', anet's "
+                        f"robots.txt disallows this and --ignore-robots is "
+                        f"the deliberate override.")
+                if args.write and i % 100 == 0:
+                    conn.commit()
+                if i % 100 == 0 or args.dry_run:
+                    rate = i / max(1e-9, time.time() - t0)
+                    print(f"  [{i:,}/{len(todo):,}] {meta:,} teams, {crests:,} crests, "
+                          f"{addrs:,} addresses, {missed:,} missed · "
+                          f"{rate * 3600:,.0f}/h · last {school} ({state})", flush=True)
+            if args.write:
+                n = markShared(cur)
+                conn.commit()
+                print(f"  shared crests: {n:,} images worn by several schools")
+            print(f"  done: {meta:,} teams, {crests:,} crests, {addrs:,} addresses, "
+                  f"{missed:,} missed, {(time.time() - t0) / 60:.1f} min")
+
+
+if __name__ == "__main__":
+    main()
