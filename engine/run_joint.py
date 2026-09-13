@@ -1890,9 +1890,11 @@ def main():
 
     #   race-day term, the robust weights and the curve, and it should be
     #   biggest exactly where the old engine's SE was least trustworthy.
-    old_delta = pairEngineDelta(
-        os.path.join(os.path.dirname(args.out), "pair_difficulty.npz"), solved)
-    if old_delta is not None:
+    def _vs_pair():
+        old_delta = pairEngineDelta(
+            os.path.join(os.path.dirname(args.out), "pair_difficulty.npz"), solved)
+        if old_delta is None:
+            return
         m = np.isfinite(old_delta) & (old_delta != 0) & solved
         if m.sum() > 100:
             d = anchored[m] - old_delta[m]
@@ -1900,6 +1902,7 @@ def main():
                   f"median |move| {np.median(np.abs(d)):.4f}, p95 "
                   f"{np.percentile(np.abs(d), 95):.4f}, corr "
                   f"{np.corrcoef(anchored[m], old_delta[m])[0, 1]:.4f}")
+    guardedReport("vs pair_difficulty", _vs_pair)     # after the go-live: a report, guarded
 
 
 if __name__ == "__main__":
