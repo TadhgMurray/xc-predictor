@@ -175,3 +175,47 @@ def test_the_solves_state_round_trips_and_is_checked_against_the_design(tmp_path
     D2, *_ = _solve(cols, keep & (np.asarray(cols["course"]) != 0))[:1]
     with pytest.raises(SystemExit):
         rj.checkState(back, D2)
+
+
+def test_each_host_populations_tracks_are_recentred_to_one_zero():
+    """★ OWNER, 2026-09-13: "track difficulties are a lot more negative for
+    college than for hs". Two populations that never share a track have no
+    common level; each population's outdoor tracks are recentred to the
+    same zero, indoor ovals move with their population, a mixed track
+    counts as its own group, and the report names the shift."""
+    keys = ([f"TF:loc:{i}:out" for i in range(30)] + [f"TF:loc:{100 + i}:in" for i in range(4)]
+            + ["XC:7:d5000"])
+    n_cell = len(keys)
+    # cells 0-14 host high school rows, 15-29 college rows, 30-31 indoor hs,
+    # 32-33 indoor college; the XC cell is untouched
+    rows_cell, rows_level = [], []
+    for c in range(15):
+        rows_cell += [c] * 10; rows_level += ["hs"] * 10
+    for c in range(15, 30):
+        rows_cell += [c] * 10; rows_level += ["college"] * 10
+    for c in (30, 31):
+        rows_cell += [c] * 10; rows_level += ["hs"] * 10
+    for c in (32, 33):
+        rows_cell += [c] * 10; rows_level += ["college"] * 10
+    rows_cell += [34] * 10; rows_level += ["hs"] * 10
+    rng = np.random.default_rng(3)
+    D_b = rng.normal(0, 0.005, n_cell)
+    D_b[15:30] -= 0.02                       # the college cluster reads 2% easy
+    D_b[32:34] += 0.003 - 0.02               # college ovals: the same level, plus indoor
+    D_b[30:32] += 0.003
+    D_b[34] = 0.09
+    mc = np.zeros(len(rows_cell)); mc[150:300] = 3          # the college rows are finals
+    shift, rows = rj.trackPopulationShift(D_b, keys, rows_cell, rows_level, mc, min_cells=5)
+    after = D_b - shift
+    assert abs(after[:15].mean()) < 1e-12 and abs(after[15:30].mean()) < 1e-12
+    # the indoor ovals kept their level over their own population's outdoor
+    assert abs((after[30:32].mean() - after[:15].mean()) - (D_b[30:32].mean() - D_b[:15].mean())) < 1e-12
+    assert abs((after[32:34].mean() - after[15:30].mean()) - (D_b[32:34].mean() - D_b[15:30].mean())) < 1e-12
+    assert after[34] == D_b[34]              # not a track
+    by = {r["population"]: r for r in rows}
+    assert abs(by["college"]["shift"] - D_b[15:30].mean()) < 1e-12
+    assert by["college"]["champ_share"] == 1.0 and by["hs"]["champ_share"] == 0.0
+    assert by["college"]["applied"] and by["hs"]["applied"]
+    # a population under the cell floor is reported and left alone
+    shift2, rows2 = rj.trackPopulationShift(D_b, keys, rows_cell, rows_level, mc, min_cells=16)
+    assert not np.any(shift2) and all(not r["applied"] for r in rows2)

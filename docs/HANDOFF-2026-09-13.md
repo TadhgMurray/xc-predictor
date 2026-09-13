@@ -431,3 +431,87 @@ onto the logo directory) so Python never sees a crest at all.
 existing bracket, diagnose, era, track, logo, sitemap and guard files:
 314 pass. `test_board_build_streams_the_sports_in_parallel` and the
 `test_page_cache_headers` order-dependence fail on the unchanged tree too.
+
+### 8.9 "Track difficulties are a lot more negative for college than for hs"
+
+**Mechanism, and why it is not the tracks.** A college athlete-season
+references only college races and a high-school one only high-school
+races, so the level between the college-only ovals and the high-school-
+only ovals rests on whatever links them: the tracks that host both. On
+those, the college rows are mostly the conference or NCAA final
+(tapered, stacked, fast) against the same athletes' invitationals
+elsewhere; the engine names no taper and no field, so the difference
+lands in the venues and the whole college cluster reads "easy". A
+constant shift of one pool's cells never moves a rating inside that
+pool (its pool mean moves with them), so what it costs is the board's
+number for every college track and every conversion read off one.
+
+**Fix** (`run_joint.trackPopulationShift`, on by default under the
+bracket path, `XCP_TRACK_LEVEL_BY_POOL=0` leaves it): a cell's host
+population is the level (hs, college, ms, elem) of the majority of its
+rows (under 60% is "mixed"); each population's outdoor tracks are
+recentred to the same zero, its indoor ovals move with it so the
+indoor level is kept. The log prints, per population, the mean before,
+the sd and the championship-class share of its rows -- the "something
+else" made visible -- and the shift applied:
+
+```
+[joint] track level by host population ...
+        population  outdoor indoor mean before     sd champ share   shift
+```
+
+If the college row's `mean before` is a couple of percent under the hs
+row's and its champ share is several times higher, that is the whole
+story. Physics says a 400 m track is a 400 m track, which is what the
+recentring asserts.
+
+### 8.10 Distance normalization: how to "finally get this right"
+
+What a rating applies is the spline TIMES the solve's fitted event
+offsets (per pool, distance and rating band, `dist_offset` in the solve
+file), and only that product is worth arguing about. So:
+
+```
+/srv/venv/bin/python scripts/distance_curve_check.py                # spline alone, every pool
+/srv/venv/bin/python scripts/distance_curve_check.py --npz engine/data/joint_difficulty.npz
+```
+
+The second prints, for each TF pool, the spline's local exponent
+between events and then the EFFECTIVE exponent per rating band (spline
+plus offsets: what the boards use). Read it against three outside
+numbers: Riegel 1.06 for a trained runner, the 1500 -> mile at 1.077
+(3:35 is 3:51.5), and 5000 -> 10000 at 1.06-1.07. A band whose 800 ->
+1600 effective exponent sits far from the others is "800s overrated"
+in one number, and the fix is then in the offsets' prior
+(`engine/distance_tables.py`) or the fitter's pairs, not in a hunch.
+
+The principled end state is unchanged (ENGINE.md 11.6): refit the track
+curve on equal-quality pairs with level and sex inside it and retire
+the offsets. Until then the floor (8.5) stops the curve saying things
+no runner does, and this table says what the composite does.
+
+### 8.11 "A better way to decide difficulty" when a venue is keyed in pieces
+
+The engine's number for Foot Locker is right for what it was given: one
+to three race days per canonical id. No estimator fixes evidence it is
+not shown. Two routes, cheapest first:
+
+1. **Key the pieces together.** `engine/course_merge.py` already
+   collapses XC course names at one coordinate with a protected list
+   for deliberate splits (the Mt. SAC rain course); `location_merge.py`
+   does the same for duplicate TF location ids. `scripts/meet_cells.py
+   --meet "Foot Locker" --meet "Champs Sports" --meet Eastbay --meet
+   "Brooks"` lists the ids; if they sit at one coordinate and one
+   distance, the merge tool is the fix and the engine needs nothing.
+2. **A place prior in the engine.** Where the ids are legitimately
+   different courses at one park (Balboa's loops), the honest structure
+   is one level up from the era prior: cells within a few hundred
+   metres and at one distance pulled toward each other's mean with a
+   stated weight, so a thin id rests on its neighbours before it rests
+   on the sport's average. That needs the venue's coordinates in the
+   pack (a column at 07_pack from `course_canonical`), then one more
+   `bincount` in `bracket_engine.fit` beside `base_of_cell`. Not built;
+   build it only if route 1 leaves real splits behind.
+
+What is NOT a better way: a stronger era prior or a weaker group prior.
+Either moves every venue to help one.

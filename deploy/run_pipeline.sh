@@ -559,6 +559,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   group (XC, outdoor track, indoor track). Default "fit": read from
   #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
   #   states them; one number states every group (bracket_engine.parsePrior).
+  # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
+  #   tracks at the level the linkage gave them; default 1 recentres each host
+  #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
   # ★ XCP_DIFFICULTY=bracket publishes the bracket engine's course numbers
   #   (run_joint.bracketDifficulties): the solve still fits everything
   #   else, the courses come from the owner's method, the abilities are
@@ -568,6 +571,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       --outer "${XCP_OUTER:-5}" \
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
       ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
+      ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \

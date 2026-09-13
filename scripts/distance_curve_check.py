@@ -28,6 +28,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts")):
@@ -56,6 +58,40 @@ def factors(pool, sport, distances=DISTANCES, floor=None):
             for d in distances}, float(target)
 
 
+def loadOffsets(npz):
+    """{(pool, distance bucket, band): log offset} from a solve file's
+    dist_offset / dist_labels ('hs_m:3200:b1'; an unbanded label has no
+    band and lands in band 0), and the number of bands. Empty without the
+    block. The RATING subtracts the offset from log normalized time
+    (joint_golive: adjusted = norm / exp(eff)), so the effective
+    multiplier at a distance is the spline's times exp(-offset)."""
+    if npz is None or "dist_offset" not in npz or "dist_labels" not in npz:
+        return {}, 0
+    e = [float(x) for x in np.asarray(npz["dist_offset"]).reshape(-1)]
+    labels = [str(x) for x in np.asarray(npz["dist_labels"]).reshape(-1)]
+    out, n_band = {}, 1
+    for lab, val in zip(labels, e):
+        parts = lab.split(":")
+        pool, dist = parts[0], int(float(parts[1]))
+        band = int(parts[2][1:]) if len(parts) > 2 and parts[2].startswith("b") else 0
+        n_band = max(n_band, band + 1)
+        out[(pool, dist, band)] = val
+    return out, n_band
+
+
+def effective(f, pool, offsets, band, distances=DISTANCES):
+    """The spline's multipliers with the solve's offsets applied for one
+    pool and band: a distance the solve keyed (its 100 m bucket) gets
+    exp(-offset); the reference event and unkeyed distances keep the
+    spline's own value."""
+    out = {}
+    for d in distances:
+        bucket = int(round(d / 100.0) * 100)
+        off = offsets.get((pool, bucket, band), 0.0)
+        out[d] = f[d] * math.exp(-off)
+    return out
+
+
 def segments(f, distances=DISTANCES):
     """[(d1, d2, exponent)] between consecutive distances: t2/t1 = (d2/d1)^k."""
     out = []
@@ -64,8 +100,22 @@ def segments(f, distances=DISTANCES):
     return out
 
 
-def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print):
+BAND_ANCHORS = (90, 112, 127, 145)          # joint_solve.DIST_BAND_ANCHORS
+
+
+def _segLine(segs, sane):
+    return "  ".join(f"{a}->{b}: {k:.3f}{'!' if not (sane[0] <= k <= sane[1]) else ' '}"
+                     for a, b, k in segs)
+
+
+def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
+           offsets=None, n_band=0):
+    """The spline's exponents per pool and sport; with `offsets` (loadOffsets)
+    also the EFFECTIVE exponents per rating band on the track -- the
+    spline and the solve's fitted event offsets together, which is what a
+    rating actually applies. Returns the number of flagged segments."""
     flagged = 0
+    offsets = offsets or {}
     for pool in pools:
         for sport in sports:
             try:
@@ -78,8 +128,16 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print):
             flagged += len(bad)
             out(f"\n{pool}|{sport}  (normalised to {target:.0f} m)"
                 + (f"  [floor {floor:g} applied]" if floor else ""))
-            out("   " + "  ".join(f"{a}->{b}: {k:.3f}{'!' if not (sane[0] <= k <= sane[1]) else ' '}"
-                                for a, b, k in segs))
+            out("   spline    " + _segLine(segs, sane))
+            if sport == "TF" and offsets and any(k[0] == pool for k in offsets):
+                for b in range(max(n_band, 1)):
+                    fe = effective(f, pool, offsets, b)
+                    segs_b = segments(fe)
+                    flagged += sum(1 for s_ in segs_b if not (sane[0] <= s_[2] <= sane[1]))
+                    tag = (f"band {b} (~{BAND_ANCHORS[b]})" if b < len(BAND_ANCHORS)
+                           else f"band {b}")
+                    out(f"   {tag:<10}" + _segLine(segs_b, sane)
+                        + "   <- spline + the solve's offsets: what a rating applies")
     out(f"\n{flagged} segment(s) outside [{sane[0]:.2f}, {sane[1]:.2f}] "
         "(! = the curve says something no runner does; see the header)")
     return flagged
@@ -91,8 +149,24 @@ def main():
     ap.add_argument("--pool", action="append", default=[])
     ap.add_argument("--floor", type=float, default=None,
                     help="show the curve with its local exponent held to this floor")
+    ap.add_argument("--npz", default=None,
+                    help="a solve file (engine/data/joint_difficulty.npz by default when "
+                         "it exists): its fitted event offsets are laid on the spline and "
+                         "the EFFECTIVE exponent per rating band is printed too")
     args = ap.parse_args()
-    report(pools=tuple(args.pool) or POOLS, floor=args.floor)
+    offsets, n_band = {}, 0
+    path = args.npz
+    if path is None:
+        import run_joint as rj
+        path = rj.buildParser().get_default("out")
+    if path and os.path.exists(path):
+        with np.load(path, allow_pickle=False) as z:
+            offsets, n_band = loadOffsets({k: z[k] for k in ("dist_offset", "dist_labels")
+                                           if k in z.files})
+        print(f"(event offsets from {path}: {len(offsets):,} (pool, distance, band) "
+              f"cells, {n_band} bands)" if offsets else
+              f"({path}: no event offsets in the file; spline only)")
+    report(pools=tuple(args.pool) or POOLS, floor=args.floor, offsets=offsets, n_band=n_band)
 
 
 if __name__ == "__main__":

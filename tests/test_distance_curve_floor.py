@@ -10,6 +10,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts")):
@@ -70,3 +72,24 @@ def test_the_check_reads_the_artifacts_exponents_back(monkeypatch):
     assert n_bad >= 1 and "!" in text
     n_after = dcc.report(pools=("college_m",), sports=("XC",), floor=1.04, out=lambda _s: None)
     assert n_after < n_bad
+
+
+def test_the_solves_offsets_lay_on_the_spline_per_band(monkeypatch):
+    knots, vals = _curve([1.12, 1.10, 1.09, 1.08, 1.08, 1.07, 1.07], d0=700.0, n=13)
+    art = {"kind": "distance_potential", "target": 5000.0, "pool_targets": {"hs_m": 5000.0},
+           "pools": {"hs_m|TF": {"knots": knots, "values": vals}},
+           "global": {"knots": knots, "values": vals}, "global_by_sport": {}}
+    monkeypatch.setattr(nd, "_SPLINES", art)
+    npz = {"dist_offset": np.array([0.02, -0.01, 0.0, 0.0]),
+           "dist_labels": np.array(["hs_m:800:b0", "hs_m:800:b1", "hs_m:3200:b0", "hs_m:3200:b1"])}
+    offsets, n_band = dcc.loadOffsets(npz)
+    assert n_band == 2 and offsets[("hs_m", 800, 0)] == 0.02
+    f, _t = dcc.factors("hs_m", "TF")
+    fe = dcc.effective(f, "hs_m", offsets, 0)
+    # a positive offset at 800 makes the 800 read faster: its multiplier falls
+    assert fe[800] < f[800] and fe[3200] == f[3200] and fe[1600] == f[1600]
+    lines = []
+    dcc.report(pools=("hs_m",), sports=("TF",), out=lines.append, offsets=offsets, n_band=n_band)
+    text = "\n".join(lines)
+    assert "spline" in text and "band 0" in text and "band 1" in text
+    assert dcc.loadOffsets(None) == ({}, 0)
