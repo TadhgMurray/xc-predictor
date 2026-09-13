@@ -450,7 +450,7 @@ class Manners:
         return self._insecure
 
     def get(self, url, max_bytes=MAX_BYTES, etag=None, modified=None,
-            insecure=False):
+            insecure=False, extra=None):
         """(bytes, content_type) or (None, reason). One attempt.
 
         `etag` / `modified`: the validators the last fetch of this URL came
@@ -467,6 +467,7 @@ class Manners:
             headers["If-None-Match"] = etag
         if modified:
             headers["If-Modified-Since"] = modified
+        headers.update(extra or {})
         self._local.etag = self._local.modified = None
         req = urllib.request.Request(url, headers=headers)
         kw = {"context": self._ctx()} if insecure else {}
@@ -491,7 +492,8 @@ class Manners:
             why = _reason(exc)
             if why == "ssl" and not insecure:
                 self.insecureHosts.add(urllib.parse.urlsplit(url).netloc)
-                return self.get(url, max_bytes, etag, modified, insecure=True)
+                return self.get(url, max_bytes, etag, modified, insecure=True,
+                                extra=extra)
             return None, why
 
 

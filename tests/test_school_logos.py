@@ -938,6 +938,36 @@ class Anet(unittest.TestCase):
         self.assertIn("manners.allowed = lambda url: (True, 0.0)", src)
         self.assertNotIn("default=True", src.split("--ignore-robots")[1][:200])
 
+    def test_it_sends_the_client_header_anet_s_own_site_sends(self):
+        """★ THE FIRST RUN GOT 200 application/json BACK WITH NO TEAM IN
+        IT, which is what an API answers when it does not recognise the
+        caller. scripts/scraper.py has sent anet-appinfo against
+        GetResultsData3 for a year; this sends the same."""
+        self.assertEqual(A.HEADERS.get("anet-appinfo"), "web:web:0:240")
+        src = read("scripts", "anet_teams.py")
+        self.assertEqual(src.count("extra=HEADERS"), 3,
+                         "both endpoints and the probe")
+
+    def test_the_failure_shows_what_came_back(self):
+        """A diagnosis that discards the body is not a diagnosis. That was
+        the actual bug the first time this ran."""
+        src = read("scripts", "anet_teams.py")
+        self.assertIn("What anet actually said", src)
+        self.assertIn('raw[:600].decode("utf-8", "replace")', src)
+        self.assertIn('ap.add_argument("--probe"', src)
+
+    def test_extra_headers_reach_the_request(self):
+        sent = {}
+
+        def urlopen(req, timeout=None, **kw):
+            sent.update(req.headers)
+            return _Resp(b"{}", "application/json")
+        real = S.urllib.request.urlopen
+        S.urllib.request.urlopen = urlopen
+        self.addCleanup(setattr, S.urllib.request, "urlopen", real)
+        S.Manners(rate=0).get("https://x.org/a", extra={"Anet-Appinfo": "z"})
+        self.assertEqual(sent.get("Anet-appinfo"), "z")
+
     def test_a_dead_endpoint_stops_the_run_early(self):
         src = read("scripts", "anet_teams.py")
         self.assertIn("if i == ABORT_AFTER and meta == 0:", src)

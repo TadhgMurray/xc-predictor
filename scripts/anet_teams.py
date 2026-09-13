@@ -44,6 +44,12 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
 from scrape_school_logos import (            # noqa: E402
     DDL, Manners, _tableExists, markShared, normalise, record, writeFile)
 
+# ! THE CLIENT HEADER anet's OWN SITE SENDS, copied from scripts/scraper.py,
+#   which has worked against /api/v1/Meet/GetResultsData3 for a year. The
+#   first run of this script got 200 application/json back with no team in
+#   it, which is what an API answers when it does not recognise the caller.
+HEADERS = {"anet-appinfo": "web:web:0:240", "Accept": "application/json"}
+
 API = "https://www.athletic.net/api/v1/TeamNav/Team?team={team}&sport={sport}&season={season}"
 CORE = "https://www.athletic.net/api/v1/TeamHome/GetTeamCore?teamId={team}&sport={sport}&year={season}"
 ABORT_AFTER = 20
@@ -268,13 +274,35 @@ def main():
     ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
     ap.add_argument("--no-logos", action="store_true",
                     help="metadata and addresses only, fetch no images")
+    ap.add_argument("--probe", type=int, default=None, metavar="TEAM",
+                    help="print both endpoints' whole response for one team "
+                         "and stop; no database, no writes")
     ap.add_argument("--ignore-robots", action="store_true",
                     help="fetch even where anet's robots.txt disallows it")
     ap.add_argument("--dir", default=None)
     args = ap.parse_args()
-    if not (args.write or args.dry_run):
-        ap.error("pass --dry-run or --write")
+    if not (args.write or args.dry_run or args.probe):
+        ap.error("pass --probe, --dry-run or --write")
     season = args.season or time.gmtime().tm_year
+    if args.probe:
+        manners = Manners(rate=0)
+        if args.ignore_robots:
+            manners.allowed = lambda url: (True, 0.0)
+        for name, tpl in (("TeamNav/Team", API), ("GetTeamCore", CORE)):
+            url = tpl.format(team=args.probe, sport="xc", season=season)
+            raw, why = manners.get(url, max_bytes=512 * 1024, extra=HEADERS)
+            print(f"\n=== {name} -> {why}\n{url}")
+            if raw is None:
+                continue
+            body = raw.decode("utf-8", "replace")
+            try:
+                got = json.loads(body)
+                print(f"  top-level keys: {sorted(got)[:20]}"
+                      if isinstance(got, dict) else f"  a {type(got).__name__}")
+                print(json.dumps(got, indent=2)[:3000])
+            except Exception:                             # noqa: BLE001
+                print(body[:1500])
+        return
     sports = [x.strip() for x in args.sports.split(",") if x.strip() in ("xc", "tf")]
     if not sports:
         ap.error("--sports takes xc, tf or xc,tf")
@@ -299,14 +327,14 @@ def main():
                 for sport in sports:
                     raw, why = manners.get(
                         API.format(team=team_id, sport=sport, season=season),
-                        max_bytes=512 * 1024)
+                        max_bytes=512 * 1024, extra=HEADERS)
                     got = parseTeam(raw) if raw is not None else None
                     team = team or got
                     divs = parseDivisions(raw) if raw is not None else []
                     if not divs and got is not None:
                         craw, _w = manners.get(
                             CORE.format(team=team_id, sport=sport, season=season),
-                            max_bytes=512 * 1024)
+                            max_bytes=512 * 1024, extra=HEADERS)
                         divs = parseDivisions(craw) if craw is not None else []
                     if divs and args.write:
                         units += storeDivisions(cur, team_id, sport, divs)
@@ -335,9 +363,12 @@ def main():
                     conn.rollback()
                     raise SystemExit(
                         f"  {ABORT_AFTER} calls, no team came back ({why}). "
-                        f"Nothing written. If that says 'robots', anet's "
-                        f"robots.txt disallows this and --ignore-robots is "
-                        f"the deliberate override.")
+                        f"Nothing written.\n"
+                        f"  What anet actually said:\n    "
+                        + (raw[:600].decode("utf-8", "replace") if raw else "(no body)")
+                        + "\n  If that is a challenge page, --ignore-robots does "
+                          "not help; if it says robots, it does. "
+                          "--probe <team> prints one whole response.")
                 if args.write and i % 100 == 0:
                     conn.commit()
                 if i % 100 == 0 or args.dry_run:
