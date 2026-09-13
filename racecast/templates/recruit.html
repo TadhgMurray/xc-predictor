@@ -24,7 +24,7 @@
     {% with share_title=p.name ~ " recruiting profile on Racecast", share_url=site_origin ~ "/recruit/" ~ p.person_id %}{% include "_share.html" %}{% endwith %}
   </div>
   <p class="meta">
-    {% if p.school %}{{ crest(p.school, p.state) }}<a href="/school/{{ p.school|urlencode }}{% if p.state %}?state={{ p.state }}{% endif %}">{{ p.school_label }}</a>{% else %} - {% endif %}
+    {% if p.school and p.school|is_team %}{{ crest(p.school, p.state) }}<a href="/school/{{ p.school|urlencode }}{% if p.state %}?state={{ p.state }}{% endif %}">{{ p.school_label }}</a>{% elif p.school %}{{ p.school_label }}{% else %} - {% endif %}
     {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
     · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
     · <a href="/compare?a={{ p.person_id }}">Compare</a>

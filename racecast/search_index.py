@@ -311,11 +311,15 @@ def _load_schools(conn):
         WHERE COALESCE(TRIM(school),'') <> '' AND school NOT LIKE '%<%'
         GROUP BY 1
     """)
+    from panels import isTeamName
     rows = []
     n_split = 0
     for r in cur.fetchall():
         s = r["school"]
-        if not s:
+        # ⚠ "Unattached" HAS NO PAGE. school_page 404s every name
+        #   isTeamName rejects, so a search hit for one is a hit that goes
+        #   nowhere (owner, 2026-09-13).
+        if not s or not isTeamName(s):
             continue
         # The school PAGE. This linked a filtered athlete search from
         # before /school existed, and the stale index outlived the
@@ -346,7 +350,15 @@ def _load_schools(conn):
 
 
 def _load_courses(conn):
-    """XC courses, sorted by result count."""
+    """XC courses, sorted by result count.
+
+    ⚠ ONE COURSE, ONE ROW. course_difficulties is keyed the way the engine
+      keys a cell, and under --era-years that is once per two-year era
+      ("XC:Crystal Springs@e3") -- so stripping only the prefix listed
+      every course several times in the search box (owner, 2026-09-13).
+      The eras are summed: a course's weight is all of its results, not
+      its latest era's."""
+    from courses import courseDisplayName
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     wr  = conn.cursor()
     cur.execute("""
@@ -354,15 +366,14 @@ def _load_courses(conn):
         FROM course_difficulties
         WHERE course_name LIKE 'XC:%'
     """)
-    rows = []
+    totals = {}
     for r in cur.fetchall():
-        clean = r["course_name"][3:]                 # strip 'XC:'
+        clean = courseDisplayName(r["course_name"])
         if clean:
-            rows.append((
-                "course", clean, "Cross Country",
-                f"/course/{clean}", clean.lower(), clean.lower(),
-                0, r["n_results"] or 0,
-            ))
+            totals[clean] = totals.get(clean, 0) + (r["n_results"] or 0)
+    rows = [("course", clean, "Cross Country", f"/course/{clean}",
+             clean.lower(), clean.lower(), 0, n)
+            for clean, n in sorted(totals.items())]
     _flush(wr, rows); conn.commit(); print(f"  courses: {len(rows):,}")
 
 

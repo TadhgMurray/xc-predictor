@@ -1727,6 +1727,93 @@ class Thumbs(unittest.TestCase):
         self.assertEqual(SL.thumbPath(big, 64), small)          # reused
 
 
+class NoDeadLinks(unittest.TestCase):
+    """★ "Unattached" HAS NO PAGE, and three separate places were offering
+    one anyway (owner, 2026-09-13). school_page 404s every name
+    panels.isTeamName rejects, so a link to one is a dead link, a search
+    hit for one goes nowhere, and a sitemap full of them costs crawl budget
+    and the sitemap's own credibility."""
+
+    def test_every_school_link_in_every_template_is_guarded(self):
+        import glob
+        import re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast", "templates",
+                                               "*.html"))):
+            name = os.path.basename(f)
+            if name in ("school.html", "school_prs.html"):
+                continue           # its own page: navigation, not a mention
+            with io.open(f, encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    if re.search(r'href="/school/', line):
+                        self.assertIn("is_team", line, f"{name}:{n}")
+
+    def test_the_sitemap_and_the_search_index_both_filter(self):
+        self.assertIn("if isTeamName(r[0])", read("racecast", "build_sitemap.py"))
+        self.assertIn("if not s or not isTeamName(s)",
+                      read("racecast", "search_index.py"))
+
+    def test_the_filter_rejects_what_it_should(self):
+        try:                            # panels imports psycopg2; the box has it
+            from panels import isTeamName
+        except ImportError as exc:      # pragma: no cover
+            self.skipTest(str(exc))
+        for junk in ("Unattached", "unattached", "Independent", "No Team",
+                     "SW Individuals -6 (AZ)"):
+            self.assertFalse(isTeamName(junk), junk)
+        for real in ("Amherst", "De La Salle", "Chisago Lakes/Rush City"):
+            self.assertTrue(isTeamName(real), real)
+
+
+class OneCourseOneUrl(unittest.TestCase):
+    """⚠ course_difficulties IS KEYED THE WAY THE ENGINE KEYS A CELL --
+    "XC:<venue>", and under --era-years once per two-year era. The site
+    links to the bare name. Anything building a URL off that table has to
+    come through courseDisplayName or it emits a URL nothing links to,
+    once per era."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        from courses import courseDisplayName
+        self.name = courseDisplayName
+
+    def test_the_prefix_and_the_era_both_come_off(self):
+        self.assertEqual(self.name("XC:Crystal Springs@e3"), "Crystal Springs")
+        self.assertEqual(self.name("XC:Crystal Springs"), "Crystal Springs")
+        self.assertEqual(self.name("TF:Hayward Field"), "Hayward Field")
+
+    def test_an_unprefixed_name_is_left_alone(self):
+        self.assertEqual(self.name("Mt. SAC"), "Mt. SAC")
+
+    def test_nothing_is_empty_rather_than_an_exception(self):
+        for junk in (None, "", "   ", "XC:", "XC:@e2"):
+            self.assertEqual(self.name(junk), "", repr(junk))
+
+    def test_the_eras_collapse_to_one_row(self):
+        keys = ["XC:Woodward Park@e1", "XC:Woodward Park@e2", "XC:Woodward Park"]
+        self.assertEqual({self.name(k) for k in keys}, {"Woodward Park"})
+
+    def test_both_builders_go_through_it(self):
+        self.assertIn("courseDisplayName", read("racecast", "build_sitemap.py"))
+        self.assertIn("courseDisplayName", read("racecast", "search_index.py"))
+
+
+class CollegeDirectoryScope(unittest.TestCase):
+    """⚠ THE DIRECTORY IS KEYED ON THE NAME ALONE, so every "Amherst" in
+    the country took Amherst College's NCAA DIII -- including Amherst,
+    Nebraska, which is a high school and a middle school (owner,
+    2026-09-13). And excluding the whole NAME from the exact pass then
+    denied Nebraska the units it does have."""
+
+    def test_the_campus_pass_is_gated_on_a_college_pool(self):
+        src = read("racecast", "build_ranking_results.py")
+        i = src.index("WHERE s.school = c.school")
+        self.assertIn("s.pool LIKE 'college", src[i:i + 120])
+
+    def test_and_it_no_longer_claims_the_name_from_everyone_else(self):
+        src = read("racecast", "build_ranking_results.py")
+        self.assertNotIn("s.school NOT IN (SELECT school FROM tmp_campus)", src)
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

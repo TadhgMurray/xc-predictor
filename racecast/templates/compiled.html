@@ -75,7 +75,7 @@
             {% for t in group.scores.teams %}
             <tr>
                 <td>{{ t.place }}</td>
-                <td>{{ crest(t.school, t.state) }}<a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label }}{% endif %}</a></td>
+                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label }}{% endif %}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
                 <td>{{ t.points }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO displace,
                    and hiding them makes a deep team look like a top-heavy one. #}
@@ -128,7 +128,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade if row.grade else " - " }}</td>
-                <td>{% if row.school %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %} - {% endif %}</td>
+                <td>{% if row.school and row.school|is_team %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% elif row.school %}{{ row.school|school_label }}{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %} - {% endif %}</td>
                 <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
                 <td>{{ row.score_place if row.score_place else " - " }}</td>

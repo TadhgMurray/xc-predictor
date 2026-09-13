@@ -53,6 +53,24 @@ _SORTS = {
 DISTANCES = (3000, 3200, 4000, 4828, 5000, 6000, 6437, 8000, 8047, 10000)
 
 
+# ★ ONE COURSE HAS ONE URL, AND course_difficulties DOES NOT HOLD IT.
+#   That table is keyed the way the ENGINE keys a cell -- "XC:<venue>",
+#   and since --era-years also "XC:<venue>@e2" once per two-year era. The
+#   site links to the bare venue name. Anything building a URL or a search
+#   row off that table has to come through here or it emits a URL the site
+#   never links to, once per era (2026-09-13: the sitemap was doing both,
+#   and the search box was listing every course several times).
+def courseDisplayName(key):
+    """"XC:Crystal Springs@e3" -> "Crystal Springs". The name the site's
+    own links use, and the only thing that belongs in a URL."""
+    name = str(key or "").strip()
+    for prefix in ("XC:", "TF:"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    return name.partition("@e")[0].strip()
+
+
 def parseFilters(args):
     """Read the query string into a bound-parameter dict, or (None, error)."""
     states = _multiValue(args, "state", upper=True)

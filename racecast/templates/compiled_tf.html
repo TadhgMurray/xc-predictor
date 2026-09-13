@@ -87,7 +87,7 @@
                     {% endif %}
                 </td>
                 {% endif %}
-                <td>{% if row.school %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% else %} - {% endif %}</td>
+                <td>{% if row.school and row.school|is_team %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}</td>
                 <td class="no-break">{{ row.display_result }}</td>
                 {% if not ev.is_field and not ev.is_relay %}<td>{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
                 {% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}

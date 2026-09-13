@@ -106,7 +106,7 @@
                 <td>{{ r.row_place }}</td>
                 <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
                 <td>{{ r.grade or " - " }}</td>
-                <td>{% if r.school %}{{ crest(r.school, header.state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% else %} - {% endif %}</td>
+                <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
                 <td>{{ r.display_result }}</td>
                 <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else " - " }}</td>
             </tr>

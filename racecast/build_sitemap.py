@@ -29,6 +29,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 MAX_PER_FILE = 45000
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -116,18 +117,35 @@ def collect(conn):
         #   disk and the step ran for hours (owner, 2026-09-08: "13d is
         #   taking forever"). In memory, with parallel workers, they are
         #   minutes. Session-only; nothing else sees it.
+        # ! LAZY, like everything else that reaches into the site's modules
+        #   from a builder: panels imports psycopg2, and importing it at
+        #   module scope makes this file unimportable anywhere that has not
+        #   got it -- which broke tests/test_sitemap.py, whose whole point
+        #   is that it needs no database.
+        from courses import courseDisplayName
+        from panels import isTeamName
         cur.execute("SET work_mem = '1GB'")
         cur.execute("SET max_parallel_workers_per_gather = 4")
+        # ⚠ "Unattached" IS NOT A PAGE. school_page 404s any name
+        #   panels.isTeamName rejects, so listing them here hands the
+        #   crawlers a sitemap full of 404s -- which costs crawl budget and
+        #   the sitemap's own credibility (2026-09-13).
         if _exists(cur, "school_identity"):
             cur.execute("""SELECT DISTINCT school FROM school_identity
                            WHERE is_primary AND school IS NOT NULL""")
             by_kind["schools"] = [("/school/" + quote(r[0], safe=""), None)
-                                  for r in cur.fetchall()]
+                                  for r in cur.fetchall() if isTeamName(r[0])]
+        # ⚠ AND ONE COURSE IS ONE URL. course_difficulties is keyed
+        #   "XC:<venue>", and under --era-years once per era as well, while
+        #   the site links to the bare name -- so this listed a URL nothing
+        #   links to, several times over. courseDisplayName is the one way
+        #   from that table's keys to a page.
         if _exists(cur, "course_difficulties"):
             cur.execute("""SELECT DISTINCT course_name FROM course_difficulties
                            WHERE course_name IS NOT NULL AND TRIM(course_name) <> ''""")
-            by_kind["courses"] = [("/course/" + quote(r[0], safe=""), None)
-                                  for r in cur.fetchall()]
+            seen = {courseDisplayName(r[0]) for r in cur.fetchall()}
+            by_kind["courses"] = [("/course/" + quote(n, safe=""), None)
+                                  for n in sorted(seen) if n]
         meets = []
         for table, fmt in (("meet_agg_xc", "/meet/xc/{}"), ("meet_agg_tf", "/meet/tf/{}")):
             if _exists(cur, table):

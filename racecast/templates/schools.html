@@ -28,13 +28,13 @@
   {% if colleges %}
   <h2 class="dir-h2">Colleges</h2>
   <ul class="dir-list">
-    {% for r in colleges %}<li>{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
+    {% for r in colleges if r.school|is_team %}<li>{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
   </ul>
   {% endif %}
   <h2 class="dir-h2">High schools, middle schools and clubs</h2>
   {% if others %}
   <ul class="dir-list">
-    {% for r in others %}<li>{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
+    {% for r in others if r.school|is_team %}<li>{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
   </ul>
   {% else %}
   <p class="meta">None yet.</p>
