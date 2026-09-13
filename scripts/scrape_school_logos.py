@@ -906,6 +906,27 @@ def stats(cur):
     ok, shared, n = (r["ok"], r["shared"], r["n"]) if isinstance(r, dict) else r
     out.append(f"  {ok:,} crests of {n:,} tried "
                f"({100.0 * ok / max(1, n):.1f}%), {shared:,} flagged as a district's")
+    # ⚠ "196 CRESTS" IS NOT 196 PICTURES. A source that serves a default
+    #   mascot for teams with no logo hands us one image over and over, and
+    #   the count of rows says nothing about it. The distinct-image count
+    #   does, and the biggest groups name the placeholders.
+    cur.execute("""SELECT count(DISTINCT sha) AS d FROM school_logo
+                   WHERE status = 'ok' AND sha IS NOT NULL""")
+    distinct = _one(cur.fetchone())
+    out.append(f"  {distinct:,} DISTINCT images among them "
+               f"({ok - distinct:,} rows are a repeat of one already seen)")
+    cur.execute("""SELECT count(DISTINCT school) AS n, min(kind) AS kind,
+                          min(source_url) AS url
+                   FROM   school_logo WHERE sha IS NOT NULL AND status = 'ok'
+                   GROUP  BY sha HAVING count(DISTINCT school) >= %s
+                   ORDER  BY 1 DESC LIMIT 5""", (SHARED_MIN,))
+    top = cur.fetchall()
+    if top:
+        out.append("  the images worn by the most schools (placeholders live here):")
+        for row in top:
+            n, kind, url = ((row["n"], row["kind"], row["url"])
+                            if isinstance(row, dict) else row)
+            out.append(f"    {n:,} schools  {kind or '?':<20} {(url or '')[:60]}")
     cur.execute("""SELECT kind, count(*) AS n FROM school_logo
                    WHERE status = 'ok' GROUP BY kind ORDER BY n DESC""")
     out.append("  where the crest came from:")
