@@ -1499,6 +1499,12 @@ def buildParser():
     #   athlete_ratings, results.speed_rating and pair_difficulty.npz from
     #   THIS solve, through joint_golive. --golive-dry builds all of it and
     #   writes only the npz, for a look before the irreversible part.
+    ap.add_argument("--difficulty", default="joint", choices=("joint", "bracket"),
+                    help="whose course numbers the go-live publishes: the joint "
+                         "solve's, or the bracket engine's fitted on the solve's "
+                         "residual (bracketDifficulties)")
+    ap.add_argument("--bracket-window", type=float, default=21.0)
+    ap.add_argument("--bracket-top", type=float, default=0.5)
     ap.add_argument("--golive", action="store_true")
     ap.add_argument("--golive-dry", action="store_true")
     ap.add_argument("--anchor", default="career",
@@ -1621,6 +1627,148 @@ def applyImplications(args, ap):
               f"log-time. No beta, no winter-gain pin, curve free: the "
               f"fall-to-spring change is fitness.")
     return args
+
+
+# ------------------------------------------------------------------ #
+# THE COURSE ORDERING FROM THE OWNER'S METHOD (2026-09-13)
+# ------------------------------------------------------------------ #
+#
+# ★ WHY. On the same 537,107 held-out rows the bracket engine predicts a
+#   new race at a known course with error sd 0.0423 against the joint
+#   solve's 0.0472, in both sports, in every band of course thickness
+#   (scripts/bracket_holdout.py, "SAME ROWS"). The owner: "the bracket
+#   engine could help ... specifically the course ordering, so we'd only
+#   have to worry about the cross-sport ordering and the distance spline".
+#   So under --difficulty bracket the joint solve still fits everything it
+#   fits -- the curve, the tilt, the event offsets, the altitude credit,
+#   the sport level, the race-day terms -- and then the COURSE numbers are
+#   replaced by the bracket engine's, and the abilities recomputed to
+#   match. The site's ratings, boards and conversions read the swapped
+#   numbers through the same go-live.
+#
+# ★ HOW. Every term of the solve except the course, the day and the
+#   ability is taken off each row (rowPrediction less those three), so
+#   the engine brackets z = ability + tilt * (course + day) + noise: the
+#   curve, the event offsets and the altitude are not left for a course to
+#   absorb, and a track hosting 800s is not "easier" than one hosting
+#   3200s. The engine's cells are the design's cells, its ratings and
+#   tilt the solve's. Its difficulties are recentred exactly as
+#   recentreLevels centres d (the outdoor cells' unweighted mean per sport
+#   is the zero; indoor cells keep their level), the asserted or fitted
+#   sport level is added back, and each ability becomes the solve's own
+#   weighted mean of its rows' residuals against the new courses -- the
+#   ability block of the normal equations has no penalty, so that IS the
+#   solve's ability given these courses. Ratings follow from abilities as
+#   in the solve. The cell variance is the fitted race-day variance over
+#   the races behind the cell plus the prior, which is what the engine
+#   averaged.
+def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
+                        window=21.0, top=0.5, verbose=True):
+    """Swap the joint solve's course difficulties for the bracket engine's,
+    in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
+    delta kept as delta_joint). Returns a dict of what happened."""
+    import bracket as bk
+    import bracket_engine as be
+    t0 = time.time()
+    b = D.unpack(out["theta"])
+    h = np.asarray(out["h"], dtype=np.float64)
+    if h.ndim == 0 or h.size != D.n:
+        h = np.full(D.n, float(np.mean(h)))
+    pred = js.rowPrediction(b, D, h, out["amp"])          # fits y less the asserted offsets
+    u_row = (np.asarray(b["u"], dtype=np.float64)[D.race] if b["u"].size == D.n_race
+             else np.zeros(D.n))
+    mu_full = np.asarray(out["mu"], dtype=np.float64)
+    g_row = np.asarray(D.group_row)
+    # everything but the ability, the course and the day; the fitted indoor
+    # term stays IN z so an indoor cell's number carries its level, as delta does
+    rest = pred - b["a"][D.athlete] - h * (b["d"][D.cell] + u_row)
+    if b.get("ind") is not None and getattr(D, "n_ind", 0):
+        rest = rest - h * D.ind_w * b["ind"][D.ind_idx]
+    rest = rest + h * (mu_full[g_row] - b["mu"][g_row])   # the sport level, asserted or fitted
+    y = np.asarray(y, dtype=np.float64)
+    z = y - rest                     # ability + h*(course + day) + indoor level + noise; no sport level
+    # the design's rows and codes, for the engine
+    sub = bk.subsetCols(cols, keep)
+    sub["_season"] = np.asarray(D.athlete, dtype=np.int64)
+    sub["_race"] = np.asarray(D.race, dtype=np.int64)
+    sub["_cell"] = np.asarray(D.cell, dtype=np.int64)
+    keys = [str(k) for k in cols["course_keys"]]
+    cell_keys = [str(k) for k in (getattr(D, "course_keys", None) or keys)]
+    key_to_base = {k: i for i, k in enumerate(keys)}
+    base_of_cell = np.array([key_to_base[k.rpartition("@e")[0] if "@e" in k else k]
+                             for k in cell_keys], dtype=np.int64)
+    pool_of_raw, _names = poolCodes(cols["athlete_keys"])
+    codes = dict(n_season=int(D.n_ath), n_race=int(D.n_race), n_cell=int(D.n_cell),
+                 cell_keys=cell_keys, base_of_cell=base_of_cell,
+                 era_years=int(any("@e" in k for k in cell_keys)), pool_of_raw=pool_of_raw,
+                 pool_names=list(pool_names), n_base=len(keys), keys=keys)
+    npz_like = {"rating": out["rating"]} if out.get("rating") is not None else None
+    f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
+               h_row=h, verbose=verbose)
+    D_b = np.asarray(f["D"], dtype=np.float64).copy()
+    # recentre as recentreLevels centres d: the outdoor cells' unweighted
+    # mean per sport is the zero; indoor cells keep their level
+    g = np.asarray(D.group_of_cell)
+    is_indoor = np.array([k.split("@", 1)[0].endswith(":in") for k in cell_keys], dtype=bool)
+    for gg in range(int(g.max()) + 1):
+        m = (g == gg) & ~is_indoor
+        if not m.any():
+            m = g == gg
+        if m.any():
+            D_b[g == gg] -= float(D_b[m].mean())
+    delta_b = mu_full[g] + D_b
+    # abilities given the new courses: the solve's own weighted means
+    w = np.asarray(out["weights"], dtype=np.float64)
+    resid = z - h * (D_b[D.cell] + u_row)                  # what is left for the ability
+    den = np.bincount(D.athlete, weights=w, minlength=D.n_ath)
+    a_new = np.where(den > 0, np.bincount(D.athlete, weights=w * resid, minlength=D.n_ath)
+                     / np.maximum(den, 1e-12), b["a"])
+    gauge = np.asarray(out["ability"], dtype=np.float64) - b["a"]   # the curve's gauge shift
+    delta_joint = np.asarray(out["delta"], dtype=np.float64).copy()
+    a_joint = b["a"].copy()
+    out["delta_joint"] = delta_joint
+    out["delta"] = delta_b
+    out["d"] = D_b - (out["indoor_cell"] if out.get("indoor_cell") is not None else 0.0)
+    out["ability"] = a_new + gauge
+    if "ability_raw" in out:
+        out["ability_raw"] = a_new
+    if athlete_pool is not None:
+        out["rating"] = js.ratingsFromAbility(a_new, np.asarray(athlete_pool),
+                                              out["n_races"], len(pool_names))
+    sig_u2 = np.atleast_1d(np.asarray(out["sigma_u2"], dtype=np.float64))
+    su2 = sig_u2[g] if sig_u2.size == int(g.max()) + 1 else np.full(D.n_cell, float(sig_u2.mean()))
+    votes = np.asarray(f["votes"], dtype=np.float64)
+    out["cell_var"] = su2 / (votes + float(f["prior_races"]))
+    out["cell_se"] = np.sqrt(out["cell_var"])
+    out["bracket_votes"] = votes
+    out["bracket_races_per_cell"] = np.asarray(f["races_per_cell"])
+    out["difficulty_source"] = "bracket"
+    # the report: what moved
+    solved = np.bincount(D.cell, minlength=D.n_cell) > 0
+    no_votes = solved & (votes <= 0)
+    m = solved & (votes > 0)
+    corr = float(np.corrcoef(delta_b[m], delta_joint[m])[0, 1]) if m.sum() > 2 else np.nan
+    move = delta_b[m] - delta_joint[m]
+    info = dict(seconds=time.time() - t0, n_cells=int(solved.sum()), n_voted=int(m.sum()),
+                n_no_votes=int(no_votes.sum()), corr=corr,
+                median_move=float(np.median(np.abs(move))) if m.any() else np.nan,
+                p95_move=float(np.percentile(np.abs(move), 95)) if m.any() else np.nan,
+                ability_corr=float(np.corrcoef(a_new, a_joint)[0, 1]),
+                ability_shift=float(np.median(np.abs(a_new - a_joint))))
+    print(f"[joint] difficulty = BRACKET ENGINE (--difficulty bracket): {info['n_voted']:,} of "
+          f"{info['n_cells']:,} cells with votes in {info['seconds']:.0f}s; {info['n_no_votes']:,} "
+          f"cells without a race of 5+ voters sit at their sport's average. Against the "
+          f"joint solve's courses: corr {corr:.3f}, median |move| {100 * info['median_move']:.2f}%, "
+          f"p95 {100 * info['p95_move']:.2f}%. Abilities recomputed: corr "
+          f"{info['ability_corr']:.4f}, median |shift| {100 * info['ability_shift']:.2f}%.")
+    races = np.asarray(f["races_per_cell"])
+    for lo, hi, lab in ((1, 1, "1"), (2, 3, "2-3"), (4, 9, "4-9"), (10, 10**9, "10+")):
+        mm = m & (races >= lo) & (races <= hi)
+        if mm.sum() >= 10:
+            print(f"        courses on {lab:>4} races: {int(mm.sum()):>8,}   "
+                  f"median |move| {100 * float(np.median(np.abs(delta_b[mm] - delta_joint[mm]))):.2f}%   "
+                  f"sd of the number {100 * float(np.std(delta_b[mm])):.2f}% (joint {100 * float(np.std(delta_joint[mm])):.2f}%)")
+    return info
 
 
 def guardedReport(name, fn):
@@ -1763,6 +1911,9 @@ def main():
               f"({abs(args.sport_gap_delta) * 50:.1f} points at a 100 rating, "
               f"{abs(args.sport_gap_delta) * 75:.1f} at 150)")
 
+    if getattr(args, "difficulty", "joint") == "bracket":
+        bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
+                            window=args.bracket_window, top=args.bracket_top)
     delta = out["delta"]
     rows_per_cell = np.bincount(D.cell, minlength=D.n_cell).astype(np.float64)
     solved = rows_per_cell > 0
@@ -1814,6 +1965,11 @@ def main():
                 athlete_pool=athlete_pool.astype(np.int16),
                 n_races=out["n_races"].astype(np.int32),
                 pool_names=np.array(pool_names))
+    save["difficulty_source"] = np.array([str(out.get("difficulty_source") or "joint")])
+    if out.get("delta_joint") is not None:
+        save["delta_joint"] = out["delta_joint"]
+        save["bracket_votes"] = out["bracket_votes"]
+        save["bracket_races_per_cell"] = out["bracket_races_per_cell"]
     if out.get("rating") is not None:
         save["rating"] = out["rating"].astype(np.float32)
     if out.get("beta") is not None:

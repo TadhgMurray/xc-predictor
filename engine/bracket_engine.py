@@ -69,12 +69,15 @@ PRIOR_RACES = 2.0
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_GROUP,
         race_sat=RACE_SAT, min_voters=5, tilt=True, use_curve=True, tol=1e-5,
-        verbose=False, codes=None, prior_rows=None):
+        verbose=False, codes=None, prior_rows=None, z=None, h_row=None):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
     prior_races / prior_group / race_sat: see the note above; prior_rows
-    is the old name of prior_races and still accepted.
+    is the old name of prior_races and still accepted. z: the response per
+    row, given instead of ln(norm) less the curve (run_joint hands in the
+    joint solve's residual with every term but the course and the day
+    taken off); h_row: the tilt per row, given instead of computed.
 
     codes: bracket.packCodes' codes, with the pack carrying `_season`,
     `_race`, `_cell` numbered over the WHOLE pack. Then `cols` may be any
@@ -120,22 +123,30 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                                  dtype=np.int64) if era_years else np.arange(n_cell))
         season, n_season = pe.athleteSeasonCodes(ath_raw, year)
         race, n_race = rj.raceCodes(course, days)
-    ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     # the athlete's rating (for the voters and the tilt) and curve point
     rating = None
     if npz is not None and "rating" in npz and np.asarray(npz["rating"]).size == n_season:
         rating = np.asarray(npz["rating"], dtype=np.float64)[season]
     curve = np.zeros(n)
-    if use_curve and npz is not None and "curve" in npz and "doy" in cols:
-        if pool_of_raw is None:
-            pool_of_raw, _names = rj.poolCodes(cols["athlete_keys"])
-        curve = bk.curveOnRows(npz, pool_of_raw[ath_raw], cols["doy"], rating)
-    z = ln - curve
-    h = np.ones(n)
-    if tilt and rating is not None:
-        r_clip = np.clip(np.nan_to_num(rating, nan=100.0), js.TILT_RATING_LO,
-                         js.TILT_RATING_HI)
-        h = 1.0 + js.TILT_K * (r_clip - 100.0) / 10.0
+    if z is not None:
+        z = np.asarray(z, dtype=np.float64)
+        assert z.size == n, "z must be one value per row"
+    else:
+        ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
+        if use_curve and npz is not None and "curve" in npz and "doy" in cols:
+            if pool_of_raw is None:
+                pool_of_raw, _names = rj.poolCodes(cols["athlete_keys"])
+            curve = bk.curveOnRows(npz, pool_of_raw[ath_raw], cols["doy"], rating)
+        z = ln - curve
+    if h_row is not None:
+        h = np.asarray(h_row, dtype=np.float64)
+        assert h.size == n, "h_row must be one value per row"
+    else:
+        h = np.ones(n)
+        if tilt and rating is not None:
+            r_clip = np.clip(np.nan_to_num(rating, nan=100.0), js.TILT_RATING_LO,
+                             js.TILT_RATING_HI)
+            h = 1.0 + js.TILT_K * (r_clip - 100.0) / 10.0
     valid = (course >= 0) & np.isfinite(z)
     ref = valid & train
     # the voters: the top fraction of each race's TRAINING field

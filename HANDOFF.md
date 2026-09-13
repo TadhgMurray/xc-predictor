@@ -239,6 +239,44 @@ from the sampled rows; every diagnostic now maps (course, era) through
 the solve file's own keys and `era_base_year` (`bracket.cellsFromKeys`),
 so any subset of rows lands on the file's cells.
 
+**The switch is built: `XCP_DIFFICULTY=bracket` (2026-09-13).** The owner:
+"the bracket engine could help ... specifically the course ordering, so
+we'd only have to worry about the cross-sport ordering and the distance
+spline." Under `--difficulty bracket` (`run_joint.bracketDifficulties`)
+the joint solve runs as before and fits everything it fits; then every
+term but the course, the day and the ability is taken off each row and
+the bracket engine is fitted on that residual, on the design's own cells
+with the solve's ratings and tilt, so the curve, the event offsets, the
+altitude credit and the sport level are not left for a course to absorb.
+Its numbers are recentred the way the solve centres its own (the outdoor
+cells' unweighted mean per sport is the zero), the sport level is added
+back, each ability becomes the solve's weighted mean of its rows'
+residuals against the new courses (the ability block has no penalty, so
+that is the solve's ability given these courses), ratings follow, and
+the cell variance is the fitted race-day variance over the races behind
+the cell. The go-live publishes the result through the same code. The
+npz carries `difficulty_source`, the joint's numbers as `delta_joint`,
+and the votes and races per cell. Cells with no race of five voters sit
+at their sport's average.
+
+Measured on the planted era world against the planted truth
+(`tests/test_bracket_golive.py`): both engines within 0.8% rms on XC and
+outdoor tracks; on indoor cells the bracket engine 0.5% and the joint
+solve 4.7%. The joint pins the indoor cells' mean to the asserted level
+and discards their real mean; under the bracket path the indoor level is
+MEASURED from the same athletes' indoor and outdoor rows, and the
+assertion (`XCP_INDOOR_LEVEL`) only reaches the ratings the engine uses
+to pick voters. That is the "indoor to outdoor" thing to watch after run
+22: `scripts/diagnose.py --only indoor` against the published indoor
+cells' mean.
+
+Run 22:
+
+```
+XCP_SPORT_LEVEL=0.0583 XCP_ERA_YEARS=2 XCP_ALTITUDE=1 XCP_INDOOR_LEVEL=0.003 \
+XCP_IMPORTANCE=none XCP_DIFFICULTY=bracket bash deploy/run_pipeline.sh --from 8
+```
+
 **Run 21's fair comparison, and shrinkage (2026-09-13).** On the 537,107
 held-out rows both engines cover, with the joint model's own per-row
 predictions aligned to the pack (100% overlap): bracket engine 0.0426,

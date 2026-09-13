@@ -540,8 +540,14 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   0.01): with a few race days per era that number, against
   #   sigma_u / sqrt(days), decides how far a venue can move. The holdout
   #   carries the same.
+  # ★ XCP_DIFFICULTY=bracket publishes the bracket engine's course numbers
+  #   (run_joint.bracketDifficulties): the solve still fits everything
+  #   else, the courses come from the owner's method, the abilities are
+  #   recomputed to match. Default joint. The holdout and the ladder score
+  #   the joint solve either way; 08d compares the two on the same rows.
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
+      ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
       ${XCP_NO_IMPORTANCE:+--no-importance} \
