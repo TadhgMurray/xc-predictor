@@ -472,12 +472,41 @@ def splitCollisionTeams(cur, rows):
             p, st = (row["person_id"], row["state"]) \
                 if isinstance(row, dict) else (row[0], row[1])
             home[p] = st
+
+    # ⚠ A RAW HOME STATE SHATTERS A COLLEGE TEAM (owner, 2026-09-13: Amherst
+    #   scored 318 at a DIII meet with all seven place columns blank, while
+    #   its seven runners sat in the results right there). A home state is
+    #   where an athlete races MOST, and a college races away most weekends
+    #   -- so Amherst's seven came out MA, CT, NY and so on, this split them
+    #   into four pseudo-teams of one and two, none of them reached five
+    #   scorers, none was scoreable, and the published graft had nothing to
+    #   attach. Exactly the BYU failure school_identity documents in its own
+    #   header.
+    #
+    # ! AND THE CURE WAS ALREADY IN THE DATABASE. school_state_alias exists
+    #   to say which resolved cluster each original home state went to --
+    #   "for readers keyed on an athlete's home state", which is precisely
+    #   what this is. It just was not asked.
+    alias = {}
+    if multi and _has("school_state_alias"):
+        cur.execute("SELECT school, home_state, state FROM school_state_alias "
+                    "WHERE school = ANY(%s)", (sorted(multi),))
+        for row in cur.fetchall():
+            sc, hs, st = ((row["school"], row["home_state"], row["state"])
+                          if isinstance(row, dict) else (row[0], row[1], row[2]))
+            alias[(sc, hs)] = st
+
     for r in rows:
         s = r.get("school")
         if s in multi:
-            # the athlete's own home state; an unknown falls to the name's
-            # biggest cluster so nobody vanishes from scoring
-            st = home.get(r.get("person_id")) or clus[s][0]
+            # the athlete's home state, resolved through the merge that
+            # school_identity already did, then clamped to a cluster the
+            # name actually has -- an unknown or a travel state falls to
+            # the biggest, so nobody vanishes from scoring
+            st = home.get(r.get("person_id"))
+            st = alias.get((s, st), st)
+            if st not in clus[s]:
+                st = clus[s][0]
             r["school"] = f"{s}{_KEYSEP}{st}"
 
 

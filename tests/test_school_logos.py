@@ -1914,6 +1914,95 @@ class LevelSplit(unittest.TestCase):
         self.assertIn("DETECTABLE error", src)
 
 
+class CollegeTeamNotShattered(unittest.TestCase):
+    """★ Amherst SCORED 318 AT A DIII MEET WITH ALL SEVEN PLACE COLUMNS
+    BLANK, while its seven runners sat in the results right there (owner,
+    2026-09-13).
+
+    A home state is where an athlete races MOST, and a college races away
+    most weekends -- so Amherst's seven came out MA, CT and NY, the
+    collision split put them in three pseudo-teams, none reached five
+    scorers, none was scoreable, and the published-score graft had nothing
+    to attach. The same failure school_identity documents for BYU. And the
+    cure was already in the database: school_state_alias exists to say
+    which cluster each original home state resolved to."""
+
+    class _Cur:
+        """Answers the three queries splitCollisionTeams asks."""
+
+        def __init__(self, alias=True):
+            self.alias, self.last = alias, None
+
+        def execute(self, sql, args=None):
+            self.last = (sql, args)
+
+        def fetchone(self):
+            sql, args = self.last
+            want = (args or ("",))[0]
+            present = want != "school_state_alias" or self.alias
+            return {"present": present}
+
+        def fetchall(self):
+            sql, _a = self.last
+            if "FROM school_identity" in sql:          # two real Amhersts
+                return [{"school": "Amherst", "state": "MA"},
+                        {"school": "Amherst", "state": "NE"}]
+            if "FROM person_home_state" in sql:        # a college travels
+                return [{"person_id": 1, "state": "MA"},
+                        {"person_id": 2, "state": "CT"},
+                        {"person_id": 3, "state": "NY"},
+                        {"person_id": 4, "state": "MA"},
+                        {"person_id": 5, "state": "VT"}]
+            if "FROM school_state_alias" in sql:
+                return [{"school": "Amherst", "home_state": h, "state": "MA"}
+                        for h in ("CT", "NY", "VT")]
+            return []
+
+    def rows(self):
+        return [{"school": "Amherst", "person_id": i} for i in range(1, 6)]
+
+    def split(self, alias=True):
+        from meet_compile import splitCollisionTeams, _KEYSEP
+        rows = self.rows()
+        splitCollisionTeams(self._Cur(alias=alias), rows)
+        return [r["school"] for r in rows], _KEYSEP
+
+    def setUp(self):
+        try:
+            import meet_compile                        # noqa: F401
+        except ImportError as exc:                     # pragma: no cover
+            self.skipTest(str(exc))
+
+    def test_the_seven_stay_one_team(self):
+        got, sep = self.split()
+        self.assertEqual(set(got), {f"Amherst{sep}MA"},
+                         "a travel state must not mint a second Amherst")
+
+    def test_and_the_other_real_amherst_is_still_a_different_team(self):
+        """The split has to keep doing its actual job: Amherst NE is a
+        different school from Amherst MA."""
+        from meet_compile import splitCollisionTeams, _KEYSEP
+        rows = self.rows() + [{"school": "Amherst", "person_id": 9}]
+        cur = self._Cur()
+        real = cur.fetchall
+
+        def fetchall():
+            got = real()
+            if got and "home_state" not in got[0] and "person_id" in got[0]:
+                return got + [{"person_id": 9, "state": "NE"}]
+            return got
+        cur.fetchall = fetchall
+        splitCollisionTeams(cur, rows)
+        self.assertEqual(rows[-1]["school"], f"Amherst{_KEYSEP}NE")
+        self.assertEqual(rows[0]["school"], f"Amherst{_KEYSEP}MA")
+
+    def test_a_state_that_is_not_a_cluster_falls_to_the_biggest(self):
+        """Without the alias table the travel states are unknown -- they
+        must still not become teams of their own."""
+        got, sep = self.split(alias=False)
+        self.assertEqual(set(got), {f"Amherst{sep}MA"})
+
+
 class Wiring(unittest.TestCase):
     """Every place a school is named, and the rule that a school without a
     crest is unchanged."""

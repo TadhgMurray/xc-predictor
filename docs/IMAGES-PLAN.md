@@ -677,3 +677,49 @@ The one exception is not a precedence rule but arithmetic: an image four
 hundred schools already wear is hidden by the shared sweep, so installing
 it OVER a good crest does not swap one picture for another -- it leaves
 that school with none. `--replace` overrides even that.
+
+
+## A live pool case to measure the fix against (2026-09-13)
+
+Logged at the owner's request. One NCAA DIII men's race, nine athletes who
+ran a COLLEGE race and were pooled as HIGH SCHOOLERS -- each shows a
+school-grade number and no rating at all:
+
+| place | athlete | grade | school |
+|---|---|---|---|
+| 47 | Stan Craig | 11 | Amherst (MA) |
+| 88 | Jonathan Cobb | 12 | Lynchburg (VA) |
+| 99 | Jacob Slater | 11 | Case Western (OH) |
+| 105 | Nathaniel Aronson | 10 | Bates (ME) |
+| 202 | Zach Utz | 12 | Middlebury (VT) |
+| 209 | Lucas Guidone | 12 | Hope (MI) |
+| 262 | Brandon Massman | 12 | UW-Whitewater (WI) |
+| 290 | Everett Mosher | 10 | WPI (MA) |
+| 291 | Robert Cooper | 11 | Washington and Lee (VA) |
+
+**Stan Craig was Amherst's number one scorer**, so this is not confined to
+one athlete's page -- it silently removes a team's top runner from its
+rating. Nine in one race is the rate to beat.
+
+Every one of them is a row whose SCHOOL's level is college while its OWN
+pool says hs: the exact disagreement `school_level` is built to make
+detectable. When the pool work lands, re-run this race and count.
+
+## Amherst's blank place columns -- a travelling college team, shattered
+
+Amherst scored 318 at that meet with all seven place columns empty, while
+its seven runners sat in the results.
+
+`splitCollisionTeams` stamps a colliding school name with each athlete's
+HOME state, and a home state is where an athlete races most. A college
+races away most weekends, so Amherst's seven came out MA, CT and NY: the
+split made three pseudo-teams, none reached five scorers, none was
+scoreable, and the published-score graft had nothing to attach. Exactly
+the BYU failure `school_identity` documents in its own header.
+
+The cure was already in the database. `school_state_alias` exists to record
+which cluster each original home state resolved to -- "for readers keyed on
+an athlete's home state", which is precisely what this is. It simply was
+not asked. Resolved through the alias and then clamped to a cluster the
+name actually has, so a travel state can never mint a second team, while
+Amherst NE stays the different school it is.

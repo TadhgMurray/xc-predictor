@@ -306,6 +306,31 @@ def applyCollegeDirectory(cur):
 #    That is the road to settling pools once and for all. This table is
 #    the first piece of it. Do not drop it for looking cosmetic.
 #
+# ★★ A LIVE CASE TO CHECK THE FIX AGAINST (owner, 2026-09-13). Kept
+#    concrete on purpose: when the pool work lands, these should stop
+#    being wrong, and if they do not the work is not done.
+#
+#    NCAA DIII men's race (Amherst scored 318). Every one of these ran a
+#    COLLEGE race and was pooled as a HIGH SCHOOLER, so each shows a
+#    school-grade number and NO RATING at all:
+#
+#       47   Stan Craig          grade 11   Amherst (MA)   24:49.3
+#       88   Jonathan Cobb       grade 12   Lynchburg (VA) 25:13.9
+#       99   Jacob Slater        grade 11   Case Western   25:18.6
+#      105   Nathaniel Aronson   grade 10   Bates (ME)     25:22.2
+#      202   Zach Utz            grade 12   Middlebury     26:03.3
+#      209   Lucas Guidone       grade 12   Hope (MI)      26:05.7
+#      262   Brandon Massman     grade 12   UW-Whitewater  26:44.7
+#      290   Everett Mosher      grade 10   WPI (MA)       29:01.4
+#      291   Robert Cooper       grade 11   Wash. & Lee    30:43.2
+#
+#    Stan Craig was Amherst's NUMBER ONE SCORER, so the error is not
+#    confined to one athlete's page: it silently removes the top runner
+#    from a team's rating. Nine of them in a single race is the rate to
+#    beat, and every one is a row whose school's LEVEL is college while
+#    its own pool says hs -- the exact disagreement school_level makes
+#    detectable.
+#
 # ! A SEPARATE TABLE, NOT A COLUMN ON school_identity -- DELIBERATELY.
 #   The identity table's key is (school, state) and two passes above
 #   collapse states into one row (co-racing merge, college directory).
