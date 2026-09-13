@@ -800,6 +800,81 @@ class Svg(unittest.TestCase):
 
 
 # ===================================================================== #
+#  ATHLETIC.NET: THE IDS WE ALREADY HAVE                                #
+# ===================================================================== #
+
+import anet_school_logos as A                                     # noqa: E402
+
+
+class Anet(unittest.TestCase):
+    """No crawl: every result row already carries anet's TeamID, so the
+    only request is the image itself."""
+
+    class _Cur:
+        def __init__(self, tables=("school_identity", "person_home_state")):
+            self.tables, self.sql, self.params = tables, [], []
+
+        def execute(self, sql, params=None):
+            self.sql.append(sql)
+            self.params.append(params)
+
+        def fetchone(self):
+            # _tableExists passes the name as a PARAMETER, not in the SQL
+            args = self.params[-1] or ()
+            want = (args[0] if args else "").replace("public.", "")
+            return [f"public.{want}" if want in self.tables else None]
+
+        def fetchall(self):
+            return []
+
+    def test_the_team_is_modal_per_school_AND_state(self):
+        """Two real schools share the name "Kingston" and anet gives them
+        two ids -- the same split school_identity already draws."""
+        cur = self._Cur()
+        A.teamIds(cur)
+        sql = cur.sql[-1]
+        self.assertIn("DISTINCT ON (school, state)", sql)
+        self.assertIn("GROUP  BY 1, 2, 3", sql)
+        self.assertIn("person_home_state", sql)
+        self.assertIn("ORDER  BY si.n_athletes DESC", sql)
+
+    def test_it_reads_both_sports_results_tables(self):
+        cur = self._Cur()
+        A.teamIds(cur)
+        self.assertIn("FROM results\n", cur.sql[-1])
+        self.assertIn("FROM results_tf\n", cur.sql[-1])
+
+    def test_fill_leaves_a_crest_alone_and_replace_does_not(self):
+        cur = self._Cur()
+        A.teamIds(cur)
+        self.assertIn("l.status IS DISTINCT FROM 'ok'", cur.sql[-1])
+        cur = self._Cur()
+        A.teamIds(cur, replace=True)
+        self.assertNotIn("l.status IS DISTINCT FROM 'ok'", cur.sql[-1])
+
+    def test_an_override_of_none_is_honoured_here_too(self):
+        cur = self._Cur()
+        A.teamIds(cur)
+        self.assertIn("COALESCE(lower(l.override), '') <> 'none'", cur.sql[-1])
+
+    def test_it_survives_a_database_without_home_states(self):
+        cur = self._Cur(tables=("school_identity",))
+        A.teamIds(cur)
+        self.assertNotIn("person_home_state", cur.sql[-1])
+        self.assertIn("'' AS state", cur.sql[-1])
+
+    def test_it_refuses_to_run_without_school_identity(self):
+        with self.assertRaises(SystemExit):
+            A.teamIds(self._Cur(tables=()))
+
+    def test_a_wrong_url_template_stops_the_run_early(self):
+        src = read("scripts", "anet_school_logos.py")
+        self.assertIn("if i == ABORT_AFTER and got == 0:", src)
+        self.assertIn("conn.rollback()", src)
+        self.assertLessEqual(A.ABORT_AFTER, 25)
+
+
+# ===================================================================== #
 #  THE WHOLE THING, AGAINST A REAL SERVER ON LOOPBACK                   #
 # ===================================================================== #
 

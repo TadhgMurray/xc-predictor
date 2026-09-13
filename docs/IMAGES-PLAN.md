@@ -382,3 +382,47 @@ scraper works in, so `--limit` reads straight off it.
 to the scraper can crest a school it has no URL for. Only `--wikidata` was
 ever loaded. That is the next piece of work, and it is directory work, not
 crawler work.
+
+
+---
+
+# ATHLETIC.NET (owner's call, 2026-09-13)
+
+`scripts/anet_school_logos.py`.
+
+The owner decided to take the crests from anet after the open-web routes
+capped out around 11,000 addresses. Two things about that are worth
+stating plainly, because they change what the job should look like.
+
+**The logos are not anet's.** They are the schools' own marks; anet hosts
+them. So there is no copyright of anet's being taken. What is at stake is
+their terms of service and their bandwidth.
+
+**And the bandwidth cost is almost nothing, because we already have the
+ids.** Every result row we have ever scraped carries anet's `TeamID`
+(`results.team_id` and `results_tf.team_id`), so there is no crawl: no team
+pages are read, no search is run, nothing is discovered. One image request
+per school, once, cached forever. One host, so one request a second and no
+concurrency -- roughly seven hours for twenty-five thousand schools, which
+is a rounding error against a site serving millions of pages, and it never
+repeats.
+
+The team is the modal `team_id` per (school, HOME STATE), not per school
+string: two real schools share the name "Kingston" and anet gives them two
+ids, which is the same split `school_identity` already draws.
+
+It fills gaps by default and leaves a crest already scraped from a school's
+own site alone; `--replace` prefers the anet mark everywhere. An override of
+"none" is honoured here as everywhere. The shared-crest sweep runs
+afterwards as usual, which is what catches anet's own placeholder image if
+it serves one.
+
+`--url` takes the image URL with `{team}` where the id goes. If the first
+twenty requests all fail the run stops, rolls back and says the template is
+wrong, rather than spending an evening on it.
+
+```bash
+/srv/venv/bin/python scripts/anet_school_logos.py \
+    --url 'https://.../{team}...' --write --rate 1.0
+sudo systemctl restart xc-predictor
+```
