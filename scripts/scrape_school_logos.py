@@ -721,6 +721,8 @@ CREATE TABLE IF NOT EXISTS school_logo (
     PRIMARY KEY (school, state))
 """
 
+SHA_INDEX = "CREATE INDEX IF NOT EXISTS idx_school_logo_sha ON school_logo (sha)"
+
 
 def ensureTable(cur, ddl):
     """CREATE TABLE IF NOT EXISTS, and then add whatever columns the DDL
@@ -800,6 +802,7 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
       window is up: `fetched` is stamped on a failure too. --retry-failed
       (or --redo) when the picking has changed and it is worth re-asking."""
     ensureTable(cur, DDL)
+    cur.execute(SHA_INDEX)
     rank = ("COALESCE(si.n_athletes, 0)" if _tableExists(cur, "school_identity")
             else "0")
     join = ("LEFT JOIN school_identity si ON si.school = w.school "
@@ -846,6 +849,56 @@ def writeFile(school, state, png, directory=None):
         fh.write(png)
     os.replace(tmp, path)
     return name
+
+
+# ★ WHICH CREST WINS WHEN TWO SOURCES BOTH HAVE ONE (owner, 2026-09-13:
+#   "if they differ from the previously scraped ones do we take the new
+#   ones?"). Not blindly, no. Best first:
+#
+#     override    a person said so
+#     athletics   the school's OWN athletics site: the real mark, at the
+#                 resolution the school publishes it
+#     anet        the athletics mark too, but one small mascot image, and
+#                 a placeholder for any team that never uploaded one
+#     direct      Wikidata's logo file: usually institutional
+#     school      the school's main site: the institutional wordmark
+#
+#   A later run only replaces a crest with one of the same rank or better,
+#   so re-running anet over a corpus that already has athletics-site
+#   crests improves the gaps and leaves the good ones alone. --replace
+#   overrides the rule where a caller means to.
+KIND_RANK = {"override": 0, "athletics": 1, "anet": 2, "refresh": 2,
+             "direct": 3, "school": 4}
+
+
+def kindRank(kind):
+    """The rank of a stored kind. Kinds are "<where>:<tag>" for the web
+    scraper ("athletics:apple-touch") and bare for the rest."""
+    return KIND_RANK.get(str(kind or "").split(":")[0], 5)
+
+
+def sharedAlready(cur, sha, minimum=SHARED_MIN):
+    """True when this exact image is already worn by `minimum` schools --
+    a placeholder, and not worth installing on one more. The sweep would
+    flag it afterwards anyway; this stops it being written at all."""
+    if not sha:
+        return False
+    cur.execute("""SELECT count(DISTINCT school) FROM school_logo
+                   WHERE sha = %s""", (sha,))
+    row = cur.fetchone()
+    n = row[0] if not isinstance(row, dict) else list(row.values())[0]
+    return (n or 0) >= minimum
+
+
+def storedKind(cur, school, state):
+    """The kind of the crest already stored for this school, or None."""
+    cur.execute("""SELECT kind FROM school_logo
+                   WHERE school = %s AND state = %s AND path IS NOT NULL
+                     AND status = 'ok'""", (school, state))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return row[0] if not isinstance(row, dict) else row.get("kind")
 
 
 def record(cur, school, state, name, source_url, kind, sha, status,

@@ -524,11 +524,19 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
 .board-grid .c-name a { color: #111; text-decoration: none; }
 .board-grid .c-name a:hover { text-decoration: underline; }
 
+/* ★ AN OUTLINE ROUND THE WHOLE BOARD (owner, 2026-09-13). The home page's
+   boards are a CSS GRID, not a table -- the rankings page's table.rk rule
+   does not reach them -- and their cells carry horizontal rules only, so
+   the rows bled off both edges with no frame at all. The grid takes the
+   frame. Square corners, like the rankings table. */
 .board-grid {
     min-width: 0;
     display: grid;
     grid-template-columns: var(--cols);
+    border: 1px solid #ddd;
 }
+/* the head already draws its own top rule; against the frame it doubles */
+.board-grid .head { border-top: none; }
 .cell {
     /* remove: display: flex; align-items: center; */
     padding: 0.4rem 0.9rem;
@@ -1173,11 +1181,25 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
  * Everything here is under .rankings-page and stays there.
  */
 
+/* ★ AN OUTLINE ROUND THE WHOLE BOARD (owner, 2026-09-13). The rows had
+   their own bottom rules but the table had no edge, so a long board bled
+   into the page.
+   ⚠ AND IT HAS TO BE border-collapse: separate. Under `collapse` the
+     table's own border is merged into the cells' and simply does not
+     draw, and `overflow: hidden` does not clip a table -- so the first
+     attempt rendered nothing at all. `separate` with zero spacing looks
+     identical and lets the border exist.
+   ! SQUARE CORNERS, 90 degrees (owner, 2026-09-13): no radius on either
+     board, and the corner-cell rules the radius needed are gone with it. */
 .rankings-page table.rk {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.875rem;
+  border: 1px solid var(--rk-line);
 }
+/* the last row's own rule would double up against the outline */
+.rankings-page table.rk tbody tr:last-child td { border-bottom: 0; }
 
 .rankings-page table.rk th,
 .rankings-page table.rk td {

@@ -105,48 +105,84 @@ def loadCrests(conn_factory, force=False):
             with conn.cursor() as cur:
                 if tableExists(cur, force=True):
                     cur.execute("""
-                        SELECT school, state FROM school_logo
+                        SELECT school, state, sha FROM school_logo
                         WHERE  path IS NOT NULL
                           AND  COALESCE(lower(override), '') <> 'none'
                           AND  (NOT shared OR override IS NOT NULL)
                     """)
-                    for school, state in cur.fetchall():
-                        got.setdefault(school, []).append((state or "").upper())
+                    for school, state, sha in cur.fetchall():
+                        got.setdefault(school, []).append(
+                            ((state or "").upper(), (sha or "")[:8]))
     except Exception:                              # noqa: BLE001 -- optional
         got = {}
     _CRESTS["map"] = got
     _CRESTS["loaded"] = True
 
 
-def crestState(school, state=None):
-    """The state whose crest answers for this mention, or None when none
-    does. The cache's version of pickRow, and it keeps pickRow's rule: a
-    name two real schools wear answers only when the caller says which."""
+def crestState(school, state=None, pool=None):
+    """(state, version) whose crest answers for this mention, or None.
+
+    ★ THE SAME RESOLVER THE LABEL USES, and that is the whole point (owner,
+      2026-09-13: a race page showed Hope (AR) wearing Hope (RI)'s crest).
+      The label, the link and the badge each worked the state out their own
+      way, so one row could answer three different questions. Now a mention
+      resolves ONCE -- through school_identity.teamState when a pool is
+      known (a season line, where a college's name beats its athletes' home
+      states) and contextState otherwise -- and the crest is looked up
+      under whatever that says.
+    """
     rows = _CRESTS["map"].get(school)
     if not rows:
         return None
-    st = (state or "").upper()
-    if st and st in rows:
-        return st
-    if "" in rows:
-        return ""
+    try:
+        from school_identity import contextState, teamState
+        st = (teamState(school, pool, state) if pool
+              else contextState(school, state))
+    except Exception:                              # noqa: BLE001
+        st = None
+    # ! AND THE CALLER'S OWN STATE IS THE FLOOR. The resolver answers None
+    #   for a name the identity cannot place -- correct for a LABEL, where
+    #   the alternative is printing the venue's state as if it were the
+    #   school's. But a caller that named a state has already decided, and
+    #   without this every crest on the site disappears whenever the label
+    #   cache is empty (mid-rebuild, a fresh process, an old database).
+    st = (st or state or "").upper()
+    for row in rows:
+        if st and row[0] == st:
+            return row
+    for row in rows:
+        if not row[0]:
+            return row
     return rows[0] if len(rows) == 1 else None
 
 
-def crestUrl(school, state=None, px=None):
-    """The <img src> for a mention of this school, or None -- with NO
+def crestUrl(school, state=None, px=None, pool=None):
+    """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
-    every table on the site."""
-    st = crestState(school, state)
-    if st is None:
+    every table on the site.
+
+    ⚠ THE VERSION IS NOT DECORATION (owner, 2026-09-13: Tufts showed the
+      new crest on a race page and the old one on its school page). The
+      file's URL does not change when its CONTENTS do, and the route hands
+      out a week of cache -- so a re-scrape leaves every viewer, and every
+      edge cache, holding whatever they happened to fetch first, per URL.
+      Two sizes are two URLs, which is exactly how one page can disagree
+      with another. `v` is the image's own hash: new picture, new URL.
+    """
+    got = crestState(school, state, pool)
+    if got is None:
         return None
+    st, version = got
     url = logoUrl(school, st or None)
     if px:
         url += ("&" if "?" in url else "?") + f"px={int(px)}"
+    if version:
+        url += ("&" if "?" in url else "?") + f"v={version}"
     return url
 
 
-def crestImg(school, state=None, px=64, size=18, cls="school-mark"):
+def crestImg(school, state=None, px=64, size=18, cls="school-mark",
+             pool=None):
     """The little crest that goes before a school's name, or "" (305). The
     template global `crest`.
 
@@ -158,7 +194,7 @@ def crestImg(school, state=None, px=64, size=18, cls="school-mark"):
     ⚠ IT RETURNS MARKUP, SO EVERYTHING IN IT IS ESCAPED HERE. School names
       are scraped free text and genuinely contain quotes and ampersands.
     """
-    url = crestUrl(school, state, px)
+    url = crestUrl(school, state, px, pool)
     if not url:
         return ""
     from markupsafe import Markup, escape

@@ -32,13 +32,26 @@ def collect(days):
     out = []
     if not os.path.isdir(SITEMAPS):
         return out
+    # ! THE FILES ARE GZIPPED NOW (build_sitemap, 2026-09-13). Reading only
+    #   ".xml" silently found nothing at all -- and this script's whole job
+    #   is to be the fast path, so finding nothing looks exactly like
+    #   having nothing to say.
+    import gzip
     for name in sorted(os.listdir(SITEMAPS)):
-        if not (name.startswith("sitemap-") and name.endswith(".xml")):
+        if not name.startswith("sitemap-"):
             continue
-        with open(os.path.join(SITEMAPS, name), encoding="utf-8") as fh:
-            for loc, lastmod in _URL.findall(fh.read()):
-                if lastmod is None or lastmod == "" or lastmod >= cutoff:
-                    out.append(loc)
+        path = os.path.join(SITEMAPS, name)
+        if name.endswith(".xml.gz"):
+            with gzip.open(path, "rt", encoding="utf-8") as fh:
+                text = fh.read()
+        elif name.endswith(".xml"):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            continue
+        for loc, lastmod in _URL.findall(text):
+            if lastmod is None or lastmod == "" or lastmod >= cutoff:
+                out.append(loc)
     return out
 
 

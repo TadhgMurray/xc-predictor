@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
-{% from "_recflag.html" import recflag %}
+{% from "_recflag.html" import recflag, ratflag %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -104,7 +104,7 @@
                 {# identity-split teams carry their OWN state (two Jesuits =
                    two schools); only unsplit ones fall back to the global
                    label filter #}
-                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="/school/{{ t.school|urlencode }}{% if t.state %}?state={{ t.state }}{% endif %}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
+                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                 <td>{{ t.points if t.points is not none else " - " }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO
                    displace, and hiding them makes a deep team look like a
@@ -180,9 +180,9 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
-                <td>{% if row.school and row.school|is_team %}{{ crest(row.school) }}<a href="/school/{{ row.school|urlencode }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label_in(header.state) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
+                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label_in(header.state) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
-                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
+                <td class="no-break">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
                 <td>{{ row.score_place if row.score_place else " - " }}</td>
             </tr>
             {% endfor %}

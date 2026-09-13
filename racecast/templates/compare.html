@@ -70,7 +70,7 @@
         <div class="h2h-card a">
             <div class="nm"><a href="/athlete/{{ card_a.person_id }}">{{ card_a.name }}</a></div>
             <div class="sub">
-                {% if card_a.school %}{{ crest(card_a.school) }}<a href="/school/{{ card_a.school|urlencode }}">{{ card_a.school|school_label }}</a>{% else %} - {% endif %}
+                {% if card_a.school and card_a.school|is_team %}{{ crest(card_a.school) }}<a href="{{ school_href(card_a.school) }}">{{ card_a.school|school_label }}</a>{% elif card_a.school %}{{ card_a.school|school_label }}{% else %} - {% endif %}
                 {% if card_a.grade %} · Grade {{ card_a.grade }}{% endif %}
             </div>
             {% if card_a.season_rating is not none %}
@@ -94,7 +94,7 @@
         <div class="h2h-card b">
             <div class="nm"><a href="/athlete/{{ card_b.person_id }}">{{ card_b.name }}</a></div>
             <div class="sub">
-                {% if card_b.school %}{{ crest(card_b.school) }}<a href="/school/{{ card_b.school|urlencode }}">{{ card_b.school|school_label }}</a>{% else %} - {% endif %}
+                {% if card_b.school and card_b.school|is_team %}{{ crest(card_b.school) }}<a href="{{ school_href(card_b.school) }}">{{ card_b.school|school_label }}</a>{% elif card_b.school %}{{ card_b.school|school_label }}{% else %} - {% endif %}
                 {% if card_b.grade %} · Grade {{ card_b.grade }}{% endif %}
             </div>
             {% if card_b.season_rating is not none %}

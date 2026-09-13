@@ -30,6 +30,8 @@ Everything here degrades: tables missing (mid-rebuild, old database)
 means no chips, no splits, plain labels -- never an error.
 """
 
+import urllib.parse
+
 MIN_ATHLETES = 3
 MIN_SHARE = 0.10
 
@@ -95,19 +97,37 @@ def schoolLabel(school):
 CONTEXT_MIN_SHARE = 0.03
 
 
-def schoolLabelIn(school, state):
-    """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
-    Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
-    labelled three Missouri schools WA, MI and CA). The name's cluster in
-    the context's state wins when it exists; else the primary label."""
+def contextState(school, state=None):
+    """WHICH school a mention means, given where the mention appears.
+
+    ★ THE ONE RESOLVER FOR A MENTION (owner, 2026-09-13: a race page showed
+      Hope (AR) wearing Hope (RI)'s crest). The label, the link and the
+      crest each used to work this out their own way, so one row could
+      answer three different questions -- and the badge is the answer that
+      shows. schoolLabelIn labels with this and school_logo picks with it,
+      so they cannot disagree.
+
+    The name's cluster in the context's state wins when it is real; else
+    the primary. None when the identity cannot place the name at all --
+    and NOT the context state, because a row's state is the VENUE's."""
     if not school:
-        return school
+        return None
     if state:
         clusters = _LABELS.get("clusters") or {}
         share = (clusters.get(school) or {}).get(state)
         if share is not None and share >= CONTEXT_MIN_SHARE:
-            return f"{school} ({state})"
-    return schoolLabel(school)
+            return state
+    return _LABELS["map"].get(school)
+
+
+def schoolLabelIn(school, state):
+    """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
+    Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
+    labelled three Missouri schools WA, MI and CA)."""
+    if not school:
+        return school
+    st = contextState(school, state)
+    return f"{school} ({st})" if st else school
 
 
 def _collegeState(school):
@@ -177,6 +197,43 @@ def schoolLabelFor(school, pool, state=None):
         return school
     st = teamState(school, pool, state)
     return f"{school} ({st})" if st else school
+
+
+def schoolHref(school, state=None, pool=None, sport=None):
+    """The URL for a MENTION of a school -- the same school the label
+    names and the crest pictures.
+
+    ★ THE LINK WAS THE HALF THAT STAYED STATELESS (owner, 2026-09-14:
+      "Oregon (OR) and Oregon (IL) still go to same page with hs logo").
+      race.html labelled the row with schoolLabelIn(header.state) and,
+      after the crest fix, drew the crest with the same context -- and
+      then wrote a bare /school/Oregon under both. Two schools, one page,
+      and the page picked the bigger one. A mention now resolves ONCE and
+      the label, the crest and the href all come off that answer.
+
+    ! THE LEVEL RIDES ALONG WHEN THE POOL KNOWS IT. Amherst (MA) is a
+      NESCAC college and a regional middle school; a college row's link
+      says ?level=college so the page opens on the right institution
+      rather than on whichever has more athletes. The route drops a level
+      the school does not actually split on, so this is never wrong, only
+      sometimes redundant.
+    """
+    if not school:
+        return "#"
+    st = teamState(school, pool, state) if pool else contextState(school, state)
+    # ! quote(safe="/") is exactly what Jinja's |urlencode did here, and
+    #   the route is a <path:> converter -- a school string genuinely
+    #   contains a slash ("Chisago Lakes/Rush City").
+    q = []
+    if sport:
+        q.append(("sport", sport))
+    if st:
+        q.append(("state", st))
+    lvl = levelOf(pool)
+    if lvl:
+        q.append(("level", lvl))
+    url = "/school/" + urllib.parse.quote(str(school), safe="/")
+    return url + ("?" + urllib.parse.urlencode(q) if q else "")
 
 
 def stateFor(school, preferred=None):
@@ -254,6 +311,59 @@ def _liveClusters(cur, school):
     if out:
         out[0]["is_primary"] = True
     return out
+
+
+# ★ WHICH INSTITUTION (305 / the Amherst split, 2026-09-13). A name and a
+#   state can cover two schools -- Amherst College and Amherst Regional
+#   Middle School are both "Amherst" in MA -- and only the level tells
+#   them apart. Same thresholds as the state split, so the rule is one
+#   rule; degrades to [] when school_level has not been built, and the
+#   page then reads exactly as it did before.
+_LEVEL_LABEL = {"college": "College", "hs": "High school",
+                "ms": "Middle school", "elem": "Elementary", "pro": "Pro"}
+
+
+def levelChips(cur, school, state):
+    """[{level, label, n, share}] widest first, or [] when this school is
+    one institution (which is nearly all of them).
+
+    ! NOT is_bucket: "Arkansas" at a state meet is a few hundred high
+      schoolers who each belong to a real high school, and a chip for them
+      puts the university on a page with its own visitors (owner,
+      2026-09-13; the rule is build_school_identity's BUCKET_SHARE)."""
+    if not school or not _tableExists(cur, "school_level"):
+        return []
+    sql = """
+        SELECT level, n_athletes, share FROM school_level
+        WHERE  school = %s AND state = %s
+          AND  n_athletes >= %s AND share >= %s{bucket}
+        ORDER  BY n_athletes DESC
+    """
+    args = (school, state or "", MIN_ATHLETES, MIN_SHARE)
+    rows = None
+    # a table built before is_bucket existed still answers the old query,
+    # and chips without the filter beat no chips at all
+    for clause in (" AND NOT is_bucket", ""):
+        try:
+            cur.execute(sql.format(bucket=clause), args)
+            rows = cur.fetchall()
+            break
+        except Exception:                          # noqa: BLE001 -- optional
+            cur.connection.rollback()
+    if not rows or len(rows) < 2:
+        return []
+    out = []
+    for r in rows:
+        lvl, n, share = ((r["level"], r["n_athletes"], r["share"])
+                         if isinstance(r, dict) else r)
+        out.append({"level": lvl, "label": _LEVEL_LABEL.get(lvl, (lvl or "").title()),
+                    "n": n, "share": float(share or 0)})
+    return out
+
+
+def levelOf(pool):
+    """The level a pool belongs to: "college_m" -> "college"."""
+    return (pool or "").split("|")[0].split("_")[0] or None
 
 
 def stateChips(cur, school):

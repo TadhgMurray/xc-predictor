@@ -92,7 +92,7 @@
     <p class="meta">Best mark per athlete, every event the school has
        contested. A year narrows to that season's bests{% if sport == 'XC' %};
        a course narrows to bests run there{% endif %}.
-       · <a href="/school/{{ school|urlencode }}?sport={{ sport }}">Back to school page →</a></p>
+       · <a href="{{ school_href(school, data.state, sport=sport) }}">Back to school page →</a></p>
 
     <div class="seg">
         {% for s in ['XC', 'TF'] %}

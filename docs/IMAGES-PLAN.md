@@ -621,3 +621,105 @@ inference reading a meet named something like "CA State T&F" as a unit --
 which then matched anet's California id well enough to win. That is the
 cross-check earning its keep on the first run: the bug is in
 `check_school_units`'s parser, not in anything anet sent.
+
+
+## Level, and why it is not really about crests (2026-09-13)
+
+Amherst (MA) was ONE page holding Amherst College -- eight NESCAC runners
+-- and Amherst Regional Middle School, seventeen seventh and eighth
+graders. Two institutions, one name, one state, so one page, one crest,
+and units that said NESCAC over a middle schooler.
+
+`school_level (school, state, level, n_athletes, share, is_primary)`, built
+beside `school_identity` at pipeline 10b, records which levels a name and
+state actually cover. Same thresholds as the state split, so it is one
+rule; `?level=` scopes the page exactly as `?state=` does; a school with
+one level -- nearly all of them -- gets no chips and no change.
+
+**A separate table, not a new key on `school_identity`, deliberately.**
+That table's key is (school, state) and two passes above collapse states
+into one row (the co-racing merge, the college directory). Re-keying it
+means rewriting both, untested, underneath every school page on the site.
+This is additive and degrades to nothing. Promote it into the key once it
+has been read against real data.
+
+### ★★ AND IT IS THE FIRST PIECE OF SETTLING POOLS ★★
+
+Recorded at the owner's request, and repeated in
+`build_school_identity.buildSchoolLevel` where the work will happen.
+
+The pool decides which ratings are comparable, which board an athlete
+lands on, which HS-equivalent factor applies, and how a season is
+normalised. It is inferred per ATHLETE-SEASON from grade and meet context,
+and it is wrong often enough to have its own diagnostics.
+
+A school's LEVEL is the missing constraint. A middle school has no college
+seniors; a NESCAC programme has no seventh graders. Once
+(school, state, level) is a real entity with its own roster, **a pool that
+disagrees with its school's level is a detectable error instead of an
+invisible one** -- and anet's `Level` (`anet_team.level`, one per team_id)
+is an INDEPENDENT witness to the same fact, so the two can be
+cross-examined without either being assumed correct.
+
+Not yet done, and the obvious next steps: units keyed per level (so NESCAC
+cannot land on the middle school), a crest per level, and the pool
+disagreement report itself.
+
+## Crests: anet overwrites (owner, 2026-09-13)
+
+anet's mascot replaces whatever was there. Its images are the athletics
+mark and they are the same shape for every school, so a corpus of them
+reads as one set rather than as whatever each CMS happened to publish.
+`--keep-better` restores ranked precedence (override > athletics site >
+anet > Wikidata > school site) for anyone who wants it.
+
+The one exception is not a precedence rule but arithmetic: an image four
+hundred schools already wear is hidden by the shared sweep, so installing
+it OVER a good crest does not swap one picture for another -- it leaves
+that school with none. `--replace` overrides even that.
+
+
+## A live pool case to measure the fix against (2026-09-13)
+
+Logged at the owner's request. One NCAA DIII men's race, nine athletes who
+ran a COLLEGE race and were pooled as HIGH SCHOOLERS -- each shows a
+school-grade number and no rating at all:
+
+| place | athlete | grade | school |
+|---|---|---|---|
+| 47 | Stan Craig | 11 | Amherst (MA) |
+| 88 | Jonathan Cobb | 12 | Lynchburg (VA) |
+| 99 | Jacob Slater | 11 | Case Western (OH) |
+| 105 | Nathaniel Aronson | 10 | Bates (ME) |
+| 202 | Zach Utz | 12 | Middlebury (VT) |
+| 209 | Lucas Guidone | 12 | Hope (MI) |
+| 262 | Brandon Massman | 12 | UW-Whitewater (WI) |
+| 290 | Everett Mosher | 10 | WPI (MA) |
+| 291 | Robert Cooper | 11 | Washington and Lee (VA) |
+
+**Stan Craig was Amherst's number one scorer**, so this is not confined to
+one athlete's page -- it silently removes a team's top runner from its
+rating. Nine in one race is the rate to beat.
+
+Every one of them is a row whose SCHOOL's level is college while its OWN
+pool says hs: the exact disagreement `school_level` is built to make
+detectable. When the pool work lands, re-run this race and count.
+
+## Amherst's blank place columns -- a travelling college team, shattered
+
+Amherst scored 318 at that meet with all seven place columns empty, while
+its seven runners sat in the results.
+
+`splitCollisionTeams` stamps a colliding school name with each athlete's
+HOME state, and a home state is where an athlete races most. A college
+races away most weekends, so Amherst's seven came out MA, CT and NY: the
+split made three pseudo-teams, none reached five scorers, none was
+scoreable, and the published-score graft had nothing to attach. Exactly
+the BYU failure `school_identity` documents in its own header.
+
+The cure was already in the database. `school_state_alias` exists to record
+which cluster each original home state resolved to -- "for readers keyed on
+an athlete's home state", which is precisely what this is. It simply was
+not asked. Resolved through the alias and then clamped to a cluster the
+name actually has, so a travel state can never mint a second team, while
+Amherst NE stays the different school it is.

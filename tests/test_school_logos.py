@@ -18,6 +18,7 @@
 import io
 import json
 import os
+import re
 import sys
 import time
 import unittest
@@ -1525,7 +1526,7 @@ class Csv(unittest.TestCase):
         rows = W.readCsv(path)
         self.assertEqual(rows, [{"name": "Piedmont High School", "state": "CA",
                                  "url": "http://www.piedmont.k12.ca.us/",
-                                 "source": "csv"}])
+                                 "source": "csv", "level": None}])
 
     def test_the_private_survey_spelling_and_a_tab_file(self):
         path = self._write("PINST\tPSTABB\tURL\nSaint Ignatius\tCA\thttps://si.org\n",
@@ -1638,37 +1639,75 @@ class Mentions(unittest.TestCase):
 
     def setUp(self):
         SL._CRESTS.update(loaded=True, map={
-            "Jesuit": ["CA"],
-            "Highland": ["UT", "CA"],          # two real schools, one name
-            "Nameless": [""],                  # stored under no state
+            "Jesuit": [("CA", "ab12cd34")],
+            "Highland": [("UT", "d1"), ("CA", "d2")],   # two schools, one name
+            "Nameless": [("", "e5")],                   # stored under no state
         })
         self.addCleanup(SL._CRESTS.update, {"loaded": False, "map": {}})
 
     def test_a_school_with_a_crest_gets_a_url_with_no_query(self):
         self.assertEqual(SL.crestUrl("Jesuit", "CA"),
-                         "/img/school/Jesuit.png?state=CA")
+                         "/img/school/Jesuit.png?state=CA&v=ab12cd34")
         self.assertEqual(SL.crestUrl("Jesuit", "CA", 64),
-                         "/img/school/Jesuit.png?state=CA&px=64")
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
+
+    def test_every_size_of_one_crest_carries_the_same_version(self):
+        """★ THE BUG THIS EXISTS FOR (owner, 2026-09-13): Tufts showed the
+        new crest on a race page and the old one on its school page. Two
+        sizes are two URLs, the file's URL does not change when its
+        CONTENTS do, and the route hands out a week of cache -- so each URL
+        kept whatever it happened to fetch first."""
+        small = SL.crestUrl("Jesuit", "CA", 64)
+        big = SL.crestUrl("Jesuit", "CA", 128)
+        self.assertNotEqual(small, big)
+        self.assertTrue(small.endswith("v=ab12cd34"))
+        self.assertTrue(big.endswith("v=ab12cd34"))
+        SL._CRESTS["map"]["Jesuit"] = [("CA", "99999999")]
+        self.assertNotEqual(SL.crestUrl("Jesuit", "CA", 64), small,
+                            "a new picture must be a new URL")
+
+    def test_a_mention_with_no_state_resolves_the_same_as_the_page(self):
+        """A race row passes no state and the school page passes one; if
+        they resolved differently the two would show different crests."""
+        self.assertEqual(SL.crestUrl("Jesuit", None, 64),
+                         SL.crestUrl("Jesuit", "CA", 64))
 
     def test_a_school_with_none_gets_nothing_at_all(self):
         self.assertIsNone(SL.crestUrl("Nobody", "CA"))
         self.assertEqual(SL.crestImg("Nobody", "CA"), "")
 
-    def test_a_name_two_schools_share_needs_a_state(self):
-        self.assertEqual(SL.crestState("Highland", "UT"), "UT")
-        self.assertIsNone(SL.crestState("Highland", None),
-                          "a coin toss here is the WRONG crest on a real page")
+    def test_a_name_two_schools_share_takes_the_state_it_is_given(self):
+        self.assertEqual(SL.crestState("Highland", "UT")[0], "UT")
         self.assertIsNone(SL.crestState("Highland", "NY"))
 
+    def test_and_with_no_state_it_follows_the_link(self):
+        """★ owner, 2026-09-13: a race page's team row showed Amherst's
+        link going to the right school and NO crest beside it. Refusing to
+        guess looked safe, but the link is not refusing -- /school/Amherst
+        with no state lands on the primary cluster, so the crest has to
+        land there too. Guessing DIFFERENTLY from the link is the bug;
+        guessing the same way is the fix."""
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Highland": "UT"})
+        self.addCleanup(SI._LABELS.update, {"loaded": False, "map": {}})
+        self.assertEqual(SL.crestState("Highland", None)[0], "UT")
+
+    def test_but_a_name_the_identity_cannot_place_still_shows_nothing(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={})
+        self.addCleanup(SI._LABELS.update, {"loaded": False, "map": {}})
+        self.assertIsNone(SL.crestState("Highland", None))
+
     def test_one_row_answers_without_a_state_and_a_stateless_row_answers_for_any(self):
-        self.assertEqual(SL.crestState("Jesuit", None), "CA")
-        self.assertEqual(SL.crestState("Nameless", "TX"), "")
-        self.assertEqual(SL.crestUrl("Nameless", "TX"), "/img/school/Nameless.png")
+        self.assertEqual(SL.crestState("Jesuit", None)[0], "CA")
+        self.assertEqual(SL.crestState("Nameless", "TX")[0], "")
+        self.assertEqual(SL.crestUrl("Nameless", "TX"),
+                         "/img/school/Nameless.png?v=e5")
 
     def test_the_markup_escapes_a_scraped_name(self):
         """School names are free text: 'Smith & "Jones"' is the kind of
         thing that breaks a page written with an f-string."""
-        SL._CRESTS["map"]['Smith & "Jones"'] = ["CA"]
+        SL._CRESTS["map"]['Smith & "Jones"'] = [("CA", "f0")]
         img = str(SL.crestImg('Smith & "Jones"', "CA"))
         self.assertIn("%26", img)                  # the & is encoded in the URL
         self.assertIn("&amp;px=64", img)           # and the separator escaped
@@ -1681,15 +1720,16 @@ class Mentions(unittest.TestCase):
                 {"school": "Nobody", "state": "CA"},
                 {"school": None, "state": None}]
         SL.stampCrests(rows)
-        self.assertEqual(rows[0]["crest"], "/img/school/Jesuit.png?state=CA&px=64")
+        self.assertEqual(rows[0]["crest"],
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
         self.assertNotIn("crest", rows[1])
         self.assertNotIn("crest", rows[2])
 
     def test_a_search_hit_is_read_back_off_its_link(self):
         self.assertEqual(SL.crestUrlForLink("/school/Highland?state=UT"),
-                         "/img/school/Highland.png?state=UT&px=64")
+                         "/img/school/Highland.png?state=UT&px=64&v=d1")
         self.assertEqual(SL.crestUrlForLink("/school/Jesuit"),
-                         "/img/school/Jesuit.png?state=CA&px=64")
+                         "/img/school/Jesuit.png?state=CA&px=64&v=ab12cd34")
         self.assertIsNone(SL.crestUrlForLink("/school/Highland"))
         for junk in ("/athlete/12", "", None, "/schools/ca", "https://x/school/Y"):
             self.assertIsNone(SL.crestUrlForLink(junk), junk)
@@ -1725,6 +1765,414 @@ class Thumbs(unittest.TestCase):
         self.assertEqual(Image.open(small).size, (64, 64))
         self.assertLess(os.path.getsize(small), os.path.getsize(big))
         self.assertEqual(SL.thumbPath(big, 64), small)          # reused
+
+
+class NoDeadLinks(unittest.TestCase):
+    """★ "Unattached" HAS NO PAGE, and three separate places were offering
+    one anyway (owner, 2026-09-13). school_page 404s every name
+    panels.isTeamName rejects, so a link to one is a dead link, a search
+    hit for one goes nowhere, and a sitemap full of them costs crawl budget
+    and the sitemap's own credibility."""
+
+    def test_every_school_link_in_every_template_is_guarded(self):
+        import glob
+        import re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast", "templates",
+                                               "*.html"))):
+            name = os.path.basename(f)
+            if name in ("school.html", "school_prs.html"):
+                continue           # its own page: navigation, not a mention
+            with io.open(f, encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    if re.search(r'href="/school/', line):
+                        self.assertIn("is_team", line, f"{name}:{n}")
+
+    def test_the_sitemap_and_the_search_index_both_filter(self):
+        self.assertIn("if isTeamName(school)", read("racecast", "build_sitemap.py"))
+        self.assertIn("if not s or not isTeamName(s)",
+                      read("racecast", "search_index.py"))
+
+    def test_the_filter_rejects_what_it_should(self):
+        try:                            # panels imports psycopg2; the box has it
+            from panels import isTeamName
+        except ImportError as exc:      # pragma: no cover
+            self.skipTest(str(exc))
+        for junk in ("Unattached", "unattached", "Independent", "No Team",
+                     "SW Individuals -6 (AZ)"):
+            self.assertFalse(isTeamName(junk), junk)
+        for real in ("Amherst", "De La Salle", "Chisago Lakes/Rush City"):
+            self.assertTrue(isTeamName(real), real)
+
+
+class OneCourseOneUrl(unittest.TestCase):
+    """⚠ course_difficulties IS KEYED THE WAY THE ENGINE KEYS A CELL --
+    "XC:<venue>", and under --era-years once per two-year era. The site
+    links to the bare name. Anything building a URL off that table has to
+    come through courseDisplayName or it emits a URL nothing links to,
+    once per era."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        from courses import courseDisplayName
+        self.name = courseDisplayName
+
+    def test_the_prefix_and_the_era_both_come_off(self):
+        self.assertEqual(self.name("XC:Crystal Springs@e3"), "Crystal Springs")
+        self.assertEqual(self.name("XC:Crystal Springs"), "Crystal Springs")
+        self.assertEqual(self.name("TF:Hayward Field"), "Hayward Field")
+
+    def test_an_unprefixed_name_is_left_alone(self):
+        self.assertEqual(self.name("Mt. SAC"), "Mt. SAC")
+
+    def test_nothing_is_empty_rather_than_an_exception(self):
+        for junk in (None, "", "   ", "XC:", "XC:@e2"):
+            self.assertEqual(self.name(junk), "", repr(junk))
+
+    def test_the_eras_collapse_to_one_row(self):
+        keys = ["XC:Woodward Park@e1", "XC:Woodward Park@e2", "XC:Woodward Park"]
+        self.assertEqual({self.name(k) for k in keys}, {"Woodward Park"})
+
+    def test_both_builders_go_through_it(self):
+        self.assertIn("courseDisplayName", read("racecast", "build_sitemap.py"))
+        self.assertIn("courseDisplayName", read("racecast", "search_index.py"))
+
+
+class CollegeDirectoryScope(unittest.TestCase):
+    """⚠ THE DIRECTORY IS KEYED ON THE NAME ALONE, so every "Amherst" in
+    the country took Amherst College's NCAA DIII -- including Amherst,
+    Nebraska, which is a high school and a middle school (owner,
+    2026-09-13). And excluding the whole NAME from the exact pass then
+    denied Nebraska the units it does have."""
+
+    def test_the_campus_pass_is_gated_on_a_college_pool(self):
+        src = read("racecast", "build_ranking_results.py")
+        i = src.index("WHERE s.school = c.school")
+        self.assertIn("s.pool LIKE 'college", src[i:i + 120])
+
+    def test_and_it_no_longer_claims_the_name_from_everyone_else(self):
+        src = read("racecast", "build_ranking_results.py")
+        self.assertNotIn("s.school NOT IN (SELECT school FROM tmp_campus)", src)
+
+
+class LevelSplit(unittest.TestCase):
+    """★ Amherst (MA) IS TWO SCHOOLS: Amherst College (NESCAC) and Amherst
+    Regional Middle School. One name, one state, one page, one crest, and
+    NESCAC written over seventh graders. A home state cannot separate
+    them; the level can, and the pool carries it."""
+
+    def test_the_level_comes_off_the_pool(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        from school_identity import levelOf
+        self.assertEqual(levelOf("college_m"), "college")
+        self.assertEqual(levelOf("hs_f"), "hs")
+        self.assertEqual(levelOf("ms_m|something"), "ms")
+        self.assertIsNone(levelOf(""))
+        self.assertIsNone(levelOf(None))
+
+    def test_one_athlete_has_one_level(self):
+        """A single mis-pooled season must not mint an institution -- which
+        is the very error this table exists to detect."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("DISTINCT ON (school, person_id)", src)
+        self.assertIn("ORDER BY school, person_id, n DESC, level", src)
+
+    def test_the_split_uses_the_same_thresholds_as_the_state_split(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        body = src[i:src.index("def levelOf")]
+        self.assertIn("MIN_ATHLETES", body)
+        self.assertIn("MIN_SHARE", body)
+        self.assertIn("len(rows) < 2", body,
+                      "one institution is not a split")
+
+    def test_it_is_a_separate_table_not_a_new_key(self):
+        """The identity table's key is (school, state) and two passes
+        collapse states into one row. Re-keying it means rewriting both,
+        untested, under every school page."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("CREATE TABLE school_level_new", src)
+        self.assertIn("school_level", src[src.index("for t in (\"person_home_state"):
+                                          src.index("for t in (\"person_home_state") + 200],
+                      "and it has to ride the same atomic swap")
+
+    def test_a_missing_table_changes_nothing(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        self.assertIn('_tableExists(cur, "school_level")',
+                      src[i:src.index("def levelOf")])
+
+    def test_the_page_scopes_and_keeps_an_unpooled_row(self):
+        """Dropping a row because we failed to infer its pool would hide a
+        real athlete to enforce a guess."""
+        app = read("racecast", "app.py")
+        self.assertIn("levelOf(r.get(\"pool\")) in (None, level)", app)
+        self.assertIn('request.args.get("level")', app)
+
+    def test_the_pool_note_is_recorded_where_it_will_be_found(self):
+        """The owner asked for this on the record: level is the missing
+        constraint on the pool, and anet's Level is a second witness."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("READ THIS BEFORE TOUCHING", src)
+        self.assertIn("anet_team.level", src)
+        self.assertIn("DETECTABLE error", src)
+
+
+class CollegeTeamNotShattered(unittest.TestCase):
+    """★ Amherst SCORED 318 AT A DIII MEET WITH ALL SEVEN PLACE COLUMNS
+    BLANK, while its seven runners sat in the results right there (owner,
+    2026-09-13).
+
+    A home state is where an athlete races MOST, and a college races away
+    most weekends -- so Amherst's seven came out MA, CT and NY, the
+    collision split put them in three pseudo-teams, none reached five
+    scorers, none was scoreable, and the published-score graft had nothing
+    to attach. The same failure school_identity documents for BYU. And the
+    cure was already in the database: school_state_alias exists to say
+    which cluster each original home state resolved to."""
+
+    class _Cur:
+        """Answers the three queries splitCollisionTeams asks."""
+
+        def __init__(self, alias=True):
+            self.alias, self.last = alias, None
+
+        def execute(self, sql, args=None):
+            self.last = (sql, args)
+
+        def fetchone(self):
+            sql, args = self.last
+            want = (args or ("",))[0]
+            present = want != "school_state_alias" or self.alias
+            return {"present": present}
+
+        def fetchall(self):
+            sql, _a = self.last
+            if "FROM school_identity" in sql:          # two real Amhersts
+                return [{"school": "Amherst", "state": "MA"},
+                        {"school": "Amherst", "state": "NE"}]
+            if "FROM person_home_state" in sql:        # a college travels
+                return [{"person_id": 1, "state": "MA"},
+                        {"person_id": 2, "state": "CT"},
+                        {"person_id": 3, "state": "NY"},
+                        {"person_id": 4, "state": "MA"},
+                        {"person_id": 5, "state": "VT"}]
+            if "FROM school_state_alias" in sql:
+                return [{"school": "Amherst", "home_state": h, "state": "MA"}
+                        for h in ("CT", "NY", "VT")]
+            return []
+
+    def rows(self):
+        return [{"school": "Amherst", "person_id": i} for i in range(1, 6)]
+
+    def split(self, alias=True):
+        from meet_compile import splitCollisionTeams, _KEYSEP
+        rows = self.rows()
+        splitCollisionTeams(self._Cur(alias=alias), rows)
+        return [r["school"] for r in rows], _KEYSEP
+
+    def setUp(self):
+        try:
+            import meet_compile                        # noqa: F401
+        except ImportError as exc:                     # pragma: no cover
+            self.skipTest(str(exc))
+
+    def test_the_seven_stay_one_team(self):
+        got, sep = self.split()
+        self.assertEqual(set(got), {f"Amherst{sep}MA"},
+                         "a travel state must not mint a second Amherst")
+
+    def test_and_the_other_real_amherst_is_still_a_different_team(self):
+        """The split has to keep doing its actual job: Amherst NE is a
+        different school from Amherst MA."""
+        from meet_compile import splitCollisionTeams, _KEYSEP
+        rows = self.rows() + [{"school": "Amherst", "person_id": 9}]
+        cur = self._Cur()
+        real = cur.fetchall
+
+        def fetchall():
+            got = real()
+            if got and "home_state" not in got[0] and "person_id" in got[0]:
+                return got + [{"person_id": 9, "state": "NE"}]
+            return got
+        cur.fetchall = fetchall
+        splitCollisionTeams(cur, rows)
+        self.assertEqual(rows[-1]["school"], f"Amherst{_KEYSEP}NE")
+        self.assertEqual(rows[0]["school"], f"Amherst{_KEYSEP}MA")
+
+    def test_a_state_that_is_not_a_cluster_falls_to_the_biggest(self):
+        """Without the alias table the travel states are unknown -- they
+        must still not become teams of their own."""
+        got, sep = self.split(alias=False)
+        self.assertEqual(set(got), {f"Amherst{sep}MA"})
+
+
+class BoardOutline(unittest.TestCase):
+    """★ TWO DIFFERENT BOARDS, TWO DIFFERENT RULES (owner, 2026-09-13, and
+    it took two goes). /rankings draws a <table class="rk">; the HOME page
+    draws a CSS grid, .board-grid, which the table rule cannot reach. Both
+    needed a frame and each needed its own."""
+
+    def css(self):
+        return read("racecast", "static", "style.css")
+
+    def test_the_rankings_table_is_framed(self):
+        css = self.css()
+        i = css.index(".rankings-page table.rk {")
+        block = css[i:i + 400]
+        self.assertIn("border: 1px solid var(--rk-line)", block)
+        self.assertIn("border-collapse: separate", block,
+                      "under `collapse` a table's own border does not draw")
+
+    def test_the_home_grid_is_framed_too(self):
+        css = self.css()
+        i = css.index(".board-grid {")
+        self.assertIn("border: 1px solid #ddd", css[i:i + 400])
+
+    def test_both_frames_have_square_corners(self):
+        """Owner, 2026-09-13: 90 degrees, no radius on either board."""
+        css = self.css()
+        for start in (".rankings-page table.rk {", ".board-grid {"):
+            i = css.index(start)
+            self.assertNotIn("border-radius", css[i:i + 400], start)
+        self.assertNotIn("table.rk thead tr:first-child th:first-child", css,
+                         "the corner-cell rules existed only for the radius")
+
+    def test_neither_frame_doubles_against_the_cells(self):
+        css = self.css()
+        self.assertIn(".rankings-page table.rk tbody tr:last-child td "
+                      "{ border-bottom: 0; }", css)
+        self.assertIn(".board-grid .head { border-top: none; }", css)
+
+
+class RatingRecordFlag(unittest.TestCase):
+    """★ THE SAME BADGE BESIDE THE RATING (owner, 2026-09-13). Not the same
+    fact as the time badge: a time PR is bound to a distance because a 5k
+    and an 8k are not comparable, while a rating IS comparable across
+    distances and courses -- that is what it is for. So a row can carry SR
+    on its time and PR on its rating, and banding the rating query would
+    only throw evidence away."""
+
+    def src(self):
+        return read("racecast", "app.py")
+
+    def test_the_rating_query_is_not_distance_banded(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        body = src[i:src.index("\ndef ", i + 1)]
+        self.assertNotIn("distance", body,
+                         "a rating compares across distances by design")
+        self.assertIn("max(speed_rating)", body, "higher is better, not lower")
+        self.assertIn("race_date < %(day)s", body,
+                      "the badge is a claim about the day it was run")
+
+    def test_pr_wins_and_a_row_is_never_both(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        body = src[i:src.index("\ndef ", i + 1)]
+        self.assertIn('row["rating_sr"] = (not row["rating_pr"]', body)
+
+    def test_a_debut_is_a_personal_best(self):
+        src = self.src()
+        i = src.index("def stampRatingFlags")
+        self.assertIn('best is None or float(v) > float(best)',
+                      src[i:i + 2600])
+
+    def test_both_race_pages_stamp_and_render_it(self):
+        src = self.src()
+        self.assertIn('stampRatingFlags(cur, "XC", results', src)
+        self.assertIn('stampRatingFlags(cur, "TF", results', src)
+        for page in ("race.html", "race_tf.html"):
+            html = read("racecast", "templates", page)
+            self.assertIn("ratflag(row)", html, page)
+            self.assertIn("import recflag, ratflag", html, page)
+
+    def test_the_two_badges_say_different_things(self):
+        """Same pill, different tooltip -- or the reader cannot tell which
+        record they are being shown."""
+        m = read("racecast", "templates", "_recflag.html")
+        self.assertIn("Personal Record", m)
+        self.assertIn("Personal Best rating", m)
+        self.assertIn("Their highest rating in any race", m)
+
+
+class OneResolver(unittest.TestCase):
+    """★ Hope (AR) WORE Hope (RI)'s CREST (owner, 2026-09-13). The label,
+    the link and the badge each worked out which school a mention meant
+    their own way, so one row could answer three different questions --
+    and the badge is the answer a reader sees. A mention now resolves
+    ONCE."""
+
+    def test_the_label_and_the_crest_share_a_resolver(self):
+        si = read("racecast", "school_identity.py")
+        self.assertIn("def contextState(", si)
+        i = si.index("def schoolLabelIn(")
+        self.assertIn("contextState(school, state)", si[i:i + 500],
+                      "the label must not have its own copy of the rule")
+        sl = read("racecast", "school_logo.py")
+        self.assertIn("from school_identity import contextState, teamState", sl)
+
+    def test_a_pooled_mention_goes_through_teamState(self):
+        """A season line knows its pool, and a college's own name beats its
+        athletes' home states -- which is exactly what teamState is for."""
+        sl = read("racecast", "school_logo.py")
+        i = sl.index("def crestState(")
+        self.assertIn("teamState(school, pool, state) if pool", sl[i:i + 900])
+
+    def test_no_context_state_leaks_in_as_an_identity(self):
+        """A row's state is the VENUE's. An unplaceable name must come back
+        None rather than wearing the state it happened to race in."""
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={}, clusters={})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        self.assertIsNone(SI.contextState("Nowhere High", "AR"))
+        self.assertEqual(SI.schoolLabelIn("Nowhere High", "AR"), "Nowhere High")
+
+    def test_the_context_wins_only_when_the_cluster_is_real(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Hope": "RI"},
+                          clusters={"Hope": {"RI": 0.8, "AR": 0.2}})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        self.assertEqual(SI.contextState("Hope", "AR"), "AR")
+        self.assertEqual(SI.contextState("Hope", None), "RI")
+        self.assertEqual(SI.contextState("Hope", "TX"), "RI",
+                         "a stray away meet is not a cluster")
+
+    def test_and_the_crest_follows_it(self):
+        import school_identity as SI
+        SI._LABELS.update(loaded=True, map={"Hope": "RI"},
+                          clusters={"Hope": {"RI": 0.8, "AR": 0.2}})
+        self.addCleanup(SI._LABELS.update,
+                        {"loaded": False, "map": {}, "clusters": {}})
+        SL._CRESTS.update(loaded=True,
+                          map={"Hope": [("RI", "aaaa1111"), ("AR", "bbbb2222")]})
+        self.addCleanup(SL._CRESTS.update, {"loaded": False, "map": {}})
+        self.assertEqual(SL.crestState("Hope", "AR")[1], "bbbb2222",
+                         "the Arkansas race must show the Arkansas crest")
+        self.assertEqual(SL.crestState("Hope", None)[1], "aaaa1111")
+
+    def test_every_crest_gets_the_context_its_label_gets(self):
+        """A crest called with less context than the label beside it is the
+        Hope bug waiting to happen again."""
+        import glob
+        import re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast", "templates",
+                                               "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "crest(" not in line:
+                    continue
+                m = re.search(r"school_label_(?:in|for)\(([^)]*)\)", line)
+                if not m:
+                    continue
+                where = f"{os.path.basename(f)}:{n}"
+                crest = re.search(r"crest\(([^)]*)\)", line).group(1)
+                # the crest may be MORE specific than the label -- a
+                # collision-split team row knows its own state where the
+                # label only has the meet's -- but never less
+                self.assertRegex(crest, r"[._]state\b|state=",
+                                 f"{where}: the label has a context and the "
+                                 f"crest does not")
 
 
 class Wiring(unittest.TestCase):
@@ -1879,6 +2327,457 @@ class Normalise(unittest.TestCase):
         png, sha, why = S.normalise(b"<html>not an image</html>")
         self.assertEqual((png, sha), (None, None))
         self.assertIn("unreadable", why)
+
+
+# ===================================================================== #
+#  THE SCHOOL ID TFRRS HAS BEEN HANDING US ALL ALONG                    #
+# ===================================================================== #
+
+class _Cell:
+    """The three methods _extractTFTeam asks of a soup tag. bs4 is a scraper
+    dependency and is not installed where these tests run."""
+
+    def __init__(self, text, href=None):
+        self.text, self.href = text, href
+
+    def find(self, _tag):
+        return _Cell(self.text, self.href) if self.href is not None else None
+
+    def get(self, _attr, default=""):
+        return self.href if self.href is not None else default
+
+    def get_text(self):
+        return self.text
+
+
+class TeamSlug(unittest.TestCase):
+    """tfrrs names every team page after a stable key -- state, level, gender
+    and school in one token. The parser read it and the saver dropped it."""
+
+    def test_the_xc_parser_still_reads_it(self):
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_xc
+        self.assertEqual(
+            parse_xc._teamSlugFromHref(
+                "https://www.tfrrs.org/teams/xc/CT_college_f_Conn_College.html"),
+            "CT_college_f_Conn_College")
+
+    def test_the_tf_parser_now_reads_it_too(self):
+        """It used to throw the slug away and return the bare string 'tfrrs'."""
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_tf
+        cell = _Cell("Tufts", href="/teams/tf/MA_college_m_Tufts.html")
+        name, native, system, slug = parse_tf._extractTFTeam(cell)
+        self.assertEqual((name, system, slug),
+                         ("Tufts", "tfrrs", "MA_college_m_Tufts"))
+
+    def test_an_unlinked_tf_team_has_no_slug(self):
+        sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "parser"))
+        import parse_tf
+        self.assertEqual(parse_tf._extractTFTeam(_Cell("Unattached"))[3], None)
+
+    def test_the_build_half_carries_it(self):
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn('"team_slug":     parsed.get("team_slug")', save)
+
+    def test_both_savers_write_it(self):
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn("scraped_at, splits_json, team_slug", save)
+        self.assertIn("place, score, wind, scraped_at, splits_json, team_slug",
+                      save)
+        self.assertEqual(save.count('row.get("team_slug")'), 2)
+
+    def test_a_rescrape_without_a_link_cannot_null_a_stored_slug(self):
+        """The old pages have no team <a> at all; a straight refresh would
+        wipe the slug the newer scrape found."""
+        save = read("tfrrs", "scraper", "save_tfrrs.py")
+        self.assertIn(
+            "team_slug     = COALESCE(EXCLUDED.team_slug, results_tf.team_slug)",
+            save)
+        self.assertIn(
+            "team_slug     = COALESCE(EXCLUDED.team_slug, results.team_slug)",
+            save)
+
+    def test_the_column_is_added_to_both_tables_and_registered(self):
+        db = read("scripts", "database.py")
+        self.assertIn("def _migrateResultsAddTeamSlug(cursor):", db)
+        self.assertIn("_migrateResultsAddTeamSlug(cursor)\n", db)
+        self.assertIn('for table in ("results", "results_tf"):', db)
+        self.assertIn("ADD COLUMN IF NOT EXISTS team_slug TEXT", db)
+
+    def test_the_migration_is_idempotent(self):
+        """Every statement it runs is IF NOT EXISTS -- run it twice, nothing
+        happens the second time."""
+        db = read("scripts", "database.py")
+        body = db.split("def _migrateResultsAddTeamSlug(cursor):")[1]
+        body = body.split("\ndef ")[0]
+        for stmt in ("ALTER TABLE", "CREATE INDEX"):
+            for line in body.splitlines():
+                if stmt in line:
+                    self.assertIn("IF NOT EXISTS", line)
+
+
+class TeamIdZero(unittest.TestCase):
+    """anet writes TeamID 0 for unattached. Zero is not an id."""
+
+    def test_zero_and_rubbish_become_none(self):
+        # database.py opens a connection pool at import, so read the one
+        # function out of the source instead of importing the module.
+        src = read("scripts", "database.py")
+        body = src.split("def _teamIdOrNone(value):")[1].split("\n\n")[0]
+        ns = {}
+        exec("def _teamIdOrNone(value):" + body, ns)                # noqa: S102
+        f = ns["_teamIdOrNone"]
+        self.assertIsNone(f(0))
+        self.assertIsNone(f("0"))
+        self.assertIsNone(f(None))
+        self.assertIsNone(f(""))
+        self.assertIsNone(f("unattached"))
+        self.assertEqual(f(21480), 21480)
+        self.assertEqual(f("21480"), 21480)
+
+    def test_both_anet_writers_go_through_it(self):
+        db = read("scripts", "database.py")
+        self.assertIn('_teamIdOrNone(resultData.get("TeamID"))', db)
+        self.assertIn('_teamIdOrNone(result.get("TeamID"))', db)
+        self.assertNotIn('\n            resultData.get("TeamID"),', db)
+        self.assertNotIn('\n            result.get("TeamID"),', db)
+
+    def test_the_anet_worklist_will_not_take_zero_as_a_modal_id(self):
+        """One unattached row could otherwise become a school's modal team
+        and send the whole scrape to team 0."""
+        teams = read("scripts", "anet_teams.py")
+        self.assertEqual(teams.count("team_id IS NOT NULL AND team_id <> 0"), 2)
+
+
+# ===================================================================== #
+#  A HOLDING PEN IS NOT A SCHOOL                                        #
+# ===================================================================== #
+
+class Buckets(unittest.TestCase):
+    """★ "Arkansas having college and hs, when it should just be college
+    and Arkansas is just for indiv ppl at state" (owner, 2026-09-13). At a
+    state meet an unattached runner's team cell is the STATE NAME, so the
+    university shares a page with a few hundred of its own visitors."""
+
+    def test_the_tell_is_where_the_athletes_belong_the_rest_of_the_time(self):
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("belongs AS (", src)
+        self.assertIn("b.school IS DISTINCT FROM p.school", src)
+        self.assertIn("AS n_elsewhere", src)
+        self.assertIn("AS is_bucket", src)
+
+    def test_it_asks_within_the_level_not_across_a_career(self):
+        """A college freshman has four high-school seasons behind them, so
+        their career-modal school is their high school -- every college in
+        the country would read as a bucket."""
+        src = read("racecast", "build_school_identity.py")
+        self.assertIn("DISTINCT ON (person_id, level)", src)
+        self.assertIn("b.person_id = p.person_id AND b.level = p.level", src)
+
+    def test_the_threshold_is_high_because_the_verdict_deletes_a_school(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        src = read("racecast", "build_school_identity.py")
+        i = src.index("BUCKET_SHARE = ")
+        share = float(src[i:].split("=")[1].split("\n")[0].strip())
+        self.assertGreaterEqual(share, 0.5)
+        self.assertLess(share, 1.0)
+
+    def test_a_bucket_is_never_the_primary_level(self):
+        """The state-meet crowd outnumbers the university, and everything
+        downstream calls the school by its primary level."""
+        src = read("racecast", "build_school_identity.py")
+        order = src[src.index("AS is_primary") - 400:src.index("AS is_primary")]
+        self.assertIn("ORDER BY (n_elsewhere >= {bucket} * n_athletes)", order)
+
+    def test_the_ddl_formats_with_the_threshold_and_nothing_else(self):
+        """It is a .format() template now; a stray brace would raise at
+        build time, hours in."""
+        src = read("racecast", "build_school_identity.py")
+        ddl = src.split('_LEVEL_DDL = """')[1].split('"""')[0]
+        self.assertEqual(sorted(set(re.findall(r"\{[^}]*\}", ddl))),
+                         ["{bucket}"])
+        self.assertIn("0.6", ddl.format(bucket=0.6))
+        self.assertIn("_LEVEL_DDL.format(bucket=BUCKET_SHARE)", src)
+
+    def test_the_chips_leave_buckets_out(self):
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        self.assertIn("AND NOT is_bucket", src[i:i + 1200])
+
+    def test_but_an_older_table_still_gets_chips(self):
+        """is_bucket did not exist last build; losing every chip because a
+        column is missing is worse than an unfiltered chip row."""
+        src = read("racecast", "school_identity.py")
+        i = src.index("def levelChips")
+        body = src[i:src.index("def levelOf")]
+        self.assertIn('for clause in (" AND NOT is_bucket", "")', body)
+        self.assertIn("rollback()", body)
+
+
+# ===================================================================== #
+#  A COLLEGE IS NEVER A HIGH SCHOOL, WHATEVER THE NAME SAYS             #
+# ===================================================================== #
+
+class WebsiteLevel(unittest.TestCase):
+    """★ "college Oregon gets hs Oregon's logo" (owner, 2026-09-13). The
+    wikidata query asked for universities AND secondary schools and threw
+    the class away, so the two were one row set and the matcher took
+    whichever the feed listed first."""
+
+    def test_the_query_now_selects_the_class(self):
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn("SELECT ?itemLabel ?site ?logo ?class WHERE", src)
+        self.assertIn('_WD_LEVEL = {"Q38723": "college", "Q159334": "hs"}', src)
+
+    def test_a_wikidata_row_carries_its_level(self):
+        self.assertEqual(W._WD_LEVEL["Q38723"], "college")
+        self.assertEqual(W._WD_LEVEL["Q159334"], "hs")
+
+    def test_a_contradicting_row_is_dropped(self):
+        hits = [{"name": "Oregon High School", "level": "hs"},
+                {"name": "University of Oregon", "level": "college"}]
+        self.assertEqual([r["name"] for r in W.levelOfRows(hits, "college")],
+                         ["University of Oregon"])
+        self.assertEqual([r["name"] for r in W.levelOfRows(hits, "hs")],
+                         ["Oregon High School"])
+
+    def test_an_unlabelled_row_is_kept_at_either_level(self):
+        """Most directory exports do not say what they are, and dropping
+        them all would cost far more crests than the collision does."""
+        hits = [{"name": "Oregon", "level": None}]
+        self.assertEqual(W.levelOfRows(hits, "college"), hits)
+        self.assertEqual(W.levelOfRows(hits, "hs"), hits)
+        self.assertEqual(W.levelOfRows(hits, None), hits)
+
+    def test_the_filter_never_returns_nothing(self):
+        hits = [{"name": "Oregon", "level": "hs"}]
+        self.assertEqual(W.levelOfRows(hits, "college"), hits,
+                         "no answer is worse than a badly labelled one")
+
+    def test_the_matcher_picks_the_college_row_over_the_high_school(self):
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, review = W.matchSchools(
+            [("Oregon", "OR")], source, colleges=set(),
+            levels={("Oregon", "OR"): "college"})
+        self.assertEqual([m["url"] for m in matched], ["http://uoregon.example"])
+        self.assertEqual(review, [])
+
+    def test_and_the_high_school_row_when_we_are_a_high_school(self):
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, _ = W.matchSchools([("Oregon", "OR")], source,
+                                    levels={("Oregon", "OR"): "hs"})
+        self.assertEqual([m["url"] for m in matched], ["http://ohs.example"])
+
+    def test_without_a_level_the_collision_is_still_ambiguous(self):
+        """Which is the honest answer, and the behaviour before this."""
+        source = [{"name": "Oregon", "state": "OR", "url": "http://ohs.example",
+                   "level": "hs", "source": "csv"},
+                  {"name": "Oregon", "state": "OR", "url": "http://uoregon.example",
+                   "level": "college", "source": "wikidata"}]
+        matched, review = W.matchSchools([("Oregon", "OR")], source)
+        self.assertEqual(matched, [])
+        self.assertEqual(review[0][2], "ambiguous")
+
+    def test_a_college_tries_the_directory_key_first(self):
+        """The permissive key exists BECAUSE a college's short name is not
+        its directory name; trying it second meant never reaching it."""
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn('if want == "college" and ckey and ckey in colleges', src)
+
+    def test_the_directory_outranks_the_inferred_level(self):
+        """school_level is inferred from the athletes' own pools -- the
+        thing the level is meant to check. A name the college directory
+        places is a college, full stop."""
+        src = read("scripts", "build_school_websites.py")
+        i = src.index("def ourLevels")
+        self.assertIn('out[(school, st)] = "college"', src[i:i + 1600])
+
+    def test_a_csv_can_declare_what_it_is(self):
+        src = read("scripts", "build_school_websites.py")
+        self.assertIn("--csv-level", src)
+        self.assertIn("rows = readCsv(path, args.csv_level)", src)
+        self.assertIn('"source": "csv", "level": level', src)
+
+    def test_no_level_tables_means_the_old_behaviour_exactly(self):
+        source = [{"name": "Amherst", "state": "MA", "url": "http://a.example",
+                   "source": "csv"}]
+        matched, _ = W.matchSchools([("Amherst", "MA")], source)
+        self.assertEqual([m["url"] for m in matched], ["http://a.example"])
+
+
+# ===================================================================== #
+#  AND THE LINK RESOLVES WITH THE LABEL AND THE CREST                   #
+# ===================================================================== #
+
+class OneHref(unittest.TestCase):
+    """★ "Oregon (OR) and Oregon (IL) still go to same page with hs logo"
+    (owner, 2026-09-14). The crest fix made the badge agree with the
+    label; the HREF was still a bare /school/<name> under both, so two
+    schools shared a page and the page picked the bigger one."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        import school_identity as SI
+        self.SI = SI
+        self._saved = dict(SI._LABELS)
+        SI._LABELS.update({
+            "loaded": True,
+            "map": {"Oregon": "OR", "Amherst": "MA",
+                    "Chisago Lakes/Rush City": "MN"},
+            "clusters": {"Oregon": {"OR": 0.70, "IL": 0.20},
+                         "Amherst": {"MA": 1.0}}})
+
+    def tearDown(self):
+        self.SI._LABELS.clear()
+        self.SI._LABELS.update(self._saved)
+
+    def test_the_two_oregons_are_two_urls(self):
+        self.assertEqual(self.SI.schoolHref("Oregon", "IL"),
+                         "/school/Oregon?state=IL")
+        self.assertEqual(self.SI.schoolHref("Oregon", "OR"),
+                         "/school/Oregon?state=OR")
+
+    def test_a_travel_state_still_lands_on_the_real_school(self):
+        """A row's state is the VENUE's -- Oregon racing in Texas is not a
+        third Oregon."""
+        self.assertEqual(self.SI.schoolHref("Oregon", "TX"),
+                         "/school/Oregon?state=OR")
+
+    def test_the_href_agrees_with_the_label_and_the_crest(self):
+        """One mention, one answer: whatever schoolLabelIn says the school
+        is, the link goes there."""
+        for state in ("IL", "OR", "TX", None):
+            label = self.SI.schoolLabelIn("Oregon", state)
+            href = self.SI.schoolHref("Oregon", state)
+            st = label.split("(")[1].rstrip(")") if "(" in label else ""
+            self.assertIn(f"state={st}", href, f"context {state}")
+
+    def test_the_level_rides_along_when_the_pool_knows_it(self):
+        """Amherst (MA) is a NESCAC college and a regional middle school."""
+        self.assertEqual(self.SI.schoolHref("Amherst", "MA", pool="college_m"),
+                         "/school/Amherst?state=MA&level=college")
+
+    def test_a_school_the_identity_cannot_place_links_as_it_always_did(self):
+        self.assertEqual(self.SI.schoolHref("Nowhere Unknown", "VT"),
+                         "/school/Nowhere Unknown".replace(" ", "%20"))
+
+    def test_a_slash_in_a_school_name_survives_the_path_converter(self):
+        """The route is <path:school_name> and school strings really do
+        contain slashes."""
+        self.assertEqual(self.SI.schoolHref("Chisago Lakes/Rush City", "MN"),
+                         "/school/Chisago%20Lakes/Rush%20City?state=MN")
+
+    def test_no_school_is_not_a_link_to_the_school_index(self):
+        self.assertEqual(self.SI.schoolHref(None), "#")
+        self.assertEqual(self.SI.schoolHref(""), "#")
+
+    def test_it_is_registered_as_a_template_global(self):
+        app = read("racecast", "app.py")
+        self.assertIn('app.jinja_env.globals["school_href"] = '
+                      'school_identity.schoolHref', app)
+
+    def test_no_template_writes_a_bare_school_link_any_more(self):
+        """Every mention of a school links through the resolver. The
+        school page's own navigation (tabs, years, the state chips) is
+        exempt: it already holds the identity."""
+        import glob
+        allowed = {"school.html", "schools.html", "school_prs.html"}
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            if os.path.basename(f) in allowed:
+                continue
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                self.assertNotIn('href="/school/', line,
+                                 f"{os.path.basename(f)}:{n}: bare school "
+                                 f"link -- use school_href()")
+
+    def test_a_label_with_a_context_never_sits_on_a_link_without_one(self):
+        """The other half of the chain: label -> crest is checked by
+        OneResolver, crest -> link below. This closes it."""
+        import glob, re as _re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "school_href(" not in line:
+                    continue
+                if not _re.search(r"school_label_(?:in|for)\(", line):
+                    continue
+                href = _re.search(r"school_href\(([^)]*)\)", line).group(1)
+                self.assertRegex(
+                    href, r"[._]state\b|state=",
+                    f"{os.path.basename(f)}:{n}: the label has a context "
+                    f"and the link does not")
+
+    def test_every_crest_row_links_through_the_same_context(self):
+        """A row whose crest knows the state and whose link does not is
+        the bug this class exists for."""
+        import glob, re as _re
+        for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
+                                               "templates", "*.html"))):
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "crest(" not in line or "school_href(" not in line:
+                    continue
+                crest = _re.search(r"crest\(([^)]*)\)", line).group(1)
+                href = _re.search(r"school_href\(([^)]*)\)", line).group(1)
+                where = f"{os.path.basename(f)}:{n}"
+                if "state" in crest:
+                    self.assertIn("state", href,
+                                  f"{where}: the crest has a context and "
+                                  f"the link does not")
+                if "pool=" in crest:
+                    self.assertIn("pool=", href,
+                                  f"{where}: the crest knows the level and "
+                                  f"the link does not")
+
+
+class Canonical(unittest.TestCase):
+    """A sitemap URL that canonicalises somewhere else is a URL the
+    crawler discards, and a canonical shared by two schools tells Google
+    they are one page."""
+
+    def test_the_school_canonical_carries_the_state(self):
+        html = read("racecast", "templates", "school.html")
+        self.assertIn('{% set meta_path = "/school/" ~ (school|urlencode)',
+                      html)
+        self.assertIn('"?state=" ~ header.state if header.state', html)
+
+    def test_it_uses_the_resolved_state_not_the_query_parameter(self):
+        """A page reached without ?state must point at its own resolved
+        URL, not mint a third one."""
+        html = read("racecast", "templates", "school.html")
+        i = html.index("set meta_path")
+        expr = html[i:html.index("%}", i)]
+        self.assertIn("header.state", expr)
+        self.assertNotIn("~ state ", expr)
+
+    def test_the_level_only_when_the_name_really_is_two_schools(self):
+        html = read("racecast", "templates", "school.html")
+        i = html.index("set meta_path")
+        self.assertIn("level_chips and level", html[i:i + 400])
+
+    def test_the_share_url_and_the_json_ld_are_the_canonical(self):
+        html = read("racecast", "templates", "school.html")
+        self.assertIn('"url": site_origin ~ meta_path,', html)
+        self.assertIn('data-share-url="{{ site_origin }}{{ meta_path }}"', html)
+
+    def test_the_sitemap_lists_the_same_url_the_page_claims(self):
+        src = read("racecast", "build_sitemap.py")
+        self.assertIn("SELECT school, state FROM school_identity", src)
+        self.assertIn('f"?state={quote(state, safe=\'\')}" if state else ""', src)
+
+    def test_a_second_real_cluster_gets_its_own_line(self):
+        """Oregon (IL) had no sitemap entry at all: the query took primary
+        clusters only."""
+        src = read("racecast", "build_sitemap.py")
+        self.assertIn("OR (n_athletes >= %s AND share >= %s)", src)
+        self.assertIn("from school_identity import (MIN_ATHLETES", src)
 
 
 if __name__ == "__main__":

@@ -2391,15 +2391,26 @@ def _stampSeasonUnits(conn, season_table):
                               FROM school_unit ORDER BY school, state, votes DESC) u
                           ON u.school = c.school AND u.state = c.state
                         WHERE s.school = c.school
+                          AND s.pool LIKE 'college%%'
                     """)
                     n0 = cur.rowcount
+            # ⚠ THE CAMPUS PASS IS FOR COLLEGE ROWS ONLY, AND IT DOES NOT
+            #   CLAIM THE NAME (owner, 2026-09-13: Amherst, Nebraska -- a
+            #   high school and a middle school -- was labelled NCAA DIII).
+            #   The directory is keyed on the school NAME alone, so every
+            #   "Amherst" in the country used to take Amherst College's
+            #   division; and excluding the whole name from the pass below
+            #   then denied the Nebraska school the units it does have. So:
+            #   the campus pass is gated on a college pool, and the exact
+            #   (school, state) pass runs for everyone -- the IS NULL guard
+            #   is already what stops it overwriting a campus answer.
             # then the exact (school, state) for the rest
             cur.execute(f"""
                 UPDATE {season_table} s SET {sets}
                 FROM (SELECT DISTINCT ON (school, state) school, state, {collist}
                       FROM school_unit ORDER BY school, state, votes DESC) u
                 WHERE u.school = s.school AND u.state = s.state
-                  AND s."{cols[0]}" IS NULL AND s.school NOT IN (SELECT school FROM tmp_campus)
+                  AND s."{cols[0]}" IS NULL
             """) if n0 else cur.execute(f"""
                 UPDATE {season_table} s SET {sets}
                 FROM (SELECT DISTINCT ON (school, state) school, state, {collist}

@@ -239,6 +239,10 @@ app.template_filter("school_label_for")(school_identity.schoolLabelFor)
 # the crest beside a school's name, everywhere one is named (305). Both
 # live in school_logo so they can be tested without importing the app.
 app.jinja_env.globals["crest"] = school_logo.crestImg
+# ★ AND THE LINK RESOLVES WITH THEM. A mention's label, crest and href are
+#   one answer about one school; the href used to be a bare /school/<name>
+#   and sent Oregon (IL) to Oregon (OR)'s page.
+app.jinja_env.globals["school_href"] = school_identity.schoolHref
 stampCrests = school_logo.stampCrests
 
 
@@ -1051,7 +1055,6 @@ def buildRankLine(cur, person_id, season):
     Returns None when there is nothing real to show (unrankable pool, or no
     scope produced a number): a line of nothing but "soon" is noise.
     """
-    from urllib.parse import quote
     from werkzeug.datastructures import MultiDict
 
     level = (season.get("pool") or "").split("_", 1)[0]
@@ -1251,8 +1254,13 @@ def buildRankLine(cur, person_id, season):
             if row:
                 entries.append({
                     "label": "Team", "rank": row["place"],
-                    "href": (f"/school/{quote(school, safe='')}"
-                             f"?sport={sport}&year={label_year}")})
+                    # through the resolver, so a team-rank chip cannot
+                    # open a different school of the same name than the
+                    # label beside it names
+                    "href": (school_identity.schoolHref(
+                                 school, state, pool=season.get("pool"),
+                                 sport=sport)
+                             + f"&year={label_year}")})
 
     if not any("rank" in e for e in entries):
         return None
@@ -2763,6 +2771,58 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
                         and (season is None or float(t) < float(season)))
 
 
+# ★ THE SAME BADGE FOR THE RATING (owner, 2026-09-13). A time PR is a
+#   distance-and-course-bound fact; the RATING is the whole point of this
+#   site, and "best rating they had ever run" is the claim a reader
+#   actually wants -- it survives a slow course and a fast one.
+#
+# ! DELIBERATELY NOT stampRecordFlags WITH ANOTHER COLUMN. That one is
+#   keyed on a distance band, because a 5k time and an 8k time are not
+#   comparable. A rating IS comparable across distances and courses -- that
+#   is what it is for -- so the band would only throw away evidence.
+def stampRatingFlags(cur, sport, rows, race_date):
+    """Stamp rating_pr / rating_sr, the rating twin of stampRecordFlags.
+
+    PR: no earlier rated race by that athlete scored higher, in any sport.
+    SR: none this season did. PR wins; a row is never both. Same tense --
+    "when this race was run" -- so a rating beaten later still reads PR."""
+    if not race_date:
+        return
+    pids = [r["person_id"] for r in rows
+            if r.get("person_id") and r.get("speed_rating") is not None]
+    if not pids:
+        return
+    yr = seasonYearFromIso(sport, race_date)
+    try:
+        cur.execute("""
+            SELECT person_id,
+                   max(speed_rating)                                AS best_before,
+                   max(speed_rating) FILTER (WHERE year = %(yr)s)   AS season_before
+            FROM   ranking_results
+            WHERE  person_id = ANY(%(pids)s)
+              AND  race_date < %(day)s
+              AND  speed_rating IS NOT NULL
+            GROUP  BY person_id
+        """, {"pids": pids, "day": race_date, "yr": yr})
+        prior = {r["person_id"]: r for r in cur.fetchall()}
+    except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
+        cur.connection.rollback()
+        print(f"stampRatingFlags: {sport} {race_date} skipped: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+        return
+
+    for row in rows:
+        v = row.get("speed_rating")
+        if not row.get("person_id") or v is None:
+            continue
+        p = prior.get(row["person_id"])
+        best = p["best_before"] if p else None
+        season = p["season_before"] if p else None
+        row["rating_pr"] = best is None or float(v) > float(best)
+        row["rating_sr"] = (not row["rating_pr"]
+                            and (season is None or float(v) > float(season)))
+
+
 def raceDayEffect(cur, sport, header, race_date):
     """The solve's race-day term for this race (the hover on the
     difficulty), or None: no table yet, no date, or the cell was not in
@@ -2821,6 +2881,7 @@ def race_xc(meet_id, div_id):
                 stampRecordFlags(cur, "XC", results,
                                  header.get("distance"),
                                  results[0].get("date"))
+                stampRatingFlags(cur, "XC", results, results[0].get("date"))
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
@@ -3517,6 +3578,7 @@ def race_tf(meet_id, event_id, div_id):
                     dist = parseEventShort(header.get("event_short")).get("meters")
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
+                stampRatingFlags(cur, "TF", results, results[0].get("date"))
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
             # Points come from scoring the WHOLE meet, not this page's rows:
@@ -4311,6 +4373,21 @@ def school_page(school_name):
             units = unitsFor(cur, school_name, state or primary_state,
                              sport, long=True)
 
+            # ★ ONE NAME, ONE STATE, TWO INSTITUTIONS (owner, 2026-09-13):
+            #   Amherst (MA) is Amherst College AND Amherst Regional Middle
+            #   School, and the page showed both rosters under one header
+            #   with NESCAC written over the middle schoolers. The level
+            #   chips work exactly as the state chips do -- ?level= scopes
+            #   the page to one institution -- and a school with one level,
+            #   which is nearly all of them, gets no chips and no change.
+            from school_identity import levelChips, levelOf
+            lchips = levelChips(cur, school_name, state or primary_state)
+            level = (request.args.get("level") or "").strip().lower() or None
+            if level and not any(c["level"] == level for c in lchips):
+                level = None
+            if lchips and not level:
+                level = lchips[0]["level"]
+
             years = schoolYears(cur, school_name)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
@@ -4337,7 +4414,7 @@ def school_page(school_name):
             #   the ratings beside them are on different pools' scales.
             #   One table per level, HS first, only when more than one
             #   level has anyone; a single-level school reads as before.
-            roster_levels = rosterByLevel(roster)
+            roster_levels = rosterByLevel(roster)   # replaced below when scoped
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
                                  state=state, primary=primary_state)
             # deeper than the old 25: the tables reveal in place now, and
@@ -4346,6 +4423,18 @@ def school_page(school_name):
                                 state=state, primary=primary_state)
             top    = schoolTopAthletes(cur, school_name, sport, limit=100,
                                        state=state, primary=primary_state)
+
+    # ! SCOPED IN PYTHON, NOT IN SQL. Every row already carries its pool,
+    #   so the level filter is a predicate rather than another parameter
+    #   threaded through six queries -- and a row whose pool is missing is
+    #   KEPT, because dropping a row for a pool we failed to infer would
+    #   hide a real athlete to enforce a guess.
+    if level:
+        def _here(rows):
+            return [r for r in rows
+                    if levelOf(r.get("pool")) in (None, level)]
+        roster, best, top = _here(roster), _here(best), _here(top)
+        roster_levels = []
 
     # HS-equivalent view: rows carry their pool straight from
     # ranking_results / athlete_season, so no lookup is needed.
@@ -4384,6 +4473,7 @@ def school_page(school_name):
 
     return render_template("school.html", school=school_name, header=header,
                            units=units,
+                           level_chips=lchips, level=level,
                            state_chips=chips, state=state,
                            has_hs_view=has_hs_view,
                            years=years, year=seasonLabel(sport, year),

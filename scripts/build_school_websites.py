@@ -169,6 +169,41 @@ def collegeNames(cur):
         return set()
 
 
+def ourLevels(cur, colleges=()):
+    """{(school, state): level} -- what each of our schools IS.
+
+    Two witnesses, and the directory wins. school_level (built by
+    racecast/build_school_identity.py) is inferred from the athletes' own
+    pools, which is why it exists and also why it cannot be the only vote:
+    a college whose runners are mis-pooled as high schoolers would ask for
+    a high school's website. A name the college directory places is a
+    college, full stop.
+
+    Empty when neither table is built -- the matcher then behaves exactly
+    as it did before levels existed."""
+    out = {}
+    try:
+        cur.execute("SELECT to_regclass('public.school_level')")
+        row = cur.fetchone()
+        if (row[0] if not isinstance(row, dict) else row.get("to_regclass")):
+            cur.execute("SELECT school, state, level FROM school_level "
+                        "WHERE is_primary")
+            for r in cur.fetchall():
+                school, st, lvl = ((r["school"], r["state"], r["level"])
+                                   if isinstance(r, dict) else r)
+                if lvl:
+                    out[(school, (st or "").upper())] = lvl
+    except Exception:                                     # noqa: BLE001
+        cur.connection.rollback()
+    colleges = set(colleges or ())
+    if colleges:
+        for (school, st) in list(out):
+            key = collegeKey(school)
+            if key and key in colleges:
+                out[(school, st)] = "college"
+    return out
+
+
 # ------------------------------------------------------------- matching
 
 def buildIndex(rows):
@@ -181,22 +216,58 @@ def buildIndex(rows):
     return idx
 
 
-def matchSchools(ours, source_rows, colleges=()):
+def levelOfRows(hits, want):
+    """The hits that can belong to a `want`-level school.
+
+    ★ A COLLEGE IS NEVER A HIGH SCHOOL, WHATEVER THE NAME SAYS (owner,
+      2026-09-13). Oregon, Arkansas, Amherst, Hope -- a university and a
+      high school share the name, and the source rows for both landed
+      under one key. The matcher then read whichever the feed happened to
+      list first and a college wore a high school's badge.
+
+    ! A ROW WITH NO LEVEL IS KEPT AT EITHER LEVEL. Most directory exports
+      do not say what they are, and dropping every unlabelled row to
+      enforce a level we are only guessing at would cost far more crests
+      than the collision does. The rule only bites when the source
+      actually contradicts us -- a row that SAYS college against a high
+      school, or the reverse.
+
+    ! AND IT NEVER RETURNS NOTHING. If the level filter empties the list,
+      the unfiltered hits stand: no answer at all is worse than one from
+      a source that did not label itself the way we hoped."""
+    if not want:
+        return hits
+    kept = [r for r in hits if (r.get("level") or want) == want]
+    return kept or hits
+
+
+def matchSchools(ours, source_rows, colleges=(), levels=None):
     """(matched, review). `matched` is one row per (school, state) we can
     place beyond doubt; `review` is every name that matched nothing, or
-    matched more than one source row that disagree about the URL."""
+    matched more than one source row that disagree about the URL.
+
+    `levels` is {(school, state): level} -- what WE believe each of our
+    schools is. Absent, every source row is eligible, as before."""
     idx = buildIndex(source_rows)
     colleges = set(colleges or ())
+    levels = levels or {}
     matched, review = [], []
     for school, state in ours:
+        want = levels.get((school, state))
         strict = normSchool(school)
-        keys = [(strict, state)]
         ckey = collegeKey(school)
-        if ckey and ckey in colleges:
-            keys.append((ckey, state))
+        # ⚠ THE COLLEGE KEY GOES FIRST FOR A COLLEGE. It used to go second
+        #   always, so "Oregon" matched the strict key against a secondary
+        #   school and never reached the directory's own normalisation --
+        #   the permissive key exists precisely because a college's short
+        #   name is not its directory name.
+        keys = ([(ckey, state), (strict, state)]
+                if want == "college" and ckey and ckey in colleges
+                else [(strict, state)]
+                     + ([(ckey, state)] if ckey and ckey in colleges else []))
         hits = []
         for k in keys:
-            hits = idx.get(k) or []
+            hits = levelOfRows(idx.get(k) or [], want)
             if hits:
                 break
         if not hits:
@@ -222,9 +293,14 @@ def matchSchools(ours, source_rows, colleges=()):
 
 # ------------------------------------------------------------------ csv
 
-def readCsv(path):
+def readCsv(path, level=None):
     """Rows from any directory export whose headers name a school, a state
-    and a website. Raises when a column is missing, naming what it saw."""
+    and a website. Raises when a column is missing, naming what it saw.
+
+    `level` is what the FILE is: the CCD and the PSS are K-12 directories,
+    so --csv-level hs stops a college taking a high school's website. None
+    means "this file does not say", and an unlevelled row still matches
+    anything, exactly as before."""
     with io.open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
         sample = fh.read(8192)
         fh.seek(0)
@@ -250,7 +326,7 @@ def readCsv(path):
             url = cleanUrl(r.get(picked["site"]))
             rows.append({"name": (r.get(picked["name"]) or "").strip(),
                          "state": (r.get(picked["state"]) or "").strip().upper()[:2],
-                         "url": url, "source": "csv"})
+                         "url": url, "source": "csv", "level": level})
     return [r for r in rows if r["name"] and r["state"]]
 
 
@@ -283,8 +359,14 @@ WDQS = "https://query.wikidata.org/sparql"
 
 # one state at a time: the whole country in one query times out, and a
 # state that fails leaves the other fifty alone
+# ★ THE CLASS COMES BACK WITH THE ROW (owner, 2026-09-13: "college Oregon
+#   gets hs Oregon's logo"). Q38723 is a higher-education institution and
+#   Q159334 a secondary school; the query asked for both and returned
+#   neither label, so a college and a high school of one name in one state
+#   were two indistinguishable rows and the matcher took whichever came
+#   first. Selecting ?class costs nothing and is the whole fix.
 _SPARQL = """
-SELECT ?itemLabel ?site ?logo WHERE {
+SELECT ?itemLabel ?site ?logo ?class WHERE {
   VALUES ?class { wd:Q38723 wd:Q159334 }
   ?item wdt:P31/wdt:P279* ?class .
   ?item wdt:P17 wd:Q30 .
@@ -295,6 +377,9 @@ SELECT ?itemLabel ?site ?logo WHERE {
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }
 }
 """
+
+
+_WD_LEVEL = {"Q38723": "college", "Q159334": "hs"}
 
 
 def wikidataRows(states=STATES, pace=2.0, verbose=True):
@@ -322,7 +407,9 @@ def wikidataRows(states=STATES, pace=2.0, verbose=True):
                 "name": name, "state": st,
                 "url": cleanUrl(b.get("site", {}).get("value")),
                 "direct_logo": (b.get("logo", {}).get("value") or "").strip() or None,
-                "source": "wikidata"})
+                "source": "wikidata",
+                "level": _WD_LEVEL.get(
+                    (b.get("class", {}).get("value") or "").rsplit("/", 1)[-1])})
             n += 1
         if verbose:
             print(f"  wikidata {st}: {n:,} institutions")
@@ -374,6 +461,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--csv", action="append", default=[],
                     help="a directory export (NCES CCD, PSS, or hand-made); repeatable")
+    ap.add_argument("--csv-level", default=None, choices=("college", "hs", "ms", "elem"),
+                    help="what the --csv files are (the CCD and PSS are hs); "
+                         "unset means the file does not say and its rows "
+                         "match a school of any level")
     ap.add_argument("--wikidata", action="store_true",
                     help="query the Wikidata service, one request per state")
     ap.add_argument("--states", default="", help="limit --wikidata to these, comma separated")
@@ -386,7 +477,7 @@ def main():
 
     source = []
     for path in args.csv:
-        rows = readCsv(path)
+        rows = readCsv(path, args.csv_level)
         with_url = sum(1 for r in rows if r["url"])
         print(f"  {path}: {len(rows):,} rows, {with_url:,} with a website")
         source += rows
@@ -399,8 +490,11 @@ def main():
         with conn.cursor() as cur:
             ours = ourSchools(cur)
             colleges = collegeNames(cur)
-            print(f"  ours: {len(ours):,} schools, {len(colleges):,} known colleges")
-            matched, review = matchSchools(ours, source, colleges)
+            levels = ourLevels(cur, colleges)
+            n_col = sum(1 for v in levels.values() if v == "college")
+            print(f"  ours: {len(ours):,} schools, {len(colleges):,} known "
+                  f"colleges, {len(levels):,} levelled ({n_col:,} college)")
+            matched, review = matchSchools(ours, source, colleges, levels)
             direct = sum(1 for m in matched if m["direct_logo"])
             print(f"  matched {len(matched):,} of {len(ours):,} "
                   f"({100.0 * len(matched) / max(1, len(ours)):.1f}%), "

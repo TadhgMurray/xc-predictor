@@ -21,3 +21,24 @@
         aria-label="Season Record. Their fastest time at this distance in this season, when this race was run.">SR</span>
     {%- endif -%}
 {%- endmacro %}
+
+{# ---------------------------------------------------------------------
+   ratflag -- the same badge beside a RATING (owner, 2026-09-13).
+
+   Stamped by app.stampRatingFlags. Not the same fact as the time badge:
+   a time PR is bound to a distance, a rating PR is not, because comparing
+   across distances and courses is what the rating is FOR. So a row can
+   carry SR on its time and PR on its rating -- a season best on a hard
+   course can still be the best they have ever run.
+   ------------------------------------------------------------------- #}
+{% macro ratflag(row) -%}
+    {%- if row.rating_pr %} <span class="flag flag--pr" tabindex="0"
+        data-title="Personal Best rating"
+        data-blurb="Their highest rating in any race when this one was run."
+        aria-label="Personal Best rating. Their highest rating in any race when this one was run.">PR</span>
+    {%- elif row.rating_sr %} <span class="flag flag--sr" tabindex="0"
+        data-title="Season Best rating"
+        data-blurb="Their highest rating this season when this race was run."
+        aria-label="Season Best rating. Their highest rating this season when this race was run.">SR</span>
+    {%- endif -%}
+{%- endmacro %}

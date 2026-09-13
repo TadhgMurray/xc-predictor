@@ -10,7 +10,8 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
 
   sitemap.xml                    the index: one <sitemap> per file below
   sitemap-pages.xml              the handful of fixed pages
-  sitemap-schools-N.xml          /school/<name>, primary state per school
+  sitemap-schools-N.xml.gz       /school/<name>?state=ST, one per cluster
+                                 the site treats as its own school
   sitemap-courses-N.xml          /course/<name>
   sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
@@ -29,6 +30,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 MAX_PER_FILE = 45000
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -65,12 +67,27 @@ def indexXml(files):
     return "\n".join(out) + "\n"
 
 
-def writeSitemaps(by_kind, out_dir, origin):
+# ⚠ GZIP, AND IT IS NOT A MICRO-OPTIMISATION (2026-09-13). Bing had made
+#   501 requests to this site: roughly 450 of them were these files at
+#   FOUR MEGABYTES each, and exactly one was a page. It had downloaded
+#   something like two gigabytes of XML and indexed nothing, because the
+#   sitemap WAS the crawl. Google's rate fell off a cliff over the same
+#   period. sitemaps.org has allowed gzip since the beginning and both
+#   engines take it; 4 MB becomes about 350 KB, so the same budget reaches
+#   ten times as many actual pages.
+#
+# ! .xml.gz IS SERVED AS-IS, not with Content-Encoding. That is the
+#   documented shape -- a gzipped sitemap file, which nginx already serves
+#   with the right type off the extension -- so this needs no server
+#   change and cannot be undone by one.
+def writeSitemaps(by_kind, out_dir, origin, gzipped=True):
     """by_kind: {kind: [(path, lastmod), ...]}. Writes the files and the
     index, replacing what is there. Returns the file names written."""
+    import gzip
     os.makedirs(out_dir, exist_ok=True)
     for old in os.listdir(out_dir):
-        if old.startswith("sitemap") and old.endswith(".xml"):
+        if old.startswith("sitemap") and (old.endswith(".xml")
+                                          or old.endswith(".xml.gz")):
             os.remove(os.path.join(out_dir, old))
     files = []
     for kind, entries in by_kind.items():
@@ -80,9 +97,20 @@ def writeSitemaps(by_kind, out_dir, origin):
                 continue
             name = (f"sitemap-{kind}.xml" if len(parts) == 1
                     else f"sitemap-{kind}-{i}.xml")
-            with open(os.path.join(out_dir, name), "w", encoding="utf-8") as fh:
-                fh.write(urlsetXml(part).replace("{ORIGIN}", origin))
+            body = urlsetXml(part).replace("{ORIGIN}", origin).encode("utf-8")
+            if gzipped:
+                name += ".gz"
+                # mtime=0: the same URLs produce the same bytes, so an
+                # unchanged sitemap keeps its ETag and is not re-fetched
+                with gzip.GzipFile(os.path.join(out_dir, name), "wb",
+                                   compresslevel=9, mtime=0) as fh:
+                    fh.write(body)
+            else:
+                with open(os.path.join(out_dir, name), "wb") as fh:
+                    fh.write(body)
             files.append(name)
+    # the INDEX stays uncompressed: robots.txt names it, it is small, and
+    # it is the one file a human ever opens
     with open(os.path.join(out_dir, "sitemap.xml"), "w", encoding="utf-8") as fh:
         fh.write(indexXml(files).replace("{ORIGIN}", origin))
     return files
@@ -116,18 +144,51 @@ def collect(conn):
         #   disk and the step ran for hours (owner, 2026-09-08: "13d is
         #   taking forever"). In memory, with parallel workers, they are
         #   minutes. Session-only; nothing else sees it.
+        # ! LAZY, like everything else that reaches into the site's modules
+        #   from a builder: panels imports psycopg2, and importing it at
+        #   module scope makes this file unimportable anywhere that has not
+        #   got it -- which broke tests/test_sitemap.py, whose whole point
+        #   is that it needs no database.
+        from courses import courseDisplayName
+        from panels import isTeamName
+        # the same bar school_identity draws a second cluster at,
+        # read from the one place that defines it
+        from school_identity import (MIN_ATHLETES as _MIN_ATHLETES,
+                                     MIN_SHARE as _MIN_SHARE)
         cur.execute("SET work_mem = '1GB'")
         cur.execute("SET max_parallel_workers_per_gather = 4")
+        # ⚠ "Unattached" IS NOT A PAGE. school_page 404s any name
+        #   panels.isTeamName rejects, so listing them here hands the
+        #   crawlers a sitemap full of 404s -- which costs crawl budget and
+        #   the sitemap's own credibility (2026-09-13).
+        # ⚠ AND THE STATE IS PART OF THE URL (owner, 2026-09-14: the two
+        #   Oregons). This listed the bare name of PRIMARY clusters only,
+        #   so Oregon (IL) had no entry at all and Oregon (OR)'s entry did
+        #   not match the page's own canonical, which now carries ?state=.
+        #   A sitemap URL that canonicalises elsewhere is a URL the crawler
+        #   discards. Every cluster the site treats as its own school gets
+        #   its own line, spelled the way the page spells itself.
         if _exists(cur, "school_identity"):
-            cur.execute("""SELECT DISTINCT school FROM school_identity
-                           WHERE is_primary AND school IS NOT NULL""")
-            by_kind["schools"] = [("/school/" + quote(r[0], safe=""), None)
-                                  for r in cur.fetchall()]
+            cur.execute("""SELECT school, state FROM school_identity
+                           WHERE school IS NOT NULL
+                             AND (is_primary
+                                  OR (n_athletes >= %s AND share >= %s))""",
+                        (_MIN_ATHLETES, _MIN_SHARE))
+            by_kind["schools"] = [
+                ("/school/" + quote(school, safe="")
+                 + (f"?state={quote(state, safe='')}" if state else ""), None)
+                for school, state in cur.fetchall() if isTeamName(school)]
+        # ⚠ AND ONE COURSE IS ONE URL. course_difficulties is keyed
+        #   "XC:<venue>", and under --era-years once per era as well, while
+        #   the site links to the bare name -- so this listed a URL nothing
+        #   links to, several times over. courseDisplayName is the one way
+        #   from that table's keys to a page.
         if _exists(cur, "course_difficulties"):
             cur.execute("""SELECT DISTINCT course_name FROM course_difficulties
                            WHERE course_name IS NOT NULL AND TRIM(course_name) <> ''""")
-            by_kind["courses"] = [("/course/" + quote(r[0], safe=""), None)
-                                  for r in cur.fetchall()]
+            seen = {courseDisplayName(r[0]) for r in cur.fetchall()}
+            by_kind["courses"] = [("/course/" + quote(n, safe=""), None)
+                                  for n in sorted(seen) if n]
         meets = []
         for table, fmt in (("meet_agg_xc", "/meet/xc/{}"), ("meet_agg_tf", "/meet/tf/{}")):
             if _exists(cur, table):
