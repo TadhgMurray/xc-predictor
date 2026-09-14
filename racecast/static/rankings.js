@@ -1554,6 +1554,24 @@ function renderBoard(rows, data) {
 
 document.addEventListener("rc-scale-change", () => {
   if (!_lastBoard) return;
+  /* ⚠ THESE ARE ONE BOARD'S ROWS AND renderBoard DISPATCHES ON THE CURRENT
+       ONE (owner, 2026-09-14: a Teams board of "undefined" in every numeric
+       cell, fixed by pressing Apply). Switching tabs sets state.board and
+       starts a fetch; until it lands, _lastBoard still holds the PREVIOUS
+       board's rows. scale-view.js fires this event on its own init whenever
+       the stored mode is "hs" -- which is the default -- so the stale rows
+       were being drawn by the new board's renderer. Ability rows have
+       school, state and year and none of rank/points/n_athletes, which is
+       exactly the three "undefined" columns and the two blank ratings.
+
+       The in-flight fetch is about to render the right thing, so the answer
+       is to leave it alone: a redraw is only ever valid for the board the
+       rows actually came from. data.hs_movable belongs to that board too,
+       and deciding the refetch on another board's flag is the same bug. */
+  if (_lastBoard.board !== state.board) return;
+  /* A load already running will render the current scale when it lands;
+     redrawing under it just paints a frame that is about to be replaced. */
+  if (state.busy) return;
   /* A board where the scale moves some rows is ORDERED on the scale, so a
      flip changes the order and must refetch. A board where nothing moves is
      the same rows either way, and a redraw is enough. */
@@ -1661,7 +1679,9 @@ async function load() {
       // Keep the pager visible past page 1 so there is a way back.
       $("pager").classList.toggle("hidden", state.offset === 0);
     } else {
-      _lastBoard = { rows, data };
+      /* ! THE BOARD IS PART OF THE MEMO. Rows alone cannot say which
+           renderer they belong to, and renderBoard asks state.board. */
+      _lastBoard = { board: state.board, rows, data };
       $("results").innerHTML = renderBoard(rows, data);
       $("pager").classList.remove("hidden");
     }
