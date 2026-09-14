@@ -72,6 +72,36 @@ WANTED = [
     #   now, without waiting for a rebuild.
     ("ranking_results", "pool", "rr_pool_year_dist_idx",
      "(pool, year, distance)"),
+    # ★ THE TIME BOARDS, THE SAME GAP ONE BOARD LATER (owner, 2026-09-14:
+    #   "best times/marks is pretty slow, same with performances").
+    #   rr_board_time_idx is (pool, sport, year, time_seconds), so it
+    #   reaches its ordering column only when a YEAR pins the third
+    #   position -- and the Academic year filter defaults to Any. The
+    #   default Best-times board therefore sorted every row of the pool to
+    #   take the first fifty, which is exactly what rr_pool_rating_idx was
+    #   added to stop on the rating boards; the time boards were never
+    #   given the equivalent.
+    #
+    # ! TWO SHAPES, BECAUSE sport='both' EMITS NO PREDICATE AT ALL
+    #   (rankings._whereClauses says why), so an index with sport in the
+    #   second position cannot be used by the default board.
+    #
+    # ! AND DISTANCE IS INSIDE THE KEY, which it is not in the rating
+    #   pair. The PR board RANKS THE CLOCK AT ONE DISTANCE -- that filter
+    #   is what the board IS, not an optional narrowing -- so an index
+    #   that cannot use it leaves a range between the equality and the
+    #   ordering, and the sort comes back.
+    #
+    # ! build_ranking_results carries all three in _CANONICAL_INDEXES so a
+    #   rebuild recreates them on the shadow; they are here so they can be
+    #   built on the LIVE table now, the same arrangement
+    #   rr_pool_year_dist_idx has.
+    ("ranking_results", "pool", "rr_pr_time_idx",
+     "(pool, distance, time_seconds)"),
+    ("ranking_results", "pool", "rr_pr_sport_time_idx",
+     "(pool, sport, distance, time_seconds)"),
+    ("ranking_results", "pool", "rr_perf_dist_rating_idx",
+     "(pool, sport, distance, speed_rating DESC)"),
     # ★ THE ATHLETE PICKER'S NAME MATCH (2026-09-01). /api/predict/athletes
     #   filters on `(first_name || ' ' || last_name) ILIKE '%tok%'`, and a
     #   LEADING wildcard cannot use a btree at all -- so every keystroke was

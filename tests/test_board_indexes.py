@@ -26,6 +26,16 @@ def indexes():
     return dict(re.findall(r'\("(\w+)",\s*\n?\s*"([^"]+)"', block))
 
 
+def wanted():
+    """The (name -> spec) the live-table step builds."""
+    with io.open(os.path.join(_ROOT, "scripts", "add_page_indexes.py"),
+                 encoding="utf-8") as fh:
+        src = fh.read()
+    block = src[src.index("WANTED = ["):]
+    block = block[:block.index("\n]")]
+    return dict(re.findall(r'"(\w+)",\s*\n?\s*"(\([^"]+)"', block))
+
+
 class BoardIndexes(unittest.TestCase):
 
     def setUp(self):
@@ -63,6 +73,42 @@ class BoardIndexes(unittest.TestCase):
                          "(pool, sport, year, time_seconds)")
         self.assertEqual(self.idx["rr_pool_rating_idx"],
                          "(pool, speed_rating DESC)")
+
+
+class BuiltByThePipeline(unittest.TestCase):
+    """★ NOT BY HAND (owner, 2026-09-14: "can you add the indices to the
+    pipeline rather than hand running"). _CANONICAL_INDEXES only builds
+    them on the SHADOW at step 10, so without this they arrive on the live
+    table at the next full rebuild and not before. Step 11b
+    (scripts/add_page_indexes.py) builds missing ones CONCURRENTLY on the
+    live table, which is the arrangement rr_pool_year_dist_idx already
+    has."""
+
+    NEW = ("rr_pr_time_idx", "rr_pr_sport_time_idx",
+           "rr_perf_dist_rating_idx")
+
+    def test_the_live_table_step_builds_all_three(self):
+        w = wanted()
+        for name in self.NEW:
+            self.assertIn(name, w, f"{name} would need a full rebuild")
+
+    def test_the_two_lists_agree_on_every_spec(self):
+        """Two definitions of one index drift, and the drift is silent:
+        the step would rebuild on every run, or report OK on the wrong
+        shape."""
+        shadow, live = indexes(), wanted()
+        for name in self.NEW:
+            self.assertEqual(shadow[name].replace(" ", ""),
+                             live[name].replace(" ", ""), name)
+
+    def test_the_step_is_in_the_pipeline(self):
+        with io.open(os.path.join(_ROOT, "deploy", "run_pipeline.sh"),
+                     encoding="utf-8") as fh:
+            self.assertIn("scripts/add_page_indexes.py", fh.read())
+
+    def test_the_precedent_is_still_carried_both_ways(self):
+        self.assertIn("rr_pool_year_dist_idx", indexes())
+        self.assertIn("rr_pool_year_dist_idx", wanted())
 
 
 if __name__ == "__main__":
