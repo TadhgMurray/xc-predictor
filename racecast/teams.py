@@ -515,6 +515,48 @@ def gradeExcluded(f):
     return bool(f.get("exclude_grade"))
 
 
+# ⚠ athlete_season DOES NOT RELIABLY CARRY THE UNIT COLUMNS, and this path
+#   is the only one that reads them off it. team_season is built with all
+#   nine, so _fieldWhere can name them unconditionally; athlete_season gets
+#   them from a migration that has run on some databases and not others --
+#   which is exactly why the ability board probes (rankings._rowHasUnit)
+#   instead of trusting them. The returning board named all nine in its
+#   SELECT list with no probe at all, so on a database missing one, every
+#   "Graduating (removed)" request is an UndefinedColumn 500 (owner,
+#   2026-09-14: "The teams ranking page graduating thing doesn't work
+#   (errors)").
+#
+# ! PRESENCE, NOT POPULATED-NESS. _rowHasUnit also demands values, which is
+#   right for a FILTER -- an all-NULL column matches nobody and the semi-join
+#   it replaced would have answered. For a SELECT list the only question is
+#   whether naming the column raises, so this is the weaker test on purpose.
+_ATHLETE_COLS = {"at": 0.0, "cols": frozenset()}
+_ATHLETE_COLS_TTL = 600
+
+
+def athleteUnitCols():
+    """The TEAM_UNIT_COLS that athlete_season actually has. Cached for ten
+    minutes, so a column that arrives with a rebuild is picked up without a
+    restart; an unreachable database answers "none" rather than raising."""
+    import time as _t
+    if _t.time() - _ATHLETE_COLS["at"] <= _ATHLETE_COLS_TTL:
+        return _ATHLETE_COLS["cols"]
+    cols = frozenset()
+    try:
+        from database import getConn
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'athlete_season'""")
+            present = {r[0] if not isinstance(r, dict) else r["column_name"]
+                       for r in cur.fetchall()}
+        cols = frozenset(TEAM_UNIT_COLS & present)
+    except Exception:                                     # noqa: BLE001
+        pass
+    _ATHLETE_COLS.update({"at": _t.time(), "cols": cols})
+    return cols
+
+
 def _athleteFieldWhere(f, params):
     """The same population _fieldWhere selects, expressed against
     athlete_season -- which is where the grades are."""
@@ -534,7 +576,11 @@ def _athleteFieldWhere(f, params):
     for key in UNIT_FILTERS:
         if not f.get(key):
             continue
-        cols = [c for c in UNIT_COLUMNS[key] if c in TEAM_UNIT_COLS]
+        # the columns this table HAS -- naming one it does not is a 500,
+        # and a unit it cannot answer is better skipped than fatal
+        have = athleteUnitCols()
+        cols = [c for c in UNIT_COLUMNS[key]
+                if c in TEAM_UNIT_COLS and c in have]
         if not cols:
             continue
         params[f"{key}_vals"] = list(f[key])
@@ -561,7 +607,12 @@ def getReturningField(cur, f):
     """Athlete-seasons for the selected teams, minus the excluded grades."""
     params = {"cap": RETURN_CAP}
     where = _athleteFieldWhere(f, params)
-    units = "".join(f', s."{c}"' for c in sorted(TEAM_UNIT_COLS))
+    # ! NULL FOR A COLUMN THIS DATABASE HAS NOT GOT, not a missing key: every
+    #   row rankTeams sees has the same shape whichever database it came
+    #   from, so a downstream reader cannot start KeyError-ing on one box.
+    have = athleteUnitCols()
+    units = "".join((f', s."{c}"' if c in have else f', NULL::text AS "{c}"')
+                    for c in sorted(TEAM_UNIT_COLS))
     cur.execute(f"""
         SELECT s.person_id, s.school, s.state, s.grade, s.pool,
                s.mean_rating AS rating{units},
