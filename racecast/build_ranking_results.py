@@ -1828,6 +1828,27 @@ _CANONICAL_INDEXES = {
         ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
         ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # ★ AND THE SAME PAIR THE RATING BOARDS ALREADY HAVE (owner,
+        #   2026-09-14: "best times/marks is pretty slow, same with
+        #   performances"). rr_board_time_idx needs a YEAR to reach its
+        #   ordering column, and the Academic year filter defaults to Any
+        #   -- so the default Best-times board sorted every row of the pool
+        #   to take the first fifty, which is exactly the problem
+        #   rr_pool_rating_idx was added to fix for the rating boards. The
+        #   time boards were never given the equivalent.
+        #
+        # ! DISTANCE IS IN THE KEY HERE, and it is not in the rating ones.
+        #   The PR board RANKS THE CLOCK AT ONE DISTANCE -- that filter is
+        #   what the board IS, not an optional narrowing -- so an index
+        #   that cannot use it leaves a range filter between the equality
+        #   and the ordering and the sort comes back.
+        ("rr_pr_time_idx", "(pool, distance, time_seconds)"),
+        ("rr_pr_sport_time_idx", "(pool, sport, distance, time_seconds)"),
+        # ★ AND PERFORMANCES ONCE A DISTANCE IS PICKED. rr_pool_rating_idx
+        #   and rr_pool_sport_rating_idx cover the unfiltered board; adding
+        #   a distance to either one turns the ordering back into a sort.
+        ("rr_perf_dist_rating_idx",
+         "(pool, sport, distance, speed_rating DESC)"),
         # ★ THE EVENT WINDOW (rankings._abilitySource, 2026-09-08).
         #   That board re-aggregates ranking_results over a distance
         #   range, and with sport='both' there is NO sport predicate --
