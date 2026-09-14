@@ -609,6 +609,14 @@ squad and its elite group wear one name. The census prints
 `club_with_pros_repooled_pro`. The pro team list (`_PRO_TEAMS`) and the
 hand list stay as the floor under it.
 
+**Only in a season raced mostly for the club** (owner: "a collegiate
+runner running the Euros would be fine"): `speed_ratings_db.
+loadClubMajority` lists the athlete-years in which more than half of
+the athlete's rows, both sports together, are on a club-level team or
+a team with professionals; both club rules (the club level and the
+professionals) fire only there. The census prints
+`club_row_in_a_school_season` for the rows the gate spared.
+
 Foreseeable edges, in order of likelihood: a genuine seventh grader in
 a club that also fields one professional is repooled pro (the rule you
 asked for; the count says how many); an anet level code named wrong in

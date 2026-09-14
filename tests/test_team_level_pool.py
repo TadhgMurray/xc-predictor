@@ -71,3 +71,14 @@ def test_a_club_with_professionals_has_no_middle_schoolers():
     # a grade_sanity verdict of hs on the season stops the rule (the grade
     # itself still decides the pool as it always did: ms here, never pro)
     assert pr.resolvePool("6", team_has_pros=True, fixed_level="hs", **kw) != "pro_m|TF"
+
+
+def test_the_club_rules_fire_only_in_a_season_raced_mostly_for_the_club(monkeypatch):
+    """★ OWNER, 2026-09-14: "only if they run the majority of their races
+    with their club / national team; a collegiate runner running the
+    Euros would be fine". The pack gates both club rules on the
+    athlete-year's majority."""
+    import speed_ratings as sr
+    monkeypatch.setattr(sr, "_CLUB_MAJORITY", {(1, 2025)})
+    assert sr.clubSeason(1, 2025) and not sr.clubSeason(1, 2024) and not sr.clubSeason(2, 2025)
+    assert not sr.clubSeason(None, 2025)

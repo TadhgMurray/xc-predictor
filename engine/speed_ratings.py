@@ -271,6 +271,40 @@ def loadClubPros():
     return _CLUB_PROS
 
 
+_CLUB_MAJORITY = None
+
+
+def loadClubMajority():
+    """{(person_id, year)} whose rows that year are mostly on a club or a
+    team with professionals, once (speed_ratings_db.loadClubMajority)."""
+    global _CLUB_MAJORITY
+    if _CLUB_MAJORITY is not None:
+        return _CLUB_MAJORITY
+    _CLUB_MAJORITY = set()
+    try:
+        from speed_ratings_db import loadClubMajority as _load
+        levels = loadAnetLevels()
+        by_team, by_school = loadClubPros()
+        club_ids = [t for t, lv in levels.items() if lv == "club"]
+        _CLUB_MAJORITY = _load(club_ids, list(by_team), list(by_school))
+        print(f"[engine] club seasons: {len(_CLUB_MAJORITY):,} athlete-years race mostly "
+              f"for a club or a team with professionals (the club rules fire only there)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] club seasons unavailable ({type(exc).__name__}: {exc}) -- "
+              "the club rules stay off")
+    return _CLUB_MAJORITY
+
+
+def clubSeason(person_id, year):
+    """Does this athlete race mostly for a club or a pro team this year?
+    The gate on every club rule (owner: a college runner at the Euros is
+    one row on a national team, not a professional)."""
+    try:
+        return (int(person_id), int(year)) in loadClubMajority()
+    except (TypeError, ValueError):
+        return False
+
+
 def teamHasPros(team_id, school):
     by_team, by_school = loadClubPros()
     try:
@@ -1125,6 +1159,13 @@ def packResults(batches, today, merge=False):
                 if team_level:
                     census[f"team_level_{team_level}"] += 1
                 has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
+                # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE
+                #   CLUB (clubSeason): one national-team race is one row
+                if (team_level == "club" or has_pros) and not clubSeason(r[_PID], d.year):
+                    has_pros = False
+                    if team_level == "club":
+                        team_level = None
+                        census["club_row_in_a_school_season"] += 1
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,

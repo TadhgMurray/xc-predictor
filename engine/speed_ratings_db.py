@@ -919,6 +919,59 @@ def loadClubPros(min_pros=1):
     return by_team, by_school
 
 
+# ★ ONLY WHEN THE CLUB IS WHERE THEY RACE (owner, 2026-09-14: "it should
+#   only be if they run the majority of their races with their club /
+#   national team. So any collegiate runner running the Euros would be
+#   fine"). The club rules above are per ROW; a college runner's one
+#   national-team race in July is a row on a team with professionals. So
+#   the rules fire only for athlete-years in which MORE THAN HALF of the
+#   athlete's rows are on a club or a team with professionals.
+def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
+    """{(person_id, calendar year)} whose rows that year are mostly on a
+    club-level anet team, a team with professionals, or a school string
+    with professionals. Empty when there is nothing to test against."""
+    team_ids = sorted(set(int(t) for t in club_team_ids) | set(int(t) for t in pro_team_ids))
+    schools = sorted(set(str(x) for x in pro_schools))
+    if not team_ids and not schools:
+        return set()
+    agg = {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("CREATE TEMP TABLE club_teams (team_id bigint PRIMARY KEY) ON COMMIT DROP")
+        cur.execute("CREATE TEMP TABLE club_schools (school text PRIMARY KEY) ON COMMIT DROP")
+        if team_ids:
+            _copyInto(cur, "club_teams", ("team_id",), [(t,) for t in team_ids])
+        if schools:
+            _copyInto(cur, "club_schools", ("school",), [(_escape(x),) for x in schools])
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'team_id'""", (table,))
+            has_team = cur.fetchone() is not None
+            on_team = ("ct.team_id IS NOT NULL" if has_team else "FALSE")
+            join_team = (f"LEFT JOIN club_teams ct ON ct.team_id = r.team_id" if has_team else "")
+            cur.execute(f"""
+                SELECT r.person_id, substr(r.date, 1, 4)::int AS yr,
+                       count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) AS n_club,
+                       count(*) AS n
+                FROM   {table} r
+                {join_team}
+                LEFT   JOIN club_schools cs ON cs.school = lower(btrim(r.school))
+                WHERE  r.person_id IS NOT NULL AND r.date ~ '^(19|20)[0-9][0-9]-'
+                GROUP  BY 1, 2
+                HAVING count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) > 0""")
+            for pid, yr, n_club, n in cur.fetchall():
+                k = (int(pid), int(yr))
+                a = agg.get(k, [0, 0])
+                a[0] += int(n_club); a[1] += int(n)
+                agg[k] = a
+        conn.rollback()                                  # the temp tables
+    # ! BOTH SPORTS TOGETHER: a season's rows are summed across the two
+    #   tables before the majority is judged (a HAVING that kept only the
+    #   athlete-years with a club row means a year with none is not here,
+    #   which is the same answer: no club rows, no majority)
+    return {k for k, (n_club, n) in agg.items() if n_club * 2 > n}
+
+
 def printTeamLevels(meaning, rows):
     print("[engine] anet team levels (code -> meaning, from our rows' grades and "
           "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")
