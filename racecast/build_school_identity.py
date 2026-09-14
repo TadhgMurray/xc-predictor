@@ -192,11 +192,37 @@ def mergeCoRacingClusters(cur):
 # ★ THE DIRECTORY OUTRANKS THE DATA FOR A COLLEGE (owner, 2026-09-06: "add
 #   directory"). college_directory (scripts/build_college_directory.py,
 #   NCAA D1-D3 and NAIA from Wikipedia, ~2,000 names) says where a college
-#   IS. A name in it has its college-pool clusters (half or more of the
-#   cluster's athletes in a college pool) collapsed into one row in the
-#   directory's state; a high-school cluster wearing the same name
-#   ("Washington") is left alone. Without the table, nothing changes.
+#   IS: the pass PLACES the college's cluster in the directory's state.
+#
+# ⚠ IT PLACES ONE CLUSTER. IT DOES NOT SWALLOW THE OTHERS (owner,
+#   2026-09-14: "oregon/williams are still incorrect, and I see others,
+#   such as a hser being on Baylor"). It used to collect EVERY cluster of
+#   the name that read college, delete them all, and insert one row in the
+#   directory's state -- so Baylor School (a Tennessee high school) was
+#   deleted into Baylor University (TX), and its high schoolers appeared on
+#   a college roster. Oregon (IL) and Williams went the same way. After
+#   that fold the name has ONE cluster, which is why no amount of fixing
+#   the crest or the ?state= validation could separate the two Oregons:
+#   the identity table itself said there was only one.
+#
+# ! AND THE LEGITIMATE MERGE HAS ALREADY HAPPENED. The case this pass
+#   exists for -- BYU's athletes coming out CA, UT and CO by their own home
+#   states -- is a scatter of ONE squad, and a scatter of one squad SHARES
+#   RACES. mergeCoRacingClusters runs before this and has already merged
+#   it. So a name that still has several clusters here has clusters that
+#   never raced each other, which is the definition of different schools.
+#   Placing one and leaving the rest is therefore not a weaker rule than
+#   the old one; it is the rule the old one was reaching for.
 COLLEGE_SHARE = 0.5
+
+# ! ONE LEVEL PER ATHLETE, THE ONE THEY MOSTLY RACED AT THIS SCHOOL. The
+#   test was bool_or(pool LIKE 'college%') -- ANY college-pooled row made
+#   the athlete a collegian, so the mis-pooled seasons this codebase
+#   already tracks (the nine in one DIII race, logged under school_level)
+#   were enough to turn a prep school's cluster college and feed it to the
+#   university of the same name. A majority of an athlete's rows at the
+#   school is the same rule buildSchoolLevel uses, and it cannot be moved
+#   by one bad season.
 
 
 def applyCollegeDirectory(cur):
@@ -219,18 +245,38 @@ def applyCollegeDirectory(cur):
     names = sorted(hits)
     # which of each name's clusters are college clusters
     cur.execute("""
-        WITH v AS (
-            SELECT DISTINCT rr.school, rr.person_id,
-                   bool_or(rr.pool LIKE 'college%%') OVER (PARTITION BY rr.school, rr.person_id) AS college
-            FROM   ranking_results rr WHERE rr.school = ANY(%s) AND rr.person_id IS NOT NULL)
+        WITH rows AS (
+            SELECT rr.school, rr.person_id,
+                   (rr.pool LIKE 'college%%') AS college, count(*) AS n
+            FROM   ranking_results rr
+            WHERE  rr.school = ANY(%s) AND rr.person_id IS NOT NULL
+            GROUP  BY 1, 2, 3
+        ),
+        -- the level the athlete MOSTLY raced at this school; ties go to
+        -- college, which is the only way a one-season collegian counts
+        v AS (
+            SELECT DISTINCT ON (school, person_id) school, person_id, college
+            FROM   rows ORDER BY school, person_id, n DESC, college DESC
+        )
         SELECT v.school, ph.state, count(*) FILTER (WHERE v.college), count(*)
         FROM   v JOIN person_home_state_new ph USING (person_id)
         GROUP  BY 1, 2
     """, (names,))
-    college_clusters = {}
+    # ! THE CLUSTER TO PLACE, NOT THE CLUSTERS TO EAT. The directory's own
+    #   state wins when the name has a cluster there; otherwise the biggest
+    #   college-reading cluster is the college and everything else is left
+    #   exactly as it was.
+    best = {}
     for school, st, n_col, n in cur.fetchall():
-        if n and n_col >= COLLEGE_SHARE * n:
-            college_clusters.setdefault(school, []).append(st)
+        if not n or n_col < COLLEGE_SHARE * n:
+            continue
+        target = hits[school]
+        # (is the directory's own state, how big) -- max() picks the
+        # directory state if it reads college, else the largest that does
+        rank = (st == target, n)
+        if school not in best or rank > best[school][0]:
+            best[school] = (rank, st)
+    college_clusters = {school: [st] for school, (_r, st) in best.items()}
     # the alias table may already fold some of these (the co-racing merge):
     # follow it, so every original home state lands on the directory state
     cur.execute("SELECT school, home_state, state FROM school_state_alias_new "
@@ -253,8 +299,16 @@ def applyCollegeDirectory(cur):
             homes |= folded.get((school, st), set())
         cur.execute("DELETE FROM school_identity_new WHERE school = %s AND state = ANY(%s)",
                     (school, states))
-        cur.execute("INSERT INTO school_identity_new (school, state, n_athletes, share, is_primary) "
-                    "VALUES (%s, %s, %s, 0, false)", (school, target, total))
+        # ⚠ MERGE INTO THE TARGET ROW, NEVER INSERT A SECOND ONE. When the
+        #   placed cluster is not already in the directory's state the name
+        #   may still HAVE a row there, and a blind INSERT would leave two
+        #   rows keyed (school, target) -- two of everything downstream.
+        cur.execute("UPDATE school_identity_new SET n_athletes = n_athletes + %s "
+                    "WHERE school = %s AND state = %s", (total, school, target))
+        if not cur.rowcount:
+            cur.execute("INSERT INTO school_identity_new "
+                        "(school, state, n_athletes, share, is_primary) "
+                        "VALUES (%s, %s, %s, 0, false)", (school, target, total))
         cur.execute("DELETE FROM school_state_alias_new WHERE school = %s AND home_state = ANY(%s)",
                     (school, sorted(homes)))
         cur.executemany("INSERT INTO school_state_alias_new VALUES (%s, %s, %s)",

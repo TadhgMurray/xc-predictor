@@ -419,6 +419,10 @@ def _multiInt(args, name, lo, hi):
 
 
 from season_floor import floorSql   # the race-count floor, one rule
+# the pace no runner in this pool has run, as a predicate -- the same
+# rule build_ranking_results applies per row (engine/record_pace.py).
+# app.py puts engine/ on the path, as build_ranking_results does.
+from record_pace import paceFloorSql
 
 
 def parseFilters(args):
@@ -1395,7 +1399,21 @@ def getPrRankings(cur, f):
     else:
         ranked, cand_where, cand_order, dedup_key = (
             "time_seconds",
-            f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}",
+            f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}"
+            # ★ AND NOT A TIME NOBODY IN THIS POOL HAS RUN (owner,
+            #   2026-09-14: "on best times/marks there's issues with wrong
+            #   times for the sprint races being shown on the boards ...
+            #   should prob throw something to stop crazy times for each
+            #   pool"). This board ranks the CLOCK, so one mis-parsed
+            #   distance or one hand time entered as a machine time takes
+            #   the top row outright -- the other boards rank a rating and
+            #   absorb it. engine/record_pace owns the rule; the same
+            #   predicate the build applies, as SQL, so a row the stored
+            #   table let through still cannot head the board.
+            # ! IN THE CANDIDATE SET, not the outer WHERE. A bad row filtered
+            #   later has already spent one of the LIMIT slots that a real
+            #   time needed.
+            f" AND NOT {paceFloorSql('time_seconds', 'distance', 'pool')}",
             "time_seconds ASC", "round(time_seconds::numeric, 1)")
         order = _orderBy(f, _SORTS_PR, "p.time_seconds ASC", "p.result_id")
         # ! NULL, NOT p.mark: an older ranking_results has no mark column,
