@@ -677,3 +677,21 @@ out AT the 1.04 floor over most of their span (the pairs said less;
 college_f|XC demoted to degree 1 and floored flat). Those curves are now
 a stated assumption where the measurement was a confound; the
 `distance_curve_check.py` spline rows say exactly where.
+
+### 9.10 The bake-off: which distance curve is right
+
+`scripts/curve_bakeoff.py --era-years 2` scores every candidate curve on
+one number, the same-athlete gap of `event_check.py`: each track row's
+adjusted log time is rebuilt with the candidate in place of the fitted
+spline (the pack's normalization undone through the spline that made
+it, redone through the candidate) and the medians per pool and pair are
+summarised as a row-weighted mean |gap|. Candidates: `fitted` (the
+shipped potential), `fitted+offsets` (what a rating applies today), `wa`
+(the World Athletics 2025 tables by sex and band, from
+`distance_tables.py`), `hybrid` (fitted between 800 and 3200, tables
+outside), `riegel` (1.06, the straw man), `vdot` (Daniels-Gilbert).
+`--all` prints every pair table; the default prints the best two. The
+fitted curve was fitted on these rows' pairs, so read a narrow win for
+it as a tie. Run it after the backfill and the pack (the script warns
+when the spline file is newer than the pack). Planted: a 1.10 world
+scores the matching curve near zero and Riegel at 2.8% a doubling.
