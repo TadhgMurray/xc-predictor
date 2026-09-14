@@ -1092,6 +1092,9 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .rankings-page .teams-only { display: none; }
 .rankings-page[data-board="teams"] .teams-only   { display: flex; }
 .rankings-page[data-board="teams"] .ability-only { display: none; }
+/* ...except the event window, which the Teams board takes too
+   (owner, 2026-09-14). Same pattern as the course specifier above. */
+.rankings-page[data-board="teams"] .ability-only.teams-ok { display: flex; }
 .rankings-page[data-board="teams"] .perf-only    { display: none; }
 .rankings-page[data-board="teams"] .pr-only      { display: none; }
 /* Finding an ATHLETE on a board of teams is not a question with an answer. */

@@ -285,11 +285,14 @@ function buildQuery() {
      "CA,TX" is one bind, not two clauses. An empty combo sends NOTHING, which
      is what keeps the index usable: an always-true predicate stops Postgres
      choosing one. */
-  /* ★ THE EVENT WINDOW, ABILITY BOARD ONLY. Sent as dist_min in metres;
+  /* ★ THE EVENT WINDOW, ABILITY AND TEAMS. Sent as dist_min in metres;
      the API refuses it on the other boards rather than ignoring it, so it
      must not be sent from them. An empty value sends nothing at all, which
-     is what keeps the ordinary board reading the prebuilt table. */
-  if (state.board === "ability") {
+     is what keeps the ordinary board reading the prebuilt table.
+     ! ON TEAMS THE API ALSO WANTS EXACTLY ONE YEAR, because a restricted
+       team board has no prebuilt table to read and is raced live. The
+       message says so; the control cannot express it. */
+  if (state.board === "ability" || state.board === "teams") {
     const ev = $("events");
     if (ev && ev.value) q.set("dist_min", ev.value);
   }
