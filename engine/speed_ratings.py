@@ -246,6 +246,30 @@ _RID, _PID, _NORM, _GRADE, _SRC, _SCHOOL, _DATE, _SPORT, _VENUE, _GENDER = range
 _DIST = 10          # speed_ratings_db.COLUMNS: dist_m (issue 148)
 _MEETCLASS = 11     # speed_ratings_db.COLUMNS: meet_class (issue #22)
 _TIME = 12          # speed_ratings_db.COLUMNS: time_seconds (the raw time)
+_TEAM = 13          # speed_ratings_db.COLUMNS: team_id (anet)
+_SLUG = 14          # speed_ratings_db.COLUMNS: team_slug (tfrrs)
+_ANET_LEVELS = None
+
+
+def loadAnetLevels():
+    """{anet team_id: level name}, once; prints the code table. Empty when
+    the database has no anet_team (a pack then pools as before)."""
+    global _ANET_LEVELS
+    if _ANET_LEVELS is not None:
+        return _ANET_LEVELS
+    _ANET_LEVELS = {}
+    try:
+        from speed_ratings_db import loadTeamLevels, printTeamLevels
+        by_team, meaning, rows = loadTeamLevels()
+        if rows:
+            printTeamLevels(meaning, rows)
+        _ANET_LEVELS = by_team
+        print(f"[engine] team levels: {len(by_team):,} anet teams carry a level "
+              f"({sum(1 for v in by_team.values() if v == 'club'):,} clubs, "
+              f"{sum(1 for v in by_team.values() if v == 'college'):,} colleges)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] team levels unavailable ({type(exc).__name__}: {exc})")
+    return _ANET_LEVELS
 
 
 # ------------------------------------------------------------------ #
@@ -709,7 +733,7 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            `pool|sport`. Keeping the same convention means an athlete's XC and
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
-           person_id=None, season=None, race_date=None):
+           person_id=None, season=None, race_date=None, team_level=None):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -798,7 +822,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         upperclass_first=None if pid is None else loadUpperclassFirst().get(pid),
         race_date=race_date,
         merge=merge,
-        poolfor=_cachedPoolFor)
+        poolfor=_cachedPoolFor,
+        team_level=team_level)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -994,11 +1019,32 @@ def packOrLoad(sports, today, merge, cache):
     stream = chain(*(streamResults(s) for s in sports))
     cols = packResults(stream, today, merge=merge)
     print(f"[time] stream + pack: {time.time() - t0:.1f}s")
+    attachCourseCoords(cols)
 
     if cache:
         saveCols(cols, path)
 
     return cols
+
+
+def attachCourseCoords(cols):
+    """course_lat / course_lon per course key on the pack (the place prior,
+    speed_ratings_db.loadCourseCoords). A failure leaves the pack without
+    them and says so: the engine then runs with no place prior."""
+    if cols is None or "course_keys" not in cols:
+        return
+    try:
+        from speed_ratings_db import loadCourseCoords
+        lat, lon = loadCourseCoords(cols["course_keys"])
+        cols["course_lat"] = np.asarray(lat, dtype=np.float64)
+        cols["course_lon"] = np.asarray(lon, dtype=np.float64)
+        n = len(cols["course_keys"])
+        have = int(np.isfinite(cols["course_lat"]).sum())
+        print(f"[engine] course coordinates: {have:,} of {n:,} course keys "
+              f"({100.0 * have / max(n, 1):.0f}%) carry a (lat, lon) for the place prior")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] course coordinates unavailable ({type(exc).__name__}: {exc}) "
+              "-- the pack carries none and the bracket engine runs without a place prior")
 
 
 # ------------------------------------------------------------------ #
@@ -1040,10 +1086,16 @@ def packResults(batches, today, merge=False):
             if d is None or (today - d).days < 0:
                 census["bad_or_future_date"] += 1
                 continue
+            team_level = None
+            if len(r) > _SLUG:
+                from pool_resolve import teamLevelOf
+                team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
+                if team_level:
+                    census[f"team_level_{team_level}"] += 1
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
-                          race_date=d)
+                          race_date=d, team_level=team_level)
             if pool is None:
                 census["unknown_pool"] += 1
                 continue

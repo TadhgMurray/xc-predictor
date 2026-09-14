@@ -35,6 +35,8 @@ bracket_engine.py -- course difficulty the owner's way, as a second solve.
   joint model (scripts/bracket_holdout.py), so the two are compared with a
   number. predict() gives a held-out row's ln(norm) as a_s + h * D + curve.
 """
+import math
+
 import numpy as np
 
 import bracket as bk
@@ -97,6 +99,72 @@ PRIOR_FIT = "fit"
 PRIOR_FIT_WARMUP = 6           # passes on the stated priors before the estimate
 PRIOR_FIT_RANGE = (0.25, 8.0)  # races; outside it the estimate is not believed
 PRIOR_FIT_MIN_COURSES = 30     # multi-race courses a group needs to be fitted
+
+
+# ★ THE PLACE PRIOR (owner, 2026-09-14: "build the place prior too,
+#   coordinates in the pack and all"). One venue keyed in pieces is several
+#   thin cells, each pulled toward the sport's average when its own place
+#   is standing right there with twenty race days. So cells within
+#   PLACE_RADIUS_M of each other, at one distance (XC) or on one surface
+#   (TF), form a PLACE, and a course rests on its place before it rests on
+#   the average course: the place's reading is its members' vote-weighted
+#   mean shrunk toward the group by the group prior, and each member is
+#   pulled toward that by PRIOR_PLACE races' worth. A place of one (most
+#   courses) is the group prior exactly as before. A deliberate split at
+#   one coordinate (Mt. SAC's rain course) is still its own cell -- the
+#   pull is a prior, and twenty race days of its own override it -- and
+#   the era prior sits under all of this unchanged. Needs the pack's
+#   course_lat / course_lon (speed_ratings.attachCourseCoords); without
+#   them there are no places and the run says so.
+PLACE_RADIUS_M = 400.0
+PRIOR_PLACE = 2.0
+
+
+def placeClusters(keys, lat, lon, radius_m=PLACE_RADIUS_M):
+    """Per base course: its place id (-1 for a course alone, or without
+    coordinates). Courses cluster only within one kind -- an XC key's
+    distance suffix, a TF key's surface -- through a KD-tree on local
+    metres, connected components over pairs within radius_m."""
+    keys = [str(k) for k in keys]
+    n = len(keys)
+    place = np.full(n, -1, dtype=np.int64)
+    if lat is None or lon is None or n == 0 or not radius_m or radius_m <= 0:
+        return place, 0
+    lat = np.asarray(lat, dtype=np.float64)
+    lon = np.asarray(lon, dtype=np.float64)
+    ok = np.isfinite(lat) & np.isfinite(lon)
+    kind = np.empty(n, dtype=object)
+    for i, k in enumerate(keys):
+        if k.startswith("XC:"):
+            kind[i] = "XC:d" + k.rpartition(":d")[2] if ":d" in k else "XC"
+        else:
+            kind[i] = "TF:" + ("in" if k.split("@", 1)[0].endswith(":in") else "out")
+    try:
+        from scipy.spatial import cKDTree
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+    except Exception:                                            # noqa: BLE001
+        return place, 0
+    next_id = 0
+    for kd in sorted(set(kind[ok])):
+        idx = np.flatnonzero(ok & (kind == kd))
+        if idx.size < 2:
+            continue
+        lat0 = float(np.mean(lat[idx]))
+        x = np.radians(lon[idx]) * 6_371_000.0 * math.cos(math.radians(lat0))
+        y = np.radians(lat[idx]) * 6_371_000.0
+        pts = np.c_[x, y]
+        prs = cKDTree(pts).query_pairs(float(radius_m), output_type="ndarray")
+        if prs.size == 0:
+            continue
+        m = idx.size
+        adj = coo_matrix((np.ones(prs.shape[0]), (prs[:, 0], prs[:, 1])), shape=(m, m))
+        n_comp, lab = connected_components(adj, directed=False)
+        sizes = np.bincount(lab, minlength=n_comp)
+        for c in np.flatnonzero(sizes >= 2):
+            place[idx[lab == c]] = next_id
+            next_id += 1
+    return place, next_id
 
 
 def parsePrior(spec):
@@ -192,7 +260,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
-        prior_warmup=PRIOR_FIT_WARMUP):
+        prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
+        prior_place=PRIOR_PLACE):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -328,6 +397,11 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     prior_stated, fit_priors = _statedPriors(prior_group)
     prior_g = prior_stated.copy()
     prior_report = None
+    # the places: courses within place_radius of each other, of one kind
+    place_of_base, n_place = placeClusters(
+        keys, cols.get("course_lat"), cols.get("course_lon"), place_radius)
+    in_place = place_of_base >= 0
+    k_place = float(prior_place or 0.0)
 
     def levels(D_now):
         """The athletes' local levels against the courses D_now."""
@@ -363,6 +437,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         k_b = k_g[base_pg]
         D_base_ = np.where(w_b_ > 0,
                            (num_b_ + k_b * g_mean_[base_pg]) / np.maximum(w_b_ + k_b, 1e-9), 0.0)
+        if n_place and k_place > 0:
+            # the place's reading, shrunk to the group by the group prior;
+            # each member pulled toward it by prior_place races' worth
+            pl = place_of_base[in_place]
+            pl_num = np.bincount(pl, weights=num_b_[in_place], minlength=n_place)
+            pl_w = np.bincount(pl, weights=w_b_[in_place], minlength=n_place)
+            pl_kg = np.zeros(n_place); pl_kg[pl] = k_b[in_place]
+            pl_gm = np.zeros(n_place); pl_gm[pl] = g_mean_[base_pg[in_place]]
+            m_place = np.where(pl_w > 0, (pl_num + pl_kg * pl_gm) / np.maximum(pl_w + pl_kg, 1e-9), 0.0)
+            D_pl = (num_b_[in_place] + k_place * m_place[pl]) / np.maximum(w_b_[in_place] + k_place, 1e-9)
+            D_base_[in_place] = np.where(pl_w[pl] > 0, D_pl, D_base_[in_place])
         D_pre = np.where(w_c_ + prior_races > 0,
                          (num_c_ + prior_races * D_base_[base_of_cell]) / (w_c_ + prior_races),
                          0.0)
@@ -431,6 +516,19 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
               f"its group's average course by (in races):", flush=True)
         for ln in prior_lines:
             print("        " + ln, flush=True)
+        if cols.get("course_lat") is None:
+            print("[bracket] place prior: the pack carries no course coordinates "
+                  "(rebuild it at 07_pack); no places", flush=True)
+        elif n_place == 0:
+            print(f"[bracket] place prior: no two courses of one kind within "
+                  f"{place_radius:g} m; no places", flush=True)
+        else:
+            n_in = int(in_place.sum())
+            n_voted = int((in_place & (w_b > 0)).sum())
+            print(f"[bracket] place prior: {n_place:,} places of 2+ courses within "
+                  f"{place_radius:g} m ({n_in:,} courses, {n_voted:,} with votes); a course "
+                  f"rests on its place by {k_place:g} races' worth before the group prior",
+                  flush=True)
     return dict(D=D, votes=w_c, D_race=D_race, votes_race=w_race, race=race,
                 cell=cell, cell_keys=cell_keys, base_of_cell=base_of_cell,
                 races_per_cell=races_per_cell, races_per_base=races_per_base,
@@ -443,7 +541,9 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,
-                pin=st["pin"], D_fit=st["D_new"])
+                pin=st["pin"], D_fit=st["D_new"],
+                place_of_base=place_of_base, n_place=int(n_place),
+                place_radius=float(place_radius or 0.0), prior_place=k_place)
 
 
 TILT_BANDS = (100.0, 120.0, 130.0, 140.0, 150.0, 160.0)

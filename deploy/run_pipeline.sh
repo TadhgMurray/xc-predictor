@@ -559,6 +559,11 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   group (XC, outdoor track, indoor track). Default "fit": read from
   #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
   #   states them; one number states every group (bracket_engine.parsePrior).
+  # ★ XCP_BRACKET_PLACE_RADIUS (metres, default 400; 0 off) and
+  #   XCP_BRACKET_PLACE_PRIOR (races, default 2): the place prior -- courses
+  #   of one kind within the radius rest on each other before the sport's
+  #   average (bracket_engine.placeClusters). Needs a pack built with the
+  #   course coordinates (07_pack from 2026-09-14 on).
   # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
   #   tracks at the level the linkage gave them; default 1 recentres each host
   #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
@@ -572,6 +577,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
       ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
       ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
+      ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
+      ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \

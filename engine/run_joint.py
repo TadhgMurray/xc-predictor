@@ -1511,6 +1511,13 @@ def buildParser():
                          "residual (bracketDifficulties)")
     ap.add_argument("--bracket-window", type=float, default=21.0)
     ap.add_argument("--bracket-top", type=float, default=0.5)
+    ap.add_argument("--bracket-place-radius", type=float, default=None,
+                    help="metres within which courses of one kind form a PLACE the "
+                         "bracket engine pulls them toward (bracket_engine.PLACE_RADIUS_M, "
+                         "%s; 0 = no place prior)" % 400)
+    ap.add_argument("--bracket-place-prior", type=float, default=None,
+                    help="races' worth of pull of a course toward its place "
+                         "(bracket_engine.PRIOR_PLACE, 2)")
     ap.add_argument("--track-level-by-pool", type=int, default=1,
                     help="1 (default): under --difficulty bracket, each host population's "
                          "outdoor tracks (hs, college, ms, ...) are recentred to the same "
@@ -1758,7 +1765,7 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
 
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
-                        track_level_by_pool=True):
+                        track_level_by_pool=True, place_radius=None, prior_place=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1798,8 +1805,13 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                  era_years=int(any("@e" in k for k in cell_keys)), pool_of_raw=pool_of_raw,
                  pool_names=list(pool_names), n_base=len(keys), keys=keys)
     npz_like = {"rating": out["rating"]} if out.get("rating") is not None else None
+    place_kw = {}
+    if place_radius is not None:
+        place_kw["place_radius"] = float(place_radius)
+    if prior_place is not None:
+        place_kw["prior_place"] = float(prior_place)
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
-               h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group))
+               h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group), **place_kw)
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
     # recentre as recentreLevels centres d: the outdoor cells' unweighted
     # mean per sport is the zero; indoor cells keep their level
@@ -1863,6 +1875,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     out["bracket_cell_raw"] = np.asarray(f["D_cell_raw"], dtype=np.float64)
     out["bracket_base"] = np.asarray(f["D_base"], dtype=np.float64)[b_of]
     out["bracket_base_votes"] = np.asarray(f["base_votes"], dtype=np.float64)[b_of]
+    out["bracket_place"] = np.asarray(f["place_of_base"], dtype=np.int64)[b_of]
     out["bracket_pin"] = np.asarray(f["pin"], dtype=np.float64)
     out["bracket_shift"] = shift_cell
     out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
@@ -2151,7 +2164,9 @@ def main():
             bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                                 window=args.bracket_window, top=args.bracket_top,
                                 prior_group=getattr(args, "bracket_prior", "fit"),
-                                track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)))
+                                track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)),
+                                place_radius=getattr(args, "bracket_place_radius", None),
+                                prior_place=getattr(args, "bracket_place_prior", None))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()
@@ -2222,6 +2237,8 @@ def main():
                   "bracket_prior_group"):
             if out.get(k) is not None:
                 save[k] = np.asarray(out[k], dtype=np.float64)
+        if out.get("bracket_place") is not None:
+            save["bracket_place"] = np.asarray(out["bracket_place"], dtype=np.int64)
         save["bracket_prior_group_names"] = np.array(list(be.PRIOR_GROUP_NAMES))
         save["bracket_prior_races"] = np.array([float(be.PRIOR_RACES)])
         save["bracket_race_sat"] = np.array([float(be.RACE_SAT)])

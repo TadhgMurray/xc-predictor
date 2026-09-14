@@ -100,6 +100,34 @@ def _personGenderJoin():
             "ON pg.person_id = COALESCE(r.person_id, r.athlete_id)")
 
 
+_TEAM_COLS = {}
+
+
+def _teamColumns(table):
+    """The SELECT fragment for the team: the real columns when the table
+    has them (results.team_id came with the scraper, team_slug with the
+    2026-09-13 migration), NULLs otherwise, so a database that predates
+    either still packs. Probed once per table."""
+    got = _TEAM_COLS.get(table)
+    if got is None:
+        have = set()
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("""SELECT column_name FROM information_schema.columns
+                               WHERE table_schema = 'public' AND table_name = %s
+                                 AND column_name IN ('team_id', 'team_slug')""", (table,))
+                have = {r[0] for r in cur.fetchall()}
+        except Exception:                                    # noqa: BLE001
+            have = set()
+        got = ", ".join([("r.team_id" if "team_id" in have else "NULL::bigint AS team_id"),
+                         ("r.team_slug" if "team_slug" in have else "NULL::text AS team_slug")])
+        _TEAM_COLS[table] = got
+        if have != {"team_id", "team_slug"}:
+            print(f"[engine] {table}: team columns {sorted(have) or 'absent'} -- the "
+                  f"pack pools without the feed's team level where they are missing")
+    return got
+
+
 # Column order every loader yields. The engine unpacks by these indices.
 COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            "school", "date", "sport", "venue", "gender",
@@ -123,7 +151,14 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   The 230 ratings were rows normalised as hs_m and rated as
            #   college_m; the DB repair (anchor_repair) runs at step 5 and
            #   never reaches a pack built earlier or a pool decided later.
-           "time_seconds")
+           "time_seconds",
+           # ★ THE TEAM (2026-09-14, the pooling redo): anet's TeamID, which
+           #   anet_team names and LEVELS (college, high school, club...), and
+           #   tfrrs's team slug, whose second token is the level. A club or
+           #   an elite squad is not a school, and its gradeless rows were
+           #   landing in the college pool because they raced college fields
+           #   (pool_resolve.resolvePool, team_level).
+           "team_id", "team_slug")
 
 
 # ------------------------------------------------------------------ #
@@ -578,7 +613,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                         mt.distance)::real AS dist_m,
                {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
                               "COALESCE(mt.is_championship, 0) = 1")} AS meet_class,
-               r.time_seconds::real AS time_seconds
+               r.time_seconds::real AS time_seconds,
+               {_teamColumns('results')}
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -695,7 +731,8 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   thousands, 'mile' = 1609.34 each.
                COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m,
                {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class,
-               r.time_seconds::real AS time_seconds
+               r.time_seconds::real AS time_seconds,
+               {_teamColumns('results_tf')}
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
@@ -750,6 +787,138 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   wheelchair_person has not been built.{_chairFilter()}
 {_dedupFilter(tw, 'TF')}
     """
+
+
+# ------------------------------------------------------------------ #
+# THE VENUES' COORDINATES, PER COURSE KEY (the place prior, 2026-09-14)
+# ------------------------------------------------------------------ #
+#
+# ★ A venue keyed in pieces -- Foot Locker's final under one canonical id,
+#   the rest of Balboa under others -- is several thin cells the engine
+#   can only pull toward the sport's average. Its coordinates say which
+#   cells are one place; the bracket engine (bracket_engine.placeClusters)
+#   pulls cells within a few hundred metres, at one distance, toward each
+#   other before it pulls them toward the average course. The pack carries
+#   one (lat, lon) per course key: an XC key's canonical id through
+#   course_canonical, a TF key's location through meets_tf; NaN where the
+#   key has neither (a name-keyed XC cell, a venueless row).
+# ★ WHAT ANET'S TEAM LEVEL CODES MEAN, LEARNED FROM OUR OWN GRADES (the
+#   pooling redo, 2026-09-14). anet_team.level is an integer anet does not
+#   document; the rows tell us: a code whose rows mostly carry grades 9-12
+#   is a high school code, 6-8 middle school, 1-5 elementary. A code whose
+#   rows carry NO grade is a college or a club, and those two are told
+#   apart by tfrrs: a school whose tfrrs slug says college is a college.
+#   The table is printed, and XCP_ANET_LEVELS="4=college,3=hs,5=club"
+#   states any code outright.
+def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
+    """({anet team_id: level name}, {code: level name}, table rows). level
+    names: 'college', 'hs', 'ms', 'elem', 'club'; a code that cannot be
+    named is left out. Empty dicts without anet_team."""
+    import os
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('anet_team')")
+        if cur.fetchone()[0] is None:
+            return {}, {}, []
+        cur.execute("SELECT team_id, level, school FROM anet_team WHERE level IS NOT NULL")
+        teams = {int(t): (int(lv), sc) for t, lv, sc in cur.fetchall()}
+        # the rows' grades per code, from the XC table (the anet grades)
+        cur.execute("""
+            SELECT t.level,
+                   CASE WHEN r.grade ~ '^(9|10|11|12)$' THEN 'hs'
+                        WHEN r.grade ~ '^[678]$' THEN 'ms'
+                        WHEN r.grade ~ '^[1-5]$' THEN 'elem'
+                        WHEN r.grade IS NULL OR btrim(r.grade) IN ('', '-') THEN 'none'
+                        ELSE 'other' END AS lv,
+                   count(*)
+            FROM   results r JOIN anet_team t ON t.team_id = r.team_id
+            WHERE  t.level IS NOT NULL
+            GROUP  BY 1, 2""")
+        tally = {}
+        for code, lv, n in cur.fetchall():
+            tally.setdefault(int(code), {})[lv] = int(n)
+        # the schools tfrrs calls colleges
+        cur.execute("""SELECT DISTINCT lower(btrim(school)) FROM results_tf
+                       WHERE team_slug IS NOT NULL AND team_slug LIKE '%%\_college\_%%'
+                         AND school IS NOT NULL""")
+        colleges = {r[0] for r in cur.fetchall()}
+    # per code: the share of its TEAMS whose school tfrrs calls a college
+    by_code_teams = {}
+    for t, (code, sc) in teams.items():
+        by_code_teams.setdefault(code, []).append((sc or "").strip().lower() in colleges)
+    meaning, rows = {}, []
+    for code in sorted(set(tally) | set(by_code_teams)):
+        t = tally.get(code, {})
+        n = sum(t.values())
+        shares = {k: v / n for k, v in t.items()} if n else {}
+        c_teams = by_code_teams.get(code, [])
+        c_share = (sum(c_teams) / len(c_teams)) if c_teams else 0.0
+        name = None
+        if n >= min_rows:
+            for lv in ("hs", "ms", "elem"):
+                if shares.get(lv, 0.0) >= share:
+                    name = lv
+            if name is None and shares.get("none", 0.0) >= share:
+                name = "college" if c_share >= college_share else "club"
+        rows.append((code, n, shares, len(c_teams), c_share, name))
+        if name:
+            meaning[code] = name
+    stated = os.environ.get("XCP_ANET_LEVELS", "")
+    for part in stated.split(","):
+        k, _, v = part.partition("=")
+        if k.strip().isdigit() and v.strip():
+            meaning[int(k)] = v.strip()
+    by_team = {t: meaning[code] for t, (code, _sc) in teams.items() if code in meaning}
+    return by_team, meaning, rows
+
+
+def printTeamLevels(meaning, rows):
+    print("[engine] anet team levels (code -> meaning, from our rows' grades and "
+          "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")
+    print(f"        {'code':>5}{'rows':>11}{'hs':>7}{'ms':>7}{'elem':>7}{'none':>7}"
+          f"{'teams':>8}{'tfrrs col.':>11}   meaning")
+    for code, n, shares, n_teams, c_share, name in rows:
+        print(f"        {code:>5}{n:>11,}"
+              + "".join(f"{100 * shares.get(k, 0.0):>6.0f}%" for k in ("hs", "ms", "elem", "none"))
+              + f"{n_teams:>8,}{100 * c_share:>10.0f}%   {meaning.get(code) or '(unnamed)'}")
+
+
+def loadCourseCoords(course_keys):
+    """(lat, lon) float arrays, one per course key, NaN where unknown."""
+    import numpy as np
+    n = len(course_keys)
+    lat = np.full(n, np.nan)
+    lon = np.full(n, np.nan)
+    xc, tf = {}, {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('course_canonical')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""SELECT canonical_id, avg(gps_lat), avg(gps_long)
+                           FROM course_canonical
+                           WHERE gps_lat IS NOT NULL AND gps_long IS NOT NULL
+                           GROUP BY canonical_id""")
+            xc = {int(c): (float(a), float(b)) for c, a, b in cur.fetchall()}
+        cur.execute("SELECT to_regclass('meets_tf')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""SELECT location_id, avg(gps_lat), avg(gps_long)
+                           FROM meets_tf
+                           WHERE location_id IS NOT NULL
+                             AND gps_lat IS NOT NULL AND gps_long IS NOT NULL
+                           GROUP BY location_id""")
+            tf = {int(c): (float(a), float(b)) for c, a, b in cur.fetchall()}
+    for i, key in enumerate(course_keys):
+        k = str(key)
+        got = None
+        if k.startswith("XC:"):
+            body = k[3:].split(":d", 1)[0]
+            if body.isdigit():
+                got = xc.get(int(body))
+        elif k.startswith("TF:loc:"):
+            body = k[7:].split(":", 1)[0]
+            if body.isdigit():
+                got = tf.get(int(body))
+        if got is not None:
+            lat[i], lon[i] = got
+    return lat, lon
 
 
 # ------------------------------------------------------------------ #

@@ -70,3 +70,11 @@ def test_the_loader_carries_the_raw_time_where_the_pack_reads_it():
     assert sdb.COLUMNS[sr._DIST] == "dist_m"
     assert "r.time_seconds::real AS time_seconds" in sdb._xcQuery(200, 6000)
     assert "r.time_seconds::real AS time_seconds" in sdb._tfQuery(200, 6000)
+
+
+def test_the_loader_carries_the_team_and_the_pack_reads_it():
+    assert sdb.COLUMNS[sr._TEAM] == "team_id" and sdb.COLUMNS[sr._SLUG] == "team_slug"
+    # without a database the probe answers NULLs; with one, the columns
+    for q in (sdb._xcQuery(200, 6000), sdb._tfQuery(200, 6000)):
+        assert ("AS team_id" in q or "r.team_id" in q) and ("AS team_slug" in q or "r.team_slug" in q)
+        assert q.index("team_id") > q.index("time_seconds")

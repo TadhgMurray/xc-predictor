@@ -275,6 +275,9 @@ def engineCells(npz, cell_keys, base_key, delta):
     pin = np.asarray(npz["bracket_pin"], dtype=np.float64)
     shift = np.asarray(npz["bracket_shift"], dtype=np.float64)
     fit = np.asarray(npz["bracket_cell_fit"], dtype=np.float64)
+    place = (np.asarray(npz["bracket_place"], dtype=np.int64) if "bracket_place" in npz
+             and np.asarray(npz["bracket_place"]).size == len(cell_keys) else None)
+    place_size = np.bincount(place[place >= 0], minlength=int(place.max()) + 1) if place is not None and (place >= 0).any() else None
     prior_races = float(np.asarray(npz.get("bracket_prior_races", [2.0])).reshape(-1)[0])
     kg = np.asarray(npz.get("bracket_prior_group", []), dtype=np.float64).reshape(-1)
     names = [str(x) for x in np.asarray(npz.get("bracket_prior_group_names", [])).reshape(-1)]
@@ -287,7 +290,9 @@ def engineCells(npz, cell_keys, base_key, delta):
         g = 0 if bare.startswith("XC:") else (2 if bare.endswith(":in") else 1)
         k_g = float(kg[g]) if kg.size > g else np.nan
         era = (raw[c] * votes[c] + prior_races * base[c]) / (votes[c] + prior_races)
+        pl = int(place[c]) if place is not None else -1
         out.append({"cell_key": k, "races": int(races[c]), "votes": float(votes[c]),
+                    "place": pl, "place_cells": int(place_size[pl]) if pl >= 0 else 0,
                     "raw": float(raw[c]), "base": float(base[c]),
                     "base_votes": float(base_votes[c]), "group": names[g] if g < len(names) else "",
                     "prior_group": k_g, "prior_races": prior_races,
@@ -330,16 +335,19 @@ def report(result, names=None, top=0.0):
         if res.get("engine"):
             print("  the engine's arithmetic (--difficulty bracket), per (course, era) cell:")
             print(f"    {'cell':<28} {'races':>5} {'votes':>6} {'raw':>7} "
-                  f"{'history':>8} {'(votes':>7} {'prior)':>7} {'era':>7} {'pin':>7} "
+                  f"{'history':>8} {'(votes':>7} {'prior)':>7} {'place':>9} {'era':>7} {'pin':>7} "
                   f"{'recentre':>9} {'level':>7} {'published':>10}")
             for e in res["engine"]:
+                pl = (f"#{e['place']}({e['place_cells']})" if e.get("place", -1) >= 0 else "-")
                 print(f"    {e['cell_key']:<28} {e['races']:>5} {e['votes']:>6.2f} "
                       f"{_pct(e['raw']):>7} {_pct(e['base']):>8} {e['base_votes']:>7.2f} "
-                      f"{e['prior_group']:>7.2f} {_pct(e['era']):>7} {_pct(-e['pin']):>7} "
+                      f"{e['prior_group']:>7.2f} {pl:>9} {_pct(e['era']):>7} {_pct(-e['pin']):>7} "
                       f"{_pct(-e['shift']):>9} {_pct(e['level']):>7} {_pct(e['published']):>10}")
             print("    read: raw = the era's vote-weighted mean of its races' readings "
                   "(each race weighs voters/(voters+sat)); history = every era of the "
                   "course pulled toward its group's average by `prior` races' worth; "
+                  "place = the cells this course rests on first (#id, how many) when the "
+                  "pack carries coordinates; "
                   "era = (raw x votes + 2 x history) / (votes + 2); then the (sport, "
                   "era) pin and the recentring come off and the sport level goes on. "
                   "A course whose raw reading is right but whose published number is "

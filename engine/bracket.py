@@ -188,7 +188,7 @@ def _poolCodes(athlete_keys):
 # ------------------------------------------------------------------ #
 
 PACK_COLUMNS = ("athlete", "course", "norm", "days", "sport", "doy", "year",
-                "dist_m", "meet_class")
+                "dist_m", "meet_class", "course_lat", "course_lon")
 
 
 def loadInputs(pack_path, npz_path=None, only=PACK_COLUMNS):

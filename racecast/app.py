@@ -1325,19 +1325,35 @@ def athlete(person_id):
                 conn.rollback()
                 season_rating = None
 
-            # ★ THE HEADER'S TEAM IS THE SEASON THE HEADER RATES, from the same
-            #   row (owner, 2026-09-06: Liam Lucas headed "Loyola Blakefield"
-            #   over a Tufts season, Tufts' chips and Tufts' ranks; two
-            #   queries with the same ORDER BY can still disagree on a tie,
-            #   the same year in two pools). One row, one school. An
-            #   unattached season falls back to the latest season with a
-            #   team; a career with no team keeps the scraped value.
-            def _isTeam(name):
-                n = (name or "").strip().lower()
-                return bool(n) and not n.startswith("unattached") and n not in (
-                    "unat", "independent", "individual", "no team", "none", "n/a")
-            if season_rating and _isTeam(season_rating.get("school")):
-                athlete["school"] = season_rating["school"]
+            # ★ THE TEAM IS THE LATEST SEASON'S, ANY SPORT, ANY RACE COUNT
+            #   (owner, 2026-09-14: "it doesn't take the athlete's school for
+            #   the most recent season -- it always takes the most recent xc
+            #   season, not the most recent season"). The header RATING still
+            #   wants a season deep enough to rate (three races, above), and
+            #   that rule was also choosing the team: a two-race track season
+            #   at a new school lost to the last full cross country season at
+            #   the old one. The rating and the team are two questions; the
+            #   team is answered by the season that raced last. An unattached
+            #   season does not name a team, so the latest season that does
+            #   answers; a career with no team keeps the scraped value.
+            latest_team = None
+            try:
+                cur.execute("""
+                    SELECT school, pool, sport, year FROM athlete_season
+                    WHERE  person_id = %s AND school IS NOT NULL
+                      AND  lower(school) NOT LIKE 'unattached%%'
+                      AND  lower(school) NOT IN ('unat', 'independent',
+                                                 'individual', 'no team',
+                                                 'none', 'n/a', '')
+                    ORDER  BY last_race DESC NULLS LAST, year DESC,
+                              n_races DESC
+                    LIMIT  1
+                """, (person_id,))
+                latest_team = cur.fetchone()
+            except Exception:                                # noqa: BLE001
+                conn.rollback()                              # mid-rebuild: keep scraped
+            if latest_team and latest_team.get("school"):
+                athlete["school"] = latest_team["school"]
                 # ★ A COLLEGE SEASON'S TEAM IS THE COLLEGE (owner, 2026-09-06).
                 #   The stored season school is the row majority, and a feed
                 #   still naming the high school can be the majority; the
@@ -1345,8 +1361,8 @@ def athlete(person_id):
                 #   then the page asks the season's own rows for the school
                 #   that carries a college division.
                 from school_identity import _collegeState
-                if ((season_rating.get("pool") or "").startswith("college")
-                        and not _collegeState(season_rating["school"])):
+                if ((latest_team.get("pool") or "").startswith("college")
+                        and not _collegeState(latest_team["school"])):
                     try:
                         cur.execute("""
                             SELECT school, count(*) AS n
@@ -1355,32 +1371,17 @@ def athlete(person_id):
                               AND  year = %s AND division IS NOT NULL
                               AND  school IS NOT NULL
                             GROUP  BY school ORDER BY n DESC LIMIT 1
-                        """, (person_id, season_rating["pool"],
-                              season_rating["sport"], season_rating["year"]))
+                        """, (person_id, latest_team["pool"],
+                              latest_team["sport"], latest_team["year"]))
                         _col = cur.fetchone()
                         if _col and _col["school"]:
                             athlete["school"] = _col["school"]
-                            season_rating["school"] = _col["school"]
                     except Exception:                    # noqa: BLE001
                         conn.rollback()
-            else:
-                try:
-                    cur.execute("""
-                        SELECT school FROM athlete_season
-                        WHERE  person_id = %s AND school IS NOT NULL
-                          AND  lower(school) NOT LIKE 'unattached%%'
-                          AND  lower(school) NOT IN ('unat', 'independent',
-                                                     'individual', 'no team',
-                                                     'none', 'n/a', '')
-                        ORDER  BY last_race DESC NULLS LAST, year DESC,
-                                  n_races DESC
-                        LIMIT  1
-                    """, (person_id,))
-                    recent = cur.fetchone()
-                    if recent and recent["school"]:
-                        athlete["school"] = recent["school"]
-                except Exception:                            # noqa: BLE001
-                    conn.rollback()                          # mid-rebuild: keep scraped
+                if season_rating and (season_rating.get("pool"), season_rating.get("sport"),
+                                      season_rating.get("year")) == (
+                        latest_team.get("pool"), latest_team.get("sport"), latest_team.get("year")):
+                    season_rating["school"] = athlete["school"]
 
             # League / section / division for the header line. Read
             # through school_units so every page phrases them alike.

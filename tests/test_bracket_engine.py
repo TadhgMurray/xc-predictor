@@ -279,3 +279,65 @@ def test_the_prior_spec_parses():
         pass
     else:
         raise AssertionError("an unknown group must be refused")
+
+
+def test_places_cluster_by_distance_and_kind():
+    keys = ["XC:1:d5000", "XC:2:d5000", "XC:3:d5000", "XC:4:d3000", "TF:loc:5:out",
+            "TF:loc:6:out", "TF:loc:7:in", "XC:8:d5000"]
+    lat = np.array([32.7300, 32.7302, 32.7500, 32.7300, 40.0000, 40.0001, 40.0001, np.nan])
+    lon = np.array([-117.150, -117.151, -117.150, -117.150, -75.000, -75.000, -75.000, -117.15])
+    place, n = be.placeClusters(keys, lat, lon, 400.0)
+    assert n == 2
+    assert place[0] == place[1] >= 0                 # 100 m apart, same distance
+    assert place[2] == -1                            # 2 km away
+    assert place[3] == -1                            # same spot, another distance
+    assert place[4] == place[5] >= 0 and place[6] == -1   # indoor is another kind
+    assert place[7] == -1                            # no coordinates
+    place0, n0 = be.placeClusters(keys, lat, lon, 0)
+    assert n0 == 0 and (place0 == -1).all()
+    place1, n1 = be.placeClusters(keys, None, None)
+    assert n1 == 0
+
+
+def test_a_thin_course_rests_on_its_place_before_the_average():
+    """★ OWNER, 2026-09-14: Foot Locker's final under one id beside the rest
+    of Balboa under others. Planted: a course raced 30 times at +8%; a
+    second id at the same coordinates raced ONCE (also +8%); a third id
+    raced once, +8%, far away. With the place prior the neighbour lands
+    near +8; the far one keeps about half, as before."""
+    rng = np.random.default_rng(23)
+    n_ath, n_ord = 3000, 40
+    a = rng.normal(0, 0.12, n_ath)
+    rows = []
+    for i in range(n_ath):
+        for k in range(8):
+            rows.append((i, rng.integers(0, n_ord), 10 + 7 * k + rng.integers(0, 3), 0.0))
+    for r in range(30):
+        for i in rng.choice(n_ath, 25, replace=False):
+            rows.append((i, n_ord, 12 + 2 * r, 0.08))
+    for i in rng.choice(n_ath, 12, replace=False):
+        rows.append((i, n_ord + 1, 40, 0.08))
+    for i in rng.choice(n_ath, 12, replace=False):
+        rows.append((i, n_ord + 2, 41, 0.08))
+    ath = np.array([r[0] for r in rows]); course = np.array([r[1] for r in rows])
+    days = np.array([r[2] for r in rows], dtype=np.float64); eff = np.array([r[3] for r in rows])
+    y = a[ath] + eff + rng.normal(0, 0.03, ath.size)
+    n_c = n_ord + 3
+    lat = 30.0 + 0.05 * np.arange(n_c); lon = -100.0 + 0.05 * np.arange(n_c)
+    lat[n_ord + 1] = lat[n_ord] + 0.001; lon[n_ord + 1] = lon[n_ord]      # 110 m off
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course, "days": days,
+            "sport": np.zeros(ath.size, dtype=np.int64), "norm": np.exp(y),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
+            "course_keys": [f"XC:{100 + c}:d5000" for c in range(n_c)],
+            "course_lat": lat, "course_lon": lon}
+    with contextlib.redirect_stdout(log := io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0, prior_group=1.0, verbose=True)
+    assert f["n_place"] == 1 and f["place_of_base"][n_ord] == f["place_of_base"][n_ord + 1] >= 0
+    assert "place prior: 1 places" in log.getvalue()
+    D = f["D"]
+    assert abs(D[n_ord] - 0.08) < 0.012
+    assert D[n_ord + 1] > 0.065, D[n_ord + 1]           # rests on its place
+    assert 0.03 < D[n_ord + 2] < 0.065, D[n_ord + 2]    # alone: about half, as before
+    with contextlib.redirect_stdout(io.StringIO()):
+        f0 = be.fit(cols, None, window=21, top=1.0, prior_group=1.0, place_radius=0)
+    assert f0["n_place"] == 0 and f0["D"][n_ord + 1] < D[n_ord + 1]

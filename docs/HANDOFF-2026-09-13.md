@@ -515,3 +515,82 @@ not shown. Two routes, cheapest first:
 
 What is NOT a better way: a stronger era prior or a weaker group prior.
 Either moves every venue to help one.
+
+---
+
+## 9. 2026-09-14: THE PLACE PRIOR, THE POOLING REDO, THE EVENT CHECK, THE TEAM
+
+### 9.1 The place prior (built)
+
+The pack carries one (lat, lon) per course key (`speed_ratings.
+attachCourseCoords`: an XC key's canonical id through `course_canonical`,
+a TF key's location through `meets_tf`; the census line says the share
+covered). In the engine (`bracket_engine.placeClusters`) courses of one
+kind -- an XC distance, a TF surface -- within `PLACE_RADIUS_M` (400 m)
+form a place, and a course rests on its place by `PRIOR_PLACE` (2 races'
+worth) before it rests on the sport's average: the place's reading is its
+members' vote-weighted mean shrunk toward the group by the group prior.
+A place of one is the group prior exactly as before; a deliberate split
+at one point (Mt. SAC's rain course) stays its own cell, twenty race days
+outvoting the pull. Planted: the once-raced id beside a thirty-race +8%
+course lands above +6.5 where the far one keeps about half. Flags
+`--bracket-place-radius` (0 off) / `--bracket-place-prior`, env
+`XCP_BRACKET_PLACE_RADIUS` / `XCP_BRACKET_PLACE_PRIOR`. The trace
+(`course_bracket.py`) prints each cell's place as `#id(n)`. **Needs a
+pack built at 07 from now on**; an old pack has no coordinates and the
+log says "no places".
+
+### 9.2 The pooling redo: the feed's word on the team
+
+The loader now carries `team_id` (anet) and `team_slug` (tfrrs) -- NULLs
+where a database lacks the columns. At pack time
+`speed_ratings_db.loadTeamLevels` reads `anet_team` and LEARNS what each
+anet level code means from our own rows' grades (a code whose rows carry
+9-12 is hs, 6-8 ms, 1-5 elem; a gradeless code is college when a quarter
+of its teams are schools tfrrs calls colleges, else club) and prints the
+table; `XCP_ANET_LEVELS="4=college,5=club"` states a code outright. Read
+that table on the first run: if a code is named wrong, state it.
+
+`pool_resolve.resolvePool(team_level=...)`: a gradeless row on a **club**
+is professional (repooled pro, as pro_flag does), so Nike Swoosh TC,
+ASICS Furman Elite, Nomad, UA Baltimore, Melbourne TC leave the college
+board when their anet team is a club; a club runner with a school grade
+keeps the grade's pool; a **college** team's row is a college season
+(the field rule's own outcome, now from the team). A tfrrs slug's
+level token does the same for tfrrs rows. "Great Britain & N.I." and
+"unattached" rows have no team level: national teams and unattached
+professionals are still the hand list (`_PRO_SEASONS`) and pro_flag;
+a country list would be the general fix.
+
+### 9.3 The event check: is the 800 or the 10k overrated?
+
+```
+/srv/venv/bin/python scripts/event_check.py --era-years 2
+/srv/venv/bin/python scripts/event_check.py --era-years 2 --no-offsets   # the spline alone
+```
+
+Per pool and per (shorter, longer) pair of distance classes: the median,
+over an athlete-season's rows at the longer event, of the fully adjusted
+log time (log normalized time less the curve, the tilted course and the
+solve's event offset for the row's band -- the rating's own arithmetic)
+minus the mean at the shorter event within 21 days; overall and per
+rating band; in log % and points at 130. Positive = the longer race rates
+worse for the same person (the shorter is overrated, or the longer
+underrated). A pair near zero in every band is right; a pair that grows
+with the band is the offsets' band shape; a pair off in every band is
+the spline or its reference. Planted: a 1.5% overrated 800 reads +1.5
+on 800->1600 and 800->3200 and zero on 1600->3200. That is the check.
+
+### 9.4 The athlete's team is the latest season's, any sport, any race count
+
+The header's rating still wants three races; the team no longer follows
+it. A two-race track season at a new school now heads the page over the
+last full cross country season at the old one (`racecast/app.py`,
+`latest_team`).
+
+### 9.5 Tests
+
+`test_bracket_engine.py` (places, the thin course on its place),
+`test_team_level_pool.py`, `test_event_check.py`, `test_pack_scale.py`
+(the team columns), plus the earlier files. Pre-existing failures
+unchanged.
