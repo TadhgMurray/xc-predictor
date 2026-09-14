@@ -245,6 +245,202 @@ REGION_REF_COUNTS_CSV = None
 _RID, _PID, _NORM, _GRADE, _SRC, _SCHOOL, _DATE, _SPORT, _VENUE, _GENDER = range(10)
 _DIST = 10          # speed_ratings_db.COLUMNS: dist_m (issue 148)
 _MEETCLASS = 11     # speed_ratings_db.COLUMNS: meet_class (issue #22)
+_TIME = 12          # speed_ratings_db.COLUMNS: time_seconds (the raw time)
+_TEAM = 13          # speed_ratings_db.COLUMNS: team_id (anet)
+_SLUG = 14          # speed_ratings_db.COLUMNS: team_slug (tfrrs)
+_ANET_LEVELS = None
+
+
+_CLUB_PROS = None
+
+
+def loadClubPros():
+    """({team_id: n}, {normalised school: n}) of teams with professionals,
+    once (speed_ratings_db.loadClubPros)."""
+    global _CLUB_PROS
+    if _CLUB_PROS is not None:
+        return _CLUB_PROS
+    _CLUB_PROS = ({}, {})
+    try:
+        from speed_ratings_db import loadClubPros as _load, loadClubTeams
+        by_team, by_school = _load()
+        n_pro_t, n_pro_s = len(by_team), len(by_school)
+        # ★ AND THE TEAMS THE DATA CALLS CLUBS: no school grade on their
+        #   rows, no college slug, not in the directory (loadClubTeams)
+        ct, cs = loadClubTeams()
+        for k in ct:
+            by_team[k] = max(by_team.get(k, 0), 1)
+        for k in cs:
+            by_school[k] = max(by_school.get(k, 0), 1)
+        _CLUB_PROS = (by_team, by_school)
+        print(f"[engine] clubs: {n_pro_t:,} anet teams and {n_pro_s:,} school names carry a "
+              f"professional; {len(ct):,} teams and {len(cs):,} names are gradeless non-schools; "
+              f"together {len(by_team):,} teams and {len(by_school):,} names (their grade 1-8 "
+              f"and gradeless rows pool pro in a season raced mostly for them)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] clubs with professionals unavailable ({type(exc).__name__}: {exc})")
+    return _CLUB_PROS
+
+
+_CLUB_MAJORITY = None
+
+
+def loadClubMajority():
+    """{(person_id, year)} whose rows that year are mostly on a club or a
+    team with professionals, once (speed_ratings_db.loadClubMajority)."""
+    global _CLUB_MAJORITY
+    if _CLUB_MAJORITY is not None:
+        return _CLUB_MAJORITY
+    _CLUB_MAJORITY = set()
+    try:
+        from speed_ratings_db import loadClubMajority as _load
+        levels = loadAnetLevels()
+        by_team, by_school = loadClubPros()
+        club_ids = [t for t, lv in levels.items() if lv == "club"]
+        _CLUB_MAJORITY = _load(club_ids, list(by_team), list(by_school))
+        print(f"[engine] club seasons: {len(_CLUB_MAJORITY):,} athlete-years race mostly "
+              f"for a club or a team with professionals (the club rules fire only there)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] club seasons unavailable ({type(exc).__name__}: {exc}) -- "
+              "the club rules stay off")
+    return _CLUB_MAJORITY
+
+
+def clubSeason(person_id, year):
+    """Does this athlete race mostly for a club or a pro team this year?
+    The gate on every club rule (owner: a college runner at the Euros is
+    one row on a national team, not a professional)."""
+    try:
+        return (int(person_id), int(year)) in loadClubMajority()
+    except (TypeError, ValueError):
+        return False
+
+
+def teamHasPros(team_id, school):
+    by_team, by_school = loadClubPros()
+    try:
+        if team_id is not None and int(team_id) in by_team:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return bool(school) and str(school).strip().lower() in by_school
+
+
+def loadAnetLevels():
+    """{anet team_id: level name}, once; prints the code table. Empty when
+    the database has no anet_team (a pack then pools as before)."""
+    global _ANET_LEVELS
+    if _ANET_LEVELS is not None:
+        return _ANET_LEVELS
+    _ANET_LEVELS = {}
+    try:
+        from speed_ratings_db import loadTeamLevels, printTeamLevels
+        by_team, meaning, rows = loadTeamLevels()
+        if rows:
+            printTeamLevels(meaning, rows)
+        _ANET_LEVELS = by_team
+        print(f"[engine] team levels: {len(by_team):,} anet teams carry a level "
+              f"({sum(1 for v in by_team.values() if v == 'club'):,} clubs, "
+              f"{sum(1 for v in by_team.values() if v == 'college'):,} colleges)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] team levels unavailable ({type(exc).__name__}: {exc})")
+    return _ANET_LEVELS
+
+
+# ------------------------------------------------------------------ #
+# CHUNK 0a -- THE ROW ON THE SCALE OF THE POOL IT IS RATED IN
+# ------------------------------------------------------------------ #
+#
+# ★ THE 230 RATINGS (Leo and Lex Young, 2023 HS mile final: six seniors at
+#   141-144 and the twins at 230-232 on the same times). A rating is
+#   100 * pool_mean / normalized_time, and the pool mean is the pool's --
+#   hs_m on a 5000 m scale, college_m on 8000 m. The backfill normalised
+#   those rows as hs_m (its season verdict was not unanimous, so grade 12
+#   -> hs_m) and the pack resolved the season college_m, so the row's
+#   number was on one scale and its pool mean on another: x1.61 for free.
+#
+# ★ THE PACK IS WHERE THE RATED POOL IS DECIDED, SO THE PACK IS WHERE THE
+#   SCALE HAS TO FOLLOW IT. engine/anchor_repair.py rewrites the column in
+#   the database toward the pool the LAST go-live rated the row in, at step
+#   5; a pack built before that repair, or a pool that resolves differently
+#   this run, still reaches the solve mismatched, and every --from 8 run
+#   reuses an old pack. Here the check is on the pool decided this run, in
+#   memory, for every row, and the pack is consistent by construction.
+#
+#   Same arithmetic as anchor_repair: the stored value is t * factor(d,
+#   pool_it_was_on) * (everything else the backfill applied). Only the pool
+#   factor is swapped -- new = stored * factor(d, rated) / factor(d, was) --
+#   so weather, geometry and era corrections survive untouched. A row whose
+#   stored value no pool reproduces within IDENTIFY_TOL is left alone and
+#   counted (census 'scale_not_identified'): a guess is not a repair.
+_SCALE_TOL = 0.10          # anchor_check.TOLERANCE: off by this much is wrong
+# ! THE NEAREST SCALE, IF IT IS NEAR AND ALONE (2026-09-14). A 3% match
+#   missed rows whose stored value carries a weather or era correction of
+#   more than that; pool scales sit 21-65% apart, so the nearest one within
+#   8% is not ambiguous when the next is at least 10% further away.
+_SCALE_IDENTIFY_TOL = 0.08    # nearest pool factor must reproduce the stored value this closely
+_SCALE_IDENTIFY_GAP = 0.03    # ... and no factor of a different size may be nearly as close
+_SCALE_SAME_SIZE = 0.05       # factors within 5% (hs_m/hs_f, XC/TF of one pool) count as one scale
+_SCALE_POOLS = ("elem_m", "elem_f", "elem_unknown_gender", "ms_m", "ms_f",
+                "ms_unknown_gender", "hs_m", "hs_f", "hs_unknown_gender",
+                "college_m", "college_f", "college_unknown_gender", "pro_m", "pro_f")
+_scaleFactorCache = {}
+
+
+def _scaleFactor(dist, pool, sport):
+    """normalizeTime's bare multiplier for (distance, pool, sport), cached
+    on the rounded distance: no season, weather, geometry or course."""
+    key = (int(round(dist)), pool, sport)
+    f = _scaleFactorCache.get(key, False)
+    if f is False:
+        from normalize_distance import normalizeTime
+        try:
+            got = normalizeTime(1000.0, float(dist), pool, sport=sport)
+        except Exception:                                    # noqa: BLE001
+            got = None
+        f = (got / 1000.0) if got else None
+        _scaleFactorCache[key] = f
+    return f
+
+
+def rescaleToPool(norm, time_s, dist, pool, sport):
+    """(normalized_time on `pool`'s scale, tag). tag: None when the stored
+    value already is (or cannot be checked), 'rescaled' when it was moved
+    from another pool's identified scale, 'scale_not_identified' when it
+    is off and no pool reproduces it."""
+    try:
+        t = float(time_s) if time_s is not None else 0.0
+        d = float(dist) if dist is not None else 0.0
+        nt = float(norm)
+    except (TypeError, ValueError):
+        return norm, None
+    if t <= 0 or d <= 0 or nt <= 0:
+        return norm, None
+    f_to = _scaleFactor(d, pool, sport)
+    if not f_to:
+        return norm, None
+    ratio = nt / (t * f_to)
+    if abs(ratio - 1.0) <= _SCALE_TOL:
+        return norm, None
+    # which scale is it on? the nearest pool factor, if it is near and no
+    # other factor of a different size is nearly as near
+    cands = []
+    for sp in (sport, "XC" if sport == "TF" else "TF"):
+        for p in _SCALE_POOLS:
+            f = _scaleFactor(d, p, sp)
+            if not f:
+                continue
+            cands.append((abs(nt / (t * f) - 1.0), f))
+    if not cands:
+        return norm, "scale_not_identified"
+    cands.sort()
+    best_off, best = cands[0]
+    if best_off > _SCALE_IDENTIFY_TOL:
+        return norm, "scale_not_identified"
+    for off, f in cands[1:]:
+        if abs(f / best - 1.0) > _SCALE_SAME_SIZE and off < best_off + _SCALE_IDENTIFY_GAP:
+            return norm, "scale_ambiguous"
+    return nt * f_to / best, "rescaled"
 
 
 # ------------------------------------------------------------------ #
@@ -623,7 +819,8 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            `pool|sport`. Keeping the same convention means an athlete's XC and
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
-           person_id=None, season=None, race_date=None):
+           person_id=None, season=None, race_date=None, team_level=None,
+           team_has_pros=False):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -712,7 +909,9 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         upperclass_first=None if pid is None else loadUpperclassFirst().get(pid),
         race_date=race_date,
         merge=merge,
-        poolfor=_cachedPoolFor)
+        poolfor=_cachedPoolFor,
+        team_level=team_level,
+        team_has_pros=team_has_pros)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -908,11 +1107,32 @@ def packOrLoad(sports, today, merge, cache):
     stream = chain(*(streamResults(s) for s in sports))
     cols = packResults(stream, today, merge=merge)
     print(f"[time] stream + pack: {time.time() - t0:.1f}s")
+    attachCourseCoords(cols)
 
     if cache:
         saveCols(cols, path)
 
     return cols
+
+
+def attachCourseCoords(cols):
+    """course_lat / course_lon per course key on the pack (the place prior,
+    speed_ratings_db.loadCourseCoords). A failure leaves the pack without
+    them and says so: the engine then runs with no place prior."""
+    if cols is None or "course_keys" not in cols:
+        return
+    try:
+        from speed_ratings_db import loadCourseCoords
+        lat, lon = loadCourseCoords(cols["course_keys"])
+        cols["course_lat"] = np.asarray(lat, dtype=np.float64)
+        cols["course_lon"] = np.asarray(lon, dtype=np.float64)
+        n = len(cols["course_keys"])
+        have = int(np.isfinite(cols["course_lat"]).sum())
+        print(f"[engine] course coordinates: {have:,} of {n:,} course keys "
+              f"({100.0 * have / max(n, 1):.0f}%) carry a (lat, lon) for the place prior")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] course coordinates unavailable ({type(exc).__name__}: {exc}) "
+              "-- the pack carries none and the bracket engine runs without a place prior")
 
 
 # ------------------------------------------------------------------ #
@@ -954,18 +1174,42 @@ def packResults(batches, today, merge=False):
             if d is None or (today - d).days < 0:
                 census["bad_or_future_date"] += 1
                 continue
+            team_level, has_pros = None, False
+            if len(r) > _SLUG:
+                from pool_resolve import teamLevelOf
+                team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
+                if team_level:
+                    census[f"team_level_{team_level}"] += 1
+                has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
+                # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE
+                #   CLUB (clubSeason): one national-team race is one row
+                if (team_level == "club" or has_pros) and not clubSeason(r[_PID], d.year):
+                    has_pros = False
+                    if team_level == "club":
+                        team_level = None
+                        census["club_row_in_a_school_season"] += 1
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
-                          race_date=d)
+                          race_date=d, team_level=team_level, team_has_pros=has_pros)
+            if has_pros and pool and pool.startswith("pro_"):
+                census["club_with_pros_repooled_pro"] += 1
             if pool is None:
                 census["unknown_pool"] += 1
                 continue
             # ! THE SANITY BAND, NOW THAT THE POOL IS KNOWN. The loader's band
             #   is garbage-only; this is the real one, and it could not run
             #   earlier because the SQL has no idea which pool a row lands in.
+            # ★ ON THE RATED POOL'S SCALE FIRST (the 230 ratings, above):
+            #   the band and the solve both read the number in this pool
+            nt = r[_NORM]
+            if len(r) > _TIME and r[_TIME]:
+                dm_row = r[_DIST] if len(r) > _DIST else None
+                nt, tag = rescaleToPool(nt, r[_TIME], dm_row, pool, r[_SPORT])
+                if tag:
+                    census[tag] += 1
             lo, hi = poolBand(pool)
-            if not lo <= r[_NORM] <= hi:
+            if not lo <= nt <= hi:
                 census["outside_pool_band"] += 1
                 continue
             days = (today - d).days
@@ -989,7 +1233,7 @@ def packResults(batches, today, merge=False):
                     vc = len(v_uniq); v_lookup[vkey] = vc; v_uniq.append(vkey)
 
             rid.append(r[_RID]); acode.append(ac); vcode.append(vc)
-            norm.append(r[_NORM]); wt.append(days)
+            norm.append(nt); wt.append(days)
             scode.append(0 if r[_SPORT] == "XC" else 1)   # for the merged result split
             doys.append(doy)
 

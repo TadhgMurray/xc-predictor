@@ -101,7 +101,13 @@ def tuneSession(conn, quiet=False):
       for more memory would be a worse build than a slow one.
     """
     applied = []
+    try:
+        from database import dbSetting          # the quiet caps (XCP_DB_QUIET)
+    except ImportError:                         # a caller off the project path
+        def dbSetting(name, default):
+            return default
     for name, value in _SETTINGS:
+        value = dbSetting(name, value)
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET {name} = %s", (value,))
@@ -115,6 +121,62 @@ def tuneSession(conn, quiet=False):
     if applied and not quiet:
         print(f"  session:  {', '.join(applied)}")
     return applied
+
+
+# ------------------------------------------------------------------ #
+#  THE SWAP -- one short transaction, a bounded wait, never a queue
+# ------------------------------------------------------------------ #
+#
+# ★ WHY EVERY BUILDER SWAPS THROUGH HERE (owner, 2026-09-13: "some parts of
+#   pipeline make website super slow (this is a must fix)"). DROP TABLE and
+#   ALTER TABLE RENAME take ACCESS EXCLUSIVE. Postgres queues locks in
+#   order, so a bare DROP behind one long site read makes EVERY later site
+#   query on that table wait behind the DROP -- and when the DROP was
+#   followed by ten index builds inside the same transaction
+#   (build_school_units), the site's filtered boards queued for the whole
+#   build, hit their 5 s lock_timeout, and rendered as 500s.
+#
+#   The rule: build and index the shadow table with the live one untouched;
+#   then, in its own transaction with `SET LOCAL lock_timeout`, drop the
+#   live table and rename the shadow in -- milliseconds under the lock --
+#   retrying while a reader is in flight, so a reader that holds the table
+#   delays the swap instead of the swap delaying every reader.
+SWAP_TRIES = 24
+SWAP_WAIT_S = 5.0
+
+
+def swapTable(conn, name, new=None, renames=(), tries=SWAP_TRIES, wait=SWAP_WAIT_S,
+              analyze=True, quiet=False):
+    """Replace `name` with `new` (default `<name>_new`): ANALYZE the shadow
+    (outside the lock), then DROP the live table, RENAME the shadow in and
+    rename its indexes (`renames`: (old, new) pairs), all in one short
+    transaction that waits at most `wait` seconds for the lock, `tries`
+    times. Raises RuntimeError when the lock never came; the shadow is
+    left built for a rerun."""
+    import time
+    import psycopg2
+    new = new or f"{name}_new"
+    with conn.cursor() as cur:
+        if analyze:
+            cur.execute(f"ANALYZE {new}")
+        conn.commit()
+        for attempt in range(1, tries + 1):
+            try:
+                cur.execute("SET LOCAL lock_timeout = %s", (f"{int(wait * 1000)}ms",))
+                cur.execute(f"DROP TABLE IF EXISTS {name}")
+                cur.execute(f"ALTER TABLE {new} RENAME TO {name}")
+                for old_ix, new_ix in renames:
+                    cur.execute(f"ALTER INDEX IF EXISTS {old_ix} RENAME TO {new_ix}")
+                conn.commit()
+                return attempt
+            except psycopg2.errors.LockNotAvailable:
+                conn.rollback()
+                if not quiet:
+                    print(f"  {name}: swap try {attempt}/{tries} -- being read; "
+                          f"retrying in {wait:g}s", flush=True)
+                time.sleep(wait)
+    raise RuntimeError(f"{name}: could not take the lock for the swap in "
+                       f"{tries * wait:.0f}s; {new} is built, rerun to swap")
 
 
 # ------------------------------------------------------------------ #

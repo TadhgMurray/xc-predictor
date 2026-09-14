@@ -100,6 +100,34 @@ def _personGenderJoin():
             "ON pg.person_id = COALESCE(r.person_id, r.athlete_id)")
 
 
+_TEAM_COLS = {}
+
+
+def _teamColumns(table):
+    """The SELECT fragment for the team: the real columns when the table
+    has them (results.team_id came with the scraper, team_slug with the
+    2026-09-13 migration), NULLs otherwise, so a database that predates
+    either still packs. Probed once per table."""
+    got = _TEAM_COLS.get(table)
+    if got is None:
+        have = set()
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("""SELECT column_name FROM information_schema.columns
+                               WHERE table_schema = 'public' AND table_name = %s
+                                 AND column_name IN ('team_id', 'team_slug')""", (table,))
+                have = {r[0] for r in cur.fetchall()}
+        except Exception:                                    # noqa: BLE001
+            have = set()
+        got = ", ".join([("r.team_id" if "team_id" in have else "NULL::bigint AS team_id"),
+                         ("r.team_slug" if "team_slug" in have else "NULL::text AS team_slug")])
+        _TEAM_COLS[table] = got
+        if have != {"team_id", "team_slug"}:
+            print(f"[engine] {table}: team columns {sorted(have) or 'absent'} -- the "
+                  f"pack pools without the feed's team level where they are missing")
+    return got
+
+
 # Column order every loader yields. The engine unpacks by these indices.
 COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            "school", "date", "sport", "venue", "gender",
@@ -116,7 +144,21 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   a name; it cross-tabulates that share against this class so
            #   the log can say whether the finals show the highest share.
            #   A pack without it runs without the cross-tab.
-           "meet_class")
+           "meet_class",
+           # ★ THE RAW TIME (2026-09-13): with it the pack can tell which
+           #   pool's scale a stored normalized_time is on and move the row
+           #   onto the pool it is RATED in (speed_ratings.rescaleToPool).
+           #   The 230 ratings were rows normalised as hs_m and rated as
+           #   college_m; the DB repair (anchor_repair) runs at step 5 and
+           #   never reaches a pack built earlier or a pool decided later.
+           "time_seconds",
+           # ★ THE TEAM (2026-09-14, the pooling redo): anet's TeamID, which
+           #   anet_team names and LEVELS (college, high school, club...), and
+           #   tfrrs's team slug, whose second token is the level. A club or
+           #   an elite squad is not a school, and its gradeless rows were
+           #   landing in the college pool because they raced college fields
+           #   (pool_resolve.resolvePool, team_level).
+           "team_id", "team_slug")
 
 
 # ------------------------------------------------------------------ #
@@ -351,6 +393,38 @@ def _ageBandJoin(sport: str) -> str:
             f"\n              AND ab.result_id = r.result_id")
 
 
+# ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): every row of a race
+#   with a time faster than the world record allows, outside the college
+#   pools, is left out of the solve. engine/impossible_race.py writes the
+#   table (step 06c); this is the anti-join, and the count, so the pack log
+#   says how many rows it refused and a missing table is a banner.
+_IMPOSSIBLE = {}
+
+
+def _impossibleFilter(sport: str) -> str:
+    if sport not in _IMPOSSIBLE:
+        n = None
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.impossible_result')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("SELECT count(*) FROM impossible_result WHERE sport = %s", (sport,))
+                    n = int(cur.fetchone()[0])
+        except Exception:                                    # noqa: BLE001
+            n = None
+        _IMPOSSIBLE[sport] = n
+        if n is None:
+            print(f"[engine] impossible_result: ABSENT -- run engine/impossible_race.py "
+                  f"--write (step 06c); no {sport} race is refused for beating the record")
+        else:
+            print(f"[engine] impossible_result: {n:,} {sport} rows of record-beating races "
+                  "left out of the solve")
+    if _IMPOSSIBLE[sport] is None:
+        return ""
+    return (f"\n          AND NOT EXISTS (SELECT 1 FROM impossible_result ir"
+            f"\n                          WHERE ir.sport = '{sport}' AND ir.result_id = r.result_id)")
+
+
 def _chairFilter() -> str:
     global _CHAIR_READY
     if _CHAIR_READY is None:
@@ -570,7 +644,9 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                            ->> 'distance')::real,
                         mt.distance)::real AS dist_m,
                {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
-                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class
+                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class,
+               r.time_seconds::real AS time_seconds,
+               {_teamColumns('results')}
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -617,7 +693,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
-          AND r.person_id IS NOT NULL
+          AND r.person_id IS NOT NULL{_impossibleFilter('XC')}
           -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing
           --   chair covers 1500m far faster than a runner, so its normalized
           --   time is extreme and the athlete rates ~147 in a youth pool.
@@ -686,7 +762,9 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   Same parse the backfill uses, in SQL: digits, 'k' =
                --   thousands, 'mile' = 1609.34 each.
                COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m,
-               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class
+               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class,
+               r.time_seconds::real AS time_seconds,
+               {_teamColumns('results_tf')}
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
@@ -720,7 +798,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
-          AND r.person_id IS NOT NULL
+          AND r.person_id IS NOT NULL{_impossibleFilter('TF')}
           AND COALESCE(r.is_relay, 0) = 0
           AND COALESCE(r.is_field, 0) = 0
           -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing
@@ -741,6 +819,302 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   wheelchair_person has not been built.{_chairFilter()}
 {_dedupFilter(tw, 'TF')}
     """
+
+
+# ------------------------------------------------------------------ #
+# THE VENUES' COORDINATES, PER COURSE KEY (the place prior, 2026-09-14)
+# ------------------------------------------------------------------ #
+#
+# ★ A venue keyed in pieces -- Foot Locker's final under one canonical id,
+#   the rest of Balboa under others -- is several thin cells the engine
+#   can only pull toward the sport's average. Its coordinates say which
+#   cells are one place; the bracket engine (bracket_engine.placeClusters)
+#   pulls cells within a few hundred metres, at one distance, toward each
+#   other before it pulls them toward the average course. The pack carries
+#   one (lat, lon) per course key: an XC key's canonical id through
+#   course_canonical, a TF key's location through meets_tf; NaN where the
+#   key has neither (a name-keyed XC cell, a venueless row).
+# ★ WHAT ANET'S TEAM LEVEL CODES MEAN, LEARNED FROM OUR OWN GRADES (the
+#   pooling redo, 2026-09-14). anet_team.level is an integer anet does not
+#   document; the rows tell us: a code whose rows mostly carry grades 9-12
+#   is a high school code, 6-8 middle school, 1-5 elementary. A code whose
+#   rows carry NO grade is a college or a club, and those two are told
+#   apart by tfrrs: a school whose tfrrs slug says college is a college.
+#   The table is printed, and XCP_ANET_LEVELS="4=college,3=hs,5=club"
+#   states any code outright.
+def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
+    """({anet team_id: level name}, {code: level name}, table rows). level
+    names: 'college', 'hs', 'ms', 'elem', 'club'; a code that cannot be
+    named is left out. Empty dicts without anet_team."""
+    import os
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('anet_team')")
+        if cur.fetchone()[0] is None:
+            return {}, {}, []
+        cur.execute("SELECT team_id, level, school FROM anet_team WHERE level IS NOT NULL")
+        teams = {int(t): (int(lv), sc) for t, lv, sc in cur.fetchall()}
+        # the rows' grades per code, from the XC table (the anet grades)
+        cur.execute("""
+            SELECT t.level,
+                   CASE WHEN r.grade ~ '^(9|10|11|12)$' THEN 'hs'
+                        WHEN r.grade ~ '^[678]$' THEN 'ms'
+                        WHEN r.grade ~ '^[1-5]$' THEN 'elem'
+                        WHEN r.grade IS NULL OR btrim(r.grade) IN ('', '-') THEN 'none'
+                        ELSE 'other' END AS lv,
+                   count(*)
+            FROM   results r JOIN anet_team t ON t.team_id = r.team_id
+            WHERE  t.level IS NOT NULL
+            GROUP  BY 1, 2""")
+        tally = {}
+        for code, lv, n in cur.fetchall():
+            tally.setdefault(int(code), {})[lv] = int(n)
+        # the schools tfrrs calls colleges
+        cur.execute("""SELECT DISTINCT lower(btrim(school)) FROM results_tf
+                       WHERE team_slug IS NOT NULL AND team_slug LIKE '%%\_college\_%%'
+                         AND school IS NOT NULL""")
+        colleges = {r[0] for r in cur.fetchall()}
+    # per code: the share of its TEAMS whose school tfrrs calls a college
+    by_code_teams = {}
+    for t, (code, sc) in teams.items():
+        by_code_teams.setdefault(code, []).append((sc or "").strip().lower() in colleges)
+    meaning, rows = {}, []
+    for code in sorted(set(tally) | set(by_code_teams)):
+        t = tally.get(code, {})
+        n = sum(t.values())
+        shares = {k: v / n for k, v in t.items()} if n else {}
+        c_teams = by_code_teams.get(code, [])
+        c_share = (sum(c_teams) / len(c_teams)) if c_teams else 0.0
+        name = None
+        if n >= min_rows:
+            for lv in ("hs", "ms", "elem"):
+                if shares.get(lv, 0.0) >= share:
+                    name = lv
+            if name is None and shares.get("none", 0.0) >= share:
+                name = "college" if c_share >= college_share else "club"
+        rows.append((code, n, shares, len(c_teams), c_share, name))
+        if name:
+            meaning[code] = name
+    stated = os.environ.get("XCP_ANET_LEVELS", "")
+    for part in stated.split(","):
+        k, _, v = part.partition("=")
+        if k.strip().isdigit() and v.strip():
+            meaning[int(k)] = v.strip()
+    by_team = {t: meaning[code] for t, (code, _sc) in teams.items() if code in meaning}
+    return by_team, meaning, rows
+
+
+# ★ A CLUB WITH PROFESSIONALS IN IT HAS NO MIDDLE SCHOOLERS (owner,
+#   2026-09-14: "lots of club runners are labeled as msers because they
+#   are in their '6th' pro year ... separate ms and pro clubs based on if
+#   there's any pros in the club. If there are, make that club unable to
+#   have msers"). A youth club's grade 6 is a sixth grader; an elite
+#   squad's grade 6 is a sixth year, and it advances every season like a
+#   grade does, so no grade rule can tell them apart. The club can: a
+#   team any of whose athletes pro_flag has called professional in a
+#   season they raced for it is a professional team, and its rows with a
+#   grade of 1-8 or no grade are repooled pro (pool_resolve, team_has_pros).
+#   Rows with a high-school grade on such a team keep it -- a sponsor's
+#   youth squad and its elite group can wear one name.
+def loadClubPros(min_pros=1):
+    """({anet team_id: n pro athletes}, {normalised school: n}) for teams
+    with at least min_pros professional athletes (pro_athlete_season) in
+    a season they raced for the team. Empty without the table."""
+    by_team, by_school = {}, {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('pro_athlete_season')")
+        if cur.fetchone()[0] is None:
+            return by_team, by_school
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'team_id'""", (table,))
+            has_team = cur.fetchone() is not None
+            team_expr = "r.team_id" if has_team else "NULL::bigint"
+            cur.execute(f"""
+                WITH pr AS (SELECT person_id, min(season) AS s0, max(season) AS s1
+                            FROM pro_athlete_season GROUP BY person_id)
+                SELECT {team_expr} AS team_id, lower(btrim(r.school)) AS school,
+                       count(DISTINCT r.person_id) AS n
+                FROM   {table} r JOIN pr ON pr.person_id = r.person_id
+                WHERE  r.date ~ '^(19|20)[0-9][0-9]-'
+                  AND  substr(r.date, 1, 4)::int BETWEEN pr.s0 AND pr.s1 + 1
+                  AND  (({team_expr}) IS NOT NULL OR r.school IS NOT NULL)
+                GROUP  BY 1, 2""")
+            for team_id, school, n in cur.fetchall():
+                if team_id is not None:
+                    by_team[int(team_id)] = by_team.get(int(team_id), 0) + int(n)
+                elif school:
+                    by_school[school] = by_school.get(school, 0) + int(n)
+    by_team = {k: v for k, v in by_team.items() if v >= min_pros}
+    by_school = {k: v for k, v in by_school.items() if v >= min_pros
+                 and not k.startswith("unattached") and k not in ("unat", "independent", "individual", "none", "n/a")}
+    return by_team, by_school
+
+
+# ★ ONLY WHEN THE CLUB IS WHERE THEY RACE (owner, 2026-09-14: "it should
+#   only be if they run the majority of their races with their club /
+#   national team. So any collegiate runner running the Euros would be
+#   fine"). The club rules above are per ROW; a college runner's one
+#   national-team race in July is a row on a team with professionals. So
+#   the rules fire only for athlete-years in which MORE THAN HALF of the
+#   athlete's rows are on a club or a team with professionals.
+def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
+    """{(person_id, calendar year)} whose rows that year are mostly on a
+    club-level anet team, a team with professionals, or a school string
+    with professionals. Empty when there is nothing to test against."""
+    team_ids = sorted(set(int(t) for t in club_team_ids) | set(int(t) for t in pro_team_ids))
+    schools = sorted(set(str(x) for x in pro_schools))
+    if not team_ids and not schools:
+        return set()
+    agg = {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("CREATE TEMP TABLE club_teams (team_id bigint PRIMARY KEY) ON COMMIT DROP")
+        cur.execute("CREATE TEMP TABLE club_schools (school text PRIMARY KEY) ON COMMIT DROP")
+        if team_ids:
+            _copyInto(cur, "club_teams", ("team_id",), [(t,) for t in team_ids])
+        if schools:
+            _copyInto(cur, "club_schools", ("school",), [(_escape(x),) for x in schools])
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'team_id'""", (table,))
+            has_team = cur.fetchone() is not None
+            on_team = ("ct.team_id IS NOT NULL" if has_team else "FALSE")
+            join_team = (f"LEFT JOIN club_teams ct ON ct.team_id = r.team_id" if has_team else "")
+            cur.execute(f"""
+                SELECT r.person_id, substr(r.date, 1, 4)::int AS yr,
+                       count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) AS n_club,
+                       count(*) AS n
+                FROM   {table} r
+                {join_team}
+                LEFT   JOIN club_schools cs ON cs.school = lower(btrim(r.school))
+                WHERE  r.person_id IS NOT NULL AND r.date ~ '^(19|20)[0-9][0-9]-'
+                GROUP  BY 1, 2
+                HAVING count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) > 0""")
+            for pid, yr, n_club, n in cur.fetchall():
+                k = (int(pid), int(yr))
+                a = agg.get(k, [0, 0])
+                a[0] += int(n_club); a[1] += int(n)
+                agg[k] = a
+        conn.rollback()                                  # the temp tables
+    # ! BOTH SPORTS TOGETHER: a season's rows are summed across the two
+    #   tables before the majority is judged (a HAVING that kept only the
+    #   athlete-years with a club row means a year with none is not here,
+    #   which is the same answer: no club rows, no majority)
+    return {k for k, (n_club, n) in agg.items() if n_club * 2 > n}
+
+
+# ★ A CLUB IS A TEAM WITH NO SCHOOL IN IT, FROM THE DATA (owner, 2026-09-14:
+#   Garden State TC, Atlanta TC, Saucony, Pacific Athletics on the college
+#   boards). anet names some teams' levels and pro_flag names some
+#   professionals; the tfrrs half of the corpus has neither for a club, so
+#   the rows have to say it: a team with at least min_rows rows of which
+#   fewer than max_grade_share carry a school grade, that no tfrrs slug
+#   calls a college and the college directory does not list, is a club --
+#   an elite squad, an adult club, a national team. A college on anet is
+#   gradeless too, which is what the directory and the slugs are for.
+def loadClubTeams(min_rows=20, max_grade_share=0.05):
+    """({anet team_id: n rows}, {normalised school: n rows}) of teams whose
+    rows carry (almost) no school grade and that are not colleges."""
+    by_team, by_school = {}, {}
+    grade_expr = ("CASE WHEN r.grade ~ '^([1-9]|1[0-2])$' OR lower(btrim(r.grade)) "
+                  "IN ('fr','so','jr','sr','fr-1','so-2','jr-3','sr-4') THEN 1 ELSE 0 END")
+    with getConn() as conn, conn.cursor() as cur:
+        colleges = set()
+        cur.execute("SELECT to_regclass('college_directory')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("SELECT lower(btrim(name)) FROM college_directory")
+            colleges |= {r[0] for r in cur.fetchall() if r[0]}
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name IN ('team_id', 'team_slug')""", (table,))
+            have = {r[0] for r in cur.fetchall()}
+            if "team_slug" in have:
+                cur.execute(f"""SELECT DISTINCT lower(btrim(school)) FROM {table}
+                                WHERE team_slug LIKE '%%\\_college\\_%%' AND school IS NOT NULL""")
+                colleges |= {r[0] for r in cur.fetchall() if r[0]}
+            team_expr = "r.team_id" if "team_id" in have else "NULL::bigint"
+            cur.execute(f"""
+                SELECT {team_expr} AS team_id, lower(btrim(r.school)) AS school,
+                       count(*) AS n, sum({grade_expr}) AS n_graded
+                FROM   {table} r
+                WHERE  r.school IS NOT NULL
+                GROUP  BY 1, 2
+                HAVING count(*) >= %s""", (int(min_rows),))
+            for team_id, school, n, n_graded in cur.fetchall():
+                if isClubName(school, colleges) and (int(n_graded) / max(int(n), 1)) < max_grade_share:
+                    if team_id is not None:
+                        by_team[int(team_id)] = by_team.get(int(team_id), 0) + int(n)
+                    else:
+                        by_school[school] = by_school.get(school, 0) + int(n)
+    return by_team, by_school
+
+
+_SCHOOL_WORDS = (" high", " middle", " elementary", " school", " hs", " ms", " academy",
+                 " prep", " college", "university", "univ ", " jr", " sr ", " intermediate")
+
+
+def isClubName(school, colleges=()):
+    """A school string that can be a club: not a college, not unattached,
+    not a name that says school. Pure; the grade share is the caller's."""
+    s = (school or "").strip().lower()
+    if not s or s in colleges:
+        return False
+    if s.startswith("unattached") or s in ("unat", "independent", "individual", "none", "n/a"):
+        return False
+    padded = " " + s + " "
+    return not any(w in padded for w in _SCHOOL_WORDS)
+
+
+def printTeamLevels(meaning, rows):
+    print("[engine] anet team levels (code -> meaning, from our rows' grades and "
+          "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")
+    print(f"        {'code':>5}{'rows':>11}{'hs':>7}{'ms':>7}{'elem':>7}{'none':>7}"
+          f"{'teams':>8}{'tfrrs col.':>11}   meaning")
+    for code, n, shares, n_teams, c_share, name in rows:
+        print(f"        {code:>5}{n:>11,}"
+              + "".join(f"{100 * shares.get(k, 0.0):>6.0f}%" for k in ("hs", "ms", "elem", "none"))
+              + f"{n_teams:>8,}{100 * c_share:>10.0f}%   {meaning.get(code) or '(unnamed)'}")
+
+
+def loadCourseCoords(course_keys):
+    """(lat, lon) float arrays, one per course key, NaN where unknown."""
+    import numpy as np
+    n = len(course_keys)
+    lat = np.full(n, np.nan)
+    lon = np.full(n, np.nan)
+    xc, tf = {}, {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('course_canonical')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""SELECT canonical_id, avg(gps_lat), avg(gps_long)
+                           FROM course_canonical
+                           WHERE gps_lat IS NOT NULL AND gps_long IS NOT NULL
+                           GROUP BY canonical_id""")
+            xc = {int(c): (float(a), float(b)) for c, a, b in cur.fetchall()}
+        cur.execute("SELECT to_regclass('meets_tf')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""SELECT location_id, avg(gps_lat), avg(gps_long)
+                           FROM meets_tf
+                           WHERE location_id IS NOT NULL
+                             AND gps_lat IS NOT NULL AND gps_long IS NOT NULL
+                           GROUP BY location_id""")
+            tf = {int(c): (float(a), float(b)) for c, a, b in cur.fetchall()}
+    for i, key in enumerate(course_keys):
+        k = str(key)
+        got = None
+        if k.startswith("XC:"):
+            body = k[3:].split(":d", 1)[0]
+            if body.isdigit():
+                got = xc.get(int(body))
+        elif k.startswith("TF:loc:"):
+            body = k[7:].split(":", 1)[0]
+            if body.isdigit():
+                got = tf.get(int(body))
+        if got is not None:
+            lat[i], lon[i] = got
+    return lat, lon
 
 
 # ------------------------------------------------------------------ #

@@ -22,6 +22,33 @@ PY="${XCP_PYTHON:-/srv/venv/bin/python}"
 #   /srv/wxvenv, not in $PY's venv. Absent, step 04e says so and the run
 #   goes on without new weather (as every run before it did).
 WXPY="${XCP_WXPYTHON:-/srv/wxvenv/bin/python}"
+
+# ★ THE PIPELINE YIELDS TO THE SITE (owner, 2026-09-13: "some parts of
+#   pipeline make website super slow (this is a must fix)"). Every step
+#   runs under nice and, where it exists, ionice idle-ish, so gunicorn and
+#   Postgres win the CPU and the disk when a page is being served; and the
+#   numpy solve's BLAS is capped at XCP_THREADS (cores less two) instead of
+#   one thread per core, which starved the eight workers for hours.
+#   XCP_NICE=0 XCP_THREADS=<n> override both.
+XCP_NICE="${XCP_NICE:-10}"
+NICE="nice -n $XCP_NICE"
+if command -v ionice >/dev/null 2>&1; then NICE="$NICE ionice -c2 -n7"; fi
+_cores=$(nproc 2>/dev/null || echo 4)
+XCP_THREADS="${XCP_THREADS:-$(( _cores > 3 ? _cores - 2 : 1 ))}"
+export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
+       MKL_NUM_THREADS="$XCP_THREADS" NUMEXPR_NUM_THREADS="$XCP_THREADS"
+# ★ AND INSIDE POSTGRES (owner, 2026-09-14: "especially the steps past the
+#   solve"). nice never reached the Postgres backends that do the boards'
+#   COPY, the heap rebuilds and the index builds; XCP_DB_QUIET=1 caps every
+#   pipeline connection (no parallel workers, 64MB work_mem, 512MB
+#   maintenance_work_mem, the backend reniced where the OS allows it) --
+#   see scripts/database.py. XCP_STREAMS is how many of the board row
+#   walks run side by side (was 4), XCP_COURSE_SHARDS the course-page
+#   workers (was 3). XCP_DB_QUIET=0 XCP_STREAMS=4 XCP_COURSE_SHARDS=3 is
+#   the old, site-blind speed.
+export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
+XCP_STREAMS="${XCP_STREAMS:-2}"
+XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-2}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -183,7 +210,7 @@ step() {
   t0=$(date +%s)
   # ! -u SO PYTHON DOES NOT BUFFER. Without it a four-hour step shows nothing
   #   until it finishes, and you cannot tell a slow step from a hung one.
-  if "$@" 2>&1 | tee "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
+  if $NICE "$@" 2>&1 | tee "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
     echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
@@ -217,9 +244,9 @@ steps2() {
   echo "  $nameA + $nameB    $(date +%H:%M:%S)   (in parallel)"
   echo "======================================================================"
   t0=$(date +%s)
-  sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
+  $NICE sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
   pa=$!
-  sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
+  $NICE sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
   pb=$!
   wait "$pa"; ra=$?
   wait "$pb"; rb=$?
@@ -256,16 +283,20 @@ stepsN() {
   fi
   echo ""
   echo "======================================================================"
-  echo "  $first (+ $(( $# / 2 - 1 )) more)    $(date +%H:%M:%S)   (in parallel)"
+  echo "  $first (+ $(( $# / 2 - 1 )) more)    $(date +%H:%M:%S)   ($XCP_STREAMS at a time)"
   echo "======================================================================"
   t0=$(date +%s)
-  names=""; pids=""
+  # ★ XCP_STREAMS AT A TIME, not all at once (2026-09-14): four row walks
+  #   were four backends scanning results side by side under the site.
+  names=""; rcs=""; batch_pids=""; batch_names=""; inflight=0
   while [ $# -ge 2 ]; do
-    sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
-    pids="$pids $!"; names="$names $1"; shift 2
+    $NICE sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
+    batch_pids="$batch_pids $!"; batch_names="$batch_names $1"; inflight=$((inflight + 1)); shift 2
+    if [ "$inflight" -ge "$XCP_STREAMS" ] || [ $# -lt 2 ]; then
+      for pid in $batch_pids; do wait "$pid"; rcs="$rcs $?"; done
+      names="$names$batch_names"; batch_pids=""; batch_names=""; inflight=0
+    fi
   done
-  rcs=""
-  for pid in $pids; do wait "$pid"; rcs="$rcs $?"; done
   el=$(( $(date +%s) - t0 ))
   set -- $names
   for rc in $rcs; do
@@ -302,7 +333,7 @@ shards() {
   pids=""
   k=0
   while [ "$k" -lt "$n" ]; do
-    "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
+    $NICE "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
     pids="$pids $!"
     k=$((k + 1))
   done
@@ -475,6 +506,10 @@ fi
 #   meets_tf on the row's own keys, and tfrrs rows had rows there only
 #   where a geometry stamp existed, unnamed. Idempotent, seconds.
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
+# ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): a time faster than
+#   the world record allows, outside the college pools, marks its whole
+#   race; the pack, the fill and the boards all anti-join the table.
+step 06c_impossible   "$PY" -u engine/impossible_race.py --write
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 
 # ★ TWO SOLVERS, ONE SWITCH.
@@ -540,6 +575,21 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   0.01): with a few race days per era that number, against
   #   sigma_u / sqrt(days), decides how far a venue can move. The holdout
   #   carries the same.
+  # ★ XCP_BRACKET_PRIOR: the bracket engine's course prior in races, per
+  #   group (XC, outdoor track, indoor track). Default "fit": read from
+  #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
+  #   states them; one number states every group (bracket_engine.parsePrior).
+  # ★ XCP_DIST_WALK: sd per unit log-distance of the random walk tying each
+  #   event offset to its neighbouring distance classes (default 0.02,
+  #   js.DIST_WALK_SD; 0 off). The 1000, 2000 and 6000 no longer wander alone.
+  # ★ XCP_BRACKET_PLACE_RADIUS (metres, default 400; 0 off) and
+  #   XCP_BRACKET_PLACE_PRIOR (races, default 2): the place prior -- courses
+  #   of one kind within the radius rest on each other before the sport's
+  #   average (bracket_engine.placeClusters). Needs a pack built with the
+  #   course coordinates (07_pack from 2026-09-14 on).
+  # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
+  #   tracks at the level the linkage gave them; default 1 recentres each host
+  #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
   # ★ XCP_DIFFICULTY=bracket publishes the bracket engine's course numbers
   #   (run_joint.bracketDifficulties): the solve still fits everything
   #   else, the courses come from the owner's method, the abilities are
@@ -548,6 +598,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
       --outer "${XCP_OUTER:-5}" \
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
+      ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
+      ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
+      ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
+      ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
@@ -556,6 +610,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
+      ${XCP_DIST_WALK:+--dist-walk "$XCP_DIST_WALK"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_MERGE_SPORTS:+--merge-sports} \
       ${XCP_CENTRE_CURVE:+--centre-curve} \
@@ -707,6 +762,13 @@ stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream
        10_rankings_tf_a "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --until ${XCP_RANK_SEAM:-2018-01-01}" \
        10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
+# ★ THE BOARDS, CHECKED BEFORE ANYONE READS THEM (owner, 2026-09-14: college
+#   boards headed at 170 by rows ranked against another pool's mean, clubs
+#   with professionals among colleges, a 5:12 "mile"). Top rows per pool:
+#   anchor gate, record pace, board pool == rating pool, club teams, margin
+#   over the pool's own top seasons, the XC/TF gap. A hard finding FAILS
+#   the step (no "|| true"): a wrong board is not a board.
+step 10a_board_sanity "$PY" -u scripts/board_sanity.py --top "${XCP_SANITY_TOP:-60}"
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # measured for telemetry only: the joint level is not steered by the json
@@ -730,7 +792,7 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 #   every third course cut the wall time to about a third. --prepare and
 #   --finish bracket them so the swap happens once, after all three.
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
-shards 12b_course_pages 3 "$PY" -u racecast/build_course_boards.py --limit 1200
+shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels

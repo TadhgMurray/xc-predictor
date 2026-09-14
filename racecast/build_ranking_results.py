@@ -36,7 +36,7 @@ import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
-from database import getConn
+from database import getConn, dbSetting, dbJobs
 
 # poolFor is the engine's SSOT for grade -> level -> pool. IMPORT it; do not
 # reimplement it in SQL. Reimplementing is how the site and the engine drift
@@ -127,7 +127,7 @@ _RATING_MAX = 200.0
 # max_parallel_maintenance_workers on its own, so this multiplies rather than
 # replaces it -- 3 stays inside max_parallel_workers (8) with room for the
 # three leader processes.
-_INDEX_JOBS = 3
+_INDEX_JOBS = dbJobs(3)     # one at a time under XCP_DB_QUIET (2026-09-14)
 
 
 # ------------------------------------------------------------------ #
@@ -560,6 +560,7 @@ _SQL = {
                --   which is worse than not having it: the build would report
                --   a gate that is not gating.
                r.normalized_time,
+               __RATING_POOL__ AS rating_pool,
                r.meet_id, r.div_id, r.canon_meet_id,
                -- ⚠ THREE SOURCES, NOT TWO. dov is the override, m.distance
                --   is anet, and xtd is tfrrs -- which lives in a JSONB blob
@@ -619,6 +620,7 @@ _SQL = {
           --   exist (possibly empty) before this runs.
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'XC' AND x.result_id = r.result_id)
+          __IMPOSSIBLE__
           -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
           --   person: the same list the engine consults. fill_ratings
           --   inverts only the speed_rating clause of this WHERE, so this
@@ -638,6 +640,7 @@ _SQL = {
                --   which is worse than not having it: the build would report
                --   a gate that is not gating.
                r.normalized_time,
+               __RATING_POOL__ AS rating_pool,
                r.meet_id, r.div_id, r.canon_meet_id,
                -- ⚠ NO m.distance ON THIS SIDE. `m` here is tmp_tf_state, a
                --   collapse of meets_tf on (meet, div, source) -- and it
@@ -717,6 +720,7 @@ _SQL = {
           AND r.person_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'TF' AND x.result_id = r.result_id)
+          __IMPOSSIBLE__
           -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
           --   person; see the XC half and ensureWheelchairPerson.
           AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
@@ -1025,11 +1029,13 @@ _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
+                "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
                 "field_mark": 0, "field_refused": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
+                "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
                 "field_mark": 0, "field_refused": 0}}
 
 # ★ TIMED NON-FLAT EVENTS. event_parse rejects hurdles and the steeple on
@@ -1082,9 +1088,57 @@ def timedEventKind(event_short):
 _WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
 
 
+def _sourceSql(conn, sport):
+    """_SQL[sport] with the rating_pool column where the table has it (the
+    go-live has written it since issue 171), NULL where a database predates
+    it, so the build runs on either."""
+    table = "results" if sport == "XC" else "results_tf"
+    with conn.cursor() as cur:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                         AND column_name = 'rating_pool'""", (table,))
+        have = cur.fetchone() is not None
+    sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
+    return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport))
+
+
+def _impossibleClause(conn, sport):
+    """The anti-join on engine/impossible_race.py's table: every row of a
+    race that beat the record is neither ranked nor priced. Empty on a
+    database where the step has not run yet."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.impossible_result')")
+        have = cur.fetchone()[0] is not None
+    if not have:
+        print(f"  ⚠ {sport}: impossible_result does not exist -- run "
+              "engine/impossible_race.py --write (step 06c); no race is excluded")
+        return ""
+    return (f"AND NOT EXISTS (SELECT 1 FROM impossible_result ir\n"
+            f"                          WHERE ir.sport = '{sport}' AND ir.result_id = r.result_id)")
+
+
 def isRankablePool(pool):
-    """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a board."""
-    return bool(pool) and not pool.endswith("_unknown_gender")
+    """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a
+    board -- and neither is a professional pool (2026-09-14): a pro_m or
+    pro_f rating is the athlete's standing among professionals and has no
+    board on the site; published under a school pool it headed the college
+    boards at 170."""
+    if not pool:
+        return False
+    bare = pool.split("|", 1)[0]
+    return not bare.endswith("_unknown_gender") and not bare.startswith("pro_")
+
+
+# ★ THE PACE NO RUNNER HAS RUN (owner, 2026-09-14) lives in
+#   engine/record_pace.py, one definition for the pack, the fill, the
+#   boards and the sanity script; the names are re-exported here for the
+#   readers that learned them on this module. The RACE rule -- one
+#   impossible row condemns its whole race -- is engine/impossible_race.py,
+#   whose table the query below anti-joins (__IMPOSSIBLE__); the per-row
+#   gate in prepareRow is the belt to that brace, for a row the table was
+#   built too early to know.
+from record_pace import (_WR_PACE, PACE_FLOOR_SLACK, recordPace,     # noqa: E402,F401
+                         impossiblePace, exemptPool)
 
 
 def prepareRow(row, sport):
@@ -1142,24 +1196,41 @@ def prepareRow(row, sport):
     #   hit rather than a second parse.
     season = seasonYearFromIso(sport, row.date)
 
-    pool = resolvePool(row.grade, row.gender, row.source, school,
-                       sport,
-                       season=season,
-                       season_level=row.season_level,
-                       grade_untrusted=bool(row.grade_untrusted),
-                       fixed_grade=row.fixed_grade,
-                       fixed_level=row.fixed_level,
-                       grade_verdict=row.grade_verdict,
-                       # ! FOR _PRO_PEOPLE -- see pool_resolve.
-                       person_id=row.person_id,
-                       is_pro=bool(row.is_pro),
-                       # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
-                       #   readers were the two promotion gates, now gone. This
-                       #   call was already lazy about building the date; now
-                       #   it does not build one -- up to 61.6M _asDate calls
-                       #   removed outright.
-                       merge=True)
+    # ★ THE POOL THE ENGINE RATED THE ROW IN, OFF THE ROW (issue 171, and
+    #   the owner, 2026-09-14: "the rating compares to the wrong pool mean
+    #   for some people"). This builder used to resolve the pool again
+    #   from its own joins, without the team level, the club rules or the
+    #   pack's own verdicts, so a row the engine rated among professionals
+    #   was ranked as a college row: a pro_f 100 published on the college
+    #   board. The rating IS a number relative to one pool's mean, and
+    #   only the pool that made it can rank it. The resolver is the
+    #   fallback for a row that carries no rating_pool (an unrated sprint,
+    #   a database before the column).
+    rp = getattr(row, "rating_pool", None)
+    pool = str(rp).split("|", 1)[0] if rp else None
+    if pool:
+        _GATE[sport]["pool_from_row"] += 1
+    else:
+        pool = resolvePool(row.grade, row.gender, row.source, school,
+                           sport,
+                           season=season,
+                           season_level=row.season_level,
+                           grade_untrusted=bool(row.grade_untrusted),
+                           fixed_grade=row.fixed_grade,
+                           fixed_level=row.fixed_level,
+                           grade_verdict=row.grade_verdict,
+                           # ! FOR _PRO_PEOPLE -- see pool_resolve.
+                           person_id=row.person_id,
+                           is_pro=bool(row.is_pro),
+                           # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
+                           #   readers were the two promotion gates, now gone. This
+                           #   call was already lazy about building the date; now
+                           #   it does not build one -- up to 61.6M _asDate calls
+                           #   removed outright.
+                           merge=True)
     if not isRankablePool(pool):
+        if pool and pool.split("|", 1)[0].startswith("pro_"):
+            _GATE[sport]["pro_pool"] += 1
         return None
 
     # ★ UNTRUSTED SEASONS ARE RATED BUT NOT RANKED, AND THIS IS THE ONLY
@@ -1281,6 +1352,10 @@ def prepareRow(row, sport):
     #   build that cannot check a third of its rows and does not say so is
     #   the "gate that is not gating" this file's own comment warns about, so
     #   the counts are printed per sport at the end of buildSport.
+    # ★ FASTER THAN THE WORLD RECORD IS A WRONG DISTANCE, NOT A RECORD
+    if not exemptPool(pool) and impossiblePace(row.time_seconds, distance, row.gender):
+        _GATE[sport]["impossible_pace"] += 1
+        return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
                                               row.normalized_time, pool, sport)
     if ratio is None:
@@ -1476,7 +1551,7 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     with conn.cursor(name=f"rank_src_{sport.lower()}",
                      cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
-        src.execute(_SQL[sport], {"since": since, "until": until})
+        src.execute(_sourceSql(conn, sport), {"since": since, "until": until})
 
         with conn.cursor() as dst:
             for row in src:
@@ -1522,6 +1597,9 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     if g["outside_pool"]:
         print(f"    pool ceiling: {g['outside_pool']:,} races dropped as "
               f"implausible for their pool (see RACE_MARGIN)")
+    print(f"    pool from the row: {g['pool_from_row']:,} rows ranked in the pool the "
+          f"engine rated them in; {g['pro_pool']:,} professional-pool rows not ranked; "
+          f"{g['impossible_pace']:,} rows faster than the world record not ranked")
     if g["outside_band"]:
         print(f"    sanity band: {g['outside_band']:,} races rated but "
               f"outside the engine's pace band -- filled ratings the solve "
@@ -1693,7 +1771,7 @@ def createShadow(conn, name, like):
                     f"(LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
 
         # Index builds sort; the default 64MB spills a 61.6M row sort to disk.
-        cur.execute("SET maintenance_work_mem = '2GB'")
+        cur.execute(f"SET maintenance_work_mem = '{dbSetting('maintenance_work_mem', '2GB')}'")
         # Nothing here needs to survive a crash: the whole table is rebuilt.
         cur.execute("SET synchronous_commit = off")
     conn.commit()
@@ -1924,8 +2002,9 @@ def buildIndexes(conn, name, like):
         with getConn() as c:
             with c.cursor() as cur:
                 # Per-session, so each builder gets its own sort memory.
-                cur.execute("SET maintenance_work_mem = '2GB'")
-                cur.execute("SET max_parallel_maintenance_workers = 4")
+                cur.execute(f"SET maintenance_work_mem = '{dbSetting('maintenance_work_mem', '2GB')}'")
+                cur.execute(f"SET max_parallel_maintenance_workers = "
+                            f"{dbSetting('max_parallel_maintenance_workers', 4)}")
                 cur.execute(sql)
             c.commit()
         return newname, time.time() - t0
@@ -2299,7 +2378,8 @@ GROUP BY base.person_id, base.pool, base.sport, base.year;
 #   at ~60 bytes a row a 56.6M-row sort is ~3.4GB -- so 4GB is the smallest
 #   value that keeps it in memory rather than on disk. The rest of the ladder
 #   is for a server that says no.
-_SEASON_WORK_MEM = ("4GB", "2GB", "1GB", "512MB")
+_SEASON_WORK_MEM = (("512MB", "256MB") if dbSetting("work_mem", None) == "64MB"
+                    else ("4GB", "2GB", "1GB", "512MB"))   # capped under XCP_DB_QUIET
 
 
 def refreshAthleteSeason(conn):

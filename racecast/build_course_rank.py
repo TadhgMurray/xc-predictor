@@ -50,7 +50,7 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "racecast")
 from database import getConn
 from build_ranking_results import copyField
-from dbfast import tuneSession
+from dbfast import tuneSession, swapTable
 
 # ⚠ THE SAME 51 CODES THE OTHER BOARDS USE, and for the same reason: state is
 #   the only geography stored, and a null test would keep exactly the foreign
@@ -239,15 +239,17 @@ def build(conn, min_results):
         if rows:
             cur.copy_expert(
                 f"COPY course_rank_new ({', '.join(_COLUMNS)}) FROM STDIN", buf)
-        cur.execute("DROP TABLE IF EXISTS course_rank_old")
-        cur.execute("ALTER TABLE course_rank RENAME TO course_rank_old")
-        cur.execute("ALTER TABLE course_rank_new RENAME TO course_rank")
-        cur.execute("DROP TABLE course_rank_old")
-        cur.execute("CREATE INDEX ON course_rank (difficulty)")
-        cur.execute("CREATE INDEX ON course_rank (state)")
-        cur.execute("CREATE INDEX ON course_rank (lower(course_name))")
-        cur.execute("ANALYZE course_rank")
+        # ! THE INDEXES GO ON THE SHADOW, BEFORE THE SWAP (2026-09-13).
+        #   Built on the live name after the rename, they held the courses
+        #   pages behind ACCESS EXCLUSIVE for three index builds.
+        cur.execute("CREATE INDEX idx_course_rank_new_difficulty ON course_rank_new (difficulty)")
+        cur.execute("CREATE INDEX idx_course_rank_new_state ON course_rank_new (state)")
+        cur.execute("CREATE INDEX idx_course_rank_new_lname ON course_rank_new (lower(course_name))")
     conn.commit()
+    swapTable(conn, "course_rank",
+              renames=[("idx_course_rank_new_difficulty", "idx_course_rank_difficulty"),
+                       ("idx_course_rank_new_state", "idx_course_rank_state"),
+                       ("idx_course_rank_new_lname", "idx_course_rank_lname")])
 
     n_state = sum(1 for r in rows if r["state"])
     n_shared = sum(1 for r in rows if r["n_same_name"] > 1)

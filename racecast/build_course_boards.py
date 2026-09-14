@@ -34,6 +34,7 @@ sys.path.insert(0, "racecast")
 
 import psycopg2.extras
 from database import getConn
+from dbfast import swapTable
 
 _DDL = """
 CREATE TABLE course_boards_new (
@@ -116,12 +117,9 @@ def main():
                 n = cur.fetchone()[0]
                 if not n:
                     sys.exit("course_boards_new is empty: refusing to swap")
-                cur.execute("DROP TABLE IF EXISTS course_boards")
-                cur.execute("ALTER TABLE course_boards_new RENAME TO course_boards")
-                cur.execute("ALTER INDEX course_boards_new_pkey "
-                            "RENAME TO course_boards_pkey")
-                cur.execute("ANALYZE course_boards")
             conn.commit()
+            swapTable(conn, "course_boards",
+                      renames=[("course_boards_new_pkey", "course_boards_pkey")])
         print(f"course_boards: swapped in, {n:,} rows", flush=True)
         return
     shard_k = shard_n = None
@@ -210,12 +208,9 @@ def main():
         # the swap: readers keep the old table until the new one is whole.
         # A shard leaves it to --finish, once every shard is done.
         if shard_n is None:
-            cur.execute("DROP TABLE IF EXISTS course_boards")
-            cur.execute("ALTER TABLE course_boards_new RENAME TO course_boards")
-            cur.execute("ALTER INDEX course_boards_new_pkey "
-                        "RENAME TO course_boards_pkey")
-            cur.execute("ANALYZE course_boards")
             conn.commit()
+            swapTable(conn, "course_boards",
+                      renames=[("course_boards_new_pkey", "course_boards_pkey")])
 
     mins = (time.time() - t0) / 60
     print(f"done: {built:,} courses built, {skipped:,} empty, "

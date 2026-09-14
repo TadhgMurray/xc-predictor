@@ -33,7 +33,8 @@ def test_search_index_builds_both_meet_aggregates():
     # single-table aggregates joined small: no results-to-meets join
     assert "FROM   results_tf\n" in agg and "FROM   meets_tf\n" in agg
     assert "JOIN   meets_tf m" not in agg
-    assert "RENAME TO {table}" in s
+    # the swap goes through dbfast.swapTable: a bounded lock, never a queue
+    assert "swapTable(conn, table" in s
 
 
 def test_golive_takes_the_advisory_lock_first():

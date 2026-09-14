@@ -376,6 +376,43 @@ def isProTeam(school):
     return _normSchool(school) in _PRO_TEAMS
 
 
+# ★ THE TEAM'S LEVEL, FROM THE FEEDS (the pooling redo, 2026-09-14). anet
+#   names every team's level and tfrrs's slug carries one
+#   ("CT_college_f_Conn_College"). The engine used to know only the
+#   school STRING, so a club, an elite squad or a national team racing in
+#   a college field for a whole season -- Nike Swoosh TC at The TEN, ASICS
+#   Furman Elite at Sir Walter, "Great Britain & N.I." -- was a college
+#   season by the field rule, and headed the college board.
+#     'club'     a gradeless row on a club is a professional (repooled pro,
+#                as pro_flag would); a club runner WITH a school grade is
+#                that grade's (youth clubs carry grade 10s)
+#     'college'  a college team's row is a college season, as the field
+#                rule already says when the field is college
+#   Other levels change nothing: the grade rules already hold them.
+def teamLevelFromSlug(slug):
+    """'CT_college_f_Conn_College' -> 'college'; None when the slug does
+    not name a level this code knows."""
+    if not slug:
+        return None
+    parts = str(slug).split("_")
+    if len(parts) >= 3 and parts[1].lower() in ("college", "hs", "ms", "club"):
+        return parts[1].lower()
+    return None
+
+
+def teamLevelOf(team_id, team_slug, anet_levels=None):
+    """The team's level name from anet's table (through anet_levels,
+    speed_ratings_db.loadTeamLevels) or the tfrrs slug, else None."""
+    if anet_levels and team_id is not None:
+        try:
+            got = anet_levels.get(int(team_id))
+        except (TypeError, ValueError):
+            got = None
+        if got:
+            return got
+    return teamLevelFromSlug(team_slug)
+
+
 def _gradeLevel(grade):
     """'10' -> 'hs', '3' -> 'elem', 'JR-3' -> whatever the parser says,
     None when unreadable. The same parser poolFor uses."""
@@ -392,8 +429,16 @@ def resolvePool(grade, gender, source, school, sport,
                 college_first=None, upperclass_first=None,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
-                grade_verdict=None, person_id=None):
+                grade_verdict=None, person_id=None, team_level=None,
+                team_has_pros=False):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
+
+    team_level: the team's level from the feeds (teamLevelOf): 'club'
+    makes a gradeless row professional, 'college' makes the row a college
+    season; anything else changes nothing. team_has_pros: the team has a
+    professional in it (speed_ratings_db.loadClubPros): its rows with a
+    grade of 1-8 or none are professional too -- an elite squad's "6" is
+    a sixth year, not a sixth grader -- unless the team is a college.
 
     `poolfor` is injectable so the engine can hand in a memoised poolFor. It
     defaults to the real one, so a caller that does not care never notices.
@@ -492,6 +537,20 @@ def resolvePool(grade, gender, source, school, sport,
     #   school career.
     if isProTeam(school) or isProPerson(person_id, sport, season):
         is_pro = True
+    # ★ THE FEED'S OWN WORD ON THE TEAM (team_level, above): a gradeless row
+    #   on a club is a professional; a college team's row is college
+    school_grade = _gradeLevel(fixed_grade if fixed_grade is not None else grade)
+    if team_level == "club" and (school_grade is None or grade_untrusted) \
+            and fixed_level not in ("hs", "ms", "elem"):
+        is_pro = True
+    # ★ A CLUB WITH PROFESSIONALS HAS NO MIDDLE SCHOOLERS (owner, 2026-09-14):
+    #   its grade 1-8 is a year count, its gradeless row a professional
+    if team_has_pros and team_level != "college" and not is_pro \
+            and school_grade in (None, "elem", "ms") and fixed_level != "hs":
+        is_pro = True
+    elif team_level == "college" and not is_pro and school_grade in (None, "hs", "college"):
+        fixed_level = fixed_level or "college"
+        season_level = season_level or "college"
 
     # ★ A SEASON RACED AT COLLEGE OR PRO FIELDS IS A COLLEGE OR PRO SEASON,
     #   WHATEVER THE GRADE SAYS (owner, 2026-09-06: "if a person is on a

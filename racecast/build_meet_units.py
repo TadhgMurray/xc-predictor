@@ -29,7 +29,8 @@ import psycopg2.extras
 
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
-from database import getConn                                   # noqa: E402
+from database import getConn
+from dbfast import swapTable                                   # noqa: E402
 import check_school_units as CU                                # noqa: E402
 import school_unit_overrides as OV                             # noqa: E402
 
@@ -138,11 +139,9 @@ def build(conn, dry_run=False):
         cur.execute("CREATE INDEX ON meet_unit_new (sport, meet_id)")
         cur.execute("CREATE INDEX ON meet_unit_new (unit)")
         cur.execute("CREATE INDEX ON meet_unit_new (kind, unit)")
-        cur.execute("ANALYZE meet_unit_new")
-        # one transaction: readers see the old table or the new one
-        cur.execute("DROP TABLE IF EXISTS meet_unit")
-        cur.execute("ALTER TABLE meet_unit_new RENAME TO meet_unit")
     conn.commit()
+    # readers see the old table or the new one, and wait for neither
+    swapTable(conn, "meet_unit")
     print(f"  meet_unit: {len(rows):,} rows")
 
 

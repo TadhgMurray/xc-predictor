@@ -297,14 +297,27 @@ def _selectList(columns, column, val, preserve_unmatched=True, extra=()):
 #   every index we just built. Unlogged-then-convert is two full rewrites.
 # work_mem sizes the hash table for the join; at the 4MB default a 30M-row hash
 #   spills to disk in hundreds of batches.
+def _dbSetting(name, default):
+    """database.dbSetting when scripts/ is importable, else the default."""
+    try:
+        from database import dbSetting
+    except ImportError:
+        return default
+    return dbSetting(name, default)
+
+
 def _buildNewTable(cur, table, staging, cap, column, key, val,
                    preserve_unmatched=True, extra=()):
     # SET LOCAL, not SET. A plain SET survives COMMIT and rides back into the
     # connection POOL, so the next caller silently inherits a 2GB-per-sort-node
     # budget. SET LOCAL is scoped to the transaction and evaporates at commit.
     # Verified: plain SET + commit -> `SHOW work_mem` still says 2GB.
-    cur.execute("SET LOCAL work_mem = '2GB'")
-    cur.execute("SET LOCAL max_parallel_workers_per_gather = 4")
+    # ★ THROUGH THE QUIET CAPS (XCP_DB_QUIET): the pipeline's rebuild of
+    #   results must not take every core and 2 GB per sort node from under
+    #   the site (owner, 2026-09-14).
+    cur.execute(f"SET LOCAL work_mem = '{_dbSetting('work_mem', '2GB')}'")
+    cur.execute(f"SET LOCAL max_parallel_workers_per_gather = "
+                f"{_dbSetting('max_parallel_workers_per_gather', 4)}")
     _timed(cur, f"""
         CREATE TABLE {table}_new AS
         SELECT {_selectList(cap['columns'], column, val, preserve_unmatched, extra)}
@@ -341,8 +354,9 @@ def _restoreShape(cur, table, cap):
 #   path could never do that: it inserted one random key at a time.
 def _restoreIndexes(cur, table, cap):
     # SET LOCAL: see _buildNewTable. These would otherwise leak into the pool.
-    cur.execute("SET LOCAL maintenance_work_mem = '8GB'")
-    cur.execute("SET LOCAL max_parallel_maintenance_workers = 6")
+    cur.execute(f"SET LOCAL maintenance_work_mem = '{_dbSetting('maintenance_work_mem', '8GB')}'")
+    cur.execute(f"SET LOCAL max_parallel_maintenance_workers = "
+                f"{_dbSetting('max_parallel_maintenance_workers', 6)}")
     for name, ddl in cap["indexes"]:
         _timed(cur, ddl, f"index {name}_new")
 

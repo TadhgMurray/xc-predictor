@@ -65,6 +65,116 @@ if _opts:
     _PG_CONFIG_WITH_TIMEOUT["options"] = " ".join(_opts)
 _PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "xcp"
 
+# ★ THE PIPELINE YIELDS TO THE SITE INSIDE POSTGRES TOO (owner, 2026-09-14:
+#   "make it so that the pipeline stops making the website super slow,
+#   especially the steps past the solve"). nice and ionice on the Python
+#   process (deploy/run_pipeline.sh) never touched the work that actually
+#   hurt: the Postgres BACKENDS doing the pipeline's COPYs, sorts and index
+#   builds run as the postgres user at normal priority, and the builders
+#   asked for 2-8 GB of work memory and 4-6 parallel workers per statement
+#   -- so one index build on the 61.6M-row boards table took every core
+#   and evicted the site's pages from cache while a reader waited.
+#
+#   With XCP_DB_QUIET=1 (run_pipeline.sh sets it) every connection this
+#   pool hands out is capped on the way out: no parallel workers, modest
+#   work memory, and -- where the server is local and the OS allows it --
+#   the backend process itself reniced and ionice'd like the Python that
+#   drives it. The builders' own SET statements go through dbSetting() so
+#   they cannot ask for more than the cap. The site's service unit never
+#   sets the variable, so the site's connections are untouched.
+_QUIET_SETTINGS = {
+    "work_mem": "64MB",
+    "maintenance_work_mem": "512MB",
+    "max_parallel_workers_per_gather": "0",
+    "max_parallel_maintenance_workers": "0",
+    # the pipeline's writes are rebuilds; losing the last commit to a crash
+    # costs a rerun, and skipping the fsync wait keeps the WAL off the
+    # site's disk queue
+    "synchronous_commit": "off",
+}
+_QUIET_NICE = int(os.environ.get("XCP_DB_QUIET_NICE") or 10)
+
+
+def dbQuiet():
+    """Is the quiet (site-first) mode on for this process?"""
+    return os.environ.get("XCP_DB_QUIET", "0") == "1"
+
+
+def dbSetting(name, default):
+    """The value a builder may SET for `name`: its own default, or the
+    quiet cap when quiet mode is on and the cap is stricter by intent
+    (the caps are absolute in quiet mode; a builder never out-asks it)."""
+    return _QUIET_SETTINGS.get(name, default) if dbQuiet() else default
+
+
+def dbJobs(default, quiet=1):
+    """How many database-heavy workers a builder may run side by side."""
+    return quiet if dbQuiet() else default
+
+
+_TUNED = {}          # id(conn) -> conn, connections already capped
+_QUIET_SAID = False
+
+
+def _localServer():
+    host = str(PG_CONFIG.get("host") or "")
+    return host in ("", "localhost", "127.0.0.1", "::1") or host.startswith("/")
+
+
+def _quietTune(conn):
+    """Cap one connection (settings; then the backend's own priority,
+    best effort). Every failure is survived: a managed server may refuse
+    a SET, and renicing another user's process needs a capability the
+    box may not grant."""
+    global _QUIET_SAID
+    applied, refused, niced = [], [], []
+    with conn.cursor() as cur:
+        for name, value in _QUIET_SETTINGS.items():
+            try:
+                cur.execute(f"SET {name} = %s", (value,))
+                applied.append(f"{name}={value}")
+            except Exception:                                # noqa: BLE001
+                conn.rollback()
+                refused.append(name)
+        try:
+            cur.execute("SET application_name = 'xcp-pipeline'")
+        except Exception:                                    # noqa: BLE001
+            conn.rollback()
+        pid = None
+        if _localServer():
+            try:
+                cur.execute("SELECT pg_backend_pid()")
+                pid = int(cur.fetchone()[0])
+            except Exception:                                # noqa: BLE001
+                conn.rollback()
+    conn.commit()
+    if pid:
+        try:
+            os.setpriority(os.PRIO_PROCESS, pid, _QUIET_NICE)
+            niced.append(f"nice {_QUIET_NICE}")
+        except (OSError, AttributeError):
+            niced.append("nice denied")
+        try:
+            import shutil
+            import subprocess
+            if shutil.which("ionice"):
+                rc = subprocess.run(["ionice", "-c2", "-n7", "-p", str(pid)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    check=False).returncode
+                niced.append("ionice ok" if rc == 0 else "ionice denied")
+        except Exception:                                    # noqa: BLE001
+            niced.append("ionice failed")
+    if not _QUIET_SAID:
+        _QUIET_SAID = True
+        print(f"[DB] quiet mode: {', '.join(applied) or 'no setting applied'}"
+              + (f"; refused: {', '.join(refused)}" if refused else "")
+              + (f"; backend {', '.join(niced)}" if niced else "; backend not local, priority untouched"))
+        if any("denied" in n for n in niced):
+            print("[DB] quiet mode: the backend keeps normal priority (renice of the postgres "
+                  "user's process needs CAP_SYS_NICE; run the pipeline as root or grant it, "
+                  "or ALTER ROLE ... SET the caps server-side). The SETs above still apply.")
+
+
 # Module-level pool — created once when database.py is first imported.
 # Every script that does `from database import ...` shares this same pool.
 # None until initPool() is called explicitly. This is just a 
@@ -170,6 +280,13 @@ def getConn():
             _pool.putconn(cand, close=True)
     if conn is None:
         raise RuntimeError("[DB] no live connection in the pool after three tries")
+    if dbQuiet() and _TUNED.get(id(conn)) is not conn:
+        try:
+            _quietTune(conn)
+        except Exception as exc:                             # noqa: BLE001
+            conn.rollback()
+            print(f"[DB] quiet mode: could not tune a connection ({str(exc).splitlines()[0]})")
+        _TUNED[id(conn)] = conn
 
     broken = False
     try:

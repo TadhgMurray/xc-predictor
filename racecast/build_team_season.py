@@ -48,7 +48,7 @@ from team_rank import rankTeams, raceStored, SQUAD
 #   separators. A second hand-rolled version of it is how the same bug gets
 #   fixed once and shipped twice.
 from build_ranking_results import copyField
-from dbfast import dictRows, tuneSession
+from dbfast import dictRows, tuneSession, swapTable
 
 # ! THE SAME 51 CODES rankings.py USES, and for the same reason: there is no
 #   nation column anywhere, state is the only geography stored, and a null
@@ -491,13 +491,8 @@ def build(conn, sport, since):
         flush(buf)
     at_took = time.time() - at_started
 
-    with conn.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS team_season_old")
-        cur.execute("ALTER TABLE team_season RENAME TO team_season_old")
-        cur.execute("ALTER TABLE team_season_new RENAME TO team_season")
-        cur.execute("DROP TABLE team_season_old")
-        cur.execute("ANALYZE team_season")
     conn.commit()
+    swapTable(conn, "team_season")
     # Named years, not `span` -- that word means the season/alltime column now.
     years = (f"{min(stats['years'])}-{max(stats['years'])}"
              if stats["years"] else "none")

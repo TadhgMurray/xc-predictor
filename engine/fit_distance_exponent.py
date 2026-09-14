@@ -1644,6 +1644,65 @@ def _sampleClamped(coeffs, knots, lo, hi, s_hi_override=None):
     return [float(v) for v in values]
 
 
+# ★ A DISTANCE EXPONENT UNDER 1.0 IS NOT A LAW, IT IS A CONFOUND (owner,
+#   2026-09-13: "the distance normalization might be off"). The shipped
+#   artifact's college_m|XC curve ran 8000->10000 at a local exponent of
+#   0.92 and elem_m|XC past 3200 at 0.98: a runner whose PACE gets faster
+#   as the race gets longer. No athlete does that. What the pairs carry
+#   is the calendar and the course -- a college 10k is the November
+#   championship at peak fitness against an October 8k, an elementary 5k
+#   is the strong kids' race -- and a same-athlete pair does not cancel
+#   either. The symptom on the site was "10k too low": a 30:35 10k read as
+#   a worse 8k than the runner's own 24:00. So the sampled curve is held
+#   to a floor on its local exponent, in the direction of longer
+#   distance: no segment may rise slower than MIN_LOCAL_EXP. 1.04 is the
+#   flattest fade a very strong aerobic runner shows (Riegel's band is
+#   1.06-1.10); a curve that needed the floor is printed as such.
+#   --min-exponent 0 turns it off; scripts/distance_curve_check.py reads
+#   the shipped artifact's local exponents so the effect can be seen
+#   before and after a refit.
+MIN_LOCAL_EXP = 1.04
+
+
+from distance_shape import floorLocalExponent as _floorLocalExponent  # noqa: E402
+
+
+# ★ AND ON THE TRACK THE EXPONENT ONLY FALLS WITH DISTANCE (owner,
+#   2026-09-14: "make the spline less jerky so the 600m and 1000m are less
+#   affected by being indoor and therefore seen as harder"). The 600 and
+#   the 1000 are indoor events; the curve is fitted on OUTDOOR pairs, so
+#   between 600 and 1500 it rests on a few hundred outdoor pairs and a
+#   cubic's wiggle, and a bump in the local exponent there is a step in
+#   every 600 and 1000 rating. Physiology has one shape: the exponent is
+#   highest at the anaerobic end (about 1.15-1.20 from 600 to 1000) and
+#   falls smoothly toward 1.06 by 5000. So a track curve's local exponents
+#   are held NON-INCREASING with distance -- pool-adjacent-violators over
+#   the segments, weighted by their length, which is the closest curve
+#   with that shape -- after the floor. Cross country is left alone by
+#   default (grass fades are not one shape). MONOTONE_SPORTS names the
+#   sports it applies to; --monotone-sports "" turns it off.
+MONOTONE_SPORTS = ("TF",)
+
+
+from distance_shape import monotoneLocalExponent as _monotoneLocalExponent  # noqa: E402
+
+
+def _applyMonotone(entry, sport):
+    """The stored form of a curve for `sport`: its local exponent made
+    non-increasing when the sport is in MONOTONE_SPORTS (a copy; the
+    fitted entry is untouched). Applied where the artifact is assembled,
+    after the health gates, which the smoother can only improve: it
+    averages slopes, so the exponent range shrinks."""
+    if entry is None or sport not in MONOTONE_SPORTS or not entry.get("knots"):
+        return entry
+    vals, change = _monotoneLocalExponent(entry["knots"], entry["values"])
+    out = dict(entry)
+    out["values"] = [float(v) for v in vals]
+    out["monotone"] = True
+    out["monotone_change"] = float(change)
+    return out
+
+
 # The beyond-span testimony has to be a population, not an anecdote, and
 # its verdict has to be a physical exponent. Outside the band, the tangent
 # (which the health gates already police) is the safer liar.
@@ -1745,9 +1804,12 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
     # _extensionSlopeHigh. None -> the boundary tangent, as before.
     ext_slope, n_ext = _extensionSlopeHigh(pairs, coeffs, lo, hi)
     knots = _knotGrid(edges)
+    values, floored = _floorLocalExponent(
+        knots, _sampleClamped(coeffs, knots, lo, hi, s_hi_override=ext_slope),
+        MIN_LOCAL_EXP)
     return {"knots": [float(k) for k in knots],
-            "values": _sampleClamped(coeffs, knots, lo, hi,
-                                     s_hi_override=ext_slope),
+            "values": values,
+            "floored_segments": floored, "min_local_exp": float(MIN_LOCAL_EXP or 0.0),
             "n_edges": n_trans, "degree": degree,
             "coeffs": [float(c) for c in coeffs],
             "span": (float(math.exp(lo)), float(math.exp(hi))),
@@ -1785,7 +1847,12 @@ def _healthNote(entry):
     tag = "" if _isHealthy(entry) else \
           "  <<< UNPHYSICAL — do not trust this curve"
     lo, hi = _curveHealth(entry)
-    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}"
+    fl = entry.get("floored_segments") or 0
+    floor = (f"; {fl} segment{'s' if fl != 1 else ''} held to the "
+             f"{entry.get('min_local_exp', MIN_LOCAL_EXP):.2f} floor" if fl else "")
+    mono = (f"; exponent made non-increasing (largest slope change {entry['monotone_change']:.3f})"
+            if entry.get("monotone") and entry.get("monotone_change", 0) > 1e-9 else "")
+    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}{floor}{mono}"
 
 
 # _isHealthy
@@ -2092,7 +2159,7 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
         g = _applyStabilityGate(f"global|{sport}", sport_pairs,
                                 _fitGated(f"global|{sport}", sport_pairs))
         if g is not None:
-            art["global_by_sport"][sport] = g
+            art["global_by_sport"][sport] = _applyMonotone(g, sport)
         for pool, pairs in sorted(by_pool.items()):
             if (sport, pool) not in first:
                 print(f"  {pool}|{sport}: {len(pairs):,} pairs — below "
@@ -2125,7 +2192,7 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
                 #   g is subtracted, and that is a property of the entry
                 #   rather than of the fit.
                 fitted["target"] = _targetFor(pool, sport)
-                art["pools"][f"{pool}|{sport}"] = fitted
+                art["pools"][f"{pool}|{sport}"] = _applyMonotone(fitted, sport)
     # ⚠ THE WHOLE MAP, NOT JUST THE ENTRIES THAT GOT A CURVE. A pool below
     #   MIN_PAIRS_FOR_POOL_SPLINE has no entry of its own and falls back to
     #   "global" -- and a global entry carries no anchor, so the consumer
@@ -2408,6 +2475,7 @@ def _spotCheck(entry, reference_time):
 
 def main():
     import argparse
+    global MIN_LOCAL_EXP, MONOTONE_SPORTS
     parser = argparse.ArgumentParser(
         description="Fit the per-pool distance splines")
     parser.add_argument("--fresh", action="store_true",
@@ -2420,14 +2488,28 @@ def main():
                              "100m distance rung, paired across rungs "
                              "(issue #109: equal-quality, not same-month). "
                              "XC pairs are unchanged. Own pair cache.")
+    parser.add_argument("--min-exponent", type=float, default=MIN_LOCAL_EXP,
+                        help="the floor on every curve's local distance "
+                             "exponent (default %(default)s; 0 turns it off). "
+                             "See MIN_LOCAL_EXP.")
+    parser.add_argument("--monotone-sports", default=",".join(MONOTONE_SPORTS),
+                        help="sports whose curves' local exponent is held non-increasing "
+                             "with distance (default %(default)s; '' turns it off)")
     parser.add_argument("--min-per-rung", type=int, default=1,
                         help="with --season-best: a rung needs this many "
                              "races before its best counts (2 tightens the "
                              "order-statistic bias toward the more-raced "
                              "distance)")
     args = parser.parse_args()
+    MIN_LOCAL_EXP = float(args.min_exponent or 0.0)
+    MONOTONE_SPORTS = tuple(x.strip() for x in (args.monotone_sports or "").split(",") if x.strip())
+    print(f"MONOTONE EXPONENT: {', '.join(MONOTONE_SPORTS) or 'off'} (--monotone-sports; the "
+          "track's local exponent only falls with distance)\n")
 
     print("=== fit_distance_exponent.py (rewrite) ===\n")
+    print(f"LOCAL EXPONENT FLOOR: {MIN_LOCAL_EXP:g} (--min-exponent; a curve "
+          "whose pairs say a longer race is run at a faster pace is held to "
+          "it, and says so in its health line)\n")
     if args.season_best:
         print("TF SAMPLE: season bests per rung (--season-best"
               f"{f', --min-per-rung {args.min_per_rung}' if args.min_per_rung > 1 else ''})."

@@ -105,18 +105,39 @@ def loadCrests(conn_factory, force=False):
             with conn.cursor() as cur:
                 if tableExists(cur, force=True):
                     cur.execute("""
-                        SELECT school, state, sha FROM school_logo
+                        SELECT school, state, sha, path FROM school_logo
                         WHERE  path IS NOT NULL
                           AND  COALESCE(lower(override), '') <> 'none'
                           AND  (NOT shared OR override IS NOT NULL)
                     """)
-                    for school, state, sha in cur.fetchall():
+                    for school, state, sha, path in cur.fetchall():
+                        # ★ ONLY A FILE THE DISK HAS (2026-09-13). The route
+                        #   checked the disk and 404'd; this cache did not,
+                        #   so a row whose PNG was gone drew a tag on every
+                        #   page naming the school, and every view paid a
+                        #   request, a connection and a query for a 404 that
+                        #   nothing caches. One stat per row here, at start.
+                        full = pathFor(path)
+                        if full is None or not os.path.exists(full):
+                            continue
                         got.setdefault(school, []).append(
-                            ((state or "").upper(), (sha or "")[:8]))
+                            ((state or "").upper(), (sha or "")[:8], full))
     except Exception:                              # noqa: BLE001 -- optional
         got = {}
     _CRESTS["map"] = got
     _CRESTS["loaded"] = True
+
+
+def crestPath(school, state=None):
+    """The stored file for a mention, from the start-up cache and nothing
+    else: the image route answers from this, so a page naming forty
+    schools costs forty file sends and no query (2026-09-13). None when
+    the cache has no such crest -- or is not loaded, when the caller may
+    still ask the database."""
+    got = crestState(school, state)
+    if got is None or len(got) < 3:
+        return None
+    return got[2]
 
 
 def crestState(school, state=None, pool=None):
@@ -171,6 +192,10 @@ def crestState(school, state=None, pool=None):
     return rows[0]
 
 
+def crestLoaded():
+    return bool(_CRESTS["loaded"])
+
+
 def crestUrl(school, state=None, px=None, pool=None):
     """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
@@ -187,7 +212,7 @@ def crestUrl(school, state=None, px=None, pool=None):
     got = crestState(school, state, pool)
     if got is None:
         return None
-    st, version = got
+    st, version = got[0], got[1]
     url = logoUrl(school, st or None)
     if px:
         url += ("&" if "?" in url else "?") + f"px={int(px)}"

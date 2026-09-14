@@ -522,6 +522,41 @@ def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
     return per_cell[course], known, len(keys)
 
 
+def distWalkPairs(dist_labels, dist_refs, n_band):
+    """The random walk over distance classes (js.DIST_WALK_SD): for each
+    pool, its free classes and its pinned reference sorted by distance;
+    consecutive free classes form a pair weighted 1/(gap in log-distance),
+    a free class beside the reference is tied to the reference's zero by
+    the same weight. Expanded per band (index = class * n_band + band).
+    Returns (pairs (2, M), pair weights, zero weight per e index)."""
+    n_base = len(dist_labels)
+    per_pool = {}
+    for i, lab in enumerate(dist_labels):
+        pool, d = lab.split(":")[0], int(float(lab.split(":")[1]))
+        per_pool.setdefault(pool, []).append((d, i))
+    for pool, d in dist_refs.items():
+        per_pool.setdefault(pool, []).append((int(d), -1))
+    n_e = n_base * max(int(n_band), 1)
+    pa, pb, pw = [], [], []
+    zero_w = np.zeros(n_e)
+    nb = max(int(n_band), 1)
+    for pool, items in per_pool.items():
+        items = sorted(set(items))
+        for (d1, i1), (d2, i2) in zip(items, items[1:]):
+            if d1 <= 0 or d2 <= 0 or d1 == d2:
+                continue
+            w = 1.0 / abs(np.log(d2) - np.log(d1))
+            for band in range(nb):
+                if i1 >= 0 and i2 >= 0:
+                    pa.append(i1 * nb + band); pb.append(i2 * nb + band); pw.append(w)
+                elif i1 >= 0:
+                    zero_w[i1 * nb + band] += w
+                elif i2 >= 0:
+                    zero_w[i2 * nb + band] += w
+    pairs = np.array([pa, pb], dtype=np.int64).reshape(2, -1)
+    return pairs, np.asarray(pw, dtype=np.float64), zero_w
+
+
 def bandLabels(base_labels):
     """'hs_m:3200' -> 'hs_m:3200:b0', ':b1', ':b2', in class order."""
     return [f"{lab}:b{b}" for lab in base_labels for b in range(js.DIST_N_BAND)]
@@ -733,6 +768,16 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
             print("[joint] distance tables: no reachable curve -- event "
                   "offsets keep the zero prior")
 
+    # the walk over distance classes (js.DIST_WALK_SD, distWalkPairs)
+    d_pairs = d_pair_w = d_zero_w = None
+    if dist_row is not None and dist_labels:
+        d_pairs, d_pair_w, d_zero_w = distWalkPairs(
+            dist_labels, dist_refs, js.DIST_N_BAND if dist_bands else 1)
+        print(f"[joint] event offsets: {len(dist_labels):,} classes"
+              f"{' x ' + str(js.DIST_N_BAND) + ' bands' if dist_bands else ''}; "
+              f"{d_pairs.shape[1]:,} neighbouring pairs and {int((d_zero_w > 0).sum()):,} "
+              f"ties to a reference form the random walk in log-distance "
+              f"(sd {js.DIST_WALK_SD:g} per unit; --dist-walk)")
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
@@ -740,6 +785,7 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
                   else None, lz=lz, link=links, alt=alt,
                   dist_banded=dist_bands, dist_ref=dist_ref_row,
+                  dist_pairs=d_pairs, dist_pair_w=d_pair_w, dist_zero_w=d_zero_w,
                   alt_home=alt_home,
                   era_pairs=era_pairs, era_w=era_w,
                   eras_per_base=eras_per_base,
@@ -1096,6 +1142,7 @@ def solveKwargs(args, athlete_pool, verbose):
         merge_sports=args.merge_sports,
         centre_curve=args.centre_curve,
         era_drift_sd=args.era_drift,
+        dist_walk_sd=float(getattr(args, "dist_walk", js.DIST_WALK_SD) or 0.0),
         identified_priors=not args.priors_from_all_cells,
         sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
         ability_weight=args.ability_weight,
@@ -1247,6 +1294,9 @@ def buildParser():
                     metavar="N",
                     help="split each course into N-year eras tied by a "
                          "random walk (0 = one difficulty for all time)")
+    ap.add_argument("--dist-walk", type=float, default=js.DIST_WALK_SD,
+                    help="sd per unit log-distance of the random walk tying an event "
+                         "offset to its neighbouring classes (js.DIST_WALK_SD; 0 = off)")
     ap.add_argument("--era-drift", type=float, default=js.ERA_DRIFT_SD,
                     metavar="SD",
                     help="log-time drift allowed between adjacent eras "
@@ -1511,6 +1561,23 @@ def buildParser():
                          "residual (bracketDifficulties)")
     ap.add_argument("--bracket-window", type=float, default=21.0)
     ap.add_argument("--bracket-top", type=float, default=0.5)
+    ap.add_argument("--bracket-place-radius", type=float, default=None,
+                    help="metres within which courses of one kind form a PLACE the "
+                         "bracket engine pulls them toward (bracket_engine.PLACE_RADIUS_M, "
+                         "%s; 0 = no place prior)" % 400)
+    ap.add_argument("--bracket-place-prior", type=float, default=None,
+                    help="races' worth of pull of a course toward its place "
+                         "(bracket_engine.PRIOR_PLACE, 2)")
+    ap.add_argument("--track-level-by-pool", type=int, default=1,
+                    help="1 (default): under --difficulty bracket, each host population's "
+                         "outdoor tracks (hs, college, ms, ...) are recentred to the same "
+                         "zero (run_joint.trackPopulationShift); 0 leaves the level the "
+                         "linkage gave them")
+    ap.add_argument("--bracket-prior", default="fit",
+                    help="the bracket engine's course prior in races: 'fit' (per "
+                         "group -- XC, outdoor track, indoor track -- from the "
+                         "courses with 2+ races), one number for every group, or "
+                         "'XC=1,TF:out=2.5,TF:in=1' (bracket_engine.parsePrior)")
     ap.add_argument("--golive", action="store_true")
     ap.add_argument("--golive-dry", action="store_true")
     ap.add_argument("--anchor", default="career",
@@ -1668,8 +1735,87 @@ def applyImplications(args, ap):
 #   in the solve. The cell variance is the fitted race-day variance over
 #   the races behind the cell plus the prior, which is what the engine
 #   averaged.
+# ★ COLLEGE TRACKS READ MORE NEGATIVE THAN HIGH SCHOOL TRACKS (owner,
+#   2026-09-13: "track difficulties are a lot more negative for college
+#   than for hs ... this makes me think track difficulty is carrying
+#   something else ... they're separate pops track wise ... no linkage").
+#   A 400 m track is a 400 m track, so two populations' average tracks
+#   are the same level by physics. The engine cannot see that: a college
+#   athlete-season references only college races and a high-school one
+#   only high-school races, so the LEVEL between the college-only ovals
+#   and the high-school-only ovals rests on whatever links them -- the
+#   tracks that host both, where the college rows are the conference or
+#   NCAA final (tapered, stacked: fast) against the same athletes'
+#   invitational races elsewhere. Nothing in the engine names a taper or
+#   a field, so that difference lands in the venues, and the college
+#   cluster reads "easy". Ratings inside a pool do not move with a
+#   constant shift of that pool's cells (the pool mean moves with them),
+#   so what the shift costs is the board's number for every college track
+#   and every conversion read off it.
+#
+#   So each host population's outdoor tracks are recentred to the same
+#   zero: a cell's population is the level (hs, college, ms, elem) of the
+#   majority of its rows, 'mixed' under TRACK_POP_MIN_SHARE, and each
+#   population's unweighted outdoor mean is taken off its cells (indoor
+#   cells move with their population, keeping the indoor level). The
+#   shift per population is printed with the championship-class share
+#   of its rows, which is the "something else" made visible. Off with
+#   --track-level-by-pool 0.
+TRACK_POP_MIN_SHARE = 0.6
+TRACK_POP_MIN_CELLS = 20
+
+
+def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=None,
+                         min_share=TRACK_POP_MIN_SHARE, min_cells=TRACK_POP_MIN_CELLS):
+    """(shift per cell, rows for the report). D_b: the courses (already
+    centred per sport); cell_row / level_row: per row, the cell and the
+    host level name ('hs', 'college', ...); meet_class_row: the pack's
+    name-based class per row (>= 2 is a championship round), optional.
+    Track cells only; each population with min_cells outdoor cells is
+    recentred to zero over its outdoor cells, indoor cells of the
+    population move with it."""
+    D_b = np.asarray(D_b, dtype=np.float64)
+    n_cell = D_b.size
+    keys = [str(k) for k in cell_keys]
+    is_tf = np.array([k.startswith("TF:") for k in keys])
+    is_in = np.array([k.split("@", 1)[0].endswith(":in") for k in keys])
+    cell_row = np.asarray(cell_row, dtype=np.int64)
+    levels = sorted(set(str(x) for x in level_row))
+    code = {name: i for i, name in enumerate(levels)}
+    lv = np.array([code[str(x)] for x in level_row], dtype=np.int64)
+    counts = np.zeros((n_cell, len(levels)))
+    np.add.at(counts, (cell_row, lv), 1.0)
+    total = counts.sum(axis=1)
+    top = counts.argmax(axis=1)
+    share = np.where(total > 0, counts[np.arange(n_cell), top] / np.maximum(total, 1), 0.0)
+    pop = np.array([levels[t] if total[i] > 0 and share[i] >= min_share else "mixed"
+                    for i, t in enumerate(top)], dtype=object)
+    champ = None
+    if meet_class_row is not None:
+        mc = (np.asarray(meet_class_row, dtype=np.float64) >= 2).astype(np.float64)
+        champ = np.bincount(cell_row, weights=mc, minlength=n_cell) / np.maximum(total, 1)
+    shift = np.zeros(n_cell)
+    rows = []
+    for name in list(levels) + ["mixed"]:
+        m_pop = is_tf & (pop == name) & (total > 0)
+        m_out = m_pop & ~is_in
+        n_out = int(m_out.sum())
+        if n_out == 0:
+            continue
+        before = float(D_b[m_out].mean())
+        applied = n_out >= min_cells
+        if applied:
+            shift[m_pop] = before
+        rows.append(dict(population=name, cells=n_out, indoor=int((m_pop & is_in).sum()),
+                         mean=before, sd=float(D_b[m_out].std()),
+                         champ_share=(float(champ[m_out].mean()) if champ is not None else np.nan),
+                         shift=before if applied else 0.0, applied=applied))
+    return shift, rows
+
+
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                        window=21.0, top=0.5, verbose=True):
+                        window=21.0, top=0.5, verbose=True, prior_group="fit",
+                        track_level_by_pool=True, place_radius=None, prior_place=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1709,19 +1855,37 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                  era_years=int(any("@e" in k for k in cell_keys)), pool_of_raw=pool_of_raw,
                  pool_names=list(pool_names), n_base=len(keys), keys=keys)
     npz_like = {"rating": out["rating"]} if out.get("rating") is not None else None
+    place_kw = {}
+    if place_radius is not None:
+        place_kw["place_radius"] = float(place_radius)
+    if prior_place is not None:
+        place_kw["prior_place"] = float(prior_place)
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
-               h_row=h, verbose=verbose)
+               h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group), **place_kw)
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
     # recentre as recentreLevels centres d: the outdoor cells' unweighted
     # mean per sport is the zero; indoor cells keep their level
     g = np.asarray(D.group_of_cell)
     is_indoor = np.array([k.split("@", 1)[0].endswith(":in") for k in cell_keys], dtype=bool)
+    shift_cell = np.zeros(D.n_cell)
     for gg in range(int(g.max()) + 1):
         m = (g == gg) & ~is_indoor
         if not m.any():
             m = g == gg
         if m.any():
-            D_b[g == gg] -= float(D_b[m].mean())
+            shift_cell[g == gg] = float(D_b[m].mean())
+    D_b = D_b - shift_cell
+    # the track level by host population (see trackPopulationShift)
+    pop_rows = []
+    if track_level_by_pool and athlete_pool is not None:
+        names = [str(n) for n in pool_names]
+        level_of_pool = np.array([n.split("_", 1)[0] for n in names], dtype=object)
+        level_row = level_of_pool[np.asarray(athlete_pool)[np.asarray(D.athlete)]]
+        mc_row = (np.asarray(sub["meet_class"]) if "meet_class" in sub
+                  and np.asarray(sub["meet_class"]).size == D.n else None)
+        pop_shift, pop_rows = trackPopulationShift(D_b, cell_keys, D.cell, level_row, mc_row)
+        D_b = D_b - pop_shift
+        shift_cell = shift_cell + pop_shift
     delta_b = mu_full[g] + D_b
     # abilities given the new courses: the solve's own weighted means
     w = np.asarray(out["weights"], dtype=np.float64)
@@ -1744,10 +1908,27 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     sig_u2 = np.atleast_1d(np.asarray(out["sigma_u2"], dtype=np.float64))
     su2 = sig_u2[g] if sig_u2.size == int(g.max()) + 1 else np.full(D.n_cell, float(sig_u2.mean()))
     votes = np.asarray(f["votes"], dtype=np.float64)
-    out["cell_var"] = su2 / (votes + float(f["prior_races"]))
+    k_cell = np.asarray(f["prior_group"], dtype=np.float64)[np.asarray(f["cell_prior_group"])]
+    out["cell_var"] = su2 / (votes + k_cell)
+    out["bracket_prior_group"] = np.asarray(f["prior_group"], dtype=np.float64)
     out["cell_se"] = np.sqrt(out["cell_var"])
     out["bracket_votes"] = votes
     out["bracket_races_per_cell"] = np.asarray(f["races_per_cell"])
+    # ★ THE ENGINE'S ARITHMETIC, KEPT (owner, 2026-09-13: "it kind of seems
+    #   like we made diagnostics that capture course difficulty and then we
+    #   aren't using it"). Per cell: the era's own vote-mean of its races,
+    #   the course's history after the group prior, the history's votes,
+    #   and the recentring taken off -- so scripts/course_bracket.py can
+    #   print, race by race and step by step, how a venue's bracket became
+    #   its published number (Foot Locker against Glendoveer).
+    b_of = np.asarray(f["base_of_cell"], dtype=np.int64)
+    out["bracket_cell_raw"] = np.asarray(f["D_cell_raw"], dtype=np.float64)
+    out["bracket_base"] = np.asarray(f["D_base"], dtype=np.float64)[b_of]
+    out["bracket_base_votes"] = np.asarray(f["base_votes"], dtype=np.float64)[b_of]
+    out["bracket_place"] = np.asarray(f["place_of_base"], dtype=np.int64)[b_of]
+    out["bracket_pin"] = np.asarray(f["pin"], dtype=np.float64)
+    out["bracket_shift"] = shift_cell
+    out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
     # the report: what moved
     solved = np.bincount(D.cell, minlength=D.n_cell) > 0
@@ -1761,6 +1942,29 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                 p95_move=float(np.percentile(np.abs(move), 95)) if m.any() else np.nan,
                 ability_corr=float(np.corrcoef(a_new, a_joint)[0, 1]),
                 ability_shift=float(np.median(np.abs(a_new - a_joint))))
+    for ln in f.get("prior_lines", []):
+        print(f"[joint] bracket prior: {ln}")
+    if pop_rows:
+        print("[joint] track level by host population (the level of the majority of a "
+              "cell's rows; each population's outdoor tracks recentred to the same "
+              "zero, --track-level-by-pool 0 leaves them):")
+        print(f"        {'population':<11}{'outdoor':>8}{'indoor':>7}{'mean before':>12}"
+              f"{'sd':>7}{'champ share':>12}{'shift':>8}")
+        for r in pop_rows:
+            cs = f"{100 * r['champ_share']:.0f}%" if np.isfinite(r["champ_share"]) else "-"
+            print(f"        {r['population']:<11}{r['cells']:>8,}{r['indoor']:>7,}"
+                  f"{100 * r['mean']:>+11.2f}%{100 * r['sd']:>6.2f}%{cs:>12}"
+                  f"{(100 * r['shift']):>+7.2f}%{'' if r['applied'] else '  (too few cells, left)'}")
+        out["bracket_population_shift"] = np.array(
+            [[float(r["mean"]), float(r["shift"]), float(r["cells"])] for r in pop_rows])
+        out["bracket_population_names"] = np.array([r["population"] for r in pop_rows])
+    tl = be.tiltLines(f.get("tilt_bands"))
+    if tl:
+        print("[joint] bracket tilt by band: the course multiplier the voters' own "
+              "brackets imply against the one applied (a hard venue read by a band "
+              "whose implied h is below its applied h is overstated by the ratio):")
+        for ln in tl:
+            print("        " + ln)
     print(f"[joint] difficulty = BRACKET ENGINE (--difficulty bracket): {info['n_voted']:,} of "
           f"{info['n_cells']:,} cells with votes in {info['seconds']:.0f}s; {info['n_no_votes']:,} "
           f"cells without a race of 3+ voters sit at their sport's average. Against the "
@@ -2008,7 +2212,11 @@ def main():
     if getattr(args, "difficulty", "joint") == "bracket":
         try:
             bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                                window=args.bracket_window, top=args.bracket_top)
+                                window=args.bracket_window, top=args.bracket_top,
+                                prior_group=getattr(args, "bracket_prior", "fit"),
+                                track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)),
+                                place_radius=getattr(args, "bracket_place_radius", None),
+                                prior_place=getattr(args, "bracket_place_prior", None))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()
@@ -2073,6 +2281,17 @@ def main():
         save["delta_joint"] = out["delta_joint"]
         save["bracket_votes"] = out["bracket_votes"]
         save["bracket_races_per_cell"] = out["bracket_races_per_cell"]
+        import bracket_engine as be
+        for k in ("bracket_cell_raw", "bracket_base", "bracket_base_votes",
+                  "bracket_pin", "bracket_shift", "bracket_cell_fit",
+                  "bracket_prior_group"):
+            if out.get(k) is not None:
+                save[k] = np.asarray(out[k], dtype=np.float64)
+        if out.get("bracket_place") is not None:
+            save["bracket_place"] = np.asarray(out["bracket_place"], dtype=np.int64)
+        save["bracket_prior_group_names"] = np.array(list(be.PRIOR_GROUP_NAMES))
+        save["bracket_prior_races"] = np.array([float(be.PRIOR_RACES)])
+        save["bracket_race_sat"] = np.array([float(be.RACE_SAT)])
     if out.get("rating") is not None:
         save["rating"] = out["rating"].astype(np.float32)
     if out.get("beta") is not None:

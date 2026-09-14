@@ -17,7 +17,7 @@ def read(*p):
 def test_pipeline_order_and_shards():
     sh = read("deploy", "run_pipeline.sh")
     assert sh.index("11b_indexes") < sh.index("12_courses") < sh.index("12b_prepare")
-    assert sh.index("12b_prepare") < sh.index("shards 12b_course_pages 3") < sh.index("12b_finish")
+    assert sh.index("12b_prepare") < sh.index("shards 12b_course_pages \"$XCP_COURSE_SHARDS\"") < sh.index("12b_finish")
     assert "shards() {" in sh and '--shard "$k/$n"' in sh
     assert "13c_search_index" in sh and "search_index.py --only units" not in sh
     assert sh.index("13b_pool_consts") < sh.index("13c_search_index")

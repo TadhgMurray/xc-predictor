@@ -54,7 +54,8 @@ import run_joint as rj                                          # noqa: E402
 
 
 def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
-            same_sport=True, min_rows=5, use_curve=True, subset=True, codes=None):
+            same_sport=True, min_rows=5, use_curve=True, subset=True, codes=None,
+            race_sat=5.0, min_voters=3):
     """Per race day at every base cell whose key contains one of `match`
     (case-insensitive): the bracket measurement and the model's terms.
     The bracket is engine/bracket.py's: the same athlete-season's other
@@ -70,6 +71,8 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             cols, codes = bk.packCodes(cols, npz, era_years)
         except ValueError as exc:
             raise SystemExit(str(exc))
+    if npz is not None and "bracket_race_sat" in npz:
+        race_sat = float(np.asarray(npz["bracket_race_sat"]).reshape(-1)[0])
     keys, n_base = codes["keys"], codes["n_base"]
     want = [m.lower() for m in match]
     base_ids = [i for i, k in enumerate(keys) if any(m in k.lower() for m in want)]
@@ -144,6 +147,7 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             continue
         br = np.full(rows.size, np.nan)
         ref = np.full(rows.size, np.nan)      # the model's board + day of the OTHER races
+        ref_d = np.full(rows.size, np.nan)    # the board alone: what the engine subtracts
         for j, r in enumerate(rows):
             s, e = int(start_of[season[r]]), int(end_of[season[r]])
             idx_o = order[s:e]
@@ -159,6 +163,20 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                 if ok_o.any():
                     ref[j] = float(np.mean(delta[oc[ok_o]]
                                            + (u[race[o][ok_o]] if u is not None else 0.0)))
+                    ref_d[j] = float(np.mean(delta[oc[ok_o]]))
+        # ★ THE ENGINE'S READING OF EACH ROW (2026-09-13): the bracket over
+        #   the tilt, plus the board of the races it was measured against.
+        #   That is exactly what bracket_engine votes with -- (z - a_local)/h
+        #   with a_local read off the same references less h * D -- so the
+        #   race's mean over its top-half voters is the number the engine
+        #   put into the cell, and the cell block below says what the
+        #   priors did with it.
+        h_row = np.ones(rows.size)
+        if rating is not None:
+            r_clip = np.clip(np.nan_to_num(rating[season[rows]], nan=100.0),
+                             js.TILT_RATING_LO, js.TILT_RATING_HI)
+            h_row = 1.0 + js.TILT_K * (r_clip - 100.0) / 10.0
+        reading = br / h_row + ref_d
         races = []
         for rid in np.unique(race[rows]):
             in_race = rows[race[rows] == rid]
@@ -173,6 +191,18 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             if rr is not None:
                 front = float(np.sort(rr)[::-1][:js.FIELD_TOP_K].mean())
             c0 = int(cell[in_race[0]])
+            # the engine's voters: the top half of the race by rating, with
+            # a level to compare to; their mean reading and applied tilt
+            n_vote, h_vote, read = 0, np.nan, np.nan
+            if rr is not None:
+                k_v = max(int(math.ceil(0.5 * in_race.size)), 1)
+                top_v = np.argsort(-rr)[:k_v]
+                rv = reading[sel][top_v]
+                fv = np.isfinite(rv)
+                n_vote = int(fv.sum())
+                if n_vote:
+                    read = float(rv[fv].mean())
+                    h_vote = float(h_row[sel][top_v][fv].mean())
             rec = {"race": int(rid), "year": int(year[in_race[0]]),
                    "days_ago": float(days[in_race[0]]),
                    "cell_key": cell_keys[c0] if c0 >= 0 else keys[b],
@@ -185,6 +215,9 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
                    # board's own scale, to read against board + day
                    "ref": float(rj_[got].mean()) if got.any() else np.nan,
                    "bracket_top": np.nan,
+                   "voters": n_vote, "h": h_vote, "reading": read,
+                   "race_weight": (n_vote / (n_vote + race_sat)
+                                   if n_vote >= min_voters else 0.0),
                    "board": float(delta[c0]) if c0 >= 0 else np.nan,
                    "day": float(u[rid]) if u is not None else np.nan,
                    "field": (float(field_row[in_race].mean())
@@ -214,7 +247,58 @@ def bracket(cols, npz, match, window=28, top=0.0, era_years=0,
             bs = np.array([b["bracket"] for b in by_year])
             ws = np.array([b["n"] for b in by_year], dtype=np.float64)
             slope = float(np.polyfit(ys, bs, 1, w=np.sqrt(ws))[0])
-        out[keys[b]] = {"races": races, "by_year": by_year, "slope_per_year": slope}
+        out[keys[b]] = {"races": races, "by_year": by_year, "slope_per_year": slope,
+                        "engine": engineCells(npz, cell_keys, keys[b], delta)}
+    return out
+
+
+def engineCells(npz, cell_keys, base_key, delta):
+    """★ THE SHRINKAGE CHAIN, PER CELL OF THE VENUE (owner, 2026-09-13:
+    Foot Locker against Glendoveer -- "what's going on is the question").
+    From the solve file written under --difficulty bracket: the era's own
+    vote-mean of its races (raw), its votes and races; the course's
+    history after the group prior (base) and the votes behind it; the era
+    after the era prior; the (sport, era) pin and the recentring taken
+    off; the published number. Empty when the file is not the engine's."""
+    need = ("bracket_cell_raw", "bracket_votes", "bracket_races_per_cell",
+            "bracket_base", "bracket_base_votes", "bracket_pin", "bracket_shift",
+            "bracket_cell_fit")
+    if npz is None or any(k not in npz for k in need):
+        return []
+    raw = np.asarray(npz["bracket_cell_raw"], dtype=np.float64)
+    if raw.size != len(cell_keys):
+        return []
+    votes = np.asarray(npz["bracket_votes"], dtype=np.float64)
+    races = np.asarray(npz["bracket_races_per_cell"])
+    base = np.asarray(npz["bracket_base"], dtype=np.float64)
+    base_votes = np.asarray(npz["bracket_base_votes"], dtype=np.float64)
+    pin = np.asarray(npz["bracket_pin"], dtype=np.float64)
+    shift = np.asarray(npz["bracket_shift"], dtype=np.float64)
+    fit = np.asarray(npz["bracket_cell_fit"], dtype=np.float64)
+    place = (np.asarray(npz["bracket_place"], dtype=np.int64) if "bracket_place" in npz
+             and np.asarray(npz["bracket_place"]).size == len(cell_keys) else None)
+    place_size = np.bincount(place[place >= 0], minlength=int(place.max()) + 1) if place is not None and (place >= 0).any() else None
+    prior_races = float(np.asarray(npz.get("bracket_prior_races", [2.0])).reshape(-1)[0])
+    kg = np.asarray(npz.get("bracket_prior_group", []), dtype=np.float64).reshape(-1)
+    names = [str(x) for x in np.asarray(npz.get("bracket_prior_group_names", [])).reshape(-1)]
+    mu = np.asarray(npz.get("mu", [0.0, 0.0]), dtype=np.float64).reshape(-1)
+    out = []
+    for c, k in enumerate(cell_keys):
+        bare = k.split("@", 1)[0]
+        if bare != base_key:
+            continue
+        g = 0 if bare.startswith("XC:") else (2 if bare.endswith(":in") else 1)
+        k_g = float(kg[g]) if kg.size > g else np.nan
+        era = (raw[c] * votes[c] + prior_races * base[c]) / (votes[c] + prior_races)
+        pl = int(place[c]) if place is not None else -1
+        out.append({"cell_key": k, "races": int(races[c]), "votes": float(votes[c]),
+                    "place": pl, "place_cells": int(place_size[pl]) if pl >= 0 else 0,
+                    "raw": float(raw[c]), "base": float(base[c]),
+                    "base_votes": float(base_votes[c]), "group": names[g] if g < len(names) else "",
+                    "prior_group": k_g, "prior_races": prior_races,
+                    "era": float(era), "pin": float(pin[c]), "shift": float(shift[c]),
+                    "fit": float(fit[c]), "level": float(mu[1] if bare.startswith("TF:") else mu[0]),
+                    "published": float(delta[c])})
     return out
 
 
@@ -226,21 +310,49 @@ def report(result, names=None, top=0.0):
     for key, res in result.items():
         name = names.get(key.split(":")[1], "") if names else ""
         print(f"\n{key}  {name}")
+        engine = any(np.isfinite(r.get("reading", np.nan)) for r in res["races"])
         print(f"  {'year':>5} {'days ago':>9} {'era':>5} {'rows':>6} {'brkt':>6} "
               f"{'front':>6} {'depth':>6} "
               f"{'bracket':>8} {'top' + (f'{int(100 * top)}%' if top else ''):>7} "
               f"{'ref':>7} {'implied':>8} "
-              f"{'board':>7} {'day':>7} {'field':>7} {'board+day':>10}")
+              + (f"{'voters':>7} {'h':>6} {'reading':>8} " if engine else "")
+              + f"{'board':>7} {'day':>7} {'field':>7} {'board+day':>10}")
         for r in sorted(res["races"], key=lambda r: -r["days_ago"]):
             era = r["cell_key"].rpartition("@e")[2] if "@e" in r["cell_key"] else "-"
             fr = f"{r['front']:6.1f}" if np.isfinite(r["front"]) else "      "
             dp = f"{r['depth']:6.1f}" if np.isfinite(r["depth"]) else "      "
+            eng = ""
+            if engine:
+                hv = f"{r['h']:6.3f}" if np.isfinite(r.get("h", np.nan)) else "      "
+                eng = f"{r.get('voters', 0):>7,} {hv} {_pct(r.get('reading', np.nan)):>8} "
             print(f"  {r['year']:>5} {r['days_ago']:>9.0f} {era:>5} {r['n']:>6,} "
                   f"{r['n_bracketed']:>6,} {fr} {dp} "
                   f"{_pct(r['bracket']):>8} {_pct(r['bracket_top']):>7} "
                   f"{_pct(r['ref']):>7} {_pct(r['bracket'] + r['ref']):>8} "
-                  f"{_pct(r['board']):>7} {_pct(r['day']):>7} {_pct(r['field']):>7} "
+                  + eng
+                  + f"{_pct(r['board']):>7} {_pct(r['day']):>7} {_pct(r['field']):>7} "
                   f"{_pct(r['board'] + (r['day'] if np.isfinite(r['day']) else 0.0)):>10}")
+        if res.get("engine"):
+            print("  the engine's arithmetic (--difficulty bracket), per (course, era) cell:")
+            print(f"    {'cell':<28} {'races':>5} {'votes':>6} {'raw':>7} "
+                  f"{'history':>8} {'(votes':>7} {'prior)':>7} {'place':>9} {'era':>7} {'pin':>7} "
+                  f"{'recentre':>9} {'level':>7} {'published':>10}")
+            for e in res["engine"]:
+                pl = (f"#{e['place']}({e['place_cells']})" if e.get("place", -1) >= 0 else "-")
+                print(f"    {e['cell_key']:<28} {e['races']:>5} {e['votes']:>6.2f} "
+                      f"{_pct(e['raw']):>7} {_pct(e['base']):>8} {e['base_votes']:>7.2f} "
+                      f"{e['prior_group']:>7.2f} {pl:>9} {_pct(e['era']):>7} {_pct(-e['pin']):>7} "
+                      f"{_pct(-e['shift']):>9} {_pct(e['level']):>7} {_pct(e['published']):>10}")
+            print("    read: raw = the era's vote-weighted mean of its races' readings "
+                  "(each race weighs voters/(voters+sat)); history = every era of the "
+                  "course pulled toward its group's average by `prior` races' worth; "
+                  "place = the cells this course rests on first (#id, how many) when the "
+                  "pack carries coordinates; "
+                  "era = (raw x votes + 2 x history) / (votes + 2); then the (sport, "
+                  "era) pin and the recentring come off and the sport level goes on. "
+                  "A course whose raw reading is right but whose published number is "
+                  "not is thin: few races, or its meets keyed under several ids "
+                  "(scripts/meet_cells.py --meet).")
         if res["by_year"]:
             print(f"  by year:   {'year':>5} {'races':>6} {'rows':>7} {'bracket':>8} "
                   f"{'implied':>8} {'board':>7} {'day':>7} {'board+day':>10}")
@@ -256,7 +368,11 @@ def report(result, names=None, top=0.0):
         print("  read: bracket = slower here than the same people's other races in "
               "the window (log %, + = harder). Those other races have their own "
               "difficulty: ref is the board + day the model gave them, and "
-              "implied = bracket + ref is the bracket on the board's scale. Read "
+              "implied = bracket + ref is the bracket on the board's scale. "
+              "voters / h / reading: the bracket engine's top-half voters, the "
+              "tilt applied to them, and their mean reading = bracket / h + the "
+              "board of their references (no day) -- the number the engine put "
+              "into the cell. Read "
               "implied against board + day; the gap between them is what the "
               "model and the runners disagree about for that day (the field "
               "term is not in a rating, so a stacked day's implied can sit "
