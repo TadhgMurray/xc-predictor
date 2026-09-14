@@ -522,6 +522,41 @@ def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
     return per_cell[course], known, len(keys)
 
 
+def distWalkPairs(dist_labels, dist_refs, n_band):
+    """The random walk over distance classes (js.DIST_WALK_SD): for each
+    pool, its free classes and its pinned reference sorted by distance;
+    consecutive free classes form a pair weighted 1/(gap in log-distance),
+    a free class beside the reference is tied to the reference's zero by
+    the same weight. Expanded per band (index = class * n_band + band).
+    Returns (pairs (2, M), pair weights, zero weight per e index)."""
+    n_base = len(dist_labels)
+    per_pool = {}
+    for i, lab in enumerate(dist_labels):
+        pool, d = lab.split(":")[0], int(float(lab.split(":")[1]))
+        per_pool.setdefault(pool, []).append((d, i))
+    for pool, d in dist_refs.items():
+        per_pool.setdefault(pool, []).append((int(d), -1))
+    n_e = n_base * max(int(n_band), 1)
+    pa, pb, pw = [], [], []
+    zero_w = np.zeros(n_e)
+    nb = max(int(n_band), 1)
+    for pool, items in per_pool.items():
+        items = sorted(set(items))
+        for (d1, i1), (d2, i2) in zip(items, items[1:]):
+            if d1 <= 0 or d2 <= 0 or d1 == d2:
+                continue
+            w = 1.0 / abs(np.log(d2) - np.log(d1))
+            for band in range(nb):
+                if i1 >= 0 and i2 >= 0:
+                    pa.append(i1 * nb + band); pb.append(i2 * nb + band); pw.append(w)
+                elif i1 >= 0:
+                    zero_w[i1 * nb + band] += w
+                elif i2 >= 0:
+                    zero_w[i2 * nb + band] += w
+    pairs = np.array([pa, pb], dtype=np.int64).reshape(2, -1)
+    return pairs, np.asarray(pw, dtype=np.float64), zero_w
+
+
 def bandLabels(base_labels):
     """'hs_m:3200' -> 'hs_m:3200:b0', ':b1', ':b2', in class order."""
     return [f"{lab}:b{b}" for lab in base_labels for b in range(js.DIST_N_BAND)]
@@ -733,6 +768,16 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
             print("[joint] distance tables: no reachable curve -- event "
                   "offsets keep the zero prior")
 
+    # the walk over distance classes (js.DIST_WALK_SD, distWalkPairs)
+    d_pairs = d_pair_w = d_zero_w = None
+    if dist_row is not None and dist_labels:
+        d_pairs, d_pair_w, d_zero_w = distWalkPairs(
+            dist_labels, dist_refs, js.DIST_N_BAND if dist_bands else 1)
+        print(f"[joint] event offsets: {len(dist_labels):,} classes"
+              f"{' x ' + str(js.DIST_N_BAND) + ' bands' if dist_bands else ''}; "
+              f"{d_pairs.shape[1]:,} neighbouring pairs and {int((d_zero_w > 0).sum()):,} "
+              f"ties to a reference form the random walk in log-distance "
+              f"(sd {js.DIST_WALK_SD:g} per unit; --dist-walk)")
     D = js.Design(athlete, course, race, group_of_cell=group, sc=sc,
                   pool_row=pool_row if (curve or rust) else None,
                   day=day, first=first,
@@ -740,6 +785,7 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
                   else None, lz=lz, link=links, alt=alt,
                   dist_banded=dist_bands, dist_ref=dist_ref_row,
+                  dist_pairs=d_pairs, dist_pair_w=d_pair_w, dist_zero_w=d_zero_w,
                   alt_home=alt_home,
                   era_pairs=era_pairs, era_w=era_w,
                   eras_per_base=eras_per_base,
@@ -1096,6 +1142,7 @@ def solveKwargs(args, athlete_pool, verbose):
         merge_sports=args.merge_sports,
         centre_curve=args.centre_curve,
         era_drift_sd=args.era_drift,
+        dist_walk_sd=float(getattr(args, "dist_walk", js.DIST_WALK_SD) or 0.0),
         identified_priors=not args.priors_from_all_cells,
         sigma_u_floor=_sigmaUFloor(args.sigma_u_floor),
         ability_weight=args.ability_weight,
@@ -1247,6 +1294,9 @@ def buildParser():
                     metavar="N",
                     help="split each course into N-year eras tied by a "
                          "random walk (0 = one difficulty for all time)")
+    ap.add_argument("--dist-walk", type=float, default=js.DIST_WALK_SD,
+                    help="sd per unit log-distance of the random walk tying an event "
+                         "offset to its neighbouring classes (js.DIST_WALK_SD; 0 = off)")
     ap.add_argument("--era-drift", type=float, default=js.ERA_DRIFT_SD,
                     metavar="SD",
                     help="log-time drift allowed between adjacent eras "

@@ -108,8 +108,12 @@ def segments(f, distances=DISTANCES):
 BAND_ANCHORS = (90, 112, 127, 145)          # joint_solve.DIST_BAND_ANCHORS
 
 
+def _ok(k, sane):
+    return sane[0] - 1e-6 <= k <= sane[1] + 1e-6
+
+
 def _segLine(segs, sane):
-    return "  ".join(f"{a}->{b}: {k:.3f}{'!' if not (sane[0] <= k <= sane[1]) else ' '}"
+    return "  ".join(f"{a}->{b}: {k:.3f}{'!' if not _ok(k, sane) else ' '}"
                      for a, b, k in segs)
 
 
@@ -129,7 +133,7 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
                 out(f"{pool}|{sport}: no curve ({type(exc).__name__}: {exc})")
                 continue
             segs = segments(f)
-            bad = [s for s in segs if not (sane[0] <= s[2] <= sane[1])]
+            bad = [s for s in segs if not _ok(s[2], sane)]
             flagged += len(bad)
             out(f"\n{pool}|{sport}  (normalised to {target:.0f} m)"
                 + (f"  [floor {floor:g} applied]" if floor else "")
@@ -139,7 +143,7 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
                 for b in range(max(n_band, 1)):
                     fe = effective(f, pool, offsets, b)
                     segs_b = segments(fe)
-                    flagged += sum(1 for s_ in segs_b if not (sane[0] <= s_[2] <= sane[1]))
+                    flagged += sum(1 for s_ in segs_b if not _ok(s_[2], sane))
                     tag = (f"band {b} (~{BAND_ANCHORS[b]})" if b < len(BAND_ANCHORS)
                            else f"band {b}")
                     out(f"   {tag:<10}" + _segLine(segs_b, sane)

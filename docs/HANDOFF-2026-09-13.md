@@ -646,3 +646,34 @@ anywhere.
 
 `master` is fast-forwarded to this branch as the repo convention says;
 `git pull` on the box picks it up.
+
+### 9.9 The event offsets are a curve: the random walk in log-distance
+
+Read off the refit box's `distance_curve_check.py --npz`: the spline
+rows are clean now (the track curves monotone, the floors binding where
+the pairs said something no runner does), and every one of the 128 flags
+sat in the BAND rows -- the solve's per-(pool, distance, band) event
+offsets laid on the spline. Between 800, 1000 and 1500 the effective
+exponent jumped by 0.1 and more in every pool and band; the 1000, the
+2000 and the 6000 are thin classes, each fitted alone against a 3% prior,
+and each wandered on its own. That is the jerkiness at the 600 and the
+1000, and it is not the spline.
+
+So neighbouring classes of one pool and band are now tied by a random
+walk in log-distance (`js.DIST_WALK_SD` 0.02 per unit; the class beside
+the pool's pinned reference is tied to its zero), the same device as
+the eras' walk, in the solve's operator (`run_joint.distWalkPairs`,
+`_Operator.pen_walk`). It is gentle by design: a class with thousands of
+rows keeps its own number, a class with a handful rests on its
+neighbours (planted: a six-row 1000 on a 5%-slow day comes home).
+`--dist-walk` / `XCP_DIST_WALK` state it; 0 turns it off. If the 1000
+still reads jerky with thousands of rows behind it, its rows genuinely
+say so -- mostly indoor 1000s by 800/1500 types -- and
+`scripts/event_check.py`'s 800->1000 row per band is the number that
+decides whether that is a fair rating or a wrong one.
+
+Also read from the refit: college_f|XC and the ms/elem XC curves came
+out AT the 1.04 floor over most of their span (the pairs said less;
+college_f|XC demoted to degree 1 and floored flat). Those curves are now
+a stated assumption where the measurement was a confound; the
+`distance_curve_check.py` spline rows say exactly where.

@@ -194,6 +194,22 @@ WINTER_GAIN = 0.0
 #   like difficulty. The prior sd is loose: the big classes are decided by
 #   their rows, the tiny ones fall to zero.
 DIST_PRIOR_SD = 0.03
+# ★ THE OFFSETS ARE A CURVE, NOT A LIST (owner, 2026-09-14: "make the
+#   spline less jerky so the 600 and 1000 are less affected"). Read off
+#   the shipped solve, the effective exponent between neighbouring events
+#   -- the spline plus these offsets, what a rating applies -- jumped by
+#   0.1 and more between 800, 1000 and 1500 in every pool and band: the
+#   1000, the 2000, the 6000 are thin classes, each fitted alone against
+#   a 3% prior, and each wandered on its own. An event offset is a
+#   correction to a smooth curve, so neighbouring classes of one pool and
+#   band are tied by a random walk in log-distance, exactly as a course's
+#   eras are tied (ERA_DRIFT_SD): the difference between two adjacent
+#   classes' offsets has sd DIST_WALK_SD per unit of log-distance (the
+#   800 and the 1000 are 0.22 apart, the 3200 and the 5000 0.45), and the
+#   class next to the pool's pinned reference is tied to its zero the
+#   same way. A thin class then rests on its neighbours; a thick one
+#   still moves. Stated, printed; --dist-walk 0 turns it off.
+DIST_WALK_SD = 0.02
 
 # ★ A DAY TERM BEYOND THIS IS NOT A DAY, IT IS A BROKEN SHEET (issue 187,
 #   2026-09-05). A JV meet whose 3200 lost a lap ran "20-28% fast", the
@@ -653,6 +669,7 @@ class Design:
                  era_pairs=None, era_w=None, eras_per_base=None,
                  mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
                  ind=None, e_table=None, alt_dist=None, imp_w=None,
+                 dist_pairs=None, dist_pair_w=None, dist_zero_w=None,
                  imp_kind=None, ind_fixed=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
@@ -786,6 +803,17 @@ class Design:
         #   class with too few season-best pairs to calibrate itself is
         #   pulled toward a stated relation instead of toward "the curve's
         #   tangent extension is right". NaN = no table for that class.
+        # the walk over neighbouring distance classes (DIST_WALK_SD):
+        # dist_pairs (2, M) over e indices, dist_pair_w = 1/gap in
+        # log-distance, dist_zero_w per e index = the tie to the pinned
+        # reference class (its offset is zero by definition)
+        self.dist_pairs = (None if dist_pairs is None or not self.n_e
+                           else np.asarray(dist_pairs, dtype=np.int64).reshape(2, -1))
+        self.dist_pair_w = (None if self.dist_pairs is None
+                            else np.asarray(dist_pair_w, dtype=np.float64))
+        self.dist_zero_w = (np.zeros(self.n_e) if dist_zero_w is None or not self.n_e
+                            else np.asarray(dist_zero_w, dtype=np.float64))
+        self.n_dist_pair = 0 if self.dist_pairs is None else self.dist_pairs.shape[1]
         self.e_table = None
         if e_table is not None and self.n_e:
             t = np.asarray(e_table, dtype=np.float64)
@@ -1272,7 +1300,8 @@ class _Operator:
                  lam_gap=None, gap_target=0.0, pen_dist=0.0,
                  ridge_slope=0.0, link_weight=0.0,
                  alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
-                 pen_era=0.0, imp_prior_pen=None, ind_prior_pen=None):
+                 pen_era=0.0, imp_prior_pen=None, ind_prior_pen=None,
+                 pen_walk=0.0):
         self.D, self.w, self.h, self.amp = D, w, h, amp
         # the importance and indoor terms' priors, in row units: a few
         # dozen pseudo-rows toward the stated mean, nothing against the
@@ -1313,6 +1342,18 @@ class _Operator:
                                      minlength=D.n_e)
                 share = DIST_CAL_SHARE / (1.0 - DIST_CAL_SHARE)
                 self.pen_dist = np.where(cal > 0, rows_w * share, self.pen_dist)
+        # the walk over distance classes: incident weight per class, for
+        # the diagonal (the pairs, plus the tie to the reference's zero)
+        self.pen_walk = float(pen_walk)
+        self._dist_deg = None
+        if D.n_e and self.pen_walk > 0.0 and (getattr(D, "n_dist_pair", 0)
+                                              or getattr(D, "dist_zero_w", None) is not None):
+            deg = np.array(D.dist_zero_w, dtype=np.float64).copy()
+            if getattr(D, "n_dist_pair", 0):
+                a, b_ = D.dist_pairs
+                deg += (np.bincount(a, weights=D.dist_pair_w, minlength=D.n_e)
+                        + np.bincount(b_, weights=D.dist_pair_w, minlength=D.n_e))
+            self._dist_deg = deg
         self.ridge_slope = float(ridge_slope)
         self.link_weight = float(link_weight)
         self.alt_prior_mean = float(alt_prior_mean)
@@ -1390,6 +1431,19 @@ class _Operator:
                                  - np.bincount(b_, weights=c,
                                                minlength=D.n_cell))
         out[D.o_u:D.o_mu] += self.pen_race * b["u"]
+        # ★ THE WALK OVER DISTANCE CLASSES (DIST_WALK_SD): adjacent classes
+        #   of one pool and band pulled together, the class beside the
+        #   reference pulled to its zero; the level of the whole curve is
+        #   still the rows' and the table prior's
+        if self._dist_deg is not None:
+            e = b["e"]
+            g_e = self.pen_walk * D.dist_zero_w * e
+            if getattr(D, "n_dist_pair", 0):
+                a, b_ = D.dist_pairs
+                c = self.pen_walk * D.dist_pair_w * (e[a] - e[b_])
+                g_e = g_e + (np.bincount(a, weights=c, minlength=D.n_e)
+                             - np.bincount(b_, weights=c, minlength=D.n_e))
+            out[D.o_e:D.o_g] += g_e
         if D.n_beta:
             out[D.o_beta:D.o_c] += self.ridge * b["beta"]
         if D.n_c:
@@ -1462,7 +1516,8 @@ class _Operator:
                                             minlength=D.n_pool))
         if D.n_e:
             jobs.append(lambda: np.bincount(D.e_idx, weights=w * D.e_w,
-                                            minlength=D.n_e) + self.pen_dist)
+                                            minlength=D.n_e) + self.pen_dist
+                        + (0.0 if self._dist_deg is None else self.pen_walk * self._dist_deg))
         if D.n_g:
             jobs.append(lambda: np.bincount(D.athlete, weights=w * D.lz * D.lz,
                                             minlength=D.n_ath)
@@ -2472,7 +2527,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                curve_gap=CURVE_GAP_WEIGHT, winter_gain=WINTER_GAIN,
                ridge_slope=SLOPE_RIDGE, link_weight=LINK_WEIGHT,
                tau_max="default", alt_prior_pen=ALT_PRIOR_PEN_FIXED,
-               era_drift_sd=ERA_DRIFT_SD,
+               era_drift_sd=ERA_DRIFT_SD, dist_walk_sd=DIST_WALK_SD,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
@@ -2565,12 +2620,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                    if getattr(D, "n_era_pair", 0) else 0.0)
         pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
         pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
+        pen_walk = (sigma2 / max(float(dist_walk_sd), 1e-9) ** 2
+                    if D.n_e and dist_walk_sd else 0.0)
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
                        ridge_slope=ridge_slope, link_weight=link_weight,
                        alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                        imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
-                       ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2)
+                       ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
+                       pen_walk=pen_walk)
         diag = op.diag()
         # the asserted level comes off y, tilted like the estimated one
         # the asserted level(s) come off y, tilted like the estimated ones
@@ -2723,12 +2781,15 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                if getattr(D, "n_era_pair", 0) else 0.0)
     pen_race = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
     pen_dist = sigma2 / DIST_PRIOR_SD ** 2 if D.n_e else 0.0
+    pen_walk = (sigma2 / max(float(dist_walk_sd), 1e-9) ** 2
+                if D.n_e and dist_walk_sd else 0.0)
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,
                    ridge_slope=ridge_slope, link_weight=link_weight,
                    alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                    imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
-                   ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2)
+                   ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
+                   pen_walk=pen_walk)
     diag_final = op.diag()
     nested_d, nested_u = (nestedPosteriorVar(
         D, w, h, op.pen_cell, pen_race, sigma2,

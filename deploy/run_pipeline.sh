@@ -559,6 +559,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   group (XC, outdoor track, indoor track). Default "fit": read from
   #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
   #   states them; one number states every group (bracket_engine.parsePrior).
+  # ★ XCP_DIST_WALK: sd per unit log-distance of the random walk tying each
+  #   event offset to its neighbouring distance classes (default 0.02,
+  #   js.DIST_WALK_SD; 0 off). The 1000, 2000 and 6000 no longer wander alone.
   # ★ XCP_BRACKET_PLACE_RADIUS (metres, default 400; 0 off) and
   #   XCP_BRACKET_PLACE_PRIOR (races, default 2): the place prior -- courses
   #   of one kind within the radius rest on each other before the sport's
@@ -587,6 +590,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
+      ${XCP_DIST_WALK:+--dist-walk "$XCP_DIST_WALK"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_MERGE_SPORTS:+--merge-sports} \
       ${XCP_CENTRE_CURVE:+--centre-curve} \
