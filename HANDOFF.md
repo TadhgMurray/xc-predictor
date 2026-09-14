@@ -594,3 +594,47 @@ last full cross country season at the old one (`racecast/app.py`,
 `test_team_level_pool.py`, `test_event_check.py`, `test_pack_scale.py`
 (the team columns), plus the earlier files. Pre-existing failures
 unchanged.
+
+### 9.6 A club with professionals has no middle schoolers
+
+"Lots of club runners are labelled msers because they are in their 6th
+pro year." An elite squad's grade 6 advances every season like a grade,
+so no grade rule can tell it from a sixth grader; the club can.
+`speed_ratings_db.loadClubPros` lists every team (anet id, or the school
+string where there is no id) with a pro_flag professional in a season
+they raced for it; on such a team, unless it is a college, a row with a
+grade of 1-8 or none is repooled pro (`resolvePool(team_has_pros=)`).
+A high-school grade on the same team is kept, since a sponsor's youth
+squad and its elite group wear one name. The census prints
+`club_with_pros_repooled_pro`. The pro team list (`_PRO_TEAMS`) and the
+hand list stay as the floor under it.
+
+Foreseeable edges, in order of likelihood: a genuine seventh grader in
+a club that also fields one professional is repooled pro (the rule you
+asked for; the count says how many); an anet level code named wrong in
+the learned table (state it with `XCP_ANET_LEVELS`); "unattached"
+professionals at pro meets, still only the hand list and pro_flag; a
+national team ("Great Britain & N.I.") is caught once any of its
+athletes is pro-flagged, not before.
+
+### 9.7 The spline's shape: a floor and, on the track, a non-increasing exponent
+
+The fitter now stores every track curve with its local exponent held
+NON-INCREASING with distance (pool-adjacent-violators over the segments,
+after the 1.04 floor; `--monotone-sports ""` turns it off; cross country
+is left alone). That is the physiology in one shape: highest at the
+anaerobic end, falling to 1.06 by 5000, no bump at 600 or 1000 from a
+cubic fitted on a few hundred outdoor pairs. Read before refitting:
+`scripts/distance_curve_check.py --monotone TF --floor 1.04` shows what
+changes -- on the shipped artifact the hs_m and college_m track curves
+were already monotone, so if the 600 and 1000 still read hard, it is
+their event OFFSETS (indoor rows, the +0.3% level) and not the spline;
+`scripts/event_check.py` now carries a 600 class, and the 600->800 and
+800->1000 rows per band are where that shows. The shape passes live in
+`engine/distance_shape.py` (no fitter, no database) so the check runs
+anywhere.
+
+### 9.8 Where the code is
+
+`master` is fast-forwarded to this branch as the repo convention says;
+`git pull` on the box picks it up.

@@ -93,3 +93,21 @@ def test_the_solves_offsets_lay_on_the_spline_per_band(monkeypatch):
     text = "\n".join(lines)
     assert "spline" in text and "band 0" in text and "band 1" in text
     assert dcc.loadOffsets(None) == ({}, 0)
+
+
+def test_the_track_exponent_is_made_non_increasing_and_nothing_else():
+    knots, vals = _curve([1.16, 1.12, 1.15, 1.09, 1.10, 1.07, 1.07])    # two bumps
+    out, change = fde._monotoneLocalExponent(knots, vals)
+    slopes = [(out[i + 1] - out[i]) / (knots[i + 1] - knots[i]) for i in range(len(out) - 1)]
+    assert all(a >= b - 1e-12 for a, b in zip(slopes, slopes[1:]))
+    assert abs(slopes[0] - 1.16) < 1e-9 and abs(slopes[-1] - 1.07) < 1e-9
+    assert abs(slopes[1] - 1.135) < 1e-9 and abs(slopes[2] - 1.135) < 1e-9   # the pooled pair
+    assert abs(change - 0.015) < 1e-9
+    knots2, vals2 = _curve([1.15, 1.12, 1.10, 1.08, 1.08, 1.07, 1.07])   # already monotone
+    same, c2 = fde._monotoneLocalExponent(knots2, vals2)
+    assert c2 < 1e-12 and all(abs(a - b) < 1e-12 for a, b in zip(same, vals2))
+    e = {"knots": knots, "values": vals}
+    assert fde._applyMonotone(e, "XC") is e                              # not a monotone sport
+    tf = fde._applyMonotone(e, "TF")
+    assert tf["monotone"] and tf["monotone_change"] > 0 and e.get("monotone") is None
+    assert "non-increasing" in fde._healthNote(tf)

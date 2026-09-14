@@ -251,6 +251,36 @@ _SLUG = 14          # speed_ratings_db.COLUMNS: team_slug (tfrrs)
 _ANET_LEVELS = None
 
 
+_CLUB_PROS = None
+
+
+def loadClubPros():
+    """({team_id: n}, {normalised school: n}) of teams with professionals,
+    once (speed_ratings_db.loadClubPros)."""
+    global _CLUB_PROS
+    if _CLUB_PROS is not None:
+        return _CLUB_PROS
+    _CLUB_PROS = ({}, {})
+    try:
+        from speed_ratings_db import loadClubPros as _load
+        _CLUB_PROS = _load()
+        print(f"[engine] clubs with professionals: {len(_CLUB_PROS[0]):,} anet teams, "
+              f"{len(_CLUB_PROS[1]):,} school names (their grade 1-8 and gradeless rows pool pro)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] clubs with professionals unavailable ({type(exc).__name__}: {exc})")
+    return _CLUB_PROS
+
+
+def teamHasPros(team_id, school):
+    by_team, by_school = loadClubPros()
+    try:
+        if team_id is not None and int(team_id) in by_team:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return bool(school) and str(school).strip().lower() in by_school
+
+
 def loadAnetLevels():
     """{anet team_id: level name}, once; prints the code table. Empty when
     the database has no anet_team (a pack then pools as before)."""
@@ -733,7 +763,8 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            `pool|sport`. Keeping the same convention means an athlete's XC and
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
-           person_id=None, season=None, race_date=None, team_level=None):
+           person_id=None, season=None, race_date=None, team_level=None,
+           team_has_pros=False):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -823,7 +854,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         race_date=race_date,
         merge=merge,
         poolfor=_cachedPoolFor,
-        team_level=team_level)
+        team_level=team_level,
+        team_has_pros=team_has_pros)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1086,16 +1118,19 @@ def packResults(batches, today, merge=False):
             if d is None or (today - d).days < 0:
                 census["bad_or_future_date"] += 1
                 continue
-            team_level = None
+            team_level, has_pros = None, False
             if len(r) > _SLUG:
                 from pool_resolve import teamLevelOf
                 team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
                 if team_level:
                     census[f"team_level_{team_level}"] += 1
+                has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
-                          race_date=d, team_level=team_level)
+                          race_date=d, team_level=team_level, team_has_pros=has_pros)
+            if has_pros and pool and pool.startswith("pro_"):
+                census["club_with_pros_repooled_pro"] += 1
             if pool is None:
                 census["unknown_pool"] += 1
                 continue

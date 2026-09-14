@@ -47,7 +47,7 @@ import bracket as bk                                            # noqa: E402
 import joint_solve as js                                        # noqa: E402
 import run_joint as rj                                          # noqa: E402
 
-CLASSES = (800, 1000, 1500, 1600, 3000, 3200, 5000, 10000)
+CLASSES = (600, 800, 1000, 1500, 1600, 3000, 3200, 5000, 10000)
 BANDS = (105.0, 120.0, 135.0)                                   # js.DIST_BANDS
 
 

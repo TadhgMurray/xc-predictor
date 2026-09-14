@@ -871,6 +871,54 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
     return by_team, meaning, rows
 
 
+# ★ A CLUB WITH PROFESSIONALS IN IT HAS NO MIDDLE SCHOOLERS (owner,
+#   2026-09-14: "lots of club runners are labeled as msers because they
+#   are in their '6th' pro year ... separate ms and pro clubs based on if
+#   there's any pros in the club. If there are, make that club unable to
+#   have msers"). A youth club's grade 6 is a sixth grader; an elite
+#   squad's grade 6 is a sixth year, and it advances every season like a
+#   grade does, so no grade rule can tell them apart. The club can: a
+#   team any of whose athletes pro_flag has called professional in a
+#   season they raced for it is a professional team, and its rows with a
+#   grade of 1-8 or no grade are repooled pro (pool_resolve, team_has_pros).
+#   Rows with a high-school grade on such a team keep it -- a sponsor's
+#   youth squad and its elite group can wear one name.
+def loadClubPros(min_pros=1):
+    """({anet team_id: n pro athletes}, {normalised school: n}) for teams
+    with at least min_pros professional athletes (pro_athlete_season) in
+    a season they raced for the team. Empty without the table."""
+    by_team, by_school = {}, {}
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('pro_athlete_season')")
+        if cur.fetchone()[0] is None:
+            return by_team, by_school
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'team_id'""", (table,))
+            has_team = cur.fetchone() is not None
+            team_expr = "r.team_id" if has_team else "NULL::bigint"
+            cur.execute(f"""
+                WITH pr AS (SELECT person_id, min(season) AS s0, max(season) AS s1
+                            FROM pro_athlete_season GROUP BY person_id)
+                SELECT {team_expr} AS team_id, lower(btrim(r.school)) AS school,
+                       count(DISTINCT r.person_id) AS n
+                FROM   {table} r JOIN pr ON pr.person_id = r.person_id
+                WHERE  r.date ~ '^(19|20)[0-9][0-9]-'
+                  AND  substr(r.date, 1, 4)::int BETWEEN pr.s0 AND pr.s1 + 1
+                  AND  (({team_expr}) IS NOT NULL OR r.school IS NOT NULL)
+                GROUP  BY 1, 2""")
+            for team_id, school, n in cur.fetchall():
+                if team_id is not None:
+                    by_team[int(team_id)] = by_team.get(int(team_id), 0) + int(n)
+                elif school:
+                    by_school[school] = by_school.get(school, 0) + int(n)
+    by_team = {k: v for k, v in by_team.items() if v >= min_pros}
+    by_school = {k: v for k, v in by_school.items() if v >= min_pros
+                 and not k.startswith("unattached") and k not in ("unat", "independent", "individual", "none", "n/a")}
+    return by_team, by_school
+
+
 def printTeamLevels(meaning, rows):
     print("[engine] anet team levels (code -> meaning, from our rows' grades and "
           "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")

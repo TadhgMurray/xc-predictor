@@ -36,19 +36,24 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-DISTANCES = (800, 1000, 1500, 1600, 2000, 3000, 3200, 5000, 6000, 8000, 10000)
+DISTANCES = (600, 800, 1000, 1500, 1600, 2000, 3000, 3200, 5000, 6000, 8000, 10000)
 POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "hs_m", "hs_f", "college_m", "college_f")
 SANE = (1.04, 1.20)
 
 
-def factors(pool, sport, distances=DISTANCES, floor=None):
+def factors(pool, sport, distances=DISTANCES, floor=None, monotone=False):
     """{distance: multiplier} for a pool and sport from the artifact, the
-    curve's local exponent optionally held to `floor` first."""
+    curve's local exponent optionally held to `floor` and made non-
+    increasing (`monotone`) first, as the fitter now does."""
     import normalize_distance as nd
     entry = nd._distancePotentialEntry(pool, sport)
     if floor:
-        from fit_distance_exponent import _floorLocalExponent
-        vals, _n = _floorLocalExponent(entry["knots"], entry["values"], floor)
+        from distance_shape import floorLocalExponent
+        vals, _n = floorLocalExponent(entry["knots"], entry["values"], floor)
+        entry = dict(entry, values=vals)
+    if monotone:
+        from distance_shape import monotoneLocalExponent
+        vals, _c = monotoneLocalExponent(entry["knots"], entry["values"])
         entry = dict(entry, values=vals)
     base = (pool or "").split("|")[0]
     target = (nd._SPLINES.get("pool_targets", {}).get(base) or entry.get("target")
@@ -109,7 +114,7 @@ def _segLine(segs, sane):
 
 
 def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
-           offsets=None, n_band=0):
+           offsets=None, n_band=0, monotone=()):
     """The spline's exponents per pool and sport; with `offsets` (loadOffsets)
     also the EFFECTIVE exponents per rating band on the track -- the
     spline and the solve's fitted event offsets together, which is what a
@@ -119,7 +124,7 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
     for pool in pools:
         for sport in sports:
             try:
-                f, target = factors(pool, sport, floor=floor)
+                f, target = factors(pool, sport, floor=floor, monotone=sport in monotone)
             except Exception as exc:                          # noqa: BLE001
                 out(f"{pool}|{sport}: no curve ({type(exc).__name__}: {exc})")
                 continue
@@ -127,7 +132,8 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
             bad = [s for s in segs if not (sane[0] <= s[2] <= sane[1])]
             flagged += len(bad)
             out(f"\n{pool}|{sport}  (normalised to {target:.0f} m)"
-                + (f"  [floor {floor:g} applied]" if floor else ""))
+                + (f"  [floor {floor:g} applied]" if floor else "")
+                + ("  [non-increasing exponent applied]" if sport in monotone else ""))
             out("   spline    " + _segLine(segs, sane))
             if sport == "TF" and offsets and any(k[0] == pool for k in offsets):
                 for b in range(max(n_band, 1)):
@@ -149,6 +155,9 @@ def main():
     ap.add_argument("--pool", action="append", default=[])
     ap.add_argument("--floor", type=float, default=None,
                     help="show the curve with its local exponent held to this floor")
+    ap.add_argument("--monotone", default="",
+                    help="sports (e.g. TF) shown with the local exponent made non-increasing, "
+                         "as the fitter now stores them")
     ap.add_argument("--npz", default=None,
                     help="a solve file (engine/data/joint_difficulty.npz by default when "
                          "it exists): its fitted event offsets are laid on the spline and "
@@ -166,7 +175,8 @@ def main():
         print(f"(event offsets from {path}: {len(offsets):,} (pool, distance, band) "
               f"cells, {n_band} bands)" if offsets else
               f"({path}: no event offsets in the file; spline only)")
-    report(pools=tuple(args.pool) or POOLS, floor=args.floor, offsets=offsets, n_band=n_band)
+    report(pools=tuple(args.pool) or POOLS, floor=args.floor, offsets=offsets, n_band=n_band,
+           monotone=tuple(x.strip() for x in args.monotone.split(",") if x.strip()))
 
 
 if __name__ == "__main__":

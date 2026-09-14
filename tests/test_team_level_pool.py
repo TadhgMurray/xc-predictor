@@ -54,3 +54,20 @@ def test_a_college_teams_row_is_a_college_season():
     assert pr.resolvePool(None, team_level="college", **kw) == "college_f|XC"
     # an eighth grader on a college-named team keeps her grade (one step only)
     assert pr.resolvePool("8", team_level="college", **kw) == "ms_f|XC"
+
+
+def test_a_club_with_professionals_has_no_middle_schoolers():
+    """★ OWNER, 2026-09-14: club runners labelled ms because they are in
+    their "6th" pro year. On a team with a professional in it, a grade of
+    1-8 or none is professional; a high-school grade is kept; a college
+    team is never touched."""
+    kw = dict(gender="M", source="anet", school="Nomad Intl Elite", sport="TF",
+              poolfor=_poolfor, season=2025)
+    assert pr.resolvePool("6", **kw) == "ms_m|TF"                          # the old answer
+    assert pr.resolvePool("6", team_has_pros=True, **kw) == "pro_m|TF"
+    assert pr.resolvePool(None, team_has_pros=True, **kw) == "pro_m|TF"
+    assert pr.resolvePool("11", team_has_pros=True, **kw) == "hs_m|TF"      # a youth squad's junior
+    assert pr.resolvePool("6", team_has_pros=True, team_level="college", **kw) == "ms_m|TF"
+    # a grade_sanity verdict of hs on the season stops the rule (the grade
+    # itself still decides the pool as it always did: ms here, never pro)
+    assert pr.resolvePool("6", team_has_pros=True, fixed_level="hs", **kw) != "pro_m|TF"

@@ -429,12 +429,16 @@ def resolvePool(grade, gender, source, school, sport,
                 college_first=None, upperclass_first=None,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
-                grade_verdict=None, person_id=None, team_level=None):
+                grade_verdict=None, person_id=None, team_level=None,
+                team_has_pros=False):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
 
     team_level: the team's level from the feeds (teamLevelOf): 'club'
     makes a gradeless row professional, 'college' makes the row a college
-    season; anything else changes nothing.
+    season; anything else changes nothing. team_has_pros: the team has a
+    professional in it (speed_ratings_db.loadClubPros): its rows with a
+    grade of 1-8 or none are professional too -- an elite squad's "6" is
+    a sixth year, not a sixth grader -- unless the team is a college.
 
     `poolfor` is injectable so the engine can hand in a memoised poolFor. It
     defaults to the real one, so a caller that does not care never notices.
@@ -538,6 +542,11 @@ def resolvePool(grade, gender, source, school, sport,
     school_grade = _gradeLevel(fixed_grade if fixed_grade is not None else grade)
     if team_level == "club" and (school_grade is None or grade_untrusted) \
             and fixed_level not in ("hs", "ms", "elem"):
+        is_pro = True
+    # ★ A CLUB WITH PROFESSIONALS HAS NO MIDDLE SCHOOLERS (owner, 2026-09-14):
+    #   its grade 1-8 is a year count, its gradeless row a professional
+    if team_has_pros and team_level != "college" and not is_pro \
+            and school_grade in (None, "elem", "ms") and fixed_level != "hs":
         is_pro = True
     elif team_level == "college" and not is_pro and school_grade in (None, "hs", "college"):
         fixed_level = fixed_level or "college"
