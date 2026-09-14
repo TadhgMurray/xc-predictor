@@ -393,6 +393,38 @@ def _ageBandJoin(sport: str) -> str:
             f"\n              AND ab.result_id = r.result_id")
 
 
+# ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): every row of a race
+#   with a time faster than the world record allows, outside the college
+#   pools, is left out of the solve. engine/impossible_race.py writes the
+#   table (step 06c); this is the anti-join, and the count, so the pack log
+#   says how many rows it refused and a missing table is a banner.
+_IMPOSSIBLE = {}
+
+
+def _impossibleFilter(sport: str) -> str:
+    if sport not in _IMPOSSIBLE:
+        n = None
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.impossible_result')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("SELECT count(*) FROM impossible_result WHERE sport = %s", (sport,))
+                    n = int(cur.fetchone()[0])
+        except Exception:                                    # noqa: BLE001
+            n = None
+        _IMPOSSIBLE[sport] = n
+        if n is None:
+            print(f"[engine] impossible_result: ABSENT -- run engine/impossible_race.py "
+                  f"--write (step 06c); no {sport} race is refused for beating the record")
+        else:
+            print(f"[engine] impossible_result: {n:,} {sport} rows of record-beating races "
+                  "left out of the solve")
+    if _IMPOSSIBLE[sport] is None:
+        return ""
+    return (f"\n          AND NOT EXISTS (SELECT 1 FROM impossible_result ir"
+            f"\n                          WHERE ir.sport = '{sport}' AND ir.result_id = r.result_id)")
+
+
 def _chairFilter() -> str:
     global _CHAIR_READY
     if _CHAIR_READY is None:
@@ -661,7 +693,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
-          AND r.person_id IS NOT NULL
+          AND r.person_id IS NOT NULL{_impossibleFilter('XC')}
           -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing
           --   chair covers 1500m far faster than a runner, so its normalized
           --   time is extreme and the athlete rates ~147 in a youth pool.
@@ -766,7 +798,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
-          AND r.person_id IS NOT NULL
+          AND r.person_id IS NOT NULL{_impossibleFilter('TF')}
           AND COALESCE(r.is_relay, 0) = 0
           AND COALESCE(r.is_field, 0) = 0
           -- ★ WHEELCHAIR AND SEATED RACES ARE NOT RUNNING RACES. A racing

@@ -15,8 +15,8 @@ the top rows of every board:
               normalized_time? (engine/anchor_check.mismatch, the same gate
               build_ranking_results applies -- checked again on what is
               actually published, in the pool the row is published in)
-  pace        is the row faster than the world record allows?
-              (build_ranking_results.impossiblePace)
+  pace        is the row faster than the world record allows? (outside
+              the college pools; engine/record_pace.py)
   pool        is the row's board pool the engine's rating_pool?
   club        is the row's team a club (a team with professionals, or a
               team the rows say carries no school grades)?
@@ -46,7 +46,8 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"),
         sys.path.insert(0, _p)
 
 from anchor_check import mismatch as anchorMismatch            # noqa: E402
-from build_ranking_results import impossiblePace, isRankablePool  # noqa: E402
+from build_ranking_results import isRankablePool                # noqa: E402
+from record_pace import impossiblePace, exemptPool               # noqa: E402
 from database import getConn                                    # noqa: E402
 from pool_ceiling import ceilingFor                             # noqa: E402
 import speed_ratings_db as sdb                                  # noqa: E402
@@ -86,7 +87,7 @@ def checkRow(row, sport, club_schools, club_teams, pool_top):
         out.append(("pool", True, f"board pool {pool} is not rankable"))
     if rp and rp != pool:
         out.append(("pool", True, f"rated in {rp}, ranked in {pool}"))
-    if impossiblePace(row.get("time_seconds"), row.get("distance"), row.get("gender")):
+    if not exemptPool(pool) and impossiblePace(row.get("time_seconds"), row.get("distance"), row.get("gender")):
         pace = float(row["time_seconds"]) / (float(row["distance"]) / 1000.0)
         out.append(("pace", True, f"{pace:.0f} s/km over {row['distance']:.0f} m is faster than the record"))
     is_bad, expected, ratio = anchorMismatch(row.get("time_seconds"), row.get("distance"),

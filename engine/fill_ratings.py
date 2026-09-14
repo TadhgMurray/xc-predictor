@@ -83,8 +83,12 @@ _MARK = {
 }
 
 
-def _sqlFor(sport):
-    sql = B._SQL[sport]
+def _sqlFor(sport, conn=None):
+    # ★ THROUGH _sourceSql, not _SQL: it fills in the rating_pool column and
+    #   the impossible-race anti-join (2026-09-14), so a race the record
+    #   condemned is never priced either -- unrated means unrated.
+    sql = (B._sourceSql(conn, sport) if conn is not None
+           else B._SQL[sport].replace("__IMPOSSIBLE__", ""))
     mark, inverse = _MARK[sport]
     assert mark in sql, (
         f"build_ranking_results._SQL[{sport!r}] no longer carries the WHERE "
@@ -193,7 +197,7 @@ def fillSport(conn, sport, dry_run=False):
             #   its two-half streams (216) and the fill, which reuses that
             #   SQL, bound only `since`; KeyError 'until' failed 09b on
             #   run16d (2026-09-07). Open-ended here: the fill wants every row.
-            src.execute(_sqlFor(sport), {"since": "1990-01-01", "until": "2100-01-01"})
+            src.execute(_sqlFor(sport, conn), {"since": "1990-01-01", "until": "2100-01-01"})
             for row in src:
                 nt = row.normalized_time
                 if nt is None or float(nt) <= 0:

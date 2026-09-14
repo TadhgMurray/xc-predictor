@@ -36,7 +36,7 @@ import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
-from database import getConn
+from database import getConn, dbSetting, dbJobs
 
 # poolFor is the engine's SSOT for grade -> level -> pool. IMPORT it; do not
 # reimplement it in SQL. Reimplementing is how the site and the engine drift
@@ -127,7 +127,7 @@ _RATING_MAX = 200.0
 # max_parallel_maintenance_workers on its own, so this multiplies rather than
 # replaces it -- 3 stays inside max_parallel_workers (8) with room for the
 # three leader processes.
-_INDEX_JOBS = 3
+_INDEX_JOBS = dbJobs(3)     # one at a time under XCP_DB_QUIET (2026-09-14)
 
 
 # ------------------------------------------------------------------ #
@@ -620,6 +620,7 @@ _SQL = {
           --   exist (possibly empty) before this runs.
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'XC' AND x.result_id = r.result_id)
+          __IMPOSSIBLE__
           -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
           --   person: the same list the engine consults. fill_ratings
           --   inverts only the speed_rating clause of this WHERE, so this
@@ -719,6 +720,7 @@ _SQL = {
           AND r.person_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM result_twin x
                           WHERE x.sport = 'TF' AND x.result_id = r.result_id)
+          __IMPOSSIBLE__
           -- ★ NOT ONE RACE OF A CHAIR ATHLETE (issue 14, 2026-09-03), by
           --   person; see the XC half and ensureWheelchairPerson.
           AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
@@ -1096,7 +1098,23 @@ def _sourceSql(conn, sport):
                        WHERE table_schema = 'public' AND table_name = %s
                          AND column_name = 'rating_pool'""", (table,))
         have = cur.fetchone() is not None
-    return _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
+    sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
+    return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport))
+
+
+def _impossibleClause(conn, sport):
+    """The anti-join on engine/impossible_race.py's table: every row of a
+    race that beat the record is neither ranked nor priced. Empty on a
+    database where the step has not run yet."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.impossible_result')")
+        have = cur.fetchone()[0] is not None
+    if not have:
+        print(f"  ⚠ {sport}: impossible_result does not exist -- run "
+              "engine/impossible_race.py --write (step 06c); no race is excluded")
+        return ""
+    return (f"AND NOT EXISTS (SELECT 1 FROM impossible_result ir\n"
+            f"                          WHERE ir.sport = '{sport}' AND ir.result_id = r.result_id)")
 
 
 def isRankablePool(pool):
@@ -1111,53 +1129,16 @@ def isRankablePool(pool):
     return not bare.endswith("_unknown_gender") and not bare.startswith("pro_")
 
 
-# ★ THE PACE NO RUNNER HAS RUN (owner, 2026-09-14: the college boards headed
-#   by a 5:12 "mile" at 166, a 12:18 "5k", a 5:58 "3k"). A row whose pace is
-#   faster than the open world record for its distance is a wrong distance
-#   or a wrong time, never a performance; it is rated (the engine cannot
-#   know) and never ranked. Per sex, world records in seconds per km at
-#   each distance, linearly interpolated in log-distance between them and
-#   held flat beyond; a row must be no faster than PACE_FLOOR_SLACK of it.
-#   Records as of 2025: men 800 1:40.91, 1500 3:26.00, mile 3:43.13, 3000
-#   7:17.55, 5000 12:35.36, 10000 26:11.00; women 800 1:53.28, 1500
-#   3:49.04, mile 4:07.64, 3000 8:06.11, 5000 14:00.21, 10000 28:54.14.
-_WR_PACE = {                                   # distance m -> seconds per km
-    "M": ((800, 100.91 / 0.8), (1500, 206.00 / 1.5), (1609, 223.13 / 1.609),
-          (3000, 437.55 / 3.0), (5000, 755.36 / 5.0), (10000, 1571.00 / 10.0)),
-    "F": ((800, 113.28 / 0.8), (1500, 229.04 / 1.5), (1609, 247.64 / 1.609),
-          (3000, 486.11 / 3.0), (5000, 840.21 / 5.0), (10000, 1734.14 / 10.0)),
-}
-PACE_FLOOR_SLACK = 0.98        # 2% inside the record: timing and rounding
-
-
-def recordPace(distance_m, sex="M"):
-    """The world-record pace (s/km) at this distance, interpolated in
-    log-distance; the nearest end beyond the table."""
-    import math
-    pts = _WR_PACE["F" if str(sex or "").upper().startswith("F") else "M"]
-    d = float(distance_m)
-    if d <= pts[0][0]:
-        return pts[0][1]
-    if d >= pts[-1][0]:
-        return pts[-1][1]
-    for (d0, p0), (d1, p1) in zip(pts, pts[1:]):
-        if d0 <= d <= d1:
-            t = (math.log(d) - math.log(d0)) / (math.log(d1) - math.log(d0))
-            return p0 + t * (p1 - p0)
-    return pts[-1][1]
-
-
-def impossiblePace(time_seconds, distance_m, sex="M", slack=PACE_FLOOR_SLACK):
-    """True when the row is faster than the record allows. False when it
-    cannot be judged (no time or distance): a missing fact is not a
-    finding, the anchor gate's own rule."""
-    try:
-        t = float(time_seconds); d = float(distance_m)
-    except (TypeError, ValueError):
-        return False
-    if t <= 0 or d <= 0:
-        return False
-    return (t / (d / 1000.0)) < slack * recordPace(d, sex)
+# ★ THE PACE NO RUNNER HAS RUN (owner, 2026-09-14) lives in
+#   engine/record_pace.py, one definition for the pack, the fill, the
+#   boards and the sanity script; the names are re-exported here for the
+#   readers that learned them on this module. The RACE rule -- one
+#   impossible row condemns its whole race -- is engine/impossible_race.py,
+#   whose table the query below anti-joins (__IMPOSSIBLE__); the per-row
+#   gate in prepareRow is the belt to that brace, for a row the table was
+#   built too early to know.
+from record_pace import (_WR_PACE, PACE_FLOOR_SLACK, recordPace,     # noqa: E402,F401
+                         impossiblePace, exemptPool)
 
 
 def prepareRow(row, sport):
@@ -1372,7 +1353,7 @@ def prepareRow(row, sport):
     #   the "gate that is not gating" this file's own comment warns about, so
     #   the counts are printed per sport at the end of buildSport.
     # ★ FASTER THAN THE WORLD RECORD IS A WRONG DISTANCE, NOT A RECORD
-    if impossiblePace(row.time_seconds, distance, row.gender):
+    if not exemptPool(pool) and impossiblePace(row.time_seconds, distance, row.gender):
         _GATE[sport]["impossible_pace"] += 1
         return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
@@ -1790,7 +1771,7 @@ def createShadow(conn, name, like):
                     f"(LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
 
         # Index builds sort; the default 64MB spills a 61.6M row sort to disk.
-        cur.execute("SET maintenance_work_mem = '2GB'")
+        cur.execute(f"SET maintenance_work_mem = '{dbSetting('maintenance_work_mem', '2GB')}'")
         # Nothing here needs to survive a crash: the whole table is rebuilt.
         cur.execute("SET synchronous_commit = off")
     conn.commit()
@@ -2021,8 +2002,9 @@ def buildIndexes(conn, name, like):
         with getConn() as c:
             with c.cursor() as cur:
                 # Per-session, so each builder gets its own sort memory.
-                cur.execute("SET maintenance_work_mem = '2GB'")
-                cur.execute("SET max_parallel_maintenance_workers = 4")
+                cur.execute(f"SET maintenance_work_mem = '{dbSetting('maintenance_work_mem', '2GB')}'")
+                cur.execute(f"SET max_parallel_maintenance_workers = "
+                            f"{dbSetting('max_parallel_maintenance_workers', 4)}")
                 cur.execute(sql)
             c.commit()
         return newname, time.time() - t0
@@ -2396,7 +2378,8 @@ GROUP BY base.person_id, base.pool, base.sport, base.year;
 #   at ~60 bytes a row a 56.6M-row sort is ~3.4GB -- so 4GB is the smallest
 #   value that keeps it in memory rather than on disk. The rest of the ladder
 #   is for a server that says no.
-_SEASON_WORK_MEM = ("4GB", "2GB", "1GB", "512MB")
+_SEASON_WORK_MEM = (("512MB", "256MB") if dbSetting("work_mem", None) == "64MB"
+                    else ("4GB", "2GB", "1GB", "512MB"))   # capped under XCP_DB_QUIET
 
 
 def refreshAthleteSeason(conn):

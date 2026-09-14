@@ -765,3 +765,65 @@ Still open after this, for the constants discussion: the sport level
 track prior cap, and `POOL_CEILING`, which is a decade stale (college_m
 130 against a board that tops at 150) and is only printed here, not
 applied.
+
+### 9.12 The record condemns the race; the pipeline goes quiet in Postgres (2026-09-14)
+
+**Impossible times, the race rule.** The owner: "do for every but
+college pool, and if this happens for a race, make the entire race
+unrated / unranked". `engine/record_pace.py` is the one definition
+(records of 2025, 2% slack, `exemptPool` = college). Step
+`06c_impossible` (`engine/impossible_race.py --write`, before the pack)
+keeps every row under 183 s/km in SQL (no record is slower), judges
+those in Python by the athlete's sex and the loader's own distance,
+and writes two tables built as `_new` and swapped under a lock
+timeout: `impossible_race` (one line per race: key, rows, how many
+beat the record, the fastest pace against the record, a sample row)
+and `impossible_result` (every result_id of those races). A row's pool
+is the `rating_pool` the last go-live wrote; a row without one counts
+as college only when it came from tfrrs. Three readers anti-join the
+table: the pack loader (`speed_ratings_db._impossibleFilter`, with a
+count in the pack log and a banner when the table is absent), the
+board query (`build_ranking_results._SQL` `__IMPOSSIBLE__`, filled by
+`_sourceSql`) and the fill, which now prices through `_sourceSql` too
+-- so a condemned race has no rating anywhere: not in the solve, not
+priced, not ranked, a dash on the athlete page. The per-row pace gate
+in `prepareRow` and in `board_sanity.py` stays as belt to that brace
+and now skips college pools. Tests: `tests/test_impossible_race.py`.
+
+Dry run on the box (lists the races, writes nothing):
+
+    python engine/impossible_race.py
+    python engine/impossible_race.py --write      # what step 06c runs
+
+**The pipeline and the site.** 8.7 put nice/ionice on the Python and
+lock timeouts on the swaps. What still hurt was inside Postgres: the
+backends doing the boards' 61.6M-row COPY, the heap rebuilds of
+`results` (tilt, fill) and the index builds ran at normal priority
+with 2-8 GB work memory and 4-6 parallel workers per statement, three
+index builds at a time, four board row walks side by side, three
+course-page shards. Now:
+
+* `XCP_DB_QUIET=1` (run_pipeline.sh exports it; the site's unit never
+  does): every connection `scripts/database.getConn` hands out is
+  capped once -- `work_mem 64MB`, `maintenance_work_mem 512MB`, no
+  parallel workers, `synchronous_commit off`, `application_name
+  xcp-pipeline` -- and, on a local server, the backend process is
+  reniced (+10) and ionice'd best-effort; a denied renice prints once
+  (needs CAP_SYS_NICE: run as root, grant it, or `ALTER ROLE ... SET`
+  the caps server-side) and the SETs still hold.
+* The builders' own SETs go through `database.dbSetting` /
+  `dbJobs`: `merge_column` (was 2GB/4 and 8GB/6), `build_ranking_results`
+  (index builds 2GB/4 x 3 jobs -> 512MB/0 x 1; the athlete_season sort
+  asks 512MB then 256MB instead of 4GB), `dbfast.tuneSession` (every
+  swap-through builder).
+* `XCP_STREAMS` (default 2, was 4) board row walks at a time;
+  `XCP_COURSE_SHARDS` (default 2, was 3).
+* `XCP_DB_QUIET=0 XCP_STREAMS=4 XCP_COURSE_SHARDS=3` is the old speed.
+
+The run will be longer (the index builds alone were 4x parallel). If
+that is too long, the next knobs are `XCP_DB_QUIET_NICE` and, on the
+server, `ALTER ROLE <pipeline role> SET ...` with a separate role for
+the pipeline so the caps live in Postgres rather than in the client.
+Still open from 8.7: the site's `XCP_DB_STATEMENT_TIMEOUT_MS=55000`
+lets one reader hold a table long enough to stall a swap round; 10-15 s
+is worth trying in the service unit. Tests: `tests/test_db_quiet.py`.

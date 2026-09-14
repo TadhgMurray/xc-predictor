@@ -37,6 +37,18 @@ _cores=$(nproc 2>/dev/null || echo 4)
 XCP_THREADS="${XCP_THREADS:-$(( _cores > 3 ? _cores - 2 : 1 ))}"
 export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
        MKL_NUM_THREADS="$XCP_THREADS" NUMEXPR_NUM_THREADS="$XCP_THREADS"
+# ★ AND INSIDE POSTGRES (owner, 2026-09-14: "especially the steps past the
+#   solve"). nice never reached the Postgres backends that do the boards'
+#   COPY, the heap rebuilds and the index builds; XCP_DB_QUIET=1 caps every
+#   pipeline connection (no parallel workers, 64MB work_mem, 512MB
+#   maintenance_work_mem, the backend reniced where the OS allows it) --
+#   see scripts/database.py. XCP_STREAMS is how many of the board row
+#   walks run side by side (was 4), XCP_COURSE_SHARDS the course-page
+#   workers (was 3). XCP_DB_QUIET=0 XCP_STREAMS=4 XCP_COURSE_SHARDS=3 is
+#   the old, site-blind speed.
+export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
+XCP_STREAMS="${XCP_STREAMS:-2}"
+XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-2}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -271,16 +283,20 @@ stepsN() {
   fi
   echo ""
   echo "======================================================================"
-  echo "  $first (+ $(( $# / 2 - 1 )) more)    $(date +%H:%M:%S)   (in parallel)"
+  echo "  $first (+ $(( $# / 2 - 1 )) more)    $(date +%H:%M:%S)   ($XCP_STREAMS at a time)"
   echo "======================================================================"
   t0=$(date +%s)
-  names=""; pids=""
+  # ★ XCP_STREAMS AT A TIME, not all at once (2026-09-14): four row walks
+  #   were four backends scanning results side by side under the site.
+  names=""; rcs=""; batch_pids=""; batch_names=""; inflight=0
   while [ $# -ge 2 ]; do
     $NICE sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
-    pids="$pids $!"; names="$names $1"; shift 2
+    batch_pids="$batch_pids $!"; batch_names="$batch_names $1"; inflight=$((inflight + 1)); shift 2
+    if [ "$inflight" -ge "$XCP_STREAMS" ] || [ $# -lt 2 ]; then
+      for pid in $batch_pids; do wait "$pid"; rcs="$rcs $?"; done
+      names="$names$batch_names"; batch_pids=""; batch_names=""; inflight=0
+    fi
   done
-  rcs=""
-  for pid in $pids; do wait "$pid"; rcs="$rcs $?"; done
   el=$(( $(date +%s) - t0 ))
   set -- $names
   for rc in $rcs; do
@@ -490,6 +506,10 @@ fi
 #   meets_tf on the row's own keys, and tfrrs rows had rows there only
 #   where a geometry stamp existed, unnamed. Idempotent, seconds.
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
+# ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): a time faster than
+#   the world record allows, outside the college pools, marks its whole
+#   race; the pack, the fill and the boards all anti-join the table.
+step 06c_impossible   "$PY" -u engine/impossible_race.py --write
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 
 # ★ TWO SOLVERS, ONE SWITCH.
@@ -772,7 +792,7 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 #   every third course cut the wall time to about a third. --prepare and
 #   --finish bracket them so the swap happens once, after all three.
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
-shards 12b_course_pages 3 "$PY" -u racecast/build_course_boards.py --limit 1200
+shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels

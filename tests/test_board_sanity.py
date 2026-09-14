@@ -59,7 +59,11 @@ def test_a_row_faster_than_the_record_is_impossible_and_a_real_one_is_not():
 def test_the_ranking_query_carries_the_rating_pool_only_when_the_table_has_it():
     class Cur:
         def __init__(self, have): self.have = have; self.rows = []
-        def execute(self, sql, params=None): self.rows = [(1,)] if self.have else []
+        def execute(self, sql, params=None):
+            if "to_regclass" in sql:                 # the impossible-race probe
+                self.rows = [("impossible_result" if self.have else None,)]
+            else:
+                self.rows = [(1,)] if self.have else []
         def fetchone(self): return self.rows[0] if self.rows else None
         def __enter__(self): return self
         def __exit__(self, *a): return False
@@ -139,8 +143,10 @@ def test_a_row_rated_in_another_pool_is_a_hard_finding():
 
 
 def test_a_record_pace_is_hard_a_club_and_a_margin_are_soft():
-    got = bs.checkRow(_row(time_seconds=738.0), "TF", {}, {}, {})
+    got = bs.checkRow(_row(time_seconds=738.0, pool="hs_f", rating_pool="hs_f"), "TF", {}, {}, {})
     assert [(k, h) for k, h, _ in got] == [("pace", True)]
+    # a college row is outside the rule (owner: "every but college")
+    assert bs.checkRow(_row(time_seconds=738.0), "TF", {}, {}, {}) == []
     got = bs.checkRow(_row(school="Nike Swoosh TC", speed_rating=166.0), "TF",
                       {"nike swoosh tc": "3 professional(s)"}, {}, {"college_f": 140.0})
     assert [(k, h) for k, h, _ in got] == [("club", False), ("margin", False)]

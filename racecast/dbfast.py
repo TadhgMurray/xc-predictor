@@ -101,7 +101,13 @@ def tuneSession(conn, quiet=False):
       for more memory would be a worse build than a slow one.
     """
     applied = []
+    try:
+        from database import dbSetting          # the quiet caps (XCP_DB_QUIET)
+    except ImportError:                         # a caller off the project path
+        def dbSetting(name, default):
+            return default
     for name, value in _SETTINGS:
+        value = dbSetting(name, value)
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET {name} = %s", (value,))
