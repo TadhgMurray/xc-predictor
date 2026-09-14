@@ -1138,7 +1138,7 @@ def isRankablePool(pool):
 #   gate in prepareRow is the belt to that brace, for a row the table was
 #   built too early to know.
 from record_pace import (_WR_PACE, PACE_FLOOR_SLACK, recordPace,     # noqa: E402,F401
-                         impossiblePace, exemptPool)
+                         impossiblePace, exemptPool, impossibleRow)
 
 
 def prepareRow(row, sport):
@@ -1353,7 +1353,22 @@ def prepareRow(row, sport):
     #   the "gate that is not gating" this file's own comment warns about, so
     #   the counts are printed per sport at the end of buildSport.
     # ★ FASTER THAN THE WORLD RECORD IS A WRONG DISTANCE, NOT A RECORD
-    if not exemptPool(pool) and impossiblePace(row.time_seconds, distance, row.gender):
+    # ★ AND THE FLOOR IS THE POOL'S, NOT THE OPEN RECORD'S (owner,
+    #   2026-09-14). impossibleRow is the same test plus the pool's own
+    #   ceiling: the open record is a weak bar for a seventh grader, and a
+    #   2:15 800 that clears Rudisha by a minute is still not a time a
+    #   middle schooler runs. College and pro stay exempt inside it.
+    #
+    # ★★ AND IT IS GATED HERE, NOT ON THE BOARD (owner, 2026-09-14: "the
+    #    thing stopping wrong sprint races should be in building ranking
+    #    results so rloading the page doesnt take even longer"). The first
+    #    version of this put the same rule in the best-times board's
+    #    candidate WHERE as a generated SQL predicate -- which meant
+    #    evaluating a piecewise log-interpolated curve per candidate row,
+    #    on every page load, on a board that was already slow. A row that
+    #    is not a performance should not be in ranking_results at all;
+    #    then every board is clean for free and none of them pays for it.
+    if impossibleRow(row.time_seconds, distance, row.gender, pool):
         _GATE[sport]["impossible_pace"] += 1
         return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,

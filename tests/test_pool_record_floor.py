@@ -11,9 +11,8 @@
   prob throw something to stop crazy times for each pool -- whatever that
   pool's record is").
 """
-import math
+import io
 import os
-import sqlite3
 import sys
 import unittest
 
@@ -21,19 +20,6 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "engine"))
 
 import record_pace as R                                        # noqa: E402
-
-
-def evalSql(sql, t, d, pool):
-    """Run the generated predicate. split_part and ln are stood up so the
-    SQL can be checked without Postgres."""
-    con = sqlite3.connect(":memory:")
-    con.create_function("ln", 1, math.log)
-    con.create_function(
-        "split_part", 3,
-        lambda s, sep, i: ((s or "").split(sep) + ["", ""])[i - 1])
-    return bool(con.execute(
-        f"SELECT {sql} FROM (SELECT ? AS t, ? AS d, ? AS pool)",
-        (t, d, pool)).fetchone()[0])
 
 
 class TheCurve(unittest.TestCase):
@@ -103,57 +89,61 @@ class ThePoolFloor(unittest.TestCase):
         self.assertEqual(R.poolFactor("ms_f"), R.poolFactor("ms_f|TF"))
 
 
-class TheSqlIsTheSameRule(unittest.TestCase):
-    """Two copies of a rule drift. This one is generated from the table,
-    and this test is what proves it did not."""
+class GatedInTheBuild(unittest.TestCase):
+    """★ NOT ON THE BOARD (owner, 2026-09-14: "the thing stopping wrong
+    sprint races should be in building ranking resutls so rloading the page
+    doesnt take even longer"). The first version of this put the rule in
+    the best-times board's candidate WHERE as a generated SQL predicate --
+    a piecewise log-interpolated curve evaluated per candidate row, on
+    every page load, on the board that had just been reported slow. A row
+    that is not a performance belongs out of ranking_results; then every
+    board is clean for free."""
 
-    CASES = [(10.30, 100, "hs_m"), (9.30, 100, "hs_m"), (10.65, 100, "hs_f"),
-             (125.0, 800, "ms_m"), (105.0, 800, "ms_m"),
-             (9.30, 100, "college_m"), (800.0, 5000, "hs_m"),
-             (42.0, 400, "hs_m"), (45.0, 400, "hs_m"), (240.0, 1609, "hs_f"),
-             (None, 100, "hs_m"), (10.0, None, "hs_m"), (0.0, 100, "hs_m"),
-             (60.0, 400, "ms_f"), (1000.0, 5000, "elem_m"),
-             (700.0, 5000, "college_f"), (95.0, 800, "hs_m|TF"),
-             (5.50, 55, "hs_m"), (6.20, 55, "hs_m"), (1571.0, 10000, "hs_m")]
+    def build(self):
+        with io.open(os.path.join(_ROOT, "racecast",
+                                  "build_ranking_results.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
 
-    def test_every_case_agrees_with_the_python_rule(self):
-        sql = R.paceFloorSql("t", "d", "pool")
-        for t, d, pool in self.CASES:
-            sex = "F" if pool.split("|")[0].endswith("_f") else "M"
-            self.assertEqual(
-                evalSql(sql, t, d, pool), R.impossibleRow(t, d, sex, pool),
-                f"{pool} {d}m {t}s: the SQL and the Python disagree")
-
-    def test_a_missing_fact_is_not_a_finding(self):
-        sql = R.paceFloorSql("t", "d", "pool")
-        self.assertFalse(evalSql(sql, None, 100, "hs_m"))
-        self.assertFalse(evalSql(sql, 10.0, None, "hs_m"))
-
-    def test_it_takes_no_bind_parameters(self):
-        """It goes straight into a WHERE, so nothing from a request may
-        reach it and there is nothing for a caller to bind."""
-        self.assertNotIn("%s", R.paceFloorSql("t", "d", "pool"))
-        self.assertNotIn("%(", R.paceFloorSql("t", "d", "pool"))
-
-    def test_it_matches_segments_rather_than_escaped_like_patterns(self):
-        """LIKE 'hs\\_%' means one thing in Postgres and another in SQLite,
-        and a rule that differs between the harness and production is
-        worse than no rule."""
-        sql = R.paceFloorSql("t", "d", "pool")
-        self.assertNotIn("LIKE", sql)
-        self.assertIn("split_part", sql)
-
-    def test_the_pr_board_applies_it_to_its_candidate_set(self):
-        with open(os.path.join(_ROOT, "racecast", "rankings.py"),
-                  encoding="utf-8") as fh:
-            src = fh.read()
-        self.assertIn("from record_pace import paceFloorSql", src)
+    def test_the_build_applies_the_full_rule(self):
+        src = self.build()
         self.assertIn(
-            "paceFloorSql('time_seconds', 'distance', 'pool')", src)
-        i = src.index("paceFloorSql('time_seconds'")
-        self.assertIn("cand_where", src[max(0, i - 1500):i],
-                      "a row filtered after the LIMIT has already taken a "
-                      "slot a real time needed")
+            "impossibleRow(row.time_seconds, distance, row.gender, pool)", src)
+
+    def test_the_pool_floor_reaches_the_build(self):
+        """impossibleRow is the one call that carries it; impossiblePace
+        alone is the open record and would leave the young pools open."""
+        src = self.build()
+        i = src.index("impossibleRow(row.time_seconds")
+        self.assertNotIn("impossiblePace(row.time_seconds",
+                         src[max(0, i - 600):i + 200])
+        self.assertIn("impossibleRow", src[src.index("from record_pace import"):
+                                           src.index("from record_pace import")
+                                           + 200])
+
+    def test_the_exemption_is_inside_it(self):
+        """impossibleRow checks exemptPool itself, so the caller cannot
+        forget it the way the open-record call had to remember."""
+        with io.open(os.path.join(_ROOT, "engine", "record_pace.py"),
+                     encoding="utf-8") as fh:
+            rp = fh.read()
+        body = rp[rp.index("def impossibleRow"):]
+        self.assertIn("if exemptPool(pool):", body)
+
+    def test_the_board_does_not_re_check_it(self):
+        with io.open(os.path.join(_ROOT, "racecast", "rankings.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotIn("paceFloorSql", src,
+                         "the board must not pay per row for a rule the "
+                         "build already applied once")
+
+    def test_the_sql_generator_is_gone_rather_than_left_unused(self):
+        with io.open(os.path.join(_ROOT, "engine", "record_pace.py"),
+                     encoding="utf-8") as fh:
+            rp = fh.read()
+        self.assertNotIn("paceFloorSql", rp)
+        self.assertNotIn("_paceCase", rp)
 
 
 if __name__ == "__main__":
