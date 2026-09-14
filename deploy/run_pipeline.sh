@@ -742,6 +742,13 @@ stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream
        10_rankings_tf_a "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --until ${XCP_RANK_SEAM:-2018-01-01}" \
        10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
+# ★ THE BOARDS, CHECKED BEFORE ANYONE READS THEM (owner, 2026-09-14: college
+#   boards headed at 170 by rows ranked against another pool's mean, clubs
+#   with professionals among colleges, a 5:12 "mile"). Top rows per pool:
+#   anchor gate, record pace, board pool == rating pool, club teams, margin
+#   over the pool's own top seasons, the XC/TF gap. A hard finding FAILS
+#   the step (no "|| true"): a wrong board is not a board.
+step 10a_board_sanity "$PY" -u scripts/board_sanity.py --top "${XCP_SANITY_TOP:-60}"
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # measured for telemetry only: the joint level is not steered by the json

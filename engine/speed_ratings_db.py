@@ -972,6 +972,69 @@ def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
     return {k for k, (n_club, n) in agg.items() if n_club * 2 > n}
 
 
+# ★ A CLUB IS A TEAM WITH NO SCHOOL IN IT, FROM THE DATA (owner, 2026-09-14:
+#   Garden State TC, Atlanta TC, Saucony, Pacific Athletics on the college
+#   boards). anet names some teams' levels and pro_flag names some
+#   professionals; the tfrrs half of the corpus has neither for a club, so
+#   the rows have to say it: a team with at least min_rows rows of which
+#   fewer than max_grade_share carry a school grade, that no tfrrs slug
+#   calls a college and the college directory does not list, is a club --
+#   an elite squad, an adult club, a national team. A college on anet is
+#   gradeless too, which is what the directory and the slugs are for.
+def loadClubTeams(min_rows=20, max_grade_share=0.05):
+    """({anet team_id: n rows}, {normalised school: n rows}) of teams whose
+    rows carry (almost) no school grade and that are not colleges."""
+    by_team, by_school = {}, {}
+    grade_expr = ("CASE WHEN r.grade ~ '^([1-9]|1[0-2])$' OR lower(btrim(r.grade)) "
+                  "IN ('fr','so','jr','sr','fr-1','so-2','jr-3','sr-4') THEN 1 ELSE 0 END")
+    with getConn() as conn, conn.cursor() as cur:
+        colleges = set()
+        cur.execute("SELECT to_regclass('college_directory')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("SELECT lower(btrim(name)) FROM college_directory")
+            colleges |= {r[0] for r in cur.fetchall() if r[0]}
+        for table in ("results", "results_tf"):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name IN ('team_id', 'team_slug')""", (table,))
+            have = {r[0] for r in cur.fetchall()}
+            if "team_slug" in have:
+                cur.execute(f"""SELECT DISTINCT lower(btrim(school)) FROM {table}
+                                WHERE team_slug LIKE '%%\\_college\\_%%' AND school IS NOT NULL""")
+                colleges |= {r[0] for r in cur.fetchall() if r[0]}
+            team_expr = "r.team_id" if "team_id" in have else "NULL::bigint"
+            cur.execute(f"""
+                SELECT {team_expr} AS team_id, lower(btrim(r.school)) AS school,
+                       count(*) AS n, sum({grade_expr}) AS n_graded
+                FROM   {table} r
+                WHERE  r.school IS NOT NULL
+                GROUP  BY 1, 2
+                HAVING count(*) >= %s""", (int(min_rows),))
+            for team_id, school, n, n_graded in cur.fetchall():
+                if isClubName(school, colleges) and (int(n_graded) / max(int(n), 1)) < max_grade_share:
+                    if team_id is not None:
+                        by_team[int(team_id)] = by_team.get(int(team_id), 0) + int(n)
+                    else:
+                        by_school[school] = by_school.get(school, 0) + int(n)
+    return by_team, by_school
+
+
+_SCHOOL_WORDS = (" high", " middle", " elementary", " school", " hs", " ms", " academy",
+                 " prep", " college", "university", "univ ", " jr", " sr ", " intermediate")
+
+
+def isClubName(school, colleges=()):
+    """A school string that can be a club: not a college, not unattached,
+    not a name that says school. Pure; the grade share is the caller's."""
+    s = (school or "").strip().lower()
+    if not s or s in colleges:
+        return False
+    if s.startswith("unattached") or s in ("unat", "independent", "individual", "none", "n/a"):
+        return False
+    padded = " " + s + " "
+    return not any(w in padded for w in _SCHOOL_WORDS)
+
+
 def printTeamLevels(meaning, rows):
     print("[engine] anet team levels (code -> meaning, from our rows' grades and "
           "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")

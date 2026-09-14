@@ -695,3 +695,73 @@ fitted curve was fitted on these rows' pairs, so read a narrow win for
 it as a tie. Run it after the backfill and the pack (the script warns
 when the spline file is newer than the pack). Planted: a 1.10 world
 scores the matching curve near zero and Riegel at 2.8% a doubling.
+
+### 9.11 The board sanity (2026-09-14, from the owner's read of the run-22 boards)
+
+What the owner saw, and what each one was:
+
+* **college_f headed by 170s, college_m by 160s.** Rows the backfill
+  normalised on another pool's scale (a hs row is 5000-equivalent; a
+  college_f row 6000-equivalent: x1.21; college_m x1.65) rated against
+  the college mean. Two causes, both fixed: (a) `build_ranking_results`
+  re-resolved the pool from its own joins and ignored the row's
+  `rating_pool`, so a row the engine rated as `pro_f` was ranked as
+  `college_f`; (b) the pack's scale identification (`rescaleToPool`)
+  only knew the row's own gender-and-level pools, so a hs_m row landing
+  in college_m was left on the hs scale.
+* **Clubs with professionals on the college board.** The club rules of
+  9.6 keyed on the anet team level and `pro_flag`; tfrrs club rows carry
+  neither. `speed_ratings_db.loadClubTeams` now reads clubs off the rows
+  themselves: a team string that is not a college (college_directory,
+  tfrrs `_college_` slugs), not "unattached", not a name that says
+  school (`isClubName`), with 20+ rows and under 5% of them carrying a
+  school grade. `loadClubPros` merges it, so `team_has_pros` fires for
+  those teams too (still under the majority gate of 9.6).
+* **A 5:12 "mile" at 166, a 12:18 "5k".** A wrong distance. The builder
+  now refuses any row faster than 98% of the open world-record pace for
+  its distance and sex (`impossiblePace`, records of 2025 interpolated
+  in log-distance). The 5:12 was actually a scale mismatch, caught by
+  the anchor gate now that it runs on the rating pool.
+
+The builder (`racecast/build_ranking_results.py`):
+
+* pool = the row's `rating_pool` (both SELECTs carry it; `_sourceSql`
+  substitutes `NULL::text` on a database before the column, and then
+  `resolvePool` is the fallback as before). Counter `pool_from_row`.
+* `isRankablePool` refuses `pro_*` (counter `pro_pool`): a professional
+  rating has no board on the site.
+* `impossible_pace` gate before the anchor gate.
+
+The pack (`engine/speed_ratings.py`): `rescaleToPool` identifies the
+stored scale against EVERY pool in both sports, takes the nearest factor
+within 8%, and declines (`scale_ambiguous` in the census) when a factor
+of a different size (>5% apart) is within 3% of the nearest; factors
+within 5% of each other (hs_m/hs_f, XC/TF of one pool) count as one
+scale and the nearest is used.
+
+The check, `scripts/board_sanity.py`, pipeline step `10a_board_sanity`
+right after `10_rankings_finish`, and it FAILS the step on a hard
+finding (no `|| true`). For the top `--top` (60) rows of every (sport,
+pool) board: anchor gate on the published pool, record pace, board pool
+== rating pool, club team (by `loadClubPros` + `loadClubTeams`), margin
+over the pool's own top-20 season means (`MARGIN` 12 points; the stale
+`pool_ceiling.POOL_CEILING` is printed beside it), then athlete_season
+rows in school pools on club teams, and the same-athlete TF minus XC
+season-median gap per pool (the sport level as the boards show it).
+Hard: anchor, pace, pool. Soft: club, margin (`--strict` makes them
+hard). Every offender prints with name, school, time, distance, date
+and result_id, so the row can be pulled up.
+
+Run on the box after the pack + rankings:
+
+    python scripts/board_sanity.py --top 60
+    python scripts/board_sanity.py --top 200 --strict --show 50   # the long list
+
+Tests: `tests/test_board_sanity.py` (rails, record pace, `_sourceSql`,
+`isClubName`, ambiguity, the pure checks).
+
+Still open after this, for the constants discussion: the sport level
+(TF under XC by the boards' own gap row), the tilt above 140, the
+track prior cap, and `POOL_CEILING`, which is a decade stale (college_m
+130 against a board that tops at 150) and is only printed here, not
+applied.

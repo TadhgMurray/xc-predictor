@@ -262,10 +262,21 @@ def loadClubPros():
         return _CLUB_PROS
     _CLUB_PROS = ({}, {})
     try:
-        from speed_ratings_db import loadClubPros as _load
-        _CLUB_PROS = _load()
-        print(f"[engine] clubs with professionals: {len(_CLUB_PROS[0]):,} anet teams, "
-              f"{len(_CLUB_PROS[1]):,} school names (their grade 1-8 and gradeless rows pool pro)")
+        from speed_ratings_db import loadClubPros as _load, loadClubTeams
+        by_team, by_school = _load()
+        n_pro_t, n_pro_s = len(by_team), len(by_school)
+        # ★ AND THE TEAMS THE DATA CALLS CLUBS: no school grade on their
+        #   rows, no college slug, not in the directory (loadClubTeams)
+        ct, cs = loadClubTeams()
+        for k in ct:
+            by_team[k] = max(by_team.get(k, 0), 1)
+        for k in cs:
+            by_school[k] = max(by_school.get(k, 0), 1)
+        _CLUB_PROS = (by_team, by_school)
+        print(f"[engine] clubs: {n_pro_t:,} anet teams and {n_pro_s:,} school names carry a "
+              f"professional; {len(ct):,} teams and {len(cs):,} names are gradeless non-schools; "
+              f"together {len(by_team):,} teams and {len(by_school):,} names (their grade 1-8 "
+              f"and gradeless rows pool pro in a season raced mostly for them)")
     except Exception as exc:                                     # noqa: BLE001
         print(f"[engine] clubs with professionals unavailable ({type(exc).__name__}: {exc})")
     return _CLUB_PROS
@@ -363,9 +374,16 @@ def loadAnetLevels():
 #   stored value no pool reproduces within IDENTIFY_TOL is left alone and
 #   counted (census 'scale_not_identified'): a guess is not a repair.
 _SCALE_TOL = 0.10          # anchor_check.TOLERANCE: off by this much is wrong
-_SCALE_IDENTIFY_TOL = 0.03 # anchor_repair.IDENTIFY_TOL: this close names the scale
-_SCALE_POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "hs_m", "hs_f",
-                "college_m", "college_f", "pro_m", "pro_f")
+# ! THE NEAREST SCALE, IF IT IS NEAR AND ALONE (2026-09-14). A 3% match
+#   missed rows whose stored value carries a weather or era correction of
+#   more than that; pool scales sit 21-65% apart, so the nearest one within
+#   8% is not ambiguous when the next is at least 10% further away.
+_SCALE_IDENTIFY_TOL = 0.08    # nearest pool factor must reproduce the stored value this closely
+_SCALE_IDENTIFY_GAP = 0.03    # ... and no factor of a different size may be nearly as close
+_SCALE_SAME_SIZE = 0.05       # factors within 5% (hs_m/hs_f, XC/TF of one pool) count as one scale
+_SCALE_POOLS = ("elem_m", "elem_f", "elem_unknown_gender", "ms_m", "ms_f",
+                "ms_unknown_gender", "hs_m", "hs_f", "hs_unknown_gender",
+                "college_m", "college_f", "college_unknown_gender", "pro_m", "pro_f")
 _scaleFactorCache = {}
 
 
@@ -404,20 +422,24 @@ def rescaleToPool(norm, time_s, dist, pool, sport):
     ratio = nt / (t * f_to)
     if abs(ratio - 1.0) <= _SCALE_TOL:
         return norm, None
-    # which scale is it on? the sport's own pools first, then the other
-    best, best_off = None, None
+    # which scale is it on? the nearest pool factor, if it is near and no
+    # other factor of a different size is nearly as near
+    cands = []
     for sp in (sport, "XC" if sport == "TF" else "TF"):
         for p in _SCALE_POOLS:
             f = _scaleFactor(d, p, sp)
             if not f:
                 continue
-            off = abs(nt / (t * f) - 1.0)
-            if best_off is None or off < best_off:
-                best, best_off = f, off
-        if best_off is not None and best_off <= _SCALE_IDENTIFY_TOL:
-            break
-    if best is None or best_off > _SCALE_IDENTIFY_TOL:
+            cands.append((abs(nt / (t * f) - 1.0), f))
+    if not cands:
         return norm, "scale_not_identified"
+    cands.sort()
+    best_off, best = cands[0]
+    if best_off > _SCALE_IDENTIFY_TOL:
+        return norm, "scale_not_identified"
+    for off, f in cands[1:]:
+        if abs(f / best - 1.0) > _SCALE_SAME_SIZE and off < best_off + _SCALE_IDENTIFY_GAP:
+            return norm, "scale_ambiguous"
     return nt * f_to / best, "rescaled"
 
 

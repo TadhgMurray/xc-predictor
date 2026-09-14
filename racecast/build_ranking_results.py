@@ -560,6 +560,7 @@ _SQL = {
                --   which is worse than not having it: the build would report
                --   a gate that is not gating.
                r.normalized_time,
+               __RATING_POOL__ AS rating_pool,
                r.meet_id, r.div_id, r.canon_meet_id,
                -- ⚠ THREE SOURCES, NOT TWO. dov is the override, m.distance
                --   is anet, and xtd is tfrrs -- which lives in a JSONB blob
@@ -638,6 +639,7 @@ _SQL = {
                --   which is worse than not having it: the build would report
                --   a gate that is not gating.
                r.normalized_time,
+               __RATING_POOL__ AS rating_pool,
                r.meet_id, r.div_id, r.canon_meet_id,
                -- ⚠ NO m.distance ON THIS SIDE. `m` here is tmp_tf_state, a
                --   collapse of meets_tf on (meet, div, source) -- and it
@@ -1025,11 +1027,13 @@ _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
+                "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
                 "field_mark": 0, "field_refused": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
+                "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
                 "field_mark": 0, "field_refused": 0}}
 
 # ★ TIMED NON-FLAT EVENTS. event_parse rejects hurdles and the steeple on
@@ -1082,9 +1086,78 @@ def timedEventKind(event_short):
 _WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
 
 
+def _sourceSql(conn, sport):
+    """_SQL[sport] with the rating_pool column where the table has it (the
+    go-live has written it since issue 171), NULL where a database predates
+    it, so the build runs on either."""
+    table = "results" if sport == "XC" else "results_tf"
+    with conn.cursor() as cur:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                         AND column_name = 'rating_pool'""", (table,))
+        have = cur.fetchone() is not None
+    return _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
+
+
 def isRankablePool(pool):
-    """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a board."""
-    return bool(pool) and not pool.endswith("_unknown_gender")
+    """unknown_gender pools exist but hold 9 athletes corpus-wide. Not a
+    board -- and neither is a professional pool (2026-09-14): a pro_m or
+    pro_f rating is the athlete's standing among professionals and has no
+    board on the site; published under a school pool it headed the college
+    boards at 170."""
+    if not pool:
+        return False
+    bare = pool.split("|", 1)[0]
+    return not bare.endswith("_unknown_gender") and not bare.startswith("pro_")
+
+
+# ★ THE PACE NO RUNNER HAS RUN (owner, 2026-09-14: the college boards headed
+#   by a 5:12 "mile" at 166, a 12:18 "5k", a 5:58 "3k"). A row whose pace is
+#   faster than the open world record for its distance is a wrong distance
+#   or a wrong time, never a performance; it is rated (the engine cannot
+#   know) and never ranked. Per sex, world records in seconds per km at
+#   each distance, linearly interpolated in log-distance between them and
+#   held flat beyond; a row must be no faster than PACE_FLOOR_SLACK of it.
+#   Records as of 2025: men 800 1:40.91, 1500 3:26.00, mile 3:43.13, 3000
+#   7:17.55, 5000 12:35.36, 10000 26:11.00; women 800 1:53.28, 1500
+#   3:49.04, mile 4:07.64, 3000 8:06.11, 5000 14:00.21, 10000 28:54.14.
+_WR_PACE = {                                   # distance m -> seconds per km
+    "M": ((800, 100.91 / 0.8), (1500, 206.00 / 1.5), (1609, 223.13 / 1.609),
+          (3000, 437.55 / 3.0), (5000, 755.36 / 5.0), (10000, 1571.00 / 10.0)),
+    "F": ((800, 113.28 / 0.8), (1500, 229.04 / 1.5), (1609, 247.64 / 1.609),
+          (3000, 486.11 / 3.0), (5000, 840.21 / 5.0), (10000, 1734.14 / 10.0)),
+}
+PACE_FLOOR_SLACK = 0.98        # 2% inside the record: timing and rounding
+
+
+def recordPace(distance_m, sex="M"):
+    """The world-record pace (s/km) at this distance, interpolated in
+    log-distance; the nearest end beyond the table."""
+    import math
+    pts = _WR_PACE["F" if str(sex or "").upper().startswith("F") else "M"]
+    d = float(distance_m)
+    if d <= pts[0][0]:
+        return pts[0][1]
+    if d >= pts[-1][0]:
+        return pts[-1][1]
+    for (d0, p0), (d1, p1) in zip(pts, pts[1:]):
+        if d0 <= d <= d1:
+            t = (math.log(d) - math.log(d0)) / (math.log(d1) - math.log(d0))
+            return p0 + t * (p1 - p0)
+    return pts[-1][1]
+
+
+def impossiblePace(time_seconds, distance_m, sex="M", slack=PACE_FLOOR_SLACK):
+    """True when the row is faster than the record allows. False when it
+    cannot be judged (no time or distance): a missing fact is not a
+    finding, the anchor gate's own rule."""
+    try:
+        t = float(time_seconds); d = float(distance_m)
+    except (TypeError, ValueError):
+        return False
+    if t <= 0 or d <= 0:
+        return False
+    return (t / (d / 1000.0)) < slack * recordPace(d, sex)
 
 
 def prepareRow(row, sport):
@@ -1142,24 +1215,41 @@ def prepareRow(row, sport):
     #   hit rather than a second parse.
     season = seasonYearFromIso(sport, row.date)
 
-    pool = resolvePool(row.grade, row.gender, row.source, school,
-                       sport,
-                       season=season,
-                       season_level=row.season_level,
-                       grade_untrusted=bool(row.grade_untrusted),
-                       fixed_grade=row.fixed_grade,
-                       fixed_level=row.fixed_level,
-                       grade_verdict=row.grade_verdict,
-                       # ! FOR _PRO_PEOPLE -- see pool_resolve.
-                       person_id=row.person_id,
-                       is_pro=bool(row.is_pro),
-                       # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
-                       #   readers were the two promotion gates, now gone. This
-                       #   call was already lazy about building the date; now
-                       #   it does not build one -- up to 61.6M _asDate calls
-                       #   removed outright.
-                       merge=True)
+    # ★ THE POOL THE ENGINE RATED THE ROW IN, OFF THE ROW (issue 171, and
+    #   the owner, 2026-09-14: "the rating compares to the wrong pool mean
+    #   for some people"). This builder used to resolve the pool again
+    #   from its own joins, without the team level, the club rules or the
+    #   pack's own verdicts, so a row the engine rated among professionals
+    #   was ranked as a college row: a pro_f 100 published on the college
+    #   board. The rating IS a number relative to one pool's mean, and
+    #   only the pool that made it can rank it. The resolver is the
+    #   fallback for a row that carries no rating_pool (an unrated sprint,
+    #   a database before the column).
+    rp = getattr(row, "rating_pool", None)
+    pool = str(rp).split("|", 1)[0] if rp else None
+    if pool:
+        _GATE[sport]["pool_from_row"] += 1
+    else:
+        pool = resolvePool(row.grade, row.gender, row.source, school,
+                           sport,
+                           season=season,
+                           season_level=row.season_level,
+                           grade_untrusted=bool(row.grade_untrusted),
+                           fixed_grade=row.fixed_grade,
+                           fixed_level=row.fixed_level,
+                           grade_verdict=row.grade_verdict,
+                           # ! FOR _PRO_PEOPLE -- see pool_resolve.
+                           person_id=row.person_id,
+                           is_pro=bool(row.is_pro),
+                           # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
+                           #   readers were the two promotion gates, now gone. This
+                           #   call was already lazy about building the date; now
+                           #   it does not build one -- up to 61.6M _asDate calls
+                           #   removed outright.
+                           merge=True)
     if not isRankablePool(pool):
+        if pool and pool.split("|", 1)[0].startswith("pro_"):
+            _GATE[sport]["pro_pool"] += 1
         return None
 
     # ★ UNTRUSTED SEASONS ARE RATED BUT NOT RANKED, AND THIS IS THE ONLY
@@ -1281,6 +1371,10 @@ def prepareRow(row, sport):
     #   build that cannot check a third of its rows and does not say so is
     #   the "gate that is not gating" this file's own comment warns about, so
     #   the counts are printed per sport at the end of buildSport.
+    # ★ FASTER THAN THE WORLD RECORD IS A WRONG DISTANCE, NOT A RECORD
+    if impossiblePace(row.time_seconds, distance, row.gender):
+        _GATE[sport]["impossible_pace"] += 1
+        return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
                                               row.normalized_time, pool, sport)
     if ratio is None:
@@ -1476,7 +1570,7 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     with conn.cursor(name=f"rank_src_{sport.lower()}",
                      cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
-        src.execute(_SQL[sport], {"since": since, "until": until})
+        src.execute(_sourceSql(conn, sport), {"since": since, "until": until})
 
         with conn.cursor() as dst:
             for row in src:
@@ -1522,6 +1616,9 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     if g["outside_pool"]:
         print(f"    pool ceiling: {g['outside_pool']:,} races dropped as "
               f"implausible for their pool (see RACE_MARGIN)")
+    print(f"    pool from the row: {g['pool_from_row']:,} rows ranked in the pool the "
+          f"engine rated them in; {g['pro_pool']:,} professional-pool rows not ranked; "
+          f"{g['impossible_pace']:,} rows faster than the world record not ranked")
     if g["outside_band"]:
         print(f"    sanity band: {g['outside_band']:,} races rated but "
               f"outside the engine's pace band -- filled ratings the solve "
