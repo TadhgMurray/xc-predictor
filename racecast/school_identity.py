@@ -120,6 +120,23 @@ def contextState(school, state=None):
     return _LABELS["map"].get(school)
 
 
+def splitsByState(school):
+    """Does this name cover more than one school?
+
+    ★ ASKED BY THE CREST (owner, 2026-09-14: "the Oregon (IL) thing still
+      isn't fixed ... I also see it for Williams"). A name with one school
+      may wear the one crest stored for it whatever state the mention came
+      from -- that is the common case and it must keep working. A name with
+      TWO cannot: the crest stored under OR is the University of Oregon's,
+      and putting it beside Oregon (IL) is the bug.
+
+    Reads the same cluster cache contextState does, at the same bar, so
+    the two cannot disagree about how many Oregons there are."""
+    clusters = (_LABELS.get("clusters") or {}).get(school) or {}
+    return sum(1 for share in clusters.values()
+               if share >= CONTEXT_MIN_SHARE) > 1
+
+
 def schoolLabelIn(school, state):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
@@ -366,13 +383,32 @@ def levelOf(pool):
     return (pool or "").split("|")[0].split("_")[0] or None
 
 
-def stateChips(cur, school):
+def stateChips(cur, school, include=None):
     """(chips, primary_state). Chips only when a SECOND real cluster
-    exists -- one-state schools get no chip row at all."""
+    exists -- one-state schools get no chip row at all.
+
+    ⚠ TWO BARS FOR ONE QUESTION WAS THE BUG (owner, 2026-09-14). The label
+      and the link name a cluster at CONTEXT_MIN_SHARE (3%); this drew
+      chips, and school_page validated ?state=, at MIN_SHARE (10%). So a
+      race page labelled a row "Oregon (IL)", linked it to ?state=IL, and
+      the page threw the state away and served Oregon (OR) -- the link
+      promised a page that did not exist.
+
+      `include` is the state the caller was actually asked for. When it is
+      a real cluster the narrow bar happens to hide, the chip row widens to
+      the bar that named it, so the page exists AND is reachable from the
+      other namesake. Nothing widens for a school nobody asked about, so an
+      ordinary page's chips are unchanged."""
     clusters = schoolClusters(cur, school)
     primary = clusters[0]["state"] if clusters else None
     real = [c for c in clusters
             if c["n"] >= MIN_ATHLETES and float(c["share"]) >= MIN_SHARE]
+    if include and not any(c["state"] == include for c in real):
+        wider = [c for c in clusters
+                 if c["n"] >= MIN_ATHLETES
+                 and float(c["share"]) >= CONTEXT_MIN_SHARE]
+        if any(c["state"] == include for c in wider):
+            real = wider
     return (real if len(real) >= 2 else []), primary
 
 

@@ -2780,5 +2780,106 @@ class Canonical(unittest.TestCase):
         self.assertIn("from school_identity import (MIN_ATHLETES", src)
 
 
+# ===================================================================== #
+#  ONE BAR, NOT TWO -- THE TWO OREGONS, ROUND TWO                       #
+# ===================================================================== #
+
+class TwoBars(unittest.TestCase):
+    """★ "The oregon (IL) thing still isn't fixed. (I also see it for
+    Williams)" (owner, 2026-09-14). The label and the link named a cluster
+    at CONTEXT_MIN_SHARE; the PAGE validated ?state= at MIN_SHARE and the
+    crest fell back to whatever single row it had. So the link promised a
+    page that did not exist, and the badge came from the other school."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        import school_identity as SI
+        self.SI, self._labels = SI, dict(SI._LABELS)
+        self._crests = dict(SL._CRESTS)
+        SI._LABELS.update({
+            "loaded": True, "map": {"Oregon": "OR", "Tufts": "MA"},
+            "clusters": {"Oregon": {"OR": 0.70, "IL": 0.20},
+                         "Tufts": {"MA": 1.0}}})
+        SL._CRESTS.update({"loaded": True, "map": {
+            "Oregon": [("OR", "aaaaaaaa")],
+            "Tufts": [("MA", "bbbbbbbb")]}})
+
+    def tearDown(self):
+        self.SI._LABELS.clear(); self.SI._LABELS.update(self._labels)
+        SL._CRESTS.clear(); SL._CRESTS.update(self._crests)
+
+    # ---- the crest half
+
+    def test_a_split_name_does_not_lend_its_one_crest_to_the_other_school(self):
+        self.assertIsNone(SL.crestState("Oregon", "IL"))
+        self.assertIsNone(SL.crestUrl("Oregon", "IL"))
+        self.assertEqual(SL.crestImg("Oregon", "IL"), "")
+
+    def test_the_school_the_crest_belongs_to_still_wears_it(self):
+        self.assertEqual(SL.crestState("Oregon", "OR"), ("OR", "aaaaaaaa"))
+
+    def test_a_one_school_name_keeps_the_fallback(self):
+        """Nearly every school is this, and the crest is stored under one
+        state while mentions arrive from everywhere."""
+        self.assertEqual(SL.crestState("Tufts", "RI"), ("MA", "bbbbbbbb"))
+
+    def test_splits_reads_the_same_bar_the_label_does(self):
+        self.assertTrue(self.SI.splitsByState("Oregon"))
+        self.assertFalse(self.SI.splitsByState("Tufts"))
+        self.assertFalse(self.SI.splitsByState("Never Heard Of It"))
+
+    def test_a_cluster_under_the_context_bar_is_not_a_second_school(self):
+        self.SI._LABELS["clusters"]["Tufts"] = {"MA": 0.99, "RI": 0.01}
+        self.assertFalse(self.SI.splitsByState("Tufts"))
+        self.assertEqual(SL.crestState("Tufts", "RI"), ("MA", "bbbbbbbb"))
+
+    def test_an_empty_label_cache_cannot_delete_every_crest(self):
+        self.SI._LABELS["clusters"] = {}
+        self.assertEqual(SL.crestState("Oregon", "IL"), ("OR", "aaaaaaaa"))
+
+    # ---- the page half
+
+    def _chips(self, clusters, include=None):
+        class Cur:
+            def execute(self, *a, **k): pass
+            def fetchall(self): return clusters
+        SI = self.SI
+        real = SI._tableExists
+        SI._tableExists = lambda cur, name: True
+        try:
+            return SI.stateChips(Cur(), "Oregon", include=include)
+        finally:
+            SI._tableExists = real
+
+    def test_the_page_accepts_the_state_its_own_links_hand_it(self):
+        """Oregon IL is 20% of the name -- over the 3% the label uses,
+        under the 10% the chips used."""
+        rows = [{"state": "OR", "n": 700, "share": 0.70, "is_primary": True},
+                {"state": "IL", "n": 40, "share": 0.20, "is_primary": False}]
+        chips, primary = self._chips(rows, include="IL")
+        self.assertEqual([c["state"] for c in chips], ["OR", "IL"])
+        self.assertEqual(primary, "OR")
+
+    def test_a_small_cluster_becomes_reachable_only_when_asked_for(self):
+        rows = [{"state": "OR", "n": 700, "share": 0.93, "is_primary": True},
+                {"state": "IL", "n": 40, "share": 0.05, "is_primary": False}]
+        self.assertEqual(self._chips(rows)[0], [],
+                         "an ordinary page's chips must not change")
+        chips, _ = self._chips(rows, include="IL")
+        self.assertEqual([c["state"] for c in chips], ["OR", "IL"])
+
+    def test_a_state_the_name_has_no_school_in_is_still_refused(self):
+        rows = [{"state": "OR", "n": 700, "share": 0.99, "is_primary": True},
+                {"state": "TX", "n": 1, "share": 0.01, "is_primary": False}]
+        self.assertEqual(self._chips(rows, include="TX")[0], [])
+
+    def test_both_school_routes_pass_the_asked_for_state(self):
+        app = read("racecast", "app.py")
+        self.assertEqual(
+            app.count("stateChips(cur, school_name, include=state)"), 2,
+            "the school page and the PRs page must resolve the same school")
+        self.assertNotIn("stateChips(cur, school_name)\n", app)
+
+
 if __name__ == "__main__":
     unittest.main()

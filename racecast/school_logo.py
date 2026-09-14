@@ -153,7 +153,22 @@ def crestState(school, state=None, pool=None):
     for row in rows:
         if not row[0]:
             return row
-    return rows[0] if len(rows) == 1 else None
+    # ⚠ THE ONE-CREST FALLBACK IS ONLY SAFE FOR A ONE-SCHOOL NAME (owner,
+    #   2026-09-14: "the Oregon (IL) thing still isn't fixed ... I also see
+    #   it for Williams"). Oregon has ONE crest row, stored under OR, so
+    #   len(rows) == 1 handed the University of Oregon's badge to Oregon
+    #   (IL) -- and to Williams (wherever) from Williams College's. Where
+    #   the name really is two schools, a crest filed under another state
+    #   is another school's crest and NO badge is the right answer.
+    if len(rows) != 1:
+        return None
+    try:
+        from school_identity import splitsByState
+        if splitsByState(school):
+            return None
+    except Exception:                              # noqa: BLE001
+        pass
+    return rows[0]
 
 
 def crestUrl(school, state=None, px=None, pool=None):
