@@ -4389,8 +4389,18 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 .predict2 .add-menu { display: block; margin: 0.3rem 0 0; }
 .predict2 .add-menu > summary { list-style: none; cursor: pointer; }
 .predict2 .add-menu > summary::-webkit-details-marker { display: none; }
+/* ⚠ CENTRED WITH FLEX, NOT text-align (owner, 2026-09-15: "the location
+     of the Add button is off, it is not centered in the box"). A <summary>
+     is display:list-item by default and its disclosure marker takes
+     inline space, so text-align:center centres the text WITHIN what the
+     marker left -- off by the marker's width. The two guards here,
+     list-style:none and ::-webkit-details-marker, cover Chromium and
+     nothing else; Firefox and Safari still reserved the box.
+     A flex container has no marker to lay out, so this is centred in every
+     engine rather than in the one I happened to measure in. */
 .predict2 .add-menu > summary.squad-btn {
-    border: 1px solid #bbb; text-align: center; color: #222;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid #bbb; color: #222;
     font-weight: 600; margin-top: 4px; }
 .predict2 .add-menu[open] > summary.squad-btn { border-radius: 3px 3px 0 0;
     border-bottom-color: #eee; }
