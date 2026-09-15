@@ -376,6 +376,11 @@
                 return {
                     label: tr.cells[0].textContent,
                     course: tr.getAttribute('data-course'),
+                    /* ★ THE ID IS THE AUTHORITATIVE PART. The server
+                       re-resolves the difficulty from it against the table
+                       the pipeline rebuilds; data-difficulty below is only
+                       a fallback for a course with no fitted cell. */
+                    canonical_id: parseInt(tr.getAttribute('data-canonical'), 10) || null,
                     // null, not 0, when the course has no fitted cell: the
                     // API defaults an ABSENT difficulty to the sport's typical
                     // venue, but honours an explicit 0 as "exactly average".
@@ -566,27 +571,35 @@
         '/api/course_search?q=',
         function (c) {
             return c.distances.slice(0, 4).map(function (d) {
+                /* per-distance difficulty: course_difficulties is keyed on
+                   (canonical_id, distance_m), so a course fitted at 4.0k and
+                   5.0k has two, and showing one for both was wrong even
+                   before the stale-table bug. */
+                var dd = (d.difficulty != null ? d.difficulty : c.difficulty);
                 return '<div class="drop-item" data-name="' + esc(c.name) +
-                       '" data-diff="' + c.difficulty +
+                       '" data-diff="' + dd +
+                       '" data-cid="' + (c.canonical_id == null ? '' : c.canonical_id) +
                        '" data-dist="' + d.distance + '">' +
                        esc(c.name) +
                        ' <span class="drop-meta">' + (d.distance/1000).toFixed(2) +
                        'k · ' + d.n + ' races · diff ' +
-                       (c.difficulty!=null?c.difficulty.toFixed(3):'?') +
+                       (dd != null ? dd.toFixed(3) : '?') +
                        '</span></div>';
             }).join('');
         },
         function (item) {
             addCourseRow(item.getAttribute('data-name'),
                          parseFloat(item.getAttribute('data-diff')) || 0,
-                         parseFloat(item.getAttribute('data-dist')) || 5000);
+                         parseFloat(item.getAttribute('data-dist')) || 5000,
+                         item.getAttribute('data-cid'));
             document.getElementById('add-course').value = '';
         }
     );
 
-    function addCourseRow(name, diff, dist) {
+    function addCourseRow(name, diff, dist, cid) {
         var tr = document.createElement('tr');
         tr.setAttribute('data-course', name);
+        tr.setAttribute('data-canonical', cid == null ? '' : cid);
         tr.setAttribute('data-difficulty', diff);
         tr.setAttribute('data-distance', dist);
         tr.innerHTML =

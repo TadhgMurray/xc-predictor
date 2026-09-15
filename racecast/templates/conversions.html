@@ -195,7 +195,11 @@
                 <thead><tr><th>Course</th><th>Distance</th><th>Time</th></tr></thead>
                 <tbody id="xc-body">
                     {% for c in xc_courses %}
+                    {# canonical_id rides along so /api/convert can re-resolve
+                       the difficulty server-side instead of trusting whatever
+                       this attribute holds -- see _XC_COURSE_SQL in app.py #}
                     <tr data-course="{{ c.course_name }}"
+                        data-canonical="{{ c.canonical_id if c.canonical_id is not none else '' }}"
                         data-difficulty="{{ c.difficulty }}"
                         data-distance="{{ c.distance }}">
                         <td>{{ c.course_name }}</td>

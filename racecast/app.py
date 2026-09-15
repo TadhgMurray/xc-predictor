@@ -5990,20 +5990,67 @@ _POOLS = [
 ]
 
 
+# ★★ ONE SOURCE FOR A COURSE'S DIFFICULTY: course_difficulties (2026-09-15).
+#
+#    The conversions page used to read course_common_distance here and
+#    course_distances in /api/course_search. NOTHING IN THE REPOSITORY
+#    WRITES EITHER ONE -- grep every file type: readers only, no INSERT, no
+#    swap, no pipeline step. They hold whatever anchor was current when they
+#    were last populated, which is the pre-2026-09-10 scale where a course
+#    was measured against the average CROSS COUNTRY course rather than the
+#    average track.
+#
+#    Measured on the owner's own page (rating 137.7, normalized 5K 14:55.89,
+#    tilt 0.883): the difficulties it was using came out
+#
+#        WakeMed -0.39%   Woodward +1.89%   Holmdel +6.15%   median +1.30%
+#
+#    against a stored median XC course of +6.04%. Spread preserved, centre
+#    4.74 points low -- exactly the missing grass cost, which is why every
+#    cross country time converted FASTER than the track 5000m and Holmdel
+#    read easier than a flat oval.
+#
+#    course_difficulties is rebuilt by joint_golive every run and the owner's
+#    diag_difficulty_anchor confirms it is correct (median XC +6.041%, median
+#    TF -0.227%, gap +6.27% against XC_TRACK_GAP's +5.83%). So both readers
+#    now come here, and the two legacy tables are read by nothing.
+#
+# ! DISTINCT ON PICKS THE COURSE'S OWN COMMON DISTANCE. One row per
+#   canonical_id, the (canonical_id, distance_m) cell with the most results,
+#   which is what "common_distance" meant.
+_XC_COURSE_SQL = """
+    SELECT canonical_id, name, difficulty, distance, n_results
+    FROM (
+        SELECT DISTINCT ON (cd.canonical_id)
+               cd.canonical_id,
+               cd.distance_m  AS distance,
+               cd.difficulty,
+               cd.n_results,
+               (SELECT cc.course_name FROM course_canonical cc
+                 WHERE cc.canonical_id = cd.canonical_id
+                 ORDER BY cc.course_name LIMIT 1) AS name
+        FROM   course_difficulties cd
+        WHERE  cd.canonical_id IS NOT NULL
+          AND  cd.difficulty  IS NOT NULL
+          {where}
+        ORDER BY cd.canonical_id, cd.n_results DESC NULLS LAST
+    ) one
+    WHERE name IS NOT NULL
+      {name_where}
+    ORDER BY n_results DESC NULLS LAST
+    LIMIT %(n)s
+"""
+
+
 def _default_xc_courses(cur, n=10):
-    cur.execute("""
-        SELECT substring(course_name from 4) AS name,
-               difficulty, common_distance
-        FROM   course_common_distance
-        ORDER  BY n_results DESC
-        LIMIT  %(n)s
-    """, {"n": n})
+    cur.execute(_XC_COURSE_SQL.format(where="", name_where=""), {"n": n})
     # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a NULL
     # (no fitted cell) into a claim of averageness. Pass NULL through as None
     # so the conversion layer can tell "unrated" from "average".
     return [{"course_name": r["name"],
+             "canonical_id": r["canonical_id"],
              "difficulty": r["difficulty"],
-             "distance":   r["common_distance"] or 5000.0}
+             "distance":   r["distance"] or 5000.0}
             for r in cur.fetchall()]
 
 
@@ -6087,17 +6134,43 @@ def api_convert():
 
     # XC targets: each course, at its difficulty. XC distance defaults to 5000
     # (the standard); the course carries the difficulty + name (weather soil).
+    # ★★ THE SERVER RESOLVES THE DIFFICULTY WHEN IT CAN (2026-09-15). The
+    #    client used to supply it and this route used it as given, so a
+    #    course list built from a stale table put a stale difficulty
+    #    straight into the maths -- which is exactly how every cross
+    #    country conversion came out 4.74 points easy. A canonical_id is
+    #    re-resolved here against course_difficulties, the table the
+    #    pipeline rebuilds, and the client's number is ignored.
+    import conversions as _cv
+
+    def _xcDifficulty(c):
+        cid = c.get("canonical_id")
+        if cid is not None:
+            try:
+                exact = _cv.venue_difficulty(
+                    "XC", canonical_id=int(cid),
+                    distance_meters=float(c.get("distance") or 5000.0))
+            except Exception:                            # noqa: BLE001
+                exact = None
+            if exact is not None:
+                return exact
+        # no id, or no fitted cell at that distance: fall through to the
+        # client's value, and to resolve_difficulty's sport default if that
+        # is absent too. Never assert 0.0 -- see the note above.
+        return c.get("difficulty")
+
     xc_targets = []
     for c in body.get("xc_courses", []):
         xc_targets.append({
             "label":      c.get("label"),
             "distance":   c.get("distance", 5000.0),
             "pool":       pool,
+            "canonical_id": c.get("canonical_id"),
             # c.get("difficulty") with NO 0.0 fallback: a course with no
             # fitted cell should fall through to the sport default, not be
             # asserted average. resolve_difficulty reads absent-or-None as
             # "unspecified" and only an explicit number as a choice.
-            "difficulty": c.get("difficulty"),
+            "difficulty": _xcDifficulty(c),
             "course":     c.get("course"),         # for weather soil sensitivity
             "weather":    weather_out,
         })
@@ -6128,24 +6201,41 @@ def course_search():
         return jsonify([])
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT substring(course_name from 4) AS name,
-                       difficulty, distance, n
-                FROM   course_distances
-                WHERE  lower(course_name) LIKE %(q)s
-                ORDER  BY (SELECT SUM(n) FROM course_distances c2
-                           WHERE c2.course_name = course_distances.course_name) DESC,
-                          n DESC
-            """, {"q": "xc:%" + q + "%"})
+            # the SAME table the defaults use -- see _XC_COURSE_SQL for why
+            # the two legacy tables are gone
+            cur.execute(_XC_COURSE_SQL.format(
+                where="", name_where="AND lower(name) LIKE %(q)s"),
+                {"q": "%" + q + "%", "n": 40})
             rows = cur.fetchall()
-    # group distances under each course
-    courses = {}
-    for r in rows:
-        c = courses.setdefault(r["name"], {"name": r["name"],
-                                           "difficulty": r["difficulty"],
-                                           "distances": []})
-        c["distances"].append({"distance": r["distance"], "n": r["n"]})
-    return jsonify(list(courses.values())[:8])
+            # every fitted distance for the courses that matched, so the
+            # picker still offers 4.0k/4.8k/5.0k where a course has them
+            ids = [r["canonical_id"] for r in rows[:8]]
+            by_id = {}
+            if ids:
+                cur.execute("""
+                    SELECT canonical_id, distance_m AS distance,
+                           n_results AS n, difficulty
+                    FROM   course_difficulties
+                    WHERE  canonical_id = ANY(%(ids)s)
+                      AND  difficulty IS NOT NULL
+                    ORDER BY n_results DESC NULLS LAST
+                """, {"ids": ids})
+                for r in cur.fetchall():
+                    by_id.setdefault(r["canonical_id"], []).append(
+                        {"distance": r["distance"], "n": r["n"],
+                         "difficulty": r["difficulty"]})
+    out = []
+    for r in rows[:8]:
+        out.append({"name": r["name"],
+                    # ★ THE ID, SO THE SERVER CAN RESOLVE IT AGAIN. /api/convert
+                    #   no longer trusts the difficulty the client sends back.
+                    "canonical_id": r["canonical_id"],
+                    "difficulty": r["difficulty"],
+                    "distances": by_id.get(r["canonical_id"],
+                                           [{"distance": r["distance"],
+                                             "n": r["n_results"],
+                                             "difficulty": r["difficulty"]}])})
+    return jsonify(out)
 
 @app.route("/api/athlete_results")
 def athlete_results():
