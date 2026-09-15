@@ -1678,7 +1678,11 @@ def athlete(person_id):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             training = _athletePaces(cur, person_id)
+            # the picture (305, through accounts): the photo of the account
+            # that claims this page, or None; public, so it may be cached
+            photo = _accounts.photoFor(cur, person_id)
     athlete["person_id"] = person_id
+    athlete["photo"] = photo
 
     return render_template("athlete.html",
                            athlete=athlete,

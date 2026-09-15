@@ -48,6 +48,29 @@ and SPF records into Cloudflare DNS (grey cloud, DNS only). Add a
 DMARC record too (`_dmarc` TXT, `v=DMARC1; p=quarantine`). Without
 these the links land in spam.
 
+### What goes in XCP_MAIL_FROM
+
+`XCP_MAIL_FROM` is the From header on the mails, nothing more. It has to
+be an address at a domain Resend has verified for you, and the part
+before the @ is yours to choose: `login@racecast.co`, `hello@racecast.co`,
+whatever you like. Nothing has to exist as a mailbox, because nobody is
+expected to reply. If you want replies to reach you anyway, Cloudflare
+Email Routing (free, under the zone's Email tab) forwards any address at
+racecast.co to your own inbox.
+
+The random-looking names Resend shows are not your sender. Two things
+look that way:
+
+- Before a domain is verified, Resend only sends from
+  `onboarding@resend.dev`, and only to the address you signed up with.
+  That is the sandbox; the site's From must not be set to it.
+- The DNS records it asks you to add have generated hostnames (the DKIM
+  selector `resend._domainkey`, a `send` subdomain for bounces). Those
+  are plumbing, added once, and never appear on a mail a person reads.
+
+Domains > racecast.co > "Verified" is the state to reach; after that the
+From is whatever you put in the env.
+
 ## 3. Google sign-in
 
 1. Google Cloud console: a project, then APIs & Services > OAuth consent
@@ -97,7 +120,21 @@ XCP_ADMIN_EMAILS=you@wherever.com
 The verification queue (a coach confirming an athlete, a school-domain
 match, your own review) is the next cut and will hang off this.
 
-## 6. What the site does with a session
+## 6. The picture (305, through accounts)
+
+Settings lets a signed-in person upload one picture. It is re-encoded
+through Pillow (upright, centre-cropped square, at most 512 px, JPEG,
+every byte of metadata dropped) and written to `racecast/static/photos/`
+(gitignored; `XCP_PHOTO_DIR` to move it), under a name that carries the
+content hash, so nginx serves it from `/static/photos/` and it caches for
+a week like the rest of static. The athlete page shows the photo of the
+account that claims it (a verified claim first, else the oldest); a page
+nobody claims shows a placeholder, and the owner sees "+ photo" on their
+own page. Pages are edge-cached, so a new picture shows within about
+fifteen minutes. There is no moderation queue yet: the audit table
+records every upload, and removing an account removes its picture.
+
+## 7. What the site does with a session
 
 - The pages stay anonymous and edge-cacheable. The topbar asks `/api/me`
   (never cached) and swaps "Sign in" for the person's link; an athlete
@@ -114,7 +151,7 @@ match, your own review) is the next cut and will hang off this.
 - Deleting an account deletes its sessions and claims (cascade). Results
   are the public record and stay.
 
-## 7. Accounts are for people 13 or older
+## 8. Accounts are for people 13 or older
 
 The login form asks once; the attestation is stored on the account
 (`age_ok`). Middle-school athletes are in the data but cannot hold an

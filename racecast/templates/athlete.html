@@ -271,7 +271,14 @@
     {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
        at the right end of the name row, the one place a header action lives
        on every profile page people know #}
-    <div class="hdr-row">
+    <div class="hdr-row ath-hdr" data-has-photo="{{ '1' if athlete.photo else '' }}">
+      {# the picture (305): the photo of the account that claims this page,
+         else a placeholder the owner is invited to fill (topbar-search.js
+         adds the invitation when /api/me says the page is theirs) #}
+      <div class="ath-avatar{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar">
+        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="72" height="72">
+        {% else %}<svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}
+      </div>
       <h1>{{ athlete.name }}</h1>
       <button type="button" class="share-box share-btn" data-share-title="{{ athlete.name }} on Racecast"
               data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"

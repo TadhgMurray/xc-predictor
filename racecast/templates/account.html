@@ -1,12 +1,13 @@
-{# account.html -- your account (283): the role you picked, the athletes
-   you are, the teams you coach, and the exits. Every change is a POST
-   with the session's CSRF token; the pickers are the site's own typeahead. #}
+{# account.html -- settings (283): your picture and name, who you are, the
+   athlete pages you are, the teams you coach, and the exits. Every change
+   is a POST with the session's CSRF token; the pickers are the site's own
+   typeahead. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{% set meta_title = "Your account" %}
+{% set meta_title = "Settings" %}
 {% include "_meta.html" %}
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
@@ -15,23 +16,51 @@
 <body>
 {% include "_topbar.html" %}
 <main class="page account-page" data-role="{{ account.role }}">
-  <h1>Your account</h1>
-  <p class="meta">{{ account.email }}{% if account.name %} · {{ account.name }}{% endif %}{% if account.google_sub %} · Google{% endif %}{% if admin %} · admin{% endif %}</p>
+  <h1>Settings</h1>
+  <p class="meta">{{ account.email }}{% if account.google_sub %} · signed in with Google{% endif %}{% if admin %} · admin{% endif %}</p>
   {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
   {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
-
-  <h2>I am</h2>
-  <form method="post" action="/account/role" class="acct-roles">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    {% for r, word in [("athlete", "an athlete"), ("coach", "a coach"), ("neither", "neither, just looking")] %}
-    <label class="acct-role {{ 'is-on' if account.role == r }}"><input type="radio" name="role" value="{{ r }}" {{ 'checked' if account.role == r }} onchange="this.form.submit()"> {{ word }}</label>
-    {% endfor %}
-    <noscript><button type="submit" class="go">Save</button></noscript>
-  </form>
 
   {% set athletes = claims|selectattr("kind", "equalto", "athlete")|list %}
   {% set selves = claims|selectattr("kind", "equalto", "coach_self")|list %}
   {% set teams = claims|selectattr("kind", "equalto", "coach_team")|list %}
+
+  <section class="acct-block acct-profile" id="photo">
+    <div class="acct-photo-row">
+      <form method="post" action="/account/photo" enctype="multipart/form-data" class="acct-photo" id="acct-photo-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="acct-avatar{% if not photo %} acct-avatar-empty{% endif %}" for="acct-photo-file" title="{{ 'Change your picture' if photo else 'Add a picture' }}">
+          {% if photo %}<img src="{{ photo.url }}" alt="" width="96" height="96">
+          {% else %}<svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}
+          <span class="acct-avatar-cta">{{ "Change" if photo else "Add photo" }}</span>
+        </label>
+        <input id="acct-photo-file" type="file" name="photo" accept="image/*" hidden>
+      </form>
+      <div class="acct-profile-fields">
+        <h2>Your picture and name</h2>
+        <p class="meta">The picture shows on every athlete page you link below, square, {{ 512 }} pixels; we strip everything else out of the file. JPEG, PNG or WebP up to 8 MB.</p>
+        {% if photo %}
+        <form method="post" action="/account/photo" class="acct-inline-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="remove" value="1"><button type="submit" class="acct-x">Remove picture</button></form>
+        {% endif %}
+        <form method="post" action="/account/name" class="acct-row">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="text" name="name" value="{{ account.name or '' }}" maxlength="{{ name_max }}" placeholder="Display name" autocomplete="name">
+          <button type="submit" class="go quiet">Save name</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="acct-block">
+    <h2>I am</h2>
+    <form method="post" action="/account/role" class="acct-roles">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for r, word in [("athlete", "an athlete"), ("coach", "a coach"), ("neither", "neither, just looking")] %}
+      <label class="acct-role {{ 'is-on' if account.role == r }}"><input type="radio" name="role" value="{{ r }}" {{ 'checked' if account.role == r }} onchange="this.form.submit()"> {{ word }}</label>
+      {% endfor %}
+      <noscript><button type="submit" class="go">Save</button></noscript>
+    </form>
+  </section>
 
   <section class="acct-block acct-athlete">
     <h2>Your athlete page{{ "s" if athletes|length > 1 }}</h2>
@@ -113,7 +142,7 @@
       <form method="post" action="/account/logout-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="go quiet">Sign out everywhere</button></form>
     </div>
     <h2>Delete this account</h2>
-    <p class="meta">Removes the account, its sessions and its links. Results on the site are the public record and stay.</p>
+    <p class="meta">Removes the account, its picture, its sessions and its links. Results on the site are the public record and stay.</p>
     <form method="post" action="/account/delete" class="acct-row">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="text" name="confirm" placeholder="type DELETE" size="12" autocomplete="off">

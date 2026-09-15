@@ -73,6 +73,18 @@ CLAIM_KINDS = ("athlete", "coach_team", "coach_self")
 LEVELS = ("hs", "college", "ms", "club")
 LEVEL_WORDS = {"hs": "High school", "college": "College", "ms": "Middle school", "club": "Club"}
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# ★ THE PHOTO (305, owner: "get athlete images"). One picture per account,
+#   shown on every athlete page the account claims. Re-encoded through
+#   Pillow to a square JPEG: the upload's metadata (EXIF, GPS, the camera)
+#   never reaches the disk. Served by nginx from static/photos (gitignored)
+#   under a name that carries the content hash, so a new picture is a new
+#   URL and the old one can be cached for a year like the crests.
+PHOTO_DIR = os.environ.get("XCP_PHOTO_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "static", "photos")
+PHOTO_URL = "/static/photos/"
+PHOTO_SIZE = 512
+MAX_PHOTO_BYTES = 8 * 1024 * 1024
+NAME_MAX = 60
 
 DDL = """
 CREATE TABLE IF NOT EXISTS account (
@@ -127,6 +139,14 @@ CREATE TABLE IF NOT EXISTS account_claim (
 CREATE UNIQUE INDEX IF NOT EXISTS account_claim_unique ON account_claim
     (account_id, kind, coalesce(person_id, 0), coalesce(school, ''), coalesce(state, ''), coalesce(level, ''));
 CREATE INDEX IF NOT EXISTS account_claim_person_idx ON account_claim (person_id);
+CREATE TABLE IF NOT EXISTS account_photo (
+    account_id bigint PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
+    file       text NOT NULL,
+    width      integer NOT NULL,
+    height     integer NOT NULL,
+    bytes      integer NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS auth_event (
     id         bigserial PRIMARY KEY,
     at         timestamptz NOT NULL DEFAULT now(),
@@ -555,6 +575,113 @@ def turnstileOk(token):
         return False
 
 
+# ---- the photo -----------------------------------------------------------
+
+def processPhoto(data):
+    """An upload's bytes -> (jpeg bytes, width, height): opened by Pillow,
+    turned upright by its own orientation tag, centre-cropped square,
+    shrunk to PHOTO_SIZE, written fresh (no metadata survives). Raises
+    AccountsError with a message for the person."""
+    if not data:
+        raise AccountsError("Choose a picture first.")
+    if len(data) > MAX_PHOTO_BYTES:
+        raise AccountsError("That picture is over 8 MB. Try a smaller one.")
+    import io as _io
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        raise AccountsError("Pictures are not enabled on this server (Pillow is missing).")
+    try:
+        img = Image.open(_io.BytesIO(data))
+        img.load()
+        img = ImageOps.exif_transpose(img)
+    except Exception:                                   # noqa: BLE001
+        raise AccountsError("That file is not a picture we can read (JPEG, PNG, WebP or HEIC-free HEIF).")
+    if img.width < 64 or img.height < 64:
+        raise AccountsError("That picture is too small; 64 pixels each way at least.")
+    img = img.convert("RGB")
+    side = min(img.width, img.height)
+    left, top = (img.width - side) // 2, (img.height - side) // 2
+    img = img.crop((left, top, left + side, top + side))
+    if side > PHOTO_SIZE:
+        img = img.resize((PHOTO_SIZE, PHOTO_SIZE), Image.LANCZOS)
+    out = _io.BytesIO()
+    img.save(out, "JPEG", quality=86, optimize=True, progressive=True)
+    return out.getvalue(), img.width, img.height
+
+
+def photoUrl(file):
+    return PHOTO_URL + file if file else None
+
+
+def savePhoto(cur, account_id, data):
+    """Process and store the picture; the row points at the new file, the
+    old file goes. Returns the file name."""
+    jpeg, w, h = processPhoto(data)
+    name = f"{int(account_id)}-{hashlib.sha256(jpeg).hexdigest()[:12]}.jpg"
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    with open(os.path.join(PHOTO_DIR, name), "wb") as fh:
+        fh.write(jpeg)
+    cur.execute("SELECT file FROM account_photo WHERE account_id = %s", (account_id,))
+    old = _one(cur)
+    cur.execute("""INSERT INTO account_photo (account_id, file, width, height, bytes, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, now())
+                   ON CONFLICT (account_id) DO UPDATE SET file = EXCLUDED.file, width = EXCLUDED.width,
+                       height = EXCLUDED.height, bytes = EXCLUDED.bytes, updated_at = now()""",
+                (account_id, name, w, h, len(jpeg)))
+    if old and old["file"] != name:
+        _unlink(old["file"])
+    logEvent(cur, "photo", account_id, detail={"bytes": len(jpeg)})
+    return name
+
+
+def removePhoto(cur, account_id):
+    cur.execute("DELETE FROM account_photo WHERE account_id = %s RETURNING file", (account_id,))
+    row = _one(cur)
+    if row:
+        _unlink(row["file"])
+        logEvent(cur, "photo_removed", account_id)
+    return bool(row)
+
+
+def _unlink(file):
+    try:
+        os.unlink(os.path.join(PHOTO_DIR, os.path.basename(file)))
+    except OSError:
+        pass
+
+
+def accountPhoto(cur, account_id):
+    """The account's picture as {url, width, height} or None."""
+    cur.execute("SELECT file, width, height FROM account_photo WHERE account_id = %s", (account_id,))
+    row = _one(cur)
+    return {"url": photoUrl(row["file"]), "width": row["width"], "height": row["height"]} if row else None
+
+
+def photoFor(cur, person_id):
+    """The picture on an athlete's page: the photo of the account that
+    claims the person (a verified claim first, else the oldest). None when
+    nobody has, or the tables are not there. Public data: the page is
+    cached and this is what everyone sees."""
+    try:
+        cur.execute("""SELECT p.file
+                       FROM   account_claim c
+                       JOIN   account_photo p ON p.account_id = c.account_id
+                       JOIN   account a ON a.id = c.account_id AND a.deleted_at IS NULL
+                       WHERE  c.person_id = %s AND c.kind IN ('athlete', 'coach_self')
+                       ORDER  BY (c.status = 'verified') DESC, c.created_at
+                       LIMIT  1""", (person_id,))
+        row = _one(cur)
+    except Exception as exc:                            # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                               # noqa: BLE001
+            pass
+        print(f"[accounts] photoFor({person_id}) failed ({type(exc).__name__}: {exc})", flush=True)
+        return None
+    return photoUrl(row["file"]) if row else None
+
+
 # ---- routes ------------------------------------------------------------
 
 def _loginPage(mode="form", **kw):
@@ -674,8 +801,10 @@ def account_page():
         return go
     with _db() as (conn, cur):
         claims = claimsFor(cur, sess["account"]["id"])
+        photo = accountPhoto(cur, sess["account"]["id"])
         conn.commit()
     return render_template("account.html", account=sess["account"], csrf=sess["csrf"], claims=claims,
+                           photo=photo, name_max=NAME_MAX,
                            roles=ROLES, levels=[(k, LEVEL_WORDS[k]) for k in LEVELS],
                            admin=isAdmin(sess["account"]), google=googleEnabled(),
                            notice=request.args.get("notice", "")[:200],
@@ -707,6 +836,47 @@ def account_role():
         conn.commit()
     return _back(notice=f"You are set up as {'an' if role == 'athlete' else 'a' if role == 'coach' else ''} "
                         f"{role if role != 'neither' else 'visitor'}.".replace("  ", " "))
+
+
+@bp.route("/account/name", methods=["POST"])
+def account_name():
+    sess, go = _requireSession()
+    if go:
+        return go
+    if not csrfOk(sess):
+        return _back(error="That request did not come from this site."), 400
+    name = " ".join((request.form.get("name") or "").split())[:NAME_MAX]
+    with _db() as (conn, cur):
+        cur.execute("UPDATE account SET name = %s WHERE id = %s", (name or None, sess["account"]["id"]))
+        logEvent(cur, "name", sess["account"]["id"])
+        conn.commit()
+    return _back(notice="Name saved." if name else "Name cleared.")
+
+
+@bp.route("/account/photo", methods=["POST"])
+def account_photo():
+    """Upload (multipart 'photo') or remove ('remove'=1) the account's
+    picture. The file is read up to the cap plus one byte, so an oversized
+    upload is refused without being held in memory whole."""
+    sess, go = _requireSession()
+    if go:
+        return go
+    if not csrfOk(sess):
+        return _back(error="That request did not come from this site."), 400
+    with _db() as (conn, cur):
+        if request.form.get("remove"):
+            removePhoto(cur, sess["account"]["id"])
+            conn.commit()
+            return _back(notice="Picture removed.")
+        f = request.files.get("photo")
+        data = f.read(MAX_PHOTO_BYTES + 1) if f else b""
+        try:
+            savePhoto(cur, sess["account"]["id"], data)
+        except AccountsError as exc:
+            conn.rollback()
+            return _back(error=str(exc)), 400
+        conn.commit()
+    return _back(notice="Picture saved. It shows on your athlete pages within a few minutes.")
 
 
 @bp.route("/account/claim", methods=["POST"])
@@ -791,15 +961,18 @@ def api_me():
     if not sess:
         return jsonify({"signed_in": False})
     a = sess["account"]
+    photo = None
     try:
         with _db() as (conn, cur):
             claims = claimsFor(cur, a["id"])
+            photo = accountPhoto(cur, a["id"])
             conn.commit()
     except Exception as exc:                            # noqa: BLE001
         print(f"[accounts] claims failed ({type(exc).__name__}: {exc})", flush=True)
         claims = []
     return jsonify({
         "signed_in": True, "email": a["email"], "name": a.get("name") or "",
+        "photo": photo["url"] if photo else None,
         "label": a.get("name") or a["email"].split("@", 1)[0],
         "role": a.get("role") or "neither", "admin": isAdmin(a),
         "athletes": [{"person_id": c["person_id"], "name": c.get("name") or "", "status": c["status"]}

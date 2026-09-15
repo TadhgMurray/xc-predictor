@@ -144,3 +144,43 @@ def test_the_wiring():
                   '@bp.route("/account")', '@bp.route("/account/claim", methods=["POST"])',
                   '@bp.route("/account/delete", methods=["POST"])', '@bp.route("/api/me")'):
         assert route in read("racecast", "accounts.py"), route
+
+
+def test_the_picture_is_re_encoded_square_and_stripped(tmp_path):
+    PIL = pytest.importorskip("PIL")
+    from PIL import Image
+    import io as _io
+    buf = _io.BytesIO()
+    img = Image.new("RGB", (900, 600), (10, 120, 200))
+    img.save(buf, "JPEG", exif=Image.Exif() if hasattr(Image, "Exif") else b"")
+    jpeg, w, h = AC.processPhoto(buf.getvalue())
+    assert (w, h) == (AC.PHOTO_SIZE, AC.PHOTO_SIZE)          # square, shrunk to the cap
+    out = Image.open(_io.BytesIO(jpeg))
+    assert out.format == "JPEG" and out.size == (512, 512) and not out.getexif()
+    small = _io.BytesIO(); Image.new("RGB", (300, 200)).save(small, "PNG")
+    assert AC.processPhoto(small.getvalue())[1:] == (200, 200)   # under the cap: cropped, not enlarged
+    tiny = _io.BytesIO(); Image.new("RGB", (40, 40)).save(tiny, "PNG")
+    with pytest.raises(AC.AccountsError):
+        AC.processPhoto(tiny.getvalue())
+    with pytest.raises(AC.AccountsError):
+        AC.processPhoto(b"not an image at all")
+    with pytest.raises(AC.AccountsError):
+        AC.processPhoto(b"")
+    with pytest.raises(AC.AccountsError):
+        AC.processPhoto(b"x" * (AC.MAX_PHOTO_BYTES + 1))
+    assert AC.photoUrl("1-abc.jpg") == "/static/photos/1-abc.jpg" and AC.photoUrl(None) is None
+
+
+def test_the_picture_is_wired():
+    src = read("racecast", "accounts.py")
+    assert "CREATE TABLE IF NOT EXISTS account_photo (" in AC.DDL
+    for route in ('@bp.route("/account/photo", methods=["POST"])', '@bp.route("/account/name", methods=["POST"])'):
+        assert route in src, route
+    assert 'f.read(MAX_PHOTO_BYTES + 1)' in src            # never the whole upload into memory
+    assert "photo = _accounts.photoFor(cur, person_id)" in read("racecast", "app.py")
+    ath = read("racecast", "templates", "athlete.html")
+    assert 'id="ath-avatar"' in ath and "ath-avatar-empty" in ath and "{{ athlete.photo }}" in ath
+    assert "ath-avatar-add" in read("racecast", "static", "topbar-search.js")
+    acct = read("racecast", "templates", "account.html")
+    assert 'enctype="multipart/form-data"' in acct and 'action="/account/name"' in acct and "<h1>Settings</h1>" in acct
+    assert "racecast/static/photos/" in read(".gitignore")

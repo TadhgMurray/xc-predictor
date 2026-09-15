@@ -54,3 +54,10 @@
     document.addEventListener("click", (e) => { if (!form.contains(e.target)) list.hidden = true; });
   });
 })();
+
+/* the picture (305): choosing a file submits it; nothing else to click */
+(function () {
+  const input = document.getElementById("acct-photo-file"), form = document.getElementById("acct-photo-form");
+  if (!input || !form) return;
+  input.addEventListener("change", () => { if (input.files && input.files.length) form.submit(); });
+})();

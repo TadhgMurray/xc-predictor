@@ -4733,3 +4733,22 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .account-page .r-combo-item .sr-sub { color: var(--muted); font-size: 0.8rem; margin-left: 0.4rem; }
 .account-page .acct-row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin: 0.4rem 0; }
 .account-page .acct-notice { color: #146c2e; }
+
+/* the account picture (305): on the settings page and the athlete header */
+.account-page .acct-photo-row { display: flex; gap: 1.25rem; align-items: flex-start; flex-wrap: wrap; }
+.account-page .acct-profile-fields { flex: 1 1 18rem; }
+.account-page .acct-avatar { position: relative; display: flex; align-items: center; justify-content: center; width: 96px; height: 96px;
+  border-radius: 50%; overflow: hidden; background: #e5e7eb; color: #9ca3af; cursor: pointer; flex: none; }
+.account-page .acct-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.account-page .acct-avatar-cta { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.2rem 0; text-align: center;
+  font-size: 0.68rem; font-weight: 700; color: #fff; background: rgba(17,20,24,0.72); }
+.account-page .acct-inline-form { display: inline; }
+.ath-hdr { gap: 0.9rem; }
+.ath-hdr h1 { display: flex; align-items: center; }
+.ath-avatar { width: 72px; height: 72px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
+  justify-content: center; background: #e5e7eb; color: #9ca3af; }
+.ath-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ath-avatar-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;
+  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.3rem; line-height: 1; background: #eef3f9; }
+.ath-avatar-add span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.15rem; }
+@media (max-width: 600px) { .ath-avatar { width: 52px; height: 52px; } .ath-avatar svg { width: 28px; height: 28px; } }

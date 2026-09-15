@@ -1019,3 +1019,10 @@ verification yet. Built on `claude/nice-rubin-tj0kev` and on master.
 - **Next:** what a claim opens (a coach's roster tools, an athlete's
   fields and contact), verification, then the coaches' recruiting
   pages.
+- **Later the same day:** the sign-in page became its own shell (the dark
+  ground, the wordmark, one card); the recruiting page was redone as
+  "you, then the schools" after screenshots in a real browser; `/account`
+  is Settings with a display name and the account picture, which the
+  athlete page shows in its header (`docs/ACCOUNTS.md` section 6; the
+  files live in `racecast/static/photos/`, gitignored). Mail: Resend,
+  and what `XCP_MAIL_FROM` means, in section 2 of the same doc.

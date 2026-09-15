@@ -117,6 +117,9 @@
    cached) and swaps the topbar link, marks an athlete page that is yours,
    and hands the answer to any page script listening (xcp:me). */
 (function () {
+  /* ! AFTER THE DOM, LIKE init() ABOVE: this file is loaded before <body>,
+       so the slot does not exist yet when the script runs. */
+  function whoami() {
     var slot = document.getElementById('topbar-account');
     if (!slot) return;
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -129,9 +132,16 @@
                 var mine = document.querySelector('[data-person-id]');
                 if (mine && (me.athletes || []).some(function (a) { return String(a.person_id) === mine.dataset.personId; })) {
                     mine.insertAdjacentHTML('beforeend', ' · <a href="/account" class="is-account">Your page</a>');
+                    var av = document.getElementById('ath-avatar');
+                    if (av && av.classList.contains('ath-avatar-empty') && !me.photo) {
+                        av.innerHTML = '<a href="/account#photo" class="ath-avatar-add" title="Add your picture">+<span>photo</span></a>';
+                    }
                 }
             }
             document.dispatchEvent(new CustomEvent('xcp:me', { detail: window.xcpMe }));
         })
         .catch(function () { window.xcpMe = { signed_in: false }; });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', whoami);
+  else whoami();
 })();
