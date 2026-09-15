@@ -128,13 +128,19 @@
         .then(function (me) {
             window.xcpMe = me || { signed_in: false };
             if (me && me.signed_in) {
-                slot.innerHTML = '<a href="/account" class="is-account" title="' + esc(me.email) + '">' + esc(me.label) + '</a>';
+                /* the picture, or the first letter of the name, as a round
+                   button: it reads as "you", not as one more menu item */
+                var initial = (me.label || '?').trim().charAt(0).toUpperCase();
+                slot.innerHTML = '<a href="/account" class="tb-me' + (me.photo ? ' has-photo' : '') + '" title="' +
+                    esc(me.label) + ' · settings">' +
+                    (me.photo ? '<img src="' + esc(me.photo) + '" alt="" width="34" height="34">' : esc(initial)) + '</a>';
                 var mine = document.querySelector('[data-person-id]');
                 if (mine && (me.athletes || []).some(function (a) { return String(a.person_id) === mine.dataset.personId; })) {
                     mine.insertAdjacentHTML('beforeend', ' · <a href="/account" class="is-account">Your page</a>');
                     var av = document.getElementById('ath-avatar');
                     if (av && av.classList.contains('ath-avatar-empty') && !me.photo) {
                         av.innerHTML = '<a href="/account#photo" class="ath-avatar-add" title="Add your picture">+<span>photo</span></a>';
+                        av.hidden = false;
                     }
                 }
             }

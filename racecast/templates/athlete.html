@@ -271,15 +271,21 @@
     {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
        at the right end of the name row, the one place a header action lives
        on every profile page people know #}
-    <div class="hdr-row ath-hdr" data-has-photo="{{ '1' if athlete.photo else '' }}">
-      {# the picture (305): the photo of the account that claims this page,
-         else a placeholder the owner is invited to fill (topbar-search.js
-         adds the invitation when /api/me says the page is theirs) #}
-      <div class="ath-avatar{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar">
-        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="72" height="72">
-        {% else %}<svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}
+    {# the header (305): the picture of the account that claims this page
+       beside the name and the meta line, Share at the right; the numbers
+       keep the full width underneath. With no picture the slot is hidden
+       for everyone but the owner, who gets "+ photo" (topbar-search.js,
+       when /api/me says the page is theirs). #}
+    <div class="ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
+      <div class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>
+        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="88" height="88">{% endif %}
       </div>
-      <h1>{{ athlete.name }}</h1>
+      <div class="ath-head-body">
+        <h1>{{ athlete.name }}</h1>
+        <p class="meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="{{ school_href(athlete.school, athlete.header_state, pool=athlete.header_pool) }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.header_pool and (athlete.header_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a>{% endif %}</p>
+      </div>
+      {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
+         at the right end of the name row #}
       <button type="button" class="share-box share-btn" data-share-title="{{ athlete.name }} on Racecast"
               data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
               title="Share this page; the preview is the athlete's card">
@@ -287,7 +293,6 @@
         <span>Share</span>
       </button>
     </div>
-    <p class="meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="{{ school_href(athlete.school, athlete.header_state, pool=athlete.header_pool) }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.header_pool and (athlete.header_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a>{% endif %}</p>
 
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the

@@ -253,3 +253,4 @@ racecast/static/sitemaps/
 static/cards/
 # account pictures (283/305): uploaded on the server, never in git
 racecast/static/photos/
+racecast/static/mock/
