@@ -250,17 +250,31 @@ def sport_gain(pool, sport, rating):
     """The log-time shift the engine applied to a track row at this
     rating (0 for XC, or without the table).
 
-    ! OFF UNLESS ASKED FOR (issue 306, 2026-09-08). The stored track
-      ratings do not carry the band shift the sport_gain table records:
-      across 300 random 2025 hs_m track rows the stored rating sat
-      3 percent above what the raw time gives through venue, distance
-      and shift at the top bands, which is the shift to within a point.
-      Adding it here turned a stored 9:01 into a 9:28 at its own
-      distance. Until the go-live and the table agree, conversions run
-      on the ratings as stored; XCP_CONVERT_SPORT_GAIN=1 puts it back."""
+    ★ THE TABLE'S OWN EMPTINESS IS THE SWITCH (2026-09-15, owner: "when we
+      changed tf to get a sports gain it made the conversions too fast").
+      joint_golive writes sport_gain IF AND ONLY IF it shifted the rows:
+      both happen inside one `if gains_mat is not None:` block, from the
+      same `shift` array, and writeSportGain([]) DELETEs the table when no
+      shift was applied. So a non-empty table means the stored track
+      ratings carry that shift, and conversions must carry it too or the
+      two are on different scales for track -- which is exactly the bug
+      above. An environment variable cannot know that; the table does.
+
+    ! HISTORY, SO NOBODY RE-FLIPS THIS BLIND (issue 306, 2026-09-08). This
+      used to be off unless XCP_CONVERT_SPORT_GAIN=1, because across 300
+      random 2025 hs_m track rows the stored rating sat 3 percent above
+      what the raw time gave through venue, distance and shift, and adding
+      the shift here turned a stored 9:01 into a 9:28. That was a run whose
+      rows did NOT carry the shift its table claimed. Gating on the table
+      rather than on an env var fixes both cases at once, and
+      XCP_CONVERT_SPORT_GAIN=0 still forces it off.
+
+    ⚠ MEASURE BEFORE TRUSTING EITHER SETTING. scripts/diag_conversion_gain.py
+      round-trips real stored rows both ways and prints which is closer; it
+      is the check issue 306 did by hand, and it takes a minute."""
     if not pool or (sport or "").upper() != "TF":
         return 0.0
-    if os.environ.get("XCP_CONVERT_SPORT_GAIN") != "1":
+    if os.environ.get("XCP_CONVERT_SPORT_GAIN") == "0":
         return 0.0
     with _offset_lock:
         if time.time() - _gain["at"] > _OFFSET_TTL:

@@ -1225,3 +1225,63 @@ predict_check, 1-sigma band at 68% coverage, `ctx_mean` 24 long and
   22 and is 23. The width was right, so no shape check anywhere would have
   caught it -- the clamp would simply have been rewriting the grade flag,
   silently, forever.
+
+## 14. 2026-09-15: THE CONVERSIONS RAN FAST AFTER THE TF SPORT GAIN
+
+Owner: "the conversions messed up again. When we changed tf to get a
+sports gain it made the conversions too fast."
+
+**The mechanism.** Run 24 passes `--sport-level-pools`, so `joint_golive`
+takes the `gain_levels` path, builds `gains_mat`, and adds the per-band
+shift into every TRACK row's applied effect:
+
+```
+    eff = eff + where(sport == 1, sportGainRow(rating, pool, shift), 0)
+    adjusted = norm / exp(eff)          # so the stored rating carries it
+```
+
+`results_tf.speed_rating` is written from that, and `build_ranking_results`
+reads `r.speed_rating` rather than recomputing -- so the shift is in every
+stored track rating. The same block writes the shift to `sport_gain`.
+
+`conversions.sport_gain()` then returned 0.0 unless
+`XCP_CONVERT_SPORT_GAIN=1` was set, so the page inverted on the UNSHIFTED
+scale: the engine and the page were a whole `log_shift` apart for track,
+and the page read fast.
+
+**Why it hid.** `venueEffect` is on BOTH legs of a conversion, so a
+track-to-track conversion cancels the error exactly and the round trip
+still closes. Every conversion test passes with the bug present. It only
+shows against the engine's own stored number.
+
+**The fix: the table's emptiness is the switch, not an env var.**
+`joint_golive` writes `sport_gain` if and only if it shifted the rows --
+both are inside one `if gains_mat is not None:` block, from the same
+`shift` array, and `writeSportGain([])` DELETEs the table when no shift
+was applied. So a non-empty table already means "the stored ratings carry
+this shift". An environment variable cannot know that; the table does.
+`XCP_CONVERT_SPORT_GAIN=0` still forces it off.
+
+⚠ **Issue 306 was the same disagreement pointing the other way** (2026-09-08:
+300 hs_m rows sat 3% above what the raw time gave, and applying the shift
+turned a 9:01 into a 9:28). That was a run whose rows did NOT carry the
+shift its table claimed. Gating on the table covers both cases; gating on
+an env var covered neither reliably, which is why this recurred.
+
+**Measure it, do not trust the reasoning.** `scripts/diag_conversion_gain.py`
+samples real rated track rows, asks the conversions code what time each
+stored rating is worth at that row's own distance (so the distance curve
+cancels), and compares with the time actually run -- both with the gain
+and without, reporting which is closer:
+
+```
+    /srv/venv/bin/python scripts/diag_conversion_gain.py --n 600 --pool hs_m --year 2025
+```
+
+If it says "without" is closer while `sport_gain` is non-empty, the run
+wrote a table whose shift its own rows do not carry -- an engine bug, not
+a page bug, and the 306 state.
+
+`tests/test_sport_gain.py::test_conversions_apply_the_same_shift` passes
+again; it had been failing since the env gate went in, asserting the
+behaviour the page is supposed to have.

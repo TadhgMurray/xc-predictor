@@ -29,20 +29,38 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _d in ("model", "scripts", "engine", "racecast"):
     sys.path.insert(0, os.path.join(ROOT, _d))
 
-if "corrections" not in sys.modules:
-    _c = types.ModuleType("corrections")
-    _c.distanceOverrideSQL = lambda *a, **k: ("", "")
-    sys.modules["corrections"] = _c
-if "database" not in sys.modules:
-    _db = types.ModuleType("database")
+# ⚠ THE SUPERSET, AND FILLED IN RATHER THAN CLAIMED. Other tests stub
+#   `corrections` too (tests/test_distance_curve_floor.py) and each guards
+#   on "not in sys.modules" -- so whichever pytest collects FIRST decides
+#   what the module has, and a stub carrying only the names its own test
+#   needs breaks the others. This one provides every name anything in the
+#   repo imports from it, and adds only what is missing.
+_c = sys.modules.get("corrections") or types.ModuleType("corrections")
+for _name, _fn in (("distanceOverrideSQL", lambda *a, **k: ("", "")),
+                   ("distanceDropSQL", lambda *a, **k: "")):
+    if not hasattr(_c, _name):
+        setattr(_c, _name, _fn)
+for _name in ("_DISTANCE_OVERRIDES_BY_SPORT", "_RESULT_DROP_BY_SPORT",
+              "_DISTANCE_DROP_BY_SPORT", "_DISTANCE_OVERRIDES_XC"):
+    if not hasattr(_c, _name):
+        setattr(_c, _name, {})
+sys.modules["corrections"] = _c
+@contextlib.contextmanager
+def _noConn():
+    yield None
 
-    @contextlib.contextmanager
-    def _noConn():
-        yield None
-    _db.getConn = _noConn
-    _db.initPool = lambda *a, **k: None
-    _db.closePool = lambda *a, **k: None
-    sys.modules["database"] = _db
+
+# ⚠ FILL IN A STUB SOMEONE ELSE LEFT, rather than assuming this test ran
+#   first. tests/test_accounts.py installs its own `database` stub with
+#   getConn and initPool but no closePool; whichever of the two pytest
+#   collects first wins, and feature_extraction imports all three -- so a
+#   bare "if not in sys.modules" passed alone and failed in the suite.
+_db = sys.modules.get("database") or types.ModuleType("database")
+for _name, _fn in (("getConn", _noConn), ("initPool", lambda *a, **k: None),
+                   ("closePool", lambda *a, **k: None)):
+    if not hasattr(_db, _name):
+        setattr(_db, _name, _fn)
+sys.modules["database"] = _db
 
 pytest.importorskip("torch")
 pytest.importorskip("sklearn")
