@@ -146,27 +146,24 @@
       <div class="combo" data-field="state"></div>
     </div>
 
-    {# ★ RETURNING TEAMS (owner, 2026-09-08). Drop the grades that are
-         leaving and the board is next year's squad. Teams-only: on an
-         athlete board "remove the seniors" is just the Grade filter
-         inverted, and the two side by side would be one control too many.
+    {# ★ ONE GRADE CONTROL, BOTH JOBS (owner, 2026-09-15: "grade and
+         graduating should be the same ... You should be able to press for
+         example all freshman teams"). On the athlete boards it filters
+         athletes. On TEAMS it BUILDS the squad: tick 9 and the board is
+         every school's freshman team, and "next year's squad" is the same
+         control with the seniors left unticked.
 
-         ⚠ IT NEEDS A YEAR and the API says so -- an all-time board with
-           the seniors removed is a field of squads from thirty seasons,
-           which would look like a working answer. #}
-    <div class="field teams-only">
-      {# ! NAMED FOR WHAT IT DOES TO THE BOARD (owner, 2026-09-10:
-           "Leaving (returning teams) is just like the worst possible way
-           to describe that filter"). It read as though it FILTERED TO the
-           leavers; it removes them. The grade you pick is the one that
-           graduates, and what is left is next year's squad. #}
-      <label for="exclude_grade-input">Graduating (removed)</label>
-      <div class="combo" data-field="exclude_grade"></div>
-    </div>
+         This replaced a second, teams-only "Graduating (removed)" combo
+         that said the second half only and said it backwards. The API
+         still accepts exclude_grade for links already sent.
 
+         ! IT NEEDS ONE SEASON, and now it picks one instead of refusing:
+           teams.parseFilters fills the current season and the board says
+           which one it used. #}
     <div class="field not-courses">
       <label for="grade-input">Grade</label>
       <div class="combo" data-field="grade"></div>
+      <span class="field-note teams-only">the squad is built from these grades</span>
     </div>
 
     <div class="field not-courses year-field">

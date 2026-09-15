@@ -6384,7 +6384,21 @@ def api_teams():
     per-state offset lands on all five scorers at once and pushes them the
     same way, instead of being one athlete's error.
     """
-    f, err = parseTeamFilters(request.args)
+    # ★ THE SEASON A GRADE OR EVENT FILTER FALLS BACK TO. Those boards are
+    #   raced live and need exactly one year; rather than refusing a reader
+    #   who cannot express that in the control, parseFilters fills it from
+    #   here and flags that it did.
+    _sport = (request.args.get("sport") or "XC").strip().upper()
+    _def_year = None
+    try:
+        with getConn() as _yc:
+            with _yc.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as _ycur:
+                _def_year = (_seasonYears(_ycur) or {}).get(_sport)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"teams: season year lookup failed ({type(exc).__name__}: {exc})",
+              flush=True)
+
+    f, err = parseTeamFilters(request.args, default_year=_def_year)
     if err:
         return jsonify({"error": err}), 400
 

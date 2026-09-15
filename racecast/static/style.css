@@ -4914,3 +4914,16 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 @media (max-width: 600px) {
     .coach-home .coach-grid { grid-template-columns: 1fr; }
 }
+
+/* The one-line hint under a filter that behaves differently per board --
+   the Grade combo SELECTS on the athlete boards and BUILDS THE SQUAD on
+   teams, and that is not guessable from the label. .teams-only is already
+   shown/hidden by the board switch, so this inherits that for free. */
+/* ! NO display HERE. .teams-only already sets none/flex by board and wins
+     on specificity; declaring one would be dead weight that reads as live. */
+.rankings .field-note {
+    margin-top: 0.25rem;
+    font-size: 0.78rem;
+    color: #6b7280;
+    line-height: 1.3;
+}

@@ -107,7 +107,7 @@ _SORTS = {
 TEAM_SPORTS = {"XC", "TF"}
 
 
-def parseFilters(args):
+def parseFilters(args, default_year=None):
     """request.args -> (filters, error or None). Same contract as rankings."""
     sport = args.get("sport", "XC")
     if sport not in TEAM_SPORTS:
@@ -182,20 +182,38 @@ def parseFilters(args):
     if (f["dist_min"] is not None and f["dist_max"] is not None
             and f["dist_min"] > f["dist_max"]):
         return None, "dist_min is greater than dist_max: no event can match"
-    if ((f["dist_min"] is not None or f["dist_max"] is not None)
-            and len(f["year"] or ()) != 1):
-        return None, ("an event window needs exactly one year selected: the "
-                      "restricted board is raced live, and every season at "
-                      "once is a field of squads from thirty different years")
-
     f["exclude_grade"] = _multiValue(args, "exclude_grade")
-    if f["exclude_grade"] and len(f["year"] or ()) != 1:
-        # ! ONE SEASON, EXPLICITLY. "Next year's team" is a question about
-        #   a season; the all-time board with the seniors removed is a
-        #   field of squads from thirty different years, which is not a
-        #   thing anybody wants and would look like a working answer.
-        return None, ("removing grades needs exactly one year selected: it "
-                      "asks what a squad looks like next season")
+    # the same list the athlete boards use, read here as a SELECTION: these
+    # grades make the squad. See teamGradeSql for the two directions.
+    f["grade"] = _multiValue(args, "grade")
+
+    # ★ THESE FILTERS NEED ONE SEASON, AND NOW THEY PICK ONE (owner,
+    #   2026-09-15: "for teams choosing events still causes an error. same
+    #   with graduating"). They do genuinely need a single year -- a
+    #   restricted board is raced live, and an all-time board with the
+    #   seniors removed is a field of squads from thirty different seasons,
+    #   which is not a question anybody is asking. But refusing was the
+    #   wrong way to say so: the control cannot express the requirement, so
+    #   every reader who touched it got an error instead of a board.
+    #
+    #   Now the requirement fills itself from `default_year` -- the current
+    #   season, which is what "next year's squad" and "the 3200 board" both
+    #   mean anyway -- and `year_defaulted` tells the page to show which
+    #   season it landed on, so the answer is never silently about a year
+    #   nobody chose.
+    needs_one_year = (f["dist_min"] is not None or f["dist_max"] is not None
+                      or bool(f["exclude_grade"]) or bool(f.get("grade")))
+    if needs_one_year and len(f["year"] or ()) != 1:
+        if len(f["year"] or ()) > 1:
+            return None, ("an event or grade filter needs ONE season "
+                          "selected: the board is raced live, and several "
+                          "seasons at once is a field of squads from "
+                          "different years")
+        if not default_year:
+            return None, ("an event or grade filter needs a season selected, "
+                          "and no current season is known")
+        f["year"] = [int(default_year)]
+        f["year_defaulted"] = True
 
     # ★ ONE YEAR MEANS THAT YEAR'S MEET; ANYTHING ELSE MEANS THE ALL-TIME
     #   ONE. Not a preference -- the season boards cannot be stacked (thirty
@@ -545,8 +563,11 @@ TEAM_MIN_RACES = 2          # build_team_season.MIN_RACES
 
 
 def gradeExcluded(f):
-    """Is the board being asked for the squad minus some grades?"""
-    return bool(f.get("exclude_grade"))
+    """Is the board being asked for a squad built from, or minus, some
+    grades? Either way team_season cannot answer it -- that table stores
+    finished squads with no person and no grade behind them -- so both
+    send the board down the live athlete_season path."""
+    return bool(f.get("exclude_grade")) or bool(f.get("grade"))
 
 
 # ⚠ athlete_season DOES NOT RELIABLY CARRY THE UNIT COLUMNS, and this path
@@ -627,13 +648,37 @@ def _athleteFieldWhere(f, params):
     #   text would leave every senior a feed spelled "Sr" in the returning
     #   squad -- the same bug the athlete board's grade filter had
     #   (owner, 2026-09-07: "grade filter is removing ppl it shouldn't").
-    params["ex_grade_keys"] = [_gradeKey(v) for v in f["exclude_grade"]]
     grade_sql = gradeKeySql("s")
-    # ! A ROW WITH NO GRADE STAYS IN. An unknown grade is not evidence that
-    #   the athlete is leaving, and dropping them would quietly shrink every
-    #   team whose feed is thin on grades -- which is most older seasons.
-    parts.append(f" AND ({grade_sql} IS NULL"
-                 f"      OR {grade_sql} <> ALL(%(ex_grade_keys)s))")
+
+    # ★ ONE GRADE CONTROL, TWO DIRECTIONS (owner, 2026-09-15: "grade and
+    #   graduating should be the same [control] ... You should be able to
+    #   press for example all freshman teams"). Selecting grades BUILDS the
+    #   squad from them -- tick 9 and the board is every school's freshman
+    #   team -- and "next year's squad" is the same control used the other
+    #   way, by not ticking the seniors. exclude_grade stays for the links
+    #   already in the wild.
+    if f.get("grade"):
+        params["in_grade_keys"] = [_gradeKey(v) for v in f["grade"]]
+        # ⚠ AND HERE A ROW WITH NO GRADE GOES OUT, which is the opposite of
+        #   the rule below and is right for the opposite reason. "Every
+        #   freshman team" is a claim about who IS a freshman; an unknown
+        #   grade is not evidence of one, and letting it in would pad every
+        #   squad with whoever the feed forgot to grade.
+        parts.append(f" AND {grade_sql} = ANY(%(in_grade_keys)s)")
+
+    if f.get("exclude_grade"):
+        # ★ EXCLUDED BY MEANING, NOT BY SPELLING. The feeds write a senior as
+        #   12, 12th, Sr, Senior, SR-4 or 16, and rankings._gradeKey is the one
+        #   place that already knows they are the same person. Comparing raw
+        #   text would leave every senior a feed spelled "Sr" in the returning
+        #   squad -- the same bug the athlete board's grade filter had
+        #   (owner, 2026-09-07: "grade filter is removing ppl it shouldn't").
+        params["ex_grade_keys"] = [_gradeKey(v) for v in f["exclude_grade"]]
+        # ! A ROW WITH NO GRADE STAYS IN. An unknown grade is not evidence that
+        #   the athlete is leaving, and dropping them would quietly shrink every
+        #   team whose feed is thin on grades -- which is most older seasons.
+        parts.append(f" AND ({grade_sql} IS NULL"
+                     f"      OR {grade_sql} <> ALL(%(ex_grade_keys)s))")
     return "".join(parts)
 
 
