@@ -4763,41 +4763,32 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .account-page .acct-avatar-cta { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.2rem 0; text-align: center;
   font-size: 0.68rem; font-weight: 700; color: #fff; background: rgba(17,20,24,0.72); }
 .account-page .acct-inline-form { display: inline; }
-/* the athlete header (305): a roster headshot, 3:4, beside the name, the
-   meta line and the numbers; Share at the right. No picture: the slot is
-   hidden unless the owner is looking, who gets "+ photo". */
-.ath-head { display: flex; gap: 1.1rem; align-items: center; margin-bottom: 0.25rem; }
-.ath-head .ath-head-body { flex: 1 1 auto; min-width: 0; }
-.ath-head .ath-head-body h1 { margin: 0; }
-.ath-head .ath-head-body .meta { margin: 0.15rem 0 0; }
-.ath-head .share-box { align-self: flex-start; flex: none; }
-/* ! SMALL, LIKE ATHLETIC.NET'S (owner, 2026-09-15: "way too big"). 96px
-     read as a portrait rather than an avatar; this is about the height of
-     the name beside it, which is what a roster avatar looks like. */
-.ath-portrait { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
-  justify-content: center; background: #eef0f3; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07); }
+/* ★ THE ATHLETE HEADER (305, owner 2026-09-15: "just next to the name, so
+   it only indents the name"). The picture lives INSIDE the h1, the way
+   athletic.net draws it, so the name line is the only thing it moves: the
+   school line and the headline numbers keep the page's own left edge.
+   Roughly the height of the name beside it -- an avatar, not a portrait.
+   No picture: the slot is hidden unless the owner is looking, who gets a
+   "+" pointing at settings. */
+/* ! overflow-wrap, because the name is an ANONYMOUS flex item here and
+     nothing else can be told to shrink it: without this a long name
+     runs under the Share box on a phone. */
+.ath-name { display: flex; align-items: center; gap: 0.6rem; min-width: 0; overflow-wrap: anywhere; }
+.ath-portrait { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: #eef0f3;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.07); }
 .ath-portrait[hidden] { display: none; }   /* the attribute must win over the flex display */
 .ath-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ath-avatar-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;
-  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.05rem; line-height: 1; background: #eef3f9; }
-.ath-avatar-add span { font-size: 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 0.1rem; }
-/* with a picture the numbers sit beside it too, under the name; the stat
-   strip is inside the body in that case (athlete.html moves it) */
-.ath-head[data-has-photo="1"] .stat-strip { border-bottom: 0; margin-bottom: 0; padding-bottom: 0.2rem; }
+.ath-avatar-add { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.35rem; line-height: 1;
+  background: #eef3f9; }
+.ath-avatar-add span { display: none; }    /* no room for a word at this size */
 @media (max-width: 600px) {
-  /* the name stays beside the headshot; the meta line and the numbers
-     drop below it at full width */
-  .ath-head { flex-wrap: wrap; gap: 0.5rem 0.8rem; align-items: center; }
-  .ath-head .ath-head-body { display: contents; }
-  .ath-head .ath-head-body h1 { flex: 1 1 0; min-width: 0; order: 1; }
-  .ath-head .share-box { order: 2; align-self: center; }
-  .ath-head .ath-head-body .meta { order: 3; flex-basis: 100%; margin: 0.2rem 0 0; }
-  .ath-head .ath-head-body .stat-strip { order: 4; flex-basis: 100%; }
-  .ath-head[data-has-photo="1"] .stat-strip { border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; margin-bottom: 0.2rem; }
-  .ath-portrait { width: 44px; height: 44px; }
-  .ath-avatar-add { font-size: 1.1rem; }
-  .ath-avatar-add span { font-size: 0.55rem; }
+  .ath-portrait { width: 34px; height: 34px; }
+  .ath-name { gap: 0.45rem; }
+  .ath-avatar-add { font-size: 1.05rem; }
 }
+
 
 /* the coach's search (282), in the athlete edition's language */
 .recruit-coach .rc-classes { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }

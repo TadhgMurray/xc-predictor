@@ -276,50 +276,12 @@
        keep the full width underneath. With no picture the slot is hidden
        for everyone but the owner, who gets "+ photo" (topbar-search.js,
        when /api/me says the page is theirs). #}
-    <div class="ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
-      <div class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>
-        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="96" height="96">{% endif %}
-      </div>
-      <div class="ath-head-body">
-        <h1>{{ athlete.name }}</h1>
-        <p class="meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="{{ school_href(athlete.school, athlete.header_state, pool=athlete.header_pool) }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.header_pool and (athlete.header_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a>{% endif %}</p>
-        {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
-           sidebar, so the page's own subject was the one thing the top of the
-           page did not say. Each figure links where it can: the best race
-           scrolls to its own row. #}
-        <div class="stat-strip">
-            <div>
-                <span class="s-lab">Athlete rating{{ rating_i() }}</span>
-                <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
-                {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
-                   season · top 1.3% of HS boys"; the 5K equivalent is off the page #}
-                {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
-            </div>
-            {% if alltime.rating %}
-            <div>
-                <span class="s-lab">Best race</span>
-                <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
-                <span class="s-sub">{{ alltime.rating.sport }}</span>
-            </div>
-            {% endif %}
-            {# Guarded like the others: a caller that does not set this should
-               drop the cell, not render a label over an empty space. #}
-            {% if athlete.n_races %}
-            <div>
-                <span class="s-lab">Races</span>
-                <span class="s-val">{{ athlete.n_races }}</span>
-            </div>
-            {% endif %}
-            {% if athlete.n_seasons %}
-            <div>
-                <span class="s-lab">Seasons</span>
-                <span class="s-val">{{ athlete.n_seasons }}</span>
-                {% if athlete.season_span %}<span class="s-sub">{{ athlete.season_span }}</span>{% endif %}
-            </div>
-            {% endif %}
-        </div>
-
-      </div>
+    <div class="hdr-row ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
+      {# the picture (305) sits INSIDE the name (owner, 2026-09-15: "just
+         next to the name, so it only indents the name"), the way
+         athletic.net draws it: the meta line and the numbers below start
+         at the page's own left edge, not behind the avatar. #}
+      <h1 class="ath-name"><span class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>{% if athlete.photo %}<img src="{{ athlete.photo }}" alt="" width="44" height="44">{% endif %}</span>{{ athlete.name }}</h1>
       {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
          at the right end of the name row #}
       <button type="button" class="share-box share-btn" data-share-title="{{ athlete.name }} on Racecast"
@@ -329,6 +291,43 @@
         <span>Share</span>
       </button>
     </div>
+    <p class="meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.header_state, px=128, size=24, pool=athlete.header_pool) }}<a href="{{ school_href(athlete.school, athlete.header_state, pool=athlete.header_pool) }}">{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.header_pool, athlete.header_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.header_pool) if athlete.grade else " - " }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.header_pool and (athlete.header_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a>{% endif %}</p>
+    {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
+       sidebar, so the page's own subject was the one thing the top of the
+       page did not say. Each figure links where it can: the best race
+       scrolls to its own row. #}
+    <div class="stat-strip">
+        <div>
+            <span class="s-lab">Athlete rating{{ rating_i() }}</span>
+            <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
+            {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
+               season · top 1.3% of HS boys"; the 5K equivalent is off the page #}
+            {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
+        </div>
+        {% if alltime.rating %}
+        <div>
+            <span class="s-lab">Best race</span>
+            <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
+            <span class="s-sub">{{ alltime.rating.sport }}</span>
+        </div>
+        {% endif %}
+        {# Guarded like the others: a caller that does not set this should
+           drop the cell, not render a label over an empty space. #}
+        {% if athlete.n_races %}
+        <div>
+            <span class="s-lab">Races</span>
+            <span class="s-val">{{ athlete.n_races }}</span>
+        </div>
+        {% endif %}
+        {% if athlete.n_seasons %}
+        <div>
+            <span class="s-lab">Seasons</span>
+            <span class="s-val">{{ athlete.n_seasons }}</span>
+            {% if athlete.season_span %}<span class="s-sub">{{ athlete.season_span }}</span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
 
     {# ★ THE SEASON RANK LINE. Where this athlete stands for the same season
        the header rating describes, broadest scope to narrowest, ending at
