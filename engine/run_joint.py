@@ -1996,6 +1996,9 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     out["bracket_shift"] = shift_cell
     out["bracket_scale"] = scale_cell
     out["bracket_course_scale"] = np.array([float(scale_sport[0]), float(scale_sport[1])])
+    # the band table as numbers, for the acceptance check (board_sanity):
+    # rows of (sport code, band lower edge, voters, applied h, implied h, se)
+    out["bracket_tilt_bands"] = be.tiltBandArray(f.get("tilt_bands"))
     out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
     # the report: what moved
@@ -2363,7 +2366,8 @@ def main():
         import bracket_engine as be
         for k in ("bracket_cell_raw", "bracket_base", "bracket_base_votes",
                   "bracket_pin", "bracket_shift", "bracket_cell_fit",
-                  "bracket_prior_group", "bracket_scale", "bracket_course_scale"):
+                  "bracket_prior_group", "bracket_scale", "bracket_course_scale",
+                  "bracket_tilt_bands"):
             if out.get(k) is not None:
                 save[k] = np.asarray(out[k], dtype=np.float64)
         if out.get("bracket_place") is not None:

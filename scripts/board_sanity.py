@@ -25,16 +25,29 @@ the top rows of every board:
   seasons     athlete_season rows in school pools whose school is a club
   gap         the same athlete's XC and TF season medians per pool: the
               sport level, as the boards show it
+  level       (--npz, XCP_SPORT_LEVEL_POOLS set) the same gap in log-time
+              against the stated gain per level: the sport level HELD
+  tilt        (--npz) the go-live's tilt-by-band table divided by the
+              course scale it applied: implied/applied within TILT_TOL in
+              every trusted band, both sports -- the course scale and the
+              tilt HELD
 
 Hard failures (exit 1, --strict makes the soft ones hard too): a published
 row that fails the anchor or the pace gate, a row whose board pool is not
-its rating pool, a professional pool on a board. Soft: a club on a school
-board, a row more than MARGIN above the pool's top season means.
+its rating pool, a professional pool on a board, a level or a tilt band
+off its target. Soft: a club on a school board, a row more than MARGIN
+above the pool's top season means.
+
+★ THE CONSTANTS ARE CHECKED, NOT PRINTED (owner, 2026-09-15: "I'd really
+  like to kill this once and for all"). Every measured constant has a
+  number that says whether it held; this is where those numbers fail the
+  run instead of scrolling past.
 
 No engine import beyond the pure checks; reads only. Runs in seconds: the
 top rows are read through the (pool, year, rating) index.
 """
 import argparse
+import math
 import os
 import statistics
 import sys
@@ -55,6 +68,10 @@ import speed_ratings_db as sdb                                  # noqa: E402
 MARGIN = 12.0        # points above the pool's top season means before a row is "too high"
 TOP_SEASONS = 20     # the pool's "top" is the mean of its best N season medians
 MIN_GAP_PAIRS = 30   # athlete-years with both sports before the gap is reported
+LEVEL_TOL = 0.005    # log-time (about 0.6 points at 120) the gap may miss the stated gain by
+TILT_TOL = 0.06      # implied/applied (after the course scale) may miss 1.0 by this, per band
+TILT_MIN_VOTERS = 5000
+TILT_MAX_SE = 0.02
 
 
 # ------------------------------------------------------------------ #
@@ -101,6 +118,52 @@ def checkRow(row, sport, club_schools, club_teams, pool_top):
     if top is not None and row["speed_rating"] is not None and float(row["speed_rating"]) > top + MARGIN:
         out.append(("margin", False, f"{float(row['speed_rating']):.1f} is {float(row['speed_rating']) - top:.1f} "
                                      f"above the pool's top-{TOP_SEASONS} season mean {top:.1f}"))
+    return out
+
+
+def levelGains(spec):
+    """{level: gain} from 'college=0,hs=0.008' (XCP_SPORT_LEVEL_POOLS). Pure."""
+    out = {}
+    for part in (spec or "").split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip().lower()] = float(v)
+    return out
+
+
+def levelCheck(pairs, gains, tol=LEVEL_TOL, min_pairs=MIN_GAP_PAIRS):
+    """[(level, n, log gap read, target, ok)]: the same-athlete gap in
+    log-time (ln XC/TF of season means: positive = track slower) per pool
+    level against the stated gain -- the go-live shifted the track rows
+    so the gap reads -gain. pairs: [(pool, xc_mean, tf_mean)]. Pure."""
+    by = {}
+    for pool, xc, tf in pairs:
+        if xc and tf and float(xc) > 0 and float(tf) > 0:
+            by.setdefault(pool.split("|", 1)[0].split("_", 1)[0], []).append(
+                math.log(float(tf) / float(xc)))
+    out = []
+    for level, vals in sorted(by.items()):
+        if level not in gains or len(vals) < min_pairs:
+            continue
+        # log(TF rating / XC rating) is -(log-time gap); the target gap is -gain
+        read = -statistics.median(vals)
+        target = -float(gains[level])
+        out.append((level, len(vals), read, target, abs(read - target) <= tol))
+    return out
+
+
+def tiltCheck(bands, scale, tol=TILT_TOL, min_voters=TILT_MIN_VOTERS, max_se=TILT_MAX_SE):
+    """[(sport, band lo, voters, ratio, ok)] from the npz's tilt-by-band
+    array (sport, lo, n, applied, implied, se) and the course scale
+    [XC, TF] it applied: implied/(applied*scale) should be 1. Pure."""
+    out = []
+    for row in bands if bands is not None else ():
+        sp, lo, n, applied, implied, se = [float(x) for x in row]
+        if n < min_voters or se > max_se or applied <= 0:
+            continue
+        sc = float(scale[int(sp)]) if scale is not None and len(scale) > int(sp) else 1.0
+        ratio = implied / (applied * sc)
+        out.append(("XC" if sp == 0 else "TF", lo, int(n), ratio, abs(ratio - 1.0) <= tol))
     return out
 
 
@@ -222,6 +285,10 @@ def main():
     ap.add_argument("--year", type=int, default=None, help="one season year; default every year")
     ap.add_argument("--strict", action="store_true", help="soft findings fail the step too")
     ap.add_argument("--show", type=int, default=25, help="offenders printed per check")
+    ap.add_argument("--npz", default=os.path.join(_ROOT, "engine", "data", "joint_difficulty.npz"),
+                    help="the go-live's solve file, for the tilt check ('' skips it)")
+    ap.add_argument("--level-pools", default=os.environ.get("XCP_SPORT_LEVEL_POOLS", ""),
+                    help="the stated gain per level the go-live applied (XCP_SPORT_LEVEL_POOLS)")
     args = ap.parse_args()
 
     print("[sanity] club teams from the rows...")
@@ -270,12 +337,42 @@ def main():
                   f"  person {pid}  ({club_schools.get(school.strip().lower(), '?')})")
 
         print("\n== TF minus XC, same athlete, same pool and year (season medians) ==")
-        gaps = gapReport(loadSportGap(cur))
+        pairs = loadSportGap(cur)
+        gaps = gapReport(pairs)
         if not gaps:
             print("  (too few athlete-years with both sports)")
         for p in sorted(gaps):
             n, med = gaps[p]
             print(f"  {p:<12} {n:>7,} athlete-years   median TF-XC {med:+6.2f}")
+
+    print("\n== the sport level held? (log-time gap per level against XCP_SPORT_LEVEL_POOLS) ==")
+    gains = levelGains(args.level_pools)
+    if not gains:
+        print("  (no XCP_SPORT_LEVEL_POOLS in the environment: not checked)")
+    for level, n, read, target, ok in levelCheck(pairs, gains):
+        if not ok:
+            hard += 1
+        print(f"  {level:<9} {n:>8,} athlete-years   gap read {read:+.4f}   target {target:+.4f}"
+              f"   {'ok' if ok else 'HARD: off by more than ' + str(LEVEL_TOL)}")
+
+    print("\n== the course scale and the tilt held? (implied/applied per band, after the scale) ==")
+    if args.npz and os.path.exists(args.npz):
+        import numpy as np
+        with np.load(args.npz, allow_pickle=False) as npz:
+            bands = npz["bracket_tilt_bands"] if "bracket_tilt_bands" in npz else None
+            scale = npz["bracket_course_scale"] if "bracket_course_scale" in npz else None
+        if bands is None or bands.size == 0:
+            print("  (the solve file carries no band table: a go-live before 2026-09-15)")
+        else:
+            print(f"  course scale applied: XC x{float(scale[0]):.3f}, TF x{float(scale[1]):.3f}")
+            for sport, lo, n, ratio, ok in tiltCheck(bands, scale):
+                if not ok:
+                    hard += 1
+                lab = "<100" if lo == float("-inf") else f"{lo:.0f}+"
+                print(f"  {sport:<4} {lab:>6} {n:>10,} voters   implied/applied {ratio:.3f}"
+                      f"   {'ok' if ok else 'HARD: off by more than ' + str(TILT_TOL)}")
+    else:
+        print("  (no solve file at --npz: not checked)")
 
     print(f"\n[sanity] {hard} hard finding(s), {soft} soft finding(s)")
     if hard or (args.strict and soft):

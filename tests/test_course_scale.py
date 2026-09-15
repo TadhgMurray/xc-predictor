@@ -104,3 +104,24 @@ def test_the_rails_and_the_plumbing_are_in_place():
     assert '--course-scale "$XCP_COURSE_SCALE"' in sh and '--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"' in sh
     cb = open(os.path.join(_ROOT, "scripts", "course_bracket.py")).read()
     assert '"scale": float(scale[c])' in cb
+
+
+def test_the_sanity_step_checks_the_level_and_the_tilt():
+    import board_sanity as bs
+    # the level: log(TF/XC) of season means; the gain 0.01 wants the gap -0.01
+    pairs = [("hs_m", 100.0, 101.0)] * 40 + [("college_f", 100.0, 100.0)] * 40 + [("ms_m", 100.0, 105.0)] * 40
+    got = bs.levelCheck(pairs, {"hs": 0.01, "college": 0.0, "ms": 0.0}, tol=0.005)
+    by = {lvl: (ok, read) for lvl, n, read, target, ok in got}
+    assert by["hs"][0] and by["college"][0] and not by["ms"][0]
+    assert abs(by["hs"][1] + 0.00995) < 1e-4
+    assert bs.levelGains("college=0, hs=0.008") == {"college": 0.0, "hs": 0.008}
+    # the tilt: run 23's XC rows with the 1.1 scale applied read within 6%
+    bands = be.tiltBandArray([("XC", "<100", 575_000, 1.012, 1.151, 0.001),
+                              ("XC", "140-150", 9_000, 0.867, 0.986, 0.009),
+                              ("XC", "150-160", 2_000, 0.83, 1.5, 0.05),
+                              ("TF", "100-120", 2_000_000, 0.963, 0.968, 0.001)])
+    assert bands.shape == (4, 6) and bands[0, 1] == -np.inf and bands[1, 1] == 140.0
+    got = bs.tiltCheck(bands, np.array([1.10, 1.0]))
+    assert [(s, ok) for s, lo, n, r, ok in got] == [("XC", True), ("XC", True), ("TF", True)]
+    got = bs.tiltCheck(bands, np.array([1.0, 1.0]))          # unscaled, XC is a tenth off
+    assert [(s, ok) for s, lo, n, r, ok in got] == [("XC", False), ("XC", False), ("TF", True)]

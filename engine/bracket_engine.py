@@ -656,6 +656,16 @@ def tiltRaceLines(rows):
     return out
 
 
+def tiltBandArray(rows):
+    """The tilt-by-band rows as a float array (sport code, band lower edge
+    or -inf, voters, applied, implied, se), for the npz; empty without rows."""
+    out = []
+    for s_name, lab, n, applied, implied, se in rows or ():
+        lo = (-np.inf if lab.startswith("<") else float(lab.rstrip("+").split("-")[0]))
+        out.append([0.0 if s_name == "XC" else 1.0, lo, float(n), applied, implied, se])
+    return np.asarray(out, dtype=np.float64).reshape(-1, 6)
+
+
 def tiltLines(rows):
     """The tilt-by-band rows as printable lines."""
     if not rows:

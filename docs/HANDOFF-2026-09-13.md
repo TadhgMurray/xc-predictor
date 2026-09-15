@@ -939,3 +939,14 @@ applied, before the scale), `grep -A10 "tilt by races" logs/run24.out`,
 `grep "course scale per sport" logs/run24.out`, `grep -A40 "winter gain
 per band" logs/run24.out`, and the sanity log's gap row
 (`logs/<ts>/10a_board_sanity.log`). Tests: `tests/test_course_scale.py`.
+
+**The constants are checked, not printed (2026-09-15, same day).** The
+band table now rides in the solve file (`bracket_tilt_bands`, rows of
+sport, band edge, voters, applied, implied, se) with `bracket_course_scale`,
+and `board_sanity.py` (step 10a) fails the run on two more findings:
+`level` -- the same-athlete gap per pool level in log-time against the
+gain in `XCP_SPORT_LEVEL_POOLS` (tolerance 0.005, about 0.6 points) --
+and `tilt` -- every trusted band's implied/applied, divided by the scale
+the go-live applied, within 6% of 1.0 in both sports. So a constant that
+drifts fails step 10a on the run that let it drift, and the trace to
+the cause is the two tables above it in the go-live log.
