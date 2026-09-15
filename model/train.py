@@ -20,6 +20,11 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 # in model/ (same folder), matching how feature_extraction.py imports.
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
                          SEQ_NORM_TIME)
+# ! FROM THE EXTRACTOR, NOT A SECOND COPY. Which context slot holds the race
+#   year is the extractor's decision; importing it means a feature inserted
+#   rather than appended moves this with it. feature_extraction imports torch
+#   and parses corrections.py at import, which train.py pays for once.
+from feature_extraction import CONTEXT_YEAR_INDEX
 
 # ------------------------------------------------------------------ #
 # CONSTANTS — the training dials, named once so they don't drift
@@ -630,6 +635,7 @@ def computeStats(dataset, is_train: torch.Tensor,
     lr_n = 0
     raw_sum = 0.0
     raw_n = 0
+    max_year = 0.0
 
     for c in range(n_chunks):
         chunk = dataset._loadChunk(c)
@@ -656,6 +662,16 @@ def computeStats(dataset, is_train: torch.Tensor,
         ctx_sum += ctx.sum(dim=0)
         ctx_sq += (ctx * ctx).sum(dim=0)
         ctx_n += ctx.shape[0]
+        # ★ THE NEWEST YEAR THESE WEIGHTS EVER SAW, carried into
+        #   target_stats.pkl so inference can clamp to it. The year feature
+        #   is the only one whose value at inference can sit outside the
+        #   training range -- a race next spring is later than every row
+        #   here by definition -- and a linear layer on a z-scored year
+        #   extrapolates whatever trend it found. Guarded on the width so a
+        #   chunk set written before the feature existed still trains.
+        if ctx.shape[1] > CONTEXT_YEAR_INDEX:
+            yr = float(ctx[:, CONTEXT_YEAR_INDEX].max()) if ctx.shape[0] else 0.0
+            max_year = max(max_year, yr)
 
         t = targets[keep]
         b = base[keep]
@@ -681,6 +697,9 @@ def computeStats(dataset, is_train: torch.Tensor,
             "ctx_mean": ctx_mean, "ctx_std": ctx_std,
             "mean": float(lr_mean), "std": float(max(lr_std, 1e-6)),
             "fallback_seconds": raw_sum / max(raw_n, 1),
+            # 0.0 means "no year feature in these chunks"; predict.py treats
+            # a falsy ceiling as no clamp, which is the old behaviour.
+            "max_year": max_year,
             "n_examples": lr_n, "n_rows": seq_n, "n_chunks": n_chunks}
 
 
@@ -707,6 +726,7 @@ def saveTargetStats(stats: dict, path: str) -> None:
            "seq_std": stats["seq_std"].tolist(),
            "ctx_mean": stats["ctx_mean"].tolist(),
            "ctx_std": stats["ctx_std"].tolist(),
+           "max_year": float(stats.get("max_year") or 0.0),
            "n_examples": int(stats["n_examples"]),
            "n_chunks": int(stats["n_chunks"])}
     with open(path, "wb") as f:

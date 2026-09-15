@@ -54,10 +54,13 @@ import torch.nn as nn
 SEQUENCE_FEATURES = 21
 
 # Width of the target-race context vector (also from feature_extraction).
-# 21, not 20: is_forecast was added at index 0. ⚠ THIS MUST MATCH
+# 24: is_forecast at index 0, then 2026-09-15 appended the grade ordinal,
+# its known-flag and the race year at 21-23. ⚠ THIS MUST MATCH
 # _buildContextVector IN feature_extraction.py. A mismatch surfaces as a shape
-# error inside the first Linear AFTER the extraction has written gigabytes.
-CONTEXT_FEATURES = 21
+# error inside the first Linear AFTER the extraction has written gigabytes --
+# which is why tests/test_context_width.py counts the builder's return and
+# compares it to both constants without needing a database.
+CONTEXT_FEATURES = 24
 
 # Positions inside a sequence row that this file reads by NAME. Mirror
 # _buildSequenceVector in feature_extraction.py: index 0 is the prior race's

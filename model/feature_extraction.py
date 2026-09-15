@@ -124,9 +124,25 @@ SHUFFLE_SEED = 42
 #   gigabytes of chunk files. The padding row below used a hardcoded 18,
 #   which silently desyncs the moment a feature is added.
 SEQUENCE_FEATURES = 21
-# 21, not 20: is_forecast sits at index 0 -- count _buildContextVector's
-# return, and keep transformer.CONTEXT_FEATURES equal to it.
-CONTEXT_FEATURES  = 21
+# 24, not 21: is_forecast sits at index 0, and 2026-09-15 appended three at
+# the end -- the grade ordinal, its known-flag, and the race year. Count
+# _buildContextVector's return, and keep transformer.CONTEXT_FEATURES equal
+# to it. A test does that counting for you: tests/test_context_width.py.
+CONTEXT_FEATURES  = 24
+
+# ★ THE ONE CONTEXT INDEX ANYONE OUTSIDE THIS FILE READS BY NAME. The year
+#   at 22 is the only feature whose value can fall outside the range the
+#   weights were fitted on -- a race next spring is later than every training
+#   row by definition -- so inference clamps it (racecast/predict.py
+#   _clampYear). Named here so the clamp cannot drift from the builder: if
+#   a feature is ever inserted rather than appended, this moves with it and
+#   tests/test_context_width.py checks that it still points at the year.
+#
+# ! IT WAS WRITTEN 22 FIRST AND THE TEST CAUGHT IT. The count is 0-19 for
+#   the original twenty, then grade ordinal 21, its flag 22, the year 23 --
+#   an off-by-one that no shape check would have found, because the width
+#   was right and only the meaning of a slot was wrong.
+CONTEXT_YEAR_INDEX = 23
 
 # ★ ATHLETE-DISJOINT VALIDATION, DECIDED HERE. train.py used to random_split
 #   over EXAMPLES, which puts the same athlete's examples -- and a forecast
@@ -1083,6 +1099,54 @@ FORECAST_GAP_MAX_WEEKS = 40.0
 FORECAST_GAP_SKEW = 2.0
 
 # ------------------------------------------------------------------ #
+# HORIZON TWINS -- THE SAME IDEA, A YEAR TO FOUR YEARS OUT
+# ------------------------------------------------------------------ #
+
+# ★ A THIRD CLASS OF EXAMPLE, NOT A WIDER FORECAST TWIN (owner, 2026-09-15:
+#   "just add a class of examples that is beyond max weeks"). Exactly right,
+#   and it needs NO new context feature: days_since_last_race already sits
+#   in the context vector, so a 150-week gap is expressible today -- the
+#   model has simply never been shown one. The forecast twin caps at
+#   FORECAST_GAP_MAX_WEEKS = 40 and skews to a median of 11.5 weeks, so it
+#   answers "this weekend" and "at state" and nothing further out.
+#
+# ★ WHY RAISING THAT CAP WOULD NOT HAVE WORKED. Two reasons, both fatal.
+#   The skew (u**2 over the window) puts almost no mass past a year, so the
+#   long examples would be too rare to learn from; and stretching one
+#   distribution over 2-208 weeks thins the 4-10 week championship band
+#   that the near-term model is FOR. Two generators, each dense in its own
+#   range, keeps both questions well covered.
+#
+# ★ WHAT IT BUYS. The recruiting projection -- high school to college -- and
+#   middle school to high school, which is the same machinery at a shorter
+#   horizon. An athlete's last high-school season, then a college race two
+#   years later, IS a horizon twin; there are as many of them in the corpus
+#   as there are athletes who went on to compete.
+#
+# ⚠ AND THE SELECTION IT CARRIES. Only athletes who kept racing produce one
+#   of these, so a model trained on them answers "if they compete in college,
+#   what will they run" and NOT "will they". That is a real and identified
+#   question, and it is the one the page must be labelled with; the
+#   correction for the other one (fitting P(continues) and weighting by its
+#   inverse) is a later job and does not live in this file.
+HORIZON_GAP_MIN_WEEKS = 44.0     # just under a year: the next XC season
+HORIZON_GAP_MAX_WEEKS = 208.0    # four years: a full college career out
+
+# ! FLAT, NOT SKEWED. The forecast twin's skew exists to concentrate mass at
+#   short gaps where the queries are; here every year out is asked about
+#   equally often ("where does this sophomore land as a college freshman"
+#   and "as a senior" are the same question at different horizons), so a
+#   uniform draw over the window is the honest default.
+HORIZON_GAP_SKEW = 1.0
+
+# ★ EMITTED FOR EVERY TARGET THAT CAN CARRY ONE, not sampled. These are
+#   RARE -- they need an athlete with a multi-year career and two races at
+#   least HORIZON_GAP_MIN_WEEKS before the target -- so unlike the forecast
+#   twin, which would double an already-huge corpus at rate 1.0, taking all
+#   of them is both affordable and necessary to have enough of them.
+HORIZON_TWIN_RATE = 1.0
+
+# ------------------------------------------------------------------ #
 # VENUE VOCABULARY
 # ------------------------------------------------------------------ #
 
@@ -1578,8 +1642,18 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
 #           "target_result": result dict (full, for Chunk 4),
 #           "target":        float (normalized_time to predict),
 #         }
-def _forecastTwin(prior_results, target_result, full_sequence, rng):
+def _gapTwin(prior_results, target_result, full_sequence, rng,
+             min_weeks=FORECAST_GAP_MIN_WEEKS, max_weeks=FORECAST_GAP_MAX_WEEKS,
+             skew=FORECAST_GAP_SKEW, min_prior=MIN_PRIOR_FOR_TWIN,
+             kind="forecast"):
     """A copy of one example with the last k prior races hidden, or None.
+
+    ★ ONE GENERATOR, TWO HORIZONS (2026-09-15). The window bounds are
+      arguments rather than constants because the horizon twin is the same
+      construction at a different distance -- cut the history, leave a gap,
+      predict across it. Copying the body and changing three numbers would
+      have left two truncation rules to keep in step, and the truncation
+      rule is the subtle part (see both warnings below).
 
     ⚠ TRUNCATES THE END, NOT THE START. Dropping the OLDEST races would model
       "we only know their recent form", which is a different and much less
@@ -1593,7 +1667,7 @@ def _forecastTwin(prior_results, target_result, full_sequence, rng):
       truncated one. Slicing the list would keep the old days_ago and quietly
       teach the model a contradiction.
     """
-    if len(prior_results) < MIN_PRIOR_FOR_TWIN:
+    if len(prior_results) < min_prior:
         return None
 
     target_date = _asDate(target_result.get("date"))
@@ -1620,12 +1694,12 @@ def _forecastTwin(prior_results, target_result, full_sequence, rng):
     hi_weeks = (target_date - dates[MIN_KEPT_RACES - 1]).days / 7.0
 
     # Clip to the range we are willing to train on at all.
-    lo_weeks = max(lo_weeks, FORECAST_GAP_MIN_WEEKS)
-    hi_weeks = min(hi_weeks, FORECAST_GAP_MAX_WEEKS)
+    lo_weeks = max(lo_weeks, min_weeks)
+    hi_weeks = min(hi_weeks, max_weeks)
     if hi_weeks <= lo_weeks:
         return None
 
-    weeks = lo_weeks + (rng.random() ** FORECAST_GAP_SKEW) * (hi_weeks - lo_weeks)
+    weeks = lo_weeks + (rng.random() ** skew) * (hi_weeks - lo_weeks)
     cutoff = target_date - timedelta(days=weeks * 7.0)
 
     # Results arrive chronological, so the date cut IS a prefix -- taken as an
@@ -1659,7 +1733,33 @@ def _forecastTwin(prior_results, target_result, full_sequence, rng):
         # would depend on a value that cannot be supplied.
         "n_hidden": len(prior_results) - len(kept),
         "gap_weeks": round(weeks, 1),
+        # Which generator made it, for the run's own counts. Same rule as
+        # n_hidden: a diagnostic, never a feature.
+        "kind": kind,
     }
+
+
+def _forecastTwin(prior_results, target_result, full_sequence, rng):
+    """The near-term twin: 2 to 40 weeks, skewed short. "This weekend",
+    and "at the championship in six weeks"."""
+    return _gapTwin(prior_results, target_result, full_sequence, rng)
+
+
+def _horizonTwin(prior_results, target_result, full_sequence, rng):
+    """The long twin: 44 to 208 weeks, drawn flat. "Where does this high
+    schooler land in college", which is the recruiting projection, and
+    middle school to high school, which is the same shape shorter.
+
+    ⚠ IT ASKS MORE OF THE HISTORY THAN THE NEAR-TERM TWIN DOES. Both kept
+      races have to sit at least min_weeks before the target, so only an
+      athlete with a genuinely multi-year career can produce one. That is
+      the point -- and it is also the selection this class carries, since
+      an athlete who stopped racing never appears as a target at all."""
+    return _gapTwin(prior_results, target_result, full_sequence, rng,
+                    min_weeks=HORIZON_GAP_MIN_WEEKS,
+                    max_weeks=HORIZON_GAP_MAX_WEEKS,
+                    skew=HORIZON_GAP_SKEW,
+                    kind="horizon")
 
 
 def _baseVectors(athlete_results: list[dict], encoders: dict) -> list:
@@ -1738,6 +1838,16 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
             twin = _forecastTwin(prior_results, target_result, sequence, rng)
             if twin is not None:
                 examples.append(twin)
+
+        # ★ AND THE LONG ONE (2026-09-15). Same target again, cut a year to
+        #   four years back. Taken at rate 1.0 rather than sampled: it
+        #   returns None for every athlete whose history cannot reach that
+        #   far, which is most of them, so these are scarce and all of them
+        #   are wanted. See HORIZON_GAP_MIN_WEEKS for what it is for.
+        if rng is not None and rng.random() < HORIZON_TWIN_RATE:
+            far = _horizonTwin(prior_results, target_result, sequence, rng)
+            if far is not None:
+                examples.append(far)
 
     return examples
 
@@ -2303,6 +2413,96 @@ def _dayOfYear(date_str: str) -> int:
     # a .tm_yday field — the day-of-year count (Jan 1 = 1).
     return parsed.timetuple().tm_yday
 
+
+# ------------------------------------------------------------------ #
+# WHERE THE ATHLETE IS IN SCHOOL, AS ONE ORDINAL
+# ------------------------------------------------------------------ #
+
+# ★ WHY THE POOL WAS NOT ENOUGH (2026-09-15). The context vector carried
+#   buildPool's level -- elem/ms/hs/college/pro -- which says an athlete is
+#   in college but not WHICH YEAR of it. Over a two-week horizon that costs
+#   nothing: the last race in the sequence already carries the grade and
+#   nothing has changed. Over the two-to-four YEARS a recruiting projection
+#   spans it is the whole question, because "what will they run as a college
+#   sophomore" is not expressible at all without it. This is the feature
+#   that had to go in before the extraction, not after.
+#
+# ⚠ AN ORDINAL, NEVER A LabelEncoder CODE. The same trap the pool feature
+#   fell into and climbed out of: encoding "10"/"FR-3"/"senior" with a
+#   LabelEncoder yields an arbitrary integer whose ORDER is alphabetical,
+#   and handing that to a Linear layer as a float claims an ordering that
+#   does not exist. Years of schooling is a real ordering, so it is the one
+#   used: grade 5 is 5, a high-school senior is 12, and a college freshman
+#   is 13 -- one continuous ladder from middle school to a fifth-year.
+#
+# ! THE POOL DISAMBIGUATES THE WORDS, which is why this takes it. "FR" is
+#   ninth grade in a high-school pool and a first year in a college one; the
+#   same four words mean eight different things depending on the level, and
+#   the corpus spells them every way (racecast/grade_label.py has the full
+#   list: bare numbers, words, and the tfrrs FR-1..SR-4 eligibility codes).
+_GRADE_WORDS = {"fr": 1, "so": 2, "jr": 3, "sr": 4,
+                "freshman": 1, "sophomore": 2, "junior": 3, "senior": 4}
+_GRADE_ELIG = re.compile(r"^(fr|so|jr|sr)-?([1-6])$")
+# The last year of high school, so a college first year reads as the next
+# rung up rather than starting a second ladder at 1.
+HS_LAST_GRADE = 12
+POOL_COLLEGE = 3.0          # buildPool: elem 0 < ms 1 < hs 2 < college 3 < pro 4
+
+
+def _gradeOrdinal(grade_raw, pool_ordinal) -> float:
+    """Years of schooling as one number, or 0.0 when the feed did not say.
+
+    5..12 school, 13..18 college years one to six. 0.0 means unknown and
+    is paired with the known-flag beside it in the context vector -- on its
+    own a 0 would read as "four years below fifth grade", which is why the
+    flag is not optional.
+    """
+    if grade_raw is None:
+        return 0.0
+    g = str(grade_raw).strip().lower().rstrip(".")
+    if not g:
+        return 0.0
+    college = float(pool_ordinal or 0.0) >= POOL_COLLEGE
+
+    # "FR-1".."SR-6": always a college eligibility code, whatever the pool
+    # says -- the number after the dash IS the year, and it is the only
+    # spelling that carries a fifth or sixth year at all.
+    m = _GRADE_ELIG.match(g)
+    if m:
+        return float(HS_LAST_GRADE + int(m.group(2)))
+
+    if g.isdigit():
+        n = int(g)
+        # 5..12 is school as written; 13..18 is already the college ladder
+        # (grade_label maps "14" in a college pool to SO-2, same rung).
+        return float(n) if 5 <= n <= 18 else 0.0
+
+    word = _GRADE_WORDS.get(g)
+    if word is None:
+        return 0.0
+    # ⚠ THE SAME WORD, TWO LADDERS. A high-school "senior" is 12; a college
+    #   "senior" is 16. Only the pool can tell them apart.
+    return float(HS_LAST_GRADE + word) if college else float(8 + word)
+
+
+def _raceYear(date_str) -> float:
+    """The calendar year of the target race.
+
+    ★ SEASONALITY WAS THERE, ERA WAS NOT. day_of_year says where in the
+      season a race sits; nothing said WHICH season. The engine takes most
+      of the era out of normalized_time before the model sees it, so this
+      is a residual-drift feature rather than a load-bearing one.
+
+    ⚠ IT EXTRAPOLATES BADLY BY CONSTRUCTION. A model trained through 2026
+      has never seen 2027, and a linear layer on a z-scored year will
+      happily march off the end of its training range. Inference clamps to
+      the range the weights were fitted on -- see racecast/predict.py --
+      rather than trusting the network to be sensible outside it.
+    """
+    parsed = _parseDate(date_str)
+    return float(parsed.year) if parsed is not None else 0.0
+
+
 # ------------------------------------------------------------------ #
 # Context vector builder
 # ------------------------------------------------------------------ #
@@ -2355,6 +2555,10 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
     # FULL prior history.
     altitude_delta = _altitudeDelta(target_result["altitude_meters"], prior_results)
 
+    # Once, not twice: the ordinal and its known-flag are one computation,
+    # and this function runs ~80M times over the corpus.
+    grade_ord = _gradeOrdinal(target_result.get("grade"), pool_encoded)
+
     return [
         # ★ is_forecast. NOT redundant with days_since_last_race: a real
         #   six-week gap and a truncated six-week gap produce the same number
@@ -2389,6 +2593,17 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
         # Where the target race is (indices 18-19). Known BEFORE the race,
         # so unlike `place` this is safe in the context vector.
         *_geo(target_result["gps_lat"], target_result["gps_long"]),
+
+        # ★ WHERE THEY ARE IN SCHOOL, AND WHEN (indices 21-23, added
+        #   2026-09-15). All three are known before the gun, so none is
+        #   leakage -- the test `place` fails. Appended at the END on
+        #   purpose: every existing index keeps its meaning, so the only
+        #   thing that has to move in step is the WIDTH.
+        grade_ord,
+        # The known-flag for the ordinal above. 0.0 there means "the feed
+        # did not say", which is a different statement from any real year.
+        1.0 if grade_ord else 0.0,
+        _raceYear(target_result["date"]),
     ]
 
 def addContextToExamples(examples: list[dict], encoders: dict) -> None:

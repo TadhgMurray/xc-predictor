@@ -1157,3 +1157,71 @@ puts almost no mass out there, and it would dilute the near-term model
 that is the point of this run. It wants its own twin type: a cut at a
 fixed calendar point (end of high school) with a college race as the
 target. Separate extraction, separate regime, after this model works.
+
+### 13.5 The three features and the horizon class went in (2026-09-15)
+
+Decided to do both before the extraction rather than after, because the
+extraction has to be re-run anyway (13.2) and doing it twice is the only
+expensive part.
+
+**Context vector 21 -> 24**, appended so every existing index keeps its
+meaning:
+
+| idx | feature | why |
+|-----|---------|-----|
+| 21 | grade ordinal | years of schooling, 5-12 school and 13-18 college |
+| 22 | grade known | 0 in slot 21 means "the feed did not say", not a year |
+| 23 | race year | era residual; day_of_year said where in a season, nothing said which |
+
+`_gradeOrdinal` takes the POOL as well as the grade string, because "FR" is
+ninth grade in a high-school pool and a first year in a college one -- the
+same four words mean eight different things. It is a real ordinal, never a
+LabelEncoder code: that was the trap the pool feature already climbed out
+of, and an alphabetical ordering handed to a Linear layer claims an order
+that does not exist.
+
+**The horizon twin**, a third class of example. The owner's framing was
+right and it needed no new feature at all: `days_since_last_race` is
+already in the context, so a 150-week gap was always expressible -- the
+model had simply never been shown one. `_gapTwin` now takes its window as
+arguments and `_forecastTwin` / `_horizonTwin` are thin wrappers over it,
+so there is one truncation rule rather than two to keep in step.
+
+- forecast: 2-40 weeks, skewed short (median 11.5), rate 0.5
+- horizon: 44-208 weeks, drawn flat, rate 1.0
+
+Rate 1.0 for the long one because it returns None for every athlete whose
+history cannot reach back a year, which is most of them; they are scarce
+and all of them are wanted. Raising the existing cap instead would have
+failed twice over: the skew puts almost no mass past a year, and
+stretching one distribution over 2-208 weeks thins the 4-10 week
+championship band the near-term model is FOR.
+
+⚠ **The year feature extrapolates, so inference clamps it.** A race next
+spring is later than every training row by definition, and a linear layer
+on a z-scored year marches off in whatever direction the trend pointed.
+`train.py` records the newest year it trained on into `target_stats.pkl`;
+`predict.py._clampYear` holds queries to it. A model saved before the
+feature existed carries no ceiling and the clamp is a no-op.
+
+⚠ **The selection this class carries.** Only athletes who kept racing
+produce a horizon twin, so a model trained on them answers "if they
+compete in college, what will they run" and NOT "will they". That is a
+real and identified question and it is the one the page must be labelled
+with. The correction for the other one -- fitting P(continues), which is
+an UNCENSORED label since every high-school senior either appears in a
+college pool or does not, and weighting by its inverse -- is a later job.
+
+**Verified before committing:** `tests/test_context_width.py` (32 checks:
+the builder's width against both constants, the year index by value, the
+grade ordinal across 20 spellings, the horizon window, that one season
+cannot make a horizon twin, that the near-term twin did not change, that
+the two windows do not overlap, and the clamp by behaviour). Then the full
+chain again on regenerated 24-wide fake chunks: fake_chunks -> train ->
+predict_check, 1-sigma band at 68% coverage, `ctx_mean` 24 long and
+`max_year` persisted.
+
+! THE TEST EARNED ITS KEEP IMMEDIATELY: `CONTEXT_YEAR_INDEX` was written
+  22 and is 23. The width was right, so no shape check anywhere would have
+  caught it -- the clamp would simply have been rewriting the grade flag,
+  silently, forever.

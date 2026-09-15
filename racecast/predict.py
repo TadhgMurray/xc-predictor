@@ -133,6 +133,10 @@ def _loadModel():
         _artifacts = {"mean": float(stats.get("mean", stats.get("target_mean"))),
                       "std": float(stats.get("std", stats.get("target_std"))),
                       "kind": stats.get("kind", "seconds"),
+                      # The newest race year the weights were fitted on, for
+                      # _clampYear. Absent in a model trained before the year
+                      # feature existed, and the clamp then does nothing.
+                      "max_year": stats.get("max_year"),
                       "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
@@ -494,7 +498,31 @@ def _forecastExample(fx, hist, target_row, encoders):
     prior = hist[-fx.MAX_SEQ_LEN:]
     ctx = fx._buildContextVector(target_row, seq, prior, encoders,
                                  is_forecast=True)
+    _clampYear(ctx, fx)
     return seq, ctx
+
+
+# ⚠ THE YEAR FEATURE EXTRAPOLATES, SO INFERENCE CLAMPS IT. The context
+#   vector carries the target race's calendar year (feature_extraction
+#   index 22). Every other feature in it is something the model has seen
+#   the range of; a year is not, because a race next spring is by
+#   definition later than every row the weights were fitted on, and a
+#   linear layer on a z-scored year keeps going in whatever direction the
+#   trend pointed. Clamping to the last year in the training data asks the
+#   model "what would this be worth in the most recent season you know",
+#   which is the question actually being asked, instead of letting it
+#   invent a trend two years past its evidence.
+#
+# ! THE CEILING RIDES IN model.pt. train.py records the newest year it
+#   trained on; a model saved before that existed has no ceiling and the
+#   clamp is then a no-op, which is the old behaviour exactly.
+def _clampYear(ctx, fx):
+    idx = fx.CONTEXT_YEAR_INDEX
+    if idx is None or idx >= len(ctx):
+        return
+    ceiling = (_artifacts or {}).get("max_year")
+    if ceiling and ctx[idx] > ceiling:
+        ctx[idx] = float(ceiling)
 
 
 def _historyRows(cur, person_ids):
