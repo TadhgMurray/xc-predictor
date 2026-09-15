@@ -4771,13 +4771,16 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .ath-head .ath-head-body h1 { margin: 0; }
 .ath-head .ath-head-body .meta { margin: 0.15rem 0 0; }
 .ath-head .share-box { align-self: flex-start; flex: none; }
-.ath-portrait { width: 96px; height: 96px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
+/* ! SMALL, LIKE ATHLETIC.NET'S (owner, 2026-09-15: "way too big"). 96px
+     read as a portrait rather than an avatar; this is about the height of
+     the name beside it, which is what a roster avatar looks like. */
+.ath-portrait { width: 56px; height: 56px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
   justify-content: center; background: #eef0f3; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07); }
 .ath-portrait[hidden] { display: none; }   /* the attribute must win over the flex display */
 .ath-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ath-avatar-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;
-  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.4rem; line-height: 1; background: #eef3f9; }
-.ath-avatar-add span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.2rem; }
+  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.05rem; line-height: 1; background: #eef3f9; }
+.ath-avatar-add span { font-size: 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 0.1rem; }
 /* with a picture the numbers sit beside it too, under the name; the stat
    strip is inside the body in that case (athlete.html moves it) */
 .ath-head[data-has-photo="1"] .stat-strip { border-bottom: 0; margin-bottom: 0; padding-bottom: 0.2rem; }
@@ -4791,7 +4794,7 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .ath-head .ath-head-body .meta { order: 3; flex-basis: 100%; margin: 0.2rem 0 0; }
   .ath-head .ath-head-body .stat-strip { order: 4; flex-basis: 100%; }
   .ath-head[data-has-photo="1"] .stat-strip { border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; margin-bottom: 0.2rem; }
-  .ath-portrait { width: 64px; height: 64px; }
+  .ath-portrait { width: 44px; height: 44px; }
   .ath-avatar-add { font-size: 1.1rem; }
   .ath-avatar-add span { font-size: 0.55rem; }
 }
