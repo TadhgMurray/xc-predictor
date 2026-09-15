@@ -1782,8 +1782,19 @@ def createShadow(conn, name, like):
         #
         # ⚠ IT MUST BE SET BACK TO LOGGED BEFORE THE SWAP, or the live
         #   ranking_results stops being crash-safe. See swapIn.
+        # ★ AUTOVACUUM OFF ON THE BOARDS TABLES (owner, 2026-09-15: the site
+        #   slow long after the pipeline was stopped). A freshly loaded
+        #   61.6M-row table trips Postgres's insert-triggered autovacuum
+        #   minutes after the swap: a full pass over 23 GB of heap and
+        #   every index at autovacuum's pace, on the site's disk. The
+        #   table is never updated after the load, so the only pass it
+        #   needs is the one that sets the visibility map -- and the
+        #   pipeline runs that itself, last and throttled
+        #   (scripts/gentle_vacuum.py, step 18). The reloption survives
+        #   SET LOGGED and the rename.
         cur.execute(f"CREATE UNLOGGED TABLE {name} "
-                    f"(LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS)")
+                    f"(LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) "
+                    f"WITH (autovacuum_enabled = false)")
 
         # Index builds sort; the default 64MB spills a 61.6M row sort to disk.
         cur.execute(f"SET maintenance_work_mem = '{dbSetting('maintenance_work_mem', '2GB')}'")

@@ -125,6 +125,24 @@ fi
 
 LOGDIR="$ROOT/logs/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOGDIR"
+
+# ★ AN INTERRUPTED RUN STOPS ITS DATABASE WORK TOO (owner, 2026-09-15: "even
+#   after I ctrl-c'd the script the website is slow as shit"). Ctrl-C ends
+#   this shell and the foreground Python; it does NOT end the statement
+#   Postgres is running for them (a CREATE TABLE AS runs to completion with
+#   nobody to send the rows to), and the parallel children started with &
+#   ignore SIGINT. So on INT or TERM: terminate every backend labelled
+#   xcp-pipeline (quiet mode names them), then the whole process group.
+_cleanup() {
+  trap - INT TERM
+  echo ""
+  echo "  interrupted: ending the pipeline's database backends and children" | tee -a "$SUMMARY"
+  "$PY" scripts/db_activity.py --kill-pipeline --quiet 2>/dev/null || true
+  _pgid=$(ps -o pgid= $$ 2>/dev/null | tr -d ' ')
+  [ -n "$_pgid" ] && kill -TERM -- -"$_pgid" 2>/dev/null
+  exit 130
+}
+trap _cleanup INT TERM
 SUMMARY="$LOGDIR/summary.log"
 echo "  logs -> $LOGDIR"
 
@@ -819,6 +837,12 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 
 # ---- the owner's go/no-go ------------------------------------------- #
 step 17_checklist     "$PY" -u scripts/run_checklist.py
+
+# ---- the gentle vacuum, last ----------------------------------------- #
+# the boards tables are built with autovacuum off (createShadow); this is
+# the one pass they need, at a trickle, after everything the site is
+# waiting for has shipped. See scripts/gentle_vacuum.py.
+step 18_vacuum        "$PY" -u scripts/gentle_vacuum.py
 
 # ---- summary -------------------------------------------------------- #
 summarise

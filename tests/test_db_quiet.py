@@ -109,3 +109,16 @@ def test_the_school_identity_builder_reads_seasons_not_the_boards_table():
     assert len(scans) <= 2, scans                     # the two meet reads, both filtered by school
     assert "FROM   athlete_season" in body
     assert src.count("conn.commit()") >= 5
+
+
+def test_an_interrupted_run_ends_its_backends_and_the_boards_are_vacuumed_last():
+    sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
+    assert "trap _cleanup INT TERM" in sh
+    assert "db_activity.py --kill-pipeline" in sh
+    assert sh.index("trap _cleanup") < sh.index("step 01_season_year")
+    assert sh.index("step 17_checklist") < sh.index("step 18_vacuum") < sh.rindex("\nsummarise")
+    src = open(os.path.join(_ROOT, "racecast", "build_ranking_results.py")).read()
+    assert "WITH (autovacuum_enabled = false)" in src
+    import db_activity
+    assert db_activity.PIPELINE_APP == "xcp-pipeline"
+    assert "'xcp-pipeline'" in open(os.path.join(_ROOT, "scripts", "database.py")).read()

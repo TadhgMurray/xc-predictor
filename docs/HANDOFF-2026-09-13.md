@@ -862,9 +862,14 @@ pack). Run 23's XC list (168 races, 9,456 rows) is what the rule was
 for: 13 s "4.5ks", 34 rows at 4 s/km.
 
 **Read from run 23, for the constants:** the bracket tilt-by-band table
-says XC's bands all pay LESS of a course than they are charged (implied
-h 1.15 at <100 against 1.01 applied; 1.07 vs 0.97 at 100-120; 1.01 vs
-0.93 at 120-130), while TF's implied and applied agree within 1% in
-every band. XC course multipliers are overstated by about 8-14% across
-the board, TF's are right. That is the sport level and the XC course
-scale together, and it is where the constants discussion starts.
+(implied < applied means the band pays LESS of a course than charged,
+i.e. the course is overstated) has XC's implied h ABOVE its applied h
+in every band: 1.15 against 1.01 at <100, 1.07 vs 0.97 at 100-120,
+1.01 vs 0.93 at 120-130, 0.99 vs 0.90 at 130-140, 0.99 vs 0.87 at
+140-150 -- the voters' own brackets say XC courses cost them about
+10-14% MORE than the solve charges, uniformly across bands, while TF's
+implied and applied agree within 1% everywhere. So XC's course effects
+are UNDERstated by roughly a tenth (the XC prior shrinks them too hard,
+or the XC course scale wants a factor of ~1.1) and the tilt's slope is
+right in both sports. That, with the gap row (college TF 1.2-1.7 under
+XC, hs 0.4-0.9 under), is where the constants discussion starts.
