@@ -323,7 +323,11 @@ def logEvent(cur, kind, account_id=None, email=None, detail=None):
 def _http(url, data=None, headers=None, form=False, timeout=10):
     """One HTTPS call -> parsed JSON (or {} for no body)."""
     body = None
-    hdrs = {"Accept": "application/json", **(headers or {})}
+    # ! A NAMED USER AGENT. Resend's API sits behind Cloudflare, which
+    #   answers urllib's default "Python-urllib/3.x" with a 403 (error 1010,
+    #   "browser signature banned") before the request reaches Resend.
+    hdrs = {"Accept": "application/json",
+            "User-Agent": f"racecast/1.0 (+{siteOrigin()})", **(headers or {})}
     if data is not None:
         if form:
             body = urllib.parse.urlencode(data).encode("utf-8")
