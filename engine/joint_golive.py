@@ -166,7 +166,16 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         print(f"    {'pool':<10}{'band':>6}{'athletes':>10}{'gap read':>10}"
               f"{'target':>9}{'shift':>9}")
         for p in range(n_pool):
-            for b in range(len(gain_bands)):
+            # ⚠ THE MATRIX'S OWN WIDTH, NOT len(gain_bands) (2026-09-15).
+            #   The per-level path (gain_levels) builds gains_mat with
+            #   gain_bands left None, so a run carrying
+            #   --sport-level-pools without --winter-gain-bands -- which
+            #   is the stated recipe -- reached this line with None and
+            #   died AFTER the solve, three hours in:
+            #       TypeError: object of type 'NoneType' has no len()
+            #   gains_mat is always (n_pool, len(SPORT_GAIN_ANCHORS)),
+            #   which is what the loop meant in both paths.
+            for b in range(gains_mat.shape[1]):
                 if n_g[p, b] == 0 or not np.isfinite(gains_mat[p, b]):
                     continue
                 gain_rows.append((attrs["pool_names"][p], "TF", b,

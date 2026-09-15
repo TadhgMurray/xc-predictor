@@ -1027,3 +1027,12 @@ verification yet. Built on `claude/nice-rubin-tj0kev` and on master.
   files live in `racecast/static/photos/`, gitignored). Mail: Resend,
   and what `XCP_MAIL_FROM` means, in section 2 of the same doc.
 - **311, the athlete page's uncached cost:** the rank line's scoped counts, now precomputed by `build_season_ranks.py` (step `10g_season_ranks`, run it alone once: `$PY racecast/build_season_ranks.py --verify 40`, then restart). The page reads one row of `season_rank`; the live counts remain the fallback.
+- **312, the go-live crash (fixed):** `--sport-level-pools` without
+  `--winter-gain-bands` left `gain_bands` None while the per-level path
+  built the matrix, and the report loop under it still asked for
+  `len(gain_bands)` -- so the run died after the solve with
+  `TypeError: object of type 'NoneType' has no len()`. The loop is
+  bounded by the matrix now. Rerun from the state file: `--from 8` with
+  `XCP_FROM_STATE=engine/data/joint_difficulty_state.npz`, no solve.
+  `tests/test_joint_golive.winter_gain_paths` covers all four
+  combinations of the two arguments.

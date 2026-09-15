@@ -4671,19 +4671,29 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 /* ======================================================================
    accounts (283): the topbar slot, the sign-in shell, the account page
    ====================================================================== */
-/* the account control is the last thing on the bar: a small outlined
-   button signed out, the person's picture or initial signed in. The nav
-   links never break mid-word; the search box is what gives way. */
+/* ★ THE ACCOUNT CONTROL RIDES THE SEARCH BAR'S ROW (owner, 2026-09-15:
+   "in line with the search bar"). It already sat on that line at every
+   width; what it did not do was LOOK like part of it. So the signed-out
+   button takes the search input's own height, border and corner, and the
+   signed-in picture is a circle of exactly that height. The nav links
+   never break mid-word; the search box is what gives way when it is tight. */
 .topnav a { white-space: nowrap; }
-.topbar .search-wrap { flex: 0 1 300px; min-width: 150px; width: auto; }
-.topbar .topbar-account { flex: none; margin-left: 0.75rem; display: flex; align-items: center; }
-.topbar .tb-signin { display: inline-block; padding: 0.4rem 0.9rem; border: 1.5px solid var(--ink); border-radius: 999px;
-  color: var(--ink); font-weight: 650; font-size: 0.85rem; text-decoration: none; white-space: nowrap; line-height: 1.1; }
-.topbar .tb-signin:hover { background: var(--ink); color: #fff; }
-.topbar .tb-me { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%;
+.topbar .search-wrap { flex: 0 1 300px; min-width: 140px; width: auto; }
+.topbar .topbar-account { flex: none; margin-left: 0.5rem; display: flex; align-items: center; }
+.topbar .tb-signin { display: inline-flex; align-items: center; padding: 0.45rem 0.9rem;
+  border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #374151;
+  font-weight: 600; font-size: 0.9rem; line-height: 1.2; text-decoration: none; white-space: nowrap; }
+.topbar .tb-signin:hover { border-color: var(--ink); color: var(--ink); }
+.topbar .tb-me { display: flex; align-items: center; justify-content: center; width: 33px; height: 33px; border-radius: 50%;
   background: var(--ink); color: #fff; font-weight: 700; font-size: 0.95rem; text-decoration: none; overflow: hidden; }
 .topbar .tb-me img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .topbar .tb-me:hover { box-shadow: 0 0 0 3px rgba(20,71,125,0.25); }
+/* ! ON A PHONE THE SEARCH BOX YIELDS THE WIDTH, so the button stays on its
+     row instead of dropping to one of its own: signed out it is ~85px wide
+     and 300px of search plus 85 did not fit at 400px. */
+@media (max-width: 700px) {
+  .topbar .search-wrap { flex: 1 1 0; min-width: 0; }
+}
 @media (max-width: 720px) { .topbar .topbar-account { margin-left: auto; } }
 
 /* the sign-in shell: the home page's dark ground, the wordmark, one card */

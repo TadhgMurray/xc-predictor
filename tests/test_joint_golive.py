@@ -106,7 +106,11 @@ def main():
                             "joint_golive.py")).read()
     body = src[src.index("def buildLive"):src.index("def report")]
     assert "curve" not in body.split("eff = ")[1].split("\n")[0]
-    assert "rust" not in body and '"r"]' not in body
+    # ⚠ WORD BOUNDARIES (2026-09-15). A bare substring test read the word
+    #   "trusting" in a printed sentence as the rust TERM and failed this
+    #   whole file on an unchanged engine.
+    import re as _re
+    assert not _re.search(r"\brust\b", body) and '"r"]' not in body
     print("  curve and rust stay out of the rating ................. OK")
 
     # the tilt is inside: an elite's effect is h * delta with h < 1
@@ -152,6 +156,48 @@ def per_sport_day_term():
     print("  race-day term per sport: XC keeps it, TF drops it, default none  OK")
 
 
+def winter_gain_paths():
+    """The winter gain by LEVEL, by BAND, by both and by neither.
+
+    ⚠ THE RUN THAT CRASHED (2026-09-15). --sport-level-pools without
+      --winter-gain-bands is the stated recipe, and it left gain_bands
+      None while gain_levels built the matrix; the report loop was still
+      bounded by len(gain_bands) and the go-live died AFTER the solve,
+      three hours in, with "object of type 'NoneType' has no len()". The
+      four paths below are the whole space of that argument pair.
+    """
+    out, D, cols, keep, truth, raw = synthetic_pack()
+
+    # 1. levels only -- the crash
+    levels = jg.buildLive(out, D, cols, keep, gain_levels={"hs": 0.008, "college": 0.0})
+    rows = levels["gain_rows"]
+    assert rows, "a stated level must produce the per-band report rows"
+    assert len({r[0] for r in rows}) == 2                 # both pools
+    assert len({r[2] for r in rows}) == len(js.SPORT_GAIN_ANCHORS)
+    assert all(r[4] == 0.008 for r in rows), "every hs band carries the level's gain"
+    assert all(r[1] == "TF" for r in rows)                # the shift is on the track rows
+
+    # 2. bands only -- the path that already worked
+    bands = jg.buildLive(out, D, cols, keep, gain_bands=(0.005, 0.006, 0.007))
+    assert {r[4] for r in bands["gain_rows"]} == {0.005, 0.006, 0.007}
+
+    # 3. both -- a named level wins over the bands for its own pools
+    both = jg.buildLive(out, D, cols, keep, gain_bands=(0.005, 0.006, 0.007),
+                        gain_levels={"hs": 0.008})
+    assert all(r[4] == 0.008 for r in both["gain_rows"])
+
+    # 4. neither -- no shift, no rows, and the ratings are the plain ones
+    plain = jg.buildLive(out, D, cols, keep)
+    assert plain["gain_rows"] == []
+    assert not np.allclose(levels["chosen"], plain["chosen"]), \
+        "a stated gain must actually move the track rows"
+    sport = np.asarray(cols["sport"][keep])
+    assert np.allclose(levels["chosen"][sport == 0], plain["chosen"][sport == 0]), \
+        "and must leave the cross country rows alone"
+    print("  winter gain by level, by band, by both, by neither .... OK")
+
+
 if __name__ == "__main__":
     main()
     per_sport_day_term()
+    winter_gain_paths()
