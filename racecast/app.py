@@ -6483,8 +6483,21 @@ def api_teams():
     # HS-equivalent view: a team board is one pool throughout; the top-5
     # average and the fifth man scale by the same factor as any member.
     hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",
-                                                   "fifth_rating"),
+                                                   "fifth_rating",
+                                                   "best_rating"),
                                 pool=f.get("pool"), sport=f.get("sport"))
+    # ⚠ AND THE ROSTER ROWS, WHICH WERE NEVER STAMPED (owner, 2026-09-15:
+    #   "the speed ratings for the ppl on the teams is not hs-equivalent
+    #   when it should be"). Only the TEAM-level numbers went through the
+    #   stamper, so the Rosters view showed raw pool ratings under an
+    #   HS-equivalent heading. The scorers are nested one level down, so
+    #   they are flattened into one list and stamped together -- each
+    #   carries its own pool (team_rank.rankTeams), so a pool=all board
+    #   converts every runner by the right factor rather than the board's.
+    scorers = [sc for r in rows for sc in (r.get("scorers") or [])]
+    if scorers and stampBoardRows(scorers, rating_keys=("rating",),
+                                  pool=f.get("pool"), sport=f.get("sport")):
+        hs_movable = True
 
     stampCrests(rows)
     return jsonify({"filters": f, "count": len(rows),

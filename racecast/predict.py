@@ -1534,6 +1534,22 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
         if exclude_terminal and not (r.get("grade") or "").strip():
             entry["grade_unknown"] = True
         out.setdefault(r["school"], []).append(entry)
+
+    # ★ THE HS-EQUIVALENT NUMBER, STAMPED BESIDE THE POOL ONE (owner,
+    #   2026-09-15: "the speed ratings for the ppl on the teams is not
+    #   hs-equivalent when it should be if the scale is hs-equivalent").
+    #   _bestFirst already converts through repFactor to SORT a mixed-pool
+    #   squad correctly -- it has to, since a rating is pool-relative -- but
+    #   the number shown was always the raw one. Every entry carries its own
+    #   pool, so each converts by its own factor.
+    #
+    # ⚠ BESIDE, NOT INSTEAD. `rating` stays the pool rating because the
+    #   prediction maths and the data-rating attributes the page reads back
+    #   are built on it. This is a display value only.
+    from pool_view import stampBoardRows
+    flat = [e for rows in out.values() for e in rows]
+    if flat:
+        stampBoardRows(flat, rating_keys=("rating",), sport=sport)
     return {sch: _bestFirst(rows, sport) for sch, rows in out.items()}
 
 

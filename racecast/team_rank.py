@@ -122,7 +122,14 @@ def rankTeams(athletes):
         for m in members[:SQUAD]:
             field.append((float(m["rating"]), key, str(m.get("person_id")),
                           {"person_id": m.get("person_id"),
-                           "name": m.get("name")}))
+                           "name": m.get("name"),
+                           # ★ THE RUNNER'S OWN POOL, so the HS-equivalent
+                           #   view can convert each roster row by ITS
+                           #   factor. Without it a pool=all board would
+                           #   scale every scorer by the board's pool, which
+                           #   is not a pool any of them race in.
+                           "pool": m.get("pool"),
+                           "sport": m.get("sport")}))
 
     scored = _raceField(field)
 
@@ -162,8 +169,13 @@ def rankTeams(athletes):
             #   second answer, and this is the value the athlete boards
             #   already filter on.
             "units": {u: members[0].get(u) for u in UNIT_KEYS},
+            # ! THE ROSTER ROWS, AND THEY CARRY THEIR POOL. app.py stamps
+            #   hs_rating onto each of these; the HS-equivalent toggle
+            #   showed raw pool ratings here until 2026-09-15 because only
+            #   the TEAM-level numbers were ever stamped.
             "scorers": [{"person_id": r.get("person_id"), "name": r.get("name"),
                          "place": r["score_place"],
+                         "pool": r.get("pool"), "sport": r.get("sport"),
                          "rating": round(float(r["rating"]), 2)}
                         for r in t["runners"][:SQUAD]],
         })
