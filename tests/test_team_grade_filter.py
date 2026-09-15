@@ -92,3 +92,47 @@ def test_selecting_grades_keeps_only_them_and_excluding_keeps_the_ungraded():
     assert "= ANY(%(in_grade_keys)s)" in body
     # the exclusion explicitly keeps NULL grades
     assert "IS NULL" in body and "<> ALL(%(ex_grade_keys)s)" in body
+
+
+# ------------------------------------------------------------------ #
+# THE 500 UNDERNEATH BOTH COMPLAINTS
+# ------------------------------------------------------------------ #
+
+def _squad(school, ratings, year=2025):
+    return [{"person_id": i, "name": f"{school}{i}", "school": school,
+             "state": "CA", "pool": "hs_m", "grade": "11", "year": year,
+             "rating": float(r)} for i, r in enumerate(ratings)]
+
+
+def test_ranked_teams_carry_the_season():
+    """rankTeams never emitted a `year`, so sortAndPage's tie-break raised
+    KeyError on EVERY raced board -- which is both "graduating doesn't
+    work" and "choosing events errors" (owner, 2026-09-15)."""
+    TR = pytest.importorskip("team_rank")
+    out = TR.rankTeams(_squad("Great Oak", [170, 165, 160, 155, 150])
+                       + _squad("Newbury Park", [168, 164, 159, 152, 148]))
+    assert out and all("year" in t for t in out)
+    assert {t["year"] for t in out} == {2025}
+
+
+def test_sort_and_page_does_not_raise_on_a_raced_board():
+    TR = pytest.importorskip("team_rank")
+    rows = TR.rankTeams(_squad("Great Oak", [170, 165, 160, 155, 150])
+                        + _squad("Newbury Park", [168, 164, 159, 152, 148]))
+    f = {"sort": "rank", "dir": "ASC", "offset": 0, "limit": 50}
+    got, total = T.sortAndPage(rows, f)
+    assert total == 2 and [r["rank"] for r in got] == [1, 2]
+
+
+def test_a_missing_sort_key_degrades_the_order_and_never_500s():
+    """The year is carried properly now; the tie-break stays defensive
+    because a board that cannot sort must still be a board."""
+    TR = pytest.importorskip("team_rank")
+    rows = TR.rankTeams(_squad("Great Oak", [170, 165, 160, 155, 150])
+                        + _squad("Newbury Park", [168, 164, 159, 152, 148]))
+    for r in rows:
+        r.pop("year", None)
+    rows[0].pop("school", None)
+    f = {"sort": "rank", "dir": "ASC", "offset": 0, "limit": 50}
+    got, total = T.sortAndPage(rows, f)      # must not raise
+    assert total == 2

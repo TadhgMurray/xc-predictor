@@ -524,7 +524,15 @@ def sortAndPage(rows, f):
     descending = f["dir"] == "DESC"
 
     def tieBreak(r):
-        return (r["points"], r["rank"], -(r["year"] or 0), r["school"] or "")
+        # ⚠ .get, NOT [] (2026-09-15). rankTeams has never emitted a `year`
+        #   -- it builds a team row from athlete rows and that key was not
+        #   among them -- so EVERY raced board died here with KeyError:
+        #   'year'. That is both the "graduating doesn't work" and the
+        #   "choosing events errors" report: both take this path. The year
+        #   is carried through properly now; this stays defensive because a
+        #   missing sort key must degrade the ORDER, never 500 the board.
+        return (r["points"], r["rank"], -(r.get("year") or 0),
+                r.get("school") or "")
 
     present = sorted((r for r in rows if keyOf(r) is not None), key=tieBreak)
     missing = sorted((r for r in rows if keyOf(r) is None), key=tieBreak)
@@ -725,7 +733,7 @@ def getReturningField(cur, f):
     units = "".join((f', s."{c}"' if c in have else f', NULL::text AS "{c}"')
                     for c in sorted(TEAM_UNIT_COLS))
     cur.execute(f"""
-        SELECT s.person_id, s.school, s.state, s.grade, s.pool,
+        SELECT s.person_id, s.school, s.state, s.grade, s.pool, s.year,
                s.mean_rating AS rating{units},
                COALESCE(a.name, 'Unknown') AS name
         FROM   {source}

@@ -134,6 +134,12 @@ def rankTeams(athletes):
         out.append({
             "school": school,
             "state": state,
+            # ★ THE SEASON, CARRIED LIKE THE UNITS BELOW. Every athlete of
+            #   one squad shares it, so the first member speaks for the
+            #   team. Absent from this dict until 2026-09-15, which made
+            #   teams.sortAndPage's tie-break raise KeyError on every raced
+            #   board -- the returning squad and the event window both.
+            "year": members[0].get("year"),
             "rank": t["place"],
             "points": t["points"],
             "n_athletes": len(members),
