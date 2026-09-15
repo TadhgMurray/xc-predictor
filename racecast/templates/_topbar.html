@@ -21,7 +21,28 @@
        section lit, and an exact test would leave every detail page with a
        blank bar. #}
     {% set here = request.path %}
+    {# ★ TWO EDITIONS, SWITCHED BY PATH RATHER THAN BY A COOKIE. The coach
+       tools are their own product under /coaches, not a link inside the
+       athlete nav. Keying the view on request.path is what keeps every page
+       edge-cacheable: a cookie-varying topbar would make the cache key the
+       reader rather than the URL, and the whole site would stop being
+       shared between them. It also means a coach can send a colleague a
+       link and have them land in the same edition. #}
+    {% set coach_view = here.startswith('/coaches') %}
+    <div class="viewswitch" role="group" aria-label="Site edition">
+        <a href="/" class="{{ 'is-on' if not coach_view }}"
+           {% if not coach_view %}aria-current="true"{% endif %}>Athletes</a>
+        <a href="/coaches" class="{{ 'is-on' if coach_view }}"
+           {% if coach_view %}aria-current="true"{% endif %}>Coaches</a>
+    </div>
     <nav class="topnav">
+        {% if coach_view %}
+        <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
+        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
+        <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
+        {% else %}
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
 
@@ -29,6 +50,7 @@
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
         <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
+        {% endif %}
         {# Muted, and last. The topbar is the only element on EVERY page, so
            it is the only place a report link gets site-wide reach -- but it
            is not a destination, so it should not compete with the sections. #}

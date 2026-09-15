@@ -4805,3 +4805,112 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .recruit-coach table.rc-tbl td.gain-down { color: #a32d2d; }
 
 }
+
+/* ===================================================================== *
+ * THE COACH EDITION (282/283): the topbar's edition switch and /coaches.
+ *
+ * ★ THE SWITCH IS A LINK, NOT A TOGGLE. It sits next to the mark and reads
+ *   as one control with two sides; which side is lit comes from
+ *   request.path in _topbar.html, so it is part of the cached HTML and
+ *   needs no JavaScript. See the comment there for why a cookie would
+ *   have cost the edge cache.
+ * ===================================================================== */
+
+.topbar .viewswitch {
+    display: inline-flex;
+    flex: none;
+    border: 1px solid #ccc;          /* the search input's own border */
+    border-radius: 4px;
+    overflow: hidden;
+    background: #fff;
+    font-size: 0.82rem;
+    line-height: 1.2;
+}
+.topbar .viewswitch a {
+    padding: 0.38rem 0.7rem;
+    text-decoration: none;
+    color: #6b7280;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.topbar .viewswitch a + a { border-left: 1px solid #e5e7eb; }
+.topbar .viewswitch a:hover { color: var(--ink); background: #f7f8fa; }
+.topbar .viewswitch a.is-on { background: var(--ink); color: #fff; }
+.topbar .viewswitch a.is-on:hover { background: var(--ink); }
+
+/* ⚠ THE LAPTOP BAND WAS ALREADY BROKEN, AND THE SWITCH ONLY MADE IT WIDER.
+     Measured in a browser on b1bf920, BEFORE this section existed: at
+     1180px the bar overflowed by 23px and the account chip sat off the
+     right edge; at 1024px, by 145px; and so on down to the 700px rule,
+     which wraps and is fine. Nothing between 700 and ~1200 ever reflowed,
+     because .search-wrap was a rigid 320px and .topnav could not wrap --
+     so the last element on the bar, the account chip, was pushed out of
+     the window and the page scrolled sideways. The chip has been invisible
+     on a 1024px laptop since it was added.
+
+     Three things yield, in the order they can afford to:
+       search    a rigid 320px becomes flexible. It loses width without
+                 losing a word, so it goes first.
+       nav       may wrap to a second line rather than push its siblings
+                 out. min-width: 0 is what lets it shrink past its own
+                 content in the first place.
+       switch    tightens its padding last; it is two words and both
+                 have to stay readable.
+
+     This runs on BOTH editions -- the athlete bar is the wider of the two
+     (seven links to the coach bar's six) and was the one breaking first. */
+@media (max-width: 1200px) {
+    .topbar { gap: 0.9rem; flex-wrap: wrap; }
+    .topbar .search-wrap { width: auto; flex: 1 1 9rem; min-width: 7rem; }
+    .topbar .topnav { flex-wrap: wrap; min-width: 0; gap: 0.35rem 0.9rem; }
+    .topbar .viewswitch { font-size: 0.78rem; }
+    .topbar .viewswitch a { padding: 0.34rem 0.55rem; }
+}
+
+/* ---- /coaches ------------------------------------------------------- */
+
+.coach-home .coach-mine,
+.coach-home .coach-tools,
+.coach-home .coach-next { margin-top: 2rem; }
+.coach-home h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+.coach-home .coach-mine-note { margin: 0; color: #374151; font-size: 0.92rem; }
+.coach-home .coach-team-list { list-style: none; margin: 0.4rem 0 0.6rem; padding: 0;
+    display: flex; flex-direction: column; gap: 0.3rem; }
+.coach-home .coach-team-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.coach-home .coach-admin-tag { display: inline-block; margin-left: 0.3rem; padding: 0.05rem 0.4rem;
+    border-radius: 3px; background: #f2c14e; color: #3b2f0b; font-size: 0.7rem;
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ★ THE CARDS ARE THE ONLY LIFTED THING ON THE PAGE, because they are the
+     page: six destinations, same edges, same inner padding, and the whole
+     card is the link rather than a word inside it. */
+.coach-home .coach-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.9rem;
+}
+.coach-home .coach-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--line-2, #e5e7eb);
+    border-radius: 8px;
+    background: #fff;
+    text-decoration: none;
+    color: inherit;
+}
+.coach-home .coach-card:hover { border-color: var(--ink); }
+.coach-home .coach-card h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.coach-home .coach-card p { margin: 0; color: #374151; font-size: 0.9rem; line-height: 1.45; }
+.coach-home .coach-go { margin-top: auto; padding-top: 0.2rem; font-size: 0.85rem;
+    font-weight: 650; color: var(--ink); }
+
+.coach-home .coach-next-list { margin: 0; padding-left: 1.1rem; display: flex;
+    flex-direction: column; gap: 0.35rem; color: #374151; font-size: 0.9rem; }
+.coach-home .coach-next-list b { color: var(--ink); }
+.coach-home .coach-foot { margin-top: 2rem; font-size: 0.85rem; max-width: 46rem; }
+
+@media (max-width: 600px) {
+    .coach-home .coach-grid { grid-template-columns: 1fr; }
+}

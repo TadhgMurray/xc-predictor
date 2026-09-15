@@ -1036,3 +1036,42 @@ verification yet. Built on `claude/nice-rubin-tj0kev` and on master.
   `XCP_FROM_STATE=engine/data/joint_difficulty_state.npz`, no solve.
   `tests/test_joint_golive.winter_gain_paths` covers all four
   combinations of the two arguments.
+
+## 12. 2026-09-15: THE COACH EDITION (282/283)
+
+The coach tools became their own product at `/coaches` instead of one
+more link in the athlete nav, because the free/paid line falls there: the
+athlete pages are the traffic and stay free, and a coach will pay for a
+tool that picks a lineup, not for rankings they can already read.
+
+- **The switch is a URL, not a cookie.** `_topbar.html` sets
+  `coach_view = request.path.startswith('/coaches')` and lights one half of
+  a two-item control beside the mark. This is not a style preference: a
+  cookie-varying topbar keys the edge cache on the READER instead of the
+  URL, and every page on the site would stop being shared between them.
+  It also means a coach can send a colleague a link and have them land in
+  the same edition.
+- **`/coaches`** is public, cacheable and ungated: six cards to the tools
+  that exist, and a plainly-labelled list of the ones that do not. The only
+  per-reader block is "your teams", and `coaches.js` fills it from the
+  `xcp:me` event `topbar-search.js` already dispatches -- one `/api/me`
+  request for the page, not two.
+- **`/coaches/recruits`** is the search that used to be
+  `/recruiting/search`; the old URL is a 301, not a second copy of the
+  page, because two routes rendering one template is how they drift.
+- **Admin is env-only.** `XCP_ADMIN_EMAILS=you@example.com` in
+  `/etc/xc-predictor.env`, then restart; `accounts.py --check` prints the
+  list back. Nothing under `/coaches` is gated on it today -- the flag
+  reaches `/api/me` and shows as a tag, and it is there for the tools that
+  will need it.
+- **⚠ A bar bug older than this change, found while measuring it.** On
+  b1bf920 the topbar overflowed between ~1180px and 760px -- 23px at 1180,
+  145px at 1024 -- and the account chip sat off the right edge of the
+  window, invisible on an ordinary laptop, ever since it was added.
+  `.search-wrap` was a rigid 320px and `.topnav` could not wrap, so the
+  last element on the bar was pushed out instead of anything reflowing.
+  The `max-width: 1200px` block lets the search shrink, the nav wrap and
+  the switch tighten, in that order. Swept in a browser at twelve widths
+  on both editions: zero overflow, chip visible at every one.
+- **Tests:** `tests/test_coach_view.py` (routes, the 301, the path-keyed
+  switch, no reader state in cached HTML, the reflow band).

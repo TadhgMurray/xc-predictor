@@ -146,7 +146,13 @@
             }
             document.dispatchEvent(new CustomEvent('xcp:me', { detail: window.xcpMe }));
         })
-        .catch(function () { window.xcpMe = { signed_in: false }; });
+        /* ! STILL DISPATCH ON FAILURE. Pages that wait for xcp:me (coaches.js)
+             would hang forever on a network error otherwise, leaving their
+             signed-in block empty rather than falling back to signed-out. */
+        .catch(function () {
+            window.xcpMe = { signed_in: false };
+            document.dispatchEvent(new CustomEvent('xcp:me', { detail: window.xcpMe }));
+        });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', whoami);
   else whoami();

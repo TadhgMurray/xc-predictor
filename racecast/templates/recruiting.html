@@ -3,7 +3,7 @@
    among each school's. The rows come from /api/recruiting/schools
    (recruiting.py); the filters and the subject (?athlete= or ?time=&event=)
    live in the query string so a placement is a link. The coach's search
-   is /recruiting/search. #}
+   is /coaches/recruits. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,7 +25,7 @@
       data-built="{{ '1' if built else '' }}" data-athlete="{{ prefill_athlete or '' }}">
   <div class="hdr-row">
     <h1>Recruiting</h1>
-    <a class="rc-coach" href="/recruiting/search">Coaches: search athletes →</a>
+    <a class="rc-coach" href="/coaches/recruits">Coaches: search athletes →</a>
   </div>
   <p class="rc-sub">What each college's recruits actually ran, on the high-school scale.{{ rating_i() }}
      Find yourself or enter a time, and every school says where you would sit among the runners it took.</p>

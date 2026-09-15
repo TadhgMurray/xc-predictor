@@ -1,0 +1,121 @@
+{# coaches.html -- the coach edition's home (282/283), /coaches.
+
+   ★ A SEPARATE PRODUCT, NOT A LINK IN THE ATHLETE NAV. Everything under
+     /coaches answers a coach's question -- who to recruit, who to enter,
+     how a lineup scores -- and the topbar switches between the two
+     editions on the path. See _topbar.html for why the switch is a URL
+     rather than a cookie.
+
+   ★ PUBLIC AND CACHEABLE. Nothing here is gated: a coach browsing without
+     an account sees every tool, and the page is edge-cacheable like the
+     rest of the site. The only per-reader part is "your teams", which
+     coaches.js fills from /api/me after load -- the same way the topbar
+     fills its account chip. Keep it that way; a server-rendered claim
+     would make every coach page uncacheable for one block of text. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Coaching Tools" %}
+{% set meta_description = "Recruiting search, team scoring and rankings for cross country and track coaches. Every high school and college season in the country on one comparable scale." %}
+{% set meta_crumbs = [("Coaches", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page-wide coach-home" id="coaches">
+  <div class="hdr-row">
+    <h1>Coaching tools</h1>
+    <a class="rc-coach" href="/recruiting">Athletes: where you'd fit &rarr;</a>
+  </div>
+  <p class="rc-sub">Every high school and college season in the country, on one scale that already
+     accounts for the course, the conditions and the era. Nothing here needs an account &mdash; sign in
+     only to keep your teams on hand.</p>
+
+  {# Filled by coaches.js from /api/me. Signed out, this is what shows. #}
+  <section class="coach-mine" id="coach-mine">
+    <h2>Your teams</h2>
+    <p class="coach-mine-note" id="coach-mine-note">
+      <a href="/login?next=/coaches">Sign in</a> and add the team you coach in
+      <a href="/account">settings</a> to keep it here.
+    </p>
+    <ul class="coach-team-list" id="coach-team-list" hidden></ul>
+  </section>
+
+  <section class="coach-tools">
+    <h2>Tools</h2>
+    <div class="coach-grid">
+
+      <a class="coach-card" href="/coaches/recruits">
+        <h3>Find recruits</h3>
+        <p>Every high school season in the country, filtered by graduation year, rating, state, school
+           and &mdash; the one nobody else can sort on &mdash; how fast they are improving year over year.</p>
+        <span class="coach-go">Search{% if season_years.get('XC') %} the {{ season_years.get('XC') }} season{% endif %} &rarr;</span>
+      </a>
+
+      <a class="coach-card" href="/predictions">
+        <h3>Predictions and team scoring</h3>
+        <p>Project a field at a real course and date, then score it: five runners plus two displacers,
+           with the whole field predicted rather than only the teams you asked about.</p>
+        <span class="coach-go">Open predictions &rarr;</span>
+      </a>
+
+      <a class="coach-card" href="/rankings">
+        <h3>Rankings by your unit</h3>
+        <p>State, section, division, league &mdash; and for colleges division, region and conference.
+           The board you actually compete in, not just the national one.</p>
+        <span class="coach-go">Open rankings &rarr;</span>
+      </a>
+
+      <a class="coach-card" href="/meets">
+        <h3>Meets and results</h3>
+        <p>Every meet in the corpus, with each race rated on the same scale, so a September invitational
+           and a November championship are directly comparable.</p>
+        <span class="coach-go">Browse meets &rarr;</span>
+      </a>
+
+      <a class="coach-card" href="/conversions">
+        <h3>Course and distance conversions</h3>
+        <p>What a time at one course or distance is worth at another, using the difficulty solved from
+           athletes who raced both.</p>
+        <span class="coach-go">Open conversions &rarr;</span>
+      </a>
+
+      <a class="coach-card" href="/schools">
+        <h3>School directory</h3>
+        <p>Every programme in the country by state, with its roster, its season and its own all-time
+           bests.</p>
+        <span class="coach-go">Browse schools &rarr;</span>
+      </a>
+
+    </div>
+  </section>
+
+  {# ! NAMED AS NOT BUILT, AND NOT LINKED. A card that looks live and goes
+       nowhere is worse than no card. These are plain text on purpose. #}
+  <section class="coach-next">
+    <h2>Being built</h2>
+    <ul class="coach-next-list">
+      <li><b>Lineup simulator.</b> Set a lineup, get win probability, expected score and which runner
+          actually swings the result. Waiting on the prediction model's weights.</li>
+      <li><b>Recruiting projections.</b> What a high schooler is likely to run in college, as a range
+          rather than a number, and who is furthest below what their times suggest.</li>
+      <li><b>Programme development.</b> How much athletes at a school improve per year against the
+          national baseline at their level.</li>
+      <li><b>Saved boards and watchlists.</b> Keep a recruiting list, and hear about it when someone
+          on it races.</li>
+    </ul>
+  </section>
+
+  <p class="meta coach-foot">Ratings are pool-relative: 100 sits at the mean of an athlete's own pool.
+     A search is its own link &mdash; every filter lives in the query string, so you can send one to an
+     assistant coach and they will see exactly what you saw.</p>
+</main>
+
+<script src="{{ static_v('coaches.js') }}"></script>
+</body>
+</html>

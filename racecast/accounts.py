@@ -1027,7 +1027,10 @@ def api_me():
         "role": a.get("role") or "neither", "admin": isAdmin(a),
         "athletes": [{"person_id": c["person_id"], "name": c.get("name") or "", "status": c["status"]}
                      for c in claims if c["kind"] in ("athlete", "coach_self")],
+        # level_label, not just level: /coaches renders these client-side and
+        # should not have to keep its own copy of LEVEL_WORDS.
         "teams": [{"school": c["school"], "state": c["state"], "level": c["level"],
+                   "level_label": c.get("level_label") or "",
                    "label": c["school_label"], "status": c["status"]}
                   for c in claims if c["kind"] == "coach_team"],
     })

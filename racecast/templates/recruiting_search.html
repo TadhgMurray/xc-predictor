@@ -1,5 +1,5 @@
 {# recruiting_search.html -- the coach's search (282, the coach edition,
-   /recruiting/search): every high-school season in the country, filtered
+   /coaches/recruits): every high-school season in the country, filtered
    by class year, rating, gain, state and school, ranked by rating or by how
    fast the athlete is improving. The rows come from /api/recruiting
    (recruiting.py); the filters live in the query string so a search can be
@@ -12,7 +12,7 @@
 {% from "_explain.html" import rating_i %}
 {% set meta_title = "Recruiting Search for Coaches" %}
 {% set meta_description = "Find high school cross country and track recruits by graduation year, speed rating, year-over-year improvement, state and school. Every season in the country on one comparable scale." %}
-{% set meta_crumbs = [("Recruiting", "/recruiting"), ("Coach search", none)] %}
+{% set meta_crumbs = [("Coaches", "/coaches"), ("Find recruits", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 </head>

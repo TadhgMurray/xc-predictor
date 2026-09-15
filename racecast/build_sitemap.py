@@ -36,7 +36,7 @@ MAX_PER_FILE = 45000
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "static", "sitemaps")
 FIXED_PAGES = ("/", "/rankings", "/meets", "/conversions", "/predictions",
-               "/about")
+               "/recruiting", "/coaches", "/coaches/recruits", "/about")
 
 
 def chunk(items, n=MAX_PER_FILE):

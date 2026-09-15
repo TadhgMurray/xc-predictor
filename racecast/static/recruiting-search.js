@@ -1,4 +1,4 @@
-/* recruiting-search.js -- the coach's search (282, /recruiting/search).
+/* recruiting-search.js -- the coach's search (282, /coaches/recruits).
    The filters are the query string, so a search is a link; the rows
    come from /api/recruiting. */
 (function () {
