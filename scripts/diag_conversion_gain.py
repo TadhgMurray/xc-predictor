@@ -37,6 +37,7 @@ disagrees.
   round-trip test cancels it.
 """
 import argparse
+import math
 import os
 import statistics
 import sys
@@ -130,22 +131,52 @@ def scaleReport(cur, pool):
     return cur.fetchall()
 
 
-def halfB(cv, rows, sport):
-    """raw time -> normalized_time, against the stored normalized_time.
-    The distance curve, the difficulty and the sport gain.
+def effects(cv, rows, sport):
+    """The engine's applied effect per row, recovered exactly, beside the
+    page's effect for the same row. In log units, and in percent.
 
-    ⚠ AT THE ROW'S OWN DISTANCE, and with the display difficulty, which is
-      what the page uses when no venue is named. A residual here is the
-      curve disagreeing with what the engine normalised at."""
-    errs = []
+    ★★ THIS IS THE ONLY CLEAN COMPARISON, AND TWO EARLIER VERSIONS OF THIS
+       SCRIPT GOT IT WRONG (2026-09-15). Both compared a quantity that has
+       the effect ALREADY DIVIDED OUT against normalized_time, which has
+       not, so both were measuring exp(eff) and calling it a scale error:
+
+         _norm_from_rating -> 100 * pm / rating,   which IS norm/exp(eff)
+         _norm_from_time   -> `adjusted`,          same thing (see its
+                                                   `return adjusted`)
+
+       The engine's own algebra gives the effect back exactly, from three
+       stored numbers and no join:
+
+           rating   = 100 * pm / adjusted,  adjusted = norm / exp(eff)
+        => eff      = ln(norm * rating / (100 * pm))
+
+       So the engine's per-row effect is knowable, and the page's is just
+       venueEffect at the same rating. Comparing THOSE is apples to
+       apples; everything else here was not.
+
+    ⚠ A GAP IS EXPECTED FOR TRACK AND IS BY DESIGN. With no venue named
+      the page prices track at difficulty 0.0 -- the average OUTDOOR track
+      -- while these rows are the real mix, indoor included, and
+      venueEffect's own note records that the median applied effect over
+      track rows sits about 1% off that anchor. Read the track number
+      against ~1%, not against 0."""
+    pm = cv.pool_mean(rows[0]["pool"], sport) if rows else None
+    if not pm:
+        return None, None
+    eng, page = [], []
     for r in rows:
-        got = cv._norm_from_time(float(r["time_seconds"]), float(r["distance"]),
-                                 r["pool"], sport=sport, chosen=None)
-        if not got or got <= 0:
+        rating = float(r["speed_rating"])
+        norm = float(r["normalized_time"])
+        if rating <= 0 or norm <= 0:
             continue
-        want = float(r["normalized_time"])
-        errs.append(100.0 * (got - want) / want)
-    return _stats(errs)
+        eng.append(math.log(norm * rating / (100.0 * pm)))
+        page.append(cv.venueEffect(r["pool"], sport, rating, None,
+                                   float(r["distance"])) or 0.0)
+    if not eng:
+        return None, None
+    diff = [100.0 * (math.expm1(p) - math.expm1(e)) for e, p in zip(eng, page)]
+    return (_stats([100.0 * math.expm1(e) for e in eng]),
+            _stats(diff))
 
 
 def describe(label, st, fast_word="FAST"):
@@ -192,11 +223,20 @@ def main(argv=None):
         if not rows:
             print("    nothing sampled -- widen --year, or clear --pool\n")
             continue
-        b = halfB(cv, rows, s)
-        describe("time -> normalized", b)
+        eng, diff = effects(cv, rows, s)
+        if eng is None or diff is None:
+            print("    no pool mean for this pool/sport\n")
+            continue
+        print(f"    engine's own applied effect   median {eng['median']:+7.3f}%   "
+              f"IQR {eng['p25']:+.3f}..{eng['p75']:+.3f}")
+        expect = "  (expect ~+1%: the page prices an unnamed track at 0.0)" \
+            if s == "TF" else ""
+        print(f"    page minus engine             median {diff['median']:+7.3f}%   "
+              f"IQR {diff['p25']:+.3f}..{diff['p75']:+.3f}   "
+              f"mean |err| {diff['mean_abs']:.3f}%{expect}")
         print()
-        if b and (worst is None or b["mean_abs"] > worst[2]):
-            worst = (s, "time->normalized", b["mean_abs"])
+        if worst is None or abs(diff["median"]) > abs(worst[2]):
+            worst = (s, "page-engine", diff["median"])
 
     # ---- the anchor, which is what moves XC conversions ---------------- #
     import joint_solve as js
@@ -223,6 +263,12 @@ def main(argv=None):
             bad.append((pname, off))
 
     print("\n  reading it:")
+    print("    'page minus engine' is the number that matters: it is how far the")
+    print("    page's effect model sits from what the engine actually applied,")
+    print("    at the same rating, for the same rows. Near zero for XC and near")
+    print("    +1% for TF is agreement. A systematic offset beyond that is the")
+    print("    page and the engine on different scales.")
+    print()
     print("    the XC-TF gap is the measured grass cost, and every difficulty is")
     print("    anchored on the UNWEIGHTED MEAN over outdoor track cells. Wild")
     print("    per-venue track estimates drag that mean, and the shift lands on")
