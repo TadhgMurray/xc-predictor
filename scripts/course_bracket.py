@@ -302,6 +302,12 @@ def engineCells(npz, cell_keys, base_key, delta):
                     "era": float(era), "pin": float(pin[c]), "shift": float(shift[c]),
                     "fit": float(fit[c]), "scale": float(scale[c]),
                     "level": float(mu[1] if bare.startswith("TF:") else mu[0]),
+                    # what the go-live added on top of the engine's arithmetic:
+                    # the display anchor (the zero is a track, so an XC course
+                    # carries the XC-vs-track offset); without it the trace's
+                    # era column and the published one did not reconcile
+                    "anchor": float(delta[c]) - (float(scale[c]) * (float(fit[c]) - float(shift[c]))
+                                                 + float(mu[1] if bare.startswith("TF:") else mu[0])),
                     "published": float(delta[c])})
     return out
 
@@ -340,14 +346,14 @@ def report(result, names=None, top=0.0):
             print("  the engine's arithmetic (--difficulty bracket), per (course, era) cell:")
             print(f"    {'cell':<28} {'races':>5} {'votes':>6} {'raw':>7} "
                   f"{'history':>8} {'(votes':>7} {'prior)':>7} {'place':>9} {'era':>7} {'pin':>7} "
-                  f"{'recentre':>9} {'scale':>6} {'level':>7} {'published':>10}")
+                  f"{'recentre':>9} {'scale':>6} {'level':>7} {'anchor':>7} {'published':>10}")
             for e in res["engine"]:
                 pl = (f"#{e['place']}({e['place_cells']})" if e.get("place", -1) >= 0 else "-")
                 print(f"    {e['cell_key']:<28} {e['races']:>5} {e['votes']:>6.2f} "
                       f"{_pct(e['raw']):>7} {_pct(e['base']):>8} {e['base_votes']:>7.2f} "
                       f"{e['prior_group']:>7.2f} {pl:>9} {_pct(e['era']):>7} {_pct(-e['pin']):>7} "
                       f"{_pct(-e['shift']):>9} {e.get('scale', 1.0):>6.3f} {_pct(e['level']):>7} "
-                      f"{_pct(e['published']):>10}")
+                      f"{_pct(e.get('anchor', 0.0)):>7} {_pct(e['published']):>10}")
             print("    read: raw = the era's vote-weighted mean of its races' readings "
                   "(each race weighs voters/(voters+sat)); history = every era of the "
                   "course pulled toward its group's average by `prior` races' worth; "
