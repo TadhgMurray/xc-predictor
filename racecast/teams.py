@@ -811,7 +811,8 @@ def serveBoard(cur, f):
     #   question nobody asked with numbers that ignore the filter.
     if gradeExcluded(f) or eventRestricted(f):
         raced, size = raceReturning(cur, f)
-        note = {"returning": gradeExcluded(f),
+        note = {"returning": bool(f.get("exclude_grade")),
+                "grade_selected": bool(f.get("grade")),
                 "event_window": eventRestricted(f),
                 "dist_min": f.get("dist_min"), "dist_max": f.get("dist_max")}
         if raced is None:
@@ -827,9 +828,18 @@ def serveBoard(cur, f):
                       "shown_of_field": len(shown), "span": f["span"],
                       "reason": None, "total": total,
                       "race_cap": RETURN_CAP, "unscored": 0,
-                      # the page says which grades came out, so a reader
-                      # cannot mistake this for the ordinary board
-                      "excluded_grades": list(f["exclude_grade"]), **note}
+                      # ⚠ .get(...) or [], NOT f[...] (2026-09-15). This
+                      #   read f["exclude_grade"] directly, which was safe
+                      #   only while EXCLUDING was the one way onto the
+                      #   raced path. Selecting grades is a second way, and
+                      #   _multiValue returns None for an absent argument,
+                      #   so the first freshman-team board died here with
+                      #   TypeError: 'NoneType' object is not iterable.
+                      "excluded_grades": list(f.get("exclude_grade") or []),
+                      # and the page says which grades BUILT the squad, so
+                      # "all freshman teams" is as legible as "minus the
+                      # seniors" was
+                      "grades": list(f.get("grade") or []), **note}
 
     size = countField(cur, f)
     # ⚠ TWO DIFFERENT REASONS TO FALL BACK, and the page has to tell them

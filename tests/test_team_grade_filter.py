@@ -136,3 +136,27 @@ def test_a_missing_sort_key_degrades_the_order_and_never_500s():
     f = {"sort": "rank", "dir": "ASC", "offset": 0, "limit": 50}
     got, total = T.sortAndPage(rows, f)      # must not raise
     assert total == 2
+
+
+def test_the_raced_response_survives_either_way_onto_the_path():
+    """TypeError: 'NoneType' object is not iterable (2026-09-15). The
+    response block read f["exclude_grade"] directly, which was safe only
+    while EXCLUDING was the one way onto the raced path. Selecting grades
+    is a second way, and _multiValue returns None when the argument is
+    absent -- so the first freshman-team board died building its own
+    response, after the board had been computed correctly."""
+    src = open(os.path.join(ROOT, "racecast", "teams.py"), encoding="utf-8").read()
+    block = src.split('"excluded_grades"', 1)[1][:200]
+    assert 'f.get("exclude_grade") or []' in src
+    assert 'f["exclude_grade"])' not in block
+    # and the selection is reported too, so "all freshman teams" is as
+    # legible in the response as "minus the seniors" was
+    assert '"grades": list(f.get("grade") or [])' in src
+
+
+def test_parse_leaves_absent_multivalues_as_none():
+    """The precondition the bug above tripped over, stated once."""
+    f, err = parse(pool="hs_m", sport="XC", grade="9")
+    assert err is None
+    assert f["exclude_grade"] is None      # absent -> None, not []
+    assert f["grade"] == ["9"]
