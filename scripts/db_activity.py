@@ -91,6 +91,34 @@ def report(cur):
     return act, vac
 
 
+def indexes(cur, tables=("ranking_results", "athlete_season")):
+    """The indexes the site's pages need, present or missing."""
+    for t in tables:
+        rows = _rows(cur, """SELECT indexname, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+                             FROM pg_indexes i JOIN pg_class c ON c.relname = i.indexname
+                             JOIN pg_index x ON x.indexrelid = c.oid
+                             WHERE i.schemaname = 'public' AND i.tablename = %s
+                             ORDER BY indexname""", (t,))
+        cur.execute("SELECT pg_size_pretty(pg_total_relation_size(%s)), (SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = %s)", (t, t))
+        size, live = cur.fetchone()
+        print(f"\n== indexes on {t} ({size}, ~{(live or 0):,} rows) ==")
+        print("  NONE -- every page query on it is a full scan" if not rows else
+              "\n".join(f"  {r['indexname']:<40} {r['size']}" for r in rows))
+        cur.execute("""SELECT count(*) FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid
+                       JOIN pg_class t ON t.oid = x.indrelid WHERE t.relname = %s AND NOT x.indisvalid""", (t,))
+        bad = cur.fetchone()[0]
+        if bad:
+            print(f"  ⚠ {bad} INVALID index(es): a CREATE INDEX CONCURRENTLY died; drop and rebuild (step 11b)")
+    need = {"ranking_results": ("school", "person_id", "meet_id"), "athlete_season": ("school", "person_id")}
+    for t, cols in need.items():
+        for col in cols:
+            cur.execute("""SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND tablename = %s
+                           AND (indexdef ~ ('\\(' || %s || '[,)]'))""", (t, col))
+            if not cur.fetchone()[0]:
+                print(f"  ⚠ {t} has no index led by {col}: the pages that filter by it scan the table "
+                      f"(python scripts/add_page_indexes.py builds it CONCURRENTLY, step 11b)")
+
+
 def killPipeline(cur):
     rows = _rows(cur, """SELECT pid, pg_terminate_backend(pid) AS done,
                                 left(regexp_replace(query, '\\s+', ' ', 'g'), 70) AS query
@@ -118,6 +146,7 @@ def main():
     ap.add_argument("--kill-pipeline", action="store_true")
     ap.add_argument("--kill-vacuum", action="store_true")
     ap.add_argument("--quiet", action="store_true", help="no report, only the kills")
+    ap.add_argument("--indexes", action="store_true", help="the boards tables' indexes, and which the pages miss")
     args = ap.parse_args()
     with getConn() as conn:
         conn.autocommit = True
@@ -128,6 +157,8 @@ def main():
                 killVacuum(cur)
             if not args.quiet:
                 report(cur)
+            if args.indexes:
+                indexes(cur)
     return 0
 
 
