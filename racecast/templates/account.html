@@ -1,0 +1,126 @@
+{# account.html -- your account (283): the role you picked, the athletes
+   you are, the teams you coach, and the exits. Every change is a POST
+   with the session's CSRF token; the pickers are the site's own typeahead. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Your account" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page account-page" data-role="{{ account.role }}">
+  <h1>Your account</h1>
+  <p class="meta">{{ account.email }}{% if account.name %} · {{ account.name }}{% endif %}{% if account.google_sub %} · Google{% endif %}{% if admin %} · admin{% endif %}</p>
+  {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+  {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+
+  <h2>I am</h2>
+  <form method="post" action="/account/role" class="acct-roles">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for r, word in [("athlete", "an athlete"), ("coach", "a coach"), ("neither", "neither, just looking")] %}
+    <label class="acct-role {{ 'is-on' if account.role == r }}"><input type="radio" name="role" value="{{ r }}" {{ 'checked' if account.role == r }} onchange="this.form.submit()"> {{ word }}</label>
+    {% endfor %}
+    <noscript><button type="submit" class="go">Save</button></noscript>
+  </form>
+
+  {% set athletes = claims|selectattr("kind", "equalto", "athlete")|list %}
+  {% set selves = claims|selectattr("kind", "equalto", "coach_self")|list %}
+  {% set teams = claims|selectattr("kind", "equalto", "coach_team")|list %}
+
+  <section class="acct-block acct-athlete">
+    <h2>Your athlete page{{ "s" if athletes|length > 1 }}</h2>
+    <p class="meta">Link the page that is you. If you appear twice on Racecast (it happens), link both; that also tells us they are one person.</p>
+    {% if athletes %}
+    <ul class="acct-list">
+      {% for c in athletes %}
+      <li><a href="/athlete/{{ c.person_id }}">{{ c.name or ("Athlete " ~ c.person_id) }}</a>
+          <span class="dist-note">{{ "verified" if c.status == "verified" else "linked, not yet verified" }}</span>
+          · <a href="/recruiting?athlete={{ c.person_id }}">recruiting</a>
+          <form method="post" action="/account/claim/remove" class="acct-inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ c.id }}"><button type="submit" class="acct-x" title="Unlink">unlink</button></form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/account/claim" class="acct-pick" data-kind="athlete">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="kind" value="athlete">
+      <input type="hidden" name="person_id" value="">
+      <div class="r-combo">
+        <input type="text" class="acct-q" data-search-kind="athlete" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
+        <div class="r-combo-list" hidden></div>
+      </div>
+      <button type="submit" class="go" disabled>Link</button>
+    </form>
+  </section>
+
+  <section class="acct-block acct-coach">
+    <h2>Teams you coach</h2>
+    <p class="meta">Choose the team you represent. Verification (a school email, or the site owner) comes later; for now a team claim is a statement, and it does not open anything about other people.</p>
+    {% if teams %}
+    <ul class="acct-list">
+      {% for c in teams %}
+      <li><a href="{{ school_href(c.school, c.state) }}">{{ c.school_label or c.school }}</a> <span class="dist-note">{{ c.level_label }}{{ " · verified" if c.status == "verified" else " · not yet verified" }}</span>
+          <form method="post" action="/account/claim/remove" class="acct-inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ c.id }}"><button type="submit" class="acct-x">remove</button></form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/account/claim" class="acct-pick" data-kind="coach_team">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="kind" value="coach_team">
+      <input type="hidden" name="school" value="">
+      <input type="hidden" name="state" value="">
+      <div class="r-combo">
+        <input type="text" class="acct-q" data-search-kind="school" placeholder="Type the school and pick it" autocomplete="off" size="32">
+        <div class="r-combo-list" hidden></div>
+      </div>
+      <select name="level">
+        {% for k, word in levels %}<option value="{{ k }}">{{ word }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="go" disabled>Add team</button>
+    </form>
+
+    <h3>Coaching yourself</h3>
+    <p class="meta">An athlete entering their own races. Pick your own page.</p>
+    {% if selves %}
+    <ul class="acct-list">
+      {% for c in selves %}
+      <li><a href="/athlete/{{ c.person_id }}">{{ c.name or ("Athlete " ~ c.person_id) }}</a>
+          <form method="post" action="/account/claim/remove" class="acct-inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ c.id }}"><button type="submit" class="acct-x">remove</button></form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/account/claim" class="acct-pick" data-kind="coach_self">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="kind" value="coach_self">
+      <input type="hidden" name="person_id" value="">
+      <div class="r-combo">
+        <input type="text" class="acct-q" data-search-kind="athlete" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
+        <div class="r-combo-list" hidden></div>
+      </div>
+      <button type="submit" class="go" disabled>Add</button>
+    </form>
+  </section>
+
+  <section class="acct-block acct-exits">
+    <h2>Sessions</h2>
+    <div class="acct-row">
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="go quiet">Sign out</button></form>
+      <form method="post" action="/account/logout-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="go quiet">Sign out everywhere</button></form>
+    </div>
+    <h2>Delete this account</h2>
+    <p class="meta">Removes the account, its sessions and its links. Results on the site are the public record and stay.</p>
+    <form method="post" action="/account/delete" class="acct-row">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="text" name="confirm" placeholder="type DELETE" size="12" autocomplete="off">
+      <button type="submit" class="go danger">Delete account</button>
+    </form>
+  </section>
+</main>
+<script src="{{ static_v('account.js') }}"></script>
+</body>
+</html>

@@ -111,3 +111,27 @@
         init();
     }
 })();
+
+/* ---- the account (283) ------------------------------------------------
+   Every page is served signed-out and cached; this asks /api/me (never
+   cached) and swaps the topbar link, marks an athlete page that is yours,
+   and hands the answer to any page script listening (xcp:me). */
+(function () {
+    var slot = document.getElementById('topbar-account');
+    if (!slot) return;
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    fetch('/api/me', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (me) {
+            window.xcpMe = me || { signed_in: false };
+            if (me && me.signed_in) {
+                slot.innerHTML = '<a href="/account" class="is-account" title="' + esc(me.email) + '">' + esc(me.label) + '</a>';
+                var mine = document.querySelector('[data-person-id]');
+                if (mine && (me.athletes || []).some(function (a) { return String(a.person_id) === mine.dataset.personId; })) {
+                    mine.insertAdjacentHTML('beforeend', ' · <a href="/account" class="is-account">Your page</a>');
+                }
+            }
+            document.dispatchEvent(new CustomEvent('xcp:me', { detail: window.xcpMe }));
+        })
+        .catch(function () { window.xcpMe = { signed_in: false }; });
+})();

@@ -105,6 +105,15 @@ XCP_DB_PORT=5432
 XCP_DB_NAME=xc_predictor
 XCP_DB_USER=postgres
 XCP_DB_PASSWORD=${XCP_DB_PASSWORD}
+# accounts (283), each feature off until set; see docs/ACCOUNTS.md
+#XCP_MAIL_PROVIDER=resend
+#XCP_MAIL_KEY=
+#XCP_MAIL_FROM=Racecast <login@racecast.co>
+#XCP_GOOGLE_CLIENT_ID=
+#XCP_GOOGLE_CLIENT_SECRET=
+#XCP_TURNSTILE_SITEKEY=
+#XCP_TURNSTILE_SECRET=
+#XCP_ADMIN_EMAILS=
 EOF
 chmod 600 /etc/xc-predictor.env
 

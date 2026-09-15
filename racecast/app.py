@@ -416,7 +416,10 @@ app.jinja_env.globals["static_exists"] = staticExists
 #    API or a cached search result. /search and /compare take free-text and
 #    athlete-id query strings, so their responses are per-request; /api/ and
 #    /debug/ are machine endpoints.
-_PRIVATE_PREFIXES = ("/api/", "/search", "/debug/", "/compare")
+# ! AND EVERYTHING THAT READS A SESSION (283): the login flow and the
+#   account page are per person and must never sit at the edge.
+_PRIVATE_PREFIXES = ("/api/", "/search", "/debug/", "/compare",
+                     "/login", "/logout", "/auth/", "/account")
 
 # How long the EDGE may serve a stored page. The corpus changes only when a
 # pipeline run goes live (hours apart), so this is about how stale a board may
@@ -486,6 +489,12 @@ def _headers(resp):
 #   it as a second site. One constant, overridable for a staging box.
 SITE_ORIGIN = os.environ.get("XCP_SITE_ORIGIN", "https://racecast.co").rstrip("/")
 app.jinja_env.globals["site_origin"] = SITE_ORIGIN
+
+# ★ ACCOUNTS (283): logins and claims live in their own module and
+#   blueprint; the pages stay anonymous (see accounts.py) and only
+#   these routes read the session cookie.
+import accounts as _accounts
+app.register_blueprint(_accounts.bp)
 
 
 @app.route("/robots.txt")

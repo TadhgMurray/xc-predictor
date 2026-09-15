@@ -1,0 +1,62 @@
+{# login.html -- sign in (283): an email and a one-time link, or Google
+   when configured. mode: form | sent | continue | expired. No passwords. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Sign in" %}
+{% set meta_description = "Sign in to Racecast to link your athlete page, represent your team, and place yourself on the recruiting boards." %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+{% if turnstile and mode == "form" %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page login-page">
+  {% if mode == "sent" %}
+  <h1>Check your email</h1>
+  {% if unsent %}
+  <p class="page-lead">Mail is not set up on this server yet, so no link went out. The site owner can find it in the server log.</p>
+  {% else %}
+  <p class="page-lead">If <strong>{{ email }}</strong> is an address we can send to, a sign-in link is on its way. It works once and expires in 15 minutes.</p>
+  <p class="meta">Nothing arrived? Check spam, then <a href="/login{% if next %}?next={{ next|urlencode }}{% endif %}">ask for another</a>.</p>
+  {% endif %}
+
+  {% elif mode == "continue" %}
+  <h1>Sign in to Racecast</h1>
+  <p class="page-lead">One more click. The link is single use, so it waits for you rather than for whatever scanned your email.</p>
+  <form method="post" action="/login/t/{{ token }}" class="login-form">
+    <button type="submit" class="go">Continue</button>
+  </form>
+
+  {% elif mode == "expired" %}
+  <h1>That link has expired</h1>
+  <p class="page-lead">Sign-in links work once and last 15 minutes. <a href="/login">Ask for a new one.</a></p>
+
+  {% else %}
+  <h1>Sign in</h1>
+  <p class="page-lead">No password. We email you a link, or you use Google. An account lets you link your athlete page, represent a team, and place yourself on the recruiting boards.</p>
+  {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login" class="login-form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="form-row">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" value="{{ email or '' }}" placeholder="you@school.edu">
+    </div>
+    <div class="form-row login-age">
+      <label><input type="checkbox" name="age_ok" required> I am 13 or older</label>
+    </div>
+    {% if turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
+    <div class="login-actions">
+      <button type="submit" class="go">Email me a link</button>
+      {% if google %}<button type="submit" name="provider" value="google" class="go quiet">Continue with Google</button>{% endif %}
+    </div>
+  </form>
+  <p class="meta">Accounts are for people 13 or older. Your email is used to sign you in and for nothing else until you ask. You can delete the account any time from its page.</p>
+  {% endif %}
+</main>
+</body>
+</html>

@@ -992,3 +992,30 @@ rules is issue 282 in `docs/ISSUES-2026-08-24.md`.
   engine constants.
 - **Next, as the owner listed it:** the coaches' recruiting pages and
   log-ins (283).
+
+---
+
+## 11. 2026-09-15: ACCOUNTS, THE FIRST CUT (283)
+
+The owner: three options at login (athlete, coach, neither), an athlete
+links one or several pages, a coach picks a team or themself, 13+, no
+verification yet. Built on `claude/nice-rubin-tj0kev` and on master.
+
+- **To switch it on:** `docs/ACCOUNTS.md`. One command creates the
+  tables (`racecast/accounts.py --init`, idempotent, never a pipeline
+  step), a restart, and then env variables per feature: mail (Resend
+  or Postmark; unconfigured, the link goes to the gunicorn log),
+  Google (a console project, one redirect URI), Turnstile, admins.
+- **The shape:** no passwords; magic links or Google; sessions in
+  Postgres; roles as claims; the pages anonymous and cacheable with the
+  topbar asking `/api/me`. The reasoning is the header of
+  `racecast/accounts.py` and the log entry under issue 283.
+- **Tests:** `tests/test_accounts.py` (offline: emails, the next path,
+  tokens, claim forms, CSRF, the client IP, the feature switches, the
+  wiring). The whole login flow (link, continue, consume, cookie,
+  account page, claims, CSRF refusals, logout, delete) ran through
+  Flask's test client on a stateful fake database in the sandbox. Not
+  run: the real mail and Google calls, and `--init` on Postgres.
+- **Next:** what a claim opens (a coach's roster tools, an athlete's
+  fields and contact), verification, then the coaches' recruiting
+  pages.

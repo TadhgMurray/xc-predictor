@@ -4597,3 +4597,36 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-school .r-dist { max-width: 42rem; }
 .recruit-school .r-list td, .recruit-school .r-list th { white-space: nowrap; }
 .recruit-school .r-list { display: block; overflow-x: auto; }
+
+/* ---- accounts (283): the topbar slot, sign-in and the account page ---- */
+.topnav .topnav-account a.is-account { font-weight: 700; }
+.login-page .login-form { max-width: 26rem; }
+.login-page .login-age label { display: flex; gap: 0.5rem; align-items: center; font-weight: 500; }
+.login-page .login-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0.8rem 0; }
+.login-page .go, .account-page .go { padding: 0.5rem 1rem; font: inherit; font-weight: 600; border: 0; border-radius: 6px;
+  background: #1f2937; color: #fff; cursor: pointer; }
+.login-page .go.quiet, .account-page .go.quiet { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+.account-page .go.danger { background: #a32d2d; }
+.account-page .go[disabled] { opacity: 0.5; cursor: default; }
+.account-page h2 { margin: 1.5rem 0 0.4rem; font-size: 1.05rem; }
+.account-page h3 { margin: 1rem 0 0.3rem; font-size: 0.95rem; }
+.account-page .acct-roles { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.account-page .acct-role { padding: 0.4rem 0.8rem; border: 1px solid #d1d5db; border-radius: 999px; cursor: pointer; }
+.account-page .acct-role.is-on { border-color: #1f2937; background: #1f2937; color: #fff; }
+.account-page .acct-role input { margin-right: 0.3rem; }
+.account-page .acct-list { list-style: none; padding: 0; margin: 0.4rem 0; }
+.account-page .acct-list li { padding: 0.35rem 0; border-bottom: 1px solid #e5e7eb; }
+.account-page .acct-inline { display: inline; margin-left: 0.5rem; }
+.account-page .acct-x { background: none; border: 0; color: #6b7280; cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+.account-page .acct-pick { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
+.account-page .acct-pick input[type=text], .account-page .acct-pick select, .account-page .acct-row input[type=text] {
+  padding: 0.45rem 0.6rem; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+.account-page .r-combo { position: relative; }
+.account-page .r-combo-list { position: absolute; z-index: 20; left: 0; top: 100%; min-width: 100%; background: #fff;
+  border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+.account-page .r-combo-item { text-align: left; background: none; border: 0; padding: 0.4rem 0.6rem; font: inherit; cursor: pointer; }
+.account-page .r-combo-item:hover { background: #f3f4f6; }
+.account-page .r-combo-item .sr-sub { color: #6b7280; font-size: 0.8rem; margin-left: 0.4rem; }
+.account-page .acct-row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin: 0.4rem 0; }
+.account-page .acct-notice { color: #146c2e; }
+.account-page[data-role="athlete"] .acct-coach { order: 2; }

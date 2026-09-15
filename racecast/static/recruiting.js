@@ -240,5 +240,20 @@
 
   readUrl();
   if (root.dataset.athlete && !$("r-athlete").value) $("r-athlete").value = root.dataset.athlete;
-  load();
+  /* the accounts seam (283): a signed-in athlete with a linked page is the
+     subject when the URL names nobody; the answer to /api/me arrives from
+     topbar-search.js, before or after this script runs */
+  function fromAccount(me) {
+    if (!me || !me.signed_in || $("r-athlete").value || $("r-time").value.trim()) return false;
+    const a = (me.athletes || [])[0];
+    if (!a) return false;
+    $("r-athlete").value = String(a.person_id);
+    return true;
+  }
+  if (window.xcpMe) { fromAccount(window.xcpMe); load(); }
+  else {
+    let loaded = false;
+    document.addEventListener("xcp:me", (e) => { if (fromAccount(e.detail) || !loaded) { loaded = true; load(); } });
+    setTimeout(() => { if (!loaded) { loaded = true; load(); } }, 1200);
+  }
 })();
