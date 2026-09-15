@@ -4564,69 +4564,169 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-page .recruit-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .recruiting-page table.rk td.num, .recruiting-page table.rk th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ---- recruiting, the athlete edition (282) ---- */
-.recruit-athlete h2 { margin: 1.4rem 0 0.4rem; font-size: 1.05rem; }
-.recruit-athlete h3.r-band { margin: 1.1rem 0 0.3rem; font-size: 0.95rem; display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
-.recruit-athlete .r-or { color: #6b7280; font-size: 0.85rem; }
-.recruit-athlete .go.quiet { background: #f3f4f6; color: #374151; }
-.recruit-athlete .r-subject-line, .recruit-school .r-subject-line { margin: 0.6rem 0 0; font-size: 0.95rem; }
-.recruit-athlete .r-scroll { overflow-x: auto; }
-.recruit-athlete table.rk td, .recruit-athlete table.rk th { white-space: nowrap; }
+/* ======================================================================
+   recruiting, the athlete edition (282)
+   ====================================================================== */
+.recruit-athlete .rc-coach { font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+.recruit-athlete .rc-sub { margin: 0.3rem 0 1.2rem; color: #374151; font-size: 0.95rem; max-width: 46rem; }
+.recruit-athlete h2 { margin: 1.8rem 0 0.4rem; font-size: 1.15rem; }
+.recruit-athlete .rc-input { box-sizing: border-box; padding: 0.5rem 0.65rem; border: 1px solid var(--line-2); border-radius: 6px; font: inherit; font-size: 0.9rem; background: #fff; color: var(--ink); }
+.recruit-athlete .rc-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.recruit-athlete .rc-input-lg { width: 100%; font-size: 1rem; padding: 0.65rem 0.8rem; }
+.recruit-athlete .rc-input-xs { width: 3rem; text-align: center; padding: 0.35rem 0.4rem; }
+.recruit-athlete .rc-time { width: 6rem; font-variant-numeric: tabular-nums; }
+.recruit-athlete .rc-btn { padding: 0.55rem 1.1rem; border: 0; border-radius: 6px; font: inherit; font-weight: 650; font-size: 0.9rem;
+  background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
+.recruit-athlete .rc-btn:hover { filter: brightness(1.08); }
+.recruit-athlete .rc-btn-quiet { background: #fff; color: var(--ink); border: 1px solid var(--line-2); font-weight: 600; }
+.recruit-athlete .rc-link { background: none; border: 0; padding: 0; font: inherit; color: var(--link); text-decoration: underline; cursor: pointer; }
+
+/* you: one card, two ways in, then the placement replaces the form */
+.recruit-athlete .rc-you { border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding: 1.1rem 1.25rem; }
+.recruit-athlete .rc-you-form { display: flex; gap: 1.25rem; align-items: stretch; }
+.recruit-athlete .rc-you-col { flex: 1 1 0; min-width: 0; }
+.recruit-athlete .rc-you-col:first-child { flex: 0.9 1 0; }
+.recruit-athlete .rc-you-col:last-child { flex: 1.1 1 0; }
+.recruit-athlete .rc-you-title { font-weight: 650; font-size: 0.95rem; margin-bottom: 0.45rem; }
+.recruit-athlete .rc-you-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.recruit-athlete .rc-you-or { flex: 0 0 auto; display: flex; align-items: center; padding: 0 0.25rem; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.recruit-athlete .rc-hint { margin-top: 0.4rem; font-size: 0.8rem; color: var(--muted); }
 .recruit-athlete .r-combo { position: relative; }
 .recruit-athlete .r-combo-list { position: absolute; z-index: 20; left: 0; top: 100%; min-width: 100%; background: #fff;
-  border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
-.recruit-athlete .r-combo-item { text-align: left; background: none; border: 0; padding: 0.4rem 0.6rem; font: inherit; cursor: pointer; }
-.recruit-athlete .r-combo-item:hover, .recruit-athlete .r-combo-item:focus { background: #f3f4f6; }
-.recruit-athlete .r-combo-item .sr-sub { color: #6b7280; font-size: 0.8rem; margin-left: 0.4rem; }
-.recruit-athlete .r-gap { color: #6b7280; font-size: 0.75rem; margin-left: 0.3rem; }
-.r-pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+  border: 1px solid var(--line-2); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+.recruit-athlete .r-combo-item { text-align: left; background: none; border: 0; padding: 0.45rem 0.7rem; font: inherit; cursor: pointer; }
+.recruit-athlete .r-combo-item:hover, .recruit-athlete .r-combo-item:focus { background: var(--hover); }
+.recruit-athlete .r-combo-item .sr-sub { color: var(--muted); font-size: 0.8rem; margin-left: 0.4rem; }
+.recruit-athlete .rc-subject-main { display: flex; gap: 1.25rem; align-items: center; }
+.recruit-athlete .rc-subject-rating { display: flex; flex-direction: column; align-items: center; min-width: 6.5rem; padding: 0.4rem 0.8rem;
+  border-radius: 8px; background: var(--ink); color: #fff; }
+.recruit-athlete .rc-subject-num { font-size: 2rem; font-weight: 750; line-height: 1.1; color: #f2c14e; font-variant-numeric: tabular-nums; }
+.recruit-athlete .rc-subject-word { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8; }
+.recruit-athlete .rc-subject-name { font-size: 1.15rem; font-weight: 650; }
+.recruit-athlete .rc-subject-sub { color: #374151; font-size: 0.9rem; }
+.recruit-athlete .rc-subject-times { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.45rem; }
+.recruit-athlete .rc-time-chip { border: 1px solid var(--line-2); border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.recruit-athlete .rc-time-lbl { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.35rem; }
+.recruit-athlete .rc-subject-note { margin-top: 0.75rem; font-size: 0.85rem; color: #374151; }
+
+/* the bands */
+.recruit-athlete .rc-band { margin: 0.9rem 0 1.2rem; }
+.recruit-athlete .rc-band-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.4rem; }
+.recruit-athlete .rc-band-blurb { color: #374151; font-size: 0.875rem; }
+.recruit-athlete .rc-band-n { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+
+/* the schools */
+.recruit-athlete .rc-schools-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.recruit-athlete .rc-schools-head h2 { margin-bottom: 0; }
+.recruit-athlete .rc-seg { display: inline-flex; align-items: center; gap: 0.25rem; margin-top: 1.8rem; }
+.recruit-athlete .rc-seg-gap { width: 0.6rem; }
+.recruit-athlete .rc-seg-btn { padding: 0.4rem 0.85rem; border: 1px solid var(--line-2); border-radius: 999px; background: #fff; font: inherit; font-size: 0.85rem; font-weight: 600; color: #374151; cursor: pointer; }
+.recruit-athlete .rc-seg-btn.is-on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.recruit-athlete .rc-filters { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0 0.5rem; }
+.recruit-athlete .rc-minn { font-size: 0.85rem; color: #374151; display: inline-flex; align-items: center; gap: 0.35rem; }
+.recruit-athlete .rc-count { margin: 0.4rem 0 0.5rem; }
+.recruit-athlete .r-scroll { overflow-x: auto; }
+.recruit-athlete table.rc-tbl { width: 100%; }
+.recruit-athlete table.rc-tbl td, .recruit-athlete table.rc-tbl th { white-space: nowrap; }
+.recruit-athlete table.rc-tbl td.num, .recruit-athlete table.rc-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.recruit-athlete table.rc-tbl .rc-school { max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
+.recruit-athlete table.rc-tbl .rc-dim { color: #4b5563; }
+.recruit-athlete table.rc-tbl .rc-strong { font-weight: 650; }
+.recruit-athlete .r-tiercell { white-space: nowrap; }
+.recruit-athlete .r-gap { display: block; color: var(--muted); font-size: 0.72rem; margin-top: 0.15rem; }
+.recruit-athlete .rc-foot { margin-top: 1.5rem; max-width: 60rem; }
+@media (max-width: 720px) {
+  .recruit-athlete .hdr-row { flex-wrap: wrap; }
+  .recruit-athlete .rc-coach { flex-basis: 100%; margin-top: 0.2rem; }
+  .recruit-athlete .rc-you-form { flex-direction: column; gap: 0.9rem; }
+  .recruit-athlete .rc-you-or { justify-content: center; }
+  .recruit-athlete .rc-subject-main { flex-direction: column; align-items: flex-start; }
+  .recruit-athlete .rc-seg { margin-top: 0.5rem; }
+}
+
+.r-pill { display: inline-block; padding: 0.12rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
   letter-spacing: 0.02em; color: #fff; background: #6b7280; white-space: nowrap; }
-.r-pill-top     { background: #b8860b; }
+.r-pill-top     { background: #a97a12; }
 .r-pill-solid   { background: #146c2e; }
-.r-pill-recruit { background: #2e53e6; }
+.r-pill-recruit { background: #14477d; }
 .r-pill-walkon  { background: #6b3fa0; }
 .r-pill-reach   { background: #9a6b00; }
 .r-pill-below   { background: #9ca3af; }
-.recruit-school .r-tier { padding: 0.5rem 0.75rem; border-left: 4px solid #6b7280; background: #f9fafb; margin: 0.5rem 0; }
-.recruit-school .r-tier-top     { border-color: #b8860b; }
+
+/* one college's page */
+.recruit-school .r-tier { padding: 0.55rem 0.8rem; border-left: 4px solid #6b7280; background: #f9fafb; margin: 0.5rem 0; border-radius: 0 6px 6px 0; }
+.recruit-school .r-tier-top     { border-color: #a97a12; }
 .recruit-school .r-tier-solid   { border-color: #146c2e; }
-.recruit-school .r-tier-recruit { border-color: #2e53e6; }
+.recruit-school .r-tier-recruit { border-color: #14477d; }
 .recruit-school .r-tier-walkon  { border-color: #6b3fa0; }
 .recruit-school .r-tier-reach   { border-color: #9a6b00; }
 .recruit-school .r-tier-below   { border-color: #9ca3af; }
 .recruit-school .r-dist { max-width: 42rem; }
+.recruit-school .r-scroll { overflow-x: auto; }
 .recruit-school .r-list td, .recruit-school .r-list th { white-space: nowrap; }
-.recruit-school .r-list { display: block; overflow-x: auto; }
+.recruit-school .r-subject-line { margin: 0.6rem 0 0; }
 
-/* ---- accounts (283): the topbar slot, sign-in and the account page ---- */
-.topnav .topnav-account a.is-account { font-weight: 700; }
-.login-page .login-form { max-width: 26rem; }
-.login-page .login-age label { display: flex; gap: 0.5rem; align-items: center; font-weight: 500; }
-.login-page .login-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 0.8rem 0; }
-.login-page .go, .account-page .go { padding: 0.5rem 1rem; font: inherit; font-weight: 600; border: 0; border-radius: 6px;
-  background: #1f2937; color: #fff; cursor: pointer; }
-.login-page .go.quiet, .account-page .go.quiet { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+/* ======================================================================
+   accounts (283): the topbar slot, the sign-in shell, the account page
+   ====================================================================== */
+.topbar .topbar-account { margin-left: 0.9rem; white-space: nowrap; font-size: 0.9rem; }
+.topbar .topbar-account a { color: #374151; text-decoration: none; font-weight: 600; }
+.topbar .topbar-account a.is-account { color: var(--ink); }
+
+/* the sign-in shell: the home page's dark ground, the wordmark, one card */
+body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-image: radial-gradient(60rem 30rem at 50% -10rem, #2a2c30, #161719 70%); }
+.auth { width: 100%; max-width: 26rem; margin: 0 auto; padding: 3.5rem 1.25rem 3rem; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 1.5rem; }
+@media (max-width: 480px) { .auth { padding: 2rem 1rem 2rem; } .auth-card { padding: 1.4rem 1.2rem 1.2rem; } }
+.auth-brand { line-height: 0; }
+.auth-brand img { width: 230px; height: auto; filter: invert(1) brightness(2); }
+.auth-card { width: 100%; box-sizing: border-box; background: #fff; border-radius: 12px; padding: 1.75rem 1.75rem 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.35); }
+.auth-card h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
+.auth-lead { margin: 0 0 1.1rem; color: #374151; font-size: 0.95rem; }
+.auth-form { display: flex; flex-direction: column; gap: 0.7rem; }
+.auth-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.auth-input { box-sizing: border-box; width: 100%; padding: 0.7rem 0.85rem; border: 1px solid var(--line-2); border-radius: 8px; font: inherit; font-size: 1rem; }
+.auth-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.auth-check { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: #374151; }
+.auth-check input { width: 1rem; height: 1rem; margin: 0; }
+.auth-btn { display: flex; align-items: center; justify-content: center; gap: 0.6rem; width: 100%; padding: 0.75rem 1rem; border-radius: 8px;
+  font: inherit; font-size: 0.95rem; font-weight: 650; cursor: pointer; text-decoration: none; box-sizing: border-box; }
+.auth-primary { background: var(--ink); color: #fff; border: 0; }
+.auth-primary:hover { background: #000; }
+.auth-google { background: #fff; color: var(--ink); border: 1px solid var(--line-2); }
+.auth-google:hover { background: #f8f9fa; }
+.auth-or { display: flex; align-items: center; gap: 0.75rem; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth-error { margin: 0 0 0.8rem; padding: 0.55rem 0.75rem; border-radius: 6px; background: #fdecec; color: #a32d2d; font-size: 0.875rem; }
+.auth-small { margin: 1.1rem 0 0; font-size: 0.78rem; color: var(--muted); line-height: 1.45; }
+.auth-back { margin: 0; font-size: 0.875rem; }
+.auth-back a { color: #c9ccd1; text-decoration: none; }
+.auth-back a:hover { color: #fff; }
+
+/* the account page */
+.account-page h2 { margin: 1.6rem 0 0.4rem; font-size: 1.1rem; }
+.account-page h3 { margin: 1rem 0 0.3rem; font-size: 0.95rem; }
+.account-page .go { padding: 0.5rem 1rem; font: inherit; font-weight: 600; border: 0; border-radius: 6px; background: var(--ink); color: #fff; cursor: pointer; }
+.account-page .go.quiet { background: #fff; color: var(--ink); border: 1px solid var(--line-2); }
 .account-page .go.danger { background: #a32d2d; }
 .account-page .go[disabled] { opacity: 0.5; cursor: default; }
-.account-page h2 { margin: 1.5rem 0 0.4rem; font-size: 1.05rem; }
-.account-page h3 { margin: 1rem 0 0.3rem; font-size: 0.95rem; }
 .account-page .acct-roles { display: flex; gap: 0.6rem; flex-wrap: wrap; }
-.account-page .acct-role { padding: 0.4rem 0.8rem; border: 1px solid #d1d5db; border-radius: 999px; cursor: pointer; }
-.account-page .acct-role.is-on { border-color: #1f2937; background: #1f2937; color: #fff; }
-.account-page .acct-role input { margin-right: 0.3rem; }
+.account-page .acct-role { padding: 0.4rem 0.9rem; border: 1px solid var(--line-2); border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.account-page .acct-role.is-on { border-color: var(--ink); background: var(--ink); color: #fff; }
+.account-page .acct-role input { display: none; }
+.account-page .acct-block { border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1.1rem 1rem; margin-top: 1.2rem; }
+.account-page .acct-block h2 { margin-top: 0; }
 .account-page .acct-list { list-style: none; padding: 0; margin: 0.4rem 0; }
-.account-page .acct-list li { padding: 0.35rem 0; border-bottom: 1px solid #e5e7eb; }
+.account-page .acct-list li { padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
 .account-page .acct-inline { display: inline; margin-left: 0.5rem; }
-.account-page .acct-x { background: none; border: 0; color: #6b7280; cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+.account-page .acct-x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 0.85rem; text-decoration: underline; padding: 0; }
 .account-page .acct-pick { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
 .account-page .acct-pick input[type=text], .account-page .acct-pick select, .account-page .acct-row input[type=text] {
-  padding: 0.45rem 0.6rem; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+  padding: 0.5rem 0.65rem; border: 1px solid var(--line-2); border-radius: 6px; font: inherit; }
 .account-page .r-combo { position: relative; }
 .account-page .r-combo-list { position: absolute; z-index: 20; left: 0; top: 100%; min-width: 100%; background: #fff;
-  border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
-.account-page .r-combo-item { text-align: left; background: none; border: 0; padding: 0.4rem 0.6rem; font: inherit; cursor: pointer; }
-.account-page .r-combo-item:hover { background: #f3f4f6; }
-.account-page .r-combo-item .sr-sub { color: #6b7280; font-size: 0.8rem; margin-left: 0.4rem; }
+  border: 1px solid var(--line-2); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+.account-page .r-combo-item { text-align: left; background: none; border: 0; padding: 0.45rem 0.7rem; font: inherit; cursor: pointer; }
+.account-page .r-combo-item:hover { background: var(--hover); }
+.account-page .r-combo-item .sr-sub { color: var(--muted); font-size: 0.8rem; margin-left: 0.4rem; }
 .account-page .acct-row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin: 0.4rem 0; }
 .account-page .acct-notice { color: #146c2e; }
-.account-page[data-role="athlete"] .acct-coach { order: 2; }

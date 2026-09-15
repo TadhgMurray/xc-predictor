@@ -70,10 +70,12 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="meta">To be a typical {{ school }} recruit you run about {{ fmt_time(s.times.median["5k"]) or "?" }} for 5K in cross country or {{ fmt_time(s.times.median["3200"]) or "?" }} for 3200;
-     the door opens around {{ fmt_time(s.times.p25["5k"]) or "?" }} / {{ fmt_time(s.times.p25["3200"]) or "?" }}, and a walk-on has run at least {{ fmt_time(s.times.min["5k"]) or "?" }}.</p>
+  {% if s.times.median["5k"] and s.times.p25["5k"] and s.times.min["5k"] %}
+  <p class="meta">To be a typical {{ school }} recruit you run about <strong>{{ fmt_time(s.times.median["5k"]) }}</strong> for 5K in cross country{% if s.times.median["3200"] %} or <strong>{{ fmt_time(s.times.median["3200"]) }}</strong> for 3200{% endif %};
+     the door opens around {{ fmt_time(s.times.p25["5k"]) }}{% if s.times.p25["3200"] %} / {{ fmt_time(s.times.p25["3200"]) }}{% endif %}, and a walk-on has run at least {{ fmt_time(s.times.min["5k"]) }}.</p>
+  {% endif %}
 
-  <table class="recruit-tbl r-list">
+  <div class="r-scroll"><table class="recruit-tbl r-list">
     <thead><tr><th>Class</th><th>Recruit</th><th>High school</th><th class="num">Recruited at</th><th class="num">HS season</th><th class="num">First college season</th><th>Year</th></tr></thead>
     <tbody>
     {% for r in b.recruits %}
@@ -88,7 +90,7 @@
       </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% endfor %}
 
   <p class="meta">A recruit is an athlete's first college season; "recruited at" is their last high-school season where Racecast has it,

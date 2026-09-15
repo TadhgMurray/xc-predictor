@@ -27,12 +27,20 @@ Without a provider the link is printed to the gunicorn log
 (`journalctl -u xc-predictor`) and the page tells the person mail is not
 set up. Good enough for you to try it; not for anyone else.
 
-Pick Resend or Postmark (both are one API key and a few DNS records):
+Pick Resend (recommended: free to 3,000 mails a month, three DNS
+records, one API key) or Postmark (better deliverability, paid from the
+first real month):
 
 ```
 XCP_MAIL_PROVIDER=resend            # or postmark
 XCP_MAIL_KEY=re_...
 XCP_MAIL_FROM=Racecast <login@racecast.co>
+```
+
+Then prove it, from the server, with the same call a login makes:
+
+```
+/srv/venv/bin/python racecast/accounts.py --send-test you@wherever.com
 ```
 
 In the provider's dashboard add the sending domain and copy its DKIM
@@ -57,7 +65,9 @@ XCP_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 XCP_GOOGLE_CLIENT_SECRET=...
 ```
 
-The "Continue with Google" button appears on /login when both are set.
+`racecast/accounts.py --google-check` prints the exact redirect URI to
+paste and says whether both halves are in the env. The "Continue with
+Google" button appears on /login when both are set.
 The code exchanges the code for tokens and reads the userinfo endpoint;
 no library. An account is matched by Google subject first, then by
 email, so a person who used a magic link before and Google after is one

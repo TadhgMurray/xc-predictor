@@ -1,9 +1,9 @@
-{# recruiting.html -- the athlete edition (282, the default): every
-   college's recruits on the high-school scale, where your own rating
-   sits against each of them, and which programmes to look at first.
-   The rows come from /api/recruiting/schools (recruiting.py); the
-   filters and the subject (?athlete= or ?time=&event=) live in the query
-   string so a placement is a link. The coach's search is /recruiting/search. #}
+{# recruiting.html -- the athlete edition (282, the default): you first,
+   then every college's recruits on the high-school scale and where you sit
+   among each school's. The rows come from /api/recruiting/schools
+   (recruiting.py); the filters and the subject (?athlete= or ?time=&event=)
+   live in the query string so a placement is a link. The coach's search
+   is /recruiting/search. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -20,132 +20,100 @@
 <body>
 {% include "_topbar.html" %}
 
-<div class="rankings-page recruiting-page recruit-athlete" id="recruiting"
-     data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}"
-     data-built="{{ '1' if built else '' }}" data-athlete="{{ prefill_athlete or '' }}">
-  <h1>Recruiting</h1>
-  <p class="sub">What each college's recruits actually ran, on the high-school scale.{{ rating_i() }}
-     Put in your own rating or a time and every school says where you would sit among the runners it took:
-     scholarship range, solid recruit, recruit range, walk-on range, or not yet.
-     <a href="/recruiting/search">Coaches: the search is here →</a></p>
+<main class="page-wide recruit-athlete" id="recruiting"
+      data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}"
+      data-built="{{ '1' if built else '' }}" data-athlete="{{ prefill_athlete or '' }}">
+  <div class="hdr-row">
+    <h1>Recruiting</h1>
+    <a class="rc-coach" href="/recruiting/search">Coaches: search athletes →</a>
+  </div>
+  <p class="rc-sub">What each college's recruits actually ran, on the high-school scale.{{ rating_i() }}
+     Find yourself or enter a time, and every school says where you would sit among the runners it took.</p>
 
   {% if not built %}
   <p class="predict-status show error">The recruiting table has not been built yet. It arrives with the next pipeline run (step 10f).</p>
   {% endif %}
 
-  {# ---- you: an athlete, or a time ------------------------------- #}
-  <section class="r-you">
-    <h2>You</h2>
-    <div class="filters">
-      <div class="field wide">
-        <label for="r-athlete-q">Your name on Racecast</label>
+  {# ---- you ---------------------------------------------------------- #}
+  <section class="rc-you" id="rc-you">
+    <div class="rc-you-form" id="rc-you-form">
+      <div class="rc-you-col">
+        <div class="rc-you-title">Find your page</div>
         <div class="r-combo">
-          <input id="r-athlete-q" type="text" size="26" autocomplete="off" placeholder="Type a name and pick yourself">
+          <input id="r-athlete-q" type="text" autocomplete="off" placeholder="Type your name and pick yourself" class="rc-input rc-input-lg">
           <input id="r-athlete" type="hidden" value="{{ prefill_athlete or '' }}">
           <div class="r-combo-list" id="r-athlete-list" hidden></div>
         </div>
+        <div class="rc-hint">Your latest high-school season's rating is what gets placed.</div>
       </div>
-      <div class="field"><label>&nbsp;</label><span class="r-or">or a time</span></div>
-      <div class="field">
-        <label for="r-event">Event</label>
-        <select id="r-event">
-          {% for key, ev in events.items() %}<option value="{{ key }}">{{ ev[2] }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label for="r-time">Time</label>
-        <input id="r-time" type="text" inputmode="decimal" size="8" placeholder="16:32">
-      </div>
-      <div class="field">
-        <label for="r-tgender">You are</label>
-        <select id="r-tgender">
-          <option value="m">a boy</option>
-          <option value="f">a girl</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <button id="r-place" class="go">Place me</button>
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <button id="r-clear" class="go quiet" hidden>Clear</button>
+      <div class="rc-you-or"><span>or</span></div>
+      <div class="rc-you-col">
+        <div class="rc-you-title">Enter a time</div>
+        <div class="rc-you-row">
+          <input id="r-time" type="text" inputmode="decimal" placeholder="16:32" class="rc-input rc-time">
+          <select id="r-event" class="rc-input">
+            {% for key, ev in events.items() %}<option value="{{ key }}">{{ ev[2] }}</option>{% endfor %}
+          </select>
+          <select id="r-tgender" class="rc-input">
+            <option value="m">boy</option>
+            <option value="f">girl</option>
+          </select>
+          <button id="r-place" class="rc-btn">Place me</button>
+        </div>
+        <div class="rc-hint">Converted to a rating the way the <a href="/conversions">conversions</a> page does it.</div>
       </div>
     </div>
-    <div id="r-subject"></div>
+    <div id="r-subject" class="rc-subject" hidden></div>
   </section>
 
-  {# ---- the suggestions, when there is a subject ----------------- #}
-  <section id="r-suggest" hidden>
+  {# ---- the suggestions, when there is a subject ------------------- #}
+  <section id="r-suggest" class="rc-suggest" hidden>
     <h2>Where your times fit</h2>
-    <p class="meta">The fastest programmes first inside each band. The bands are quartiles of each school's own recent recruits, so
-       "{{ scholarship_label|lower }}" means the top quarter of that school's recruits (where athletic aid tends to go in DI, DII and NAIA;
-       DIII gives none, so it reads "top recruit" there).</p>
+    <p class="meta">Bands are quartiles of each school's own recent recruits, fastest programmes first inside each.
+       "{{ scholarship_label }}" is the top quarter of that school's recruits, where athletic aid tends to go in DI, DII and NAIA; DIII gives none, so it reads "Top recruit" there.</p>
     <div id="r-suggest-out"></div>
   </section>
 
-  {# ---- every school ---------------------------------------------- #}
-  <section class="r-schools">
-    <h2>Every college's recruits</h2>
-    <div class="filters">
-      <div class="field">
-        <label for="r-gender">Team</label>
-        <select id="r-gender">
-          <option value="m">Men</option>
-          <option value="f">Women</option>
-        </select>
+  {# ---- every school ------------------------------------------------ #}
+  <section class="rc-schools">
+    <div class="rc-schools-head">
+      <h2>Every college's recruits</h2>
+      <div class="rc-seg" id="r-seg">
+        <button type="button" class="rc-seg-btn" data-set="gender" data-value="m">Men</button>
+        <button type="button" class="rc-seg-btn" data-set="gender" data-value="f">Women</button>
+        <span class="rc-seg-gap"></span>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="XC">Cross country</button>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="TF">Track</button>
       </div>
-      <div class="field">
-        <label for="r-sport">Sport</label>
-        <select id="r-sport">
-          <option value="XC">Cross Country</option>
-          <option value="TF">Track &amp; Field</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="r-division">Division</label>
-        <select id="r-division" multiple size="4">
-          {% for d in divisions %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label for="r-state">State</label>
-        <select id="r-state" multiple size="4">
-          {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label for="r-q">School</label>
-        <input id="r-q" type="text" size="16" placeholder="contains…">
-      </div>
-      <div class="field">
-        <label for="r-sort">Sort</label>
-        <select id="r-sort">
-          <option value="median">Typical recruit</option>
-          <option value="top">Top recruits</option>
-          <option value="floor">Slowest recruit</option>
-          <option value="n">Most recruits</option>
-          <option value="name">Name</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="r-minn">Min recruits</label>
-        <input id="r-minn" type="text" inputmode="numeric" size="3" value="{{ min_recruits }}">
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <button id="r-go" class="go">Show</button>
-      </div>
+    </div>
+    <div class="rc-filters">
+      <select id="r-division" class="rc-input" aria-label="Division">
+        <option value="">Any division</option>
+        {% for d in divisions %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+      </select>
+      <select id="r-state" class="rc-input" aria-label="State">
+        <option value="">Any state</option>
+        {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+      </select>
+      <input id="r-q" type="text" class="rc-input" placeholder="School name contains…" aria-label="School">
+      <select id="r-sort" class="rc-input" aria-label="Sort">
+        <option value="median">Fastest typical recruit</option>
+        <option value="top">Fastest top recruits</option>
+        <option value="floor">Highest floor</option>
+        <option value="n">Most recruits</option>
+        <option value="name">Name</option>
+      </select>
+      <label class="rc-minn">at least <input id="r-minn" type="text" inputmode="numeric" value="{{ min_recruits }}" class="rc-input rc-input-xs"> recruits</label>
+      <button id="r-go" class="rc-btn rc-btn-quiet">Apply</button>
     </div>
     <p class="predict-status" id="r-status"></p>
     <div id="r-out"></div>
   </section>
 
-  <p class="meta r-foot">A recruit is an athlete's first college season{% if since_year %}, from the {{ since_year }} class on{% endif %}; a transfer is not a recruiting fact about the second school.
+  <p class="meta rc-foot">A recruit is an athlete's first college season{% if since_year %}, from the {{ since_year }} class on{% endif %}; a transfer is not a recruiting fact about the second school.
      The rating is the recruit's own last high-school season where Racecast has it, otherwise their first college season brought onto the high-school scale less the measured freshman-year gain.
-     The times are what that rating converts to at a typical course or track, the same way the <a href="/conversions">conversions</a> page does it.
-     Schools need {{ min_recruits }} recruits to be listed; a school's page shows every one.</p>
-</div>
+     The times are what that rating converts to at a typical course or track. Schools need {{ min_recruits }} recruits to be listed; a school's page shows every one.</p>
+</main>
 
 <script src="{{ static_v('recruiting.js') }}"></script>
 </body>

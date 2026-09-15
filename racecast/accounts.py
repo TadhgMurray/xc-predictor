@@ -7,6 +7,8 @@
 #
 #     python racecast/accounts.py --init     # create the tables (once)
 #     python racecast/accounts.py --check    # which features the env enables
+#     python racecast/accounts.py --send-test you@x.com   # prove the mail provider
+#     python racecast/accounts.py --google-check         # the redirect URI, the env
 #
 # ★ NO PASSWORDS. A login is an email and a one-time link, or Google. There
 #   is nothing to leak or reset, every account has a working email, and a
@@ -820,6 +822,26 @@ def main(argv):
         print(f"  admins:    {sorted(adminEmails()) or 'none'}")
         print(f"  origin:    {siteOrigin()}")
         return 0
+    if "--send-test" in argv:
+        # proves the mail provider end to end: the same call a login makes
+        to = argv[argv.index("--send-test") + 1] if len(argv) > argv.index("--send-test") + 1 else ""
+        if not normEmail(to):
+            print("  usage: --send-test you@example.com")
+            return 2
+        if not mailEnabled():
+            print("  no mail provider in the env (XCP_MAIL_PROVIDER, XCP_MAIL_KEY)")
+            return 1
+        subject, text = loginMail(f"{siteOrigin()}/login/t/TEST-not-a-real-link")
+        ok = sendMail(to, "[test] " + subject, text)
+        print(f"  {'sent' if ok else 'FAILED'} to {to} via {_env('XCP_MAIL_PROVIDER')}")
+        return 0 if ok else 1
+    if "--google-check" in argv:
+        # what to paste into the Google console, and whether the env has both halves
+        print(f"  authorised redirect URI: {siteOrigin()}/auth/google/callback")
+        print(f"  client id:     {'set' if _env('XCP_GOOGLE_CLIENT_ID') else 'MISSING'}")
+        print(f"  client secret: {'set' if _env('XCP_GOOGLE_CLIENT_SECRET') else 'MISSING'}")
+        print(f"  button shows:  {'yes' if googleEnabled() else 'no'}")
+        return 0 if googleEnabled() else 1
     if "--init" in argv:
         from database import getConn
         with getConn() as conn:

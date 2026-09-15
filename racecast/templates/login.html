@@ -1,5 +1,6 @@
-{# login.html -- sign in (283): an email and a one-time link, or Google
-   when configured. mode: form | sent | continue | expired. No passwords. #}
+{# login.html -- sign in (283). Its own shell, not a section of the site:
+   the dark ground the home page uses, the wordmark, one card. No topbar,
+   no search. mode: form | sent | continue | expired. No passwords. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -12,51 +13,56 @@
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 {% if turnstile and mode == "form" %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
-<body>
-{% include "_topbar.html" %}
-<main class="page login-page">
+<body class="auth-body">
+<main class="auth">
+  <a class="auth-brand" href="/" aria-label="Racecast"><img src="{{ static_v('logo.svg') }}" alt="Racecast" width="230" height="84"></a>
+
+  <div class="auth-card">
   {% if mode == "sent" %}
-  <h1>Check your email</h1>
-  {% if unsent %}
-  <p class="page-lead">Mail is not set up on this server yet, so no link went out. The site owner can find it in the server log.</p>
-  {% else %}
-  <p class="page-lead">If <strong>{{ email }}</strong> is an address we can send to, a sign-in link is on its way. It works once and expires in 15 minutes.</p>
-  <p class="meta">Nothing arrived? Check spam, then <a href="/login{% if next %}?next={{ next|urlencode }}{% endif %}">ask for another</a>.</p>
-  {% endif %}
+    <h1>Check your email</h1>
+    {% if unsent %}
+    <p class="auth-lead">Mail is not set up on this server yet, so no link went out. The site owner can find it in the server log.</p>
+    {% else %}
+    <p class="auth-lead">If <strong>{{ email }}</strong> is an address we can send to, a sign-in link is on its way. It works once and expires in 15 minutes.</p>
+    <p class="auth-small">Nothing arrived? Check spam, then <a href="/login{% if next %}?next={{ next|urlencode }}{% endif %}">ask for another</a>.</p>
+    {% endif %}
 
   {% elif mode == "continue" %}
-  <h1>Sign in to Racecast</h1>
-  <p class="page-lead">One more click. The link is single use, so it waits for you rather than for whatever scanned your email.</p>
-  <form method="post" action="/login/t/{{ token }}" class="login-form">
-    <button type="submit" class="go">Continue</button>
-  </form>
+    <h1>Almost there</h1>
+    <p class="auth-lead">One more click. The link is single use, so it waits for you rather than for whatever scanned your email.</p>
+    <form method="post" action="/login/t/{{ token }}">
+      <button type="submit" class="auth-btn auth-primary">Continue to Racecast</button>
+    </form>
 
   {% elif mode == "expired" %}
-  <h1>That link has expired</h1>
-  <p class="page-lead">Sign-in links work once and last 15 minutes. <a href="/login">Ask for a new one.</a></p>
+    <h1>That link has expired</h1>
+    <p class="auth-lead">Sign-in links work once and last 15 minutes.</p>
+    <a class="auth-btn auth-primary" href="/login">Get a new link</a>
 
   {% else %}
-  <h1>Sign in</h1>
-  <p class="page-lead">No password. We email you a link, or you use Google. An account lets you link your athlete page, represent a team, and place yourself on the recruiting boards.</p>
-  {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
-  <form method="post" action="/login" class="login-form">
-    <input type="hidden" name="next" value="{{ next }}">
-    <div class="form-row">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" value="{{ email or '' }}" placeholder="you@school.edu">
-    </div>
-    <div class="form-row login-age">
-      <label><input type="checkbox" name="age_ok" required> I am 13 or older</label>
-    </div>
-    {% if turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
-    <div class="login-actions">
-      <button type="submit" class="go">Email me a link</button>
-      {% if google %}<button type="submit" name="provider" value="google" class="go quiet">Continue with Google</button>{% endif %}
-    </div>
-  </form>
-  <p class="meta">Accounts are for people 13 or older. Your email is used to sign you in and for nothing else until you ask. You can delete the account any time from its page.</p>
+    <h1>Sign in</h1>
+    <p class="auth-lead">No password to remember. We email you a link{% if google %}, or you continue with Google{% endif %}.</p>
+    {% if error %}<p class="auth-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="auth-form">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label class="auth-label" for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" value="{{ email or '' }}" placeholder="you@school.edu" class="auth-input">
+      <label class="auth-check"><input type="checkbox" name="age_ok" required><span>I am 13 or older</span></label>
+      {% if turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
+      <button type="submit" class="auth-btn auth-primary">Email me a sign-in link</button>
+      {% if google %}
+      <div class="auth-or"><span>or</span></div>
+      <button type="submit" name="provider" value="google" class="auth-btn auth-google">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.8 6.1C12.3 13.5 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.4 28.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.8-6.1C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.7-4-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+        <span>Continue with Google</span>
+      </button>
+      {% endif %}
+    </form>
+    <p class="auth-small">An account links your athlete page, lets you represent a team, and places you on the recruiting boards. Your email is for signing in and nothing else until you ask. Accounts are for people 13 or older; you can delete yours any time.</p>
   {% endif %}
+  </div>
+
+  <p class="auth-back"><a href="{{ next if next and next != '/account' else '/' }}">← Back to Racecast</a></p>
 </main>
 </body>
 </html>

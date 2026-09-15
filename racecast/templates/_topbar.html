@@ -33,10 +33,6 @@
            it is the only place a report link gets site-wide reach -- but it
            is not a destination, so it should not compete with the sections. #}
         <a href="{{ url_for('report_page') }}">Report an issue</a>
-        {# the account (283): rendered signed-out on every page so the
-           page stays cacheable; topbar-search.js asks /api/me and swaps
-           this for the person's own link #}
-        <span id="topbar-account" class="topnav-account"><a href="/login">Sign in</a></span>
     </nav>
 
     <div class="search-wrap">
@@ -55,4 +51,9 @@
                autocomplete="off" aria-label="Search">
         <div id="search-results" class="search-results"></div>
     </div>
+    {# the account (283): rendered signed-out on every page so the page
+       stays cacheable; topbar-search.js asks /api/me and swaps this for
+       the person's own link. Beside the search, not in the nav, so the
+       bar keeps its one line. #}
+    <span id="topbar-account" class="topbar-account"><a href="/login">Sign in</a></span>
 </header>
