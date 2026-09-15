@@ -1285,3 +1285,74 @@ a page bug, and the 306 state.
 `tests/test_sport_gain.py::test_conversions_apply_the_same_shift` passes
 again; it had been failing since the env gate went in, asserting the
 behaviour the page is supposed to have.
+
+## 15. 2026-09-15: THE POD, AND WHY THE FIRST RUN IS A PREFIX
+
+Pod: RTX 3090 (24 GB), 6 vCPU (Threadripper PRO 3955WX), 100 GB RAM,
+100 GB container disk.
+
+⚠ **THE FULL CORPUS DOES NOT FIT ON IT.** Measured from the real tensor
+shapes: a stored example is ~1.8 KB (mean ~20 ragged sequence rows x 21
+floats, plus a 24-float context), so
+
+```
+    200 chunks    2M examples      3.6 GB     minutes to copy
+    500 chunks    5M examples      9.0 GB
+  4,400 chunks   44M examples     ~80 GB     the ceiling on this pod
+ full today      80M examples    143.7 GB    does not fit
+ full + horizon  95M examples    170.6 GB    does not fit
+```
+
+100 GB less the torch image and OS leaves ~80 GB. So a full-corpus run on
+this pod needs a network volume; a prefix run does not, and a prefix is a
+fair sample because chunks are corpus-wide shuffles.
+
+**And the prefix is the right first run anyway**, for a reason that has
+nothing to do with disk: both deferred engine issues
+(docs/ISSUES-RUNNING.md, 2026-09-15) change `normalized_time`, which is
+the model's TARGET, and `course_difficulty`, which is one of its features.
+Whatever trains now is invalidated by the spline redo. An hour on two
+million examples buys the architecture answer and lights up
+`/predictions`; twenty GPU-hours buys the same answer and throws away
+nineteen of them.
+
+### The dials for THIS pod
+
+```
+    --batch 512        24 GB holds it easily at d_model 256
+    --lr 1e-3          scaled with the batch from the 3e-4/64 default
+    --workers 4        ⚠ NOT 8. Six vCPU total, and the main process needs
+                       one; each worker also holds its own chunk cache
+                       (~18 MB, trivial against 100 GB RAM).
+    --amp              bf16 on Ampere, free
+    --checkpoint       not optional on a rented pod
+```
+
+### The sequence
+
+```
+  # server, after run 24 finishes
+  cd /srv/xc-predictor && git pull
+  setsid nohup python -u model/feature_extraction.py > /srv/extract.log 2>&1 </dev/null &
+  tail -f /srv/extract.log            # "Done. <total> examples saved in <N> chunks."
+  du -sh model/data                   # check the real size against the table above
+
+  # copy a PREFIX, not the set
+  ls model/data/chunk_*.pt | head -200 | tar czf /tmp/prefix.tgz -T - \
+      model/data/metadata.pkl model/data/lengths.pt model/data/val_mask.pt \
+      model/data/encoders.pkl model/data/venue_vocab.pkl
+  scp -P <port> /tmp/prefix.tgz root@<ip>:/workspace/
+
+  # pod
+  cd /workspace/xc-predictor && tar xzf /tmp/prefix.tgz
+  python -u model/train.py --max-chunks 5 --batch 512 --amp --workers 4 \
+      --checkpoint model/data/ckpt.pt          # smoke: read ex/s and waiting
+  setsid nohup python -u model/train.py --batch 512 --lr 1e-3 --amp \
+      --workers 4 --patience 3 --checkpoint model/data/ckpt.pt \
+      > /workspace/train.log 2>&1 </dev/null &
+```
+
+**The number that decides everything:** the epoch line prints `model X%`
+beside `last-race Y%`. If X does not beat Y on two million examples, the
+architecture is not learning and more corpus will not save it. That is the
+go/no-go, and it arrives inside an hour.

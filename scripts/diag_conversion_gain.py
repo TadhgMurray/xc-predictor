@@ -1,38 +1,45 @@
 """diag_conversion_gain.py -- does the conversions page agree with the
-ratings the engine actually stored, for TRACK rows?
+ratings the engine actually stored? Both sports, and it says WHICH HALF
+disagrees.
 
     /srv/venv/bin/python scripts/diag_conversion_gain.py
-    /srv/venv/bin/python scripts/diag_conversion_gain.py --n 600 --pool hs_m --year 2025
+    /srv/venv/bin/python scripts/diag_conversion_gain.py --sport XC --pool hs_m
+    /srv/venv/bin/python scripts/diag_conversion_gain.py --sport TF --n 800
 
-★ WHY THIS EXISTS. joint_golive can shift every track row by a per-band
-  or per-level "winter gain" (issue 194): it adds the shift into the row's
-  applied effect, so the STORED speed_rating carries it, and it writes the
-  same shift to the sport_gain table. conversions.venueEffect adds the same
-  shift back, so the page and the engine sit on one scale for track.
+★ WHY IT SPLITS IN TWO. The engine's relation between a stored rating and
+  a stored normalized_time is one line of algebra; everything else -- the
+  distance curve, the course difficulty, the weather, the winter gain --
+  lives between normalized_time and the raw finish time. Joining
+  ranking_results (rating, pool, adjudicated distance) to the source table
+  (normalized_time) puts all three on one row, so the two halves can be
+  measured apart instead of blamed together:
 
-  When the two disagree the page is quietly wrong by exactly that shift --
-  the owner's report on 2026-09-15 was "when we changed tf to get a sports
-  gain it made the conversions too fast", and issue 306 on 2026-09-08 was
-  the SAME disagreement pointing the other way. Neither is visible in any
-  test: the round trip still closes, because both legs of a conversion
-  carry the same error and it cancels. It only shows against the engine's
-  own stored number, which is what this measures.
+    A. rating  <-> normalized_time    the pool mean and the engine scale.
+                                      No distance, no difficulty, no gain.
+                                      Off here = every conversion in this
+                                      pool is off by the same factor.
 
-★ WHAT IT DOES. Samples real rated track rows, and for each one asks the
-  conversions code the question the page asks -- "what time is this rating
-  worth, at this row's own distance?" -- then compares that with the time
-  the athlete actually ran. It runs the comparison BOTH ways, with the
-  sport gain applied and without, and says which is closer.
+    B. time    <-> normalized_time    the distance curve, the difficulty,
+                                      the sport gain. Off here with A
+                                      clean = the curve or the difficulty,
+                                      not the page's scale.
 
-  A row's own distance is used on purpose: any error in the distance curve
-  cancels, leaving the sport gain as the thing being measured.
+  That is the split worth having, because A is a page bug and B is
+  usually an engine one -- and "the conversions look wrong" has meant
+  both at different times (issue 306; the TF sport-gain scale break of
+  2026-09-15).
 
-! READ THE SIGN. "conversions read FAST" means the page turns the stored
-  rating into a time quicker than the athlete ran, which is the complaint
-  this was written for.
+★ THE SIGN, STATED ONCE. Errors are reported as a percentage of the
+  engine's own number, and "FAST" always means the page produces a
+  smaller time (or a bigger rating) than the engine stored.
+
+! IT MEASURES AGREEMENT, NOT TRUTH. Both halves can agree perfectly and
+  the ratings still be wrong, if the engine's curve is wrong -- this
+  cannot see that. What it can see is the page and the engine drifting
+  apart, which is the class of bug that keeps recurring because every
+  round-trip test cancels it.
 """
 import argparse
-import math
 import os
 import statistics
 import sys
@@ -45,59 +52,41 @@ import psycopg2.extras                                   # noqa: E402
 
 from database import getConn                             # noqa: E402
 
+# ⚠ TWO TABLES, ON PURPOSE. ranking_results has the RATING POOL and the
+#   adjudicated distance; only the source table has normalized_time (it is
+#   not in build_ranking_results._COLUMNS). Joining on result_id is what
+#   puts rating, normalized_time and distance on one row, which is what
+#   makes the A/B split below possible at all.
+_SOURCE = {"XC": "results", "TF": "results_tf"}
+
 SAMPLE_SQL = """
-    SELECT r.speed_rating, r.time_seconds, m.distance_meters, r.person_id
-    FROM   results_tf r
-    JOIN   meets_tf   m ON m.meet_id = r.meet_id
-    WHERE  r.speed_rating IS NOT NULL
-      AND  r.time_seconds  > %(min_time)s
-      AND  m.distance_meters IS NOT NULL
-      AND  m.distance_meters BETWEEN 800 AND 5000
-      AND  r.date >= %(since)s
+    SELECT rr.speed_rating, rr.time_seconds, rr.distance, rr.pool,
+           src.normalized_time
+    FROM   ranking_results rr
+    JOIN   {source} src ON src.result_id = rr.result_id
+    WHERE  rr.speed_rating IS NOT NULL
+      AND  rr.time_seconds > %(min_time)s
+      AND  rr.distance     IS NOT NULL
+      AND  src.normalized_time IS NOT NULL
+      AND  src.normalized_time > %(min_time)s
+      AND  rr.sport = %(sport)s
+      AND  rr.race_date >= %(since)s
       {pool_clause}
     ORDER BY random()
     LIMIT %(n)s
 """
 
 
-def sample(cur, n, pool, since, min_time):
-    """n random rated track rows, newest seasons, at real distances."""
-    clause = ""
-    params = {"n": n, "since": since, "min_time": min_time}
-    if pool:
-        # the rating pool is stamped on ranking_results, so join through it
-        clause = ("AND EXISTS (SELECT 1 FROM ranking_results rr "
-                  "WHERE rr.result_id = r.result_id AND rr.pool = %(pool)s)")
-        params["pool"] = pool
-    cur.execute(SAMPLE_SQL.format(pool_clause=clause), params)
+def sample(cur, n, sport, pool, since, min_time):
+    clause = "AND rr.pool = %(pool)s" if pool else ""
+    params = {"n": n, "sport": sport, "since": since,
+              "min_time": min_time, "pool": pool}
+    cur.execute(SAMPLE_SQL.format(source=_SOURCE[sport], pool_clause=clause),
+                params)
     return cur.fetchall()
 
 
-def roundTrip(cv, rating, distance, pool):
-    """The time the page would show for this rating at this distance, or
-    None when the scale for this pool is not loaded."""
-    norm = cv._norm_from_rating(rating, pool, sport="TF")
-    if norm is None:
-        return None
-    ctx = {"distance": float(distance), "pool": pool, "sport": "TF",
-           "difficulty": 0.0}
-    return cv.normalized_to_time(norm, ctx)
-
-
-def measure(rows, pool, want_gain):
-    """Median and quartile signed error, in percent of the real time.
-    Positive = the page reads SLOW, negative = the page reads FAST."""
-    # ⚠ THE MODULE CACHES THE TABLE AND THE ENV IS READ PER CALL, so the
-    #   switch below is enough -- but the caches must not be rebuilt
-    #   between the two measurements or they are not comparable.
-    os.environ["XCP_CONVERT_SPORT_GAIN"] = "1" if want_gain else "0"
-    import conversions as cv
-    errs = []
-    for r in rows:
-        got = roundTrip(cv, float(r["speed_rating"]), r["distance_meters"], pool)
-        if not got or got <= 0:
-            continue
-        errs.append(100.0 * (got - float(r["time_seconds"])) / float(r["time_seconds"]))
+def _stats(errs):
     if not errs:
         return None
     errs.sort()
@@ -106,60 +95,98 @@ def measure(rows, pool, want_gain):
             "mean_abs": statistics.fmean(abs(e) for e in errs)}
 
 
-def describe(label, st):
+def halfA(cv, rows, sport):
+    """rating -> normalized_time, against the stored normalized_time.
+    Pure pool mean and engine scale."""
+    errs = []
+    for r in rows:
+        got = cv._norm_from_rating(float(r["speed_rating"]), r["pool"], sport=sport)
+        if not got or got <= 0:
+            continue
+        want = float(r["normalized_time"])
+        errs.append(100.0 * (got - want) / want)
+    return _stats(errs)
+
+
+def halfB(cv, rows, sport):
+    """raw time -> normalized_time, against the stored normalized_time.
+    The distance curve, the difficulty and the sport gain.
+
+    ⚠ AT THE ROW'S OWN DISTANCE, and with the display difficulty, which is
+      what the page uses when no venue is named. A residual here is the
+      curve disagreeing with what the engine normalised at."""
+    errs = []
+    for r in rows:
+        got = cv._norm_from_time(float(r["time_seconds"]), float(r["distance"]),
+                                 r["pool"], sport=sport, chosen=None)
+        if not got or got <= 0:
+            continue
+        want = float(r["normalized_time"])
+        errs.append(100.0 * (got - want) / want)
+    return _stats(errs)
+
+
+def describe(label, st, fast_word="FAST"):
     if st is None:
-        print(f"  {label:<18} no rows could be converted")
+        print(f"    {label:<28} nothing could be converted")
         return
-    way = "SLOW" if st["median"] > 0 else "FAST"
-    print(f"  {label:<18} median {st['median']:+7.3f}%  ({way})   "
+    way = "SLOW" if st["median"] > 0 else fast_word
+    print(f"    {label:<28} median {st['median']:+7.3f}%  ({way})   "
           f"IQR {st['p25']:+.3f}..{st['p75']:+.3f}   "
           f"mean |err| {st['mean_abs']:.3f}%   n={st['n']:,}")
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--n", type=int, default=400, help="rows to sample")
-    ap.add_argument("--pool", default="hs_m", help="rating pool, or '' for any")
-    ap.add_argument("--year", type=int, default=2025, help="rows from this season on")
+    ap = argparse.ArgumentParser(description="conversions vs the stored ratings")
+    ap.add_argument("--sport", default="both", choices=("XC", "TF", "both"))
+    ap.add_argument("--n", type=int, default=500, help="rows sampled per sport")
+    ap.add_argument("--pool", default="hs_m", help="rating pool, '' for any")
+    ap.add_argument("--year", type=int, default=2025)
     ap.add_argument("--min-time", type=float, default=60.0)
     args = ap.parse_args(argv)
 
     pool = args.pool or None
+    sports = ("XC", "TF") if args.sport == "both" else (args.sport,)
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT count(*) AS n FROM sport_gain")
             n_gain = cur.fetchone()["n"]
-            rows = sample(cur, args.n, pool, f"{args.year}-01-01", args.min_time)
+            by_sport = {s: sample(cur, args.n, s, pool, f"{args.year}-01-01",
+                                  args.min_time) for s in sports}
 
-    print(f"\nsport_gain table: {n_gain:,} rows "
-          f"({'a shift WAS applied by the go-live' if n_gain else 'NO shift was applied'})")
-    print(f"sampled {len(rows):,} rated track rows, pool {pool or 'any'}, "
-          f"{args.year} onwards\n")
-    if not rows:
-        print("  nothing to measure -- widen --year or clear --pool")
-        return 1
+    gain_env = os.environ.get("XCP_CONVERT_SPORT_GAIN")
+    print(f"\nsport_gain: {n_gain:,} rows "
+          f"({'the go-live SHIFTED the track rows' if n_gain else 'no shift applied'})"
+          f"{'  [XCP_CONVERT_SPORT_GAIN=' + gain_env + ']' if gain_env else ''}")
+    print(f"pool {pool or 'any'}, {args.year} onwards\n")
 
-    print("the page's time for the stored rating, against the time actually run:")
-    with_gain = measure(rows, pool or "hs_m", True)
-    without = measure(rows, pool or "hs_m", False)
-    describe("with sport gain", with_gain)
-    describe("without", without)
+    import conversions as cv
+    worst = None
+    for s in sports:
+        rows = by_sport[s]
+        print(f"  {s}  ({len(rows):,} rows)")
+        if not rows:
+            print("    nothing sampled -- widen --year, or clear --pool\n")
+            continue
+        a, b = halfA(cv, rows, s), halfB(cv, rows, s)
+        describe("A  rating -> normalized", a, fast_word="FAST (rating reads high)")
+        describe("B  time   -> normalized", b)
+        print()
+        for name, st in (("A", a), ("B", b)):
+            if st and (worst is None or st["mean_abs"] > worst[2]):
+                worst = (s, name, st["mean_abs"])
 
-    print()
-    if with_gain and without:
-        better = "with" if with_gain["mean_abs"] < without["mean_abs"] else "without"
-        print(f"  -> the stored ratings agree with conversions {better.upper()} the "
-              f"sport gain applied.")
-        if better == "with":
-            print("     That is the default now (the table is non-empty, so the "
-                  "rows carry the shift). Nothing to change.")
-        else:
-            print("     Set XCP_CONVERT_SPORT_GAIN=0 in /etc/xc-predictor.env and "
-                  "restart, then open an issue: the go-live wrote a sport_gain "
-                  "table whose shift its own rows do not carry, which is the "
-                  "issue-306 state and a bug in the run rather than in the page.")
-    # a residual of a few tenths is the distance curve and the tilt; a
-    # residual near the size of the shift is the thing this looks for
+    print("  reading it:")
+    print("    A off, B clean   -> the page's pool mean / engine scale for that pool.")
+    print("    A clean, B off   -> the distance curve or the difficulty; an engine")
+    print("                        job, not a page one.")
+    print("    both off         -> start with A; B is measured through it.")
+    print("    both under ~0.3% -> the page and the engine agree; anything still")
+    print("                        wrong on screen is wrong in the ratings too.")
+    if worst:
+        print(f"\n  largest disagreement: {worst[0]} half {worst[1]}, "
+              f"mean |err| {worst[2]:.3f}%")
     return 0
 
 

@@ -1004,3 +1004,70 @@ in the list and the rule matches nothing → the rule never saw them, which is a
 different bug and needs a different fix.
 
 Read-only — every statement is a SELECT, safe with the site running.
+
+## 2026-09-15 — two engine issues, deferred behind the model run
+
+Both reported by the owner while the TF conversion scale break was being
+fixed. Neither is a page bug; both are the engine's own numbers. Logged
+rather than fixed, by the owner's call: "I want to train and extract the
+model first".
+
+### A. Track difficulty is not believable
+
+> "tf difficulty is just so insane. like we have indoor tracks that are 4%
+> easy supposedly. Idk maybe we just say nixsay on track difficulty? It
+> doesn't seem to work well."
+
+A 4% easy indoor track is roughly 22 seconds on a 9:00 3200, which no
+banking or surface explains. The suspicion to test first is that a track
+"venue" has far less genuine course variation than a cross-country course
+does, so the solver is fitting NOISE into a free per-venue parameter --
+the same failure mode `feature_extraction`'s venue embedding already
+guards against with a 50-race floor, and the same one that gave Mission
+Concepcion a +0.7585 delta and 176 ratings.
+
+Options, cheapest first:
+
+1. **Shrink it.** A prior pulling every track venue toward 0.0, strength
+   by race count. Keeps a real banked-track effect if one exists.
+2. **Floor the race count** before a track venue gets its own parameter at
+   all, as the embedding does.
+3. **Drop it.** Every outdoor track is the display zero already
+   (`venueEffect`: "a track with no venue is the zero"); indoor would need
+   one asserted constant rather than a per-venue solve.
+
+⚠ Whatever is chosen, `course_difficulty` is BOTH a model feature and part
+of what `normalized_time` is solved against, so changing it invalidates an
+extraction.
+
+### B. The distance spline is off and wants redoing
+
+> "the distance spline is just off. I think we need to entirely just redo
+> it tbh."
+
+Suspected to be behind the XC conversions still reading high after the TF
+fix, since the curve is what relates a 5K to a 3-mile to a 2-mile.
+
+`scripts/diag_conversion_gain.py` separates the two halves and will say
+whether this is the curve or the page:
+
+```
+    /srv/venv/bin/python scripts/diag_conversion_gain.py --sport XC --pool hs_m
+```
+
+* half **A** (rating ↔ normalized_time) off → the page's pool mean or
+  engine scale, a racecast bug.
+* half **B** (time ↔ normalized_time) off with A clean → the distance
+  curve or the difficulty, an engine bug. This is the one to expect here.
+
+⚠ Same warning as A, more so: `normalized_time` is the model's TARGET. A
+new spline means a new extraction and new weights.
+
+### The ordering that follows
+
+The model run comes first, and it is a PREFIX run, not the full corpus
+(HANDOFF 13.3 and 15). Both fixes above invalidate any extraction, so the
+weights from this run are a proof of the architecture and a way to light
+up `/predictions`, never the final model. Sinking twenty GPU-hours into a
+target that is about to change is the thing to avoid; an hour on two
+million examples is not.
