@@ -123,7 +123,8 @@ match, your own review) is the next cut and will hang off this.
 ## 6. The picture (305, through accounts)
 
 Settings lets a signed-in person upload one picture. It is re-encoded
-through Pillow (upright, centre-cropped square, at most 512 px, JPEG,
+through Pillow (upright, cropped to the biggest square that fits and
+biased toward the top so a face keeps its chin, at most 512 px, JPEG,
 every byte of metadata dropped) and written to `racecast/static/photos/`
 (gitignored; `XCP_PHOTO_DIR` to move it), under a name that carries the
 content hash, so nginx serves it from `/static/photos/` and it caches for

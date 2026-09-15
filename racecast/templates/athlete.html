@@ -278,7 +278,7 @@
        when /api/me says the page is theirs). #}
     <div class="ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
       <div class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>
-        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="88" height="88">{% endif %}
+        {% if athlete.photo %}<img src="{{ athlete.photo }}" alt="{{ athlete.name }}" width="96" height="96">{% endif %}
       </div>
       <div class="ath-head-body">
         <h1>{{ athlete.name }}</h1>

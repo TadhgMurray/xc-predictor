@@ -83,8 +83,12 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHOTO_DIR = os.environ.get("XCP_PHOTO_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "static", "photos")
 PHOTO_URL = "/static/photos/"
-PHOTO_W, PHOTO_H = 480, 640      # a roster headshot: portrait, 3:4 (owner, 2026-09-15)
-PHOTO_SIZE = PHOTO_H            # the long side, for callers that only ask "how big"
+# ★ SQUARE, WORN AS A CIRCLE (owner, 2026-09-15: "do it exactly like
+#   anet"): athletic.net's athlete page shows a round avatar beside the
+#   name, so the stored file is square and the page rounds it off. A 3:4
+#   portrait was tried for one commit and cropped badly inside a circle.
+PHOTO_SIZE = 512
+PHOTO_W = PHOTO_H = PHOTO_SIZE
 MAX_PHOTO_BYTES = 8 * 1024 * 1024
 NAME_MAX = 60
 
@@ -618,19 +622,16 @@ def processPhoto(data):
     if img.width < 64 or img.height < 64:
         raise AccountsError("That picture is too small; 64 pixels each way at least.")
     img = img.convert("RGB")
-    # ★ A 3:4 PORTRAIT, LIKE A MEDIA-DAY HEADSHOT: the widest 3:4 window
-    #   that fits, centred sideways and biased a little toward the top
-    #   (faces sit high in a photo), then shrunk to 480x640 at most.
+    # ★ THE BIGGEST SQUARE THAT FITS, centred sideways and biased toward
+    #   the top (a face sits high in a photo, so a centred crop takes the
+    #   chin off), then shrunk to PHOTO_SIZE at most.
     w, h = img.width, img.height
-    if w * 4 > h * 3:                       # too wide: trim the sides
-        cw, ch = (h * 3) // 4, h
-    else:                                   # too tall: trim top and bottom
-        cw, ch = w, (w * 4) // 3
-    left = (w - cw) // 2
-    top = max(0, min(h - ch, (h - ch) * 2 // 5))
-    img = img.crop((left, top, left + cw, top + ch))
-    if img.width > PHOTO_W:
-        img = img.resize((PHOTO_W, PHOTO_H), Image.LANCZOS)
+    side = min(w, h)
+    left = (w - side) // 2
+    top = max(0, min(h - side, (h - side) * 2 // 5))
+    img = img.crop((left, top, left + side, top + side))
+    if side > PHOTO_SIZE:
+        img = img.resize((PHOTO_SIZE, PHOTO_SIZE), Image.LANCZOS)
     out = _io.BytesIO()
     img.save(out, "JPEG", quality=86, optimize=True, progressive=True)
     return out.getvalue(), img.width, img.height

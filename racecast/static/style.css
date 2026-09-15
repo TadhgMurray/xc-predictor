@@ -4747,8 +4747,8 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 /* the account picture (305): on the settings page and the athlete header */
 .account-page .acct-photo-row { display: flex; gap: 1.25rem; align-items: flex-start; flex-wrap: wrap; }
 .account-page .acct-profile-fields { flex: 1 1 18rem; }
-.account-page .acct-avatar { position: relative; display: flex; align-items: center; justify-content: center; width: 96px; height: 128px;
-  border-radius: 8px; overflow: hidden; background: #e5e7eb; color: #9ca3af; cursor: pointer; flex: none; }
+.account-page .acct-avatar { position: relative; display: flex; align-items: center; justify-content: center; width: 104px; height: 104px;
+  border-radius: 50%; overflow: hidden; background: #e5e7eb; color: #9ca3af; cursor: pointer; flex: none; }
 .account-page .acct-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .account-page .acct-avatar-cta { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.2rem 0; text-align: center;
   font-size: 0.68rem; font-weight: 700; color: #fff; background: rgba(17,20,24,0.72); }
@@ -4756,13 +4756,13 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 /* the athlete header (305): a roster headshot, 3:4, beside the name, the
    meta line and the numbers; Share at the right. No picture: the slot is
    hidden unless the owner is looking, who gets "+ photo". */
-.ath-head { display: flex; gap: 1.1rem; align-items: flex-start; margin-bottom: 0.25rem; }
+.ath-head { display: flex; gap: 1.1rem; align-items: center; margin-bottom: 0.25rem; }
 .ath-head .ath-head-body { flex: 1 1 auto; min-width: 0; }
 .ath-head .ath-head-body h1 { margin: 0; }
 .ath-head .ath-head-body .meta { margin: 0.15rem 0 0; }
 .ath-head .share-box { align-self: flex-start; flex: none; }
-.ath-portrait { width: 108px; height: 144px; border-radius: 8px; overflow: hidden; flex: none; display: flex; align-items: center;
-  justify-content: center; background: #eef0f3; box-shadow: 0 1px 2px rgba(0,0,0,0.12), inset 0 0 0 1px rgba(0,0,0,0.05); }
+.ath-portrait { width: 96px; height: 96px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
+  justify-content: center; background: #eef0f3; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.07); }
 .ath-portrait[hidden] { display: none; }   /* the attribute must win over the flex display */
 .ath-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ath-avatar-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;
@@ -4781,7 +4781,7 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .ath-head .ath-head-body .meta { order: 3; flex-basis: 100%; margin: 0.2rem 0 0; }
   .ath-head .ath-head-body .stat-strip { order: 4; flex-basis: 100%; }
   .ath-head[data-has-photo="1"] .stat-strip { border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; margin-bottom: 0.2rem; }
-  .ath-portrait { width: 72px; height: 96px; }
+  .ath-portrait { width: 64px; height: 64px; }
   .ath-avatar-add { font-size: 1.1rem; }
   .ath-avatar-add span { font-size: 0.55rem; }
 }

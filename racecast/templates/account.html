@@ -30,7 +30,7 @@
       <form method="post" action="/account/photo" enctype="multipart/form-data" class="acct-photo" id="acct-photo-form">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <label class="acct-avatar{% if not photo %} acct-avatar-empty{% endif %}" for="acct-photo-file" title="{{ 'Change your picture' if photo else 'Add a picture' }}">
-          {% if photo %}<img src="{{ photo.url }}" alt="" width="96" height="128">
+          {% if photo %}<img src="{{ photo.url }}" alt="" width="104" height="104">
           {% else %}<svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}
           <span class="acct-avatar-cta">{{ "Change" if photo else "Add photo" }}</span>
         </label>
@@ -38,7 +38,7 @@
       </form>
       <div class="acct-profile-fields">
         <h2>Your picture and name</h2>
-        <p class="meta">A headshot, like a roster photo: it is cropped to portrait (3 by 4) and shown on every athlete page you link below; we strip everything else out of the file. JPEG, PNG or WebP up to 8 MB.</p>
+        <p class="meta">A headshot: it is cropped square, shown as a circle on every athlete page you link below, and we strip everything else out of the file. JPEG, PNG or WebP up to 8 MB.</p>
         {% if photo %}
         <form method="post" action="/account/photo" class="acct-inline-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="remove" value="1"><button type="submit" class="acct-x">Remove picture</button></form>
         {% endif %}

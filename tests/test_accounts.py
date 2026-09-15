@@ -154,13 +154,13 @@ def test_the_picture_is_re_encoded_square_and_stripped(tmp_path):
     img = Image.new("RGB", (1200, 900), (10, 120, 200))
     img.save(buf, "JPEG", exif=Image.Exif() if hasattr(Image, "Exif") else b"")
     jpeg, w, h = AC.processPhoto(buf.getvalue())
-    assert (w, h) == (AC.PHOTO_W, AC.PHOTO_H)                # 3:4 portrait, shrunk to the cap
+    assert (w, h) == (AC.PHOTO_SIZE, AC.PHOTO_SIZE)          # square, shrunk to the cap
     out = Image.open(_io.BytesIO(jpeg))
-    assert out.format == "JPEG" and out.size == (480, 640) and not out.getexif()
+    assert out.format == "JPEG" and out.size == (512, 512) and not out.getexif()
     small = _io.BytesIO(); Image.new("RGB", (300, 200)).save(small, "PNG")
-    assert AC.processPhoto(small.getvalue())[1:] == (150, 200)   # under the cap: cropped to 3:4, not enlarged
+    assert AC.processPhoto(small.getvalue())[1:] == (200, 200)   # under the cap: cropped, not enlarged
     tall = _io.BytesIO(); Image.new("RGB", (300, 900)).save(tall, "PNG")
-    assert AC.processPhoto(tall.getvalue())[1:] == (300, 400)
+    assert AC.processPhoto(tall.getvalue())[1:] == (300, 300)
     tiny = _io.BytesIO(); Image.new("RGB", (40, 40)).save(tiny, "PNG")
     with pytest.raises(AC.AccountsError):
         AC.processPhoto(tiny.getvalue())
