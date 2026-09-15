@@ -1,8 +1,9 @@
-{# recruiting_search.html -- the coach's search (282, the coach edition, /recruiting/search): every high-school season
-   in the country, filtered by graduation year, rating, gain, state and
-   school, ranked by rating or by how fast the athlete is improving.
-   The rows come from /api/recruiting (recruiting.py); the filters live in
-   the query string so a search can be sent to another coach. #}
+{# recruiting_search.html -- the coach's search (282, the coach edition,
+   /recruiting/search): every high-school season in the country, filtered
+   by class year, rating, gain, state and school, ranked by rating or by how
+   fast the athlete is improving. The rows come from /api/recruiting
+   (recruiting.py); the filters live in the query string so a search can be
+   sent to another coach. Styled like the athlete edition (recruiting.html). #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -19,88 +20,61 @@
 <body>
 {% include "_topbar.html" %}
 
-<div class="rankings-page recruiting-page" id="recruiting"
-     data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}">
-  <h1>Recruiting: the coach's search</h1>
-  <p class="sub">Every high school season in the country, by graduation year, rating and how fast the athlete is improving.{{ rating_i() }}
-     Open an athlete for their recruiting profile: season by season, and where they would rank in each college division.</p>
+<main class="page-wide recruit-athlete recruit-coach" id="recruiting"
+      data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}">
+  <div class="hdr-row">
+    <h1>Find recruits</h1>
+    <a class="rc-coach" href="/recruiting">Athletes: where you'd fit →</a>
+  </div>
+  <p class="rc-sub">Every high-school season in the country on one scale.{{ rating_i() }}
+     Pick the classes you recruit, set a floor, and sort by rating or by how fast they are improving. The search is the link: send it to an assistant.</p>
 
-  <div class="filters">
-    <div class="field">
-      <label for="r-pool">Pool</label>
-      <select id="r-pool">
-        <option value="hs_m">HS Boys</option>
-        <option value="hs_f">HS Girls</option>
-      </select>
+  <section class="rc-schools">
+    <div class="rc-schools-head">
+      <div class="rc-seg" id="r-seg">
+        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_m">Boys</button>
+        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_f">Girls</button>
+        <span class="rc-seg-gap"></span>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="XC">Cross country</button>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="TF">Track</button>
+      </div>
+      <label class="rc-group">Season <input id="r-year" type="text" inputmode="numeric" class="rc-input rc-input-sm" placeholder="{{ season_years.get('XC') or '' }}"></label>
     </div>
-    <div class="field">
-      <label for="r-sport">Sport</label>
-      <select id="r-sport">
-        <option value="XC">Cross Country</option>
-        <option value="TF">Track &amp; Field</option>
-      </select>
+
+    <div class="rc-filters">
+      <span class="rc-group">Class of <span class="rc-classes" id="r-grad"></span></span>
     </div>
-    <div class="field">
-      <label for="r-year">Season</label>
-      <input id="r-year" type="text" inputmode="numeric" size="6">
-    </div>
-    <div class="field">
-      <label for="r-grad">Graduates</label>
-      <select id="r-grad" multiple size="4"></select>
-    </div>
-    <div class="field">
-      <label for="r-state">State</label>
-      <select id="r-state" multiple size="4">
+    <div class="rc-filters">
+      <select id="r-state" class="rc-input" aria-label="State">
+        <option value="">Any state</option>
         {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
       </select>
-    </div>
-    <div class="field">
-      <label for="r-min">Rating at least</label>
-      <input id="r-min" type="text" inputmode="decimal" size="6">
-    </div>
-    <div class="field">
-      <label for="r-max">Rating at most</label>
-      <input id="r-max" type="text" inputmode="decimal" size="6">
-    </div>
-    <div class="field">
-      <label for="r-gain">Gain at least</label>
-      <input id="r-gain" type="text" inputmode="decimal" size="6" title="Season rating minus the same athlete's rating a year earlier">
-    </div>
-    <div class="field">
-      <label for="r-races">Min races</label>
-      <input id="r-races" type="text" inputmode="numeric" size="4">
-    </div>
-    <div class="field wide">
-      <label for="r-school">School</label>
-      <input id="r-school" type="text" size="24" title="Exact school names, comma separated">
-    </div>
-    <div class="field">
-      <label for="r-sort">Sort</label>
-      <select id="r-sort">
-        <option value="rating">Rating</option>
-        <option value="gain">Gain</option>
-        <option value="best">Best race</option>
-        <option value="grad">Graduation year</option>
+      <label class="rc-group">Rating <input id="r-min" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="from"> to <input id="r-max" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="any"></label>
+      <label class="rc-group">Gain at least <input id="r-gain" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="+0" title="This season's rating minus the same athlete's rating a year earlier"></label>
+      <label class="rc-group">Races at least <input id="r-races" type="text" inputmode="numeric" class="rc-input rc-input-sm" placeholder="{{ default_floor }}"></label>
+      <input id="r-school" type="text" class="rc-input" placeholder="School (exact name)" size="22" title="Exact school names, comma separated">
+      <select id="r-sort" class="rc-input" aria-label="Sort">
+        <option value="rating">Highest rating</option>
+        <option value="gain">Most improved</option>
+        <option value="best">Best single race</option>
+        <option value="grad">Class year</option>
       </select>
+      <button id="r-go" class="rc-btn">Search</button>
     </div>
-    <div class="field">
-      <label>&nbsp;</label>
-      <button id="r-go" class="go">Search</button>
+
+    <p class="predict-status" id="r-status"></p>
+    <div id="r-out"></div>
+    <div class="pager" id="r-pager" hidden>
+      <button id="r-prev">&laquo; Previous</button>
+      <span class="page-note" id="r-note"></span>
+      <button id="r-next">Next &raquo;</button>
     </div>
-  </div>
+  </section>
 
-  <p class="predict-status" id="r-status"></p>
-  <div id="r-out"></div>
-  <div class="pager" id="r-pager" hidden>
-    <button id="r-prev">&laquo; Previous</button>
-    <span class="page-note" id="r-note"></span>
-    <button id="r-next">Next &raquo;</button>
-  </div>
-
-  <p class="meta r-foot">Gain is this season's rating minus the same athlete's rating a year earlier in the same sport.
-     The graduation year comes from the grade the results carry, so a season with no grade shows none.
-     Seasons need {{ default_floor }} rated races unless you set a minimum yourself.</p>
-</div>
+  <p class="meta rc-foot">Gain is this season's rating minus the same athlete's rating a year earlier in the same sport.
+     The class year comes from the grade the results carry, so a season with no grade shows none.
+     Seasons need {{ default_floor }} rated races unless you set a minimum yourself. Open an athlete for their profile: every season, the gain, and where their rating would rank in each college division.</p>
+</main>
 
 <script src="{{ static_v('recruiting-search.js') }}"></script>
 </body>

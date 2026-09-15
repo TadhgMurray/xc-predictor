@@ -1,47 +1,51 @@
-/* recruiting-search.js -- the coach's search (282, /recruiting/search). The filters are the query
-   string, so a search is a link; the rows come from /api/recruiting. */
+/* recruiting-search.js -- the coach's search (282, /recruiting/search).
+   The filters are the query string, so a search is a link; the rows
+   come from /api/recruiting. */
 (function () {
   const $ = (id) => document.getElementById(id);
   const root = $("recruiting");
   const YEARS = { XC: root.dataset.yearXc, TF: root.dataset.yearTf };
   const LIMIT = 100;
+  const state = { pool: "hs_m", sport: "XC", grad: new Set() };
   let offset = 0;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  function selected(sel) {
-    return [...sel.selectedOptions].map((o) => o.value);
-  }
-  function setSelected(sel, values) {
-    const want = new Set(values);
-    for (const o of sel.options) o.selected = want.has(o.value);
+
+  /* the classes on offer follow the season: the seniors of the season
+     first, then the three classes under them, as toggles */
+  function fillGrad() {
+    const label = parseInt($("r-year").value || YEARS[state.sport] || "", 10);
+    const box = $("r-grad");
+    box.innerHTML = "";
+    if (!label) return;
+    const senior = state.sport === "TF" ? label : label + 1;
+    for (let y = senior; y <= senior + 3; y++) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "rc-chip" + (state.grad.has(String(y)) ? " is-on" : "");
+      b.dataset.year = String(y); b.textContent = String(y);
+      b.addEventListener("click", () => {
+        if (state.grad.has(b.dataset.year)) state.grad.delete(b.dataset.year); else state.grad.add(b.dataset.year);
+        b.classList.toggle("is-on");
+        offset = 0; load();
+      });
+      box.appendChild(b);
+    }
+    $("r-year").placeholder = String(YEARS[state.sport] || "");
   }
 
-  /* the graduation years on offer follow the season: seniors of the season
-     first, then the three classes under them */
-  function fillGrad(keep) {
-    const label = parseInt($("r-year").value || YEARS[$("r-sport").value] || "", 10);
-    const sel = $("r-grad");
-    const was = keep ? new Set(selected(sel)) : new Set();
-    sel.innerHTML = "";
-    if (!label) return;
-    const senior = $("r-sport").value === "TF" ? label : label + 1;
-    for (let y = senior; y <= senior + 3; y++) {
-      const o = document.createElement("option");
-      o.value = String(y); o.textContent = "Class of " + y;
-      if (was.has(o.value)) o.selected = true;
-      sel.appendChild(o);
-    }
+  function paintSeg() {
+    document.querySelectorAll(".rc-seg-btn").forEach((b) => b.classList.toggle("is-on", state[b.dataset.set] === b.dataset.value));
   }
 
   function query() {
     const q = new URLSearchParams();
-    q.set("pool", $("r-pool").value);
-    q.set("sport", $("r-sport").value);
-    const pairs = [["year", $("r-year").value], ["grad", selected($("r-grad")).join(",")],
-                   ["state", selected($("r-state")).join(",")], ["min_rating", $("r-min").value],
+    q.set("pool", state.pool);
+    q.set("sport", state.sport);
+    const pairs = [["year", $("r-year").value], ["grad", [...state.grad].sort().join(",")],
+                   ["state", $("r-state").value], ["min_rating", $("r-min").value],
                    ["max_rating", $("r-max").value], ["min_gain", $("r-gain").value],
                    ["min_races", $("r-races").value], ["school", $("r-school").value]];
     for (const [k, v] of pairs) if (String(v || "").trim()) q.set(k, String(v).trim());
@@ -51,12 +55,11 @@
 
   function readUrl() {
     const p = new URLSearchParams(location.search);
-    if (p.get("pool")) $("r-pool").value = p.get("pool");
-    if (p.get("sport")) $("r-sport").value = p.get("sport");
+    if (p.get("pool") === "hs_m" || p.get("pool") === "hs_f") state.pool = p.get("pool");
+    if (p.get("sport") === "XC" || p.get("sport") === "TF") state.sport = p.get("sport");
     $("r-year").value = p.get("year") || "";
-    fillGrad(false);
-    setSelected($("r-grad"), (p.get("grad") || "").split(",").filter(Boolean));
-    setSelected($("r-state"), (p.get("state") || "").split(",").filter(Boolean));
+    state.grad = new Set((p.get("grad") || "").split(",").filter(Boolean));
+    $("r-state").value = (p.get("state") || "").split(",")[0];
     $("r-min").value = p.get("min_rating") || "";
     $("r-max").value = p.get("max_rating") || "";
     $("r-gain").value = p.get("min_gain") || "";
@@ -85,26 +88,26 @@
       $("r-pager").hidden = true;
       return;
     }
+    const label = d.season, prev = d.season - 1;
     const body = rows.map((r, i) => `
       <tr>
-        <td class="num">${offset + i + 1}</td>
-        <td><a href="/recruit/${r.person_id}">${esc(r.name || "Unknown")}</a></td>
+        <td class="num rc-dim">${offset + i + 1}</td>
+        <td class="rc-school"><a href="/recruit/${r.person_id}">${esc(r.name || "Unknown")}</a></td>
         <td>${r.school ? `<a href="/school/${encodeURIComponent(r.school)}${r.state ? "?state=" + r.state : ""}">${esc(r.school_label || r.school)}</a>` : " - "}</td>
-        <td>${esc(r.state || "")}</td>
-        <td>${esc(r.grade_label || "")}</td>
+        <td class="rc-dim">${esc(r.grade_label || "")}</td>
         <td class="num">${r.grad_year || " - "}</td>
-        <td class="num">${r.mean_rating == null ? " - " : r.mean_rating.toFixed(1)}</td>
-        <td class="num">${r.prev_rating == null ? " - " : r.prev_rating.toFixed(1)}</td>
+        <td class="num rc-strong">${r.mean_rating == null ? " - " : r.mean_rating.toFixed(1)}</td>
+        <td class="num rc-dim">${r.prev_rating == null ? " - " : r.prev_rating.toFixed(1)}</td>
         ${gainCell(r.gain)}
         <td class="num">${r.best_rating == null ? " - " : r.best_rating.toFixed(1)}</td>
-        <td class="num">${r.n_races}</td>
+        <td class="num rc-dim">${r.n_races}</td>
       </tr>`).join("");
-    const label = d.season, prev = d.season - 1;
-    $("r-out").innerHTML = `<table class="rk">
-      <thead><tr><th class="num">#</th><th>Athlete</th><th>School</th><th>State</th><th>Grade</th>
-        <th class="num">Class of</th><th class="num">${label}</th><th class="num">${prev}</th>
-        <th class="num">Gain</th><th class="num">Best</th><th class="num">Races</th></tr></thead>
-      <tbody>${body}</tbody></table>`;
+    $("r-out").innerHTML = `<p class="meta rc-count">${d.pool === "hs_f" ? "Girls" : "Boys"}, ${label} ${d.sport === "XC" ? "cross country" : "track"}. Ratings are season averages; the gain is against ${prev}.</p>
+      <div class="r-scroll"><table class="rk rc-tbl">
+      <thead><tr><th class="num">#</th><th>Athlete</th><th>School</th><th>Grade</th>
+        <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th><th class="num" title="the same athlete a year earlier">${prev}</th>
+        <th class="num">Gain</th><th class="num" title="best single race">Best</th><th class="num">Races</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`;
     $("r-pager").hidden = false;
     $("r-prev").disabled = offset === 0;
     $("r-next").disabled = rows.length < LIMIT;
@@ -131,12 +134,20 @@
   $("r-go").addEventListener("click", () => { offset = 0; load(); });
   $("r-prev").addEventListener("click", () => { offset = Math.max(0, offset - LIMIT); load(); });
   $("r-next").addEventListener("click", () => { offset += LIMIT; load(); });
-  $("r-sport").addEventListener("change", () => fillGrad(true));
-  $("r-year").addEventListener("change", () => fillGrad(true));
+  document.querySelectorAll(".rc-seg-btn").forEach((b) => b.addEventListener("click", () => {
+    state[b.dataset.set] = b.dataset.value;
+    paintSeg();
+    if (b.dataset.set === "sport") { state.grad = new Set(); fillGrad(); }
+    offset = 0; load();
+  }));
+  $("r-year").addEventListener("change", () => { state.grad = new Set(); fillGrad(); offset = 0; load(); });
+  for (const id of ["r-state", "r-sort"]) $(id).addEventListener("change", () => { offset = 0; load(); });
   for (const id of ["r-year", "r-min", "r-max", "r-gain", "r-races", "r-school"]) {
     $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { offset = 0; load(); } });
   }
 
   readUrl();
+  paintSeg();
+  fillGrad();
   load();
 })();

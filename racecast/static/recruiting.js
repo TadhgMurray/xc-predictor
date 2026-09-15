@@ -135,8 +135,14 @@
     }
     if (!s) { box.hidden = true; form.hidden = false; box.innerHTML = ""; return; }
     const t = d.subject_times || {};
-    const times = [["5k", "5K"], ["1600", "1600"], ["3200", "3200"]].filter(([k]) => t[k]).map(([k, w]) =>
+    const equiv = [["5k", "5K"], ["1600", "1600"], ["3200", "3200"]].filter(([k]) => t[k]).map(([k, w]) =>
       `<span class="rc-time-chip"><span class="rc-time-lbl">${w}</span>${fmtTime(t[k])}</span>`).join("");
+    /* the athlete's own PRs are the real times; the conversions are what
+       the rating is worth at a typical venue, and say so */
+    const prs = (s.prs || []).map((p) =>
+      `<span class="rc-time-chip rc-pr" title="${esc(p.date)}"><span class="rc-time-lbl">${esc(p.label)}</span>${esc(p.time)}</span>`).join("");
+    const times = (prs ? `<span class="rc-times-lbl">PRs</span>${prs}` : "") +
+      (equiv ? `<span class="rc-times-lbl">${prs ? "rating equivalents" : "equivalent to"}</span>${equiv}` : "");
     let who, sub;
     if (s.kind === "athlete") {
       qbox.value = s.name;

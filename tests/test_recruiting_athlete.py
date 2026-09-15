@@ -269,3 +269,24 @@ def test_the_pages_are_wired():
     assert "/api/recruiting?" in read("racecast", "static", "recruiting-search.js")
     assert 'step 10f_recruits     "$PY" -u racecast/build_recruiting.py' in read("deploy", "run_pipeline.sh")
     assert ".r-pill-top" in read("racecast", "static", "style.css")
+
+
+def test_personal_bests_are_the_athlete_s_own_fastest_per_event():
+    rows = [
+        {"sport": "XC", "distance": 5000.0, "time_seconds": 950.0, "race_date": "2025-10-01"},
+        {"sport": "XC", "distance": 5020.0, "time_seconds": 932.4, "race_date": "2025-11-08"},   # a 5K, within tolerance
+        {"sport": "XC", "distance": 4828.0, "time_seconds": 900.0, "race_date": "2025-09-20"},   # 3 mile, its own event
+        {"sport": "TF", "distance": 3200.0, "time_seconds": 561.2, "race_date": "2025-05-10"},
+        {"sport": "TF", "distance": 3200.0, "time_seconds": 570.0, "race_date": "2025-04-10"},
+        {"sport": "TF", "distance": 1609.3, "time_seconds": 261.0, "race_date": "2025-05-24"},   # a mile is not a 1600
+        {"sport": "TF", "distance": 5000.0, "time_seconds": 940.0, "race_date": "2025-05-30"},   # track 5000, not XC
+        {"sport": "TF", "distance": 400.0, "time_seconds": 52.0, "race_date": "2025-03-01"},     # not an event we quote
+    ]
+    cur = FakeCur([("FROM ranking_results WHERE person_id", rows)])
+    prs = R.personalBests(cur, 7)
+    assert [(p["key"], p["time"]) for p in prs] == [("5k", "15:32"), ("3mi", "15:00"), ("mile", "4:21.0"),
+                                                     ("3200", "9:21.2"), ("5000", "15:40")]
+    assert prs[0]["date"] == "2025-11-08" and prs[0]["seconds"] == 932.4
+    assert R.personalBests(FakeCur([]), 7) == []
+    assert '"prs": personalBests(cur, int(person_id))' in read("racecast", "recruiting.py")
+    assert "rating equivalents" in read("racecast", "static", "recruiting.js")

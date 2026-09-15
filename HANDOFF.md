@@ -1026,4 +1026,4 @@ verification yet. Built on `claude/nice-rubin-tj0kev` and on master.
   athlete page shows in its header (`docs/ACCOUNTS.md` section 6; the
   files live in `racecast/static/photos/`, gitignored). Mail: Resend,
   and what `XCP_MAIL_FROM` means, in section 2 of the same doc.
-- **Open (311):** the owner reports the athlete page slow since the avatar slot; suspects and the measurements to run are in the issue. Not changed.
+- **311, the athlete page's uncached cost:** the rank line's scoped counts, now precomputed by `build_season_ranks.py` (step `10g_season_ranks`, run it alone once: `$PY racecast/build_season_ranks.py --verify 40`, then restart). The page reads one row of `season_rank`; the live counts remain the fallback.

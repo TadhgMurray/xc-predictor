@@ -4607,6 +4607,8 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-athlete .rc-subject-times { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.45rem; }
 .recruit-athlete .rc-time-chip { border: 1px solid var(--line-2); border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .recruit-athlete .rc-time-lbl { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 0.35rem; }
+.recruit-athlete .rc-times-lbl { flex-basis: 100%; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 0.25rem; }
+.recruit-athlete .rc-pr { border-color: var(--ink); font-weight: 650; }
 .recruit-athlete .rc-subject-note { margin-top: 0.75rem; font-size: 0.85rem; color: #374151; }
 
 /* the bands */
@@ -4745,36 +4747,57 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 /* the account picture (305): on the settings page and the athlete header */
 .account-page .acct-photo-row { display: flex; gap: 1.25rem; align-items: flex-start; flex-wrap: wrap; }
 .account-page .acct-profile-fields { flex: 1 1 18rem; }
-.account-page .acct-avatar { position: relative; display: flex; align-items: center; justify-content: center; width: 96px; height: 96px;
-  border-radius: 50%; overflow: hidden; background: #e5e7eb; color: #9ca3af; cursor: pointer; flex: none; }
+.account-page .acct-avatar { position: relative; display: flex; align-items: center; justify-content: center; width: 96px; height: 128px;
+  border-radius: 8px; overflow: hidden; background: #e5e7eb; color: #9ca3af; cursor: pointer; flex: none; }
 .account-page .acct-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .account-page .acct-avatar-cta { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.2rem 0; text-align: center;
   font-size: 0.68rem; font-weight: 700; color: #fff; background: rgba(17,20,24,0.72); }
 .account-page .acct-inline-form { display: inline; }
-/* the athlete header: the picture beside the name and the meta line, Share
-   at the right, the numbers full width underneath (variant D of the
-   2026-09-15 mock). No picture: the slot is hidden unless the owner is
-   looking, who gets "+ photo". */
-.ath-head { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.25rem; }
+/* the athlete header (305): a roster headshot, 3:4, beside the name, the
+   meta line and the numbers; Share at the right. No picture: the slot is
+   hidden unless the owner is looking, who gets "+ photo". */
+.ath-head { display: flex; gap: 1.1rem; align-items: flex-start; margin-bottom: 0.25rem; }
 .ath-head .ath-head-body { flex: 1 1 auto; min-width: 0; }
 .ath-head .ath-head-body h1 { margin: 0; }
 .ath-head .ath-head-body .meta { margin: 0.15rem 0 0; }
 .ath-head .share-box { align-self: flex-start; flex: none; }
-.ath-portrait { width: 88px; height: 88px; border-radius: 50%; overflow: hidden; flex: none; display: flex; align-items: center;
-  justify-content: center; background: #eef0f3; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06); }
+.ath-portrait { width: 108px; height: 144px; border-radius: 8px; overflow: hidden; flex: none; display: flex; align-items: center;
+  justify-content: center; background: #eef0f3; box-shadow: 0 1px 2px rgba(0,0,0,0.12), inset 0 0 0 1px rgba(0,0,0,0.05); }
 .ath-portrait[hidden] { display: none; }   /* the attribute must win over the flex display */
 .ath-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ath-avatar-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%;
-  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.3rem; line-height: 1; background: #eef3f9; }
-.ath-avatar-add span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.15rem; }
+  color: var(--accent); text-decoration: none; font-weight: 700; font-size: 1.4rem; line-height: 1; background: #eef3f9; }
+.ath-avatar-add span { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.2rem; }
+/* with a picture the numbers sit beside it too, under the name; the stat
+   strip is inside the body in that case (athlete.html moves it) */
+.ath-head[data-has-photo="1"] .stat-strip { border-bottom: 0; margin-bottom: 0; padding-bottom: 0.2rem; }
 @media (max-width: 600px) {
-  /* the name stays beside the picture; the meta line drops below, full width */
-  .ath-head { flex-wrap: wrap; gap: 0.6rem 0.8rem; }
+  /* the name stays beside the headshot; the meta line and the numbers
+     drop below it at full width */
+  .ath-head { flex-wrap: wrap; gap: 0.5rem 0.8rem; align-items: center; }
   .ath-head .ath-head-body { display: contents; }
   .ath-head .ath-head-body h1 { flex: 1 1 0; min-width: 0; order: 1; }
   .ath-head .share-box { order: 2; align-self: center; }
-  .ath-head .ath-head-body .meta { order: 3; flex-basis: 100%; margin: 0; }
-  .ath-portrait { width: 60px; height: 60px; }
-  .ath-avatar-add { font-size: 1.05rem; }
+  .ath-head .ath-head-body .meta { order: 3; flex-basis: 100%; margin: 0.2rem 0 0; }
+  .ath-head .ath-head-body .stat-strip { order: 4; flex-basis: 100%; }
+  .ath-head[data-has-photo="1"] .stat-strip { border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; margin-bottom: 0.2rem; }
+  .ath-portrait { width: 72px; height: 96px; }
+  .ath-avatar-add { font-size: 1.1rem; }
   .ath-avatar-add span { font-size: 0.55rem; }
+}
+
+/* the coach's search (282), in the athlete edition's language */
+.recruit-coach .rc-classes { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.recruit-coach .rc-chip { padding: 0.35rem 0.7rem; border: 1px solid var(--line-2); border-radius: 999px; background: #fff; font: inherit;
+  font-size: 0.82rem; font-weight: 600; color: #374151; cursor: pointer; }
+.recruit-coach .rc-chip.is-on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.recruit-coach .rc-filters { align-items: center; }
+.recruit-coach .rc-filters .rc-group { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: #374151; }
+.recruit-coach .rc-input-sm { width: 4.6rem; }
+.recruit-coach .pager { display: flex; gap: 0.75rem; align-items: center; margin: 0.75rem 0; }
+.recruit-coach .pager button { padding: 0.4rem 0.8rem; border: 1px solid var(--line-2); border-radius: 6px; background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.recruit-coach .pager button[disabled] { opacity: 0.4; cursor: default; }
+.recruit-coach table.rc-tbl td.gain-up { color: #146c2e; font-weight: 650; }
+.recruit-coach table.rc-tbl td.gain-down { color: #a32d2d; }
+
 }

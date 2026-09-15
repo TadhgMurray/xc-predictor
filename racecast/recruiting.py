@@ -698,6 +698,7 @@ def _athleteSubject(cur, person_id):
     grad = next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
     return {
         "kind": "athlete", "person_id": int(person_id), "name": latest.get("name") or "Unknown",
+        "prs": personalBests(cur, int(person_id)),
         "school": latest.get("school"), "state": latest.get("state"),
         "school_label": schoolLabelIn(latest["school"], latest.get("state")) if latest.get("school") else "",
         "gender": latest["pool"].rsplit("_", 1)[-1], "grad_year": grad,
@@ -783,3 +784,53 @@ def suggestions(rows, rating, per_tier=30):
         out.append({"key": key, "label": label, "blurb": TIERS[key][2],
                     "total": len(schools), "schools": schools[:per_tier]})
     return out
+
+
+# ---- the subject's own PRs ------------------------------------------ #
+# ★ REAL TIMES, NOT CONVERSIONS (owner, 2026-09-15: "it grabs prs that
+#   aren't actually their prs"). The card used to show the rating converted
+#   to a 5K, a 1600 and a 3200 and called them the athlete's times. Those
+#   are equivalents. The PRs are the fastest result at each distance the
+#   athlete actually ran, from ranking_results (the index on person_id
+#   carries sport, distance and time, so this is one index-only read).
+PR_EVENTS = (
+    # key, label, sport, metres, tolerance in metres
+    ("5k",   "5K XC",   "XC", 5000.0, 60.0),
+    ("3mi",  "3 mile",  "XC", 4828.0, 30.0),
+    ("800",  "800",     "TF", 800.0, 4.0),
+    ("1500", "1500",    "TF", 1500.0, 4.0),
+    ("1600", "1600",    "TF", 1600.0, 4.0),
+    ("mile", "Mile",    "TF", 1609.3, 4.0),
+    ("3000", "3000",    "TF", 3000.0, 6.0),
+    ("3200", "3200",    "TF", 3200.0, 6.0),
+    ("2mi",  "2 mile",  "TF", 3218.7, 6.0),
+    ("5000", "5000 track", "TF", 5000.0, 10.0),
+)
+
+
+def personalBests(cur, person_id):
+    """[{key, label, sport, seconds, time, date}] fastest first by event
+    order, one per event the athlete has run; [] when nothing is on file."""
+    try:
+        cur.execute("""SELECT sport, distance, time_seconds, race_date
+                       FROM   ranking_results
+                       WHERE  person_id = %s AND time_seconds > 0 AND distance > 0""",
+                    (person_id,))
+        rows = _rowsOf(cur)
+    except Exception as exc:                            # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                               # noqa: BLE001
+            pass
+        print(f"recruiting: personalBests({person_id}) failed ({type(exc).__name__}: {exc})", flush=True)
+        return []
+    best = {}
+    for r in rows:
+        d, t = float(r["distance"]), float(r["time_seconds"])
+        for key, label, sport, metres, tol in PR_EVENTS:
+            if r["sport"] == sport and abs(d - metres) <= tol:
+                if key not in best or t < best[key]["seconds"]:
+                    best[key] = {"key": key, "label": label, "sport": sport, "seconds": t,
+                                 "time": fmtTime(t), "date": str(r.get("race_date") or "")[:10]}
+                break
+    return [best[k] for k, *_ in PR_EVENTS if k in best]

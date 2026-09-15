@@ -1057,6 +1057,44 @@ _RANK_SCOPES = {
 }
 
 
+# ★ THE RANKS, PRECOMPUTED (issue 311). build_season_ranks (step 10g)
+#   stores every season's place in every scope the line shows; the page
+#   reads one row instead of running up to eight scoped counts. The
+#   table's presence is checked once per process; without it the live
+#   computation below still runs, as it always did.
+_SEASON_RANK = {"checked": False, "ready": False}
+
+
+def precomputedRanks(cur, person_id, season):
+    """{nation, nation_total, state_rank, <unit kinds>, team} for one
+    season from season_rank, or None (no table, no row)."""
+    if not _SEASON_RANK["checked"]:
+        try:
+            cur.execute("SELECT to_regclass('public.season_rank') AS t")
+            row = cur.fetchone()
+            _SEASON_RANK["ready"] = bool(row and (row["t"] if isinstance(row, dict) else row[0]))
+        except Exception:                                # noqa: BLE001
+            cur.connection.rollback()
+            _SEASON_RANK["ready"] = False
+        _SEASON_RANK["checked"] = True
+        if not _SEASON_RANK["ready"]:
+            print("rank_line: season_rank is not built (step 10g); ranks are counted live", flush=True)
+    if not _SEASON_RANK["ready"]:
+        return None
+    try:
+        cur.execute("""SELECT nation, nation_total, state_rank, state_div, section, section_div,
+                              area, league, division, region, conference, team
+                       FROM   season_rank
+                       WHERE  person_id = %s AND pool = %s AND sport = %s AND year = %s""",
+                    (person_id, season["pool"], season["sport"], season["year"]))
+        row = cur.fetchone()
+    except Exception as exc:                             # noqa: BLE001
+        cur.connection.rollback()
+        print(f"rank_line: season_rank read failed ({type(exc).__name__}: {exc})", flush=True)
+        return None
+    return dict(row) if row else None
+
+
 def buildRankLine(cur, person_id, season):
     """The entries for the rank line under the athlete's stat strip.
 
@@ -1089,6 +1127,7 @@ def buildRankLine(cur, person_id, season):
     label_year = season["year"] + 1 if sport == "TF" else season["year"]
     state = (season.get("state") or "").strip().upper() or None
     school = season.get("school")
+    pre = precomputedRanks(cur, person_id, season)
 
     def boardArgs(with_state):
         # ! min_races=1, NOT the board's default floor (20 TF / 8 XC). The
@@ -1110,6 +1149,8 @@ def buildRankLine(cur, person_id, season):
 
     def boardRank(with_state):
         which = "state" if with_state else "nation"
+        if pre is not None:
+            return pre.get("state_rank" if with_state else "nation")
         f, err = parseFilters(MultiDict(boardArgs(with_state)))
         if err:
             print(f"rank_line: {which} filters refused ({err})", flush=True)
@@ -1130,6 +1171,8 @@ def buildRankLine(cur, person_id, season):
             return None
 
     def boardTotal():
+        if pre is not None:
+            return pre.get("nation_total")
         f, err = parseFilters(MultiDict(boardArgs(False)))
         if err:
             return None
@@ -1177,6 +1220,8 @@ def buildRankLine(cur, person_id, season):
 
     def unitRank(kind, raw):
         """The athlete's place on the board narrowed to their own unit."""
+        if pre is not None:
+            return pre.get(kind)
         args = unitArgs(kind, raw)
         f, err = parseFilters(MultiDict(args))
         if err:
@@ -1249,23 +1294,26 @@ def buildRankLine(cur, person_id, season):
                 entries.append({"label": state, "rank": r,
                                 "href": boardHref(True)})
         elif scope == "team" and school and season.get("mean_rating") is not None:
-            try:
-                # Strictly-better count + 1 = place on the roster, the same
-                # mean-rating order schoolRoster sorts by; ties share it.
-                cur.execute("""
-                    SELECT count(*) + 1 AS place
-                    FROM   athlete_season t
-                    WHERE  t.school = %(school)s
-                      AND  t.sport  = %(sport)s
-                      AND  t.year   = %(year)s
-                      AND  t.mean_rating > %(mine)s
-                """, {"school": school, "sport": sport,
-                      "year": season["year"],
-                      "mine": season["mean_rating"]})
-                row = cur.fetchone()
-            except Exception:            # noqa: BLE001
-                cur.connection.rollback()
-                row = None
+            if pre is not None:
+                row = {"place": pre["team"]} if pre.get("team") else None
+            else:
+                try:
+                    # Strictly-better count + 1 = place on the roster, the same
+                    # mean-rating order schoolRoster sorts by; ties share it.
+                    cur.execute("""
+                        SELECT count(*) + 1 AS place
+                        FROM   athlete_season t
+                        WHERE  t.school = %(school)s
+                          AND  t.sport  = %(sport)s
+                          AND  t.year   = %(year)s
+                          AND  t.mean_rating > %(mine)s
+                    """, {"school": school, "sport": sport,
+                          "year": season["year"],
+                          "mine": season["mean_rating"]})
+                    row = cur.fetchone()
+                except Exception:            # noqa: BLE001
+                    cur.connection.rollback()
+                    row = None
             if row:
                 entries.append({
                     "label": "Team", "rank": row["place"],

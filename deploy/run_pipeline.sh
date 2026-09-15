@@ -811,6 +811,9 @@ step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
 # recruiting (282): each college's recruits from athlete_season, on the
 # HS scale; reads school_identity (10b) and school_unit (10d)
 step 10f_recruits     "$PY" -u racecast/build_recruiting.py
+# the athlete page's rank line, precomputed (311): every season's place in
+# every scope, one row per season, so the page runs no scoped counts
+step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
 step 11_teams         "$PY" -u racecast/build_team_season.py
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the
