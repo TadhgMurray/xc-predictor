@@ -4669,16 +4669,19 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 /* ======================================================================
    accounts (283): the topbar slot, the sign-in shell, the account page
    ====================================================================== */
-.topbar .topbar-account { margin-left: 0.9rem; white-space: nowrap; font-size: 0.9rem; }
-.topbar .topbar-account a { color: #374151; text-decoration: none; font-weight: 600; }
-.topbar .topbar-account a.is-account { color: var(--ink); }
+/* the sign-in link is the nav's last item; the links never break mid-word,
+   the search box is what gives way when the bar gets tight */
+.topnav a { white-space: nowrap; }
+.topnav .topbar-account a { font-weight: 600; }
+.topnav .topbar-account a.is-account { color: var(--ink); }
+.topbar .search-wrap { flex: 0 1 320px; min-width: 150px; width: auto; }
 
 /* the sign-in shell: the home page's dark ground, the wordmark, one card */
 body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-image: radial-gradient(60rem 30rem at 50% -10rem, #2a2c30, #161719 70%); }
 .auth { width: 100%; max-width: 26rem; margin: 0 auto; padding: 3.5rem 1.25rem 3rem; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 1.5rem; }
 @media (max-width: 480px) { .auth { padding: 2rem 1rem 2rem; } .auth-card { padding: 1.4rem 1.2rem 1.2rem; } }
 .auth-brand { line-height: 0; }
-.auth-brand img { width: 230px; height: auto; filter: invert(1) brightness(2); }
+.auth-brand img { width: 230px; height: auto; }   /* the lockup as the hero draws it: the plate is the light part */
 .auth-card { width: 100%; box-sizing: border-box; background: #fff; border-radius: 12px; padding: 1.75rem 1.75rem 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.35); }
 .auth-card h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }
 .auth-lead { margin: 0 0 1.1rem; color: #374151; font-size: 0.95rem; }
