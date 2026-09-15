@@ -39,12 +39,19 @@ def test_the_prefilter_is_slower_than_every_record_at_every_pools_floor():
 def test_the_race_rule_uses_the_pools_own_floor():
     # a 1:50 800 (137.5 s/km) is 9% off the open record: fine for a high
     # schooler (floor 1.01), not for a middle-school pool (floor 1.12)
+    # ... but a pool-floor row is a mis-pooled ROW, not a wrong race: it
+    # leaves alone and the race keeps its ratings
     ms = _row(time_seconds=110.0, distance=800.0, rating_pool="ms_m", event_id=1)
-    assert set(ir.judge("TF", [ms])) == {("anet", 10, 3, 1)}
+    races, rows = ir.judge("TF", [ms])
+    assert races == {} and [r[0] for r in rows] == [1] and rows[0][1] == ("anet", 10, 3, 1)
     hs = _row(time_seconds=110.0, distance=800.0, rating_pool="hs_m", event_id=1)
-    assert ir.judge("TF", [hs]) == {}
+    assert ir.judge("TF", [hs]) == ({}, [])
     pro = _row(time_seconds=95.0, distance=800.0, rating_pool="pro_m", event_id=1)
-    assert ir.judge("TF", [pro]) == {}                # pro is exempt now too
+    assert ir.judge("TF", [pro]) == ({}, [])          # pro is exempt now too
+    # faster than the open record in a covered pool: the race
+    wrong = _row(time_seconds=95.0, distance=800.0, rating_pool="ms_m", event_id=1)
+    races, rows = ir.judge("TF", [wrong])
+    assert set(races) == {("anet", 10, 3, 1)} and rows == []
 
 
 def test_a_row_without_a_pool_is_college_only_when_it_came_from_tfrrs():
@@ -67,17 +74,17 @@ def test_one_impossible_row_names_its_race_and_a_college_row_does_not():
             _row(result_id=3, meet_id=11, time_seconds=700.0, rating_pool="college_m"),
             _row(result_id=4, meet_id=12, time_seconds=700.0, source="tfrrs", rating_pool=None),
             _row(result_id=5, meet_id=13, time_seconds=700.0, gender="F", rating_pool="hs_f")]
-    bad = ir.judge("XC", rows)
-    assert set(bad) == {("anet", 10, 3, None), ("anet", 13, 3, None)}
+    bad, floor_rows = ir.judge("XC", rows)
+    assert set(bad) == {("anet", 10, 3, None), ("anet", 13, 3, None)} and floor_rows == []
     hit, = bad[("anet", 10, 3, None)]
     assert hit[0] == 1 and abs(hit[3] - 140.0) < 1e-9
-    assert hit[4] == rp.recordPace(5000, "M") * rp.poolFactor("hs_m")
+    assert hit[4] == rp.recordPace(5000, "M")          # the race verdict is the open record
 
 
 def test_the_track_race_is_the_event_too():
     a = _row(event_id=7, time_seconds=95.0, distance=800.0)     # 119 s/km beats the 800 record
     b = _row(event_id=8, time_seconds=95.0, distance=800.0)
-    bad = ir.judge("TF", [a, b])
+    bad, _rows = ir.judge("TF", [a, b])
     assert set(bad) == {("anet", 10, 3, 7), ("anet", 10, 3, 8)}
     assert ir.raceKey("XC", a) == ("anet", 10, 3, None)
 

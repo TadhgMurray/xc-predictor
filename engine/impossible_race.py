@@ -20,6 +20,9 @@ impossible_race.py -- the races no runner could have run. Pipeline step 06c.
   pages show a dash where a 190 used to sit. College pools are exempt
   ("every but college"): a college race carries professionals and
   near-record fields, and the anchor gate handles its scale problems.
+  A row faster than its POOL's floor but not the open record (a 3:54 1500
+  filed as an elementary schooler) is a mis-pooled row, not a wrong race:
+  that row alone is written, and its race keeps its ratings (see judge).
 
 HOW A ROW'S POOL IS KNOWN HERE. This runs before the pack, so the pool is
 the rating_pool the last go-live wrote on the row; a row that has none yet
@@ -120,25 +123,37 @@ def poolIsCollege(rating_pool, source):
 
 
 def judge(sport, rows):
-    """{race key: [(result_id, time, dist, pace, record)]} of the rows that
-    beat the record in a pool the rule covers. rows: dicts with source,
-    meet_id, div_id, event_id, result_id, time_seconds, distance, gender,
-    rating_pool. Pure."""
-    out = {}
+    """({race key: [(result_id, time, dist, pace, record)]} of the rows that
+    beat the OPEN record, [(result_id, race key, time, dist, pace, floor)]
+    of the rows that only beat their POOL's floor) in a pool the rule
+    covers. rows: dicts with source, meet_id, div_id, event_id, result_id,
+    time_seconds, distance, gender, rating_pool. Pure.
+
+    ★ TWO VERDICTS, NOT ONE (2026-09-15, the first write: 2,645 track
+      races condemned, most of them open 1500s run in 3:54 by adults the
+      club pooling had filed as elementary schoolers). A time faster than
+      the open world record is a fact about the RACE -- its distance or
+      its clock is wrong -- so the whole race goes. A time faster than a
+      pool's floor but not the record is a fact about the ROW: that
+      athlete is in the wrong pool. Dropping that row alone keeps the
+      race for everyone who belongs in it."""
+    races, rows_out = {}, []
     for r in rows:
         if poolIsCollege(r.get("rating_pool"), r.get("source")):
             continue
         t, d = r.get("time_seconds"), r.get("distance")
-        # the pool's own floor, as the builder's impossibleRow applies it
-        # (record_pace.POOL_PACE_FACTOR); a row without a pool gets the
-        # open record alone
         factor = poolFactor(r.get("rating_pool"))
         if not impossiblePace(t, d, r.get("gender"), slack=PACE_FLOOR_SLACK * factor):
             continue
         pace = float(t) / (float(d) / 1000.0)
-        out.setdefault(raceKey(sport, r), []).append(
-            (r["result_id"], float(t), float(d), pace, recordPace(d, r.get("gender")) * factor))
-    return out
+        key = raceKey(sport, r)
+        if impossiblePace(t, d, r.get("gender")):                       # the open record
+            races.setdefault(key, []).append(
+                (r["result_id"], float(t), float(d), pace, recordPace(d, r.get("gender"))))
+        else:                                                           # the pool's floor only
+            rows_out.append((r["result_id"], key, float(t), float(d), pace,
+                             recordPace(d, r.get("gender")) * factor))
+    return races, rows_out
 
 
 def candidateSql(cur, sport):
@@ -212,7 +227,7 @@ def build(conn, write, show=20):
         for sport in ("XC", "TF"):
             t0 = time.time()
             cands = loadCandidates(cur, sport)
-            bad = judge(sport, cands)
+            bad, floor_rows = judge(sport, cands)
             n_rows = 0
             for key, hits in sorted(bad.items(), key=lambda kv: min(h[3] / h[4] for h in kv[1])):
                 ids = raceRows(cur, sport, key)
@@ -221,16 +236,22 @@ def build(conn, write, show=20):
                 race_recs.append((sport, key[0], key[1], key[2], key[3], len(ids), len(hits),
                                   worst[3], worst[4], worst[0], worst[1], worst[2]))
                 res_recs.extend((sport, rid) for rid in ids)
-            print(f"  {sport}: {len(cands):,} rows under {PREFILTER_PACE:.0f} s/km, "
-                  f"{sum(len(h) for h in bad.values()):,} beat the record in a covered pool, "
-                  f"{len(bad):,} races, {n_rows:,} rows condemned  ({time.time() - t0:.1f}s)")
+            # the pool-floor rows, one by one: the row leaves, the race stays
+            res_recs.extend((sport, rid) for rid, _k, _t, _d, _p, _f in floor_rows)
+            print(f"  {sport}: {len(cands):,} rows under {PREFILTER_PACE:.0f} s/km; "
+                  f"{sum(len(h) for h in bad.values()):,} beat the OPEN record -> {len(bad):,} races, "
+                  f"{n_rows:,} rows condemned; {len(floor_rows):,} beat only their pool's floor "
+                  f"-> those rows alone  ({time.time() - t0:.1f}s)")
             for key, hits in list(sorted(bad.items(), key=lambda kv: min(h[3] / h[4] for h in kv[1])))[:show]:
                 worst = min(hits, key=lambda h: h[3] / h[4])
                 print(f"      {sport} source={key[0]} meet={key[1]} div={key[2]}"
                       + (f" event={key[3]}" if sport == "TF" else "")
                       + f"  {len(hits)} impossible; fastest {worst[3]:.0f} s/km over {worst[2]:.0f} m"
                         f" (record {worst[4]:.0f}) result {worst[0]}")
-            total_races += len(bad); total_rows += n_rows
+            for rid, key, t, d, pace, floor in sorted(floor_rows, key=lambda x: x[4] / x[5])[:min(show, 8)]:
+                print(f"      {sport} row {rid}: {pace:.0f} s/km over {d:.0f} m against a pool floor of "
+                      f"{floor:.0f} (meet={key[1]} div={key[2]}{'' if sport == 'XC' else ' event=' + str(key[3])})")
+            total_races += len(bad); total_rows += n_rows + len(floor_rows)
         if not write:
             print(f"  DRY RUN: {total_races:,} races, {total_rows:,} rows would be written")
             return total_races, total_rows

@@ -100,14 +100,14 @@ def main():
     summary = summarise(gaps, growths, args.share)
     print(f"[level] log-time; a point at 130 is about 0.77%. share {args.share:g} of the "
           f"year's XC-to-XC growth is the stated fall-to-spring gain.")
-    print(f"  {'level':<9}{'athlete-yrs':>12}{'gap TF-XC':>11}{'  yrs':>7}{'growth':>9}{'gain':>9}"
+    print(f"  {'level':<9}{'athlete-yrs':>12}{'gap TF-XC':>11}{'yrs':>12}{'growth':>9}{'gain':>9}"
           f"{'shift to apply':>16}")
     for level in LEVELS:
         d = summary.get(level)
         if not d:
             continue
         shift = d["gap"] + d["gain"] if math.isfinite(d["gap"]) and math.isfinite(d["gain"]) else float("nan")
-        print(f"  {level:<9}{d['n_gap']:>12,}{d['gap']:>+11.4f}{d['n_growth']:>7,}{d['growth']:>+9.4f}"
+        print(f"  {level:<9}{d['n_gap']:>12,}{d['gap']:>+11.4f}{d['n_growth']:>12,}{d['growth']:>+9.4f}"
               f"{d['gain']:>+9.4f}{shift:>+16.4f}")
     print("\n  (gap: negative = track already rates higher; shift: what the go-live adds to "
           "the track rows' log time, negative = track rated up)")
