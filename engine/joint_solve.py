@@ -361,7 +361,12 @@ def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
     (shift[n_pool, n_band], gap[n_pool, n_band], n[n_pool, n_band])."""
     gains = np.asarray(gains, dtype=np.float64)
     nb = len(anchors)
-    assert gains.size == nb, "one gain per band"
+    # ★ ONE GAIN PER BAND, OR ONE PER (POOL, BAND) (2026-09-15: the sport
+    #   level per pool). A NaN gain leaves that pool's rows unshifted.
+    if gains.ndim == 1:
+        assert gains.size == nb, "one gain per band"
+        gains = np.broadcast_to(gains[None, :], (n_pool, nb))
+    assert gains.shape == (n_pool, nb), "gains: (n_band,) or (n_pool, n_band)"
     log_adj = np.asarray(log_adj, dtype=np.float64)
     sport = np.asarray(sport)
     athlete = np.asarray(athlete, dtype=np.int64)
@@ -381,7 +386,7 @@ def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
     tot = np.bincount(key[both], weights=gap_ath[both],
                       minlength=n_pool * nb).reshape(n_pool, nb)
     gap = np.where(n > 0, tot / np.maximum(n, 1), np.nan)
-    shift = np.where(n >= min_athletes, gap + gains[None, :], 0.0)
+    shift = np.where((n >= min_athletes) & np.isfinite(gains), gap + gains, 0.0)
     # a band too thin to measure borrows its pool's nearest measured band
     for p in range(n_pool):
         have = n[p] >= min_athletes

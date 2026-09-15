@@ -65,7 +65,8 @@ def test_the_swap_lands_on_the_solves_scale_and_the_go_live_publishes_it(capsys)
     assert np.allclose(rebuilt - pin[m], fit[m], atol=1e-12)
     # the fitted total is the published one to within the iteration's
     # tolerance (the engine returns its damped iterate), plus the level
-    assert np.abs(fit[m] - shift[m] + mu_cell[m] - delta_b[m]).max() < 2e-4
+    scale = out["bracket_scale"]                      # the per-sport course scale (2026-09-15)
+    assert np.abs(scale[m] * (fit[m] - shift[m]) + mu_cell[m] - delta_b[m]).max() < 2e-4
     assert out["bracket_prior_group"].shape == (len(be.PRIOR_GROUP_NAMES),)
     # the two engines measure the same planted world: the numbers agree
     # course by course, and the sport level (the planted -5% on track) is

@@ -873,3 +873,69 @@ are UNDERstated by roughly a tenth (the XC prior shrinks them too hard,
 or the XC course scale wants a factor of ~1.1) and the tilt's slope is
 right in both sports. That, with the gap row (college TF 1.2-1.7 under
 XC, hs 0.4-0.9 under), is where the constants discussion starts.
+
+### 9.14 The constants, measured: the course scale, the level per pool, two rails (2026-09-15)
+
+The owner's call after run 23: "let's do that" (the XC course scale, the
+sport level per pool, the two board rails); the Mantecon race "isn't an
+issue, it's just too little tilt on a hard course" -- which the scale
+addresses first and the band table then judges.
+
+**The course scale per sport** (`run_joint.bracketDifficulties`,
+`--course-scale`, `XCP_COURSE_SCALE`, default `fit`). Run 23's
+tilt-by-band table had XC's implied multiplier a tenth above the
+applied one in every band and TF's matching within 1%: the fitted prior
+shrinks XC courses and the voters' brackets say so. Each sport's course
+effects are now multiplied, after the recentring (the zero stays a
+track), by the voter-weighted mean of implied/applied over its trusted
+bands (`bracket_engine.courseScaleFromBands`; se <= 0.02, 5,000+
+voters). TF comes out at 1.0 by its own table; XC near 1.1. `off`
+leaves 1.0; `XC=1.1,TF=1` states it. Two new tables in the go-live log:
+tilt by band is now labelled "BEFORE the course scale", and tilt by
+RACES PER CELL (`tiltByRaces`) says whether implied/applied falls with
+races (the prior pulling thin courses in -- then the prior is the
+lever, not a flat scale) or is flat (the scale). The acceptance test is
+the next run's band table: implied should equal applied. The trace
+(`scripts/course_bracket.py`) shows the scale column; the npz carries
+`bracket_scale` (per cell) and `bracket_course_scale` ([XC, TF]);
+published = scale * (fit - recentre) + level.
+
+**The sport level per pool level** (`--sport-level-pools`,
+`XCP_SPORT_LEVEL_POOLS`, e.g. `college=0,hs=0.008,ms=0.012,elem=0.015`).
+The go-live's existing winter-gain machinery (issue 194,
+`joint_solve.sportGainShift`, per pool x band) now takes a gain per
+POOL LEVEL, every band alike (`joint_golive.buildLive(gain_levels=)`);
+a level not named is left as the solve put it, and it is kept alongside
+`--sport-level` (the solve's level stays; this corrects what the boards
+show). The number is measured, not asserted: `scripts/sport_level_fit.py`
+reads athlete_season and prints, per level, the same-athlete TF-XC gap,
+the XC-to-next-XC growth, and the stated gain = `--share` (0.5) of that
+growth -- the spring sits halfway to next fall -- ending with the
+`XCP_SPORT_LEVEL_POOLS=...` line to paste. The go-live table "winter
+gain per band" shows the gap read, the target and the shift per pool;
+the sanity script's gap row is the acceptance test.
+
+**Two rails.** `build_ranking_results.prepareRow`: a RATED row with no
+distance is never ranked (counter `no_distance`; the ms_m board headed
+at 177 by "Hayward" rows with no distance -- nothing could check them).
+`speed_ratings_db.loadClubPros`: a college name never enters the club
+set (`_collegeNames`: the directory plus tfrrs's college slugs), so
+Alabama, BYU and Stanford stop reading as "a club with a professional"
+in the club gate and the sanity report.
+
+Run it from the run-23 state, no solve (the go-live is minutes):
+
+    git pull
+    set -a; . /etc/xc-predictor.env; set +a
+    /srv/venv/bin/python engine/impossible_race.py --write     # the fixed rule's tables
+    /srv/venv/bin/python scripts/sport_level_fit.py            # ends with the env line
+    XCP_FROM_STATE=engine/data/joint_difficulty_state.npz XCP_DIFFICULTY=bracket \
+    XCP_SPORT_LEVEL=0.0583 XCP_ERA_YEARS=2 XCP_ALTITUDE=1 XCP_INDOOR_LEVEL=0.003 XCP_IMPORTANCE=none \
+    XCP_SPORT_LEVEL_POOLS=<the line's value> \
+    bash deploy/run_pipeline.sh --from 8 --skip 08a_holdout,08b_ladder 2>&1 | tee logs/run24.out
+
+Then read: `grep -A16 "tilt by band" logs/run24.out` (implied vs
+applied, before the scale), `grep -A10 "tilt by races" logs/run24.out`,
+`grep "course scale per sport" logs/run24.out`, `grep -A40 "winter gain
+per band" logs/run24.out`, and the sanity log's gap row
+(`logs/<ts>/10a_board_sanity.log`). Tests: `tests/test_course_scale.py`.

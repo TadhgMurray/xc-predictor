@@ -1030,12 +1030,14 @@ _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
                 "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
+                "no_distance": 0,
                 "field_mark": 0, "field_refused": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "outside_pool": 0, "outside_band": 0, "time_only": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
                 "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
+                "no_distance": 0,
                 "field_mark": 0, "field_refused": 0}}
 
 # ★ TIMED NON-FLAT EVENTS. event_parse rejects hurdles and the steeple on
@@ -1368,6 +1370,15 @@ def prepareRow(row, sport):
     #    on every page load, on a board that was already slow. A row that
     #    is not a performance should not be in ranking_results at all;
     #    then every board is clean for free and none of them pays for it.
+    # ★ A RATED ROW WITH NO DISTANCE IS NEVER RANKED (owner, 2026-09-15: the
+    #   ms_m board headed at 177 by "Hayward" rows whose distance column
+    #   reads "-"). Without a distance neither the anchor gate nor the
+    #   record gate can check the row, and a row nothing can check does
+    #   not head a board. The unrated rows (a sprint on the time boards, a
+    #   field mark) are not rated and are not this rule's.
+    if row.speed_rating is not None and distance is None:
+        _GATE[sport]["no_distance"] += 1
+        return None
     if impossibleRow(row.time_seconds, distance, row.gender, pool):
         _GATE[sport]["impossible_pace"] += 1
         return None
@@ -1614,7 +1625,8 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
               f"implausible for their pool (see RACE_MARGIN)")
     print(f"    pool from the row: {g['pool_from_row']:,} rows ranked in the pool the "
           f"engine rated them in; {g['pro_pool']:,} professional-pool rows not ranked; "
-          f"{g['impossible_pace']:,} rows faster than the world record not ranked")
+          f"{g['impossible_pace']:,} rows faster than the world record not ranked; "
+          f"{g['no_distance']:,} rated rows with no distance not ranked")
     if g["outside_band"]:
         print(f"    sanity band: {g['outside_band']:,} races rated but "
               f"outside the engine's pace band -- filled ratings the solve "

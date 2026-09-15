@@ -275,6 +275,9 @@ def engineCells(npz, cell_keys, base_key, delta):
     pin = np.asarray(npz["bracket_pin"], dtype=np.float64)
     shift = np.asarray(npz["bracket_shift"], dtype=np.float64)
     fit = np.asarray(npz["bracket_cell_fit"], dtype=np.float64)
+    # the per-sport course scale (2026-09-15), 1.0 on a state without it
+    scale = (np.asarray(npz["bracket_scale"], dtype=np.float64) if "bracket_scale" in npz
+             and np.asarray(npz["bracket_scale"]).size == len(cell_keys) else np.ones(len(cell_keys)))
     place = (np.asarray(npz["bracket_place"], dtype=np.int64) if "bracket_place" in npz
              and np.asarray(npz["bracket_place"]).size == len(cell_keys) else None)
     place_size = np.bincount(place[place >= 0], minlength=int(place.max()) + 1) if place is not None and (place >= 0).any() else None
@@ -297,7 +300,8 @@ def engineCells(npz, cell_keys, base_key, delta):
                     "base_votes": float(base_votes[c]), "group": names[g] if g < len(names) else "",
                     "prior_group": k_g, "prior_races": prior_races,
                     "era": float(era), "pin": float(pin[c]), "shift": float(shift[c]),
-                    "fit": float(fit[c]), "level": float(mu[1] if bare.startswith("TF:") else mu[0]),
+                    "fit": float(fit[c]), "scale": float(scale[c]),
+                    "level": float(mu[1] if bare.startswith("TF:") else mu[0]),
                     "published": float(delta[c])})
     return out
 
@@ -336,13 +340,14 @@ def report(result, names=None, top=0.0):
             print("  the engine's arithmetic (--difficulty bracket), per (course, era) cell:")
             print(f"    {'cell':<28} {'races':>5} {'votes':>6} {'raw':>7} "
                   f"{'history':>8} {'(votes':>7} {'prior)':>7} {'place':>9} {'era':>7} {'pin':>7} "
-                  f"{'recentre':>9} {'level':>7} {'published':>10}")
+                  f"{'recentre':>9} {'scale':>6} {'level':>7} {'published':>10}")
             for e in res["engine"]:
                 pl = (f"#{e['place']}({e['place_cells']})" if e.get("place", -1) >= 0 else "-")
                 print(f"    {e['cell_key']:<28} {e['races']:>5} {e['votes']:>6.2f} "
                       f"{_pct(e['raw']):>7} {_pct(e['base']):>8} {e['base_votes']:>7.2f} "
                       f"{e['prior_group']:>7.2f} {pl:>9} {_pct(e['era']):>7} {_pct(-e['pin']):>7} "
-                      f"{_pct(-e['shift']):>9} {_pct(e['level']):>7} {_pct(e['published']):>10}")
+                      f"{_pct(-e['shift']):>9} {e.get('scale', 1.0):>6.3f} {_pct(e['level']):>7} "
+                      f"{_pct(e['published']):>10}")
             print("    read: raw = the era's vote-weighted mean of its races' readings "
                   "(each race weighs voters/(voters+sat)); history = every era of the "
                   "course pulled toward its group's average by `prior` races' worth; "

@@ -1573,6 +1573,18 @@ def buildParser():
                          "outdoor tracks (hs, college, ms, ...) are recentred to the same "
                          "zero (run_joint.trackPopulationShift); 0 leaves the level the "
                          "linkage gave them")
+    ap.add_argument("--course-scale", default="fit",
+                    help="under --difficulty bracket, the per-sport multiplier on the "
+                         "course effects: 'fit' (default, from the tilt-by-band table so "
+                         "implied = applied), 'off', a number, or 'XC=1.1,TF=1' "
+                         "(run_joint.courseScales)")
+    ap.add_argument("--sport-level-pools", default=None, metavar="SPEC",
+                    help="the fall-to-spring gain per POOL LEVEL, log-time, applied at "
+                         "go-live to the track rows of each level's pools so the "
+                         "dual-sport gap reads that gain: 'college=0,hs=0.008,ms=0.012'. "
+                         "Measured by scripts/sport_level_fit.py. A level not named is "
+                         "left as the solve put it. Kept alongside --sport-level (the "
+                         "solve's level stays; this corrects what the boards show)")
     ap.add_argument("--bracket-prior", default="fit",
                     help="the bracket engine's course prior in races: 'fit' (per "
                          "group -- XC, outdoor track, indoor track -- from the "
@@ -1765,6 +1777,41 @@ TRACK_POP_MIN_SHARE = 0.6
 TRACK_POP_MIN_CELLS = 20
 
 
+def courseScales(spec, tilt_rows):
+    """{0: XC scale, 1: TF scale} from --course-scale: 'fit' (from the
+    tilt-by-band rows, bracket_engine.courseScaleFromBands), 'off' or
+    '1' (1.0 both), one number (both), or 'XC=1.1,TF=1'."""
+    import bracket_engine as be
+    spec = (str(spec) if spec is not None else "fit").strip().lower()
+    if spec in ("", "fit"):
+        return {0: be.courseScaleFromBands(tilt_rows, "XC"),
+                1: be.courseScaleFromBands(tilt_rows, "TF")}
+    if spec in ("off", "none", "1", "1.0"):
+        return {0: 1.0, 1: 1.0}
+    if "=" not in spec:
+        v = float(spec)
+        return {0: v, 1: v}
+    out = {0: 1.0, 1: 1.0}
+    for part in spec.split(","):
+        k, v = part.split("=", 1)
+        out[1 if k.strip().upper() == "TF" else 0] = float(v)
+    return out
+
+
+def parseLevelGains(spec):
+    """{level: gain} from 'college=0,hs=0.008,ms=0.012,elem=0.015' (log-time
+    fall-to-spring gain per pool level; None for nothing)."""
+    if not spec:
+        return None
+    out = {}
+    for part in str(spec).split(","):
+        if not part.strip():
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip().lower()] = float(v)
+    return out or None
+
+
 def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=None,
                          min_share=TRACK_POP_MIN_SHARE, min_cells=TRACK_POP_MIN_CELLS):
     """(shift per cell, rows for the report). D_b: the courses (already
@@ -1815,7 +1862,8 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
 
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
-                        track_level_by_pool=True, place_radius=None, prior_place=None):
+                        track_level_by_pool=True, place_radius=None, prior_place=None,
+                        course_scale="fit"):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1886,6 +1934,24 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         pop_shift, pop_rows = trackPopulationShift(D_b, cell_keys, D.cell, level_row, mc_row)
         D_b = D_b - pop_shift
         shift_cell = shift_cell + pop_shift
+    # ★ THE COURSE SCALE PER SPORT (owner, 2026-09-15). Run 23's tilt-by-band
+    #   table: XC's implied multiplier sat a tenth above the applied one in
+    #   EVERY band while TF's matched within 1% -- the voters' own brackets
+    #   saying an XC course costs them a tenth more than the engine charges.
+    #   The fitted prior shrinks a sport's courses toward its average, and
+    #   this is what that shrinkage looks like from the athletes' side. So
+    #   each sport's course effects are multiplied by the scale its bands
+    #   agree on (bracket_engine.courseScaleFromBands; TF comes out at 1.0
+    #   by its own table), AFTER the recentring so the zero stays a track.
+    #   'fit' measures it, 'off' leaves 1.0, 'XC=1.1,TF=1' states it. The
+    #   tilt-by-races table says whether the ratio falls with races per
+    #   cell (the prior) or is flat (the scale): read it before trusting
+    #   the number, and the tilt-by-band table after the scale is applied
+    #   is the acceptance test -- implied should equal applied.
+    scale_sport = courseScales(course_scale, f.get("tilt_bands"))
+    cell_is_tf = np.array([1 if str(k).startswith("TF:") else 0 for k in cell_keys], dtype=np.int8)
+    scale_cell = np.where(cell_is_tf == 1, scale_sport[1], scale_sport[0])
+    D_b = D_b * scale_cell
     delta_b = mu_full[g] + D_b
     # abilities given the new courses: the solve's own weighted means
     w = np.asarray(out["weights"], dtype=np.float64)
@@ -1928,6 +1994,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     out["bracket_place"] = np.asarray(f["place_of_base"], dtype=np.int64)[b_of]
     out["bracket_pin"] = np.asarray(f["pin"], dtype=np.float64)
     out["bracket_shift"] = shift_cell
+    out["bracket_scale"] = scale_cell
+    out["bracket_course_scale"] = np.array([float(scale_sport[0]), float(scale_sport[1])])
     out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
     # the report: what moved
@@ -1960,11 +2028,21 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         out["bracket_population_names"] = np.array([r["population"] for r in pop_rows])
     tl = be.tiltLines(f.get("tilt_bands"))
     if tl:
-        print("[joint] bracket tilt by band: the course multiplier the voters' own "
-              "brackets imply against the one applied (a hard venue read by a band "
-              "whose implied h is below its applied h is overstated by the ratio):")
+        print("[joint] bracket tilt by band, BEFORE the course scale: the course "
+              "multiplier the voters' own brackets imply against the one applied (a "
+              "hard venue read by a band whose implied h is below its applied h is "
+              "overstated by the ratio):")
         for ln in tl:
             print("        " + ln)
+    tr = be.tiltRaceLines(f.get("tilt_races"))
+    if tr:
+        print("[joint] bracket tilt by races per cell, before the course scale:")
+        for ln in tr:
+            print("        " + ln)
+    print(f"[joint] course scale per sport (--course-scale {course_scale}): "
+          f"XC x{scale_sport[0]:.3f}, TF x{scale_sport[1]:.3f} -- every course effect of "
+          f"the sport multiplied after the recentring; implied/applied should read 1.0 "
+          f"in every band on the next run")
     print(f"[joint] difficulty = BRACKET ENGINE (--difficulty bracket): {info['n_voted']:,} of "
           f"{info['n_cells']:,} cells with votes in {info['seconds']:.0f}s; {info['n_no_votes']:,} "
           f"cells without a race of 3+ voters sit at their sport's average. Against the "
@@ -2216,7 +2294,8 @@ def main():
                                 prior_group=getattr(args, "bracket_prior", "fit"),
                                 track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)),
                                 place_radius=getattr(args, "bracket_place_radius", None),
-                                prior_place=getattr(args, "bracket_place_prior", None))
+                                prior_place=getattr(args, "bracket_place_prior", None),
+                                course_scale=getattr(args, "course_scale", "fit"))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()
@@ -2284,7 +2363,7 @@ def main():
         import bracket_engine as be
         for k in ("bracket_cell_raw", "bracket_base", "bracket_base_votes",
                   "bracket_pin", "bracket_shift", "bracket_cell_fit",
-                  "bracket_prior_group"):
+                  "bracket_prior_group", "bracket_scale", "bracket_course_scale"):
             if out.get(k) is not None:
                 save[k] = np.asarray(out[k], dtype=np.float64)
         if out.get("bracket_place") is not None:
@@ -2353,6 +2432,7 @@ def main():
                             anchor=args.anchor,
                             use_race_effect=not args.no_race_effect,
                             gain_bands=gain_bands, pack_date=pack_date,
+                            gain_levels=parseLevelGains(getattr(args, "sport_level_pools", None)),
                             race_effect_sports=tuple(
                                 x.strip().upper() for x in
                                 args.race_effect_sports.split(",") if x.strip()))

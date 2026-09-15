@@ -924,6 +924,14 @@ def loadClubPros(min_pros=1):
         cur.execute("SELECT to_regclass('pro_athlete_season')")
         if cur.fetchone()[0] is None:
             return by_team, by_school
+        # ★ A COLLEGE IS NOT A CLUB (owner's sanity report, 2026-09-15:
+        #   Alabama, BYU and Stanford read as "a club with a professional"
+        #   because an athlete who turned pro raced their last college
+        #   spring inside the window). The pooling was never fooled -- a
+        #   college row keeps its level -- but the club set feeds the club
+        #   season gate and the sanity report, so a college name never
+        #   enters it.
+        colleges = _collegeNames(cur)
         for table in ("results", "results_tf"):
             cur.execute("""SELECT column_name FROM information_schema.columns
                            WHERE table_schema = 'public' AND table_name = %s
@@ -941,6 +949,8 @@ def loadClubPros(min_pros=1):
                   AND  (({team_expr}) IS NOT NULL OR r.school IS NOT NULL)
                 GROUP  BY 1, 2""")
             for team_id, school, n in cur.fetchall():
+                if school and school in colleges:
+                    continue
                 if team_id is not None:
                     by_team[int(team_id)] = by_team.get(int(team_id), 0) + int(n)
                 elif school:
@@ -1013,6 +1023,25 @@ def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
 #   calls a college and the college directory does not list, is a club --
 #   an elite squad, an adult club, a national team. A college on anet is
 #   gradeless too, which is what the directory and the slugs are for.
+def _collegeNames(cur):
+    """Normalised school strings that are colleges: the directory's names
+    and every school string tfrrs files under a college slug."""
+    colleges = set()
+    cur.execute("SELECT to_regclass('college_directory')")
+    if cur.fetchone()[0] is not None:
+        cur.execute("SELECT lower(btrim(name)) FROM college_directory")
+        colleges |= {r[0] for r in cur.fetchall() if r[0]}
+    for table in ("results", "results_tf"):
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                         AND column_name = 'team_slug'""", (table,))
+        if cur.fetchone() is not None:
+            cur.execute(f"""SELECT DISTINCT lower(btrim(school)) FROM {table}
+                            WHERE team_slug LIKE '%%\\_college\\_%%' AND school IS NOT NULL""")
+            colleges |= {r[0] for r in cur.fetchall() if r[0]}
+    return colleges
+
+
 def loadClubTeams(min_rows=20, max_grade_share=0.05):
     """({anet team_id: n rows}, {normalised school: n rows}) of teams whose
     rows carry (almost) no school grade and that are not colleges."""
@@ -1020,20 +1049,12 @@ def loadClubTeams(min_rows=20, max_grade_share=0.05):
     grade_expr = ("CASE WHEN r.grade ~ '^([1-9]|1[0-2])$' OR lower(btrim(r.grade)) "
                   "IN ('fr','so','jr','sr','fr-1','so-2','jr-3','sr-4') THEN 1 ELSE 0 END")
     with getConn() as conn, conn.cursor() as cur:
-        colleges = set()
-        cur.execute("SELECT to_regclass('college_directory')")
-        if cur.fetchone()[0] is not None:
-            cur.execute("SELECT lower(btrim(name)) FROM college_directory")
-            colleges |= {r[0] for r in cur.fetchall() if r[0]}
+        colleges = _collegeNames(cur)
         for table in ("results", "results_tf"):
             cur.execute("""SELECT column_name FROM information_schema.columns
                            WHERE table_schema = 'public' AND table_name = %s
                              AND column_name IN ('team_id', 'team_slug')""", (table,))
             have = {r[0] for r in cur.fetchall()}
-            if "team_slug" in have:
-                cur.execute(f"""SELECT DISTINCT lower(btrim(school)) FROM {table}
-                                WHERE team_slug LIKE '%%\\_college\\_%%' AND school IS NOT NULL""")
-                colleges |= {r[0] for r in cur.fetchall() if r[0]}
             team_expr = "r.team_id" if "team_id" in have else "NULL::bigint"
             cur.execute(f"""
                 SELECT {team_expr} AS team_id, lower(btrim(r.school)) AS school,

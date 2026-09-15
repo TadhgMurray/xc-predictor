@@ -58,7 +58,7 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 #            the pair_difficulty-shaped arrays, and a summary.
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               use_race_effect=True, gain_bands=None, pack_date=None,
-              race_effect_sports=()):
+              race_effect_sports=(), gain_levels=None):
     import pair_golive as pg
 
     # ★ THE DESIGN'S CELL KEYS, NOT THE PACK'S (2026-09-12). Under
@@ -127,33 +127,55 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                   f"credit (issue 192)")
     # ★ THE WINTER GAIN PER ABILITY (issue 194): the shift on every track
     #   row that makes the dual-sport page gap in each band the stated one
+    # ★ OR PER LEVEL (owner, 2026-09-15: "the sport level per pool"). The
+    #   gap row of scripts/board_sanity.py read college track 1.2-1.7
+    #   points under XC and high school 0.4-0.9 under, one asserted level
+    #   for all. gain_levels {"hs": 0.008, "college": 0.0, ...} is the
+    #   stated fall-to-spring gain per POOL LEVEL, every band alike; a
+    #   level not named is left as the solve put it. Measured, not
+    #   guessed: scripts/sport_level_fit.py prints it from the boards.
     gain_rows = []
-    if gain_bands is not None:
-        n_pool = len(attrs["pool_names"])
+    gains_mat = None
+    n_pool = len(attrs["pool_names"])
+    if gain_levels:
+        gains_mat = np.full((n_pool, len(js.SPORT_GAIN_ANCHORS)), np.nan)
+        for p, name in enumerate(attrs["pool_names"]):
+            level = str(name).split("|", 1)[0].split("_", 1)[0]
+            if level in gain_levels:
+                gains_mat[p, :] = float(gain_levels[level])
+        if gain_bands is not None:
+            for p in range(n_pool):
+                if not np.isfinite(gains_mat[p]).all():
+                    gains_mat[p, :] = np.asarray(gain_bands, dtype=np.float64)
+    elif gain_bands is not None:
+        gains_mat = np.broadcast_to(np.asarray(gain_bands, dtype=np.float64)[None, :],
+                                    (n_pool, len(js.SPORT_GAIN_ANCHORS))).copy()
+    if gains_mat is not None:
         shift, gap, n_g = js.sportGainShift(
             np.log(norm) - eff, sport, D.athlete, rat["career"],
-            attrs["pool"], n_pool, gain_bands)
+            attrs["pool"], n_pool, gains_mat)
         pool_of_row = attrs["pool"][D.athlete]
         eff = eff + np.where(sport == 1,
                              js.sportGainRow(rat["career"][D.athlete],
                                              pool_of_row, shift), 0.0)
         print("[joint/live] winter gain per band (issue 194), track rows "
               "shifted so the dual-sport page gap per band is the stated "
-              f"gain {tuple(float(g) for g in gain_bands)} at ratings "
+              f"gain {tuple(float(g) for g in gain_bands) if gain_bands is not None else 'per level'}"
+              f"{(' ' + str(dict(gain_levels))) if gain_levels else ''} at ratings "
               f"{js.SPORT_GAIN_ANCHORS}:")
         print(f"    {'pool':<10}{'band':>6}{'athletes':>10}{'gap read':>10}"
               f"{'target':>9}{'shift':>9}")
         for p in range(n_pool):
             for b in range(len(gain_bands)):
-                if n_g[p, b] == 0:
+                if n_g[p, b] == 0 or not np.isfinite(gains_mat[p, b]):
                     continue
                 gain_rows.append((attrs["pool_names"][p], "TF", b,
                                   float(js.SPORT_GAIN_ANCHORS[b]),
-                                  float(gain_bands[b]),
+                                  float(gains_mat[p, b]),
                                   float(gap[p, b]) if np.isfinite(gap[p, b]) else None,
                                   float(shift[p, b]), int(n_g[p, b])))
                 print(f"    {attrs['pool_names'][p]:<10}{b:>6}{int(n_g[p, b]):>10,}"
-                      f"{gap[p, b]:>+10.4f}{-float(gain_bands[b]):>+9.4f}"
+                      f"{gap[p, b]:>+10.4f}{-float(gains_mat[p, b]):>+9.4f}"
                       f"{shift[p, b]:>+9.4f}")
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):

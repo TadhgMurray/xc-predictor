@@ -605,6 +605,13 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   of one kind within the radius rest on each other before the sport's
   #   average (bracket_engine.placeClusters). Needs a pack built with the
   #   course coordinates (07_pack from 2026-09-14 on).
+  # ★ XCP_COURSE_SCALE (2026-09-15): the per-sport multiplier on the bracket
+  #   engine's course effects, 'fit' by default (from the tilt-by-band
+  #   table, so the voters' implied multiplier equals the applied one),
+  #   'off', or 'XC=1.1,TF=1'. XCP_SPORT_LEVEL_POOLS='college=0,hs=0.008,
+  #   ms=0.012,elem=0.015' states the fall-to-spring gain per pool level
+  #   that the go-live shifts the track rows to show; scripts/
+  #   sport_level_fit.py measures it from the boards.
   # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
   #   tracks at the level the linkage gave them; default 1 recentres each host
   #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
@@ -620,6 +627,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
       ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
+      ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
+      ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \

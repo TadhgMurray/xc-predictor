@@ -510,6 +510,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     # the (sport, era) pin, and the total they rebuild
     D_cell_raw = np.where(w_c > 0, num_c / np.maximum(w_c, 1e-12), np.nan)
     tilt_bands = tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport)
+    tilt_races = tiltByRaces(z, a_local, h, D, cell, vote, races_per_cell, cell_sport)
     if verbose:
         print(f"[bracket] priors: a race weighs n/(n+{race_sat:g}) voters; an era is "
               f"pulled to the course's history by {prior_races:g} races; a course to "
@@ -541,6 +542,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,
+                tilt_races=tilt_races,
                 pin=st["pin"], D_fit=st["D_new"],
                 place_of_base=place_of_base, n_place=int(n_place),
                 place_radius=float(place_radius or 0.0), prior_place=k_place)
@@ -590,6 +592,68 @@ def tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport, bands=TILT_BAND
                    f"{lo:.0f}+" if hi == np.inf else f"{lo:.0f}-{hi:.0f}")
             rows.append((s_name, lab, n, float(h[m].mean()), implied, se))
     return rows
+
+
+RACE_BUCKETS = ((1, 1, "1"), (2, 3, "2-3"), (4, 9, "4-9"), (10, 10**9, "10+"))
+
+
+def tiltByRaces(z, a_local, h, D, cell, vote, races_per_cell, cell_sport,
+                buckets=RACE_BUCKETS, min_rows=2000, min_course=0.02):
+    """★ THE SAME REGRESSION BY HOW WELL THE COURSE IS KNOWN (2026-09-15).
+    A shrunk course reads small, and the voters' brackets then imply a
+    multiplier ABOVE the applied one by the shrinkage -- so if the ratio
+    falls with races per cell, the gap in tiltByBand is the prior pulling
+    thin courses in; if it is flat, the whole sport's course scale is
+    short. Rows (sport, bucket, n, applied, implied, se)."""
+    b = z - a_local
+    d = D[np.maximum(cell, 0)]
+    sp = cell_sport[np.maximum(cell, 0)]
+    rc = np.asarray(races_per_cell)[np.maximum(cell, 0)]
+    base = vote & np.isfinite(b) & (np.abs(d) >= min_course)
+    rows = []
+    for s_code, s_name in ((0, "XC"), (1, "TF")):
+        for lo, hi, lab in buckets:
+            m = base & (sp == s_code) & (rc >= lo) & (rc <= hi)
+            n = int(m.sum())
+            if n < min_rows:
+                continue
+            sxx = float(np.sum(d[m] * d[m]))
+            if sxx <= 0:
+                continue
+            implied = float(np.sum(d[m] * b[m]) / sxx)
+            res = b[m] - implied * d[m]
+            se = float(np.sqrt(np.sum(res * res) / max(n - 1, 1) / sxx))
+            rows.append((s_name, lab, n, float(h[m].mean()), implied, se))
+    return rows
+
+
+def courseScaleFromBands(rows, sport, max_se=0.02, min_rows=5000):
+    """★ THE COURSE SCALE A SPORT'S BANDS AGREE ON (owner, 2026-09-15). Run
+    23: XC's implied multiplier sat above the applied one by the same
+    tenth in every band while TF's matched -- the voters' own brackets
+    saying XC courses cost a tenth more than charged. The scale is the
+    voter-weighted mean of implied / applied over the sport's bands whose
+    standard error is small enough to trust; 1.0 without such a band.
+    Multiplying the sport's course effects by it makes implied = applied,
+    which is the definition of the courses being on the voters' scale."""
+    num = den = 0.0
+    for s_name, _lab, n, applied, implied, se in rows or ():
+        if s_name != sport or n < min_rows or se > max_se or applied <= 0:
+            continue
+        num += n * (implied / applied)
+        den += n
+    return (num / den) if den > 0 else 1.0
+
+
+def tiltRaceLines(rows):
+    """The tilt-by-races rows as printable lines."""
+    if not rows:
+        return []
+    out = [f"{'sport':<6}{'races':>9}{'voters':>10}{'applied h':>11}{'implied h':>11}{'se':>7}"
+           "   (implied/applied falling with races: the prior; flat: the sport's scale)"]
+    for s_name, lab, n, ha, hi_, se in rows:
+        out.append(f"{s_name:<6}{lab:>9}{n:>10,}{ha:>11.3f}{hi_:>11.3f}{se:>7.3f}")
+    return out
 
 
 def tiltLines(rows):
