@@ -45,6 +45,26 @@ WANTED = [
     #   index probes and the full --all build becomes an hour, not a day.
     ("results",         "div_id",  "idx_results_div", None),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
+    # ★ AND THE COMPOSITE THE FIELD ENDPOINT NEEDS (owner, 2026-09-15:
+    #   /api/predict/field took 6.5 s on a 396-school meet). _squadsForYear
+    #   filters `school = ANY(<396 values>) AND sport = ? AND year = ?`, and
+    #   a plain (school) index leaves sport and year as heap filters -- so
+    #   the planner reads every athlete-season of all 396 schools, across
+    #   every sport and every year, to keep a fraction of them. The
+    #   carry-forward then runs the same query again for last season.
+    #
+    # ⚠ build_ranking_results._CANONICAL_INDEXES ALREADY DECLARES THIS as
+    #   as_school_idx (school, sport, year). It is missing from the live
+    #   table because the run that would have built it did not reach its
+    #   index step -- the same gap that left the school pages scanning
+    #   61.6M rows after run 23. This builds it CONCURRENTLY on the table
+    #   that is already there, and the next full rebuild makes it again.
+    #
+    # ! THE SPEC IS GIVEN, and that matters: the existence check matches on
+    #   the LEADING column, so the plain (school) index above satisfies a
+    #   specless entry and this composite would never be built.
+    ("athlete_season",  "school",  "idx_athlete_season_school_sport_year",
+     "(school, sport, year)"),
     # ★ THE PREDICTIONS FIELD ENDPOINT (2026-09-01). meetField gained two
     #   lookups that filter athlete_season by PERSON -- _fieldGender, which
     #   reads a race's gender off the people who ran it, and
