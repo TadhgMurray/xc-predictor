@@ -1,16 +1,17 @@
-{# recruiting.html -- the coach's search (282): every high-school season
-   in the country, filtered by graduation year, rating, gain, state and
-   school, ranked by rating or by how fast the athlete is improving.
-   The rows come from /api/recruiting (recruiting.py); the filters live in
-   the query string so a search can be sent to another coach. #}
+{# recruiting.html -- the athlete edition (282, the default): every
+   college's recruits on the high-school scale, where your own rating
+   sits against each of them, and which programmes to look at first.
+   The rows come from /api/recruiting/schools (recruiting.py); the
+   filters and the subject (?athlete= or ?time=&event=) live in the query
+   string so a placement is a link. The coach's search is /recruiting/search. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% from "_explain.html" import rating_i %}
-{% set meta_title = "Recruiting Search" %}
-{% set meta_description = "Find high school cross country and track recruits by graduation year, speed rating, year-over-year improvement, state and school. Every season in the country on one comparable scale." %}
+{% set meta_title = "College Recruiting: What It Takes" %}
+{% set meta_description = "What every college cross country and track program's recruits actually ran: the speed ratings and the 5K, 1600 and 3200 times that get you recruited, a walk-on spot or a scholarship-range offer, and which schools fit your times." %}
 {% set meta_crumbs = [("Recruiting", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
@@ -19,87 +20,131 @@
 <body>
 {% include "_topbar.html" %}
 
-<div class="rankings-page recruiting-page" id="recruiting"
-     data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}">
+<div class="rankings-page recruiting-page recruit-athlete" id="recruiting"
+     data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}"
+     data-built="{{ '1' if built else '' }}" data-athlete="{{ prefill_athlete or '' }}">
   <h1>Recruiting</h1>
-  <p class="sub">Every high school season in the country, by graduation year, rating and how fast the athlete is improving.{{ rating_i() }}
-     Open an athlete for their recruiting profile: season by season, and where they would rank in each college division.</p>
+  <p class="sub">What each college's recruits actually ran, on the high-school scale.{{ rating_i() }}
+     Put in your own rating or a time and every school says where you would sit among the runners it took:
+     scholarship range, solid recruit, recruit range, walk-on range, or not yet.
+     <a href="/recruiting/search">Coaches: the search is here →</a></p>
 
-  <div class="filters">
-    <div class="field">
-      <label for="r-pool">Pool</label>
-      <select id="r-pool">
-        <option value="hs_m">HS Boys</option>
-        <option value="hs_f">HS Girls</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="r-sport">Sport</label>
-      <select id="r-sport">
-        <option value="XC">Cross Country</option>
-        <option value="TF">Track &amp; Field</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="r-year">Season</label>
-      <input id="r-year" type="text" inputmode="numeric" size="6">
-    </div>
-    <div class="field">
-      <label for="r-grad">Graduates</label>
-      <select id="r-grad" multiple size="4"></select>
-    </div>
-    <div class="field">
-      <label for="r-state">State</label>
-      <select id="r-state" multiple size="4">
-        {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="field">
-      <label for="r-min">Rating at least</label>
-      <input id="r-min" type="text" inputmode="decimal" size="6">
-    </div>
-    <div class="field">
-      <label for="r-max">Rating at most</label>
-      <input id="r-max" type="text" inputmode="decimal" size="6">
-    </div>
-    <div class="field">
-      <label for="r-gain">Gain at least</label>
-      <input id="r-gain" type="text" inputmode="decimal" size="6" title="Season rating minus the same athlete's rating a year earlier">
-    </div>
-    <div class="field">
-      <label for="r-races">Min races</label>
-      <input id="r-races" type="text" inputmode="numeric" size="4">
-    </div>
-    <div class="field wide">
-      <label for="r-school">School</label>
-      <input id="r-school" type="text" size="24" title="Exact school names, comma separated">
-    </div>
-    <div class="field">
-      <label for="r-sort">Sort</label>
-      <select id="r-sort">
-        <option value="rating">Rating</option>
-        <option value="gain">Gain</option>
-        <option value="best">Best race</option>
-        <option value="grad">Graduation year</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>&nbsp;</label>
-      <button id="r-go" class="go">Search</button>
-    </div>
-  </div>
+  {% if not built %}
+  <p class="predict-status show error">The recruiting table has not been built yet. It arrives with the next pipeline run (step 10f).</p>
+  {% endif %}
 
-  <p class="predict-status" id="r-status"></p>
-  <div id="r-out"></div>
-  <div class="pager" id="r-pager" hidden>
-    <button id="r-prev">&laquo; Previous</button>
-    <span class="page-note" id="r-note"></span>
-    <button id="r-next">Next &raquo;</button>
-  </div>
+  {# ---- you: an athlete, or a time ------------------------------- #}
+  <section class="r-you">
+    <h2>You</h2>
+    <div class="filters">
+      <div class="field wide">
+        <label for="r-athlete-q">Your name on Racecast</label>
+        <div class="r-combo">
+          <input id="r-athlete-q" type="text" size="26" autocomplete="off" placeholder="Type a name and pick yourself">
+          <input id="r-athlete" type="hidden" value="{{ prefill_athlete or '' }}">
+          <div class="r-combo-list" id="r-athlete-list" hidden></div>
+        </div>
+      </div>
+      <div class="field"><label>&nbsp;</label><span class="r-or">or a time</span></div>
+      <div class="field">
+        <label for="r-event">Event</label>
+        <select id="r-event">
+          {% for key, ev in events.items() %}<option value="{{ key }}">{{ ev[2] }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-time">Time</label>
+        <input id="r-time" type="text" inputmode="decimal" size="8" placeholder="16:32">
+      </div>
+      <div class="field">
+        <label for="r-tgender">You are</label>
+        <select id="r-tgender">
+          <option value="m">a boy</option>
+          <option value="f">a girl</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button id="r-place" class="go">Place me</button>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button id="r-clear" class="go quiet" hidden>Clear</button>
+      </div>
+    </div>
+    <div id="r-subject"></div>
+  </section>
 
-  <p class="meta r-foot">Gain is this season's rating minus the same athlete's rating a year earlier in the same sport.
-     The graduation year comes from the grade the results carry, so a season with no grade shows none.
-     Seasons need {{ default_floor }} rated races unless you set a minimum yourself.</p>
+  {# ---- the suggestions, when there is a subject ----------------- #}
+  <section id="r-suggest" hidden>
+    <h2>Where your times fit</h2>
+    <p class="meta">The fastest programmes first inside each band. The bands are quartiles of each school's own recent recruits, so
+       "{{ scholarship_label|lower }}" means the top quarter of that school's recruits (where athletic aid tends to go in DI, DII and NAIA;
+       DIII gives none, so it reads "top recruit" there).</p>
+    <div id="r-suggest-out"></div>
+  </section>
+
+  {# ---- every school ---------------------------------------------- #}
+  <section class="r-schools">
+    <h2>Every college's recruits</h2>
+    <div class="filters">
+      <div class="field">
+        <label for="r-gender">Team</label>
+        <select id="r-gender">
+          <option value="m">Men</option>
+          <option value="f">Women</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-sport">Sport</label>
+        <select id="r-sport">
+          <option value="XC">Cross Country</option>
+          <option value="TF">Track &amp; Field</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-division">Division</label>
+        <select id="r-division" multiple size="4">
+          {% for d in divisions %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-state">State</label>
+        <select id="r-state" multiple size="4">
+          {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-q">School</label>
+        <input id="r-q" type="text" size="16" placeholder="contains…">
+      </div>
+      <div class="field">
+        <label for="r-sort">Sort</label>
+        <select id="r-sort">
+          <option value="median">Typical recruit</option>
+          <option value="top">Top recruits</option>
+          <option value="floor">Slowest recruit</option>
+          <option value="n">Most recruits</option>
+          <option value="name">Name</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="r-minn">Min recruits</label>
+        <input id="r-minn" type="text" inputmode="numeric" size="3" value="{{ min_recruits }}">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button id="r-go" class="go">Show</button>
+      </div>
+    </div>
+    <p class="predict-status" id="r-status"></p>
+    <div id="r-out"></div>
+  </section>
+
+  <p class="meta r-foot">A recruit is an athlete's first college season{% if since_year %}, from the {{ since_year }} class on{% endif %}; a transfer is not a recruiting fact about the second school.
+     The rating is the recruit's own last high-school season where Racecast has it, otherwise their first college season brought onto the high-school scale less the measured freshman-year gain.
+     The times are what that rating converts to at a typical course or track, the same way the <a href="/conversions">conversions</a> page does it.
+     Schools need {{ min_recruits }} recruits to be listed; a school's page shows every one.</p>
 </div>
 
 <script src="{{ static_v('recruiting.js') }}"></script>

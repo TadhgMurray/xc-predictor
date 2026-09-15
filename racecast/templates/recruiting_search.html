@@ -1,0 +1,107 @@
+{# recruiting_search.html -- the coach's search (282, the coach edition, /recruiting/search): every high-school season
+   in the country, filtered by graduation year, rating, gain, state and
+   school, ranked by rating or by how fast the athlete is improving.
+   The rows come from /api/recruiting (recruiting.py); the filters live in
+   the query string so a search can be sent to another coach. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% from "_explain.html" import rating_i %}
+{% set meta_title = "Recruiting Search for Coaches" %}
+{% set meta_description = "Find high school cross country and track recruits by graduation year, speed rating, year-over-year improvement, state and school. Every season in the country on one comparable scale." %}
+{% set meta_crumbs = [("Recruiting", "/recruiting"), ("Coach search", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<div class="rankings-page recruiting-page" id="recruiting"
+     data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}">
+  <h1>Recruiting: the coach's search</h1>
+  <p class="sub">Every high school season in the country, by graduation year, rating and how fast the athlete is improving.{{ rating_i() }}
+     Open an athlete for their recruiting profile: season by season, and where they would rank in each college division.</p>
+
+  <div class="filters">
+    <div class="field">
+      <label for="r-pool">Pool</label>
+      <select id="r-pool">
+        <option value="hs_m">HS Boys</option>
+        <option value="hs_f">HS Girls</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="r-sport">Sport</label>
+      <select id="r-sport">
+        <option value="XC">Cross Country</option>
+        <option value="TF">Track &amp; Field</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="r-year">Season</label>
+      <input id="r-year" type="text" inputmode="numeric" size="6">
+    </div>
+    <div class="field">
+      <label for="r-grad">Graduates</label>
+      <select id="r-grad" multiple size="4"></select>
+    </div>
+    <div class="field">
+      <label for="r-state">State</label>
+      <select id="r-state" multiple size="4">
+        {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="r-min">Rating at least</label>
+      <input id="r-min" type="text" inputmode="decimal" size="6">
+    </div>
+    <div class="field">
+      <label for="r-max">Rating at most</label>
+      <input id="r-max" type="text" inputmode="decimal" size="6">
+    </div>
+    <div class="field">
+      <label for="r-gain">Gain at least</label>
+      <input id="r-gain" type="text" inputmode="decimal" size="6" title="Season rating minus the same athlete's rating a year earlier">
+    </div>
+    <div class="field">
+      <label for="r-races">Min races</label>
+      <input id="r-races" type="text" inputmode="numeric" size="4">
+    </div>
+    <div class="field wide">
+      <label for="r-school">School</label>
+      <input id="r-school" type="text" size="24" title="Exact school names, comma separated">
+    </div>
+    <div class="field">
+      <label for="r-sort">Sort</label>
+      <select id="r-sort">
+        <option value="rating">Rating</option>
+        <option value="gain">Gain</option>
+        <option value="best">Best race</option>
+        <option value="grad">Graduation year</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="r-go" class="go">Search</button>
+    </div>
+  </div>
+
+  <p class="predict-status" id="r-status"></p>
+  <div id="r-out"></div>
+  <div class="pager" id="r-pager" hidden>
+    <button id="r-prev">&laquo; Previous</button>
+    <span class="page-note" id="r-note"></span>
+    <button id="r-next">Next &raquo;</button>
+  </div>
+
+  <p class="meta r-foot">Gain is this season's rating minus the same athlete's rating a year earlier in the same sport.
+     The graduation year comes from the grade the results carry, so a season with no grade shows none.
+     Seasons need {{ default_floor }} rated races unless you set a minimum yourself.</p>
+</div>
+
+<script src="{{ static_v('recruiting-search.js') }}"></script>
+</body>
+</html>

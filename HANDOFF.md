@@ -950,3 +950,45 @@ and `tilt` -- every trusted band's implied/applied, divided by the scale
 the go-live applied, within 6% of 1.0 in both sports. So a constant that
 drifts fails step 10a on the run that let it drift, and the trace to
 the cause is the two tables above it in the go-live log.
+
+---
+
+## 10. 2026-09-15: RECRUITING, THE ATHLETE EDITION (282)
+
+The owner: "a recruiting page (for athletes) ... for each college
+school you can see the average speed rating of their recruits, lowest,
+highest ... the prs that will probably get you in ... recruit/walk
+on/full scholarship ... suggest some to you based on your times
+(prestigious/faster schools first) ... tie in to the eventual
+accounts". Built on `claude/nice-rubin-tj0kev`; the log entry with the
+rules is issue 282 in `docs/ISSUES-2026-08-24.md`.
+
+- **A new table, a new step.** `college_recruit` and
+  `college_recruit_meta`, from `racecast/build_recruiting.py`, pipeline
+  step `10f_recruits` after `10d_school_units`. It reads athlete_season,
+  school_identity and school_unit, and runs alone in a minute or two:
+  `$PY racecast/build_recruiting.py` (`--dry-run` for the counts). The
+  site says "not built yet" until it exists; nothing 500s.
+- **Read the build's log once.** It prints the classes kept, the HS-scale
+  factors from pool_view, how many recruits are linked to a
+  high-school season, and the FRESHMAN GAIN per gender and sport (the
+  median of the first college season on the HS scale less the linked
+  HS senior season). Under 50 pairs the gain is 0 and the log says so.
+  If the linked share is small, the unlinked recruits' numbers are
+  estimates and the pages mark them "est.".
+- **The pages.** `/recruiting` (athlete edition, in the topbar),
+  `/recruiting/school/<name>?state=&gender=`, `/recruiting/search`
+  (the coach's search, renamed from `/recruiting`),
+  `/api/recruiting/schools`. The subject is `?athlete=<id>` or
+  `?time=&event=&gender=`; `recruiting.subjectFrom(...,
+  account_person_id=)` is where accounts (283) plug in.
+- **Tests.** `tests/test_recruiting_athlete.py` (offline: tiers, time
+  parsing, the table and the subject on a fake cursor, the builder's
+  shaping and gain, the wiring by source). The pages were rendered
+  through Flask's test client against a fake database in the sandbox;
+  the time conversions were exercised with a patched pool mean (a
+  16:00 5K reads 127.9 and converts back to 15:59). Not run against
+  the database: the build itself, and the conversions with the live
+  engine constants.
+- **Next, as the owner listed it:** the coaches' recruiting pages and
+  log-ins (283).

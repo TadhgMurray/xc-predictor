@@ -78,6 +78,11 @@
         {{ header.athletes }} athletes ·
         {{ header.first_year }} to {{ header.last_year }} ·
         <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
+        {# a college's recruits (282): only a school with a college unit
+           gets the link; a high school has no recruiting page #}
+        {% if units and (units|selectattr("kind", "in", ["division", "conference"])|list) %}
+        · <a href="/recruiting/school/{{ school|urlencode }}?{% if state %}state={{ state }}{% endif %}">Recruiting →</a>
+        {% endif %}
     </p>
 
     {# Same name and state, DIFFERENT INSTITUTIONS: Amherst (MA) is a

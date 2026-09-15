@@ -4563,3 +4563,37 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-page .recruit-tbl th { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
 .recruit-page .recruit-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .recruiting-page table.rk td.num, .recruiting-page table.rk th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- recruiting, the athlete edition (282) ---- */
+.recruit-athlete h2 { margin: 1.4rem 0 0.4rem; font-size: 1.05rem; }
+.recruit-athlete h3.r-band { margin: 1.1rem 0 0.3rem; font-size: 0.95rem; display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
+.recruit-athlete .r-or { color: #6b7280; font-size: 0.85rem; }
+.recruit-athlete .go.quiet { background: #f3f4f6; color: #374151; }
+.recruit-athlete .r-subject-line, .recruit-school .r-subject-line { margin: 0.6rem 0 0; font-size: 0.95rem; }
+.recruit-athlete .r-scroll { overflow-x: auto; }
+.recruit-athlete table.rk td, .recruit-athlete table.rk th { white-space: nowrap; }
+.recruit-athlete .r-combo { position: relative; }
+.recruit-athlete .r-combo-list { position: absolute; z-index: 20; left: 0; top: 100%; min-width: 100%; background: #fff;
+  border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+.recruit-athlete .r-combo-item { text-align: left; background: none; border: 0; padding: 0.4rem 0.6rem; font: inherit; cursor: pointer; }
+.recruit-athlete .r-combo-item:hover, .recruit-athlete .r-combo-item:focus { background: #f3f4f6; }
+.recruit-athlete .r-combo-item .sr-sub { color: #6b7280; font-size: 0.8rem; margin-left: 0.4rem; }
+.recruit-athlete .r-gap { color: #6b7280; font-size: 0.75rem; margin-left: 0.3rem; }
+.r-pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.02em; color: #fff; background: #6b7280; white-space: nowrap; }
+.r-pill-top     { background: #b8860b; }
+.r-pill-solid   { background: #146c2e; }
+.r-pill-recruit { background: #2e53e6; }
+.r-pill-walkon  { background: #6b3fa0; }
+.r-pill-reach   { background: #9a6b00; }
+.r-pill-below   { background: #9ca3af; }
+.recruit-school .r-tier { padding: 0.5rem 0.75rem; border-left: 4px solid #6b7280; background: #f9fafb; margin: 0.5rem 0; }
+.recruit-school .r-tier-top     { border-color: #b8860b; }
+.recruit-school .r-tier-solid   { border-color: #146c2e; }
+.recruit-school .r-tier-recruit { border-color: #2e53e6; }
+.recruit-school .r-tier-walkon  { border-color: #6b3fa0; }
+.recruit-school .r-tier-reach   { border-color: #9a6b00; }
+.recruit-school .r-tier-below   { border-color: #9ca3af; }
+.recruit-school .r-dist { max-width: 42rem; }
+.recruit-school .r-list td, .recruit-school .r-list th { white-space: nowrap; }
+.recruit-school .r-list { display: block; overflow-x: auto; }

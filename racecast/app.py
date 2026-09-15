@@ -6853,14 +6853,145 @@ def _seasonYears(cur):
 
 @app.route("/recruiting")
 def recruiting_page():
+    """The athlete edition (282, the default): every college's recruits
+    on the high-school scale, where your own rating sits against each,
+    and which programmes to look at. The rows come from
+    /api/recruiting/schools; the filters and the subject live in the
+    query string so a placement is a link."""
     import recruiting as R
     from rankings import US_STATES
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             years = _seasonYears(cur)
-    return render_template("recruiting.html", season_years=years,
+            try:
+                built = R._tableExists(cur, "college_recruit")
+                meta = R.recruitMeta(cur) if built else {}
+                divisions = R.distinctUnits(R.schoolTable(cur, "m", "XC")
+                                            + R.schoolTable(cur, "f", "XC"), "division")
+            except psycopg2.Error as exc:
+                conn.rollback()
+                print(f"recruiting: page setup failed ({type(exc).__name__}: {exc})", flush=True)
+                built, meta, divisions = False, {}, []
+    since = min((m["since_year"] for m in meta.values()), default=None)
+    return render_template("recruiting.html", season_years=years, built=built,
+                           states=sorted(US_STATES), divisions=divisions,
+                           events=R.EVENTS, tiers=R.TIERS, tier_order=R.TIER_ORDER,
+                           scholarship_label=R.SCHOLARSHIP_LABEL,
+                           min_recruits=R.MIN_RECRUITS, since_year=since,
+                           prefill_athlete=request.args.get("athlete", type=int))
+
+
+@app.route("/recruiting/search")
+def recruiting_search_page():
+    """The coach edition (282): the search over every high-school season."""
+    import recruiting as R
+    from rankings import US_STATES
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            years = _seasonYears(cur)
+    return render_template("recruiting_search.html", season_years=years,
                            states=sorted(US_STATES),
                            sorts=list(R.SORTS), default_floor=R.DEFAULT_FLOOR)
+
+
+@app.route("/api/recruiting/schools")
+def api_recruiting_schools():
+    """The school table for one gender and sport, filtered and sorted,
+    with the subject's placement on every row and the suggestions when
+    the query names a subject (?athlete= or ?time=&event=)."""
+    import recruiting as R
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            f, err = R.parseSchoolFilters(request.args)
+            if err:
+                return jsonify({"error": err}), 400
+            try:
+                built = R._tableExists(cur, "college_recruit")
+                # ! THE SUBJECT DECIDES THE GENDER when an athlete is named:
+                #   a girl's page places on the women's recruits whatever
+                #   the select said. The accounts seam: pass the signed-in
+                #   athlete's person_id as account_person_id here (283).
+                subject, serr = R.subjectFrom(cur, request.args)
+                if subject and subject.get("gender"):
+                    f["gender"] = subject["gender"]
+                every = R.schoolTable(cur, f["gender"], f["sport"], f["min_n"])
+            except psycopg2.Error as exc:
+                conn.rollback()
+                print(f"recruiting: schools failed ({type(exc).__name__}: {exc})", flush=True)
+                return jsonify({"error": "The recruiting table is not available right now."}), 200
+    rows = [dict(r) for r in R.filterSchools(every, f)]
+    rating = R.subjectRating(subject, f["sport"]) if subject else None
+    R.placeRows(rows, rating)
+    return jsonify({
+        "rows": rows, "gender": f["gender"], "sport": f["sport"], "sort": f["sort"],
+        "built": built, "total": len(every),
+        # the pickers' options, from the whole table rather than the
+        # filtered rows, so a filter never hides its own alternatives
+        "divisions": R.distinctUnits(every, "division"),
+        "conferences": R.distinctUnits(every, "conference"),
+        "subject": subject, "subject_error": serr, "rating": rating,
+        "subject_times": R.timesFor(rating, f["gender"]) if rating is not None else None,
+        # the suggestions come from the FILTERED rows: a reader who asked
+        # for DIII in Ohio wants DIII in Ohio suggested
+        "suggestions": R.suggestions(rows, rating) if rating is not None else [],
+    })
+
+
+@app.route("/recruiting/school/<path:school_name>")
+def recruiting_school_page(school_name):
+    """One college's recruiting page: who they took, at what rating, what
+    that is as a 5K, a 1600 and a 3200, and where the reader sits."""
+    import recruiting as R
+    from panels import isTeamName
+    from school_identity import stateChips
+    if not isTeamName(school_name):
+        abort(404)
+    gender = (request.args.get("gender") or "m").strip().lower()
+    if gender not in R.GENDERS:
+        gender = "m"
+    state = (request.args.get("state") or "").strip().upper() or None
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                chips, primary = stateChips(cur, school_name, include=state)
+            except psycopg2.Error:
+                conn.rollback()
+                chips, primary = [], None
+            if chips and not state:
+                state = primary
+            from school_units import unitsFor
+            try:
+                units = unitsFor(cur, school_name, state or primary, "XC", long=True)
+            except psycopg2.Error:
+                conn.rollback()
+                units = []
+            subject, serr = R.subjectFrom(cur, request.args)
+            if subject and subject.get("gender") and not request.args.get("gender"):
+                gender = subject["gender"]
+            blocks = []
+            for sport in R.SPORTS:
+                summary, recruits = R.schoolRecruits(cur, school_name, state, gender, sport)
+                if summary is None:
+                    continue
+                rating = R.subjectRating(subject, sport) if subject else None
+                blocks.append({"sport": sport, "summary": summary, "recruits": recruits,
+                               "rating": rating,
+                               "tier": R.tierFor(rating, summary, summary.get("division"))
+                               if rating is not None else None})
+            other = "f" if gender == "m" else "m"
+            has_other = any(R.schoolRecruits(cur, school_name, state, other, sp)[0]
+                            for sp in R.SPORTS)
+    if not blocks and not has_other:
+        abort(404)
+    for b in blocks:
+        for r in b["recruits"]:
+            r["grade_label"] = _grade_label.gradeLabel(r.get("grade"), f"college_{gender}") \
+                if r.get("grade") else ""
+    return render_template("recruiting_school.html", school=school_name, state=state,
+                           gender=gender, has_other=has_other, blocks=blocks, units=units,
+                           subject=subject, subject_error=serr, fmt_time=R.fmtTime,
+                           scholarship=R.scholarshipDivision(
+                               (blocks[0]["summary"].get("division") if blocks else None)))
 
 
 @app.route("/api/recruiting")

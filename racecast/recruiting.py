@@ -289,3 +289,497 @@ def recruitProfile(cur, person_id):
             "school": latest.get("school"), "state": latest.get("state"),
             "school_label": schoolLabelIn(latest.get("school"), latest.get("state")) if latest.get("school") else "",
             "pool": latest["pool"], "grad_year": grad, "seasons": seasons, "placements": placements}
+
+
+# ===================================================================== #
+#  THE ATHLETE EDITION (282, owner: "the athlete edition is the default")
+# ===================================================================== #
+#
+# ★ YOU, GETTING RECRUITED. college_recruit (build_recruiting.py, step
+#   10f) holds one row per recruit and sport with the rating they were
+#   recruited at, on the HIGH-SCHOOL scale. Everything here reads that
+#   table: the school table (each college's recruits summarised), the one
+#   college page, and the placement of a reader's own rating against each
+#   school's recruits, in words a recruit understands.
+#
+# ★ THE TIERS ARE QUARTILES OF THE SCHOOL'S OWN RECRUITS, not a national
+#   bar: "scholarship range" at Colorado and at a DIII school are
+#   different numbers because their recruits are. Top quarter: where
+#   athletic aid tends to go where it exists (DI, DII, NAIA), "top
+#   recruit" where it does not (DIII) or the division is unknown. Above
+#   the median: a solid recruit. Middle half: recruit range. Between the
+#   slowest recruit and the first quartile: walk-on range. Within
+#   REACH_PTS under the slowest: just under. Below that: not yet.
+#
+# ! THE SUBJECT IS A SEAM FOR ACCOUNTS (283). subjectFrom reads ?athlete=
+#   or a typed time today; when accounts exist, a signed-in athlete's
+#   claimed person_id fills the athlete slot when the query names none.
+#   Nothing else needs to change.
+
+import math
+import threading
+import time as _time
+
+GENDERS = ("m", "f")
+GENDER_WORDS = {"m": "men", "f": "women"}
+MIN_RECRUITS = 3               # a school needs this many to be summarised
+REACH_PTS = 3.0                # "just under" band below the slowest recruit
+CACHE_TTL = 600.0
+SCHOLARSHIP_DIVISIONS = ("NCAA DI", "NCAA DII", "NAIA", "NJCAA")
+
+# event key -> (metres, sport, label). The keys are what the page's select
+# and the query string carry.
+EVENTS = {
+    "5k":   (5000.0,   "XC", "5K cross country"),
+    "3mi":  (4828.0,   "XC", "3 mile cross country"),
+    "800":  (800.0,    "TF", "800m"),
+    "1500": (1500.0,   "TF", "1500m"),
+    "1600": (1600.0,   "TF", "1600m"),
+    "mile": (1609.34,  "TF", "Mile"),
+    "3000": (3000.0,   "TF", "3000m"),
+    "3200": (3200.0,   "TF", "3200m"),
+    "2mi":  (3218.69,  "TF", "2 mile"),
+    "5000": (5000.0,   "TF", "5000m on the track"),
+}
+# the events every threshold is quoted in
+THRESHOLD_EVENTS = (("5k", 5000.0, "XC"), ("1600", 1600.0, "TF"), ("3200", 3200.0, "TF"))
+
+TIERS = {
+    # key: (order, label, what it means)
+    "top":     (5, "Top recruit",     "faster than three quarters of their recent recruits"),
+    "solid":   (4, "Solid recruit",   "faster than half of their recent recruits"),
+    "recruit": (3, "Recruit range",   "inside the middle half of their recent recruits"),
+    "walkon":  (2, "Walk-on range",   "slower than most of their recruits, faster than their slowest"),
+    "reach":   (1, "Just under",      f"within {REACH_PTS:g} rating points of their slowest recruit"),
+    "below":   (0, "Not yet",         "under their slowest recent recruit"),
+}
+SCHOLARSHIP_LABEL = "Scholarship range"
+TIER_ORDER = ("top", "solid", "recruit", "walkon", "reach", "below")
+
+
+def parseTime(text):
+    """'16:32', '16:32.4', '4:21.5', '1:02:03' or '992' -> seconds, or None."""
+    s = str(text or "").strip().replace(",", "")
+    if not s:
+        return None
+    parts = s.split(":")
+    if len(parts) > 3 or any(p == "" for p in parts):
+        return None
+    try:
+        secs = 0.0
+        for p in parts:
+            secs = secs * 60.0 + float(p)
+    except ValueError:
+        return None
+    if not (30.0 <= secs <= 7200.0):
+        return None
+    return secs
+
+
+def fmtTime(seconds, tenths=None):
+    """A time for the page: '16:32' over fifteen minutes, '4:21.5' under
+    (a track split is quoted to the tenth, a 5K is not). None -> ''."""
+    if seconds is None or seconds <= 0:
+        return ""
+    if tenths is None:
+        tenths = seconds < 900.0
+    if tenths:
+        s = math.floor(float(seconds) * 10.0 + 0.5) / 10.0
+        m, r = int(s // 60), s - 60 * int(s // 60)
+        return f"{m}:{r:04.1f}"
+    s = int(round(float(seconds)))
+    if s >= 3600:
+        return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def scholarshipDivision(division):
+    return (division or "").strip().upper() in SCHOLARSHIP_DIVISIONS
+
+
+def tierFor(rating, dist, division=None):
+    """Where a rating sits among one school's recruits.
+
+    dist: {min, p25, median, p75, max} on the HS scale. Returns
+    {key, order, label, blurb, gap, next_label}: gap is the rating points
+    to the next tier up (None at the top), next_label names it."""
+    if rating is None or dist is None or dist.get("min") is None:
+        return None
+    r = float(rating)
+    lo, p25, med, p75 = (float(dist["min"]), float(dist["p25"]),
+                         float(dist["median"]), float(dist["p75"]))
+    top_label = SCHOLARSHIP_LABEL if scholarshipDivision(division) else TIERS["top"][1]
+    if r >= p75:
+        key, gap, nxt = "top", None, None
+    elif r >= med:
+        key, gap, nxt = "solid", p75 - r, top_label
+    elif r >= p25:
+        key, gap, nxt = "recruit", med - r, TIERS["solid"][1]
+    elif r >= lo:
+        key, gap, nxt = "walkon", p25 - r, TIERS["recruit"][1]
+    elif r >= lo - REACH_PTS:
+        key, gap, nxt = "reach", lo - r, TIERS["walkon"][1]
+    else:
+        key, gap, nxt = "below", lo - r, TIERS["walkon"][1]
+    order, label, blurb = TIERS[key]
+    if key == "top":
+        label = top_label
+        if top_label == SCHOLARSHIP_LABEL:
+            blurb += "; where athletic aid tends to go in this division"
+    return {"key": key, "order": order, "label": label, "blurb": blurb,
+            "gap": round(gap, 1) if gap is not None else None, "next_label": nxt}
+
+
+# ---- the rating <-> time bridge, through conversions ------------------ #
+# ★ THE SAME MACHINERY THE CONVERSIONS PAGE USES, never a pace table of
+#   our own: a threshold quoted here as a 5K must be the 5K the site would
+#   convert that rating to anywhere else. Every call is wrapped: the
+#   constants come from the database, and a page with no times is better
+#   than a page that 500s.
+_TIMES = {"at": 0.0, "map": {}}
+_times_lock = threading.Lock()
+
+
+def _hsPool(gender):
+    return "hs_f" if (gender or "m") == "f" else "hs_m"
+
+
+def timesFor(rating, gender):
+    """{'5k': sec, '1600': sec, '3200': sec} for a HS-scale rating, each
+    at the sport's typical venue; a value the conversion cannot give is
+    None. Memoised at half a point, ten minutes."""
+    if rating is None:
+        return {k: None for k, _, _ in THRESHOLD_EVENTS}
+    key = (round(float(rating) * 2.0) / 2.0, _hsPool(gender))
+    with _times_lock:
+        if _time.time() - _TIMES["at"] > CACHE_TTL:
+            _TIMES["map"].clear()
+            _TIMES["at"] = _time.time()
+        hit = _TIMES["map"].get(key)
+    if hit is not None:
+        return hit
+    out = {}
+    try:
+        from conversions import _norm_from_rating, normalized_to_time
+        for ev, dist, sport in THRESHOLD_EVENTS:
+            norm = _norm_from_rating(key[0], key[1], sport=sport)
+            t = normalized_to_time(norm, {"distance": dist, "pool": key[1], "sport": sport}) \
+                if norm else None
+            out[ev] = round(float(t), 1) if t else None
+    except Exception as exc:                            # noqa: BLE001
+        print(f"recruiting: timesFor({rating}, {gender}) failed ({type(exc).__name__}: {exc})",
+              flush=True)
+        out = {k: None for k, _, _ in THRESHOLD_EVENTS}
+    with _times_lock:
+        _TIMES["map"][key] = out
+    return out
+
+
+def ratingFromTime(seconds, event, gender):
+    """A typed time -> (rating on the HS scale, sport) or (None, sport).
+    The event names the distance and the sport; the sport's typical venue
+    is assumed, as the conversions page does with no course chosen."""
+    if event not in EVENTS or seconds is None:
+        return None, None
+    dist, sport, _ = EVENTS[event]
+    pool = _hsPool(gender)
+    try:
+        from conversions import _norm_from_time, normalized_to_rating
+        norm = _norm_from_time(float(seconds), dist, pool, sport=sport)
+        r = normalized_to_rating(norm, pool, sport=sport) if norm else None
+    except Exception as exc:                            # noqa: BLE001
+        print(f"recruiting: ratingFromTime({seconds}, {event}, {gender}) failed "
+              f"({type(exc).__name__}: {exc})", flush=True)
+        r = None
+    return (round(float(r), 1) if r else None), sport
+
+
+# ---- the schools ------------------------------------------------------ #
+_AGG_SQL = """
+    SELECT school, state, min(division) AS division, min(conference) AS conference,
+           count(*)::int AS n,
+           sum(CASE WHEN source = 'hs' THEN 1 ELSE 0 END)::int AS n_hs,
+           min(recruit_rating)::real AS min,
+           percentile_cont(0.25) WITHIN GROUP (ORDER BY recruit_rating)::real AS p25,
+           percentile_cont(0.5)  WITHIN GROUP (ORDER BY recruit_rating)::real AS median,
+           percentile_cont(0.75) WITHIN GROUP (ORDER BY recruit_rating)::real AS p75,
+           max(recruit_rating)::real AS max,
+           min(first_year) AS first_year, max(first_year) AS last_year
+    FROM   college_recruit
+    WHERE  gender = %(gender)s AND sport = %(sport)s {extra}
+    GROUP  BY school, state
+    HAVING count(*) >= %(min_n)s
+"""
+_SCHOOLS = {}                    # (gender, sport) -> (at, rows)
+_schools_lock = threading.Lock()
+
+
+def _tableExists(cur, name):
+    cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    row = cur.fetchone()
+    v = row[0] if not isinstance(row, dict) else list(row.values())[0]
+    return v is not None
+
+
+def _rowsOf(cur):
+    return [dict(r) if isinstance(r, dict) else dict(zip([d[0] for d in cur.description], r))
+            for r in cur.fetchall()]
+
+
+def recruitMeta(cur):
+    """{(gender, sport): {gain, n_pairs, factor, since_year, built_at}} or {}."""
+    if not _tableExists(cur, "college_recruit_meta"):
+        return {}
+    cur.execute("SELECT gender, sport, gain, n_pairs, factor, since_year, built_at "
+                "FROM college_recruit_meta")
+    return {(r["gender"], r["sport"]): r for r in _rowsOf(cur)}
+
+
+def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
+    """Every college's recruits summarised, for one gender and sport, with
+    the label and the threshold times stamped. Cached ten minutes: the
+    table changes once a run. [] when the table is not built."""
+    from school_identity import schoolLabelIn
+    key = (gender, sport, int(min_n))
+    with _schools_lock:
+        hit = _SCHOOLS.get(key)
+        if hit and _time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+    if not _tableExists(cur, "college_recruit"):
+        return []
+    cur.execute(_AGG_SQL.format(extra=""), {"gender": gender, "sport": sport, "min_n": int(min_n)})
+    rows = _rowsOf(cur)
+    for r in rows:
+        for k in ("min", "p25", "median", "p75", "max"):
+            r[k] = round(float(r[k]), 1) if r[k] is not None else None
+        r["label"] = schoolLabelIn(r["school"], r.get("state")) if r.get("school") else ""
+        r["times"] = {k: timesFor(r[k], gender) for k in ("p25", "median", "p75")}
+        r["classes"] = (f"{labelYear(r['first_year'], sport)}" if r["first_year"] == r["last_year"]
+                        else f"{labelYear(r['first_year'], sport)} to {labelYear(r['last_year'], sport)}")
+    rows.sort(key=lambda r: (-(r["median"] or 0), r["school"]))
+    with _schools_lock:
+        _SCHOOLS[key] = (_time.time(), rows)
+    return rows
+
+
+SCHOOL_SORTS = {
+    "median": lambda r: (-(r["median"] or 0), r["school"]),
+    "top":    lambda r: (-(r["p75"] or 0), r["school"]),
+    "floor":  lambda r: (-(r["min"] or 0), r["school"]),
+    "n":      lambda r: (-r["n"], r["school"]),
+    "name":   lambda r: (r["school"], r.get("state") or ""),
+}
+
+
+def _csv(args, key, upper=False):
+    out = []
+    for v in (args.get(key) or "").split(","):
+        v = v.strip()
+        if v:
+            out.append(v.upper() if upper else v)
+    return out
+
+
+def parseSchoolFilters(args, season_years=None):
+    """request.args -> (filters, error) for the school table."""
+    gender = (args.get("gender") or "m").strip().lower()
+    if gender not in GENDERS:
+        return None, "gender must be m or f"
+    sport = (args.get("sport") or "XC").strip().upper()
+    if sport not in SPORTS:
+        return None, "sport must be XC or TF"
+    sort = (args.get("sort") or "median").strip().lower()
+    if sort not in SCHOOL_SORTS:
+        return None, f"sort must be one of {sorted(SCHOOL_SORTS)}"
+    states = _csv(args, "state", upper=True)
+    if any(len(s) != 2 or not s.isalpha() for s in states):
+        return None, "state must be two letters"
+    min_n = _ints(args, "min_n", 1, 500)
+    return {
+        "gender": gender, "sport": sport, "sort": sort,
+        "divisions": [d.upper() for d in _csv(args, "division")],
+        "conferences": [c.upper() for c in _csv(args, "conference")],
+        "states": states,
+        "min_n": min_n[0] if min_n else MIN_RECRUITS,
+        "q": (args.get("q") or "").strip().lower(),
+    }, None
+
+
+def filterSchools(rows, f):
+    out = rows
+    if f["divisions"]:
+        want = set(f["divisions"])
+        out = [r for r in out if (r.get("division") or "").upper() in want]
+    if f["conferences"]:
+        want = set(f["conferences"])
+        out = [r for r in out if (r.get("conference") or "").upper() in want]
+    if f["states"]:
+        want = set(f["states"])
+        out = [r for r in out if (r.get("state") or "") in want]
+    if f["q"]:
+        out = [r for r in out if f["q"] in r["school"].lower()]
+    return sorted(out, key=SCHOOL_SORTS[f["sort"]])
+
+
+def distinctUnits(rows, key):
+    return sorted({r[key] for r in rows if r.get(key)})
+
+
+# ---- one college ------------------------------------------------------ #
+
+def schoolRecruits(cur, school, state, gender, sport):
+    """(summary, recruits) for one college, gender and sport: the same
+    aggregate the table shows and the recruits behind it, newest class
+    first, fastest first inside a class. (None, []) when it has none."""
+    from rankings import nameLateral
+    from school_identity import schoolLabelIn
+    if not _tableExists(cur, "college_recruit"):
+        return None, []
+    params = {"gender": gender, "sport": sport, "min_n": 1, "school": school}
+    extra = "AND school = %(school)s"
+    if state:
+        params["state"] = state
+        extra += " AND state = %(state)s"
+    cur.execute(_AGG_SQL.format(extra=extra), params)
+    agg = _rowsOf(cur)
+    if not agg:
+        return None, []
+    summary = agg[0]
+    for k in ("min", "p25", "median", "p75", "max"):
+        summary[k] = round(float(summary[k]), 1) if summary[k] is not None else None
+    summary["label"] = schoolLabelIn(summary["school"], summary.get("state"))
+    summary["times"] = {k: timesFor(summary[k], gender) for k in ("min", "p25", "median", "p75", "max")}
+    summary["classes"] = (f"{labelYear(summary['first_year'], sport)}"
+                          if summary["first_year"] == summary["last_year"] else
+                          f"{labelYear(summary['first_year'], sport)} to {labelYear(summary['last_year'], sport)}")
+    cur.execute(f"""
+        SELECT r.person_id, r.first_year, r.grade, r.first_rating, r.hs_equiv,
+               r.hs_rating, r.hs_year, r.hs_school, r.hs_state, r.recruit_rating,
+               r.source, r.n_races, a.name
+        FROM   college_recruit r
+        {nameLateral('r')}
+        WHERE  r.gender = %(gender)s AND r.sport = %(sport)s {extra}
+        ORDER  BY r.first_year DESC, r.recruit_rating DESC, r.person_id
+    """, params)
+    recruits = _rowsOf(cur)
+    for r in recruits:
+        r["class_label"] = labelYear(r["first_year"], sport)
+        r["hs_label"] = (schoolLabelIn(r["hs_school"], r.get("hs_state"))
+                         if r.get("hs_school") else "")
+        for k in ("first_rating", "hs_equiv", "hs_rating", "recruit_rating"):
+            r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+    return summary, recruits
+
+
+# ---- the subject: you ------------------------------------------------- #
+
+def _athleteSubject(cur, person_id):
+    """The latest high-school season per sport for one athlete, as a
+    subject. None when the athlete has no HS season."""
+    from rankings import nameLateral
+    from school_identity import schoolLabelIn
+    cur.execute(f"""
+        SELECT s.pool, s.sport, s.year, s.grade, s.school, s.state, s.mean_rating,
+               s.n_races, s.last_race, {gradeNumSql('s')} AS grade_num, a.name
+        FROM   athlete_season s
+        {nameLateral('s')}
+        WHERE  s.person_id = %s AND s.pool IN ('hs_m', 'hs_f') AND s.mean_rating IS NOT NULL
+        ORDER  BY s.year DESC, s.last_race DESC NULLS LAST
+    """, (person_id,))
+    rows = _rowsOf(cur)
+    if not rows:
+        return None
+    latest = rows[0]
+    ratings, seasons = {}, {}
+    for r in rows:
+        if r["sport"] not in ratings:
+            ratings[r["sport"]] = round(float(r["mean_rating"]), 1)
+            seasons[r["sport"]] = labelYear(r["year"], r["sport"])
+    grad = next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
+    return {
+        "kind": "athlete", "person_id": int(person_id), "name": latest.get("name") or "Unknown",
+        "school": latest.get("school"), "state": latest.get("state"),
+        "school_label": schoolLabelIn(latest["school"], latest.get("state")) if latest.get("school") else "",
+        "gender": latest["pool"].rsplit("_", 1)[-1], "grad_year": grad,
+        "ratings": ratings, "seasons": seasons,
+    }
+
+
+def subjectFrom(cur, args, account_person_id=None):
+    """(subject, error). The reader's own number, from ?athlete=<id>, from
+    a typed ?time=&event=(&gender=), or -- the accounts seam (283) -- from
+    the signed-in athlete's claimed page when the query names nobody.
+    (None, None) when there is no subject."""
+    pid = (args.get("athlete") or "").strip()
+    if not pid and account_person_id:
+        pid = str(account_person_id)
+    if pid:
+        if not pid.isdigit():
+            return None, "athlete must be an id"
+        sub = _athleteSubject(cur, int(pid))
+        if sub is None:
+            return None, "That athlete has no high-school season to place."
+        return sub, None
+    text = (args.get("time") or "").strip()
+    event = (args.get("event") or "").strip().lower()
+    if not text and not event:
+        return None, None
+    if event not in EVENTS:
+        return None, f"event must be one of {', '.join(EVENTS)}"
+    seconds = parseTime(text)
+    if seconds is None:
+        return None, "time must look like 16:32 or 4:21.5"
+    gender = (args.get("gender") or "m").strip().lower()
+    if gender not in GENDERS:
+        return None, "gender must be m or f"
+    rating, sport = ratingFromTime(seconds, event, gender)
+    if rating is None:
+        return None, "That time could not be converted to a rating right now."
+    return {"kind": "time", "gender": gender, "event": event, "event_label": EVENTS[event][2],
+            "seconds": seconds, "time": fmtTime(seconds), "sport": sport,
+            # ★ ONE SCALE PER POOL: a rating from a track time places on the
+            #   cross-country recruits too (the joint solve's sport level)
+            "ratings": {"XC": rating, "TF": rating}}, None
+
+
+def subjectRating(subject, sport):
+    """The subject's rating for a sport's recruits: the sport's own season
+    when there is one, else the other sport's (one scale per pool)."""
+    if not subject:
+        return None
+    r = subject["ratings"].get(sport)
+    if r is None:
+        other = "TF" if sport == "XC" else "XC"
+        r = subject["ratings"].get(other)
+    return r
+
+
+def placeRows(rows, rating):
+    """Stamp each school row with the subject's tier."""
+    for r in rows:
+        r["tier"] = tierFor(rating, r, r.get("division")) if rating is not None else None
+    return rows
+
+
+def suggestions(rows, rating, per_tier=30):
+    """The schools grouped by where the rating lands, the fastest
+    programmes first inside each tier: [{key, label, blurb, schools}].
+    Tiers with nothing in them are left out; 'below' is never listed."""
+    if rating is None:
+        return []
+    groups = {k: [] for k in TIER_ORDER}
+    for r in rows:
+        t = tierFor(rating, r, r.get("division"))
+        if t and t["key"] != "below":
+            groups[t["key"]].append(dict(r, tier=t))
+    out = []
+    for key in TIER_ORDER:
+        if key == "below" or not groups[key]:
+            continue
+        schools = sorted(groups[key], key=lambda r: (-(r["median"] or 0), r["school"]))
+        label = TIERS[key][1]
+        if key == "top" and any(scholarshipDivision(r.get("division")) for r in schools):
+            label = f"{SCHOLARSHIP_LABEL} / top recruit"
+        out.append({"key": key, "label": label, "blurb": TIERS[key][2],
+                    "total": len(schools), "schools": schools[:per_tier]})
+    return out

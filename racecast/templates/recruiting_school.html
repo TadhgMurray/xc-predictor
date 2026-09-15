@@ -1,0 +1,100 @@
+{# recruiting_school.html -- one college's recruiting page (282): who it
+   took in each sport, at what rating on the high-school scale, what that
+   is as a 5K, a 1600 and a 3200, and where the reader sits (?athlete= or
+   ?time=&event=). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% from "_explain.html" import rating_i %}
+{% from "_units.html" import unit_chips %}
+{% set who = "Men" if gender == "m" else "Women" %}
+{% set meta_title = school ~ " " ~ who ~ " · Recruiting" %}
+{% set meta_description = "What " ~ school ~ "'s " ~ who|lower ~ "'s cross country and track recruits ran in high school: the speed ratings and 5K, 1600 and 3200 times of their recent recruiting classes, and where your times would sit among them." %}
+{% set meta_crumbs = [("Recruiting", "/recruiting"), (school, none)] %}
+{% set meta_path = "/recruiting/school/" ~ (school|urlencode) %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide recruit-page recruit-school">
+  <div class="hdr-row">
+    <h1>{{ crest(school, state, px=128, size=44, cls="school-crest") }}{{ school }} <span class="dist-note">{{ who|lower }}</span></h1>
+    {% with share_title=school ~ " recruiting on Racecast", share_url=site_origin ~ "/recruiting/school/" ~ (school|urlencode) ~ "?gender=" ~ gender ~ ((("&state=" ~ state) if state else "")) %}{% include "_share.html" %}{% endwith %}
+  </div>
+  <p class="meta">
+    {% if units %}{{ unit_chips(units) }} · {% endif %}
+    <a href="{{ school_href(school, state) }}">School page</a>
+    {% if has_other %} · <a href="/recruiting/school/{{ school|urlencode }}?gender={{ 'f' if gender == 'm' else 'm' }}{% if state %}&amp;state={{ state }}{% endif %}">{{ "Women" if gender == "m" else "Men" }}</a>{% endif %}
+    · <a href="/recruiting">Every college</a>
+  </p>
+
+  {% if subject_error %}<p class="predict-status show error">{{ subject_error }}</p>{% endif %}
+  {% if subject %}
+  <p class="meta r-subject-line">
+    {% if subject.kind == "athlete" %}
+      Placing <a href="/athlete/{{ subject.person_id }}">{{ subject.name }}</a>{% if subject.school_label %} ({{ subject.school_label }}){% endif %}{% if subject.grad_year %}, class of {{ subject.grad_year }}{% endif %}:
+      {% for sp, r in subject.ratings.items() %}{{ "%.1f"|format(r) }} in {{ subject.seasons[sp] }} {{ "XC" if sp == "XC" else "track" }}{% if not loop.last %}, {% endif %}{% endfor %}.
+    {% else %}
+      Placing a {{ subject.time }} {{ subject.event_label }}, a {{ "%.1f"|format(subject.ratings.XC) }} rating.
+    {% endif %}
+  </p>
+  {% endif %}
+
+  {% if not blocks %}
+  <p class="meta">No {{ who|lower }}'s recruits on file for {{ school }} yet.</p>
+  {% endif %}
+
+  {% for b in blocks %}
+  {% set s = b.summary %}
+  <h2>{{ "Cross country" if b.sport == "XC" else "Track" }} recruits{{ rating_i() }} <span class="dist-note">{{ s.n }} recruits, classes of {{ s.classes }}{% if s.n_hs %}, {{ s.n_hs }} with a linked high-school season{% endif %}</span></h2>
+
+  {% if b.tier %}
+  <p class="r-tier r-tier-{{ b.tier.key }}"><strong>{{ b.tier.label }}</strong>: your {{ "%.1f"|format(b.rating) }} is {{ b.tier.blurb }}{% if b.tier.gap %}; {{ "%.1f"|format(b.tier.gap) }} points to {{ b.tier.next_label|lower }}{% endif %}.</p>
+  {% endif %}
+
+  <table class="recruit-tbl r-dist">
+    <thead><tr><th></th><th class="num">Rating</th><th class="num">5K XC</th><th class="num">1600</th><th class="num">3200</th></tr></thead>
+    <tbody>
+    {% for key, name in [("max", "Fastest recruit"), ("p75", "Top quarter" ~ (" (scholarship range)" if scholarship else "")), ("median", "Typical recruit"), ("p25", "Recruit range starts"), ("min", "Slowest recruit (walk-on range)")] %}
+      <tr>
+        <td>{{ name }}</td>
+        <td class="num">{{ "%.1f"|format(s[key]) if s[key] is not none else " - " }}</td>
+        <td class="num">{{ fmt_time(s.times[key]["5k"]) or " - " }}</td>
+        <td class="num">{{ fmt_time(s.times[key]["1600"]) or " - " }}</td>
+        <td class="num">{{ fmt_time(s.times[key]["3200"]) or " - " }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="meta">To be a typical {{ school }} recruit you run about {{ fmt_time(s.times.median["5k"]) or "?" }} for 5K in cross country or {{ fmt_time(s.times.median["3200"]) or "?" }} for 3200;
+     the door opens around {{ fmt_time(s.times.p25["5k"]) or "?" }} / {{ fmt_time(s.times.p25["3200"]) or "?" }}, and a walk-on has run at least {{ fmt_time(s.times.min["5k"]) or "?" }}.</p>
+
+  <table class="recruit-tbl r-list">
+    <thead><tr><th>Class</th><th>Recruit</th><th>High school</th><th class="num">Recruited at</th><th class="num">HS season</th><th class="num">First college season</th><th>Year</th></tr></thead>
+    <tbody>
+    {% for r in b.recruits %}
+      <tr>
+        <td>{{ r.class_label }}</td>
+        <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
+        <td>{% if r.hs_school and r.hs_school|is_team %}<a href="{{ school_href(r.hs_school, r.hs_state) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
+        <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
+        <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
+        <td class="num">{{ "%.1f"|format(r.first_rating) }}<span class="dist-note-quiet"> college scale</span></td>
+        <td>{{ r.grade_label or " - " }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+
+  <p class="meta">A recruit is an athlete's first college season; "recruited at" is their last high-school season where Racecast has it,
+     otherwise (est.) the first college season on the high-school scale less the measured freshman gain. Ratings are on the
+     high-school {{ who|lower }}'s scale so they compare with your own; the college-scale column is the number their college page shows.</p>
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+</body>
+</html>
