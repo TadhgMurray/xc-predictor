@@ -827,3 +827,44 @@ the pipeline so the caps live in Postgres rather than in the client.
 Still open from 8.7: the site's `XCP_DB_STATEMENT_TIMEOUT_MS=55000`
 lets one reader hold a table long enough to stall a swap round; 10-15 s
 is worth trying in the service unit. Tests: `tests/test_db_quiet.py`.
+
+### 9.13 Run 23's two lessons (2026-09-15)
+
+**The school-identity step was the gateway timeouts.** `10b_school_ids`
+(`racecast/build_school_identity.py`) read the 61.6M-row, 23 GB boards
+table SEVEN times end to end -- one full scan per question -- and each
+scan pushed the site's pages out of the OS cache and put the disk to
+work for the pipeline until nginx gave up on the eight workers. Every
+question it asks is about athletes and seasons, so it now reads
+`athlete_season` (12.9M rows, built from the same load by
+`10_rankings_finish`): home state by races per (person, state), school
+votes, the directory's college clusters, the level table. The two reads
+that need meets (the co-racing merge) filter `ranking_results` by
+school through `idx_rr_school`. It also commits per phase: the whole
+build was one transaction, so a lock timeout in the swap rolled back
+the finished build and the retry renamed tables that no longer existed.
+The quiet mode's `work_mem` cap is 256MB, not 64MB: a smaller sort
+budget spills a 61.6M-row GROUP BY to temp files, which is the I/O the
+mode exists to prevent.
+
+**The impossible-race step condemned 5.8M track rows.** The first cut
+judged every timed row. The loader's event parser reads "60m" as 60 km
+("< 100 means kilometres", right for "5k", wrong for a dash), so a 7 s
+60 m was a 60 km at 0 s/km and every sprint race in the corpus was
+condemned; cross country had 4,828,032 m "5ks" (a distance in the wrong
+unit). The candidates are now rated rows only (`normalized_time IS NOT
+NULL`, the engine's own universe -- a sprint has none) at a distance a
+race is run over (XC 1,000-20,000 m, TF 800-15,000 m). A wrong unit on
+a distance is the ballooned-distance census's business and the band's.
+After the fix, on the box: `python engine/impossible_race.py --write`,
+then the run from 10; the solve stands (the sprints were never in the
+pack). Run 23's XC list (168 races, 9,456 rows) is what the rule was
+for: 13 s "4.5ks", 34 rows at 4 s/km.
+
+**Read from run 23, for the constants:** the bracket tilt-by-band table
+says XC's bands all pay LESS of a course than they are charged (implied
+h 1.15 at <100 against 1.01 applied; 1.07 vs 0.97 at 100-120; 1.01 vs
+0.93 at 120-130), while TF's implied and applied agree within 1% in
+every band. XC course multipliers are overstated by about 8-14% across
+the board, TF's are right. That is the sport level and the XC course
+scale together, and it is where the constants discussion starts.

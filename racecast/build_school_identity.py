@@ -4,7 +4,7 @@ build_school_identity.py -- who every athlete and school string IS.
     python racecast/build_school_identity.py
 
 Pipeline step 10b, right after 10_rankings: everything here reads
-ranking_results. Two tables out:
+athlete_season (the boards' own per-season table). Two tables out:
 
     person_home_state (person_id PK, state)
         an athlete's HOME state = the state they race in most.
@@ -120,23 +120,26 @@ def mergeCoRacingClusters(cur):
     # the school's name as a whole word inside the meet name (ARE word
     # boundaries), the name's regex metacharacters escaped
     escape_sql = "regexp_replace(s.school, '([().*+?\\[\\]\\\\^$|])', '\\\\\\1', 'g')"
+    # ! rr.school = ANY(...) so idx_rr_school answers it; the unnest join
+    #   it was planned as a full scan of the boards table (2026-09-15)
     cur.execute(f"""
         SELECT s.school, rr.state, count(DISTINCT rr.meet_id)
         FROM   ranking_results rr
         JOIN   (SELECT unnest(%s::text[]) AS school) s ON s.school = rr.school
         LEFT   JOIN meets m ON m.div_id = rr.div_id AND rr.sport = 'XC'
         LEFT   JOIN meets_tfrrs mt ON mt.meet_id = rr.meet_id AND rr.sport = 'XC'
-        WHERE  rr.state IS NOT NULL
+        WHERE  rr.school = ANY(%s)
+          AND  rr.state IS NOT NULL
           AND  COALESCE(m.meet_name, mt.meet_name) ~* ('{chr(92)}m' || {escape_sql} || '{chr(92)}M')
         GROUP  BY 1, 2
-    """, (merged_schools,))
+    """, (merged_schools, merged_schools))
     hosted = {}
     for sc, st, n in cur.fetchall():
         if n > hosted.get(sc, (None, 0))[1]:
             hosted[sc] = (st, n)
     # else where most of its rows were run
     cur.execute("""
-        SELECT school, state, count(*) FROM ranking_results
+        SELECT school, state, sum(n_races) FROM athlete_season
         WHERE  school = ANY(%s) AND state IS NOT NULL GROUP BY 1, 2
     """, (merged_schools,))
     row_state = {}
@@ -220,9 +223,9 @@ def applyCollegeDirectory(cur):
     # which of each name's clusters are college clusters
     cur.execute("""
         WITH v AS (
-            SELECT DISTINCT rr.school, rr.person_id,
-                   bool_or(rr.pool LIKE 'college%%') OVER (PARTITION BY rr.school, rr.person_id) AS college
-            FROM   ranking_results rr WHERE rr.school = ANY(%s) AND rr.person_id IS NOT NULL)
+            SELECT rr.school, rr.person_id, bool_or(rr.pool LIKE 'college%%') AS college
+            FROM   athlete_season rr WHERE rr.school = ANY(%s) AND rr.person_id IS NOT NULL
+            GROUP  BY rr.school, rr.person_id)
         SELECT v.school, ph.state, count(*) FILTER (WHERE v.college), count(*)
         FROM   v JOIN person_home_state_new ph USING (person_id)
         GROUP  BY 1, 2
@@ -348,8 +351,8 @@ CREATE TABLE school_level_new AS
 WITH seasons AS (
     SELECT rr.school, rr.person_id,
            split_part(COALESCE(NULLIF(rr.pool, ''), 'hs'), '_', 1) AS level,
-           count(*) AS n
-    FROM   ranking_results rr
+           sum(rr.n_races) AS n
+    FROM   athlete_season rr
     WHERE  COALESCE(TRIM(rr.school), '') <> '' AND rr.person_id IS NOT NULL
     GROUP  BY 1, 2, 3
 ),
@@ -448,14 +451,35 @@ def main():
     with getConn() as conn:
         cur = conn.cursor()
 
+        # ★ FROM athlete_season, NOT ranking_results (owner, 2026-09-15: "it
+        #   is specifically the school ids step that is so slow, I get a
+        #   gateway timeout"). This step read the 61.6M-row, 23 GB boards
+        #   table SEVEN times end to end -- one scan per question -- and
+        #   every scan pushed the site's pages out of the OS cache and put
+        #   the disk to work for the pipeline while the site's eight workers
+        #   queued behind it until nginx gave up. athlete_season is built
+        #   from the same rows by 10_rankings_finish, one row per
+        #   (person, pool, sport, year) with the season's school, state and
+        #   race count -- 12.9M rows, a twentieth of the bytes -- and every
+        #   question this step asks is a question about athletes and their
+        #   seasons, not about rows. The same answers, from the table made
+        #   for them. The two reads that need meets (the co-racing merge)
+        #   filter ranking_results by school through idx_rr_school.
+        # ★ AND A COMMIT PER PHASE. The whole build used to be one
+        #   transaction, so the swap's retry loop rolled back the finished
+        #   build on a lock timeout and the next attempt renamed tables
+        #   that no longer existed.
         cur.execute("DROP TABLE IF EXISTS person_home_state_new")
         cur.execute("""
             CREATE TABLE person_home_state_new AS
-            SELECT person_id,
-                   mode() WITHIN GROUP (ORDER BY state) AS state
-            FROM   ranking_results
-            WHERE  person_id IS NOT NULL AND state IS NOT NULL
-            GROUP  BY person_id
+            SELECT person_id, state
+            FROM  (SELECT person_id, state,
+                          row_number() OVER (PARTITION BY person_id
+                                             ORDER BY sum(n_races) DESC, state) AS rk
+                   FROM   athlete_season
+                   WHERE  person_id IS NOT NULL AND state IS NOT NULL
+                   GROUP  BY person_id, state) x
+            WHERE  rk = 1
         """)
         cur.execute("""
             ALTER TABLE person_home_state_new
@@ -464,6 +488,7 @@ def main():
         cur.execute("SELECT count(*) FROM person_home_state_new")
         print(f"  person_home_state: {cur.fetchone()[0]:,} athletes "
               f"({(time.time() - t0) / 60:.1f} min)", flush=True)
+        conn.commit()
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
@@ -472,7 +497,7 @@ def main():
             CREATE TABLE school_identity_new AS
             WITH votes AS (
                 SELECT DISTINCT rr.school, rr.person_id
-                FROM   ranking_results rr
+                FROM   athlete_season rr
                 WHERE  COALESCE(TRIM(rr.school), '') <> ''
                   AND  rr.person_id IS NOT NULL
             ),
@@ -507,10 +532,14 @@ def main():
         multi = cur.fetchone()[0]
         print(f"  school_identity: {ns:,} schools, {n:,} clusters, "
               f"{multi:,} names split across states", flush=True)
+        conn.commit()
 
         mergeCoRacingClusters(cur)
+        conn.commit()
         applyCollegeDirectory(cur)
+        conn.commit()
         buildSchoolLevel(cur)
+        conn.commit()
 
         # ---- the swap: old tables serve until the new ones are whole ----
         #

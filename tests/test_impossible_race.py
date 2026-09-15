@@ -116,3 +116,18 @@ def test_the_pipeline_finds_the_races_before_the_pack():
     sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
     assert sh.index("step 06c_impossible") < sh.index("step 07_pack")
     assert "impossible_race.py --write" in sh
+
+
+class _ProbeCur:
+    def execute(self, sql, params=None): pass
+    def fetchone(self): return (1,)
+
+
+def test_the_candidates_are_rated_distance_rows_at_a_race_distance():
+    # run 23: the 60m dash read as 60 km condemned 5.8M track rows
+    for sport in ("XC", "TF"):
+        sql = ir.candidateSql(_ProbeCur(), sport)
+        assert "r.normalized_time IS NOT NULL" in sql
+        lo, hi = ir.XC_DIST if sport == "XC" else ir.TF_DIST
+        assert f"BETWEEN {lo} AND {hi}" in sql
+    assert ir.TF_DIST[0] >= 800 and ir.XC_DIST[1] <= 20000

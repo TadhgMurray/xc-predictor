@@ -83,7 +83,11 @@ _PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "x
 #   they cannot ask for more than the cap. The site's service unit never
 #   sets the variable, so the site's connections are untouched.
 _QUIET_SETTINGS = {
-    "work_mem": "64MB",
+    # ! 256MB, NOT 64MB (2026-09-15): a smaller sort budget makes a
+    #   61.6M-row GROUP BY SPILL to disk, and temp-file I/O on the site's
+    #   disk is exactly what the mode exists to prevent. One process, no
+    #   parallel workers, so a few hundred MB per sort node is bounded.
+    "work_mem": "256MB",
     "maintenance_work_mem": "512MB",
     "max_parallel_workers_per_gather": "0",
     "max_parallel_maintenance_workers": "0",

@@ -29,7 +29,7 @@ def test_the_caps_apply_only_in_quiet_mode(monkeypatch):
     monkeypatch.setenv("XCP_DB_QUIET", "1")
     assert db.dbQuiet()
     assert db.dbSetting("maintenance_work_mem", "8GB") == "512MB"
-    assert db.dbSetting("work_mem", "2GB") == "64MB"
+    assert db.dbSetting("work_mem", "2GB") == "256MB"
     assert db.dbSetting("max_parallel_maintenance_workers", 6) == "0"
     assert db.dbSetting("max_parallel_workers_per_gather", 4) == "0"
     assert db.dbSetting("lock_timeout", "5s") == "5s"        # not a cap: untouched
@@ -60,7 +60,7 @@ def test_a_quiet_connection_is_capped_once_and_the_backend_is_reniced_best_effor
     conn = _Conn()
     db._quietTune(conn)
     sets = [p[0] for sql, p in conn.log if sql.startswith("SET ") and p]
-    assert "64MB" in sets and "512MB" in sets and "0" in sets and "off" in sets
+    assert "256MB" in sets and "512MB" in sets and "0" in sets and "off" in sets
     assert any("application_name" in sql for sql, _ in conn.log)
     assert seen["nice"] == (4242, db._QUIET_NICE)
     assert conn.commits == 1
@@ -81,7 +81,7 @@ def test_the_builders_ask_through_the_caps(monkeypatch):
     assert mc._dbSetting("maintenance_work_mem", "8GB") == "512MB"
     conn = _Conn()
     applied = dbfast.tuneSession(conn, quiet=True)
-    assert "work_mem=64MB" in applied and "max_parallel_maintenance_workers=0" in applied
+    assert "work_mem=256MB" in applied and "max_parallel_maintenance_workers=0" in applied
     monkeypatch.delenv("XCP_DB_QUIET")
     assert mc._dbSetting("maintenance_work_mem", "8GB") == "8GB"
     src = open(os.path.join(_ROOT, "engine", "merge_column.py")).read()
@@ -98,3 +98,14 @@ def test_the_pipeline_turns_quiet_on_and_runs_fewer_streams():
     assert '"$inflight" -ge "$XCP_STREAMS"' in sh
     assert 'shards 12b_course_pages "$XCP_COURSE_SHARDS"' in sh
     assert sh.index('export XCP_DB_QUIET') < sh.index('step 01_season_year')
+
+
+def test_the_school_identity_builder_reads_seasons_not_the_boards_table():
+    # 2026-09-15: seven full scans of the 23 GB boards table were the
+    # gateway timeouts; the per-season table answers the same questions
+    src = open(os.path.join(_ROOT, "racecast", "build_school_identity.py")).read()
+    body = src[src.index("def mergeCoRacingClusters"):]
+    scans = [ln for ln in body.splitlines() if "FROM   ranking_results" in ln or "FROM ranking_results" in ln]
+    assert len(scans) <= 2, scans                     # the two meet reads, both filtered by school
+    assert "FROM   athlete_season" in body
+    assert src.count("conn.commit()") >= 5

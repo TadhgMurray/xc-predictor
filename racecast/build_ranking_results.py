@@ -36,7 +36,7 @@ import psycopg2.errors
 import psycopg2.extras
 
 sys.path.insert(0, "scripts")
-from database import getConn, dbSetting, dbJobs
+from database import getConn, dbSetting, dbJobs, dbQuiet
 
 # poolFor is the engine's SSOT for grade -> level -> pool. IMPORT it; do not
 # reimplement it in SQL. Reimplementing is how the site and the engine drift
@@ -2378,7 +2378,7 @@ GROUP BY base.person_id, base.pool, base.sport, base.year;
 #   at ~60 bytes a row a 56.6M-row sort is ~3.4GB -- so 4GB is the smallest
 #   value that keeps it in memory rather than on disk. The rest of the ladder
 #   is for a server that says no.
-_SEASON_WORK_MEM = (("512MB", "256MB") if dbSetting("work_mem", None) == "64MB"
+_SEASON_WORK_MEM = (("512MB", "256MB") if dbQuiet()
                     else ("4GB", "2GB", "1GB", "512MB"))   # capped under XCP_DB_QUIET
 
 

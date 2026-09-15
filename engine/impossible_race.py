@@ -59,6 +59,18 @@ from record_pace import (SLOWEST_RECORD_PACE, exemptPool,        # noqa: E402
 # record pace so a rounding in the SQL arithmetic cannot lose a candidate.
 PREFILTER_PACE = float(int(SLOWEST_RECORD_PACE) + 10)
 
+# ★ RATED DISTANCE ROWS ONLY, AT A DISTANCE A RACE CAN BE (run 23,
+#   2026-09-14: the first cut judged every timed row and condemned 5.8M
+#   track rows -- the 55m, 60m and 75m dashes, whose event names the
+#   loader's parser reads as kilometres ("75" < 100 -> 75,000 m), a 7 s
+#   "75 km" at 0 s/km; and 4,828,032 m cross country "5ks", a distance
+#   stored in the wrong unit). The rule is about TIMES: a row the backfill
+#   normalised (a distance event the engine rates) whose distance is one
+#   a race is run over. A wrong unit on the distance is the ballooned-
+#   distance census's business and the pace band's, not this rule's.
+XC_DIST = (1000, 20000)
+TF_DIST = (800, 15000)
+
 _DDL = """
 CREATE TABLE {race} (
     sport            text    NOT NULL,
@@ -145,7 +157,8 @@ def candidateSql(cur, sport):
             LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id AND mt.sport = 'XC'
             LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
             CROSS JOIN LATERAL (SELECT {dist} AS distance) d
-            WHERE  r.time_seconds > 0 AND d.distance > 0
+            WHERE  r.normalized_time IS NOT NULL
+              AND  r.time_seconds > 0 AND d.distance BETWEEN {XC_DIST[0]} AND {XC_DIST[1]}
               AND  r.time_seconds / (d.distance / 1000.0) < {PREFILTER_PACE}"""
     dist = f"COALESCE(m.distance_meters::real, {_eventMetersSql('r')})"
     return f"""
@@ -156,8 +169,9 @@ def candidateSql(cur, sport):
         LEFT JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                             AND m.event_id = r.event_id AND m.source = r.source
         CROSS JOIN LATERAL (SELECT {dist} AS distance) d
-        WHERE  r.time_seconds > 0 AND COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 0
-          AND  d.distance >= 800
+        WHERE  r.normalized_time IS NOT NULL
+          AND  r.time_seconds > 0 AND COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 0
+          AND  d.distance BETWEEN {TF_DIST[0]} AND {TF_DIST[1]}
           AND  r.time_seconds / (d.distance / 1000.0) < {PREFILTER_PACE}"""
 
 
