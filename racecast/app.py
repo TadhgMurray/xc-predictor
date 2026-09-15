@@ -6026,12 +6026,23 @@ _XC_COURSE_SQL = """
                cd.distance_m  AS distance,
                cd.difficulty,
                cd.n_results,
-               (SELECT cc.course_name FROM course_canonical cc
-                 WHERE cc.canonical_id = cd.canonical_id
-                 ORDER BY cc.course_name LIMIT 1) AS name
+               -- ★ THE ENGINE'S OWN CANONICAL NAME, not a raw feed
+               --   spelling. saveCourseDifficulties writes
+               --   'XC:' || loadCanonicalNames()[canonical_id], so this
+               --   column already holds the one name the engine chose for
+               --   the venue.
+               --
+               -- ⚠ PICKING THE ALPHABETICALLY FIRST course_canonical ROW
+               --   INSTEAD PUT TYPOS AND SHOUTING ON THE PAGE (2026-09-15):
+               --   "Detweiller Pakr", "VAN COURTLANDT PARK", "Wake Med Park".
+               --   course_canonical holds every feed spelling that maps to
+               --   the venue, and alphabetical order has no opinion about
+               --   which of them is right.
+               substring(cd.course_name from 4) AS name
         FROM   course_difficulties cd
         WHERE  cd.canonical_id IS NOT NULL
           AND  cd.difficulty  IS NOT NULL
+          AND  cd.course_name LIKE 'XC:%%'
           {where}
         ORDER BY cd.canonical_id, cd.n_results DESC NULLS LAST
     ) one
