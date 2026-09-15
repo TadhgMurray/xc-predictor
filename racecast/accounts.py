@@ -412,7 +412,8 @@ def requestLink(cur, email, ip, next_path, age_ok):
         return "nomail"
     subject, text = loginMail(url)
     if not sendMail(email, subject, text):
-        return "nomail"
+        logEvent(cur, "link_failed", email=email)
+        return "failed"
     logEvent(cur, "link_sent", email=email)
     return "sent"
 
@@ -674,11 +675,34 @@ def accountPhoto(cur, account_id):
     return {"url": photoUrl(row["file"]), "width": row["width"], "height": row["height"]} if row else None
 
 
+_PHOTO_TABLES = {"checked": False, "ready": False}
+
+
+def photoTablesReady(cur):
+    """Once per process: are account_claim and account_photo there? A
+    server that has not run --init otherwise pays an exception and a
+    rollback on every athlete page."""
+    if not _PHOTO_TABLES["checked"]:
+        try:
+            cur.execute("SELECT to_regclass('public.account_photo') AS t")
+            row = _one(cur)
+            _PHOTO_TABLES["ready"] = bool(row and row.get("t"))
+        except Exception:                               # noqa: BLE001
+            _PHOTO_TABLES["ready"] = False
+        _PHOTO_TABLES["checked"] = True
+        if not _PHOTO_TABLES["ready"]:
+            print("[accounts] account_photo is not there: run racecast/accounts.py --init "
+                  "and restart; athlete pages show the placeholder until then", flush=True)
+    return _PHOTO_TABLES["ready"]
+
+
 def photoFor(cur, person_id):
     """The picture on an athlete's page: the photo of the account that
     claims the person (a verified claim first, else the oldest). None when
     nobody has, or the tables are not there. Public data: the page is
     cached and this is what everyone sees."""
+    if not photoTablesReady(cur):
+        return None
     try:
         cur.execute("""SELECT p.file
                        FROM   account_claim c
@@ -750,7 +774,7 @@ def login_post():
         return _loginPage(error=str(exc)), 400
     if status == "rate":
         return _loginPage(error="Too many sign-in links for that address this hour. Try later."), 429
-    return _loginPage("sent", email=email, unsent=(status == "nomail"))
+    return _loginPage("sent", email=email, unsent=(status if status in ("nomail", "failed") else ""))
 
 
 @bp.route("/login/t/<token>")
