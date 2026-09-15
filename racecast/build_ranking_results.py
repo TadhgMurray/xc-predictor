@@ -1850,6 +1850,13 @@ _CANONICAL_INDEXES = {
         #   above, so its candidate stage sorted every row of the pool
         #   before taking the first fifty. These two let it stop after the
         #   fifty; the state and floor filters drop few rows along the way.
+        # ★ THE SCHOOL PAGES' INDEX, BUILT WITH THE TABLE (owner, 2026-09-15:
+        #   an interrupted run 23 stopped before 11b_indexes, and every
+        #   school page then scanned 61.6M rows for 5-13 s until all eight
+        #   workers were busy and nginx timed out). scripts/add_page_indexes
+        #   still builds it CONCURRENTLY on an older table; here it exists
+        #   before the swap, so there is no window without it.
+        ("rr_school_sport_idx", "(school, sport)"),
         ("rr_pool_rating_idx", "(pool, speed_rating DESC)"),
         ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
