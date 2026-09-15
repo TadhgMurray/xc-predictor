@@ -136,7 +136,9 @@ CONTEXT_FEATURES  = 24
 #   row by definition -- so inference clamps it (racecast/predict.py
 #   _clampYear). Named here so the clamp cannot drift from the builder: if
 #   a feature is ever inserted rather than appended, this moves with it and
-#   tests/test_context_width.py checks that it still points at the year.
+#   tests/test_context_width.py checks that it still points at the year --
+#   and that transformer.CONTEXT_YEAR_INDEX, the copy train.py and
+#   predict.py read, still agrees with it.
 #
 # ! IT WAS WRITTEN 22 FIRST AND THE TEST CAUGHT IT. The count is 0-19 for
 #   the original twenty, then grade ordinal 21, its flag 22, the year 23 --

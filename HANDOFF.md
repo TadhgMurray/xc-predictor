@@ -1415,6 +1415,18 @@ corpus-wide shuffles:
 trainer falls back to a random split over EXAMPLES, which puts the same
 athlete on both sides and makes the validation loss reward memorising.
 
+⚠ **THE POD NEEDS NO DATABASE AND NO corrections.py, AND train.py MUST
+KEEP IT THAT WAY.** Everything train.py shares comes from `transformer`,
+which imports only torch. Importing anything from `feature_extraction`
+(which pulls in `database` and the 51 MB gitignored `corrections`) breaks
+`import train` on the GPU box -- it happened for one commit on
+2026-09-15, caught before the run. `tests/test_context_width.py::
+test_train_imports_without_a_database` pins it.
+
+The RunPod pytorch template (torch 2.8, CUDA 12.8, Ubuntu 24.04) already
+has everything the trainer needs. Copy `model/` and the chunks; the repo's
+`racecast/` and `engine/` are not needed there at all.
+
 On the pod (RTX 3090, 6 vCPU -- see 15 for why `--workers 4`):
 
 ```

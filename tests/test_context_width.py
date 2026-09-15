@@ -125,6 +125,24 @@ def test_the_year_index_points_at_the_year():
     ctx = buildCtx(date="2019-09-14")
     assert ctx[fx.CONTEXT_YEAR_INDEX] == 2019.0
     assert buildCtx(date="2025-10-04")[fx.CONTEXT_YEAR_INDEX] == 2025.0
+    # the copy train.py and predict.py actually read
+    assert T.CONTEXT_YEAR_INDEX == fx.CONTEXT_YEAR_INDEX
+
+
+def test_train_imports_without_a_database():
+    """⚠ THE POD HAS NO DATABASE AND NO corrections.py. train.py imported
+    CONTEXT_YEAR_INDEX from feature_extraction for one commit, which made
+    `import train` need a DB password and a 51 MB gitignored module -- on
+    the one machine that has the GPU and neither of those. Every shared
+    constant has to come from transformer, which imports only torch."""
+    tr = open(os.path.join(ROOT, "model", "train.py"), encoding="utf-8").read()
+    assert "from feature_extraction import" not in tr
+    assert "CONTEXT_YEAR_INDEX" in tr.split("from transformer import", 1)[1][:250]
+    # and transformer itself must stay light
+    tf_src = open(os.path.join(ROOT, "model", "transformer.py"), encoding="utf-8").read()
+    for heavy in ("import psycopg2", "from database", "from corrections",
+                  "import sklearn", "from sklearn"):
+        assert heavy not in tf_src, heavy
 
 
 def test_the_new_features_sit_at_the_end_and_the_old_ones_did_not_move():
@@ -269,8 +287,10 @@ def test_inference_clamps_the_year_and_reads_the_shared_builder():
     assert "CONTEXT_YEAR_INDEX" in src
     assert '"max_year"' in src
     tr = open(os.path.join(ROOT, "model", "train.py"), encoding="utf-8").read()
-    # the ceiling the clamp needs has to be measured and written
-    assert "from feature_extraction import CONTEXT_YEAR_INDEX" in tr
+    # the ceiling the clamp needs has to be measured and written. The index
+    # comes from transformer, NOT feature_extraction -- see
+    # test_train_imports_without_a_database for why that matters.
+    assert "CONTEXT_YEAR_INDEX" in tr
     assert '"max_year": float(stats.get("max_year") or 0.0)' in tr
 
 

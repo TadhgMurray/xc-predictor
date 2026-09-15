@@ -18,13 +18,13 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 
 # The model we built in transformer.py. Assumes train.py sits next to it
 # in model/ (same folder), matching how feature_extraction.py imports.
+# ⚠ EVERYTHING SHARED COMES FROM transformer, WHICH IMPORTS ONLY TORCH.
+#   CONTEXT_YEAR_INDEX briefly came from feature_extraction instead, and
+#   that made `import train` require a database password and the gitignored
+#   corrections.py -- neither of which exists on the GPU box this file is
+#   written to run on. tests/test_context_width.py keeps the copies honest.
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
-                         SEQ_NORM_TIME)
-# ! FROM THE EXTRACTOR, NOT A SECOND COPY. Which context slot holds the race
-#   year is the extractor's decision; importing it means a feature inserted
-#   rather than appended moves this with it. feature_extraction imports torch
-#   and parses corrections.py at import, which train.py pays for once.
-from feature_extraction import CONTEXT_YEAR_INDEX
+                         SEQ_NORM_TIME, CONTEXT_YEAR_INDEX)
 
 # ------------------------------------------------------------------ #
 # CONSTANTS — the training dials, named once so they don't drift

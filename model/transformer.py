@@ -62,6 +62,21 @@ SEQUENCE_FEATURES = 21
 # compares it to both constants without needing a database.
 CONTEXT_FEATURES = 24
 
+# ★ WHICH CONTEXT SLOT HOLDS THE RACE YEAR, duplicated here for the same
+#   reason CONTEXT_FEATURES is: this module imports nothing but torch, so
+#   train.py and racecast/predict.py can read it on a machine with no
+#   database and no corrections.py.
+#
+# ⚠ train.py IMPORTED IT FROM feature_extraction FOR ONE COMMIT AND THAT
+#   BROKE THE POD (2026-09-15). feature_extraction pulls in `database`
+#   (which wants a password) and `corrections` (51 MB, gitignored, server
+#   only), so `import train` died before it read a single chunk -- on the
+#   one machine that has the GPU and none of that.
+#
+# ! tests/test_context_width.py pins this against feature_extraction's copy
+#   AND against the builder's actual output, so the duplication cannot rot.
+CONTEXT_YEAR_INDEX = 23
+
 # Positions inside a sequence row that this file reads by NAME. Mirror
 # _buildSequenceVector in feature_extraction.py: index 0 is the prior race's
 # normalized_time in seconds, index 2 is days before the target.
