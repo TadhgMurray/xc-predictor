@@ -1031,8 +1031,34 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
                         for r in runners[:limit]]}
 
 
+# ⚠ CACHED, AND THAT IS NOT AN OPTIMISATION -- IT IS THE FIX FOR A
+#   REGRESSION I SHIPPED (2026-09-15). The fallback below groups over the
+#   whole of `results` to find the newest year that looks like a season.
+#   That is the right ANSWER and a ruinous thing to do per request: with
+#   season_year_XC missing from homepage_meta every squad call took that
+#   path, and one school's squad took 33 SECONDS. The page did not look
+#   broken, it looked dead -- "the squads buttons either don't work or take
+#   so long they don't work" (owner).
+#
+# ! THE TTL IS SHORT BECAUSE THE ANSWER MOVES ONCE A SEASON. An hour means
+#   a pipeline run that writes homepage_meta is picked up without a
+#   restart, and the scan happens at most once an hour per worker.
+_SEASON_CACHE = {}
+_SEASON_TTL = 3600.0
+
+
 def _currentSeason(cur, sport):
     """The season the boards are showing, so the field agrees with them."""
+    import time as _t
+    hit = _SEASON_CACHE.get(sport)
+    if hit and _t.time() - hit[0] <= _SEASON_TTL:
+        return hit[1]
+    year = _currentSeasonUncached(cur, sport)
+    _SEASON_CACHE[sport] = (_t.time(), year)
+    return year
+
+
+def _currentSeasonUncached(cur, sport):
     cur.execute("SELECT value FROM homepage_meta WHERE key = %s",
                 (f"season_year_{sport}",))
     row = cur.fetchone()
