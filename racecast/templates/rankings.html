@@ -255,7 +255,13 @@
            400s on that, but a control that cannot express the mistake is
            better than an error message). The API takes metres, so a custom
            window is still reachable by URL for anyone who wants one. #}
-    <div class="field ability-only">
+    {# ★ ON TEAMS TOO (owner, 2026-09-14: "Team rankings need to have the
+         same event thing as ability"). Same control, same metres, same
+         athlete-seasons underneath -- a team's rating is the top five of
+         them, so restricting the aggregate restricts the squad's number.
+       ! teams-ok, the class the course specifier already uses to survive
+         the Teams tab's blanket .ability-only hide. #}
+    <div class="field ability-only teams-ok">
       <label for="events">Events</label>
       <select id="events" title="Rate each athlete on this slice of their season only.">
         <option value="">All events</option>

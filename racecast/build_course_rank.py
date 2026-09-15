@@ -116,6 +116,31 @@ _SOURCE_SQL = """
         FROM   meets m
         WHERE  m.course_name IS NOT NULL
         GROUP  BY m.course_name
+    ), totals AS (
+        -- ⚠ THE BOARD'S "RESULTS" WAS THE ENGINE'S FIT SAMPLE (owner,
+        --   2026-09-14: "on the courses page the number of results is not
+        --   close to the actual number on the course page"). It came
+        --   straight from course_difficulties.n_results, which is how many
+        --   rows the SOLVE used to fit that cell's difficulty -- rated rows
+        --   only, one (course, distance) cell -- and not how many people
+        --   have raced there. get_course_header learnt this already and
+        --   says so in its own docstring: "NOT course_difficulties'
+        --   n_results". The board never did, so the two numbers describe
+        --   different things and were never going to agree.
+        --
+        -- ! THE SAME JOIN THE COURSE PAGE MAKES, at the board's own grain.
+        --   A board row is one (venue, distance), so this counts per
+        --   distance: pick that distance on the course page and the two
+        --   numbers now match. The page's default view is every distance,
+        --   which is a bigger number for a course that races several --
+        --   honestly bigger, rather than arbitrarily different.
+        SELECT m.course_name, round(m.distance)::int AS distance_m,
+               count(*)                    AS n_results,
+               count(DISTINCT r.person_id) AS n_athletes
+        FROM   results r
+        JOIN   meets m ON m.div_id = r.div_id AND m.source = r.source
+        WHERE  m.course_name IS NOT NULL AND m.distance IS NOT NULL
+        GROUP  BY 1, 2
     ), ranked AS (
         SELECT
             -- ⚠ DISTINCT ON, BECAUSE EVEN THIS KEY CAN REPEAT. Two venues
@@ -154,13 +179,24 @@ _SOURCE_SQL = """
             COALESCE(xc.key_distance,
                      CASE WHEN s.n_same = 1
                           THEN v.distance_m END)         AS distance_m,
-            xc.difficulty, xc.n_results, xc.n_athletes,
+            xc.difficulty,
+            -- ! THE REAL COUNT WHERE THERE IS ONE, the fit sample where
+            --   there is not (an older schema has no key_distance, so
+            --   there is nothing to join on). Never a mixture silently:
+            --   the fallback is the number this column always held.
+            COALESCE(t.n_results, xc.n_results)          AS n_results,
+            COALESCE(t.n_athletes, xc.n_athletes)        AS n_athletes,
             CASE WHEN s.n_same = 1 THEN COALESCE(v.n_meets, 0)
                  ELSE 0 END                              AS n_meets,
             s.n_same                                     AS n_same_name
         FROM   xc
         JOIN   shared s ON s.course_name = xc.course_name
         LEFT   JOIN venue v ON v.course_name = xc.course_name
+        LEFT   JOIN totals t ON t.course_name = xc.course_name
+                            AND t.distance_m = xc.key_distance
+        -- ! THE TIE-BREAK STAYS ON THE FIT SAMPLE. It decides which of two
+        --   colliding rows is the better-supported DIFFICULTY, which is a
+        --   question about the solve, not about attendance.
         ORDER  BY COALESCE(xc.canonical_id::text, 'name:' || xc.course_name),
                   xc.key_distance,
                   xc.n_results DESC

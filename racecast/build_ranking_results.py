@@ -1138,7 +1138,7 @@ def isRankablePool(pool):
 #   gate in prepareRow is the belt to that brace, for a row the table was
 #   built too early to know.
 from record_pace import (_WR_PACE, PACE_FLOOR_SLACK, recordPace,     # noqa: E402,F401
-                         impossiblePace, exemptPool)
+                         impossiblePace, exemptPool, impossibleRow)
 
 
 def prepareRow(row, sport):
@@ -1353,7 +1353,22 @@ def prepareRow(row, sport):
     #   the "gate that is not gating" this file's own comment warns about, so
     #   the counts are printed per sport at the end of buildSport.
     # ★ FASTER THAN THE WORLD RECORD IS A WRONG DISTANCE, NOT A RECORD
-    if not exemptPool(pool) and impossiblePace(row.time_seconds, distance, row.gender):
+    # ★ AND THE FLOOR IS THE POOL'S, NOT THE OPEN RECORD'S (owner,
+    #   2026-09-14). impossibleRow is the same test plus the pool's own
+    #   ceiling: the open record is a weak bar for a seventh grader, and a
+    #   2:15 800 that clears Rudisha by a minute is still not a time a
+    #   middle schooler runs. College and pro stay exempt inside it.
+    #
+    # ★★ AND IT IS GATED HERE, NOT ON THE BOARD (owner, 2026-09-14: "the
+    #    thing stopping wrong sprint races should be in building ranking
+    #    results so rloading the page doesnt take even longer"). The first
+    #    version of this put the same rule in the best-times board's
+    #    candidate WHERE as a generated SQL predicate -- which meant
+    #    evaluating a piecewise log-interpolated curve per candidate row,
+    #    on every page load, on a board that was already slow. A row that
+    #    is not a performance should not be in ranking_results at all;
+    #    then every board is clean for free and none of them pays for it.
+    if impossibleRow(row.time_seconds, distance, row.gender, pool):
         _GATE[sport]["impossible_pace"] += 1
         return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
@@ -1828,6 +1843,27 @@ _CANONICAL_INDEXES = {
         ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
         ("rr_board_time_idx", "(pool, sport, year, time_seconds)"),
+        # ★ AND THE SAME PAIR THE RATING BOARDS ALREADY HAVE (owner,
+        #   2026-09-14: "best times/marks is pretty slow, same with
+        #   performances"). rr_board_time_idx needs a YEAR to reach its
+        #   ordering column, and the Academic year filter defaults to Any
+        #   -- so the default Best-times board sorted every row of the pool
+        #   to take the first fifty, which is exactly the problem
+        #   rr_pool_rating_idx was added to fix for the rating boards. The
+        #   time boards were never given the equivalent.
+        #
+        # ! DISTANCE IS IN THE KEY HERE, and it is not in the rating ones.
+        #   The PR board RANKS THE CLOCK AT ONE DISTANCE -- that filter is
+        #   what the board IS, not an optional narrowing -- so an index
+        #   that cannot use it leaves a range filter between the equality
+        #   and the ordering and the sort comes back.
+        ("rr_pr_time_idx", "(pool, distance, time_seconds)"),
+        ("rr_pr_sport_time_idx", "(pool, sport, distance, time_seconds)"),
+        # ★ AND PERFORMANCES ONCE A DISTANCE IS PICKED. rr_pool_rating_idx
+        #   and rr_pool_sport_rating_idx cover the unfiltered board; adding
+        #   a distance to either one turns the ordering back into a sort.
+        ("rr_perf_dist_rating_idx",
+         "(pool, sport, distance, speed_rating DESC)"),
         # ★ THE EVENT WINDOW (rankings._abilitySource, 2026-09-08).
         #   That board re-aggregates ranking_results over a distance
         #   range, and with sport='both' there is NO sport predicate --

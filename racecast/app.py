@@ -4369,8 +4369,11 @@ def school_page(school_name):
 
             # same name, two schools: state chips scope every table to
             # one home-state cluster (see school_identity.py)
-            chips, primary_state = stateChips(cur, school_name)
+            # `include=`: the state the visitor asked for, so a cluster the
+            # chip bar hides but the LABEL names still gets its own page
+            # (owner, 2026-09-14: the two Oregons, and Williams).
             state = (request.args.get("state") or "").strip().upper() or None
+            chips, primary_state = stateChips(cur, school_name, include=state)
             if state and not any(c["state"] == state for c in chips):
                 state = None
             # ★ NO MERGED PAGE (owner's rule 2026-08-27). A name shared by
@@ -4549,8 +4552,10 @@ def school_prs_page(school_name):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            chips, primary_state = stateChips(cur, school_name)
+            # same widening as school_page: the PRs page is reached from
+            # the school page's own link and must resolve the same school
             state = (request.args.get("state") or "").strip().upper() or None
+            chips, primary_state = stateChips(cur, school_name, include=state)
             if state and not any(c["state"] == state for c in chips):
                 state = None
             # no merged PR page either -- same per-school rule as school_page

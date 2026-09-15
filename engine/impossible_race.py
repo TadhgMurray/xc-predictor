@@ -52,12 +52,15 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"),
         sys.path.insert(0, _p)
 
 from database import getConn                                    # noqa: E402
-from record_pace import (SLOWEST_RECORD_PACE, exemptPool,        # noqa: E402
-                         impossiblePace, recordPace)
+from record_pace import (SLOWEST_RECORD_PACE, PACE_FLOOR_SLACK,  # noqa: E402
+                         POOL_PACE_FACTOR, exemptPool, impossiblePace,
+                         poolFactor, recordPace)
 
 # SQL keeps every row faster than this (s/km); a margin over the slowest
 # record pace so a rounding in the SQL arithmetic cannot lose a candidate.
-PREFILTER_PACE = float(int(SLOWEST_RECORD_PACE) + 10)
+# ... times the widest pool factor (record_pace.POOL_PACE_FACTOR: an
+# elementary pool's floor sits 35% outside the open record)
+PREFILTER_PACE = float(int(SLOWEST_RECORD_PACE * max(POOL_PACE_FACTOR.values())) + 10)
 
 # ★ RATED DISTANCE ROWS ONLY, AT A DISTANCE A RACE CAN BE (run 23,
 #   2026-09-14: the first cut judged every timed row and condemned 5.8M
@@ -126,11 +129,15 @@ def judge(sport, rows):
         if poolIsCollege(r.get("rating_pool"), r.get("source")):
             continue
         t, d = r.get("time_seconds"), r.get("distance")
-        if not impossiblePace(t, d, r.get("gender")):
+        # the pool's own floor, as the builder's impossibleRow applies it
+        # (record_pace.POOL_PACE_FACTOR); a row without a pool gets the
+        # open record alone
+        factor = poolFactor(r.get("rating_pool"))
+        if not impossiblePace(t, d, r.get("gender"), slack=PACE_FLOOR_SLACK * factor):
             continue
         pace = float(t) / (float(d) / 1000.0)
         out.setdefault(raceKey(sport, r), []).append(
-            (r["result_id"], float(t), float(d), pace, recordPace(d, r.get("gender"))))
+            (r["result_id"], float(t), float(d), pace, recordPace(d, r.get("gender")) * factor))
     return out
 
 

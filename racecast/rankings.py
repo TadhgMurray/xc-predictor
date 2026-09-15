@@ -1395,6 +1395,13 @@ def getPrRankings(cur, f):
     else:
         ranked, cand_where, cand_order, dedup_key = (
             "time_seconds",
+            # ! NO PACE FLOOR HERE. A time nobody in this pool has run is
+            #   kept OUT OF ranking_results by build_ranking_results'
+            #   impossibleRow gate, which is where a row that is not a
+            #   performance belongs -- once. Re-checking it per candidate
+            #   row on every page load costs a piecewise log-interpolated
+            #   curve per row on the site's slowest board, and buys
+            #   nothing the build has not already done (owner, 2026-09-14).
             f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}",
             "time_seconds ASC", "round(time_seconds::numeric, 1)")
         order = _orderBy(f, _SORTS_PR, "p.time_seconds ASC", "p.result_id")

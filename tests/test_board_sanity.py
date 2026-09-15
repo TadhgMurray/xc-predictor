@@ -36,8 +36,20 @@ def test_professional_pools_are_not_boards():
 def test_record_pace_interpolates_in_log_distance_and_holds_flat_beyond():
     p800 = brr.recordPace(800, "M"); p1500 = brr.recordPace(1500, "M")
     assert p800 < p1500 < brr.recordPace(5000, "M") < brr.recordPace(10000, "M")
-    assert brr.recordPace(400, "M") == p800
+    # ⚠ THIS USED TO ASSERT recordPace(400) == p800, WHICH PINNED THE BUG.
+    #   The table began at 800 m and recordPace clamps below its first
+    #   point, so every sprint was judged against the 800 m record pace --
+    #   12.6 s for 100 m, which made every real sprint "impossible" and
+    #   every impossible one indistinguishable from a real one (owner,
+    #   2026-09-14: wrong sprint times on the best-times board). The table
+    #   reaches 55 m now, so a 400 has its own record and it is faster.
+    assert brr.recordPace(400, "M") < p800
+    # and the curve FALLS then RISES: 100 m is the fastest pace ever run
+    assert brr.recordPace(100, "M") < brr.recordPace(400, "M")
+    assert brr.recordPace(100, "M") < brr.recordPace(60, "M")
     assert brr.recordPace(42195, "M") == brr.recordPace(10000, "M")
+    # below the first point it still clamps -- to the 55 m record now
+    assert brr.recordPace(40, "M") == brr.recordPace(55, "M")
     assert brr.recordPace(3000, "F") > brr.recordPace(3000, "M")
 
 
