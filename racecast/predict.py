@@ -1366,7 +1366,24 @@ def _exactField(cur, meet_id, div_id, sport):
 #   through and graduated seniors carried into this year's lineup. The query
 #   now upper-cases and trims before comparing, so only the SPELLINGS need
 #   listing, not their capitalisations.
+# ⚠ THIS LIST WAS AN EXACT MATCH AND IT LET SENIORS THROUGH (owner,
+#   2026-09-15: "predicting a future race does not remove seniors from last
+#   season"). UPPER(BTRIM(grade)) caught "12", "12TH", "SR" and "SENIOR" and
+#   nothing else -- so "Sr." kept its period and stayed, and every COLLEGE
+#   senior stayed, because the feeds write those as "SR-4" or "16" and
+#   neither is in this list. A squad carried forward still had its
+#   graduating class in it, which is the one thing the carry-forward exists
+#   to remove.
+#
+# ★ rankings.gradeKeySql ALREADY KNOWS. It is the one place that decides a
+#   senior is a senior whatever the feed called them: it strips non-digits,
+#   reads the fr/so/jr/sr/se prefixes, and maps a college 13-16 onto its
+#   class word. A high school senior keys to '12' and a college senior to
+#   'sr', so those two keys are the whole terminal set.
+#
+# ! KEPT ONLY FOR THE PYTHON-SIDE FLAG BELOW. The SQL uses the key.
 _TERMINAL_GRADES = ["12", "12TH", "SR", "SENIOR"]
+_TERMINAL_KEYS = ("12", "sr")
 
 
 def _currentSquads(cur, schools, sport, season_year, gender=None):
@@ -1433,7 +1450,12 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
     gender           -- "M"/"F": only that side of the school. A school has a
                         boys team and a girls team and they are not one squad.
     """
-    grade_clause = ("AND UPPER(BTRIM(COALESCE(s.grade, ''))) <> ALL(%(term)s)"
+    # ! AN UNGRADED ROW STAYS, and that is deliberate: a blank grade is not
+    #   evidence of graduation, and dropping them would shrink every squad
+    #   whose feed is thin on grades. They are flagged below instead.
+    from rankings import gradeKeySql
+    grade_clause = (f"""AND (s.grade IS NULL OR BTRIM(s.grade) = ''
+                          OR {gradeKeySql("s")} <> ALL(%(term_keys)s))"""
                     if exclude_terminal else "")
     # ★ A TRANSFER HAS ALREADY RACED SOMEWHERE ELSE; A GRADUATE HAS NOT
     #   (issue #83). The carry-forward only runs for a school with NO row in
@@ -1466,7 +1488,8 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
           {gender_clause}
         ORDER  BY s.school, s.mean_rating DESC NULLS LAST
     """, {"schools": schools, "yr": year, "sport": sport,
-          "term": _TERMINAL_GRADES, "active_yr": active_year,
+          "term": _TERMINAL_GRADES, "term_keys": list(_TERMINAL_KEYS),
+          "active_yr": active_year,
           "gender": gender})
     out = {}
     for r in cur.fetchall():
