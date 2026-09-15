@@ -52,6 +52,7 @@ import os
 import re
 import secrets
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
@@ -331,8 +332,19 @@ def _http(url, data=None, headers=None, form=False, timeout=10):
             body = json.dumps(data).encode("utf-8")
             hdrs["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=body, headers=hdrs, method="POST" if body is not None else "GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", "replace")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        # ! THE BODY IS THE REASON. A provider's 403 says which of "domain
+        #   not verified", "key not allowed to send" or "sandbox: your own
+        #   address only" it is; without it the log said only Forbidden.
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+        except Exception:                               # noqa: BLE001
+            pass
+        raise RuntimeError(f"HTTP {exc.code} from {urllib.parse.urlsplit(url).netloc}: {detail or exc.reason}")
     return json.loads(raw) if raw.strip() else {}
 
 
