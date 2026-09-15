@@ -27,8 +27,16 @@ from transformer import (XCPredictor, SEQUENCE_FEATURES,
 
 # Where feature_extraction.py saved chunk_NNNN.pt + metadata.pkl, and
 # where we'll write the trained model.
+#
+# ★ --data OVERRIDES BOTH, and that is what makes the smoke test possible
+#   without touching the real chunks. model/fake_chunks.py writes the same
+#   on-disk format to any directory; before this flag existed the only way
+#   to reach the training loop was to put those fakes IN model/data, beside
+#   (or on top of) gigabytes that cost hours to extract. On a rented pod it
+#   also lets the chunks sit on the mounted volume while the code lives on
+#   the container's own disk.
 DATA_DIR  = "model/data"
-MODEL_OUT = "model/data/model.pt"
+MODEL_OUT = os.path.join(DATA_DIR, "model.pt")
 
 # How many training examples go through one forward/backward pass.
 # Bigger = smoother gradient estimates but more memory.
@@ -134,7 +142,7 @@ SEED = 42
 # Where we save the two numbers (mean, std) that turn a z-scored
 # prediction back into real seconds. Losing this file makes a trained
 # model useless for inference.
-STATS_OUT = "model/data/target_stats.pkl"
+STATS_OUT = os.path.join(DATA_DIR, "target_stats.pkl")
 
 # ★ THE TARGET IS A LOG RATIO TO THE ATHLETE'S LAST RACE, and the loss is
 #   Gaussian negative log-likelihood on its z-score with a LEARNED variance
@@ -1224,6 +1232,12 @@ if __name__ == "__main__":
     _ap = argparse.ArgumentParser(
         description="Train the predictor. Every dial below has a default "
                     "that changes nothing; pass one to change it.")
+    _ap.add_argument("--data", default=None,
+                     help=f"directory holding chunk_NNNN.pt + metadata.pkl "
+                          f"(default {DATA_DIR}). model.pt and "
+                          f"target_stats.pkl are written here too, so a "
+                          f"smoke run on model/fake_chunks.py output never "
+                          f"touches the real chunks.")
     _ap.add_argument("--max-chunks", type=int, default=None,
                      help="train on the first N chunks only (10k examples "
                           "each). Chunks are corpus-wide shuffles, so a "
@@ -1253,6 +1267,11 @@ if __name__ == "__main__":
                           "optimizer state.")
     _args = _ap.parse_args()
 
+    # ⚠ FIRST, because MODEL_OUT and STATS_OUT are derived from it.
+    if _args.data:
+        DATA_DIR = _args.data
+        MODEL_OUT = os.path.join(DATA_DIR, "model.pt")
+        STATS_OUT = os.path.join(DATA_DIR, "target_stats.pkl")
     if _args.max_chunks:
         MAX_CHUNKS = _args.max_chunks
     if _args.batch:

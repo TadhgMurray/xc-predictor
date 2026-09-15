@@ -38,10 +38,18 @@ from transformer import XCPredictor
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=None,
+                    help="chunk directory + model.pt (default model/data). "
+                         "Matches train.py --data, so a smoke model written "
+                         "beside fake chunks can be checked in place.")
     ap.add_argument("--n", type=int, default=500,
                     help="examples to run (default 500)")
     args = ap.parse_args()
 
+    if args.data:
+        T.DATA_DIR = args.data
+        T.MODEL_OUT = os.path.join(args.data, "model.pt")
+        T.STATS_OUT = os.path.join(args.data, "target_stats.pkl")
     for path in (T.MODEL_OUT, T.STATS_OUT):
         if not os.path.exists(path):
             print(f"MISSING {path} -- train first (overnight step 05, or "
@@ -72,7 +80,7 @@ def main():
 
     # a couple of chunks is plenty for a smoke read
     T.MAX_CHUNKS = max(1, (args.n // 4096) + 1)
-    dataset = T.ChunkedRaceDataset(T.DATA_DIR)
+    dataset = T.ChunkedRaceDataset(args.data or T.DATA_DIR)
     n = min(args.n, len(dataset))
 
     print(f"running {n} examples...")

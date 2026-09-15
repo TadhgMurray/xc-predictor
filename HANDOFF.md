@@ -1075,3 +1075,85 @@ tool that picks a lineup, not for rankings they can already read.
   on both editions: zero overflow, chip visible at every one.
 - **Tests:** `tests/test_coach_view.py` (routes, the 301, the path-keyed
   switch, no reader state in cached HTML, the reflow band).
+
+## 13. 2026-09-15: THE TRAINING RUN, PROVEN BEFORE IT IS PAID FOR
+
+`model/fake_chunks.py` says the training code "was never executed". It has
+been now, both halves, on this machine with CPU torch:
+
+```
+  python model/fake_chunks.py --out /tmp/fake --chunks 6 --chunk-size 400
+  python model/train.py --data /tmp/fake --max-chunks 6 --batch 64 \
+      --epochs 2 --patience 1 --workers 0
+  python model/predict_check.py --data /tmp/fake --n 300
+```
+
+The loop turns end to end: chunk load, athlete-disjoint split from
+`val_mask.pt`, feature/target stats from the prefix, venue embedding sized
+from the vocab, train, validate, early stop, save. `predict_check` then
+loads `model.pt`, runs a real forward pass and denormalises to seconds,
+with the 1-sigma band landing at 67% coverage against a 68% target. The
+numbers are noise -- the fake target is built from the sequence plus noise
+-- but the CHAIN is the real thing, and it is the chain that used to cost a
+full extraction to test.
+
+`tests/test_model_contract.py` and `tests/test_train_runtime.py` both pass.
+
+### 13.1 `--data`, new on train.py and predict_check.py
+
+Both scripts hardcoded `model/data`, so the only way to reach the training
+loop was to put fake chunks *in* the directory holding gigabytes that cost
+hours to extract. `--data` moves `DATA_DIR`, `MODEL_OUT` and `STATS_OUT`
+together -- separately would score one directory's chunks against another
+directory's weights, which is a silent mismatch rather than an error. On a
+rented pod it also lets the chunks sit on the mounted volume.
+
+### 13.2 ⚠ THE CHUNKS ON THE SERVER ARE STALE
+
+Extraction ran on 2026-09-01. It reads `r.normalized_time` and joins
+`course_difficulties` -- **both rebuilt by every engine run**, and runs 23
+and 24 have landed since. Training on those chunks would bake superseded
+difficulties into the weights and there would be no error to see it by.
+Re-extract after run 24 finishes, before training.
+
+### 13.3 How long it takes, and why `--max-chunks` is the answer
+
+`train.py` states it: ~80M examples, ~1.25M steps per epoch at batch 64,
+days of GPU time. The staged run, each step deciding the next:
+
+1. `--max-chunks 5` -- minutes. Read `ex/s` and `waiting` off the epoch
+   line. `waiting` is what decides `--workers`: if the GPU is idle waiting
+   on disk, raise it.
+2. `--max-chunks 200` (2M examples) -- a real loss curve inside an hour,
+   and it answers the only question that matters at this stage: does
+   `model %` beat `last-race %` on the epoch line? If it does not, no
+   amount of extra corpus will fix it and the money is better unspent.
+3. The full run, sized from the `ex/s` measured in step 1:
+   80M / ex_per_s = seconds per epoch, times roughly 6-10 epochs before
+   early stopping bites.
+
+### 13.4 What the feature vector does NOT carry, for the projection later
+
+The context vector is 21 wide and pinned in three places
+(`feature_extraction._buildContextVector`, `transformer.CONTEXT_FEATURES`,
+`racecast/predict.py`), and a mismatch is a shape error after the
+extraction has written gigabytes. So this is a list for the NEXT
+extraction, not a change to make before a paid run:
+
+- **Grade at the target.** The context carries the pool ordinal (hs=2,
+  college=3) but not the year within it. "What will they run as a college
+  sophomore" is not expressible; the model can only infer it from the
+  sequence's grades plus the gap, which gets weak across two to four years.
+  This is the one that actually blocks the projection board.
+- **Absolute year.** Only `day_of_year` is there. Probably fine, since the
+  engine takes era out of `normalized_time` before the model sees it.
+- **The engine's per-race uncertainty**, which would let the model
+  down-weight a noisy history rather than infer the noise itself.
+
+And the horizon, which is a DATA change rather than a width change:
+`FORECAST_GAP_MAX_WEEKS = 40`, skewed to a median gap of 11.5 weeks. The
+projection needs 52-208. Raising the cap alone would not do it -- the skew
+puts almost no mass out there, and it would dilute the near-term model
+that is the point of this run. It wants its own twin type: a cut at a
+fixed calendar point (end of high school) with a college race as the
+target. Separate extraction, separate regime, after this model works.
