@@ -2094,7 +2094,7 @@ def _buildTensors(examples: list[dict], max_len: int):
 
     # Print shapes so we can sanity-check before saving.
     # e.g. sequences: [10_100_000, 21]  (ragged; 2.4M examples)
-    #      context:   [2_400_000, 21]
+    #      context:   [2_400_000, 24]
     #      targets:   [2_400_000]
     # This prints as [depth, rows, columns], i.e. # of examples,
     # steps, features.
@@ -2211,6 +2211,7 @@ def saveAll(athletes, encoders: dict, vocab: dict,
     all_val        = []   # per EXAMPLE, global order -- train.py's split
     career_lengths = []   # per ATHLETE -- the distribution report
     n_val_athletes = 0
+    kinds          = {}  # real / forecast / horizon, for the closing summary
     buffer         = []  # holds up to SHUFFLE_FACTOR*CHUNK_SIZE before flushing
 
     # Local RNG, not random.seed(), so this does not reach out and change
@@ -2262,6 +2263,12 @@ def saveAll(athletes, encoders: dict, vocab: dict,
         for ex in examples:
             ex["venue_idx"] = venueIndex(ex.pop("venue_row"), vocab)
             ex["is_val"]    = is_val
+            # ★ COUNT THE THREE CLASSES. A horizon twin needs a multi-year
+            #   career, so it is scarce by construction -- and "scarce" and
+            #   "silently zero" look identical without this. If the horizon
+            #   line reads 0 at the end of a full run, the long-gap examples
+            #   the recruiting projection needs were never made.
+            kinds[ex.get("kind") or "real"] = kinds.get(ex.get("kind") or "real", 0) + 1
 
         buffer.extend(examples)
 
@@ -2311,6 +2318,14 @@ def saveAll(athletes, encoders: dict, vocab: dict,
     _saveEncoders(encoders, output_dir)
     _saveVenueVocab(vocab, output_dir)
 
+    n_all = max(total_examples, 1)
+    print(f"  by kind: " + ", ".join(
+        f"{k} {v:,} ({100.0 * v / n_all:.1f}%)"
+        for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])))
+    if not kinds.get("horizon"):
+        print("  ⚠ NO HORIZON TWINS. The 44-208 week examples the recruiting "
+              "projection needs were not produced -- check HORIZON_GAP_MIN_WEEKS "
+              "against the corpus, or that rng is being passed through.")
     print(f"Done. {total_examples:,} examples saved in {chunk_idx} chunks.")
 
 # _saveChunk

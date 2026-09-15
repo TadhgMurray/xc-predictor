@@ -1356,3 +1356,75 @@ nineteen of them.
 beside `last-race Y%`. If X does not beat Y on two million examples, the
 architecture is not learning and more corpus will not save it. That is the
 go/no-go, and it arrives inside an hour.
+
+### 15.1 Running the extraction (2026-09-15)
+
+⚠ **SMOKE IT FIRST.** feature_extraction.py changed substantially this day
+-- the context vector went 21 -> 24, `_gapTwin` replaced `_forecastTwin`'s
+body, and a third example class was added -- and none of it has touched a
+real database. `--max-athletes` runs the ENTIRE path (encoders, venue
+vocab, both streams, example build, chunk write) on a few thousand
+athletes, which is minutes instead of an hour and fails at the same line.
+
+```
+  cd /srv/xc-predictor && git pull
+  df -h /srv                      # the full set is ~145-170 GB; see 15
+  $PY model/feature_extraction.py --max-athletes 3000 --out /tmp/xcp-smoke
+```
+
+Read the closing lines. The run now prints its example mix:
+
+```
+  by kind: real N (..%), forecast N (..%), horizon N (..%)
+```
+
+- **horizon must be non-zero.** It is scarce by construction -- only an
+  athlete with two races 44+ weeks before a target can make one -- so a
+  small percentage is right and 0 means the long-gap examples the
+  recruiting projection needs were never produced. The run says so loudly
+  if that happens.
+- then check the width, which is the failure that otherwise surfaces
+  hours later inside the first nn.Linear:
+
+```
+  $PY -c "import torch; c=torch.load('/tmp/xcp-smoke/chunk_0000.pt', weights_only=False); \
+      print(c['context'].shape, c['sequences'].shape)"
+  # context must be [N, 24]; sequences [*, 21]
+```
+
+Only then the real run:
+
+```
+  setsid nohup $PY -u model/feature_extraction.py > /srv/extract.log 2>&1 </dev/null &
+  tail -f /srv/extract.log
+  du -sh model/data && ls model/data/chunk_*.pt | wc -l
+```
+
+**Then the pod.** Copy a PREFIX -- the full set does not fit on a 100 GB
+container disk (15), and a prefix is a fair sample because chunks are
+corpus-wide shuffles:
+
+```
+  cd /srv/xc-predictor/model/data
+  tar czf /tmp/prefix.tgz metadata.pkl lengths.pt val_mask.pt \
+      encoders.pkl venue_vocab.pkl $(ls chunk_*.pt | head -200)
+  scp -P <port> /tmp/prefix.tgz root@<ip>:/workspace/
+```
+
+⚠ **val_mask.pt AND lengths.pt ARE NOT OPTIONAL.** Without val_mask the
+trainer falls back to a random split over EXAMPLES, which puts the same
+athlete on both sides and makes the validation loss reward memorising.
+
+On the pod (RTX 3090, 6 vCPU -- see 15 for why `--workers 4`):
+
+```
+  cd /workspace/xc-predictor && tar xzf /tmp/prefix.tgz -C model/data/
+  $PY -u model/train.py --max-chunks 5 --batch 512 --amp --workers 4 \
+      --checkpoint model/data/ckpt.pt          # read ex/s and waiting
+  setsid nohup $PY -u model/train.py --batch 512 --lr 1e-3 --amp \
+      --workers 4 --patience 3 --checkpoint model/data/ckpt.pt \
+      > /workspace/train.log 2>&1 </dev/null &
+```
+
+The epoch line prints `model X%` beside `last-race Y%`. X beating Y is the
+whole question; it arrives inside an hour on a 200-chunk prefix.
