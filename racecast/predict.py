@@ -49,6 +49,12 @@ MODEL_DATA = os.path.dirname(MODEL_PATH) or os.path.join(_ROOT, "model",
 
 # Scoring: the top N runners per team count, and the next M displace.
 # Standard cross country is 5 scorers, 2 displacers.
+# ★ WHAT MAKES A YEAR A SEASON, for _currentSeason's fallback. A real high
+#   school season is hundreds of thousands of results across the corpus; the
+#   smallest plausible one is still orders of magnitude above this. The point
+#   is only to be far above a typo and far below a season.
+SEASON_MIN_RESULTS = 1000
+
 TEAM_SCORERS = 5
 TEAM_DISPLACERS = 2
 
@@ -1032,10 +1038,34 @@ def _currentSeason(cur, sport):
     row = cur.fetchone()
     if row and row["value"]:
         return int(row["value"])
-    # No panels run yet: fall back to the newest year that has any results.
+
+    # ⚠ THE FALLBACK USED TO BE max(substring(date,1,4)) AND ONE BAD ROW
+    #   TOOK THE PAGE DOWN (owner, 2026-09-15: "0 athletes for all teams").
+    #   homepage_meta held season_year_TF but no season_year_XC, so XC came
+    #   down this path -- and a single corrupt date in `results` with the
+    #   year 2223 won the max(). Every squad query then asked for season
+    #   2223, found nobody, and the carry-forward asked 2222 and found
+    #   nobody either: 396 teams, 0 runners, with no error anywhere.
+    #
+    # ★ SO: THE NEWEST YEAR THAT LOOKS LIKE A SEASON, not the newest string
+    #   in the column. A real season has tens of thousands of results; a
+    #   typo has one. And nothing ahead of the academic year we are actually
+    #   in can be a current season, whatever the data says.
+    from season_year import academicYear
+    ceiling = academicYear(datetime.date.today())
     table = "results" if sport == "XC" else "results_tf"
-    cur.execute(f"SELECT max(substring(date,1,4))::int AS y FROM {table}")
-    return cur.fetchone()["y"]
+    cur.execute(f"""
+        SELECT substring(date, 1, 4)::int AS y
+        FROM   {table}
+        WHERE  date ~ '^[0-9]{{4}}-'
+        GROUP  BY 1
+        HAVING count(*) >= %(floor)s
+           AND substring(date, 1, 4)::int <= %(ceiling)s
+        ORDER  BY 1 DESC
+        LIMIT  1
+    """, {"floor": SEASON_MIN_RESULTS, "ceiling": ceiling})
+    row = cur.fetchone()
+    return row["y"] if row else ceiling
 
 
 # Purpose:   a school's HOME state, for display beside its name.
