@@ -111,6 +111,47 @@ def main():
         print("                       conversion alone and leaves every other")
         print("                       reader of the table still wrong.")
 
+    # ---- the table the CONVERSIONS PAGE actually uses ------------------ #
+    #
+    # ⚠ /api/course_search reads course_distances, NOT course_difficulties,
+    #   and /api/convert feeds that client-supplied number straight into the
+    #   math ("difficulty": c.get("difficulty")). Nothing in the repository
+    #   WRITES course_distances -- it is read in three places and rebuilt by
+    #   no pipeline step -- so it holds whatever anchor was current when it
+    #   was last populated. If its median sits near 0 while
+    #   course_difficulties sits near +6%, every named-course XC conversion
+    #   is off by the whole grass cost, and only XC: the TF targets are
+    #   "a typical track" and never touch this table.
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c2:
+                c2.execute("""
+                    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY difficulty)
+                             AS med,
+                           count(*) AS n
+                    FROM   course_distances
+                    WHERE  difficulty IS NOT NULL
+                """)
+                cdm = c2.fetchone()
+        med2 = float(cdm["med"]) if cdm and cdm["med"] is not None else None
+        print(f"\ncourse_distances (what /api/course_search serves the page):")
+        if med2 is None:
+            print("  empty or absent")
+        else:
+            print(f"  median difficulty  {100 * med2:+7.3f}%   over {cdm['n']:,} rows")
+            drift = float(xc) - med2
+            print(f"  vs course_difficulties median XC {100 * float(xc):+7.3f}%"
+                  f"   ->  {100 * drift:+.2f} points apart")
+            if abs(drift) > 0.015:
+                print("\n  ⚠ THESE ARE THE SAME COURSES ON DIFFERENT ANCHORS, and the")
+                print("    page is using the WRONG one. course_difficulties is rebuilt")
+                print("    every run; course_distances is written by nothing in the")
+                print("    repo. Fix /api/course_search to serve the rebuilt table.")
+            else:
+                print("\n  the two agree; course_distances is not the problem.")
+    except Exception as exc:                             # noqa: BLE001
+        print(f"\n  (course_distances check skipped: {exc})")
+
     if named:
         print("\n  a few 5k courses, as stored:")
         for r in named:
