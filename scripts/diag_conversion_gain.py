@@ -6,28 +6,25 @@ disagrees.
     /srv/venv/bin/python scripts/diag_conversion_gain.py --sport XC --pool hs_m
     /srv/venv/bin/python scripts/diag_conversion_gain.py --sport TF --n 800
 
-★ WHY IT SPLITS IN TWO. The engine's relation between a stored rating and
-  a stored normalized_time is one line of algebra; everything else -- the
-  distance curve, the course difficulty, the weather, the winter gain --
-  lives between normalized_time and the raw finish time. Joining
-  ranking_results (rating, pool, adjudicated distance) to the source table
-  (normalized_time) puts all three on one row, so the two halves can be
-  measured apart instead of blamed together:
+★ TWO CHECKS, AND THE SECOND IS THE ONE THAT USUALLY FIRES.
 
-    A. rating  <-> normalized_time    the pool mean and the engine scale.
-                                      No distance, no difficulty, no gain.
-                                      Off here = every conversion in this
-                                      pool is off by the same factor.
+    time -> normalized_time   the distance curve, the difficulty and the
+                              sport gain, measured at each row's OWN
+                              distance so the curve cancels. Tight and
+                              small here means normalisation is healthy.
 
-    B. time    <-> normalized_time    the distance curve, the difficulty,
-                                      the sport gain. Off here with A
-                                      clean = the curve or the difficulty,
-                                      not the page's scale.
+    the anchor                engine_scale read back, and the XC-minus-TF
+                              median_effect compared with the grass cost
+                              joint_solve.XC_TRACK_GAP states. Every
+                              difficulty is anchored on the unweighted
+                              mean over outdoor track cells, so this is
+                              where a bad TRACK solve becomes a bad XC
+                              CONVERSION -- with a perfectly correct
+                              normalized_time sitting behind it.
 
-  That is the split worth having, because A is a page bug and B is
-  usually an engine one -- and "the conversions look wrong" has meant
-  both at different times (issue 306; the TF sport-gain scale break of
-  2026-09-15).
+  That second one is the shape of "the normalized 5k is fine but the
+  conversions read high", and it is not visible in any round trip,
+  because venueEffect is on both legs and the error cancels.
 
 ★ THE SIGN, STATED ONCE. Errors are reported as a percentage of the
   engine's own number, and "FAST" always means the page produces a
@@ -95,17 +92,42 @@ def _stats(errs):
             "mean_abs": statistics.fmean(abs(e) for e in errs)}
 
 
-def halfA(cv, rows, sport):
-    """rating -> normalized_time, against the stored normalized_time.
-    Pure pool mean and engine scale."""
-    errs = []
-    for r in rows:
-        got = cv._norm_from_rating(float(r["speed_rating"]), r["pool"], sport=sport)
-        if not got or got <= 0:
-            continue
-        want = float(r["normalized_time"])
-        errs.append(100.0 * (got - want) / want)
-    return _stats(errs)
+def scaleReport(cur, pool):
+    """engine_scale read back, and the one relation that must hold.
+
+    ★ THIS REPLACED A BROKEN CHECK (2026-09-15). The first version compared
+      _norm_from_rating against the stored normalized_time and called the
+      difference "the pool mean and engine scale". It is not: by the
+      engine's own algebra rating = 100 * pm * exp(eff) / norm, so
+      100 * pm / rating is the ADJUSTED time, and the comparison was
+      measuring exp(eff) -- the per-row course effect. That is why it read
+      a ~0 median with a +-2% IQR and pointed at nothing.
+
+    ★ WHAT ACTUALLY DECIDES IT. joint_golive anchors every difficulty on
+      the UNWEIGHTED MEAN over outdoor track cells:
+
+          anchor_used = float(np.mean(raw[ref]))     # ref = solved & TF & outdoor
+          anchored    = raw - anchor_used
+
+      so XC difficulties are expressed relative to the average track, and
+      engine_scale.median_effect carries that offset per (pool, sport).
+      The gap between a pool's XC and TF median_effect is therefore the
+      measured grass cost, and joint_solve.XC_TRACK_GAP says what it
+      should be. Off there and every XC conversion is off by a constant --
+      while normalized_time, which never sees the anchor, stays correct.
+      That is the shape of "the normalized 5k is fine but the conversions
+      read high".
+
+    ⚠ AN UNWEIGHTED MEAN IS THE OUTLIER-SENSITIVE CHOICE. It was picked
+      over the results-weighted mean so a few enormous championship ovals
+      could not define the zero -- but it buys that by letting a handful
+      of wild per-venue track estimates drag it instead. joint_golive
+      prints the median beside it for exactly this reason, with the note
+      that the two agreeing is the assumption. Indoor ovals reading 4%
+      easy (owner, 2026-09-15) is that assumption breaking."""
+    cur.execute("SELECT pool, sport, pool_mean, median_effect, anchor_shift, "
+                "n_rows FROM engine_scale ORDER BY pool, sport")
+    return cur.fetchall()
 
 
 def halfB(cv, rows, sport):
@@ -154,6 +176,7 @@ def main(argv=None):
             n_gain = cur.fetchone()["n"]
             by_sport = {s: sample(cur, args.n, s, pool, f"{args.year}-01-01",
                                   args.min_time) for s in sports}
+            scale = scaleReport(cur, pool)
 
     gain_env = os.environ.get("XCP_CONVERT_SPORT_GAIN")
     print(f"\nsport_gain: {n_gain:,} rows "
@@ -169,23 +192,53 @@ def main(argv=None):
         if not rows:
             print("    nothing sampled -- widen --year, or clear --pool\n")
             continue
-        a, b = halfA(cv, rows, s), halfB(cv, rows, s)
-        describe("A  rating -> normalized", a, fast_word="FAST (rating reads high)")
-        describe("B  time   -> normalized", b)
+        b = halfB(cv, rows, s)
+        describe("time -> normalized", b)
         print()
-        for name, st in (("A", a), ("B", b)):
-            if st and (worst is None or st["mean_abs"] > worst[2]):
-                worst = (s, name, st["mean_abs"])
+        if b and (worst is None or b["mean_abs"] > worst[2]):
+            worst = (s, "time->normalized", b["mean_abs"])
 
-    print("  reading it:")
-    print("    A off, B clean   -> the page's pool mean / engine scale for that pool.")
-    print("    A clean, B off   -> the distance curve or the difficulty; an engine")
-    print("                        job, not a page one.")
-    print("    both off         -> start with A; B is measured through it.")
-    print("    both under ~0.3% -> the page and the engine agree; anything still")
-    print("                        wrong on screen is wrong in the ratings too.")
+    # ---- the anchor, which is what moves XC conversions ---------------- #
+    import joint_solve as js
+    print("  engine_scale, and the grass cost it implies:")
+    print(f"    {'pool':<12}{'sport':>6}{'pool_mean':>12}{'median_eff':>12}"
+          f"{'anchor_shift':>14}{'rows':>10}")
+    by_pool = {}
+    for r in scale:
+        print(f"    {r['pool']:<12}{r['sport']:>6}{r['pool_mean']:>12.2f}"
+              f"{r['median_effect']:>12.5f}{r['anchor_shift']:>14.5f}"
+              f"{r['n_rows']:>10,}")
+        by_pool.setdefault(r["pool"], {})[r["sport"]] = r
+    print()
+    bad = []
+    for pname, d in sorted(by_pool.items()):
+        if "XC" not in d or "TF" not in d:
+            continue
+        gap = float(d["XC"]["median_effect"]) - float(d["TF"]["median_effect"])
+        off = gap - js.XC_TRACK_GAP
+        flag = "  <-- OFF" if abs(off) > 0.01 else ""
+        print(f"    {pname:<12} XC - TF median_effect = {100 * gap:+7.2f}%   "
+              f"expected {100 * js.XC_TRACK_GAP:+.2f}%   off {100 * off:+6.2f} pts{flag}")
+        if abs(off) > 0.01:
+            bad.append((pname, off))
+
+    print("\n  reading it:")
+    print("    the XC-TF gap is the measured grass cost, and every difficulty is")
+    print("    anchored on the UNWEIGHTED MEAN over outdoor track cells. Wild")
+    print("    per-venue track estimates drag that mean, and the shift lands on")
+    print("    every XC course at once -- which is a conversion error with a")
+    print("    correct normalized_time behind it.")
+    if bad:
+        print(f"\n  ⚠ {len(bad)} pool(s) off the expected grass cost: "
+              + ", ".join(f"{p} {100 * o:+.1f} pts" for p, o in bad))
+        print("    Check the run log for the two lines that say so directly:")
+        print("      grep -E 'track zero|difficulty zero|grass cost' logs/run24.out")
+        print("    'track zero: mean 0.000, median X' -- mean and median diverging")
+        print("    means the track distribution has outliers dragging the anchor.")
+    else:
+        print("\n  the grass cost looks right in every pool; the anchor is not the problem.")
     if worst:
-        print(f"\n  largest disagreement: {worst[0]} half {worst[1]}, "
+        print(f"\n  largest time->normalized disagreement: {worst[0]}, "
               f"mean |err| {worst[2]:.3f}%")
     return 0
 
