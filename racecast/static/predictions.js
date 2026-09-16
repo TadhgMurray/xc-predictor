@@ -2091,6 +2091,8 @@ bindPicker($("squad-input"), $("squad-results"), "school", renderSimple,
   const p = new URLSearchParams({ school: school, sport: state.meet.sport });
   const g = state.field && state.field.gender;
   if (g) p.set("gender", g);
+  const lv = (state.field && state.field.levels) || [];
+  if (lv.length) p.set("levels", lv.join(","));   // see loadSquad
   setStatus(`Adding ${school}\u2026`, false);
   try {
     const res = await fetch("/api/predict/squad?" + p.toString());
@@ -2620,6 +2622,13 @@ async function loadSquad(school, gender) {
   if (squadCache.has(key)) return squadCache.get(key);
   const q = new URLSearchParams({ school: school, sport: state.meet.sport });
   if (g) q.set("gender", g);
+  /* ★ AND THE LEVEL (owner, 2026-09-16: "add entire roster... adds ppl not
+     at that school just at a school with same name"). athlete_season keys
+     on the BARE name, so Amherst is the college and the regional high
+     school at once -- and "the whole squad" took both. meetField reads the
+     level off the race; this narrows the add to the same one. */
+  const lv = (state.field && state.field.levels) || [];
+  if (lv.length) q.set("levels", lv.join(","));
   const res = await fetch("/api/predict/squad?" + q.toString());
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || res.statusText);

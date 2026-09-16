@@ -6873,6 +6873,16 @@ def api_predict_squad():
     if gender not in ("M", "F"):
         gender = None
 
+    # ★ AND THE LEVEL, WHICH THE FIELD ALREADY DERIVED (owner, 2026-09-16:
+    #   "add entire roster... adds ppl not at that school just at a school
+    #   with same name"). athlete_season keys on the BARE school name, so
+    #   Amherst is the college and the regional high school at once. The
+    #   page sends back the levels meetField read off the race, so adding a
+    #   squad narrows exactly the way the field it is being added to did.
+    _LEVELS = {"hs", "ms", "college", "elem", "pro"}
+    levels = {v for v in (request.args.get("levels") or "").lower().split(",")
+              if v in _LEVELS} or None
+
     # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER. /search/api
     #   indexes a school as "DeWitt (MI)" while athlete_season.school stores
     #   the bare "DeWitt", so a picker that sent the label got an empty squad
@@ -6885,11 +6895,13 @@ def api_predict_squad():
     #   that resolves is never second-guessed.
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            out = schoolSquad(cur, school, sport, gender=gender)
+            out = schoolSquad(cur, school, sport, gender=gender,
+                              levels=levels)
             if not out.get("runners"):
                 bare = search_index.bareSchool(school)
                 if bare and bare != school:
-                    out = schoolSquad(cur, bare, sport, gender=gender)
+                    out = schoolSquad(cur, bare, sport, gender=gender,
+                                      levels=levels)
     return jsonify(out)
 
 
