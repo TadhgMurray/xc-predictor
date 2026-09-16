@@ -26,8 +26,13 @@ def read(*p):
 
 
 def routeBody(src, path):
-    """The source of one @app.route handler."""
-    i = src.index(f'@app.route("{path}")')
+    """The source of one @app.route handler.
+
+    ! MATCHED ON THE PATH, NOT THE WHOLE DECORATOR. These routes grew a
+      methods=[...] argument and an exact-string search stopped finding
+      them -- a test that cannot locate what it guards passes nothing.
+    """
+    i = src.index(f'@app.route("{path}"')
     j = src.index("@app.route(", i + 10)
     return src[i:j]
 
@@ -73,3 +78,44 @@ def test_not_available_is_still_not_an_error():
         # the broad catch must come AFTER it, or it swallows the good branch
         assert body.index("except NotImplementedError:") < \
             body.index("except Exception:"), path
+
+
+# ------------------------------------------------------------------ #
+# 414: a prediction too big to be a URL
+# ------------------------------------------------------------------ #
+
+def test_the_predict_routes_take_a_post():
+    """★ NGINX REFUSED IT BEFORE FLASK RAN (owner, 2026-09-16: "The server
+    returned 414"). The request carries the page's edits as comma-joined
+    person_ids, and "add the whole squad" across a championship field puts
+    hundreds of them in `add` -- past the 8 KB request line the request never
+    reaches the app at all, so there is no route to catch it and no traceback
+    to find."""
+    app = read("racecast", "app.py")
+    for path in ("/api/predict/individual", "/api/predict/team"):
+        assert f'@app.route("{path}", methods=["GET", "POST"])' in app, path
+        body = routeBody(app, path)
+        # ! request.values IS args + form, so one handler serves both and the
+        #   POST body is the same urlencoded string the query was.
+        assert "request.values" in body, path
+        # ⚠ and nothing may still read args alone, or a POSTed field silently
+        #   arrives empty and predicts the unedited meet instead
+        assert "request.args" not in body, \
+            f"{path} still reads request.args -- a POST would lose its edits"
+
+
+def test_the_page_posts_when_the_url_would_be_too_long():
+    js = read("racecast", "static", "predictions.js")
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    assert "function sendQuery(path, q)" in js
+    assert 'method: "POST"' in js
+    assert "application/x-www-form-urlencoded" in js
+    # the predict button must go through it, or the big case is still a URL
+    assert "await sendQuery(path, buildQuery(div))" in js
+
+    # ⚠ WELL UNDER 8 KB. nginx's is the limit we hit; a CDN or a corporate
+    #   proxy in front of it may be stricter, and crossing over early costs
+    #   nothing.
+    m = re.search(r"const URL_LIMIT = (\d+);", js)
+    assert m, "no URL_LIMIT"
+    assert 500 <= int(m.group(1)) <= 4000, m.group(1)

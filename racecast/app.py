@@ -6957,7 +6957,25 @@ def api_predict_weather():
                     "forecast": forecast, "forecast_text": fc.describe(forecast)})
 
 
-@app.route("/api/predict/individual")
+# ★ GET OR POST, AND POST IS NOT AN AFTERTHOUGHT (owner, 2026-09-16: "The
+#   server returned 414"). A prediction carries the page's EDITS as
+#   comma-joined person_ids -- and "add the whole squad" across a
+#   championship field puts hundreds of them in `add`, about eight bytes
+#   each. Past nginx's 8 KB request line the request is refused by NGINX,
+#   before Flask is reached at all: no route runs, no traceback exists, and
+#   the page gets an HTML 414 where it expected JSON.
+#
+# ! request.values IS args + form, so one handler serves both and the body
+#   is the same urlencoded string the query was. The client sends a GET
+#   while it fits and a POST when it does not, so small requests stay
+#   curl-able and large ones stop being refused.
+#
+# ⚠ THE SHARE LINK IS THE SAME PROBLEM AND IS NOT FIXED HERE. /predictions
+#   echoes its whole query into the card URL, so a shared big-field
+#   prediction is a >8 KB link that 414s on open. Trimming it would silently
+#   change what the card shows, so it needs a saved-prediction id rather
+#   than a smaller query -- logged, not papered over.
+@app.route("/api/predict/individual", methods=["GET", "POST"])
 def api_predict_individual():
     from predict import predictIndividual
 
@@ -6965,14 +6983,15 @@ def api_predict_individual():
     #   race is the obvious next question after predicting one, and it is the
     #   same request -- so `person_id` takes a comma-separated list rather than
     #   the page needing a second endpoint for the plural case.
-    ids = [s.strip() for s in (request.args.get("person_id") or "").split(",")
+    args = request.values          # args + form: see the note above
+    ids = [s.strip() for s in (args.get("person_id") or "").split(",")
            if s.strip()]
     if not ids or not all(i.isdigit() for i in ids):
         return jsonify({"error": "person_id is required."}), 400
     if len(ids) > 12:
         return jsonify({"error": "Twelve athletes at most."}), 400
 
-    target, err = _target(request.args)
+    target, err = _target(args)
     if err:
         return jsonify({"error": err}), 400
 
@@ -7008,11 +7027,12 @@ def api_predict_individual():
     return jsonify(out)
 
 
-@app.route("/api/predict/team")
+@app.route("/api/predict/team", methods=["GET", "POST"])
 def api_predict_team():
     from predict import predictTeam
 
-    target, err = _target(request.args)
+    args = request.values          # args + form: see the note above
+    target, err = _target(args)
     if err:
         return jsonify({"error": err}), 400
 
@@ -7021,7 +7041,7 @@ def api_predict_team():
     #   entrants -- it sends the EDITS (remove/add), not a roster. Requiring
     #   `schools` made every prediction fail with "At least one school is
     #   required" for a field the server could already see.
-    schools = [s.strip() for s in (request.args.get("schools") or "").split(",")
+    schools = [s.strip() for s in (args.get("schools") or "").split(",")
                if s.strip()]
     if not schools and not target.get("meet_id"):
         return jsonify({"error": "Pick a meet, or name at least one team."}), 400
@@ -7029,10 +7049,10 @@ def api_predict_team():
         return jsonify({"error": "Twenty teams at most."}), 400
 
     # The page's edits to the meet's field.
-    remove = {s for s in (request.args.get("remove") or "").split(",") if s}
-    add = {s for s in (request.args.get("add") or "").split(",") if s}
+    remove = {s for s in (args.get("remove") or "").split(",") if s}
+    add = {s for s in (args.get("add") or "").split(",") if s}
 
-    h2h = (request.args.get("head_to_head") or "").lower() in ("1", "true", "yes")
+    h2h = (args.get("head_to_head") or "").lower() in ("1", "true", "yes")
 
     try:
         with getConn() as conn:

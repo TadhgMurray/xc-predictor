@@ -631,6 +631,38 @@ function applyScale() {
  *   app is restarting and waiting will fix it. Both are things a person can
  *   act on. A parser error is not.
  */
+/*
+ * ★ A PREDICTION CAN BE TOO BIG TO BE A URL (owner, 2026-09-16: "The server
+ *   returned 414"). The request carries the page's EDITS as comma-joined
+ *   person_ids, and "add the whole squad" across a championship field puts
+ *   hundreds of them in `add` at about eight bytes each. Past nginx's 8 KB
+ *   request line NGINX refuses it outright -- Flask never runs, so there is
+ *   no traceback anywhere and the page gets HTML where it wanted JSON.
+ *
+ * ! GET WHILE IT FITS, POST WHEN IT DOES NOT. The endpoints read
+ *   request.values, which is args + form, so the POST body is the SAME
+ *   urlencoded string the query string was and one handler serves both.
+ *   Keeping the small case a GET is not nostalgia: it stays curl-able,
+ *   which is how the slow-field timings in this file's history were taken.
+ *
+ * ⚠ THE LIMIT IS DELIBERATELY WELL UNDER 8 KB. nginx's is the one we hit,
+ *   but a CDN or a corporate proxy in front of it may be stricter, and the
+ *   cost of crossing over early is nothing at all.
+ */
+const URL_LIMIT = 1800;
+
+function sendQuery(path, q) {
+  const qs = q.toString();
+  if (path.length + qs.length + 1 <= URL_LIMIT) {
+    return fetch(path + "?" + qs);
+  }
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: qs,
+  });
+}
+
 async function readJson(res) {
   const text = await res.text();
   try {
@@ -639,6 +671,12 @@ async function readJson(res) {
     if (res.status === 504) {
       throw new Error("The server took too long (504). A very large field "
                       + "can outrun the timeout - try fewer teams.");
+    }
+    if (res.status === 414) {
+      /* sendQuery should make this unreachable; if it fires, the limit
+         above is too high for whatever is in front of this server. */
+      throw new Error("The request was too large for the server (414). "
+                      + "Try predicting fewer teams at once.");
     }
     if (res.status === 502 || res.status === 503) {
       throw new Error(`The site is restarting (${res.status}). `
@@ -1807,7 +1845,7 @@ async function predict() {
   try {
     const parts = [];
     for (const div of targets) {
-      const res = await fetch(path + "?" + buildQuery(div).toString());
+      const res = await sendQuery(path, buildQuery(div));
       const data = await readJson(res);
       if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
 
