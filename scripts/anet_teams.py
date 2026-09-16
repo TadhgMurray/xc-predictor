@@ -113,9 +113,9 @@ CREATE TABLE IF NOT EXISTS anet_division (
 """
 
 
-def teams(cur, limit=None, state=None, redo=False):
-    """[(school, state, team_id)] -- the anet team each school's athletes
-    actually raced under, biggest programme first.
+def teams(cur, limit=None, state=None, redo=False, missing=False):
+    """[(school, state, team_id, stored mascot_url)] -- the anet team each
+    school's athletes actually raced under, biggest programme first.
 
     Modal per (school, STATE), not per school string: two real schools
     share the name "Kingston" and anet gives them two ids, which is the
@@ -139,7 +139,17 @@ def teams(cur, limit=None, state=None, redo=False):
       cluster has none, which is why a split name loses its badge.
       `--redo` re-asks the teams and files them under the new pairs.
       Nothing is re-scraped from the schools: anet_team.mascot_url is
-      already stored, and this pass fetches that image."""
+      already stored, and this pass fetches that image.
+
+    ★ AND `missing` IS WHY A RERUN IS NOT 38 HOURS (owner, 2026-09-16: "so
+      that anet_teams script is gonna take 38 hrs. Do we have to rerun the
+      entire thing?"). No: --redo re-asks all 40,927 teams, and Manners
+      paces one request per second PER HOST, so two or three calls each
+      against www.athletic.net is a day and a half. What changed is the
+      (school, state) pairs, so the work is the pairs that now have no
+      crest -- `missing` -- and with --logos-only there is no anet API call
+      at all, because mascot_url is already in the table. One image GET per
+      pair, on googleusercontent rather than anet."""
     for ddl in (DDL, TEAM_DDL, DIV_DDL):
         ensureTable(cur, ddl)
     cur.execute(SHA_INDEX)
@@ -160,6 +170,16 @@ def teams(cur, limit=None, state=None, redo=False):
     empty = "''"                      # the SQL empty string, not Python's
     state_expr = f"COALESCE({', '.join(parts + [empty])})" if parts else empty
     done = "" if redo else "AND a.team_id IS NULL"
+    # ! A PAIR THAT ALREADY HAS A CREST ON DISK IS NOT MISSING ONE. The
+    #   same three conditions school_logo.loadCrests serves on, so this
+    #   asks exactly for what the site cannot draw.
+    gap = ""
+    if missing and _tableExists(cur, "school_logo"):
+        gap = ("""AND NOT EXISTS (SELECT 1 FROM school_logo g
+                   WHERE g.school = si.school AND g.state = si.state
+                     AND g.path IS NOT NULL AND g.status = 'ok'
+                     AND COALESCE(lower(g.override), '') <> 'none'
+                     AND (NOT g.shared OR g.override IS NOT NULL))""")
     where_state = "AND si.state = %(state)s" if state else ""
     lim = "LIMIT %(limit)s" if limit else ""
     cur.execute(f"""
@@ -180,15 +200,15 @@ def teams(cur, limit=None, state=None, redo=False):
             SELECT DISTINCT ON (school, state) school, state, team_id
             FROM   counted ORDER BY school, state, n DESC
         )
-        SELECT si.school, si.state, modal.team_id
+        SELECT si.school, si.state, modal.team_id, a.mascot_url
         FROM   school_identity si
         JOIN   modal ON modal.school = si.school AND modal.state = si.state
         LEFT   JOIN anet_team a ON a.team_id = modal.team_id
-        WHERE  si.n_athletes >= 3 {done} {where_state}
+        WHERE  si.n_athletes >= 3 {done} {where_state} {gap}
         ORDER  BY si.n_athletes DESC
         {lim}
     """, {"limit": limit, "state": (state or "").upper()})
-    return [tuple(r[k] for k in ("school", "state", "team_id"))
+    return [tuple(r[k] for k in ("school", "state", "team_id", "mascot_url"))
             if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
 
 
@@ -366,6 +386,17 @@ def main():
     ap.add_argument("--rate", type=float, default=1.0,
                     help="seconds between requests to one host (default 1)")
     ap.add_argument("--redo", action="store_true", help="re-ask teams already stored")
+    ap.add_argument("--logos-only", action="store_true",
+                    help="no anet API calls at all: fetch the crest from the "
+                         "mascot_url already stored in anet_team. What to use "
+                         "after an identity rebuild splits a name -- the "
+                         "metadata did not change, the (school, state) pairs "
+                         "did. Implies --redo.")
+    ap.add_argument("--missing", action="store_true",
+                    help="only the (school, state) pairs the site currently "
+                         "has no crest for. With --logos-only this is the "
+                         "whole job after a split, in minutes rather than "
+                         "the 38 hours a full --redo costs.")
     ap.add_argument("--no-logos", action="store_true",
                     help="metadata and addresses only, fetch no images")
     ap.add_argument("--replace", action="store_true",
@@ -413,12 +444,24 @@ def main():
     from database import getConn
     with getConn() as conn:
         with conn.cursor() as cur:
-            todo = teams(cur, args.limit, args.state, args.redo)
+            todo = teams(cur, args.limit, args.state,
+                         redo=args.redo or args.logos_only,
+                         missing=args.missing)
             conn.commit()
+            # ! THE ESTIMATE HAS TO BE HONEST ABOUT WHICH CALLS. --logos-only
+            #   makes one image request per team and no API call at all, and
+            #   the image host is not anet, so the per-host pacing that
+            #   dominates a full run does not apply to the same queue twice.
+            per = 1 if args.logos_only else (
+                len(sports) + (0 if args.no_core else 1)
+                + (0 if args.no_logos else 1))
             print(f"  {len(todo):,} teams, biggest programme first, "
-                  f"{args.rate}s apart, "
-                  f"{len(sports) + (0 if args.no_core else 1)} calls each "
-                  f"(~{len(todo) * (len(sports) + (0 if args.no_core else 1)) * args.rate / 3600:.1f} h)",
+                  f"{args.rate}s apart, {per} call(s) each "
+                  f"(~{len(todo) * per * args.rate / 3600:.1f} h)"
+                  + ("  [--logos-only: the stored mascot_url, no anet API]"
+                     if args.logos_only else "")
+                  + ("  [--missing: only pairs with no crest]"
+                     if args.missing else ""),
                   flush=True)
 
             manners = Manners(rate=args.rate)
@@ -428,40 +471,57 @@ def main():
             meta = crests = addrs = units = missed = 0
             kept = placeholder = 0
             t0 = time.time()
-            for i, (school, state, team_id) in enumerate(todo, 1):
-                # ★ BOTH ENDPOINTS, AND THEY CARRY DIFFERENT THINGS.
-                #   TeamNav/Team has the divisions, customDivisions, the
-                #   mascot and the crest, and its divisions are PER SPORT.
-                #   GetTeamCore has WebsiteSport -- the address book's fix
-                #   -- plus TeamCode, RegionID and the season list, none of
-                #   which vary by sport. So: nav once per sport, core once.
-                parts = []
-                for sport in sports:
-                    raw, why = manners.get(
-                        API.format(team=team_id, sport=sport, season=season),
-                        max_bytes=512 * 1024, extra=HEADERS)
-                    got = parseTeam(raw) if raw is not None else None
-                    if got:
-                        parts.append(got)
-                    divs = parseDivisions(raw) if raw is not None else []
-                    if (divs or got) and args.write:
-                        units += storeDivisions(cur, team_id, sport, divs,
-                                                (got or {}).get("_custom"))
-                if parts and not args.no_core:
-                    craw, cwhy = manners.get(
-                        CORE.format(team=team_id, sport=sports[0], season=season),
-                        max_bytes=512 * 1024, extra=HEADERS)
-                    core = parseTeam(craw) if craw is not None else None
-                    if core:
-                        parts.append(core)
-                    else:
-                        why = cwhy
-                team = mergeTeams(*parts)
+            for i, (school, state, team_id, stored_url) in enumerate(todo, 1):
+                raw = why = None
+                # ★ THE STORED URL IS ENOUGH FOR A CREST (owner, 2026-09-16:
+                #   "so that anet_teams script is gonna take 38 hrs. Do we
+                #   have to rerun the entire thing?"). No. --logos-only
+                #   skips BOTH anet endpoints and fetches only the image,
+                #   which lives on a different host: the pacing that makes a
+                #   full --redo a day and a half is one request per second
+                #   against www.athletic.net, and this makes none of them.
+                #   The metadata did not change -- the (school, state) pairs
+                #   did -- so with --missing the work is one image GET per
+                #   pair that now has no crest.
+                if args.logos_only:
+                    team = ({"MascotUrl": stored_url, "IDTeam": team_id}
+                            if stored_url else None)
+                    if team is None:
+                        why = "no mascot_url stored for this team"
+                else:
+                    # ★ BOTH ENDPOINTS, AND THEY CARRY DIFFERENT THINGS.
+                    #   TeamNav/Team has the divisions, customDivisions, the
+                    #   mascot and the crest, and its divisions are PER SPORT.
+                    #   GetTeamCore has WebsiteSport -- the address book's fix
+                    #   -- plus TeamCode, RegionID and the season list, none of
+                    #   which vary by sport. So: nav once per sport, core once.
+                    parts = []
+                    for sport in sports:
+                        raw, why = manners.get(
+                            API.format(team=team_id, sport=sport, season=season),
+                            max_bytes=512 * 1024, extra=HEADERS)
+                        got = parseTeam(raw) if raw is not None else None
+                        if got:
+                            parts.append(got)
+                        divs = parseDivisions(raw) if raw is not None else []
+                        if (divs or got) and args.write:
+                            units += storeDivisions(cur, team_id, sport, divs,
+                                                    (got or {}).get("_custom"))
+                    if parts and not args.no_core:
+                        craw, cwhy = manners.get(
+                            CORE.format(team=team_id, sport=sports[0], season=season),
+                            max_bytes=512 * 1024, extra=HEADERS)
+                        core = parseTeam(craw) if craw is not None else None
+                        if core:
+                            parts.append(core)
+                        else:
+                            why = cwhy
+                    team = mergeTeams(*parts)
                 if team is None:
                     missed += 1
                 else:
                     meta += 1
-                    if args.write:
+                    if args.write and not args.logos_only:
                         storeTeam(cur, school, state, team)
                         addrs += 1 if storeAddress(cur, school, state, team) else 0
                     png = sha = None
@@ -499,7 +559,7 @@ def main():
                             name = writeFile(school, state, png, args.dir)
                             record(cur, school, state, name,
                                    mascotUrls(team)[0], "anet", sha, "ok")
-                if i == ABORT_AFTER and meta == 0:
+                if i == ABORT_AFTER and meta == 0 and not args.logos_only:
                     conn.rollback()
                     raise SystemExit(
                         f"  {ABORT_AFTER} calls, no team came back ({why}). "

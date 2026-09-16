@@ -1709,9 +1709,21 @@ under `(school, state)`. The catch is *which* pairs: its queue is
    `school_athlete_state` first, the same order `si_assign` and
    `stateFilterSql` use. Three places, one answer.
 
+⚠ **And `--redo` is 38 hours, which is the wrong job.** `Manners` paces one
+request per second *per host*, so re-asking all 40,927 teams for two or three
+API calls each against `www.athletic.net` is a day and a half. Nothing about
+the metadata changed — the `(school, state)` pairs did — and `mascot_url` is
+already in the table. So:
+
 ```bash
-python scripts/anet_teams.py --write --redo            # or --state OR
+python scripts/anet_teams.py --write --logos-only --missing
 ```
+
+`--logos-only` makes **no anet API call at all**: it reads the stored
+`mascot_url` and fetches only the image, which lives on googleusercontent.
+`--missing` restricts the queue to the pairs the site currently has no crest
+for — the same three conditions `loadCrests` serves on — which after a split is
+exactly the new clusters. One image request per pair.
 
 Williams College is **not in `anet_team` at all** (only the CA high school is),
 so its crest has to come from the website route: `build_school_websites.py

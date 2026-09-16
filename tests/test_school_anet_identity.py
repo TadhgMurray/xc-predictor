@@ -167,3 +167,25 @@ def test_an_athlete_with_no_racing_state_is_still_placed_by_their_team():
                 _SRC.index("CREATE TABLE school_identity_new AS")]
     assert "LEFT   JOIN person_home_state_new ph USING (person_id)" in body
     assert "IS NOT NULL" in body.split("WHERE")[-1]
+
+
+def test_a_split_name_does_not_cost_a_full_rescrape():
+    """★ OWNER, 2026-09-16: "so that anet_teams script is gonna take 38 hrs.
+    Do we have to rerun the entire thing?" No. Manners paces one request per
+    second PER HOST, so --redo's two or three API calls against
+    www.athletic.net for 40,927 teams is a day and a half. What changed is
+    the (school, state) pairs, and mascot_url is already stored."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    body = src[src.index("def teams(cur"):src.index("def parseTeam(")]
+    # the queue carries the stored URL and can ask for only the gaps
+    assert "a.mascot_url" in body and "{gap}" in body
+    assert "NOT EXISTS (SELECT 1 FROM school_logo g" in body
+    # the loop can then skip anet entirely
+    loop = src[src.index("            for i, (school, state, team_id, stored_url)"):
+               src.index("                    team = mergeTeams(*parts)")]
+    assert "if args.logos_only:" in loop
+    assert loop.index("if args.logos_only:") < loop.index("manners.get(")
+    assert '"MascotUrl": stored_url' in loop
+    # ...and must not claim to have refreshed metadata it never asked for
+    assert "if args.write and not args.logos_only:\n                        storeTeam" in src
+    assert "redo=args.redo or args.logos_only" in src
