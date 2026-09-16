@@ -82,12 +82,22 @@ def explain(a):
             has_weather = (row[0] if not isinstance(row, dict)
                            else row.get("to_regclass")) is not None
 
-            # a realistic field: the ids the timing run just used
-            cur.execute("""SELECT person_id FROM athlete_season
-                           WHERE sport = %s AND mean_rating IS NOT NULL
-                           LIMIT 433""", (a.sport,))
-            ids = sorted({r["person_id"] for r in cur.fetchall()})
-            print(f"\n  EXPLAIN over {len(ids)} athletes, sport {a.sport}")
+            # ★ THE REAL FIELD, NOT A SAMPLE OF THE SAME SIZE. The first
+            #   version took 433 arbitrary athlete_season rows and explained
+            #   1,868 result rows, while the actual field's athletes have
+            #   33,306 between them -- eighteen times the work. That gap sent
+            #   me looking for 45 seconds in the track query that were never
+            #   there. The plan has to be measured on the rows the request
+            #   really reads.
+            target = {"mode": "rerun", "meet_id": int(a.meet),
+                      "sport": a.sport}
+            if a.div:
+                target["div_id"] = a.div
+            field = P._fullField(
+                cur, P._teamRosters(cur, [], target, set(), set()), target)
+            ids = sorted({r["person_id"] for r in field if r.get("person_id")})
+            print(f"\n  EXPLAIN over the REAL field: {len(ids)} athletes, "
+                  f"sport {a.sport}")
 
             sql = fx.personResultsSql(a.sport, has_weather=has_weather)
             hour = fx.XC_DEFAULT_HOUR if a.sport == "XC" else fx.TF_DEFAULT_HOUR
@@ -111,9 +121,11 @@ def explain(a):
                     t = line.strip()
                     if (t.startswith(("Nested Loop", "Hash Join", "Hash Left",
                                       "Hash Right", "Merge", "Values Scan",
+                                      "Memoize", "Sort ", "Gather",
                                       "Execution Time", "Planning Time"))
-                            or "Rows Removed by Join Filter" in t):
-                        print("    " + line[:100])
+                            or "Rows Removed by Join Filter" in t
+                            or "Heap Fetches" in t or "Sort Method" in t):
+                        print("    " + line[:110])
             cur.connection.rollback()   # drop the SET LOCAL
 
 
