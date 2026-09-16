@@ -155,12 +155,15 @@ def test_the_crest_queue_uses_the_same_assignment():
     person_home_state alone -- where the athlete RACES -- so the modal team
     for (Oregon, OR) was decided by whoever happens to race in Oregon."""
     src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
-    body = src[src.index("def teams(cur"):src.index("def parseTeam(")]
+    body = src[src.index("def _stateSource("):src.index("# ★ THE TEAMS OUR OWN ROWS")]
     assert 'LEFT JOIN school_athlete_state sa' in body
-    assert body.index("school_athlete_state") < body.index("person_home_state h")
+    assert body.index("school_athlete_state") < body.index("person_home_state")
     # and both are optional, so an older database still builds a queue
     assert body.count('_tableExists(cur, "school_athlete_state")') == 1
     assert body.count('_tableExists(cur, "person_home_state")') == 1
+    # ...and teams() reads it rather than carrying its own copy
+    queue = src[src.index("def teams(cur"):src.index("def parseTeam(")]
+    assert "home, state_expr = _stateSource(cur)" in queue
 
 
 def test_the_college_level_is_the_majority_not_any_race():
@@ -207,3 +210,24 @@ def test_a_split_name_does_not_cost_a_full_rescrape():
     # ...and must not claim to have refreshed metadata it never asked for
     assert "if args.write and not args.logos_only:\n                        storeTeam" in src
     assert "redo=args.redo or args.logos_only" in src
+
+
+def test_the_teams_our_rows_name_can_be_fetched_at_all():
+    """★ MEASURED, 2026-09-16: anet team 21570 is Williams College, it is NOT
+    in anet_team, and results_tf names it 16,434 times with results another
+    4,356. teams() asks for the modal team of a (school, state) pair that
+    ALREADY EXISTS in school_identity, so a cluster that did not exist until
+    the rebuild split the name was never on any list -- no level, no state,
+    no mascot, which is what kept the college half invisible."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    body = src[src.index("def unfetchedTeams("):src.index("def teams(cur")]
+    assert "LEFT   JOIN anet_team a ON a.team_id = b.team_id" in body
+    assert "WHERE  a.team_id IS NULL" in body
+    assert "ORDER  BY total.n DESC" in body            # biggest first
+    assert "t.team_id <> 0" in body                    # never the sentinel
+    # the crest key is the team's own modal (school, state)
+    assert "DISTINCT ON (team_id) team_id, school, state" in body
+    # and both queues ask one source for that state
+    assert src.count("def _stateSource(") == 1
+    assert src.count("_stateSource(cur)") == 2
+    assert "unfetchedTeams(cur, args.limit, args.min_rows)" in src

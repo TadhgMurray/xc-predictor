@@ -1774,8 +1774,30 @@ whether anet has it — `anet_team` only holds teams a run has fetched, and the
 queue only asks for the modal team of a `(school, state)` pair with ≥3
 athletes:
 
-```sql
-SELECT team_id, school, state, anet_state, level, mascot_url IS NOT NULL
-FROM   anet_team WHERE team_id IN (21570, 21242, 16586, 685);
-SELECT team_id, count(*) FROM results_tf WHERE team_id IN (21570) GROUP BY 1;
 ```
+ team_id |  school  | state | level | has_mascot |  fetched
+     685 | Williams | CA    |     4 | t          | 2026-09-13
+   16586 | Oregon   | IL    |     4 | t          | 2026-09-13
+   21242 | Oregon   | OR    |     8 | t          | 2026-09-14
+                                                     -- 21570: NO ROW
+ results_tf 21570  16,434        results 21570  4,356
+```
+
+**20,790 rows name a team we have never fetched.** (And the level codes are
+confirmed: `4 = hs`, `8 = college`.) `teams()` asks for the modal team of a
+`(school, state)` pair **that already exists in `school_identity`** — so
+`(Williams, MA)` was never on any list, and without the team there is no level,
+no state and no mascot for it. That is the bootstrap: the college half of a
+collision cannot be seen by anet until somebody asks anet about the college.
+
+`--unfetched` starts from the rows instead: every `team_id` they use that
+`anet_team` has no row for, biggest first, each keyed to the modal
+`(school, state)` of its own rows.
+
+```bash
+python scripts/anet_teams.py --write --unfetched --limit 2000
+```
+
+⚠ It scans both row tables, so it is a maintenance command, not a pipeline
+step. The biggest-first order is the point — a few thousand teams carry most of
+the corpus's weight.

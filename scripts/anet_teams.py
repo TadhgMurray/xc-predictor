@@ -113,6 +113,95 @@ CREATE TABLE IF NOT EXISTS anet_division (
 """
 
 
+# ★ WHICH STATE A ROW'S SCHOOL IS IN, FROM ONE PLACE. The assignment
+#   first, the racing mode second -- the same order
+#   build_school_identity's si_assign and school_identity.stateFilterSql
+#   use, so all three agree about who is in which cluster. Both queues
+#   below key crests on (school, state), so both must ask it the same way.
+def _stateSource(cur, alias="t"):
+    """(join SQL, state expression) for a query whose row alias is
+    `alias` and which has person_id and school on it."""
+    joins, parts = [], []
+    if _tableExists(cur, "school_athlete_state"):
+        joins.append(f"LEFT JOIN school_athlete_state sa"
+                     f" ON sa.person_id = {alias}.person_id"
+                     f" AND sa.school = {alias}.school")
+        parts.append("sa.state")
+    if _tableExists(cur, "person_home_state"):
+        joins.append(f"LEFT JOIN person_home_state h"
+                     f" ON h.person_id = {alias}.person_id")
+        parts.append("h.state")
+    empty = "''"                      # the SQL empty string, not Python's
+    return (" ".join(joins),
+            f"COALESCE({', '.join(parts + [empty])})" if parts else empty)
+
+
+# ★ THE TEAMS OUR OWN ROWS NAME AND WE HAVE NEVER ASKED ABOUT (owner,
+#   2026-09-16, with athletic.net team 21570: "idk why you think williams
+#   isn't on anet"). Measured: 21570 is Williams College, it is NOT in
+#   anet_team, and results_tf references it 16,434 times with results
+#   another 4,356 -- 20,790 rows whose team we never fetched.
+#
+# ⚠ AND THE ORDINARY QUEUE CANNOT REACH IT. teams() asks for the modal team
+#   of a (school, state) pair THAT ALREADY EXISTS in school_identity, so a
+#   cluster that did not exist until an identity rebuild split the name was
+#   never on any list -- and without the team we have no level, no state and
+#   no mascot for it, which is what kept the college half of every collision
+#   invisible. This queue starts from the rows instead: every team_id they
+#   use that anet_team has no row for, biggest first.
+#
+# ! (school, state) IS STILL THE CREST'S KEY, so each team gets the modal
+#   pair of its own rows, by _stateSource -- not the other way round.
+#
+# ⚠ IT SCANS BOTH ROW TABLES, so this is a maintenance command and not part
+#   of any pipeline step. --limit with the biggest-first order is the point:
+#   a few thousand teams cover most of the corpus's weight, and the rest can
+#   wait for the next time somebody runs it.
+def unfetchedTeams(cur, limit=None, min_rows=1):
+    """[(school, state, team_id, None)] for teams the rows name and
+    anet_team has never seen, most rows first."""
+    for ddl in (DDL, TEAM_DDL, DIV_DDL):
+        ensureTable(cur, ddl)
+    home, state_expr = _stateSource(cur)
+    legs = []
+    for table in ("results", "results_tf"):
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                         AND column_name = 'team_id'""", (table,))
+        if cur.fetchone() is not None:
+            legs.append(table)
+    if not legs:
+        return []
+    union = "\n            UNION ALL\n".join(f"""
+            SELECT t.school, t.team_id, {state_expr} AS state, count(*) AS n
+            FROM   {leg} t {home}
+            WHERE  t.team_id IS NOT NULL AND t.team_id <> 0
+              AND  t.school IS NOT NULL AND btrim(t.school) <> ''
+            GROUP  BY 1, 2, 3""" for leg in legs)
+    cur.execute(f"""
+        WITH team_rows AS ({union}
+        ), agg AS (
+            SELECT school, team_id, state, sum(n) AS n
+            FROM   team_rows GROUP BY 1, 2, 3
+        ), total AS (
+            SELECT team_id, sum(n) AS n FROM agg GROUP BY 1
+        ), best AS (
+            -- the pair the team's own rows mostly sit in
+            SELECT DISTINCT ON (team_id) team_id, school, state
+            FROM   agg ORDER BY team_id, n DESC, school
+        )
+        SELECT b.school, b.state, b.team_id, NULL::text AS mascot_url
+        FROM   best b
+        JOIN   total ON total.team_id = b.team_id
+        LEFT   JOIN anet_team a ON a.team_id = b.team_id
+        WHERE  a.team_id IS NULL AND total.n >= %(min_rows)s
+        ORDER  BY total.n DESC
+        {"LIMIT %(limit)s" if limit else ""}
+    """, {"limit": limit, "min_rows": int(min_rows)})
+    return [tuple(r[k] for k in ("school", "state", "team_id", "mascot_url"))
+            if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+
+
 def teams(cur, limit=None, state=None, redo=False, missing=False):
     """[(school, state, team_id, stored mascot_url)] -- the anet team each
     school's athletes actually raced under, biggest programme first.
@@ -155,20 +244,7 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
     cur.execute(SHA_INDEX)
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
-    # the assignment first, the racing mode second -- the same order
-    # build_school_identity's si_assign and school_identity.stateFilterSql
-    # use, so all three agree about who is in which cluster
-    joins, parts = [], []
-    if _tableExists(cur, "school_athlete_state"):
-        joins.append("LEFT JOIN school_athlete_state sa"
-                     " ON sa.person_id = t.person_id AND sa.school = t.school")
-        parts.append("sa.state")
-    if _tableExists(cur, "person_home_state"):
-        joins.append("LEFT JOIN person_home_state h ON h.person_id = t.person_id")
-        parts.append("h.state")
-    home = " ".join(joins)
-    empty = "''"                      # the SQL empty string, not Python's
-    state_expr = f"COALESCE({', '.join(parts + [empty])})" if parts else empty
+    home, state_expr = _stateSource(cur)
     done = "" if redo else "AND a.team_id IS NULL"
     # ! A PAIR THAT ALREADY HAS A CREST ON DISK IS NOT MISSING ONE. The
     #   same three conditions school_logo.loadCrests serves on, so this
@@ -392,6 +468,15 @@ def main():
                          "after an identity rebuild splits a name -- the "
                          "metadata did not change, the (school, state) pairs "
                          "did. Implies --redo.")
+    ap.add_argument("--unfetched", action="store_true",
+                    help="the teams our own rows name that anet_team has never "
+                         "seen, biggest first -- the bootstrap the ordinary "
+                         "queue cannot reach, because that one starts from "
+                         "school_identity pairs that already exist. Use with "
+                         "--limit.")
+    ap.add_argument("--min-rows", type=int, default=1,
+                    help="with --unfetched: skip a team our rows name fewer "
+                         "than this many times")
     ap.add_argument("--missing", action="store_true",
                     help="only the (school, state) pairs the site currently "
                          "has no crest for. With --logos-only this is the "
@@ -444,9 +529,11 @@ def main():
     from database import getConn
     with getConn() as conn:
         with conn.cursor() as cur:
-            todo = teams(cur, args.limit, args.state,
-                         redo=args.redo or args.logos_only,
-                         missing=args.missing)
+            todo = (unfetchedTeams(cur, args.limit, args.min_rows)
+                    if args.unfetched else
+                    teams(cur, args.limit, args.state,
+                          redo=args.redo or args.logos_only,
+                          missing=args.missing))
             conn.commit()
             # ! THE ESTIMATE HAS TO BE HONEST ABOUT WHICH CALLS. --logos-only
             #   makes one image request per team and no API call at all, and
