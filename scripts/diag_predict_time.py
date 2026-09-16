@@ -52,12 +52,63 @@ class Stage:
         return False
 
 
+def explain(a):
+    """The indexes that exist, and the plan the history lookup actually gets.
+
+    ⚠ THE TWO CAUSES LOOK IDENTICAL FROM OUTSIDE. A 52-second _historyRows
+      is a sequential scan either way -- because the index was never built,
+      or because it exists and the planner cannot reach it through the
+      predicate. Only the plan distinguishes them, and the fix is different
+      for each.
+    """
+    import predict as P
+    fx = P._fx()
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            print("\n  indexes on the two result tables")
+            cur.execute("""
+                SELECT tablename, indexname, indexdef
+                FROM   pg_indexes
+                WHERE  schemaname = 'public'
+                  AND  tablename IN ('results', 'results_tf')
+                ORDER  BY tablename, indexname
+            """)
+            for r in cur.fetchall():
+                cols = r["indexdef"].split("USING", 1)[-1]
+                print(f"    {r['tablename']:<12} {r['indexname']:<34}{cols}")
+
+            cur.execute("SELECT to_regclass('public.weather')")
+            row = cur.fetchone()
+            has_weather = (row[0] if not isinstance(row, dict)
+                           else row.get("to_regclass")) is not None
+
+            # a realistic field: the ids the timing run just used
+            cur.execute("""SELECT person_id FROM athlete_season
+                           WHERE sport = %s AND mean_rating IS NOT NULL
+                           LIMIT 433""", (a.sport,))
+            ids = sorted({r["person_id"] for r in cur.fetchall()})
+            print(f"\n  EXPLAIN over {len(ids)} athletes, sport {a.sport}")
+
+            sql = fx.personResultsSql(a.sport, has_weather=has_weather)
+            hour = fx.XC_DEFAULT_HOUR if a.sport == "XC" else fx.TF_DEFAULT_HOUR
+            cur.execute("EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF) "
+                        + sql, (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
+            for r in cur.fetchall():
+                print("    " + list(r.values())[0])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--meet", required=True)
     ap.add_argument("--sport", default="XC")
     ap.add_argument("--div", default=None)
     ap.add_argument("--date", default=None)
+    ap.add_argument("--explain", action="store_true",
+                    help="show the indexes on results/results_tf and EXPLAIN "
+                         "the history lookup, instead of timing stages. The "
+                         "one question a stage timing cannot answer: is the "
+                         "scan there because no index exists, or because the "
+                         "planner would not use one?")
     ap.add_argument("--weather", default="both",
                     help="both (the page's default), normal, or none -- "
                          "'both' costs a second forward pass and a forecast "
@@ -72,6 +123,10 @@ def main():
         target["div_id"] = a.div
     if a.date:
         target["date"] = a.date
+
+    if a.explain:
+        explain(a)
+        return
 
     print(f"\n  meet {a.meet} {a.sport} date={a.date} weather={a.weather}\n")
     with getConn() as conn:
