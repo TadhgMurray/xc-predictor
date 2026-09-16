@@ -121,6 +121,36 @@ _MIN_SECONDS = 1.0
 # Bounds on the variance head's log-variance, in z units. See forwardDist.
 LOGVAR_MIN, LOGVAR_MAX = -7.0, 3.0
 
+# ★ AND THE TARGET IS CLAMPED TOO, WHICH IT WAS NOT (2026-09-16, the first
+#   full-corpus run went NaN in its second epoch).
+#
+#   The loss is Gaussian NLL on the z-scored log ratio, so it is QUADRATIC
+#   in z. The corpus has corrupt times in it -- this database has a result
+#   dated 2223 -- and _MIN_SECONDS lets a bad row through as one second: a
+#   1s time against a 1000s baseline is ln(1/1000) = -6.9, and at the
+#   fitted std of 0.10 that is z = -69. One such example costs 0.5 * 69**2
+#   = 2,370, which on its own moved a 1024-batch mean by +2.3; the observed
+#   epoch mean was 3.90 against 0.073 on a clean 200-chunk sample.
+#
+#   The gradient is worse than the loss. d(loss)/d(mu) is (mu - z)/var, so
+#   with var at its exp(-7) floor that single row asks for a step of ~76,000.
+#   Gradient clipping bounds the NORM but not the DIRECTION: the whole
+#   clipped step then points wherever one corrupt row wanted. A few of those
+#   and the weights are gone.
+#
+# ! CLAMPED, NOT DROPPED. An athlete really can run far outside their form
+#   -- a fall, a first race back, a DNF walked in -- and "much slower than
+#   last time" is a true thing to learn. 8 sigma is a race 2.2x their last,
+#   past which the row is telling us about the scraper rather than the
+#   runner. Clamping keeps the example and its direction and takes away only
+#   the magnitude that makes it a bomb; dropping would also throw away the
+#   batch slot and quietly bias the tails.
+#
+# ⚠ THE SAME CLAMP MUST HOLD AT INFERENCE, which is why it lives here on
+#   the model and not in the training loop. A model trained on clamped
+#   targets predicts in clamped units.
+TARGET_Z_CLAMP = 8.0
+
 
 # ------------------------------------------------------------------ #
 # THE MODEL
@@ -243,9 +273,14 @@ class XCPredictor(nn.Module):
         return torch.log(t / base.clamp(min=_MIN_SECONDS))
 
     def targetZ(self, sequences, masks, targets) -> torch.Tensor:
-        """What forward() is trained to output for these targets. [B]"""
-        return (self.logRatio(sequences, masks, targets)
-                - self.target_mean) / self.target_std
+        """What forward() is trained to output for these targets. [B]
+
+        Clamped to +-TARGET_Z_CLAMP -- see the constant for why an
+        unclamped one took the first full-corpus run to NaN.
+        """
+        z = ((self.logRatio(sequences, masks, targets)
+              - self.target_mean) / self.target_std)
+        return z.clamp(min=-TARGET_Z_CLAMP, max=TARGET_Z_CLAMP)
 
     # ---- the forward pass ------------------------------------------ #
 

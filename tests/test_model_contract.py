@@ -128,3 +128,49 @@ print("  AdamW, clipping, warmup/cosine, NLL+variance, resumable OK")
 print("  last-race baseline printed every epoch ............. OK")
 print("  the site inverts with the model .................... OK")
 print("\nall model-contract checks passed")
+
+
+def test_a_corrupt_time_cannot_end_a_run():
+    """★ THE FIRST FULL-CORPUS RUN WENT NaN IN ITS SECOND EPOCH (2026-09-16).
+
+    The loss is Gaussian NLL on the z-scored log ratio, so it is QUADRATIC
+    in z, and the corpus contains scraped times that are not times -- a 1s
+    finish, a 14-hour one, a zero. At the fitted std of 0.10 a 1s time
+    against a 1000s baseline is z = -69, one example costs millions at the
+    variance floor, and the gradient it asks for swamps the clipped step so
+    completely that the whole update points wherever that row wanted.
+
+    ⚠ A 200-CHUNK SAMPLE DID NOT CONTAIN ONE, which is why calibration was
+      clean and the real run was not. This is the guard, not the sample.
+    """
+    import torch
+    from transformer import XCPredictor, TARGET_Z_CLAMP, SEQ_NORM_TIME
+
+    m = XCPredictor(n_venues=8)
+    m.setTargetStats(-0.0050, 0.1003, 900.0)      # the real corpus's numbers
+
+    seq = torch.zeros(4, 3, 21)
+    seq[:, :, SEQ_NORM_TIME] = 1000.0
+    masks = torch.ones(4, 3, dtype=torch.bool)
+    targets = torch.tensor([1010.0, 1.0, 50000.0, 0.0])
+
+    z = m.targetZ(seq, masks, targets)
+    assert torch.isfinite(z).all(), z
+    assert z.abs().max() <= TARGET_Z_CLAMP + 1e-6, z
+
+    # ! AND THE ORDINARY TARGET IS UNTOUCHED. A clamp that moved real races
+    #   would be trading one silent error for another; 8 sigma is a race
+    #   2.2x the athlete's last, which is the scraper talking, not a runner.
+    raw = (m.logRatio(seq, masks, targets) - m.target_mean) / m.target_std
+    assert torch.allclose(raw[0], z[0]), (raw[0], z[0])
+    assert abs(float(raw[1])) > 60, "the 1s time should be far outside"
+
+
+def test_the_clamp_lives_on_the_model_so_inference_shares_it():
+    """A model trained on clamped targets predicts in clamped units, so the
+    clamp cannot live in the training loop -- it has to be the same code
+    path racecast/predict.py reaches through."""
+    import inspect
+    from transformer import XCPredictor
+    src = inspect.getsource(XCPredictor.targetZ)
+    assert "clamp" in src, src

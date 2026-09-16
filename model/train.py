@@ -24,7 +24,8 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 #   corrections.py -- neither of which exists on the GPU box this file is
 #   written to run on. tests/test_context_width.py keeps the copies honest.
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
-                         SEQ_NORM_TIME, CONTEXT_YEAR_INDEX)
+                         SEQ_NORM_TIME, CONTEXT_YEAR_INDEX,
+                         TARGET_Z_CLAMP)
 
 # ------------------------------------------------------------------ #
 # CONSTANTS — the training dials, named once so they don't drift
@@ -988,6 +989,8 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
     model.train()
     total_loss = 0.0 # A running tally of each batch's loss (Huber, z units).
     n_batches = 0
+    n_clamped = 0    # examples whose target hit the +-TARGET_Z_CLAMP bound
+    n_bad = 0        # batches dropped for a non-finite loss
 
     # ★ THROUGHPUT, MEASURED RATHER THAN GUESSED. `waiting` is the share of
     #   wall clock spent BLOCKED ON THE LOADER rather than computing: if it
@@ -1010,6 +1013,14 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
         #   computed by the model from the same tensors it predicts from, so
         #   training and inference cannot disagree about the baseline.
         z_true = model.targetZ(sequences, masks, targets)
+        # ★ HOW OFTEN THE CLAMP BITES, SAID OUT LOUD. targetZ bounds the
+        #   target at +-TARGET_Z_CLAMP because one corrupt row can end a
+        #   run (see the constant). A clamp that fires on a handful of
+        #   examples an epoch is doing exactly its job; one firing on a
+        #   PERCENT of them means the stats are wrong or the extraction is,
+        #   and that is a thing to find out from the log rather than from a
+        #   model that trained quietly and predicts badly.
+        n_clamped += int((z_true.abs() >= TARGET_Z_CLAMP - 1e-4).sum())
 
         optimizer.zero_grad()                      # 1. clear old gradients
         with _autocast():
@@ -1018,6 +1029,20 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
         # The likelihood in fp32: exp(logvar) under bf16 is too coarse.
         loss = criterion(mu.to(torch.float32), z_true,
                          torch.exp(logvar.to(torch.float32)) + VAR_EPS)
+
+        # ⚠ A NON-FINITE LOSS IS NOT A SMALL PROBLEM TO AVERAGE AWAY. One
+        #   inf or nan backpropagates into EVERY weight, and from then on
+        #   the whole model is nan -- every later epoch reads `train nan`
+        #   and the checkpoint written at the end of it is worthless. The
+        #   clamp above should mean this never fires; if it does, the batch
+        #   is dropped and counted rather than allowed to end the run.
+        if not torch.isfinite(loss):
+            n_bad += 1
+            optimizer.zero_grad(set_to_none=True)
+            if scheduler is not None:
+                scheduler.step()
+            continue
+
         loss.backward()                            # 4a. compute gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         optimizer.step()                           # 4b. apply the update
@@ -1032,6 +1057,8 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
     elapsed = max(time.time() - t_start, 1e-9)
     stats = {"examples_per_s": n_examples / elapsed,
              "steps_per_s": n_batches / elapsed,
+             "clamped": n_clamped,
+             "bad_batches": n_bad,
              "waiting": t_wait / elapsed,
              "elapsed": elapsed}
     return total_loss / max(n_batches, 1), stats
@@ -1331,7 +1358,10 @@ def main():
               f"{st['examples_per_s']:,.0f} ex/s  "
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "
-              f"({st['elapsed'] / 60:.1f} min)")
+              + (f"clamped {st['clamped']:,}  " if st.get("clamped") else "")
+              + (f"DROPPED {st['bad_batches']} non-finite batches  "
+                 if st.get("bad_batches") else "")
+              + f"({st['elapsed'] / 60:.1f} min)")
 
         # ⚠ MIN_DELTA, NOT `<`. An improvement of 1e-9 is not an improvement;
         #   without a threshold it resets the patience counter forever and
