@@ -26,8 +26,9 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
                          SEQ_NORM_TIME, SEQ_DAYS_AGO, CONTEXT_YEAR_INDEX,
                          TARGET_Z_CLAMP, CONTEXT_GAP_INDEX,
-                         BASELINE_LAST, BASELINE_EWMA,
-                         BASELINE_HALF_LIFE_DAYS, baselineWeights)
+                         BASELINE_LAST, BASELINE_EWMA, BASELINE_BEST2,
+                         BASELINE_HALF_LIFE_DAYS, BASELINE_BEST_WINDOW_DAYS,
+                         baselineWeights, ewmaFromPadded, best2FromPadded)
 
 # ★ WHAT PREDICTIONS ARE ANCHORED ON. See transformer.BASELINE_LAST for the
 #   measurement that made this a choice: the model beats "their last race
@@ -692,7 +693,9 @@ def _chunkBaselines(chunk, mode=None, half_life=None):
     if "offsets" in chunk:
         off = chunk["offsets"].to(torch.long)
         lengths = off[1:] - off[:-1]
-        if float(mode) == BASELINE_EWMA:
+        if float(mode) == BASELINE_BEST2:
+            base = _best2Ragged(seqs, lengths)
+        elif float(mode) == BASELINE_EWMA:
             base = _ewmaRagged(seqs, lengths, half_life)
         else:
             has = lengths > 0
@@ -702,19 +705,65 @@ def _chunkBaselines(chunk, mode=None, half_life=None):
     masks = chunk["masks"].to(torch.bool)
     lengths = masks.sum(dim=1)
     n = seqs.shape[0]
-    if float(mode) == BASELINE_EWMA:
-        t = seqs[:, :, SEQ_NORM_TIME]
-        d = seqs[:, :, SEQ_DAYS_AGO]
-        w = baselineWeights(d, masks & (t > 0), half_life)
-        den = w.sum(dim=1)
-        num = (w * torch.log(t.clamp(min=1.0))).sum(dim=1)
-        base = torch.where(den > 0, torch.exp(num / den.clamp(min=1e-12)),
-                           torch.zeros_like(den))
+    # ! THE MODEL'S OWN PADDED REDUCTIONS, imported rather than repeated.
+    if float(mode) == BASELINE_BEST2:
+        base = best2FromPadded(seqs, masks)
+    elif float(mode) == BASELINE_EWMA:
+        base = ewmaFromPadded(seqs, masks, half_life)
     else:
         last = (lengths - 1).clamp(min=0)
         base = seqs[torch.arange(n), last, SEQ_NORM_TIME]
         base[lengths == 0] = 0.0
     return base, seqs[masks], lengths
+
+
+# Purpose:   the best-of-two baseline over the RAGGED chunk layout.
+#
+# ⚠ THERE IS NO PER-SEGMENT top-k, so this finds the smallest, then the
+#   smallest EXCLUDING THAT ONE ROW. Excluding "every row equal to the
+#   minimum" would be wrong: two rows tied at the same time are two real
+#   races and both should count, and masking on equality would delete both.
+#   So the row is excluded by INDEX -- the lowest index achieving the
+#   minimum, chosen the same way whatever the ties.
+#
+# ! AND THE WINDOW WIDENS RATHER THAN EMPTIES, matching _best2Baseline: an
+#   athlete whose races are all older than the window keeps them.
+def _best2Ragged(seqs, lengths):
+    n = lengths.shape[0]
+    r = seqs.shape[0]
+    t = seqs[:, SEQ_NORM_TIME]
+    d = seqs[:, SEQ_DAYS_AGO]
+    seg = torch.repeat_interleave(torch.arange(n), lengths)
+    valid = t > 0
+    inwin = valid & (d <= BASELINE_BEST_WINDOW_DAYS)
+    # does this athlete have anything inside the window?
+    any_win = torch.zeros(n).index_add_(
+        0, seg, inwin.to(torch.float32)) > 0
+    use = torch.where(any_win[seg], inwin, valid)
+
+    inf = float("inf")
+    lt = torch.log(t.clamp(min=1.0))
+    x = torch.where(use, lt, torch.full_like(lt, inf))
+    m1 = torch.full((n,), inf).scatter_reduce(0, seg, x, "amin",
+                                              include_self=True)
+    # the LOWEST-INDEXED row achieving that minimum, so a tie removes one
+    rows = torch.arange(r, dtype=torch.float32)
+    cand = torch.where(x == m1[seg], rows, torch.full_like(rows, float(r)))
+    argm = torch.full((n,), float(r)).scatter_reduce(0, seg, cand, "amin",
+                                                     include_self=True)
+    x2 = x.clone()
+    hit = argm[argm < r].to(torch.long)
+    if hit.numel():
+        x2[hit] = inf
+    m2 = torch.full((n,), inf).scatter_reduce(0, seg, x2, "amin",
+                                              include_self=True)
+
+    stack = torch.stack([m1, m2], dim=1)
+    finite = torch.isfinite(stack)
+    num = torch.where(finite, stack, torch.zeros_like(stack)).sum(dim=1)
+    den = finite.sum(dim=1).to(torch.float32)
+    out = torch.exp(num / den.clamp(min=1.0))
+    return torch.where(den > 0, out, torch.zeros(n))
 
 
 # Purpose:   the EWMA baseline over the RAGGED chunk layout.
@@ -1439,7 +1488,8 @@ def main():
     # ! THE LABEL NAMES THE RULE, because under --baseline ewma "ln(t/last)"
     #   and "last-race error" are both false and the number would be read as
     #   a comparison it is not.
-    _bl = "ewma" if BASELINE == BASELINE_EWMA else "last"
+    _bl = {BASELINE_EWMA: "ewma", BASELINE_BEST2: "best2"}.get(
+        BASELINE, "last")
     print(f"  stats from {stats['n_chunks']} chunks, "
           f"{stats['n_examples']:,} train examples: ln(t/{_bl}) mean "
           f"{stats['mean']:+.4f} std {stats['std']:.4f}; the baseline's own "
@@ -1514,7 +1564,7 @@ def main():
         print(f"epoch {epoch + 1:2d}/{EPOCHS}  "
               f"train {train_loss:.4f}  val {val_loss:.4f}  "
               f"model {pct_model:.2f}%  "
-              f"{'baseline' if BASELINE == BASELINE_EWMA else 'last-race'} "
+              f"{'last-race' if BASELINE == BASELINE_LAST else 'baseline'} "
               f"{pct_base:.2f}%  "
               f"rmse {cal['rmse_pct']:.2f}% vs sigma {cal['sigma_pct']:.2f}% "
               f"({cal['inside_1s']:.0f}% inside 1s)  "
@@ -1606,11 +1656,15 @@ if __name__ == "__main__":
                           f"here: with 0 the GPU waits on every disk read.")
     _ap.add_argument("--amp", action="store_true",
                      help="bf16 mixed precision on CUDA. No-op on CPU.")
-    _ap.add_argument("--baseline", choices=("last", "ewma"), default=None,
+    _ap.add_argument("--baseline", choices=("last", "ewma", "best2"),
+                     default=None,
                      help="what a prediction is anchored on. 'last' is the "
                           "most recent race alone, which is what shipped; "
-                          "'ewma' is a recency-weighted geometric mean of "
-                          "the history. Changing it needs a RETRAIN, not a "
+                          "'ewma' is a recency-weighted geometric mean; "
+                          "'best2' is the two fastest recent races, which is "
+                          "LACCTiC's rule and the one this engine's "
+                          "weighted-mean ability estimator disagrees with. "
+                          "Changing it needs a RETRAIN, not a "
                           "re-extraction.")
     _ap.add_argument("--baseline-half-life", type=float, default=None,
                      metavar="DAYS",
@@ -1679,8 +1733,8 @@ if __name__ == "__main__":
     USE_AMP = _args.amp
     CHECKPOINT = _args.checkpoint
     if _args.baseline:
-        BASELINE = (BASELINE_EWMA if _args.baseline == "ewma"
-                    else BASELINE_LAST)
+        BASELINE = {"ewma": BASELINE_EWMA, "best2": BASELINE_BEST2,
+                    "last": BASELINE_LAST}[_args.baseline]
     if _args.baseline_half_life:
         BASELINE_HALF_LIFE = _args.baseline_half_life
 
@@ -1699,6 +1753,7 @@ if __name__ == "__main__":
     print("baseline "
           + ("ewma, half-life "
              f"{BASELINE_HALF_LIFE:.0f}d" if BASELINE == BASELINE_EWMA
-             else "last race alone")
+             else f"best two within {BASELINE_BEST_WINDOW_DAYS:.0f}d"
+             if BASELINE == BASELINE_BEST2 else "last race alone")
           + "  (a retrain, not a re-extraction -- see transformer.BASELINE_LAST)")
     main()

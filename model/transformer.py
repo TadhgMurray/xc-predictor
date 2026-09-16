@@ -131,6 +131,41 @@ SEQ_DAYS_AGO = 2
 #   silently catastrophic rather than loud.
 BASELINE_LAST = 0.0      # the most recent race, alone. What shipped.
 BASELINE_EWMA = 1.0      # recency-weighted geometric mean of the history.
+BASELINE_BEST2 = 2.0     # the two FASTEST recent races. LACCTiC's rule.
+
+# ★ WHY A BEST-OF AND NOT AN AVERAGE, which is the one real disagreement
+#   between this engine and LACCTiC (owner, 2026-09-17, quoting their FAQ:
+#   "Fitness estimates are based on two performances: the runner's top
+#   performance this season, and their top performance among 'important'
+#   races").
+#
+#   speed_ratings.computeAthleteAbilities uses a weighted MEAN over an
+#   athlete's races, and BASELINE_EWMA above is a mean too. But performance
+#   given ability is LEFT-SKEWED: a hundred things make you slower on the day
+#   -- tactics, a jog-in JV race, illness, a fall, traffic at the first
+#   turn -- and nothing makes you faster than you are fit. So the mean
+#   estimates "ability minus typical shortfall" and the minimum estimates
+#   ability, which is the quantity we actually want.
+#
+#   It is also the shape of the owner's complaint. "I beat my teamate in
+#   every single race that season" is a statement about BESTS, and a mean or
+#   a last-race anchor can contradict it while a best-of cannot.
+#
+# ⚠ AND THE OBVIOUS OBJECTION IS REAL: a maximum over n draws grows with n,
+#   so an athlete with twenty races has a better "best" than an equal athlete
+#   with four, for no athletic reason. Two mitigations, and neither is
+#   complete: the mean of the TWO fastest rather than the single fastest
+#   (which needs two good days, not one lucky timing chip), and a recency
+#   window so the pool is a season rather than a career. If the held-out
+#   score says this loses to EWMA on athletes with few races, that is the
+#   order statistic talking and the answer is shrinkage, not a different
+#   window.
+#
+# ! TWO, NOT k. The ragged chunk layout has no per-segment top-k, so the
+#   ragged reduction finds the smallest and then the smallest excluding it.
+#   Naming a knob that only one of the two layouts could honour would be a
+#   lie; LACCTiC uses two performances and so does this.
+BASELINE_BEST_WINDOW_DAYS = 400.0
 
 # Half-life in days for BASELINE_EWMA: a race this long ago counts half as
 # much as one today. 60 days weights a whole cross country season with a
@@ -152,6 +187,48 @@ def baselineWeights(days, valid, half_life):
     lam = _math.log(2.0) / max(float(half_life), 1e-6)
     w = torch.exp(-lam * days.clamp(min=0.0).to(torch.float32))
     return torch.where(valid, w, torch.zeros_like(w))
+
+
+# Purpose:   the padded [B,S,F] reductions, at module level.
+# ! HERE RATHER THAN ON THE MODEL, so train.py's padded chunk branch calls
+#   THIS and not a second spelling of it -- and so it does not have to
+#   allocate a 4M-parameter network per chunk just to reach a method.
+#   _MIN_SECONDS, not 1.0, because that is the floor the whole file uses.
+def _rowsAndDays(sequences, masks):
+    t = sequences[:, :, SEQ_NORM_TIME].to(torch.float32)
+    d = sequences[:, :, SEQ_DAYS_AGO].to(torch.float32)
+    return t, d, masks.to(torch.bool) & (t > 0)
+
+
+def ewmaFromPadded(sequences, masks, half_life):
+    t, d, valid = _rowsAndDays(sequences, masks)
+    w = baselineWeights(d, valid, half_life)
+    den = w.sum(dim=1)
+    num = (w * torch.log(t.clamp(min=_MIN_SECONDS))).sum(dim=1)
+    out = torch.exp(num / den.clamp(min=1e-12))
+    # no usable row at all -> 0, and baselineSeconds swaps in the fallback
+    return torch.where(den > 0, out, torch.zeros_like(out))
+
+
+def best2FromPadded(sequences, masks):
+    """Geometric mean of the two fastest races inside the window. [B]
+
+    ! THE WINDOW WIDENS RATHER THAN EMPTIES. An athlete whose only races are
+      older than the window would otherwise fall through to the fallback
+      constant, which is a worse estimate of them than their own two-year-old
+      races are.
+    """
+    t, d, valid = _rowsAndDays(sequences, masks)
+    inwin = valid & (d <= BASELINE_BEST_WINDOW_DAYS)
+    use = torch.where(inwin.any(dim=1, keepdim=True), inwin, valid)
+    lt = torch.log(t.clamp(min=_MIN_SECONDS))
+    x = torch.where(use, lt, torch.full_like(lt, float("inf")))
+    vals, _idx = torch.topk(x, min(2, x.shape[1]), dim=1, largest=False)
+    finite = torch.isfinite(vals)
+    num = torch.where(finite, vals, torch.zeros_like(vals)).sum(dim=1)
+    den = finite.sum(dim=1).to(torch.float32)
+    out = torch.exp(num / den.clamp(min=1.0))
+    return torch.where(den > 0, out, torch.zeros_like(out))
 
 # ★ VENUE EMBEDDING. course_difficulty stays as the PRIOR -- it is solved from
 #   athletes who raced here and elsewhere, which is cross-athlete linkage this
@@ -346,7 +423,9 @@ class XCPredictor(nn.Module):
         ! AN EMPTY HISTORY is one all-zero row with mask True (collateRagged's
           NaN guard). Its seconds read 0, and the fallback takes over.
         """
-        if float(self.baseline_mode) == BASELINE_EWMA:
+        if float(self.baseline_mode) == BASELINE_BEST2:
+            base = best2FromPadded(sequences, masks)
+        elif float(self.baseline_mode) == BASELINE_EWMA:
             base = self._ewmaBaseline(sequences, masks)
         else:
             n_real = masks.sum(dim=1).clamp(min=1)               # [B]
@@ -370,15 +449,8 @@ class XCPredictor(nn.Module):
           _orZero writes 0.0 for a missing normalized_time, so `t > 0` is
           part of what makes a row real -- the mask alone is not enough.
         """
-        t = sequences[:, :, SEQ_NORM_TIME].to(torch.float32)     # [B,S]
-        d = sequences[:, :, SEQ_DAYS_AGO].to(torch.float32)      # [B,S]
-        valid = masks.to(torch.bool) & (t > 0)
-        w = baselineWeights(d, valid, float(self.baseline_half_life))
-        den = w.sum(dim=1)
-        num = (w * torch.log(t.clamp(min=_MIN_SECONDS))).sum(dim=1)
-        out = torch.exp(num / den.clamp(min=1e-12))
-        # no usable row at all -> 0, and baselineSeconds swaps in the fallback
-        return torch.where(den > 0, out, torch.zeros_like(out))
+        return ewmaFromPadded(sequences, masks,
+                              float(self.baseline_half_life))
 
     def logRatio(self, sequences, masks, targets) -> torch.Tensor:
         """ln(target / baseline), in natural-log units. [B]"""
