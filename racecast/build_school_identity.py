@@ -841,21 +841,32 @@ def main():
         cur.execute("DROP TABLE IF EXISTS si_assign")
         cur.execute("""
             CREATE TEMP TABLE si_assign AS
-            WITH votes AS (
-                -- ! bool_or, NOT DISTINCT: one vote per (school, athlete)
-                --   still, plus whether any of that athlete's seasons under
-                --   the name was a COLLEGE one.
+            WITH levels AS (
                 -- ! starts_with, NOT LIKE 'college%': this query takes no
                 --   parameters, so psycopg2 does not un-escape a doubled
                 --   percent and a LIKE pattern here would search for a
                 --   literal one (tests/test_no_stray_percent_in_sql.py)
                 SELECT rr.school, rr.person_id,
-                       bool_or(starts_with(rr.pool, 'college')
-                            OR starts_with(rr.pool, 'pro')) AS college
+                       (starts_with(rr.pool, 'college')
+                        OR starts_with(rr.pool, 'pro')) AS college,
+                       sum(rr.n_races) AS n
                 FROM   athlete_season rr
                 WHERE  COALESCE(TRIM(rr.school), '') <> ''
                   AND  rr.person_id IS NOT NULL
-                GROUP  BY 1, 2
+                GROUP  BY 1, 2, 3
+            ),
+            votes AS (
+                -- ⚠ MOSTLY, NOT EVER (owner, 2026-09-16: "Oregon (OR)
+                --   contains hsers still"). This was bool_or -- ANY
+                --   college-pooled season under the name -- and the pooling
+                --   is exactly what is still being fixed, so one
+                --   mis-pooled race put an Illinois high schooler on the
+                --   University of Oregon's roster. The level the athlete
+                --   MOSTLY raced at this school decides, ties to college,
+                --   which is applyCollegeDirectory's own convention: one
+                --   rule, not two.
+                SELECT DISTINCT ON (school, person_id) school, person_id, college
+                FROM   levels ORDER BY school, person_id, n DESC, college DESC
             )
             -- ★ THE ATHLETE'S OWN anet TEAM FIRST (buildTeamStates), THEN
             --   THE COLLEGE DIRECTORY for a college-pooled season
@@ -873,10 +884,19 @@ def main():
                             CASE WHEN v.college THEN ds.state END,
                             ph.state) AS state
             FROM   votes v
-            JOIN   person_home_state_new ph USING (person_id)
+            -- ! LEFT, NOT INNER (2026-09-16). An athlete with no racing
+            --   state at all had no row here, so they fell through the
+            --   site's COALESCE to the PRIMARY cluster -- which for a
+            --   contested name is now sometimes the college. Their own
+            --   team or the directory can place them; only a row no
+            --   source can place is dropped, as before.
+            LEFT   JOIN person_home_state_new ph USING (person_id)
             LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
                                         AND ts.school = v.school
             LEFT   JOIN si_dir_state ds ON ds.school = v.school
+            WHERE  COALESCE(ts.state,
+                            CASE WHEN v.college THEN ds.state END,
+                            ph.state) IS NOT NULL
         """)
         cur.execute("CREATE INDEX si_assign_idx ON si_assign (school, person_id)")
         cur.execute("""

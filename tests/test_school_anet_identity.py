@@ -127,3 +127,43 @@ def test_the_build_orders_them_before_the_clusters():
     i_clusters = _SRC.index("CREATE TABLE school_identity_new AS")
     i_merge = _SRC.index("        mergeCoRacingClusters(cur, contested)")
     assert i_auth < i_team < i_dir < i_clusters < i_merge
+
+
+def test_the_crest_queue_uses_the_same_assignment():
+    """★ THE LOGO (owner, 2026-09-16: "the logos are still the old logo (for
+    oregon) ... Williams worked perfectly, they just have no logo anymore").
+    school_logo is keyed on school_identity's (school, state) pairs, and
+    anet_teams.teams decides which anet TEAM answers for each pair. It read
+    person_home_state alone -- where the athlete RACES -- so the modal team
+    for (Oregon, OR) was decided by whoever happens to race in Oregon."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    body = src[src.index("def teams(cur"):src.index("def parseTeam(")]
+    assert 'LEFT JOIN school_athlete_state sa' in body
+    assert body.index("school_athlete_state") < body.index("person_home_state h")
+    # and both are optional, so an older database still builds a queue
+    assert body.count('_tableExists(cur, "school_athlete_state")') == 1
+    assert body.count('_tableExists(cur, "person_home_state")') == 1
+
+
+def test_the_college_level_is_the_majority_not_any_race():
+    """★ OWNER, 2026-09-16: "Oregon (OR) contains hsers still". bool_or meant
+    ANY college-pooled season under the name placed the athlete at the
+    college -- and the pooling is the thing still being fixed, so one
+    mis-pooled race moved an Illinois high schooler onto the university's
+    roster."""
+    assert "bool_or(starts_with" not in _SRC
+    body = _SRC[_SRC.index("            WITH levels AS ("):
+                _SRC.index("CREATE TABLE school_identity_new AS")]
+    assert "sum(rr.n_races) AS n" in body
+    assert "DISTINCT ON (school, person_id)" in body
+    assert "ORDER BY school, person_id, n DESC, college DESC" in body
+
+
+def test_an_athlete_with_no_racing_state_is_still_placed_by_their_team():
+    """They had no si_assign row at all, so the site's COALESCE fell through
+    to the PRIMARY cluster -- which for a contested name is now sometimes
+    the college."""
+    body = _SRC[_SRC.index("            CREATE TEMP TABLE si_assign AS"):
+                _SRC.index("CREATE TABLE school_identity_new AS")]
+    assert "LEFT   JOIN person_home_state_new ph USING (person_id)" in body
+    assert "IS NOT NULL" in body.split("WHERE")[-1]

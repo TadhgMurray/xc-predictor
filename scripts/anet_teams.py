@@ -117,17 +117,48 @@ def teams(cur, limit=None, state=None, redo=False):
     """[(school, state, team_id)] -- the anet team each school's athletes
     actually raced under, biggest programme first.
 
-    Modal per (school, HOME STATE), not per school string: two real schools
+    Modal per (school, STATE), not per school string: two real schools
     share the name "Kingston" and anet gives them two ids, which is the
-    split school_identity already draws."""
+    split school_identity already draws.
+
+    ★ AND THE STATE IS THE SCHOOL'S ASSIGNMENT WHERE THERE IS ONE (owner,
+      2026-09-16: "the logos are still the old logo (for oregon) ...
+      Williams worked perfectly, they just have no logo anymore").
+      school_logo is keyed on school_identity's (school, state) pairs, and
+      this queue decides which anet TEAM answers for each pair -- so it
+      has to use the same answer the clusters were drawn from. It used
+      person_home_state alone, where the athlete RACES: for a college that
+      is a travel mode, so the modal team for (Oregon, OR) was decided by
+      whoever happens to race in Oregon rather than by the University of
+      Oregon's own roster. school_athlete_state
+      (build_school_identity.buildAthleteState) is that answer, and the
+      home state remains the fallback for every name it does not cover.
+
+    ⚠ SO A RERUN IS NEEDED AFTER EVERY IDENTITY REBUILD THAT SPLITS A
+      NAME. The crests already stored sit under the OLD pairs; the new
+      cluster has none, which is why a split name loses its badge.
+      `--redo` re-asks the teams and files them under the new pairs.
+      Nothing is re-scraped from the schools: anet_team.mascot_url is
+      already stored, and this pass fetches that image."""
     for ddl in (DDL, TEAM_DDL, DIV_DDL):
         ensureTable(cur, ddl)
     cur.execute(SHA_INDEX)
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
-    home = ("LEFT JOIN person_home_state h ON h.person_id = t.person_id"
-            if _tableExists(cur, "person_home_state") else "")
-    state_expr = "COALESCE(h.state, '')" if home else "''"
+    # the assignment first, the racing mode second -- the same order
+    # build_school_identity's si_assign and school_identity.stateFilterSql
+    # use, so all three agree about who is in which cluster
+    joins, parts = [], []
+    if _tableExists(cur, "school_athlete_state"):
+        joins.append("LEFT JOIN school_athlete_state sa"
+                     " ON sa.person_id = t.person_id AND sa.school = t.school")
+        parts.append("sa.state")
+    if _tableExists(cur, "person_home_state"):
+        joins.append("LEFT JOIN person_home_state h ON h.person_id = t.person_id")
+        parts.append("h.state")
+    home = " ".join(joins)
+    empty = "''"                      # the SQL empty string, not Python's
+    state_expr = f"COALESCE({', '.join(parts + [empty])})" if parts else empty
     done = "" if redo else "AND a.team_id IS NULL"
     where_state = "AND si.state = %(state)s" if state else ""
     lim = "LIMIT %(limit)s" if limit else ""

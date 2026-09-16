@@ -1687,3 +1687,46 @@ app after 10b.
 SCHOOL NAME, NOT AN ID"*. `/school/Oregon` is one URL; the state arrives as a
 query parameter that the label, crest and link now agree on. Giving a school a
 real id in the URL is a bigger change and is not this.
+
+### ⏳ O. The crest follows the cluster, and two things still leaked into Oregon (OR)
+
+Owner after the second 10b: *"Williams worked perfectly"*, but *"the logos are
+still the old logo (for oregon)"*, *"Williams... just have no logo anymore"*,
+and *"Oregon (OR) contains hsers still"*.
+
+**The logo is already stored — nothing needs re-scraping from the schools.**
+`anet_teams.py` has been writing `anet_team.mascot_url` since it landed, and it
+already has a pass that fetches that image and records it in `school_logo`
+under `(school, state)`. The catch is *which* pairs: its queue is
+`school_identity` JOINed to the modal anet team per `(school, state)` — so
+
+1. every crest already stored sits under the **old** pairs. A name that has
+   just split has a badge for the state it used to be and none for the new one,
+   which is exactly "Williams has no logo any more". `--redo` re-files them.
+2. its `state` came from **`person_home_state` alone** — where the athlete
+   *races*. For a college that is a travel mode, so the modal team for
+   (Oregon, OR) was decided by whoever happens to race in Oregon. It now reads
+   `school_athlete_state` first, the same order `si_assign` and
+   `stateFilterSql` use. Three places, one answer.
+
+```bash
+python scripts/anet_teams.py --write --redo            # or --state OR
+```
+
+Williams College is **not in `anet_team` at all** (only the CA high school is),
+so its crest has to come from the website route: `build_school_websites.py
+--wikidata --write`, then `scrape_school_logos.py --write --retry-failed`. And
+`school_logo.override` is the manual lever — a URL forces that image, the
+string `'none'` suppresses the crest entirely.
+
+**Two leaks into Oregon (OR),** both fixed:
+
+* **`bool_or` meant *ever*, not *mostly*.** Any college-pooled season under the
+  name placed the athlete at the college — and the pooling is the thing still
+  being fixed, so one mis-pooled race moved an Illinois high schooler onto the
+  university's roster. The level the athlete **mostly** raced at decides now,
+  ties to college, which is `applyCollegeDirectory`'s own convention.
+* **`si_assign` INNER JOINed `person_home_state`.** An athlete with no racing
+  state had no assignment row at all, so the site's COALESCE fell through to
+  the **primary** cluster — which for a contested name is now sometimes the
+  college. LEFT JOIN, and only a row no source can place is dropped.
