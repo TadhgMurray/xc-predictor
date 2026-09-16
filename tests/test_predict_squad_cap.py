@@ -8,6 +8,10 @@ model scores) are exercised against fake DB helpers, so this needs no database.
 import os
 import sys
 
+# see test_predict_carry_forward.py: predict.py's stamping pulls pool_view in,
+# and config.py resolves a connection at import. Never connected to.
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+
 # ! engine TOO, since schoolSquad started delegating to _currentSquads --
 #   which reads season_year.academicYear to decide whether the current season
 #   is over. Same two paths test_predict_carry_forward.py sets up.
@@ -162,8 +166,12 @@ class RatingCursor:
         self.asked = sorted((params or {}).get("ids") or [])
 
     def fetchall(self):
+        # ! POOL IS PART OF THE ROW NOW. The dropped runners this feeds are
+        #   shown beside converted ones, and pool is what the conversion is
+        #   looked up by -- a fake that omits it tests a query that no longer
+        #   exists.
         return [{"person_id": p, "mean_rating": r[0], "n_races": r[1],
-                 "year": r[2]}
+                 "year": r[2], "pool": (r[3] if len(r) > 3 else "hs_m")}
                 for p, r in sorted(self.ratings.items())]
 
 
@@ -171,7 +179,8 @@ def test_last_known_ratings_shape():
     cur = RatingCursor({101: (128.4, 9, 2025), 102: (117.44, 6, 2024)})
     out = predict._lastKnownRatings(cur, [102, 101, None, 101], "XC")
     assert cur.asked == [101, 102], cur.asked      # deduped, sorted, no None
-    assert out[101] == {"rating": 128.4, "n_races": 9, "year": 2025}
+    assert out[101] == {"rating": 128.4, "n_races": 9, "year": 2025,
+                        "pool": "hs_m"}
     # ! ONE DECIMAL, the same round() _squadsForYear already applies, so a
     #   dropped runner and an active one are formatted alike.
     assert out[102]["rating"] == 117.4, out[102]

@@ -562,6 +562,59 @@ function esc(v) {
   })[c]);
 }
 
+/*
+ * ★ ONE RATING, BOTH SCALES -- the JS twin of _scale.html's rv() macro
+ *   (owner, 2026-09-15: "the speed ratings for the ppl on the teams is not
+ *   hs-equivalent when it should be if the scale is hs-equivalent").
+ *
+ *   A rating is POOL-RELATIVE: 100 is the mean of your own pool, so a card
+ *   holding a middle schooler and a senior showed two 128s that are nothing
+ *   like each other. The site has fixed that everywhere else with one
+ *   site-wide view, HS-equivalent by default; this page simply never joined
+ *   in, because its rosters arrive by fetch and scale-view.js only knows how
+ *   to swap markup.
+ *
+ * ! SO THE MARKUP IS WHAT CHANGES, NOT THE NUMBERS. Every rating here is
+ *   rendered as the span scale-view.js already owns: own-pool number as the
+ *   text, HS-equivalent in data-hs. The toggle then works on this page for
+ *   free, with no second notion of the mode to drift out of step.
+ *
+ * ⚠ data-rating ATTRIBUTES STAY RAW, EVERY ONE OF THEM. The add buttons and
+ *   the state they rebuild are read BACK by this file and fed to the
+ *   prediction, and the pool rating is what the model and the server agree
+ *   on. This is a display value; writing a converted number into an
+ *   attribute would convert the maths with it.
+ */
+function rv(rating, hs) {
+  if (rating === null || rating === undefined || rating === "") return "";
+  const moves = hs !== null && hs !== undefined && hs !== ""
+                && String(hs) !== String(rating);
+  return `<span class="rv"${moves ? ` data-hs="${esc(hs)}"` : ""}` +
+         `>${esc(rating)}</span>`;
+}
+
+/*
+ * Repaint the rating spans just injected, and reveal the control if this
+ * meet has anything to switch.
+ *
+ * ! CALLED AFTER EVERY INJECTION, not once at load: scale-view.js runs its
+ *   pass on DOMContentLoaded, and at that moment this page has no ratings on
+ *   it at all -- the field has not been fetched. applySpans is exposed for
+ *   exactly this ("scripts that inject .rv spans after load").
+ *
+ * ★ AND THE CONTROL IS HIDDEN UNTIL IT WOULD DO SOMETHING. A meet of one
+ *   pool converts by 1.0, so every number is identical on both scales and a
+ *   switch between them reads as broken. rv() only writes data-hs when the
+ *   two differ, so "is there a data-hs anywhere" is the whole test.
+ */
+function applyScale() {
+  if (window.rcScale && window.rcScale.applySpans) window.rcScale.applySpans();
+  const box = document.getElementById("scale-toggle");
+  if (box && box.style.display && document.querySelector(".rv[data-hs]")) {
+    box.style.display = "";
+  }
+}
+
 /* Seconds -> 16:27.8. The model predicts seconds; a time is what people read. */
 function fmtTime(s) {
   if (s === null || s === undefined) return " - ";
@@ -632,6 +685,7 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
         const rows = await opts.rows(q);
         if (!live()) return;
         box.innerHTML = render(rows);
+        applyScale();
         box.classList.toggle("hidden", rows.length === 0);
       } catch (err) { if (live()) box.classList.add("hidden"); }
       return;
@@ -646,6 +700,7 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
       const rows = (await res.json() || []).filter((r) => r.kind === kind);
       if (!live()) return;
       box.innerHTML = render(rows);
+      applyScale();
       box.classList.toggle("hidden", rows.length === 0);
     } catch (err) {
       if (live()) box.classList.add("hidden");
@@ -794,16 +849,22 @@ function renderAthleteRows(rows) {
   return rows.slice(0, 10).map((r) => {
     const id = String(r.person_id);
     const chosen = state.athletes.some((a) => a.id === id);
-    const sub = [r.school, r.year, r.rating == null ? null : `${r.rating}`]
-      .filter(Boolean).join(" \u00b7 ");
+    /* ! BUILT IN TWO PIECES BECAUSE THE RATING IS MARKUP NOW. The whole
+         sublabel used to be one string put through esc(); the rating inside
+         it has to be a span carrying both scales, so the escaping moved to
+         the parts that are still free text. */
+    const words = [r.school, r.year].filter(Boolean).map(esc).join(" \u00b7 ");
+    const num = rv(r.rating, r.hs_rating);
+    const sub = words && num ? `${words} \u00b7 ${num}` : (words || num);
     return `<button class="pick-opt${chosen ? " is-in" : ""}" ` +
       `data-pid="${esc(id)}" data-label="${esc(r.name)}" ` +
       `data-school="${esc(r.school || "")}" ` +
       `data-year="${esc(r.year == null ? "" : r.year)}" ` +
-      `data-rating="${esc(r.rating == null ? "" : r.rating)}">` +
+      `data-rating="${esc(r.rating == null ? "" : r.rating)}" ` +
+      `data-hs="${esc(r.hs_rating == null ? "" : r.hs_rating)}">` +
       `<span class="pick-name">${esc(r.name)}</span>` +
       `<span class="pick-act">${chosen ? "Remove" : "Add"}</span>` +
-      `<span class="pick-sub">${esc(sub)}</span></button>`;
+      `<span class="pick-sub">${sub}</span></button>`;
   }).join("");
 }
 
@@ -1579,7 +1640,7 @@ function renderFieldBlock(sumEl, gridEl) {
           <div class="runner-row" data-pid="${r.person_id}">
             <span class="r-name"><a class="lnk"
                href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
-            <span class="r-rating">${r.rating === null ? "" : r.rating}</span>
+            <span class="r-rating">${rv(r.rating, r.hs_rating)}</span>
             <button class="r-x" data-remove="${r.person_id}"
                     title="Remove">&times;</button>
           </div>`).join("")}
@@ -1601,18 +1662,20 @@ function renderFieldBlock(sumEl, gridEl) {
               <div class="runner-row is-out">
                 <span class="r-name"><a class="lnk"
                    href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
-                <span class="r-rating">${r.rating === null
-                    || r.rating === undefined ? "" : r.rating}${r.rating_year
+                <span class="r-rating">${rv(r.rating, r.hs_rating)}${
+                    r.rating_year
                     ? `<span class="r-year">\u2009'${
                         String(r.rating_year).slice(2)}</span>` : ""}</span>
                 <button class="r-add" data-add="${r.person_id}"
                         data-name="${esc(r.name)}"
                         data-rating="${r.rating === null ? "" : r.rating}"
+                        data-hs="${r.hs_rating == null ? "" : r.hs_rating}"
                         data-school="${esc(t.school)}">add</button>
               </div>`).join("")}
           </details>` : ""}
       </div>
     </details>`).join("");
+  applyScale();
 }
 
 
@@ -1895,6 +1958,8 @@ bindPicker($("athlete-input"), $("athlete-results"), "athlete",
       school: d.school || null,
       year: d.year || null,
       rating: d.rating === "" ? null : Number(d.rating),
+      /* the display twin; `rating` stays the pool number the request sends */
+      hs_rating: d.hs === "" || d.hs === undefined ? null : Number(d.hs),
     });
   }
   renderAthletes();
@@ -1928,7 +1993,9 @@ bindPicker($("squad-input"), $("squad-results"), "school", renderSimple,
       if (room <= 0) break;
       state.athletes.push({ id: id, name: r.name, school: r.school || school,
                             year: data.season_year || null,
-                            rating: r.rating == null ? null : Number(r.rating) });
+                            rating: r.rating == null ? null : Number(r.rating),
+                            hs_rating: r.hs_rating == null
+                                       ? null : Number(r.hs_rating) });
       added += 1; room -= 1;
     }
     const left = runners.length - added;
@@ -1999,11 +2066,12 @@ function renderAthletes() {
          <td>${esc(a.school || "")}</td>
          <td class="num">${esc(a.year == null ? "" : a.year)}</td>
          <td class="num">${a.rating == null || isNaN(a.rating)
-                           ? "" : esc(a.rating)}</td>
+                           ? "" : rv(a.rating, a.hs_rating)}</td>
          <td class="num"><button class="r-x"
              data-drop-athlete="${esc(a.id)}" title="Remove">&times;</button></td>
        </tr>`).join("") +
     `</tbody></table>`;
+  applyScale();
 }
 
 /*
@@ -2298,7 +2366,7 @@ const squadCache = new Map();
 /* One runner onto one team's card, with their rating (the rating is how
    you judge whether adding them was right; null stays blank on purpose).
    Shared by the add button, "+ Add whole squad" and "every team". */
-function addRunner(school, pid, name, rating, div) {
+function addRunner(school, pid, name, rating, div, hs) {
   /* `div` names the race; undefined means the focused one. Writes through
      editsFor, the per-division record, so a grouped race edits the right
      block. */
@@ -2306,9 +2374,17 @@ function addRunner(school, pid, name, rating, div) {
   pid = String(pid);
   const team = (ed.field?.teams || []).find((t) => t.school === school);
   if (team && !team.runners.some((r) => String(r.person_id) === pid)) {
-    team.runners.push({ person_id: pid, name: name, rating: rating, added: true });
+    team.runners.push({ person_id: pid, name: name, rating: rating,
+                       hs_rating: hs == null ? null : hs, added: true });
     team.dropped = (team.dropped || []).filter((r) => String(r.person_id) !== pid);
-    team.runners.sort((a, b) => (b.rating ?? -Infinity) - (a.rating ?? -Infinity));
+    /* ★ SORTED ON THE HS-EQUIVALENT WHERE THERE IS ONE, which is what the
+       server's _bestFirst already does for the rosters it sends. A rating is
+       pool-relative, so ordering a card that spans pools by the raw number
+       puts the best eighth-graders above the varsity -- the same fault the
+       squad ordering was fixed for. Falls back to the raw number when no
+       factor exists, which is the single-pool case and already right. */
+    const cmp = (r) => (r.hs_rating ?? r.rating ?? -Infinity);
+    team.runners.sort((a, b) => cmp(b) - cmp(a));
   }
   ed.removed.delete(pid);
   ed.added.push({ person_id: pid, name: name, school: school });
@@ -2327,7 +2403,9 @@ async function addWholeSquad(school, div) {
   let n = 0;
   for (const r of squad.runners || []) {
     if (have.has(String(r.person_id))) continue;
-    addRunner(school, r.person_id, r.name, r.rating == null ? null : Number(r.rating), div);
+    addRunner(school, r.person_id, r.name,
+              r.rating == null ? null : Number(r.rating), div,
+              r.hs_rating == null ? null : Number(r.hs_rating));
     ed.wholeAdded.add(String(r.person_id));
     n += 1;
   }
@@ -2549,15 +2627,17 @@ document.addEventListener("click", (e) => {
             ? hits.map((r) => `<div class="anyone-row">
                    <a class="ar-name" href="/athlete/${r.person_id}"
                       >${esc(r.name || "Unknown")}</a>
-                   <span class="ar-rating">${r.rating}</span>
+                   <span class="ar-rating">${rv(r.rating, r.hs_rating)}</span>
                    <button class="r-add" data-add="${r.person_id}"
                            data-name="${esc(r.name || "Unknown")}"
                            data-rating="${r.rating}"
+                           data-hs="${r.hs_rating == null ? "" : r.hs_rating}"
                            data-school="${esc(school)}">add</button>
                    <span class="ar-school">${esc(r.school || "")}${r.year
                      ? ` \u00b7 ${esc(r.year)}` : ""}</span>
                  </div>`).join("")
             : `<div class="squad-loading">No athlete by that name.</div>`;
+          applyScale();
         } catch (err) {
           rows.innerHTML =
             `<div class="squad-loading">Could not search.</div>`;
@@ -2632,10 +2712,11 @@ document.addEventListener("click", (e) => {
             `<div class="runner-row is-out">
                <span class="r-name"><a class="lnk"
                   href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
-               <span class="r-rating">${r.rating}</span>
+               <span class="r-rating">${rv(r.rating, r.hs_rating)}</span>
                <button class="r-add" data-add="${r.person_id}"
                        data-name="${esc(r.name)}"
                        data-rating="${r.rating === null ? "" : r.rating}"
+                       data-hs="${r.hs_rating == null ? "" : r.hs_rating}"
                        data-school="${esc(school)}">add</button>
              </div>`).join("")
         : `<div class="squad-loading">No runner by that name.</div>`;
@@ -2650,12 +2731,14 @@ document.addEventListener("click", (e) => {
                 placeholder="Search ${esc(school)}'s squad\u2026"
                 aria-label="Search this squad">
          <div class="squad-rows">${rows(rest)}</div>`;
+      applyScale();
       const find = list.querySelector(".squad-find");
       const body = list.querySelector(".squad-rows");
       find.addEventListener("input", () => {
         const q = find.value.trim().toLowerCase();
         body.innerHTML = rows(
           q ? rest.filter((r) => r.name.toLowerCase().includes(q)) : rest);
+        applyScale();
       });
       find.focus();
     }).catch(() => {
@@ -2677,8 +2760,11 @@ document.addEventListener("click", (e) => {
        roster on screen still showed seven while the request would send eight,
        and there was no way to see or undo what you had added. */
     const rating = add.dataset.rating;
+    const hs = add.dataset.hs;
     addRunner(add.dataset.school, add.dataset.add, add.dataset.name,
-              rating === "" || rating === undefined ? null : Number(rating));
+              rating === "" || rating === undefined ? null : Number(rating),
+              undefined,
+              hs === "" || hs === undefined ? null : Number(hs));
     renderField();
     return;
   }

@@ -6880,6 +6880,7 @@ def api_predict_athletes():
                 SELECT * FROM (
                     SELECT DISTINCT ON (s.person_id)
                            s.person_id, s.school, s.year, s.mean_rating,
+                           s.pool,
                            COALESCE(a.first_name,'') || ' '
                                || COALESCE(a.last_name,'') AS name
                     FROM   athlete_season s
@@ -6911,12 +6912,20 @@ def api_predict_athletes():
                 LIMIT  40
             """, params)
             rows = cur.fetchall()
-    return jsonify({"athletes": [
-        {"person_id": r["person_id"],
-         "name": (r["name"] or "").strip() or "Unknown",
-         "school": r["school"], "year": r["year"],
-         "rating": round(float(r["mean_rating"]), 1)}
-        for r in rows[:25]]})
+    # ★ BOTH SCALES, SO "add anyone" READS LIKE THE REST OF THE PAGE. Every
+    #   other rating on the predictions page now carries its HS-equivalent;
+    #   a picker that hands back only the pool number would put an ms_m 128
+    #   next to an hs_m 128 and let a coach think they had found two of the
+    #   same runner. `pool` rides along because it is what the factor is
+    #   looked up by.
+    out = [{"person_id": r["person_id"],
+            "name": (r["name"] or "").strip() or "Unknown",
+            "school": r["school"], "year": r["year"],
+            "pool": r["pool"],
+            "rating": round(float(r["mean_rating"]), 1)}
+           for r in rows[:25]]
+    stampBoardRows(out, rating_keys=("rating",), sport=sport)
+    return jsonify({"athletes": out})
 
 
 @app.route("/api/predict/weather")

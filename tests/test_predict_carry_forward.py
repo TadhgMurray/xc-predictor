@@ -16,6 +16,14 @@ import os
 import re
 import sys
 
+# ⚠ _squadsForYear STAMPS THE HS-EQUIVALENT NOW, and pool_view -> conversions
+#   -> database -> config resolves a connection AT IMPORT. config.py refuses
+#   to default a password on purpose, so without this the import raises and
+#   this test cannot run on any machine that has no credentials. Nothing here
+#   opens a connection; the value is never used. Same shim as the dozen other
+#   suites that touch a module with a DB import in its chain.
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+
 _ROOT = os.path.join(os.path.dirname(__file__), "..")
 # engine/ too: _currentSquads reads season_year.academicYear to decide
 # whether the season it was handed is already over.
@@ -38,23 +46,36 @@ class FakeCursor:
         return []
 
 
-def test_terminal_grades_are_normalised_spellings():
-    # Only SPELLINGS should need listing now, never capitalisations -- the
-    # query upper-cases and trims before comparing.
-    assert predict._TERMINAL_GRADES == ["12", "12TH", "SR", "SENIOR"], \
-        predict._TERMINAL_GRADES
-    for g in predict._TERMINAL_GRADES:
-        assert g == g.upper().strip(), f"{g!r} is not already normalised"
-    print(f"  terminal grades {predict._TERMINAL_GRADES} ... OK")
+def test_terminal_grades_are_keys_not_spellings():
+    """★ SPELLINGS WERE THE BUG, NOT A DETAIL OF IT. Listing them meant the
+    list had to be complete, and it never was: "Sr.", "SR-4" and a bare "16"
+    are all seniors that ["12", "12TH", "SR", "SENIOR"] let through, and each
+    one stayed on a carried-forward roster for a year after they left.
+
+    gradeKeySql normalises instead -- digits out of the string, the
+    fr/so/jr/sr prefixes read, a college 13-16 mapped onto its class word --
+    so the terminal set is two KEYS and cannot be incomplete."""
+    assert predict._TERMINAL_KEYS == ("12", "sr"), predict._TERMINAL_KEYS
+    # ⚠ the old list must not survive beside them: two answers to "who is a
+    #   senior" is how the incomplete one gets picked up again
+    assert not hasattr(predict, "_TERMINAL_GRADES")
+    print(f"  terminal keys {predict._TERMINAL_KEYS} .................. OK")
 
 
-def test_aging_out_compares_normalised():
+def test_aging_out_compares_the_grade_key():
     cur = FakeCursor()
     predict._squadsForYear(cur, ["Alpha"], "XC", 2025, exclude_terminal=True)
-    assert "UPPER(BTRIM(COALESCE(s.grade, '')))" in cur.sql, cur.sql
-    assert "<> ALL(%(term)s)" in cur.sql, cur.sql
-    assert cur.params["term"] == predict._TERMINAL_GRADES
-    print("  aging-out upper-cases and trims before comparing ... OK")
+    # the normalisation, not a literal: this is gradeKeySql's own shape
+    assert "regexp_replace(lower(trim(s.grade))" in cur.sql, cur.sql
+    assert "ARRAY['fr','so','jr','sr']" in cur.sql, cur.sql
+    assert "<> ALL(%(term_keys)s)" in cur.sql, cur.sql
+    assert cur.params["term_keys"] == list(predict._TERMINAL_KEYS)
+    # ! AN UNKNOWN GRADE IS NOT A SENIOR. NULL and blank stay on the roster
+    #   and are flagged for a human, rather than being aged out on a guess.
+    assert "s.grade IS NULL OR BTRIM(s.grade) = ''" in cur.sql, cur.sql
+    # the dead spelling list must not still be riding along as a parameter
+    assert "term" not in cur.params, cur.params
+    print("  aging-out compares the normalised grade key ........ OK")
 
 
 def test_no_grade_clause_when_not_aging_out():

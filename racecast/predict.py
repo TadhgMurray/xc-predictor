@@ -897,6 +897,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         team["dropped"].append({"person_id": r["person_id"],
                                 "name": r["name"],
                                 "rating": prev.get("rating"),
+                                "pool": prev.get("pool"),
                                 "n_races": prev.get("n_races"),
                                 # ! THE SEASON IS PART OF THE NUMBER. A 2019
                                 #   rating and a 2025 one mean very different
@@ -905,6 +906,17 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                                 "rating_year": prev.get("year")})
     teams = sorted(by_school.values(),
                    key=lambda t: (-len(t["runners"]), t["school"]))
+
+    # ★ THE DROPPED GET THE HS-EQUIVALENT NUMBER TOO. _squadsForYear stamps
+    #   it on everyone with a current-season row, which is `runners`; these
+    #   rows come from _lastKnownRatings instead and so were the one place on
+    #   the card still showing a raw pool rating beside converted ones. Two
+    #   scales in one column is worse than either scale.
+    from pool_view import stampBoardRows
+    flat = [e for t in teams for e in t["dropped"]]
+    if flat:
+        stampBoardRows(flat, rating_keys=("rating",), sport=sport)
+
     # ! THE PAGE NEEDS IT TOO, so "add from squad" and "add anyone" can offer
     #   the same side of the school this field is made of.
     return {"season_year": season_year, "when": when, "teams": teams,
@@ -959,9 +971,15 @@ def _lastKnownRatings(cur, person_ids, sport):
     ids = sorted({p for p in person_ids if p is not None})
     if not ids:
         return {}
+    # ! POOL COMES BACK TOO, and it is not decoration: it is the only thing
+    #   that says what the rating MEANS, so it is what the HS-equivalent
+    #   conversion needs. A dropped runner's last season may be in a
+    #   different pool from the one they would race in now (an eighth-grader
+    #   moving up), and the factor is the old pool's -- that IS the rating
+    #   being shown.
     cur.execute("""
         SELECT DISTINCT ON (s.person_id)
-               s.person_id, s.mean_rating, s.n_races, s.year
+               s.person_id, s.mean_rating, s.n_races, s.year, s.pool
         FROM   athlete_season s
         WHERE  s.person_id = ANY(%(ids)s)
           AND  s.sport = %(sport)s
@@ -970,7 +988,8 @@ def _lastKnownRatings(cur, person_ids, sport):
     """, {"ids": ids, "sport": sport})
     return {r["person_id"]: {
                 "rating": round(float(r["mean_rating"]), 1),
-                "n_races": r["n_races"], "year": r["year"]}
+                "n_races": r["n_races"], "year": r["year"],
+                "pool": r["pool"]}
             for r in cur.fetchall()}
 
 
@@ -1407,8 +1426,11 @@ def _exactField(cur, meet_id, div_id, sport):
 #   class word. A high school senior keys to '12' and a college senior to
 #   'sr', so those two keys are the whole terminal set.
 #
-# ! KEPT ONLY FOR THE PYTHON-SIDE FLAG BELOW. The SQL uses the key.
-_TERMINAL_GRADES = ["12", "12TH", "SR", "SENIOR"]
+# ⚠ AND THE OLD SPELLING LIST IS GONE, NOT KEPT BESIDE IT. It survived the
+#   switch to keys as an unused query parameter, which is the shape a second
+#   answer to "who is a senior" comes back in: the next reader to reach for
+#   it would have got the list that MISSED "Sr." and "SR-4" -- the exact bug
+#   the keys were introduced to fix. One definition, and it is the key.
 _TERMINAL_KEYS = ("12", "sr")
 
 
@@ -1514,7 +1536,7 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
           {gender_clause}
         ORDER  BY s.school, s.mean_rating DESC NULLS LAST
     """, {"schools": schools, "yr": year, "sport": sport,
-          "term": _TERMINAL_GRADES, "term_keys": list(_TERMINAL_KEYS),
+          "term_keys": list(_TERMINAL_KEYS),
           "active_yr": active_year,
           "gender": gender})
     out = {}

@@ -26,6 +26,7 @@
     person, the other wants a roster you can edit. Sharing a form made both
     read as half-filled.
 ===================================================================== #}
+{% from "_scale.html" import scale_toggle %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -132,6 +133,21 @@
       </button>
     </div>
 
+    {# ★ THE RATING SCALE, ONCE FOR BOTH PANES (owner, 2026-09-15: "the speed
+       ratings for the ppl on the teams is not hs-equivalent when it should be
+       if the scale is hs-equivalent"). Every rating on this page is a season
+       mean of a pool-relative number, so a card mixing a middle school and a
+       high school put two incomparable 128s in one column -- and the site's
+       own default view, which fixes exactly that, did not reach here at all.
+
+       ! HIDDEN UNTIL SOMETHING MOVES, the way the rankings boards do it. The
+         rosters arrive by fetch, so the server cannot know at render time
+         whether this meet has a pool the factor moves; predictions.js shows
+         the control when an injected rating actually carries a different
+         HS-equivalent, and a single-pool meet never sees a switch that would
+         do nothing. #}
+    <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
+
     {# --- TEAM --- #}
     <div class="who-pane" data-pane="team">
       <div class="field-head">
@@ -189,6 +205,9 @@
 
 </div>
 
+{# ⚠ BEFORE predictions.js, WHICH READS window.rcScale. scale-view.js's own
+   header says so, and the ordering is the whole of the dependency. #}
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('predictions.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
 </body>
