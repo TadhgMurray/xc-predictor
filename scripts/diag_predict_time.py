@@ -157,7 +157,40 @@ def main():
                 print(f"\n  model unavailable: {st['reason']}")
                 return
 
-            with Stage("_teamRosters"):
+            # ★ _teamRosters, BROKEN OPEN. It is a stage made of five
+            #   queries and "6.4 s" names none of them. Each is run here in
+            #   the order the real call runs them, on the same cursor, so
+            #   the numbers add up to what the stage costs.
+            import roster as R
+            meet_id = int(a.meet)
+            div = int(a.div) if a.div and str(a.div).isdigit() else None
+            with Stage("  _exactField (who ran it)"):
+                originals = P._exactField(cur, meet_id, div, a.sport)
+            at_meet = sorted({r["school"] for r in originals if r.get("school")})
+            print(f"     -> {len(originals)} originals, {len(at_meet)} schools")
+
+            with Stage("  _fieldGender"):
+                gender = P._fieldGender(
+                    cur, [r["person_id"] for r in originals], a.sport)
+
+            with Stage("  _currentSeason"):
+                season = P._currentSeason(cur, a.sport)
+            print(f"     -> season {season}")
+
+            # ! THE CARRY-FORWARD WINDOW asks how many races each school has
+            #   run -- 396 schools, one GROUP BY over ranking_results.
+            with Stage("  roster.racesRun (the window)"):
+                run = R.racesRun(cur, at_meet, a.sport, season)
+            print(f"     -> {len(run)} schools have raced this season")
+
+            with Stage("  _squadsForYear (this season)"):
+                P._squadsForYear(cur, at_meet, a.sport, season, gender=gender)
+            with Stage("  _squadsForYear (last season, carried)"):
+                P._squadsForYear(cur, at_meet, a.sport, season - 1,
+                                 exclude_terminal=True, active_year=season,
+                                 gender=gender)
+
+            with Stage("_teamRosters (all of it, again)"):
                 roster = P._teamRosters(cur, [], target, set(), set())
             print(f"     -> {len(roster)} on the named teams")
 
