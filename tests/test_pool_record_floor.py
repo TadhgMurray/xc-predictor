@@ -65,11 +65,26 @@ class ThePoolFloor(unittest.TestCase):
         self.assertTrue(R.exemptPool("pro_f|TF"))
         self.assertFalse(R.impossibleRow(9.30, 100, "M", "college_m"))
 
-    def test_a_young_pool_is_held_to_a_tighter_floor(self):
-        self.assertTrue(R.impossibleRow(105.0, 800, "M", "ms_m"),
-                        "1:45 for 800 is not a middle schooler")
-        self.assertFalse(R.impossibleRow(125.0, 800, "M", "ms_m"),
-                         "2:05 is fast for a middle schooler, not impossible")
+    def test_every_pool_is_held_to_the_hs_equivalent_floor(self):
+        """★ THE OWNER'S RULE (2026-09-16): "do it by hs-equivalent scale
+        not own pool scale". A 1:45 800 is not a middle schooler -- but
+        deleting the row says the RACE was wrong, when what is wrong is
+        the pool, and the deleted row is the evidence that would fix it
+        (record_pace.poolFactor: the ratchet)."""
+        self.assertFalse(R.impossibleRow(105.0, 800, "M", "ms_m"),
+                         "a mis-pooled row is pool_resolve's to fix")
+        self.assertFalse(R.impossibleRow(234.0, 1500, "M", "elem_m"),
+                         "a 3:54 1500 is a real race by a real adult")
+        self.assertTrue(R.impossibleRow(200.0, 1500, "M", "elem_m"),
+                        "3:20 for 1500 is faster than anybody has run")
+        for pool in ("elem_f", "ms_m", "hs_m", "elem_m|XC"):
+            self.assertEqual(R.poolFactor(pool), R.FLOOR_FACTOR)
+        self.assertEqual(R.FLOOR_FACTOR, R.POOL_PACE_FACTOR["hs"])
+
+    def test_the_per_level_numbers_survive_for_the_prefilter_and_the_census(self):
+        self.assertEqual(R.ownPoolFactor("ms_f|XC"), 1.12)
+        self.assertEqual(R.ownPoolFactor("elem_m"), 1.35)
+        self.assertEqual(R.ownPoolFactor("nothing_m"), 1.0)
 
     def test_the_high_school_floor_never_flags_a_real_high_school_record(self):
         """The girls' 100 m record is 10.65 against a 10.49 world record --

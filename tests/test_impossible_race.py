@@ -36,22 +36,43 @@ def test_the_prefilter_is_slower_than_every_record_at_every_pools_floor():
     assert rp.SLOWEST_RECORD_PACE == rp.recordPace(10000, "F")
 
 
-def test_the_race_rule_uses_the_pools_own_floor():
-    # a 1:50 800 (137.5 s/km) is 9% off the open record: fine for a high
-    # schooler (floor 1.01), not for a middle-school pool (floor 1.12)
-    # ... but a pool-floor row is a mis-pooled ROW, not a wrong race: it
-    # leaves alone and the race keeps its ratings
+def test_the_floor_is_the_hs_equivalent_one_for_every_pool():
+    """★ THE OWNER'S RULE (2026-09-16): "redo them so they don't catch
+    college ahtlets -- do it by hs-equivalent scale not own pool scale".
+    A 1:50 800 (137.5 s/km) is 9% off the open record. The old rule read
+    the row's own pool and deleted it for a middle-school pool (floor
+    1.12); the new one judges every pool on the hs-equivalent floor, so
+    the row stays and the mis-pooling is pool_resolve's to fix."""
     ms = _row(time_seconds=110.0, distance=800.0, rating_pool="ms_m", event_id=1)
-    races, rows = ir.judge("TF", [ms])
-    assert races == {} and [r[0] for r in rows] == [1] and rows[0][1] == ("anet", 10, 3, 1)
+    assert ir.judge("TF", [ms]) == ({}, [])
     hs = _row(time_seconds=110.0, distance=800.0, rating_pool="hs_m", event_id=1)
     assert ir.judge("TF", [hs]) == ({}, [])
     pro = _row(time_seconds=95.0, distance=800.0, rating_pool="pro_m", event_id=1)
     assert ir.judge("TF", [pro]) == ({}, [])          # pro is exempt now too
-    # faster than the open record in a covered pool: the race
+    # faster than the open record in a covered pool: the whole race goes
     wrong = _row(time_seconds=95.0, distance=800.0, rating_pool="ms_m", event_id=1)
     races, rows = ir.judge("TF", [wrong])
     assert set(races) == {("anet", 10, 3, 1)} and rows == []
+    # and the floor still bites INSIDE the record: 1:39.4 is under the open
+    # 800 record with the slack, but not by 2%, so the row goes and its
+    # race keeps its ratings
+    edge = _row(time_seconds=99.4, distance=800.0, rating_pool="ms_m", event_id=1)
+    races, rows = ir.judge("TF", [edge])
+    assert races == {} and [r[0] for r in rows] == [1] and rows[0][1] == ("anet", 10, 3, 1)
+
+
+def test_the_census_names_the_rows_the_old_floor_would_have_deleted():
+    """The undo, made visible: one line per run saying what came back."""
+    ms = _row(time_seconds=110.0, distance=800.0, rating_pool="ms_m")
+    assert [r[:2] for r in ir.ownFloorOnly("TF", [ms])] == [(1, "ms_m")]
+    # a pool whose floor did not change, an exempt pool, and a row the new
+    # floor still deletes are all silent
+    assert ir.ownFloorOnly("TF", [_row(time_seconds=110.0, distance=800.0,
+                                       rating_pool="hs_m")]) == []
+    assert ir.ownFloorOnly("TF", [_row(time_seconds=110.0, distance=800.0,
+                                       rating_pool="college_m")]) == []
+    assert ir.ownFloorOnly("TF", [_row(time_seconds=95.0, distance=800.0,
+                                       rating_pool="ms_m")]) == []
 
 
 def test_a_row_without_a_pool_is_college_only_when_it_came_from_tfrrs():

@@ -20,14 +20,31 @@ impossible_race.py -- the races no runner could have run. Pipeline step 06c.
   pages show a dash where a 190 used to sit. College pools are exempt
   ("every but college"): a college race carries professionals and
   near-record fields, and the anchor gate handles its scale problems.
-  A row faster than its POOL's floor but not the open record (a 3:54 1500
-  filed as an elementary schooler) is a mis-pooled row, not a wrong race:
-  that row alone is written, and its race keeps its ratings (see judge).
+  A row faster than the FLOOR but not the open record is a mis-pooled row,
+  not a wrong race: that row alone is written, and its race keeps its
+  ratings (see judge).
+
+★ AND THE FLOOR IS ONE SCALE FOR EVERYBODY (owner, 2026-09-16: "undo all
+  the indiv rows overrides, and then redo them so they don't catch college
+  ahtlets -- do it by hs-equivalent scale not own pool scale"). It used to
+  be the row's own pool's floor, read off the rating_pool the last go-live
+  wrote, which made the test depend on the pooling -- and the rows it
+  catches are the ones the pooling got wrong. See record_pace.poolFactor
+  for the ratchet that produced, and why the two questions are separate.
+
+★ THE UNDO IS THE RERUN. Both tables are built as _new and swapped, so
+  every verdict is recomputed from the current data and the current rules
+  on every run -- there is no accumulated state to unwind. Nothing else
+  persists a condemnation: the pack, the fill and the boards all read the
+  table live, and normalized_time is never cleared. So one `--write` with
+  the new floor both undoes the old row list and writes the new one, and
+  the line it prints says how many rows came back.
 
 HOW A ROW'S POOL IS KNOWN HERE. This runs before the pack, so the pool is
 the rating_pool the last go-live wrote on the row; a row that has none yet
 (a first run, a row the solve never saw) counts as college only when it
-came from tfrrs, the college feed. The distance is the loader's own
+came from tfrrs, the college feed. The pool now decides ONLY the exemption
+-- never how hard the floor is. The distance is the loader's own
 (dist_override, then the meet's, then the tfrrs division blob for XC; the
 event's metres for TF), the sex the athlete's.
 
@@ -57,7 +74,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"),
 from database import getConn                                    # noqa: E402
 from record_pace import (SLOWEST_RECORD_PACE, PACE_FLOOR_SLACK,  # noqa: E402
                          POOL_PACE_FACTOR, exemptPool, impossiblePace,
-                         poolFactor, recordPace)
+                         ownPoolFactor, poolFactor, recordPace)
 
 # SQL keeps every row faster than this (s/km); a margin over the slowest
 # record pace so a rounding in the SQL arithmetic cannot lose a candidate.
@@ -133,10 +150,17 @@ def judge(sport, rows):
       races condemned, most of them open 1500s run in 3:54 by adults the
       club pooling had filed as elementary schoolers). A time faster than
       the open world record is a fact about the RACE -- its distance or
-      its clock is wrong -- so the whole race goes. A time faster than a
-      pool's floor but not the record is a fact about the ROW: that
-      athlete is in the wrong pool. Dropping that row alone keeps the
-      race for everyone who belongs in it."""
+      its clock is wrong -- so the whole race goes. A time faster than the
+      floor but not the record is a fact about the ROW. Dropping that row
+      alone keeps the race for everyone who belongs in it.
+
+    ⚠ AND THE FLOOR IS THE SAME FOR EVERY POOL NOW (poolFactor). Those
+      2,645 races are the argument for it: the 3:54 1500s were real races
+      by real adults, condemned because the pooling had called the adults
+      elementary schoolers. The race was never wrong. Judged on the
+      hs-equivalent scale a 3:54 1500 is simply a 3:54 1500, and the
+      mis-pooling is pool_resolve's to fix -- with the row still there to
+      fix it from."""
     races, rows_out = {}, []
     for r in rows:
         if poolIsCollege(r.get("rating_pool"), r.get("source")):
@@ -154,6 +178,27 @@ def judge(sport, rows):
             rows_out.append((r["result_id"], key, float(t), float(d), pace,
                              recordPace(d, r.get("gender")) * factor))
     return races, rows_out
+
+
+def ownFloorOnly(sport, rows):
+    """The rows the OLD rule would have deleted and this one keeps: faster
+    than their own pool's floor, slower than the hs-equivalent one, and
+    not record-beating. Report only -- nothing reads it to judge a row.
+    Pure; same row dicts as judge."""
+    out = []
+    for r in rows:
+        if poolIsCollege(r.get("rating_pool"), r.get("source")):
+            continue
+        t, d, g = r.get("time_seconds"), r.get("distance"), r.get("gender")
+        own = ownPoolFactor(r.get("rating_pool"))
+        if own <= poolFactor(r.get("rating_pool")):
+            continue                              # nothing changed for this pool
+        if not impossiblePace(t, d, g, slack=PACE_FLOOR_SLACK * own):
+            continue                              # the old rule did not catch it either
+        if impossiblePace(t, d, g, slack=PACE_FLOOR_SLACK * poolFactor(r.get("rating_pool"))):
+            continue                              # the new rule still catches it
+        out.append((r["result_id"], r.get("rating_pool"), float(t), float(d)))
+    return out
 
 
 def candidateSql(cur, sport):
@@ -228,6 +273,7 @@ def build(conn, write, show=20):
             t0 = time.time()
             cands = loadCandidates(cur, sport)
             bad, floor_rows = judge(sport, cands)
+            kept = ownFloorOnly(sport, cands)
             n_rows = 0
             for key, hits in sorted(bad.items(), key=lambda kv: min(h[3] / h[4] for h in kv[1])):
                 ids = raceRows(cur, sport, key)
@@ -242,6 +288,8 @@ def build(conn, write, show=20):
                   f"{sum(len(h) for h in bad.values()):,} beat the OPEN record -> {len(bad):,} races, "
                   f"{n_rows:,} rows condemned; {len(floor_rows):,} beat only their pool's floor "
                   f"-> those rows alone  ({time.time() - t0:.1f}s)")
+            print(f"  {sport}: {len(kept):,} rows KEPT that their own pool's floor would have "
+                  f"deleted (the hs-equivalent scale; record_pace.poolFactor)")
             for key, hits in list(sorted(bad.items(), key=lambda kv: min(h[3] / h[4] for h in kv[1])))[:show]:
                 worst = min(hits, key=lambda h: h[3] / h[4])
                 print(f"      {sport} source={key[0]} meet={key[1]} div={key[2]}"

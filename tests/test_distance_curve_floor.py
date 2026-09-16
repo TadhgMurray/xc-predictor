@@ -95,7 +95,7 @@ def test_the_solves_offsets_lay_on_the_spline_per_band(monkeypatch):
     assert dcc.loadOffsets(None) == ({}, 0)
 
 
-def test_the_track_exponent_is_made_non_increasing_and_nothing_else():
+def test_the_exponent_is_made_non_increasing_and_nothing_else():
     knots, vals = _curve([1.16, 1.12, 1.15, 1.09, 1.10, 1.07, 1.07])    # two bumps
     out, change = fde._monotoneLocalExponent(knots, vals)
     slopes = [(out[i + 1] - out[i]) / (knots[i + 1] - knots[i]) for i in range(len(out) - 1)]
@@ -107,7 +107,44 @@ def test_the_track_exponent_is_made_non_increasing_and_nothing_else():
     same, c2 = fde._monotoneLocalExponent(knots2, vals2)
     assert c2 < 1e-12 and all(abs(a - b) < 1e-12 for a, b in zip(same, vals2))
     e = {"knots": knots, "values": vals}
-    assert fde._applyMonotone(e, "XC") is e                              # not a monotone sport
-    tf = fde._applyMonotone(e, "TF")
-    assert tf["monotone"] and tf["monotone_change"] > 0 and e.get("monotone") is None
-    assert "non-increasing" in fde._healthNote(tf)
+    assert fde._applyMonotone(e, "ROAD") is e                            # not a monotone sport
+    for sport in ("TF", "XC"):
+        got = fde._applyMonotone(e, sport)
+        assert got["monotone"] and got["monotone_change"] > 0
+        assert e.get("monotone") is None                                 # a copy, not in place
+        assert "non-increasing" in fde._healthNote(got)
+
+
+def test_both_sports_get_one_shape():
+    """★ THE OWNER'S QUESTION (2026-09-16): "at extremes it's going faster
+    ... how can we best fit a clean line?" XC was the sport left out, and
+    every unphysical segment in the shipped artifact was XC's: college_m
+    8000->10000 at 0.920, elem past 3200 at 0.98, hs_m RISING after 5000.
+    A fade is a fact about the runner; the surface is what difficulty is
+    for."""
+    assert set(fde.MONOTONE_SPORTS) == {"TF", "XC"}
+
+
+def test_the_extension_may_not_choose_a_slope_the_floor_would_refuse():
+    """⚠ THE 0.920 ESCAPE HATCH. _extensionSlopeHigh accepted a measured
+    beyond-span slope anywhere in the health band, which reached down to
+    0.85, and the floor then overwrote it -- two rules disagreeing about
+    one number."""
+    assert fde.EXT_SLOPE_BAND[0] >= fde.MIN_LOCAL_EXP
+    src = open(os.path.join(_ROOT, "engine", "fit_distance_exponent.py")).read()
+    body = src[src.index("def _extensionSlopeHigh("):src.index("# _fitOnePotential")]
+    assert "max(EXT_SLOPE_BAND[0], MIN_LOCAL_EXP" in body, \
+        "the floor must be read at call time so --min-exponent raises the band too"
+
+
+def test_the_floor_survives_the_smoother_so_the_order_is_safe():
+    """The fitter floors inside _fitOnePotential and smooths where the
+    artifact is assembled. A pooled block's mean is never below its own
+    minimum, so smoothing cannot reopen the floor -- but only in that
+    order."""
+    knots, vals = _curve([1.04, 1.30, 1.04, 1.15, 1.04, 1.04, 1.04])
+    floored, _n = fde._floorLocalExponent(knots, vals, 1.04)
+    out, _c = fde._monotoneLocalExponent(knots, floored)
+    slopes = [(out[i + 1] - out[i]) / (knots[i + 1] - knots[i]) for i in range(len(out) - 1)]
+    assert min(slopes) >= 1.04 - 1e-9
+    assert all(a >= b - 1e-12 for a, b in zip(slopes, slopes[1:]))

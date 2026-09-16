@@ -1424,3 +1424,149 @@ weights from this run are a proof of the architecture and a way to light
 up `/predictions`, never the final model. Sinking twenty GPU-hours into a
 target that is about to change is the thing to avoid; an hour on two
 million examples is not.
+
+## 2026-09-16 — the extremes, the row kills, and two schools with one name
+
+### ⏳ J. The shipped distance curve is PRE-FLOOR, and the XC extremes are junk
+
+H said the spline is not the problem and that stands for what H measured —
+the round trip `time → normalized_time → time` at one pool, which is
+self-consistent by construction and 0.081% clean. It does **not** test
+whether the exponent is *right*. `scripts/distance_curve_check.py` does, and
+the shipped `engine/data/distance_spline.pkl` (built 8 Sep) answers:
+
+```
+college_m|XC   8000->10000   0.920 !     <- and 8000 is its own anchor
+elem_m|XC      past 3200     0.982 !
+elem_f|XC      past 3200     0.964 !
+hs_m|XC        1.102 at 3200->5000 RISING to 1.137 past 6000
+ms_f, college_f|XC           1.033-1.034 at the long end
+```
+
+**20 segments outside [1.04, 1.20], every one of them XC, all at the ends.**
+An exponent under 1.0 says a runner's pace *improves* as the race lengthens.
+This is the owner's "at extremes it's going faster", measured.
+
+Two separate causes, both now fixed in the fitter:
+
+1. **`MIN_LOCAL_EXP = 1.04` landed on 13 Sep; the artifact is from 8 Sep.**
+   The live site is running the 0.920. ⚠ **A refit is required for any of
+   this to take effect** — the floor and the smoother are fitter-side.
+2. **`EXT_SLOPE_BAND` was (0.85, 1.30)** — so a *measured* beyond-span
+   extension slope of 0.92 was **accepted** and then overwritten by the
+   floor two lines later. Two rules disagreeing about one number; the band's
+   low end is the floor now, read at call time so `--min-exponent` moves both.
+
+And the floor alone was never enough, which is the answer to *"how can we
+best fit a clean line?"*:
+
+* A floor clamps the low side and **cannot see a wiggle**. With it applied,
+  `college_m|XC` still runs 1.065 → 1.077 → 1.099 → 1.056 → 1.040 across
+  3200–10000 — up then down, through every distance college XC is raced at —
+  and `hs_m|XC` still *rises* after 5000.
+* `MONOTONE_SPORTS` was `("TF",)`. **That is why every bad segment is XC**:
+  TF's curves had already been smoothed to a non-increasing local exponent
+  and had zero flagged segments. XC is in it now. Floor then monotone leaves
+  **0 of 20** flagged, and the order is safe only that way round (a pooled
+  block's mean is never below its own minimum).
+* The old defence was "grass fades are not one shape". A fade is a fact about
+  the **runner**; the surface's cost is what course difficulty is for. The
+  0.920 is what the freedom actually bought.
+
+**The reference line.** `--records` now prints the world records' own implied
+exponent beside each curve (`recordSegments`, from `record_pace`): 1.088 at
+1500→3000, 1.069 at 3000→5000, 1.056 at 5000→10000, monotonically falling.
+Not a target — a record holder fades less than a ninth grader, so a pool
+should sit a little **above** it — but it says which way is up.
+
+🔎 **And it exposes a bigger one.** `hs_m|XC` runs 1.12–1.14 where the same
+athletes' `hs_m|TF` runs 1.075 and the records say 1.06. Same runners, same
+fade, ~0.05 apart by surface — which is **2.2% on a 5000 → 8000 conversion,
+about 32 s on a 24:00 8K.** That is the size and the sign of the 8K
+complaint (⏳ C). Either XC's longer races carry a confound a same-athlete
+pair does not cancel (championship timing, harder courses, stronger fields),
+or the cost is real and course difficulty should be absorbing it. **Open
+question for the engine discussion: fit the distance curve on the track,
+where the confounds are least, and let XC's difficulty carry the rest.**
+
+### ✅ K. A deleted row cannot fix the pool that deleted it
+
+Owner, 2026-09-16: *"undo all the indiv rows overrides, and then redo them so
+they don't catch college ahtlets (do it by hs-equivalent scale not own pool
+scale)"*, against *"for college runners a lot of them have all their races
+killed bcs their grade is untrusted / their rows were overrode"*.
+
+The row kills are `impossible_result`'s pool-floor branch. The floor was the
+row's **own** pool's, read off the `rating_pool` the last go-live wrote — so
+the test depended on the pooling, and the rows it catches are by construction
+the ones the pooling got **wrong**. A college runner or a professional whom
+the club rules filed `ms_m` had every real race measured against a middle
+schooler's floor and deleted; with the races deleted the solve never sees
+them, so the next run cannot repool the athlete off them either. **A ratchet:
+one pooling mistake and the career is gone for good.** Those 2,645 condemned
+track races are the evidence — mostly open 1500s run in 3:54 by adults the
+club pooling had called elementary schoolers. The races were never wrong.
+
+Now: one scale for everybody, the **hs-equivalent** floor
+(`record_pace.poolFactor`, 1.01 × the open record). "Is this time physically
+possible" is about the time; "is this athlete really a middle schooler" is
+about the pool, and belongs to `pool_resolve` — which now has the feeds' own
+team levels to answer it with. The per-level numbers survive as
+`ownPoolFactor` for the prefilter and for a census line that says, each run,
+how many rows came back.
+
+**The undo is the rerun**: both tables are built as `_new` and swapped, no
+state accumulates, `normalized_time` is never cleared. One
+`engine/impossible_race.py --write`.
+
+### ⏳ L. Two schools with one name — "Oregon" (IL) and "Oregon" (OR)
+
+Owner, 2026-09-16: *"use the school locations from anet and the school
+ids/names to separate schools (where id != 0) and separate them by location
+otherwise. If any school has id == 0 we should just put them in pro."*
+
+**The pooling half — done.** When a grade cannot answer, `poolFor` falls
+through to `levelForSchool`, which reads `school_level_graph` and
+`school_levels.pkl` — both keyed on the **normalised name and nothing else**.
+So one string is one level for everyone wearing it: `"Oregon"` is Oregon High
+School (Ogle County, IL) *and* the University of Oregon; `"Williams"` is a CA
+high school *and* Williams College, MA. Whichever level the map holds, the
+other school's gradeless rows are pooled on it.
+
+The row already carries the identity the name lacks — anet's `team_id` (its
+own level, state and city in `anet_team`) and tfrrs's slug (state, then
+level). `resolvePool` now prefers that `team_level` for exactly the rows the
+name map would have decided: unreadable or untrusted grade, no `grade_fix`
+verdict. A trusted grade still decides alone; `grade_fix` still outranks it.
+And a level the feed **states** no longer trips the three "we do not know"
+verdicts into returning no pool — that kill exists because the fallback is
+the school name, and this is not that.
+
+`team_id = 0` is anet's *no team*. It reads as `'club'`, not straight to pro,
+which is the owner's own earlier rule (2026-09-14, the season-majority gate):
+one unattached summer race must not make a tenth grader a professional. A
+tfrrs slug still outranks a zero.
+
+**Measure it before the next go-live**: `scripts/diag_school_collisions.py`
+— B lists the colliding names with each team's level/state/city, C says how
+many of those teams the name map levels **wrong**, and `--zero` answers
+whether `team_id = 0` really is unattached (if it turns out to be a sentinel
+on ordinary school rows, the `'club'` read must go).
+
+**The identity half — NOT done, and it is the one the owner sees on the
+site.** `school_identity` is keyed on the school **string**, clustered by
+athletes' home state and then merged when two clusters co-race
+(`build_school_identity.py`). That is a state clustering, not an identity: it
+cannot separate two schools whose athletes race in the same state, and the
+co-racing merge can join two real schools that meet. The right key is anet's
+`team_id`, with `(name, state)` where there is none — it changes school
+pages, crests, search and meet scoring, so it needs a decision first.
+
+### 🔎 M. A club's professional with a `no_evidence` verdict is dropped, not pooled pro
+
+Found while testing L, pre-existing, left alone. The verdict kill runs
+*before* the pro repool, so `resolvePool(None, grade_verdict="no_evidence",
+team_level="club")` returns `None` even though `is_pro` was already set. The
+row is a gradeless club row — the `no_grades → pro` verdict's own case — so
+pooling it pro is arguably right. Pinned as-is in
+`tests/test_team_level_pool.py`; not changed in the same commit as L.

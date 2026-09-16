@@ -400,16 +400,42 @@ def teamLevelFromSlug(slug):
     return None
 
 
+# ★ AND team_id = 0 IS NOT A SCHOOL (owner, 2026-09-16: "If any school has
+#   id == 0 we should just put them in pro"). anet writes 0 where there is
+#   no team -- unattached entries, open-meet walk-ups -- so the string in
+#   `school` is whatever the athlete typed, and the school-name map is being
+#   asked to level a name that names nothing.
+#
+# ! IT IS READ AS 'club', NOT WRITTEN STRAIGHT TO pro, WHICH IS THE OWNER'S
+#   OWN EARLIER RULE (2026-09-14: "it should only be if they run the
+#   majority of their races with their club / national team. So any
+#   collegiate runner running the Euros would be fine"). 'club' means
+#   exactly "a gradeless row here is a professional", and it arrives at the
+#   pro repool through the season-majority gate (speed_ratings.clubSeason)
+#   and the grade guards. Straight to pro would make one unattached summer
+#   race a professional season for a tenth grader.
+UNATTACHED_TEAM_ID = 0
+
+
 def teamLevelOf(team_id, team_slug, anet_levels=None):
     """The team's level name from anet's table (through anet_levels,
-    speed_ratings_db.loadTeamLevels) or the tfrrs slug, else None."""
-    if anet_levels and team_id is not None:
+    speed_ratings_db.loadTeamLevels) or the tfrrs slug, else None.
+    team_id 0 is anet's "no team" and reads as 'club' -- see above."""
+    if team_id is not None:
         try:
-            got = anet_levels.get(int(team_id))
+            tid = int(team_id)
         except (TypeError, ValueError):
-            got = None
-        if got:
-            return got
+            tid = None
+        if tid == UNATTACHED_TEAM_ID:
+            # ! A SLUG STILL WINS OVER A ZERO. A tfrrs row carries no anet
+            #   team at all, and 0 means "anet named no team", not "this is
+            #   not a school" -- so an identity that DOES name a level is
+            #   still the better witness.
+            return teamLevelFromSlug(team_slug) or "club"
+        if anet_levels and tid is not None:
+            got = anet_levels.get(tid)
+            if got:
+                return got
     return teamLevelFromSlug(team_slug)
 
 
@@ -552,6 +578,49 @@ def resolvePool(grade, gender, source, school, sport,
         fixed_level = fixed_level or "college"
         season_level = season_level or "college"
 
+    # ★ AND A SCHOOL LEVEL FROM THE FEED OUTRANKS THE SCHOOL'S NAME (owner,
+    #   2026-09-16: "we need to fix schools coming together ... use the
+    #   school locations from anet and the school ids/names to separate
+    #   schools ... currently Oregon(IL) and Oregon(or) are colliding
+    #   despite hs vs college, and this happens to Williams (CA) vs (MA)").
+    #
+    # ⚠ THE COLLISION IS IN THE KEY, AND THE KEY IS A NAME. When the grade
+    #   cannot answer, poolFor falls through to levelForSchool -- a lookup
+    #   in school_level_graph and school_levels.pkl, both keyed on the
+    #   NORMALISED NAME and nothing else. So one string is one level for
+    #   everybody wearing it:
+    #
+    #       "Oregon"    Oregon High School, Ogle County IL   <- hs
+    #                   University of Oregon                 <- college
+    #       "Williams"  Williams High School, CA             <- hs
+    #                   Williams College, MA                 <- college
+    #
+    #   Whichever level the map holds, the other school's gradeless rows
+    #   are pooled on it -- an Illinois tenth grader rated against the
+    #   college mean, or a Williams College runner against high schoolers.
+    #
+    # ★ BUT THE ROW ALREADY CARRIES AN IDENTITY THE NAME DOES NOT: anet's
+    #   team_id (a different id per school, with its own level, state and
+    #   city in anet_team) and tfrrs's slug (whose first token is the state
+    #   and second the level). team_level is that, resolved. Using it is
+    #   the whole fix for the pooling half: two schools with one name have
+    #   two team ids, so they get two levels.
+    #
+    # ! ONLY WHERE THE NAME MAP WOULD HAVE DECIDED -- an unreadable or
+    #   untrusted grade, and no grade_fix verdict. A trusted grade still
+    #   decides alone (stage 1), and grade_sanity's own per-season verdict
+    #   still outranks a per-row team level.
+    #
+    # ! AND IT IS WHY THE VERDICT KILL BELOW DOES NOT FIRE EITHER. That
+    #   kill exists because falling through would hand the row to the raw
+    #   grade and then to the school NAME -- "the weakest signals in the
+    #   system". A level the feed states for the team is not that.
+    elif team_level in ("hs", "ms", "elem") and not is_pro \
+            and fixed_level is None and fixed_grade is None \
+            and (school_grade is None or grade_untrusted):
+        fixed_level = team_level
+        season_level = team_level
+
     # ★ A SEASON RACED AT COLLEGE OR PRO FIELDS IS A COLLEGE OR PRO SEASON,
     #   WHATEVER THE GRADE SAYS (owner, 2026-09-06: "if a person is on a
     #   college team, pool them as college"). season_level is the unanimous
@@ -567,8 +636,16 @@ def resolvePool(grade, gender, source, school, sport,
     above_hs = field in ("college", "pro")
     if field == "pro":
         is_pro = True                     # repooled below, as pro_flag would
+    # ! A LEVEL THE FEED STATES FOR THE TEAM COUNTS AS EVIDENCE. The three
+    #   verdicts mean grade_sanity does not know the GRADE; the kill is
+    #   there because the fallback would be the school name. When anet or
+    #   the tfrrs slug names the team's own level there is no guess to
+    #   refuse -- and an athlete-season whose every race was killed this
+    #   way is the owner's report of 2026-09-16 ("a lot of them have all
+    #   their races killed bcs their grade is untrusted").
+    told = team_level in ("elem", "ms", "hs", "college")
     if grade_verdict in ("no_evidence", "contradicted", "thin_field",
-                         "lone_word") and not above_hs:
+                         "lone_word") and not above_hs and not told:
         return None
 
     if fixed_grade is not None:

@@ -82,3 +82,68 @@ def test_the_club_rules_fire_only_in_a_season_raced_mostly_for_the_club(monkeypa
     monkeypatch.setattr(sr, "_CLUB_MAJORITY", {(1, 2025)})
     assert sr.clubSeason(1, 2025) and not sr.clubSeason(1, 2024) and not sr.clubSeason(2, 2025)
     assert not sr.clubSeason(None, 2025)
+
+
+def test_two_schools_with_one_name_get_two_levels(monkeypatch):
+    """★ OWNER, 2026-09-16: "Oregon(IL) and Oregon(or) are colliding
+    despite hs vs college, and this happens to Williams (CA) vs (MA)".
+    The school-level map is keyed on the NORMALISED NAME, so one string
+    is one level for every school wearing it. The team's own id carries
+    the level the name cannot."""
+    import normalize_distance as nd
+    monkeypatch.setattr(nd, "_GRAPH_LEVELS", {})             # no database
+    monkeypatch.setattr(nd, "_SCHOOL_LEVELS", {nd.normSchoolKey("Oregon"): "college"})
+    kw = dict(gender="M", source="anet", school="Oregon", sport="XC", season=2025)
+
+    # the collision: with only the name to go on, the Illinois tenth
+    # grader's gradeless row is pooled against college runners
+    assert pr.resolvePool(None, **kw) == "college_m|XC"
+    # anet's own level for HIS team says otherwise, and wins
+    assert pr.resolvePool(None, team_level="hs", **kw) == "hs_m|XC"
+    assert pr.resolvePool(None, team_level="ms", **kw) == "ms_m|XC"
+    # ...and the university's rows still read college
+    assert pr.resolvePool(None, team_level="college", **kw) == "college_m|XC"
+    # an untrusted grade is the other way into the name map: same fix
+    assert pr.resolvePool("10", grade_untrusted=True, team_level="hs", **kw) == "hs_m|XC"
+    # a TRUSTED grade still decides alone -- the team level is a fallback,
+    # not a fifth opinion
+    assert pr.resolvePool("11", team_level="ms", **kw) == "hs_m|XC"
+    # and grade_sanity's own per-season verdict still outranks it
+    assert pr.resolvePool(None, fixed_level="college", team_level="hs", **kw) == "college_m|XC"
+
+
+def test_a_stated_team_level_answers_the_verdicts_that_killed_the_row(monkeypatch):
+    """★ OWNER, 2026-09-16: "for college runners a lot of them have all
+    their races killed bcs their grade is untrusted". The three "we do not
+    know" verdicts return no pool because the fallback is the school name.
+    A level the feed states for the team is not a guess."""
+    import normalize_distance as nd
+    monkeypatch.setattr(nd, "_GRAPH_LEVELS", {})
+    monkeypatch.setattr(nd, "_SCHOOL_LEVELS", {})
+    kw = dict(gender="F", source="anet", school="Williams", sport="XC", season=2025)
+    for verdict in ("no_evidence", "contradicted", "thin_field", "lone_word"):
+        assert pr.resolvePool(None, grade_verdict=verdict, **kw) is None
+        assert pr.resolvePool(None, grade_verdict=verdict,
+                              team_level="hs", **kw) == "hs_f|XC"
+        assert pr.resolvePool(None, grade_verdict=verdict,
+                              team_level="college", **kw) == "college_f|XC"
+    # ! A CLUB IS NOT A SCHOOL LEVEL, so the verdict still refuses the row --
+    #   unchanged behaviour, and the kill runs before the pro repool, so even
+    #   the club's professional is dropped rather than pooled pro. Left as it
+    #   was on purpose: see docs/ISSUES-RUNNING.md K.
+    assert pr.resolvePool(None, grade_verdict="no_evidence",
+                          team_level="club", **kw) is None
+
+
+def test_anets_zero_team_is_no_school_at_all():
+    """★ OWNER, 2026-09-16: "If any school has id == 0 we should just put
+    them in pro". Read as 'club', so the season-majority gate and the
+    grade guards still apply -- one unattached summer race is not a
+    professional season."""
+    assert pr.teamLevelOf(0, None, {1: "hs"}) == "club"
+    assert pr.teamLevelOf("0", None, None) == "club"
+    assert pr.teamLevelOf(0, "CT_college_f_Conn_College", None) == "college"
+    kw = dict(gender="M", source="anet", school="Unattached", sport="XC",
+              poolfor=_poolfor, season=2025)
+    assert pr.resolvePool(None, team_level=pr.teamLevelOf(0, None, None), **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", team_level=pr.teamLevelOf(0, None, None), **kw) == "hs_m|XC"

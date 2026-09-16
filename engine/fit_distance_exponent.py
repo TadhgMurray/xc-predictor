@@ -1678,10 +1678,36 @@ from distance_shape import floorLocalExponent as _floorLocalExponent  # noqa: E4
 #   falls smoothly toward 1.06 by 5000. So a track curve's local exponents
 #   are held NON-INCREASING with distance -- pool-adjacent-violators over
 #   the segments, weighted by their length, which is the closest curve
-#   with that shape -- after the floor. Cross country is left alone by
-#   default (grass fades are not one shape). MONOTONE_SPORTS names the
-#   sports it applies to; --monotone-sports "" turns it off.
-MONOTONE_SPORTS = ("TF",)
+#   with that shape -- after the floor. MONOTONE_SPORTS names the sports
+#   it applies to; --monotone-sports "" turns it off.
+#
+# ★ AND CROSS COUNTRY IS IN IT NOW (owner, 2026-09-16: "at extremes it's
+#   going faster what do you want to do abt that? How can we best fit a
+#   clean line?"). XC used to be left out on the grounds that "grass fades
+#   are not one shape" -- but a fade is a fact about the RUNNER, and the
+#   surface's cost is what course difficulty is for. Read off the shipped
+#   artifact (scripts/distance_curve_check.py), what XC's freedom bought:
+#
+#     college_m|XC   8000->10000 at 0.920   -- and 8000 is its own anchor
+#     elem_m|XC      past 3200   at 0.982
+#     elem_f|XC      past 3200   at 0.964
+#     hs_m|XC        1.102 at 3200->5000 RISING to 1.137 past 6000
+#     ms_f, college_f|XC          1.033 at the long end
+#
+#   Twenty segments outside [1.04, 1.20] against zero for TF, whose curves
+#   the smoother had already made clean. Every one of them says a runner's
+#   pace improves as the race lengthens, and they sit at the ends, where
+#   the data is thinnest and the tangent extension runs.
+#
+# ⚠ THE FLOOR ALONE IS NOT ENOUGH, WHICH IS WHY THIS AND NOT JUST THAT.
+#   A floor clamps the low side and cannot see a wiggle: with the floor
+#   applied, college_m|XC still runs 1.065 -> 1.077 -> 1.099 -> 1.056 ->
+#   1.040 across 3200-10000 -- up then down, through every distance
+#   college XC is actually raced at -- and hs_m|XC still RISES after 5000,
+#   which no floor touches. Floor then monotone leaves 0 of 20 flagged,
+#   and the order is safe in that direction only: a pooled block's mean is
+#   never below its own minimum, so the smoother cannot undo the floor.
+MONOTONE_SPORTS = ("TF", "XC")
 
 
 from distance_shape import monotoneLocalExponent as _monotoneLocalExponent  # noqa: E402
@@ -1707,7 +1733,16 @@ def _applyMonotone(entry, sport):
 # its verdict has to be a physical exponent. Outside the band, the tangent
 # (which the health gates already police) is the safer liar.
 MIN_EXT_PAIRS = 300
-EXT_SLOPE_BAND = (0.85, 1.30)
+# ⚠ AND ITS LOW END IS THE FLOOR ITSELF, NOT A LOOSER NUMBER. The band was
+#   (0.85, 1.30) -- the health gate's band -- while MIN_LOCAL_EXP refuses
+#   anything under 1.04, so a measured extension slope of 0.92 was
+#   ACCEPTED here and then overwritten two lines later. Two rules
+#   disagreeing about the same number is how the shipped college_m|XC came
+#   to run 8000->10000 at exactly that 0.920: the artifact was built before
+#   the floor existed, and the fitter was still willing to choose the
+#   slope. A slope the floor would refuse is not evidence, so it is
+#   refused here and the tangent stands.
+EXT_SLOPE_BAND = (1.04, 1.30)
 # A long leg barely past the span makes the slope's denominator ~0; demand
 # a real gap (about 5% in log-distance) before a pair may testify.
 MIN_EXT_GAP_LOG = 0.05
@@ -1751,7 +1786,11 @@ def _extensionSlopeHigh(pairs, coeffs, lo, hi):
     if len(slopes) < MIN_EXT_PAIRS:
         return None, len(slopes)
     med = float(np.median(slopes))
-    if not EXT_SLOPE_BAND[0] <= med <= EXT_SLOPE_BAND[1]:
+    # The floor is read here, not baked into the band, so --min-exponent
+    # raising it raises this too: the invariant is "never choose a slope
+    # the floor would refuse", not a pair of numbers that happen to agree.
+    lo_ok = max(EXT_SLOPE_BAND[0], MIN_LOCAL_EXP or 0.0)
+    if not lo_ok <= med <= EXT_SLOPE_BAND[1]:
         return None, len(slopes)
     return med, len(slopes)
 
@@ -2503,8 +2542,8 @@ def main():
     args = parser.parse_args()
     MIN_LOCAL_EXP = float(args.min_exponent or 0.0)
     MONOTONE_SPORTS = tuple(x.strip() for x in (args.monotone_sports or "").split(",") if x.strip())
-    print(f"MONOTONE EXPONENT: {', '.join(MONOTONE_SPORTS) or 'off'} (--monotone-sports; the "
-          "track's local exponent only falls with distance)\n")
+    print(f"MONOTONE EXPONENT: {', '.join(MONOTONE_SPORTS) or 'off'} (--monotone-sports; a "
+          "curve's local exponent only falls with distance)\n")
 
     print("=== fit_distance_exponent.py (rewrite) ===\n")
     print(f"LOCAL EXPONENT FLOOR: {MIN_LOCAL_EXP:g} (--min-exponent; a curve "

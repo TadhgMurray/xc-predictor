@@ -54,35 +54,81 @@ SLOWEST_RECORD_PACE = max(p for pts in _WR_PACE.values() for _, p in pts)
 #   race that beats the record has the wrong distance on it.
 EXEMPT_POOL_PREFIXES = ("college", "pro")
 
-# ★ AND A FLOOR PER POOL ON TOP OF IT (owner, 2026-09-14: "should prob
-#   throw something to stop crazy times for each pool -- whatever that
-#   pool's record is"). The open record is a weak bar for a seventh
-#   grader: 2:15 for 800 m is nowhere near Rudisha and is still not a
-#   time a middle schooler runs.
+# ★ AND A FLOOR ON TOP OF IT, ON ONE SCALE FOR EVERYBODY (owner,
+#   2026-09-16: "redo them so they don't catch college ahtlets -- do it by
+#   hs-equivalent scale not own pool scale"). The open record is a weak
+#   bar for a seventh grader -- 2:15 for 800 m is nowhere near Rudisha and
+#   is still not a time a middle schooler runs -- so there is a floor. But
+#   it is the HIGH SCHOOL floor for every pool the rule covers, NOT each
+#   pool's own.
 #
-# ⚠ THE NUMBERS ARE RATIOS TO THE OPEN RECORD, AND THE HIGH-SCHOOL ONE IS
-#   SMALL ON PURPOSE. A pool factor may never flag a mark somebody in that
-#   pool has actually run, so each is set under the TIGHTEST real ratio
-#   across distances and both sexes -- and for high school that ratio is
-#   the girls' 100 m: 10.65 against a 10.49 world record, 1.5% apart. So
-#   the HS floor is barely inside the open record and does almost nothing
-#   in the sprints, which is the honest answer: a high schooler really has
-#   run within a blink of the world record. It bites where the gap is
-#   genuinely wide, which is the young pools.
+# ⚠ WHY, AND IT IS THE FAILURE THAT FORCED IT. The floor used to be the
+#   row's OWN pool's, read off the rating_pool the last go-live wrote.
+#   That makes the test depend on the pooling -- and the rows this catches
+#   are, by construction, the ones the pooling got WRONG. A college runner
+#   or a professional whom the club rules filed as ms_m has every real race
+#   measured against a middle schooler's floor, so the races are deleted;
+#   with the races deleted the solve never sees them, so the next run
+#   cannot repool the athlete off them either. A ratchet: one pooling
+#   mistake, and the athlete's career is gone for good.
+#
+#   The owner's report is exactly that shape -- "for college runners a lot
+#   of them have all their races killed bcs their grade is untrusted /
+#   their rows were overrode".
+#
+# ★ SO THE TWO QUESTIONS ARE SEPARATED. "Is this time physically possible"
+#   is about the TIME and is answered on one scale. "Is this athlete really
+#   a middle schooler" is about the POOL and is answered by pool_resolve --
+#   which now has the feeds' own team levels and the club rules to answer
+#   it with. Deleting the row answers neither question and destroys the
+#   evidence for the second.
+#
+# ! THE HS FACTOR IS 1.01 AND THAT IS HONEST. A pool factor may never flag
+#   a mark somebody in that pool has actually run, and for high school the
+#   tightest real ratio across distances and both sexes is the girls'
+#   100 m: 10.65 against a 10.49 world record, 1.5% apart. So the floor
+#   sits barely inside the open record and does almost nothing in the
+#   sprints. It bites where a time is not a performance at all.
 #
 # ! MULTIPLIED BY PACE_FLOOR_SLACK, NOT INSTEAD OF IT. The slack is for
 #   timing, rounding and a short course; the factor is for who is racing.
 #   They are different corrections and both apply.
+#
+# ⚠ THE PER-LEVEL NUMBERS ARE KEPT, AND ARE NO LONGER THE FLOOR. They say
+#   what each level's own floor WOULD be, which is what the SQL prefilter
+#   is sized on (impossible_race.PREFILTER_PACE) and what a census of
+#   "rows the old rule would have deleted" is measured against. Nothing
+#   reads them to judge a row. ownPoolFactor is that reader, named so a
+#   grep for poolFactor cannot land on it by accident.
 POOL_PACE_FACTOR = {"hs": 1.01, "ms": 1.12, "elem": 1.35}
+
+# The one scale every non-exempt row is judged on. See above.
+FLOOR_LEVEL = "hs"
+FLOOR_FACTOR = POOL_PACE_FACTOR[FLOOR_LEVEL]
+
+
+def _levelOf(pool):
+    """'ms_f|TF' -> 'ms'. Either spelling, since the two callers disagree
+    about whether the sport is attached."""
+    return (pool or "").split("|", 1)[0].split("_", 1)[0]
+
+
+def ownPoolFactor(pool):
+    """What this pool's OWN floor would be -- report and prefilter only.
+    1.0 for a pool with no entry."""
+    return POOL_PACE_FACTOR.get(_levelOf(pool), 1.0)
 
 
 def poolFactor(pool):
-    """How much slower than the open record this pool's own floor is.
-    1.0 for a pool with no entry, so an unknown pool is judged by the
-    open record alone rather than by a guess."""
-    bare = (pool or "").split("|", 1)[0]
-    level = bare.split("_", 1)[0]
-    return POOL_PACE_FACTOR.get(level, 1.0)
+    """How much slower than the open record the floor this row is judged
+    against sits: the HIGH SCHOOL factor for every pool the rule covers.
+
+    1.0 for a pool the table does not name, so a row whose pool is not
+    known -- a first run, a row the solve has never seen -- is judged by
+    the open record alone rather than by a guess about who ran it.
+    """
+    level = _levelOf(pool)
+    return FLOOR_FACTOR if level in POOL_PACE_FACTOR else 1.0
 
 
 def recordPace(distance_m, sex="M"):
@@ -123,7 +169,7 @@ def exemptPool(pool):
 
 def impossibleRow(time_seconds, distance_m, sex, pool):
     """The rule in one call: a pool the rule covers, judged against the
-    open record scaled to that pool's own floor."""
+    open record scaled to the one floor above (poolFactor)."""
     if exemptPool(pool):
         return False
     return impossiblePace(time_seconds, distance_m, sex,

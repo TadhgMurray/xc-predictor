@@ -63,6 +63,33 @@ def factors(pool, sport, distances=DISTANCES, floor=None, monotone=False):
             for d in distances}, float(target)
 
 
+# ★ AND THE ONE CURVE NOBODY CAN ARGUE WITH (owner, 2026-09-16: "how can
+#   we best fit a clean line?"). The world records ARE a time-vs-distance
+#   curve for one (imaginary) athlete, so their implied local exponent is a
+#   reference our fit can be read against -- measured, external, and with
+#   no pairs, no calendar and no courses in it. Read off record_pace:
+#
+#       1500->3000  1.088      3000->5000  1.069      5000->10000  1.056
+#
+#   monotonically falling, which is the shape the fitter's smoother
+#   imposes. It is NOT a target to fit to: a record holder fades less than
+#   a ninth grader, so a real pool's exponent should sit a little ABOVE
+#   this line, not on it. What it does say is which way is up -- a pool
+#   whose exponent falls BELOW the record curve at the long end, or rises
+#   where this falls, is describing the calendar and the course rather than
+#   the runner.
+def recordSegments(gender, distances=DISTANCES):
+    """[(d1, d2, exponent)] implied by the world records for one sex."""
+    from record_pace import recordPace
+    sex = "F" if str(gender or "").upper().startswith("F") else "M"
+
+    def t(d):
+        return recordPace(d, sex) * d / 1000.0
+
+    return [(a, b, math.log(t(b) / t(a)) / math.log(b / a))
+            for a, b in zip(distances, distances[1:])]
+
+
 def loadOffsets(npz):
     """{(pool, distance bucket, band): log offset} from a solve file's
     dist_offset / dist_labels ('hs_m:3200:b1'; an unbanded label has no
@@ -118,7 +145,7 @@ def _segLine(segs, sane):
 
 
 def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
-           offsets=None, n_band=0, monotone=()):
+           offsets=None, n_band=0, monotone=(), records=False):
     """The spline's exponents per pool and sport; with `offsets` (loadOffsets)
     also the EFFECTIVE exponents per rating band on the track -- the
     spline and the solve's fitted event offsets together, which is what a
@@ -139,6 +166,10 @@ def report(pools=POOLS, sports=("TF", "XC"), floor=None, sane=SANE, out=print,
                 + (f"  [floor {floor:g} applied]" if floor else "")
                 + ("  [non-increasing exponent applied]" if sport in monotone else ""))
             out("   spline    " + _segLine(segs, sane))
+            if records:
+                out("   records   "
+                    + _segLine(recordSegments(pool.rsplit("_", 1)[-1]), sane)
+                    + "   <- the world records' own exponent (recordSegments)")
             if sport == "TF" and offsets and any(k[0] == pool for k in offsets):
                 for b in range(max(n_band, 1)):
                     fe = effective(f, pool, offsets, b)
@@ -162,6 +193,9 @@ def main():
     ap.add_argument("--monotone", default="",
                     help="sports (e.g. TF) shown with the local exponent made non-increasing, "
                          "as the fitter now stores them")
+    ap.add_argument("--records", action="store_true",
+                    help="print the world records' own implied exponent beside each curve "
+                         "(recordSegments): the external reference, not a target")
     ap.add_argument("--npz", default=None,
                     help="a solve file (engine/data/joint_difficulty.npz by default when "
                          "it exists): its fitted event offsets are laid on the spline and "
@@ -180,7 +214,8 @@ def main():
               f"cells, {n_band} bands)" if offsets else
               f"({path}: no event offsets in the file; spline only)")
     report(pools=tuple(args.pool) or POOLS, floor=args.floor, offsets=offsets, n_band=n_band,
-           monotone=tuple(x.strip() for x in args.monotone.split(",") if x.strip()))
+           monotone=tuple(x.strip() for x in args.monotone.split(",") if x.strip()),
+           records=args.records)
 
 
 if __name__ == "__main__":
