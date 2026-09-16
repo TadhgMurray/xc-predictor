@@ -545,6 +545,34 @@ def _historyRows(cur, person_ids):
     row = cur.fetchone()
     has_weather = (row[0] if not isinstance(row, dict)
                    else row.get("to_regclass")) is not None
+    # ★ LET THE PLANNER ACTUALLY PLAN THIS (owner, 2026-09-16: the
+    #   predictions page 504'd on a championship field).
+    #
+    #   The corpus row SQL joins FOURTEEN relations -- results, meets, the
+    #   distance-override VALUES list, athletes, course_canonical,
+    #   course_difficulties, athlete_season_level twice, weather, grade_fix,
+    #   pro_athlete_season, college_first_season, upperclass_first_season,
+    #   wheelchair_person. join_collapse_limit defaults to EIGHT, and past
+    #   it Postgres stops searching join orders and joins them in the order
+    #   they are WRITTEN.
+    #
+    # ⚠ WHICH LEAVES THE OVERRIDE LIST AS AN INNER LOOP. The hand-verified
+    #   distances are inlined as 16,221 VALUES rows; written-order joining
+    #   makes that the inner side of a nested loop and it is rescanned once
+    #   per result row. Measured on the live database: 30,300,741 rows
+    #   removed by that one join filter for a 1,868-row sample, and the real
+    #   field returns 33,306 rows -- about 540 million comparisons.
+    #
+    # ! THE SAME JOIN HASHES IN ISOLATION, in 41 ms. Nothing is wrong with
+    #   the query; the planner was simply not allowed to look. Raising the
+    #   limit costs planning time (18.9 ms measured, and it grows with the
+    #   search space) and is paid once per request against tens of seconds.
+    #
+    # ! SET LOCAL, so it lasts the transaction and never leaks back into the
+    #   pooled connection for the next page to inherit.
+    cur.execute("SET LOCAL join_collapse_limit = 16")
+    cur.execute("SET LOCAL from_collapse_limit = 16")
+
     out = {}
     for sport, hour in (("XC", fx.XC_DEFAULT_HOUR), ("TF", fx.TF_DEFAULT_HOUR)):
         # ids TWICE: the filter is two indexable branches now, not one

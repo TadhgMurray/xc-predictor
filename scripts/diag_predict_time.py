@@ -91,10 +91,30 @@ def explain(a):
 
             sql = fx.personResultsSql(a.sport, has_weather=has_weather)
             hour = fx.XC_DEFAULT_HOUR if a.sport == "XC" else fx.TF_DEFAULT_HOUR
-            cur.execute("EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF) "
-                        + sql, (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
-            for r in cur.fetchall():
-                print("    " + list(r.values())[0])
+
+            # ★ BOTH WAYS, SO THE COLLAPSE LIMIT IS VISIBLE RATHER THAN
+            #   ARGUED ABOUT. The query joins 14 relations and the default
+            #   limit is 8: past it the planner joins in WRITTEN order and
+            #   the 16,221-row override VALUES list becomes an inner loop.
+            for limit in (None, 16):
+                if limit:
+                    cur.execute(f"SET LOCAL join_collapse_limit = {limit}")
+                    cur.execute(f"SET LOCAL from_collapse_limit = {limit}")
+                    print(f"\n  --- with join_collapse_limit = {limit} ---")
+                else:
+                    print("\n  --- as it plans today (default limit 8) ---")
+                cur.execute("EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, COSTS OFF) "
+                            + sql, (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
+                rows = [list(r.values())[0] for r in cur.fetchall()]
+                # the shape and the number, not the id arrays
+                for line in rows:
+                    t = line.strip()
+                    if (t.startswith(("Nested Loop", "Hash Join", "Hash Left",
+                                      "Hash Right", "Merge", "Values Scan",
+                                      "Execution Time", "Planning Time"))
+                            or "Rows Removed by Join Filter" in t):
+                        print("    " + line[:100])
+            cur.connection.rollback()   # drop the SET LOCAL
 
 
 def main():
