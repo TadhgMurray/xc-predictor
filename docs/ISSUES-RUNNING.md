@@ -1240,16 +1240,22 @@ choice is what is new: they take a median where we take a mean.**
    `topFractionWeights`. Not obvious that it wins — the field is already
    trimmed to the top fraction, and a median of three voters is noisier than
    their mean — so the held-out score decides.
-2. **❌ The outdoor-track-5000 anchor — MEASURED AND DEAD.** Only **356 of
-   4,045,851** rated XC athletes have one (0.009%), and those that do rate
-   **120.2 mean against 101.2** for everyone else — nineteen points, far out
-   on the tail. Pinning a corpus of everyone to that slice would move the
-   gauge onto the fast half of the fast half. The argument below stays true
-   and the solution does not survive it. ⚠ One caveat on the count: 219
-   college athletes with an outdoor 5000 is low enough to suspect the query
-   (`meets_tf.distance_meters BETWEEN 4900 AND 5100` may miss rows that
-   record the event in `event_short` instead), but the *selection* effect is
-   what kills it and that would survive a bigger count.
+2. **🔎 A track anchor — REOPENED, my count was broken twice over.**
+   The first run said 356 of 4,045,851 (0.009%), which should have read as a
+   broken query and instead nearly read as a finding. Two bugs:
+   it took the distance from `meets_tf.distance_meters`, when TF distance is
+   parsed from `results_tf.event_short` (64,079 distinct spellings, see
+   `engine/event_parse`) into **`ranking_results.distance`**, already parsed
+   and already rated; and it **presumed 5000 m**, when high schoolers race
+   3200 m on a track and the corpus is ~72% high school. Asking a
+   high-school corpus about a 5000 asks almost nobody.
+   Section B now asks *what track distances XC-rated athletes actually race*,
+   per level, most-covered first — the anchor candidate is whatever tops that
+   list, and it will differ by level.
+   ⚠ The representativeness check still applies and is the thing most likely
+   to kill it: on the (broken) 5000 sample the athletes who had one rated
+   **120.2 against 101.2**. B2 re-runs that against whatever the real
+   candidate turns out to be.
 
    The reasoning, kept because the PROBLEM is real and still unsolved:
    I dismissed this twice as display and

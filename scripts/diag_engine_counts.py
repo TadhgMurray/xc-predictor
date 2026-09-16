@@ -138,87 +138,122 @@ def sectionA(cur, sample):
 
 
 # ------------------------------------------------------------------ #
-#  B. is there an anchor population
+#  B. is there an anchor population, at ANY track distance
 # ------------------------------------------------------------------ #
 
-def sectionB(cur):
+def sectionB(cur, top_n=6):
+    """What track races do XC-rated athletes actually run, and are the ones
+    who run them representative?
+
+    ⚠ THE FIRST VERSION ASKED THE WRONG QUESTION TWO WAYS AND FOUND 356
+      ATHLETES OUT OF FOUR MILLION.
+
+      1. It read the distance from meets_tf.distance_meters. TF distance is
+         parsed from results_tf.event_short -- 64,079 distinct spellings, see
+         engine/event_parse -- and lands in ranking_results.distance, already
+         parsed and already rated. That is the column to use.
+      2. It presumed 5000 m. High schoolers race 3200 m on a track; a 5000 is
+         a college event. Asking "do they have a track 5000" of a corpus that
+         is 72% high school asks almost nobody.
+
+    ★ SO ASK WHAT THEY RUN, DO NOT PRESUME IT. Per level, the flat track
+      distances its XC athletes actually race, most-covered first. The anchor
+      candidate is whatever tops that list -- and it will differ by level,
+      which is a finding rather than a nuisance.
+
+    ! event_kind IS NULL is "a flat race": hurdles and steeple carry their
+      metres in `distance` too, and a steeple 3000 is not a 3000.
+    """
     print("\n" + "=" * 70)
-    print("B. IS THE OUTDOOR-TRACK-5000 ANCHOR AVAILABLE?")
+    print("B. WHAT TRACK RACES DO XC-RATED ATHLETES ACTUALLY RUN?")
     print("=" * 70)
     cur.execute("""
         WITH xc AS (
             SELECT DISTINCT person_id,
                    split_part(split_part(pool, '|', 1), '_', 1) AS lvl
-            FROM   athlete_season
-            WHERE  sport = 'XC' AND mean_rating IS NOT NULL
+            FROM   ranking_results
+            WHERE  sport = 'XC' AND speed_rating IS NOT NULL
+                   AND person_id IS NOT NULL
         ), tf AS (
-            SELECT DISTINCT r.person_id
-            FROM   results_tf r
-            JOIN   meets_tf m ON m.meet_id  = r.meet_id
-                             AND m.div_id   = r.div_id
-                             AND m.event_id = r.event_id
-            WHERE  r.person_id IS NOT NULL
-              AND  r.time_seconds IS NOT NULL
-              AND  COALESCE(m.is_indoor, 0) = 0
-              AND  m.distance_meters BETWEEN 4900 AND 5100
+            SELECT DISTINCT person_id, distance
+            FROM   ranking_results
+            WHERE  sport = 'TF' AND event_kind IS NULL
+                   AND distance IS NOT NULL AND person_id IS NOT NULL
+        ), base AS (
+            SELECT lvl, count(*) AS n_xc FROM xc GROUP BY 1
         )
-        SELECT xc.lvl,
-               count(*)                                        AS rated_xc,
-               count(*) FILTER (WHERE tf.person_id IS NOT NULL) AS both
-        FROM   xc LEFT JOIN tf ON tf.person_id = xc.person_id
-        GROUP  BY 1
-        ORDER  BY 2 DESC
+        SELECT xc.lvl, tf.distance::int AS dist,
+               count(*) AS athletes, b.n_xc
+        FROM   xc
+        JOIN   tf   ON tf.person_id = xc.person_id
+        JOIN   base b ON b.lvl = xc.lvl
+        GROUP  BY 1, 2, 4
+        ORDER  BY 1, 3 DESC
     """)
-    rows = [dict(x) for x in cur.fetchall()]
+    rows = [dict(r) for r in cur.fetchall()]
     if not rows:
         print("   nothing to count")
-        return
-    print(f"\n   {'level':<12}{'rated in XC':>14}{'+ outdoor 5000':>16}"
-          f"{'share':>9}")
-    tot = both = 0
+        return {}
+    # ! rows arrive grouped by level and ordered by athletes DESC, so the
+    #   first row of a level IS its best candidate and a running counter is
+    #   all the ranking this needs.
+    best, shown = {}, {}
     for r in rows:
-        tot += r["rated_xc"]
-        both += r["both"]
-        print(f"   {str(r['lvl'] or '?'):<12}{r['rated_xc']:>14,}"
-              f"{r['both']:>16,}{pct(r['both'], r['rated_xc']):>9}")
-    print(f"\n   OVERALL {both:,} of {tot:,} ({pct(both, tot)}) rated XC "
-          f"athletes have an outdoor track 5000.")
+        lvl = r["lvl"] or "?"
+        if lvl not in best:
+            best[lvl] = r["dist"]
+            print(f"\n   {lvl}   ({r['n_xc']:,} XC-rated athletes)")
+            print(f"     {'distance':>10}{'athletes':>12}{'coverage':>11}")
+        shown[lvl] = shown.get(lvl, 0) + 1
+        if shown[lvl] <= top_n:
+            print(f"     {r['dist']:>9}m{r['athletes']:>12,}"
+                  f"{pct(r['athletes'], r['n_xc']):>11}")
+    print("\n   ★ THE ANCHOR CANDIDATE PER LEVEL is the top row, not 5000 by")
+    print("     assumption. If coverage is thin everywhere, no track anchor")
+    print("     exists and the corpus-relative zero stays -- with its drift.")
+    return best
 
-    # ⚠ AND ARE THEY THE SAME PEOPLE? An anchor fitted on the fast half of
-    #   the corpus pins the scale where the fast half lives.
-    cur.execute("""
-        WITH tf AS (
-            SELECT DISTINCT r.person_id
-            FROM   results_tf r
-            JOIN   meets_tf m ON m.meet_id  = r.meet_id
-                             AND m.div_id   = r.div_id
-                             AND m.event_id = r.event_id
-            WHERE  r.person_id IS NOT NULL
-              AND  r.time_seconds IS NOT NULL
-              AND  COALESCE(m.is_indoor, 0) = 0
-              AND  m.distance_meters BETWEEN 4900 AND 5100
-        )
-        SELECT (tf.person_id IS NOT NULL) AS has_5k,
-               count(*) AS n,
-               round(avg(s.mean_rating)::numeric, 1) AS mean_rating,
-               round(percentile_cont(0.5) WITHIN GROUP
-                     (ORDER BY s.mean_rating)::numeric, 1) AS median_rating
-        FROM   athlete_season s
-        LEFT   JOIN tf ON tf.person_id = s.person_id
-        WHERE  s.sport = 'XC' AND s.mean_rating IS NOT NULL
-        GROUP  BY 1
-    """)
-    print(f"\n   {'group':<24}{'n':>12}{'mean rating':>14}"
-          f"{'median':>10}")
-    for r in cur.fetchall():
-        label = ("has an outdoor 5000" if r["has_5k"] else "XC only")
-        print(f"   {label:<24}{r['n']:>12,}{float(r['mean_rating'] or 0):>14.1f}"
-              f"{float(r['median_rating'] or 0):>10.1f}")
-    print("\n   ★ IF THE TWO ROWS' RATINGS ARE CLOSE, the anchor population "
-          "is\n     representative and the gauge can move onto it. If the "
-          "5000 group is\n     much faster, anchoring there pins the scale "
-          "where the fast half lives\n     and the corpus mean is the "
-          "safer zero.")
+
+def sectionB2(cur, best):
+    """Are the athletes who race the anchor distance representative?
+
+    ⚠ AN ANCHOR FITTED ON THE FAST HALF PINS THE SCALE WHERE THE FAST HALF
+      LIVES. This is the check that killed the 5000 idea even when the count
+      was wrong: 120.2 mean rating against 101.2.
+    """
+    if not best:
+        return
+    print("\n" + "=" * 70)
+    print("B2. ARE THEY REPRESENTATIVE?")
+    print("=" * 70)
+    print(f"   {'level':<10}{'anchor':>8}{'group':<22}{'n':>11}"
+          f"{'mean':>8}{'median':>9}")
+    for lvl, dist in sorted(best.items()):
+        cur.execute("""
+            WITH tf AS (
+                SELECT DISTINCT person_id FROM ranking_results
+                WHERE sport = 'TF' AND event_kind IS NULL
+                  AND distance = %(d)s AND person_id IS NOT NULL
+            )
+            SELECT (tf.person_id IS NOT NULL) AS has_it,
+                   count(*) AS n,
+                   round(avg(s.mean_rating)::numeric, 1) AS mean_rating,
+                   round(percentile_cont(0.5) WITHIN GROUP
+                         (ORDER BY s.mean_rating)::numeric, 1) AS med
+            FROM   athlete_season s
+            LEFT   JOIN tf ON tf.person_id = s.person_id
+            WHERE  s.sport = 'XC' AND s.mean_rating IS NOT NULL
+              AND  split_part(split_part(s.pool, '|', 1), '_', 1) = %(lvl)s
+            GROUP  BY 1
+        """, {"d": dist, "lvl": lvl})
+        for r in cur.fetchall():
+            label = "races it" if r["has_it"] else "does not"
+            print(f"   {lvl:<10}{dist:>7}m{label:<22}{r['n']:>11,}"
+                  f"{float(r['mean_rating'] or 0):>8.1f}"
+                  f"{float(r['med'] or 0):>9.1f}")
+    print("\n   ★ CLOSE ROWS mean the anchor population is representative and")
+    print("     the gauge can move onto it. A big gap means anchoring there")
+    print("     pins the scale where that group lives.")
 
 
 # ------------------------------------------------------------------ #
@@ -322,7 +357,7 @@ def main():
             if "A" not in skip:
                 sectionA(cur, None if a.exact else a.sample)
             if "B" not in skip:
-                sectionB(cur)
+                sectionB2(cur, sectionB(cur))
             if "C" not in skip:
                 sectionC(cur, None if a.exact else a.sample)
     print()

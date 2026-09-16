@@ -21,6 +21,7 @@
 """
 import io
 import os
+import re
 import sys
 
 import numpy as np
@@ -99,10 +100,32 @@ def test_the_counts_diagnostic_asks_its_questions():
                 encoding="utf-8").read()
     # A: how much of the corpus is rated against an unmeasured course
     assert "cd.difficulty IS NULL" in d, d
-    # B: is there an anchor population, and is it representative
-    assert "is_indoor, 0) = 0" in d, d
-    assert "BETWEEN 4900 AND 5100" in d, d
-    assert "median_rating" in d, d
+    # B: what track races XC athletes actually run -- ASKED, not presumed.
+    #
+    # ⚠ THE FIRST VERSION PRESUMED 5000 AND READ THE DISTANCE OFF
+    #   meets_tf.distance_meters. It found 356 athletes in a corpus of four
+    #   million, which should have been read as a broken query and was
+    #   instead nearly read as a finding. TF distance is parsed from
+    #   event_short into ranking_results.distance; and high schoolers race
+    #   3200 m, so asking a 72%-high-school corpus about a 5000 asks almost
+    #   nobody.
+    # ! THE DOCSTRING IS STRIPPED FIRST. It explains the old bug by quoting
+    #   it, so a bare substring check on the source fails on its own
+    #   explanation -- the third time this exact trap has bitten in this
+    #   session.
+    # ⚠ ONLY THE FIRST DOCSTRING. A regex over every triple-quoted block ate
+    #   the SQL as well -- which is triple-quoted too -- and then asserted
+    #   the query was missing clauses it plainly has. Cut the docstring by
+    #   position instead.
+    b = d.split("def sectionB(")[1].split("def sectionC")[0]
+    k = b.index('"""')
+    b = b[b.index('"""', k + 3) + 3:]
+    b = "\n".join(l.split("#")[0] for l in b.splitlines())
+    assert "BETWEEN 4900 AND 5100" not in b, b
+    assert "meets_tf" not in b, b            # the distance is not there
+    assert "event_kind IS NULL" in b, b      # a flat race, not a steeple
+    assert "ranking_results" in d, d
+    assert "mean_rating" in d, d
     # C: does the model's extraction see what the engine rates
     assert "in_meets" in d, d
 
