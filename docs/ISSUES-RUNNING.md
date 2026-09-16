@@ -1125,6 +1125,91 @@ not a count. Run:
 ⚠ The ratio makes the PAGE right in both worlds. It does not make the MODEL
 right in the second one.
 
+### ✅ D. The weather features cost 5% and bought nothing — adjustment off by default
+
+> "I don't think the weather is going right tbh, I don't think its getting it
+> right." — owner, 2026-09-17
+
+Right, and it was worth more than it looked. Measured with
+`scripts/diag_model_quality.py` on a 152-athlete championship — same model,
+same field, same race, only the weather basis changed:
+
+| weather | overall bias | median error at a normal gap |
+|---|---|---|
+| normal | **−5.0%** | 5.0% |
+| none | **+0.4%** | 1.9% |
+
+Section E said why it is not weather modelling: the normal moved every
+prediction **−5.44%**, with p05 −6.25% and p95 −4.28%. A near-constant offset
+for the whole field. Real conditions help some athletes more than others; one
+number for everybody is the signature of a **feature distribution the model
+never trained on**.
+
+★ The mechanism is in the extraction. `_orZero` writes a NULL as `0.0`, so
+**pressure 0 hPa — physically impossible — is how "we do not know" is
+spelled**, in the same slot where 1013 is a real reading. Training saw a great
+deal of the first shape; inference feeds the second.
+
+*The default is now `none`, in `app._target` and `predict._predictTimes`
+both.* `?weather=normal` still asks for it, so this is reversible without a
+deploy, and `/api/predict/weather` still shows the reader the conditions —
+what is withdrawn is the model adjusting a TIME for weather it cannot use.
+
+⚠ **And it fixes the times, not the ranking.** Spearman went 0.899 → 0.900
+and inversions 13.4% → 13.4%. A uniform shift cannot reorder anybody. The
+ordering problem is section E below, and it is a different fault.
+
+**To actually use weather** the extraction has to stop conflating missing with
+zero: a `has_weather` flag beside the values, or NULL imputed to the corpus
+mean rather than to a number that means something. Either needs a
+re-extraction, so it belongs with **A** and **B**.
+
+### 🔎 E. The network's correction is noise on the pairs that matter
+
+Same run, and this is the one the owner actually complained about —
+"it has me losing to my teamate who I beat in every single race that season."
+
+Overall ordering, against what the day did:
+
+| | spearman | inversions |
+|---|---|---|
+| the model | 0.900 | 13.4% |
+| its baseline alone | 0.792 | 19.9% |
+| season mean rating | **0.904** | **12.8%** |
+
+A 4.05M parameter transformer loses to a one-column `ORDER BY`. But the
+within-team rows are worse than that:
+
+| within a team (450 teammate pairs) | inversions |
+|---|---|
+| the model | **20.7%** |
+| its baseline alone | 20.0% |
+| season mean rating | 19.1% |
+
+⚠ **On close pairs the model is worse than its own baseline.** Teammates are
+nearer in ability than two random runners, so every row here is higher — but
+the model's row being *above* the do-nothing row means the network's
+correction is not information at that resolution, it is noise. It is actively
+making the hardest pairs worse.
+
+That is a **different fault from a bad anchor**, and the two need different
+fixes:
+
+1. **The anchor.** `predictInterval` returns `baselineSeconds * exp(mu)` and
+   the baseline was one row. `transformer.BASELINE_EWMA` replaces it with a
+   recency-weighted geometric mean — a **retrain, not a re-extraction**,
+   because the chunks store raw targets in seconds. This should lift the
+   baseline row toward the rating row and drag the model's with it.
+2. **The correction.** If the network is adding noise, a better anchor does
+   not fix it; it just gives it a better thing to spoil. The candidates, and
+   none is cheap: it has no field-relative feature (section 2 below), it is
+   always told `is_forecast=1` at inference, and `normalized_time` — the
+   thing it is trained to predict — is under suspicion from **B** and **C**.
+
+★ Do (1) first anyway: it is an hour of GPU and it re-measures cleanly with
+`diag_model_quality.py --model`, whose "its baseline alone" row now reads the
+rule off the checkpoint rather than assuming the last race.
+
 ### The ordering that follows
 
 The model run comes first, and it is a PREFIX run, not the full corpus

@@ -577,7 +577,11 @@ def _predictTimes(cur, person_ids, target):
     #   hour when the grid knows it, else the model's no-weather row (the
     #   number the page showed before today; ?weather=none still asks for
     #   it). The forecast rides beside it, 16 days out at most.
-    variants = _weatherVariants(cur, spec, target.get("weather") or "both")
+    # ⚠ THE DEFAULT IS none, AND IT IS MEASURED -- see app._target and
+    #   ISSUES-RUNNING D. The venue's climatological normal moved every
+    #   prediction 5.44% faster and took the bias against real results from
+    #   +0.4% to -5.0%.
+    variants = _weatherVariants(cur, spec, target.get("weather") or "none")
     headline = "normal" if "normal" in variants else "none"
 
     # ⚠ NOTHING AFTER THE DATE BEING PREDICTED (owner, 2026-09-16: "when you
@@ -655,6 +659,15 @@ def _predictTimes(cur, person_ids, target):
             seqs[i, :len(s)] = torch.tensor(s, dtype=torch.float32)
             masks[i, :len(s)] = True
             vens[i] = v
+        # ★ WHAT THIS CHECKPOINT ANCHORS ON, RECORDED (2026-09-17). The
+        #   prediction is baselineSeconds * exp(mu), so "the baseline alone"
+        #   is the do-nothing benchmark the network has to beat -- and under
+        #   --baseline ewma it is no longer "their last race", so a
+        #   diagnostic cannot reconstruct it from the history any more. The
+        #   model is the only thing that knows its own rule.
+        with torch.no_grad():
+            bases = model.baselineSeconds(seqs, masks)
+
         by_variant = {}
         for name in variants:
             ctxs = torch.zeros(len(batch), len(batch[0][2][name]))
@@ -682,7 +695,11 @@ def _predictTimes(cur, person_ids, target):
             #   the row keeps the normalized number and says so, rather than
             #   mixing a race time with a 5K-equivalent band.
             race = _onClock(norm, clock)
+            base_norm = float(bases[i])
             entry.update({
+                # the anchor, on both clocks, for diag_model_quality
+                "baseline": base_norm,
+                "baseline_race": _onClock(base_norm, clock) or base_norm,
                 "seconds": round(race if race else norm, 1),
                 "normalized": round(norm, 1),
                 # ⚠ THE PAGE HAS TO BE ABLE TO SAY WHICH IT IS SHOWING. A 5K

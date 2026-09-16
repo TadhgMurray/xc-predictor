@@ -6669,7 +6669,25 @@ def _target(args):
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
         # none | normal | forecast | both (default) | all -- see predict._weatherVariants
-        t["weather"] = (args.get("weather") or "both").strip().lower()
+        # ⚠ none, NOT both, AND IT IS MEASURED (2026-09-17). Feeding the
+        #   venue's climatological normal made every prediction 5.44% faster,
+        #   near-uniformly (p05 -6.25%, p95 -4.28%) -- and the model's bias
+        #   against real results was -5.0%. Turning the weather off took the
+        #   overall bias to +0.4% and the median error at a normal gap from
+        #   5.0% to 1.9%. Same race, same model, same field.
+        #
+        # ! A CONSTANT OFFSET IS NOT WEATHER MODELLING. Real conditions help
+        #   some athletes more than others; one number for everybody is the
+        #   signature of a feature distribution the model never trained on.
+        #   _orZero writes NULL as 0.0, so pressure 0 hPa -- impossible -- is
+        #   how "unknown" is spelled, in the slot where 1013 is a reading.
+        #
+        # ★ THE CONDITIONS ARE STILL SHOWN. /api/predict/weather serves the
+        #   venue's normal and the forecast to the page independently of any
+        #   prediction, which is where the reader actually sees them. What is
+        #   withdrawn is the model ADJUSTING a time for weather it cannot use
+        #   -- ?weather=normal still asks for it. See ISSUES-RUNNING D.
+        t["weather"] = (args.get("weather") or "none").strip().lower()
         # ★ THE COURSE IS OVERRIDABLE WITHOUT CHANGING THE MEET (owner,
         #   2026-09-01). "What would these teams run at the state course"
         #   used to require `manual`, which throws away the meet -- its
@@ -6698,7 +6716,25 @@ def _target(args):
         t["course"] = args.get("course")
         t["sport"] = args.get("sport") or "XC"
         # none | normal | forecast | both (default) | all -- see predict._weatherVariants
-        t["weather"] = (args.get("weather") or "both").strip().lower()
+        # ⚠ none, NOT both, AND IT IS MEASURED (2026-09-17). Feeding the
+        #   venue's climatological normal made every prediction 5.44% faster,
+        #   near-uniformly (p05 -6.25%, p95 -4.28%) -- and the model's bias
+        #   against real results was -5.0%. Turning the weather off took the
+        #   overall bias to +0.4% and the median error at a normal gap from
+        #   5.0% to 1.9%. Same race, same model, same field.
+        #
+        # ! A CONSTANT OFFSET IS NOT WEATHER MODELLING. Real conditions help
+        #   some athletes more than others; one number for everybody is the
+        #   signature of a feature distribution the model never trained on.
+        #   _orZero writes NULL as 0.0, so pressure 0 hPa -- impossible -- is
+        #   how "unknown" is spelled, in the slot where 1013 is a reading.
+        #
+        # ★ THE CONDITIONS ARE STILL SHOWN. /api/predict/weather serves the
+        #   venue's normal and the forecast to the page independently of any
+        #   prediction, which is where the reader actually sees them. What is
+        #   withdrawn is the model ADJUSTING a time for weather it cannot use
+        #   -- ?weather=normal still asks for it. See ISSUES-RUNNING D.
+        t["weather"] = (args.get("weather") or "none").strip().lower()
         if not t["date"]:
             return None, "date is required for a manual target"
 

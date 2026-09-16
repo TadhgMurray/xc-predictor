@@ -148,13 +148,17 @@ def sectionA(rows, preds, seasonRating):
     # ★ TWO DUMB BASELINES, because a number with nothing to beat is not a
     #   measurement. If the model cannot beat "sort by season rating", the
     #   architecture is not earning its 4M parameters.
-    last = [float(p.get("baseline") or 0) for _r, p in got]
+    # ★ THE CHECKPOINT'S OWN ANCHOR, not a guess at it. Under --baseline
+    #   ewma "their last race" is no longer what the model starts from, so
+    #   the do-nothing benchmark has to come from the model itself.
+    last = [float(p.get("baseline_race") or p.get("baseline") or 0)
+            for _r, p in got]
     rating = [-(seasonRating.get(r["person_id"]) or 0.0) for r, _p in got]
 
     print(f"   {len(got)} athletes with both a prediction and a result\n")
     print(f"   {'':<28}{'spearman':>10}{'inversions':>12}")
     for label, series in (("the model", model),
-                          ("their last race alone", last),
+                          ("its baseline alone", last),
                           ("season mean rating", rating)):
         if not any(series):
             continue
@@ -171,7 +175,7 @@ def sectionA(rows, preds, seasonRating):
     print(f"\n   {'WITHIN A TEAM':<28}{'inversions':>12}   "
           f"(teammates are closer, so every row here is higher)")
     for label, series in (("the model", model),
-                          ("their last race alone", last),
+                          ("its baseline alone", last),
                           ("season mean rating", rating)):
         if not any(series):
             continue
@@ -180,6 +184,10 @@ def sectionA(rows, preds, seasonRating):
             print(f"   {label:<28}{inv * 100:>11.1f}%   ({n:,} pairs)")
     print("   ★ This is the owner's complaint, counted -- same coach, same"
           "\n     schedule, same races. Compare the ROWS, not the number.")
+    print("   ⚠ IF THE MODEL'S ROW IS ABOVE ITS OWN BASELINE'S, the network's")
+    print("     correction is NOISE at this resolution: it is making close")
+    print("     pairs worse than doing nothing would. That is a different")
+    print("     fault from a bad anchor and needs a different fix.")
 
 
 # ------------------------------------------------------------------ #
@@ -197,6 +205,8 @@ def sectionB(rows, preds):
     print("   the better last race wins every head-to-head by construction.\n")
     got = [(r, p) for r, p in zip(rows, preds)
            if p.get("seconds") is not None and p.get("baseline")]
+    print("   (the baseline below is the one the CHECKPOINT uses, read off")
+    print("    the model, so this stays honest under --baseline ewma)\n")
     if not got:
         print("   no baselines available")
         return
@@ -420,10 +430,14 @@ def sectionF(cur, spec, sport):
     if not normal:
         print("   the grid has no normal for this venue/date")
         return
+    # ! wind_speed_kmh ON THE TABLE, wind_speed_km AS THE FEATURE. The corpus
+    #   SQL aliases it (`w.wind_speed_kmh AS wind_speed_km`), and the first
+    #   version of this query used the feature name against the raw table and
+    #   died on it.
     cur.execute("""
         SELECT temp_c, dew_point_c, humidity, apparent_temp_c,
                precipitation_mm, pressure_hpa, cloud_cover,
-               wind_speed_km, wind_dir
+               wind_speed_kmh AS wind_speed_km, wind_dir
         FROM   weather
         WHERE  meet_id = %(m)s
         LIMIT  1
@@ -534,7 +548,10 @@ def main():
                 h = [x for x in (hist.get(r["person_id"]) or [])
                      if (predict._asDate(x.get("date")) or cut) < cut]
                 if h:
-                    p["baseline"] = h[-1].get("normalized_time")
+                    # ! ONLY AS A FALLBACK. _predictTimes records the model's
+                    #   own baseline; this fills in for an older checkpoint
+                    #   or an athlete the model could not predict.
+                    p.setdefault("baseline", h[-1].get("normalized_time"))
                     last = predict._asDate(h[-1].get("date"))
                     p["gap_days"] = (cut - last).days if last else None
                     p["n_tf"] = sum(1 for x in h if not x.get("is_xc"))
