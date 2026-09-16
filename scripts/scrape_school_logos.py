@@ -755,19 +755,31 @@ def ensureLevelKey(cur):
     """
     try:
         cur.execute("SAVEPOINT school_logo_key")
+        # ⚠ THE CONSTRAINT'S REAL NAME, NOT THE ONE POSTGRES USUALLY PICKS.
+        #   A table restored from a dump, or created by an older hand, can
+        #   carry any name -- and then DROP CONSTRAINT IF EXISTS
+        #   school_logo_pkey finds nothing, ADD PRIMARY KEY fails because
+        #   there already is one, and every INSERT afterwards dies on
+        #   "no unique or exclusion constraint matching the ON CONFLICT".
+        #   pg_constraint knows the name and the column count.
         cur.execute("""
-            SELECT count(*) AS n FROM information_schema.key_column_usage
-            WHERE  table_schema = 'public'
-              AND  constraint_name = 'school_logo_pkey'
+            SELECT conname, array_length(conkey, 1) AS n
+            FROM   pg_constraint
+            WHERE  conrelid = 'school_logo'::regclass AND contype = 'p'
         """)
         row = cur.fetchone()
-        got = row["n"] if isinstance(row, dict) else row[0]
-        if int(got) >= 3:
+        if row is None:                        # no primary key at all
+            name, cols = None, 0
+        elif isinstance(row, dict):
+            name, cols = row["conname"], int(row["n"])
+        else:
+            name, cols = row[0], int(row[1])
+        if cols >= 3:
             cur.execute("RELEASE SAVEPOINT school_logo_key")
             return False
         cur.execute("UPDATE school_logo SET level = '' WHERE level IS NULL")
-        cur.execute("ALTER TABLE school_logo "
-                    "DROP CONSTRAINT IF EXISTS school_logo_pkey")
+        if name:
+            cur.execute(f'ALTER TABLE school_logo DROP CONSTRAINT "{name}"')
         cur.execute("ALTER TABLE school_logo "
                     "ADD PRIMARY KEY (school, state, level)")
         cur.execute("RELEASE SAVEPOINT school_logo_key")
@@ -1257,6 +1269,12 @@ def main():
                 conn.commit()
                 print(f"  shared crests: {n:,} images worn by {SHARED_MIN}+ schools")
                 return
+            # ! THE MIGRATION FIRST. damagedPairs reads `level`, and on a
+            #   table made before that column existed the query is an
+            #   UndefinedColumn -- which would end the run before the
+            #   repair it was asked for.
+            ensureTable(cur, DDL)
+            ensureLevelKey(cur)
             pairs = damagedPairs(cur) if args.fix_multi else None
             if args.fix_multi:
                 print(f"  {len(pairs):,} (school, state) pairs wear an anet "

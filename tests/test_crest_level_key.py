@@ -82,13 +82,39 @@ def test_the_key_migration_is_savepointed_and_never_raises():
     assert "ROLLBACK TO SAVEPOINT school_logo_key" in body
     assert "except Exception" in body
 
-    class _Bad:
+    class _Cur:
+        def __init__(self, row, fail=None):
+            self.row, self.fail, self.sql = row, fail, []
         def execute(self, sql, params=None):
-            if "key_column_usage" in sql:
-                raise RuntimeError("no information_schema here")
+            self.sql.append(sql)
+            if self.fail and self.fail in sql:
+                raise RuntimeError("boom")
         def fetchone(self):
-            return None
-    assert S.ensureLevelKey(_Bad()) is False        # no raise, no migration
+            return self.row
+
+    # ⚠ THE CONSTRAINT'S REAL NAME. A table restored from a dump can carry
+    #   any pkey name, and then a DROP of the assumed one finds nothing, the
+    #   ADD fails because a key already exists, and every INSERT afterwards
+    #   dies on "no unique constraint matching the ON CONFLICT".
+    odd = _Cur(("school_logo_pk_from_a_dump", 2))
+    assert S.ensureLevelKey(odd) is True
+    assert any('DROP CONSTRAINT "school_logo_pk_from_a_dump"' in q for q in odd.sql)
+    assert any("ADD PRIMARY KEY (school, state, level)" in q for q in odd.sql)
+    assert S.ensureLevelKey(_Cur(("anything", 3))) is False      # already done
+    # a failure rolls back to the savepoint and reports it did nothing
+    broke = _Cur(None, fail="ADD PRIMARY KEY")
+    assert S.ensureLevelKey(broke) is False
+    assert "ROLLBACK TO SAVEPOINT school_logo_key" in broke.sql[-1]
+
+
+def test_the_repair_migrates_before_it_reads_the_level():
+    """damagedPairs reads `level`; on a table made before that column
+    existed the query is an UndefinedColumn, which would end the run before
+    the repair it was asked for."""
+    src = open(os.path.join(_ROOT, "scripts", "scrape_school_logos.py")).read()
+    body = src[src.index("            # ! THE MIGRATION FIRST."):]
+    assert body.index("ensureTable(cur, DDL)") < body.index("damagedPairs(cur)")
+    assert body.index("ensureLevelKey(cur)") < body.index("damagedPairs(cur)")
 
 
 def test_the_writers_all_take_a_level():

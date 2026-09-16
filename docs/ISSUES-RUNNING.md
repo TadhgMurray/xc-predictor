@@ -2011,3 +2011,59 @@ next one.
 Also still open from the owner's list: **coalescing an athlete's season onto one
 team** when they appear under similar names with different ids, and the
 `link_tfrrs_to_anet` output being wired in as the authority above the directory.
+
+### The owner's plan for tonight, and what it needs first (2026-09-16)
+
+> *"start scraping the schools. Then rescrape anet/tfrrs new races. Then relaunch
+> engine (update it with new ideas first). Then extraction -> train."*
+
+**✅ The school scrape can start** — after the two bugs fixed in this commit,
+both of which sit in exactly that path and both of which fail on the server:
+`ensureLevelKey` assumed the primary key is called `school_logo_pkey` (a
+restored dump can name it anything, and then the DROP finds nothing, the ADD
+fails, and every INSERT dies on *"no unique constraint matching the ON
+CONFLICT"*), and `--fix-multi` read `level` **before** the migration that adds
+it.
+
+```bash
+python scripts/scrape_school_logos.py --write --fix-multi   # repair first
+python scripts/anet_teams.py --write --unfetched            # then resume
+```
+
+**⚠ The rescrape needs a schema change first, or it happens twice.** Owner:
+*"make sure tf venue names go in so we can not label our id as venue."*
+`meets_tf` has **no venue-name column at all** — `div_id, meet_id, meet_name,
+event_short, event_id, distance_meters, gps_lat, gps_long, state, is_indoor`.
+So a TF venue key has nothing to be but an id, and that is not a scraping bug,
+it is a missing column plus the loader that would fill it. It must land before
+the rescrape.
+
+**🔎 One correction on the list contradicts what 2026-09-16 just fixed.** Owner:
+*"If a race result normalizes to a 5k that is a wr in whatever pool (ms/hs/such)
+is diff, nuke entire race ratings."* Nuking a whole race on a **pool** record is
+the ratchet ISSUES K removed: the rows that beat a young pool's record are, by
+construction, the ones the POOLING got wrong, and deleting the race deletes the
+evidence that would repool the athlete — one mistake, career gone, and the race
+was never wrong. The open record is safe to nuke a race on (no pooling can make
+a time beat the world record); a pool record should stay a ROW verdict. Proposed
+split, for the owner to accept or overrule:
+
+* normalized 5k beats the **open** 5k WR → the race's distance or clock is
+  wrong → nuke the race (what `impossible_race` already does, on the normalized
+  scale instead of the raw pace, which is the new part).
+* normalized 5k beats the **pool's** 5k record → that row is mis-pooled → drop
+  the row, keep the race.
+
+**🔎 And "anything without a team id in anet is pro" needs one guard:** a tfrrs
+row has no anet team id *by construction* — `results` does not even have a
+`team_slug` column — so the rule as written makes every tfrrs athlete
+professional. It has to be "an **anet** row with team_id 0 or NULL", which is
+what `no_team` does today.
+
+The rest of the list is logged as work, not blockers: the sections/divisions
+redo, the tfrrs column-shift guard, the 5-15σ season-median gate, culling
+`corrections` (and backing it up) so the import is not 165 MB, pooling by anet's
+level with the grades rewritten to match, tiny-team-is-pro, removing track
+difficulty while indoor is priced 4% easy, the XC-race-duplicated-into-TF dedupe
+(same day, same time, either sport), normalizing the 5k to a **track** 5k, and
+labelling a school in the extraction as `(name, state, id)` rather than a string.
