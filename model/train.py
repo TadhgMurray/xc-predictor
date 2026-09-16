@@ -25,7 +25,20 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 #   written to run on. tests/test_context_width.py keeps the copies honest.
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
                          SEQ_NORM_TIME, CONTEXT_YEAR_INDEX,
-                         TARGET_Z_CLAMP)
+                         TARGET_Z_CLAMP, CONTEXT_GAP_INDEX)
+
+# ★ THE HORIZON BANDS VALIDATION IS REPORTED IN (2026-09-16). One MAE over
+#   the whole val set averages three different jobs: predicting Saturday
+#   from last weekend, predicting next season, and projecting a sophomore
+#   into college. The corpus is 30% horizon twins, so the aggregate is
+#   dragged well below what the predictions page actually does and well
+#   above what the recruiting projection actually does -- and neither
+#   number is the one anybody wanted.
+#
+#   Banded on days_since_last_race, in days. The first band is the
+#   predictions page; the last is the college projection.
+GAP_BANDS = ((0.0, 42.0, "<=6wk"), (42.0, 365.0, "6wk-1yr"),
+             (365.0, 730.0, "1-2yr"), (730.0, float("inf"), "2yr+"))
 
 # ------------------------------------------------------------------ #
 # CONSTANTS — the training dials, named once so they don't drift
@@ -1091,6 +1104,9 @@ def _validateOneEpoch(model, loader, criterion):
     sq_sig = 0.0
     inside = 0
     n_ex = 0
+    band_err = [0.0] * len(GAP_BANDS)   # sum |error| per horizon band
+    band_base = [0.0] * len(GAP_BANDS)  # and the last-race baseline's
+    band_n = [0] * len(GAP_BANDS)
 
     with torch.no_grad():
 
@@ -1129,15 +1145,32 @@ def _validateOneEpoch(model, loader, criterion):
             inside += int((err.abs() <= sig).sum())
             n_ex += int(targets.shape[0])
 
+            # ! THE BAND COMES OFF THE RAW CONTEXT, not off a normalised
+            #   copy. setFeatureStats normalises inside forward(); the
+            #   tensor here is what extraction wrote, so this is days.
+            gap = context[:, CONTEXT_GAP_INDEX]
+            for b, (lo, hi, _lab) in enumerate(GAP_BANDS):
+                m = (gap >= lo) & (gap < hi)
+                if not bool(m.any()):
+                    continue
+                band_err[b] += float(err[m].abs().sum())
+                band_base[b] += float(lr_true[m].abs().sum())
+                band_n[b] += int(m.sum())
+
             total_loss += loss.item()
             n_batches  += 1
 
     n_ex = max(n_ex, 1)
+    bands = [{"label": lab, "n": band_n[b],
+              "model_pct": 100.0 * band_err[b] / max(band_n[b], 1),
+              "base_pct": 100.0 * band_base[b] / max(band_n[b], 1)}
+             for b, (_lo, _hi, lab) in enumerate(GAP_BANDS) if band_n[b]]
     return (total_loss / max(n_batches, 1),
             100.0 * err_model / n_ex, 100.0 * err_base / n_ex,
             {"rmse_pct": 100.0 * (sq_err / n_ex) ** 0.5,
              "sigma_pct": 100.0 * (sq_sig / n_ex) ** 0.5,
-             "inside_1s": 100.0 * inside / n_ex})
+             "inside_1s": 100.0 * inside / n_ex,
+             "bands": bands})
 
 
 # ------------------------------------------------------------------ #
@@ -1362,6 +1395,14 @@ def main():
               + (f"DROPPED {st['bad_batches']} non-finite batches  "
                  if st.get("bad_batches") else "")
               + f"({st['elapsed'] / 60:.1f} min)")
+        # ★ AND WHAT IT IS GOOD AT, not just how good on average. Each band
+        #   against the last-race baseline ON THE SAME ROWS, because the
+        #   baseline is far weaker over years than over weeks and comparing
+        #   a band's model error to the overall baseline would flatter it.
+        if cal.get("bands"):
+            print("           by horizon:  " + "   ".join(
+                f"{b['label']} {b['model_pct']:.2f}% vs {b['base_pct']:.2f}%"
+                f" (n={b['n']:,})" for b in cal["bands"]))
 
         # ⚠ MIN_DELTA, NOT `<`. An improvement of 1e-9 is not an improvement;
         #   without a threshold it resets the patience counter forever and

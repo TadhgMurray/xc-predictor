@@ -77,6 +77,22 @@ CONTEXT_FEATURES = 24
 #   AND against the builder's actual output, so the duplication cannot rot.
 CONTEXT_YEAR_INDEX = 23
 
+# ★ TWO MORE CONTEXT POSITIONS WORTH NAMING, because the aggregate error is
+#   an average over jobs of wildly different difficulty and the average is
+#   the one number that describes neither of them.
+#
+#   The corpus is 51% real next-race examples, 18% forecast twins and 30%
+#   HORIZON twins -- a horizon example asks what somebody runs one to four
+#   YEARS from their last race, which is the recruiting projection, and it is
+#   nothing like predicting Saturday. Reporting one MAE over the mixture
+#   flatters the hard job and libels the easy one.
+#
+# ! AND NO RE-EXTRACTION IS NEEDED TO SPLIT THEM. days_since_last_race is
+#   already in the context vector -- it is what made the horizon class
+#   possible without a new feature -- so validation can band on it directly.
+CONTEXT_IS_FORECAST_INDEX = 0
+CONTEXT_GAP_INDEX = 4          # days_since_last_race, raw days
+
 # Positions inside a sequence row that this file reads by NAME. Mirror
 # _buildSequenceVector in feature_extraction.py: index 0 is the prior race's
 # normalized_time in seconds, index 2 is days before the target.
