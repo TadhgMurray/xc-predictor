@@ -2038,6 +2038,12 @@ So a TF venue key has nothing to be but an id, and that is not a scraping bug,
 it is a missing column plus the loader that would fill it. It must land before
 the rescrape.
 
+★ **The whole plan, with the decisions taken, is `docs/PLAN-2026-09-16.md`.**
+The owner overruled the item below on the same day: nuke on pool records, but
+with the record taken at each pool's OWN anchor (college_m anchors at 8000, so
+an 8k record, not a 5k one). See that file's §0 for the arithmetic and the two
+conditions that make it survivable.
+
 **🔎 One correction on the list contradicts what 2026-09-16 just fixed.** Owner:
 *"If a race result normalizes to a 5k that is a wr in whatever pool (ms/hs/such)
 is diff, nuke entire race ratings."* Nuking a whole race on a **pool** record is
