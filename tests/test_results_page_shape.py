@@ -160,6 +160,44 @@ def test_an_incomplete_team_is_a_sentence_not_a_row():
     print("  an incomplete team is a sentence, not a row ....... OK")
 
 
+def test_the_crest_is_stamped_by_the_server_never_guessed():
+    """Owner, 2026-09-16: "can we get the team logos to render?"
+
+    ★ THE SERVER HAS TO ANSWER. school_logo's cache lives in the Flask
+      process; a browser can only find out whether a school has a crest by
+      fetching it, and a broken <img> per school is worse than no crests.
+      school_logo.stampCrests exists for exactly this, and says so.
+
+    ! POOL-AWARE, which stampCrests is not: Amherst (MA) is a NESCAC college
+      and a regional middle school and they do not share a crest. Same
+      reason _fieldLevels exists.
+    """
+    pred = io.open(os.path.join(ROOT, "racecast", "predict.py"),
+                   encoding="utf-8").read()
+    i = pred.index("def _stampCrests(")
+    fn = pred[i:pred.index("\n# Purpose", i + 10)]
+    assert "crestUrl" in fn, fn
+    assert "pool_key" in fn, fn
+    # every surface the browser draws
+    for caller in ("predictTeam", "meetField", "schoolSquad"):
+        j = pred.index(f"def {caller}(")
+        body = pred[j:pred.index("\ndef ", j + 10)]
+        assert "_stampCrests" in body, caller
+
+    # ...and the page renders it with the site's own class, so style.css's
+    # one rule sizes it and this cannot drift from race.html
+    i = JS.index("function crest(")
+    fn = JS[i:JS.index("\n}", i)]
+    assert 'class="school-mark"' in fn, fn
+    assert "if (!url) return" in fn, fn          # no crest -> no tag at all
+    assert 'class="school-mark"' in RACE_HTML or "school-mark" in io.open(
+        os.path.join(ROOT, "racecast", "static", "style.css"),
+        encoding="utf-8").read()
+    # both tables and the roster card ask for one
+    assert JS.count("crest(") >= 4, JS.count("crest(")
+    print("  the crest is stamped, never guessed ............... OK")
+
+
 def test_the_band_survives_the_redesign():
     """★ A single race carries about +-4 rating points, so a time quoted to a
     tenth with no range claims a precision the model does not have. It moved
@@ -178,5 +216,6 @@ if __name__ == "__main__":
                test_the_row_carries_what_a_results_row_shows,
                test_the_markup_is_the_race_pages_markup,
                test_an_incomplete_team_is_a_sentence_not_a_row,
+               test_the_crest_is_stamped_by_the_server_never_guessed,
                test_the_band_survives_the_redesign]:
         fn()

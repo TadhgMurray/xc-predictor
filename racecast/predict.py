@@ -245,8 +245,20 @@ def predictTeam(cur, schools, target, head_to_head=False,
     #   rules with one correct spelling; a JS twin of either is a second
     #   spelling waiting to drift.
     _decorate(finishers, (target.get("sport") or "XC").upper())
+    # ! THE TEAM'S POOL COMES OFF ITS RUNNERS, and off `finishers` rather
+    #   than off t["runners"] -- the team's own runner rows carry only what
+    #   the scorers table needs (id, name, place, time), while the finish
+    #   order carries the pool. The crest for Amherst depends on which
+    #   Amherst, so the team row needs one.
+    pool_of = {}
+    for r in finishers:
+        if r.get("school") and r.get("pool"):
+            pool_of.setdefault(r["school"], r["pool"])
     for t in teams:
         t.update(_schoolLink(t.get("team"), t.get("state"), None))
+        t["pool"] = pool_of.get(t.get("team"))
+    _stampCrests(teams, "team", "state")
+    _stampCrests(finishers, "school", "school_state")
 
     return {"available": True,
             "mode": "head_to_head" if head_to_head else "meet",
@@ -269,6 +281,40 @@ def _schoolLink(school, state, pool):
         # Labels not loaded (a script importing predict without the app).
         # A bare name and no link is the old behaviour, not a crash.
         return {"school_href": None, "school_label": school}
+
+
+# Purpose:   the crest URL for a mention of a school, on rows the BROWSER
+#            draws (owner, 2026-09-16: "Can we get the team logos to
+#            render?").
+#
+# ★ THE SERVER HAS TO ANSWER, BECAUSE JS CANNOT ASK. school_logo's whole
+#   cache is in this process; a browser can only find out whether a crest
+#   exists by fetching it, and a broken <img> per school is worse than no
+#   crests at all. school_logo.stampCrests exists for exactly this and says
+#   so -- a school without one simply gets no key, so the page renders
+#   nothing rather than an error.
+#
+# ! POOL-AWARE, WHICH stampCrests IS NOT. crestState takes the pool, and the
+#   reason is the same one _fieldLevels exists for: Amherst (MA) is a NESCAC
+#   college and a regional middle school, and they do not share a crest.
+# ! NO QUERY. Everything here is the start-up dict, which is why this can run
+#   once per row of a 400-runner championship.
+def _stampCrests(rows, school_key, state_key, pool_key="pool", px=64):
+    try:
+        from school_logo import crestUrl
+    except Exception:                                   # noqa: BLE001
+        return rows                                     # no cache: no crests
+    for r in rows or []:
+        school = r.get(school_key)
+        if not school:
+            continue
+        try:
+            url = crestUrl(school, r.get(state_key), px, r.get(pool_key))
+        except Exception:                               # noqa: BLE001
+            url = None
+        if url:
+            r["crest"] = url
+    return rows
 
 
 # Purpose:   put on each predicted row what a results-page row shows.
@@ -1010,6 +1056,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
             t["runners"].sort(key=lambda x: x["name"])
             # "As it ran" IS the entry list, so what is shown is what entered.
             t["entered"] = len(t["runners"])
+        _stampCrests(teams, "school", "state")
         return {"season_year": season_year, "when": when, "teams": teams}
 
     originals = _exactField(cur, meet_id, div_id, sport)
@@ -1086,6 +1133,15 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     flat = [e for t in teams for e in t["dropped"]]
     if flat:
         stampBoardRows(flat, rating_keys=("rating",), sport=sport)
+
+    # ! AND THE CRESTS, because the browser draws these cards and cannot
+    #   find out whether a school has one without fetching it. The team's
+    #   pool comes off its own runners: Amherst the college and Amherst the
+    #   middle school do not share a crest.
+    for t in teams:
+        pools = {r.get("pool") for r in t.get("runners") or []}
+        t["pool"] = next((p for p in pools if p), None)
+    _stampCrests(teams, "school", "state")
 
     # ! THE PAGE NEEDS IT TOO, so "add from squad" and "add anyone" can offer
     #   the same side of the school this field is made of.
@@ -1272,8 +1328,16 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
         other = len(_currentSquads(cur, [school], sport, season_year,
                                    levels=levels).get(school, []))
 
+    # ! THE ADDED TEAM'S CARD GETS A CREST TOO, or a school added by hand is
+    #   the one card on the page without one. The squad's own pool picks
+    #   which school of the name it is.
+    crest = _stampCrests([{"school": school, "state": _stateOf(school),
+                           "pool": next((r.get("pool") for r in runners
+                                         if r.get("pool")), None)}],
+                         "school", "state")[0].get("crest")
+
     return {"school": school, "season_year": season_year,
-            "gender": gender,
+            "gender": gender, "crest": crest,
             # How many the school HAS, on the side this race is not. 0 means
             # the school really has nobody racing, either side.
             "other_gender": other,

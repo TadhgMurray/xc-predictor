@@ -563,6 +563,27 @@ function esc(v) {
 }
 
 /*
+ * The little crest that goes before a school's name -- the JS twin of
+ * _scale.html's neighbours, `crest()` in Jinja.
+ *
+ * ★ THE URL IS STAMPED BY THE SERVER AND NEVER GUESSED (owner, 2026-09-16:
+ *   "can we get the team logos to render?"). school_logo's cache lives in
+ *   the Flask process; the browser can only find out whether a school has a
+ *   crest by fetching it, and a broken <img> per school is worse than no
+ *   crests at all. A school without one arrives with no `crest` key and
+ *   renders as nothing, which is why this can be dropped wherever a school
+ *   is named.
+ *
+ * ! SAME CLASS AS EVERY OTHER CREST ON THE SITE, so style.css's one rule
+ *   sizes it and the predictions page cannot drift from the race page.
+ */
+function crest(url) {
+  if (!url) return "";
+  return `<img class="school-mark" src="${esc(url)}" alt="" width="18"`
+       + ` height="18" loading="lazy" decoding="async">`;
+}
+
+/*
  * ★ ONE RATING, BOTH SCALES -- the JS twin of _scale.html's rv() macro
  *   (owner, 2026-09-15: "the speed ratings for the ppl on the teams is not
  *   hs-equivalent when it should be if the scale is hs-equivalent").
@@ -1681,7 +1702,7 @@ function renderFieldBlock(sumEl, gridEl) {
                 2026-09-01: "the name on its top line, with ellipses if it
                 is done as so"). Letting it wrap pushed the note down and
                 made the card taller than its neighbours. */""}
-          <span class="t-name"><a class="lnk"
+          <span class="t-name">${crest(t.crest)}<a class="lnk"
              href="/school/${encodeURIComponent(t.school)}"
              >${esc(schoolWithState(t.school, t.state))}</a></span>
           ${/* ★ AND THE SECOND LINE IS ALWAYS THERE IN A GROUPED RACE, even
@@ -2052,14 +2073,14 @@ function renderIndividual(d) {
  *   athlete cell links to the profile.
  */
 
-/* One school cell: crest-less, but the same resolved link and label the
-   race page draws. `href` null means labels were not loaded server-side --
-   then it renders as a bare name, exactly as race.html does for a
-   non-team. */
-function schoolCell(school, state, href, label) {
+/* One school cell: the crest, then the same resolved link and label the race
+   page draws. `href` null means labels were not loaded server-side -- then
+   it renders as a bare name, exactly as race.html does for a non-team. */
+function schoolCell(school, state, href, label, crestUrl) {
   if (!school) return " - ";
   const text = esc(label || schoolWithState(school, state));
-  return href ? `<a href="${esc(href)}">${text}</a>` : text;
+  return crest(crestUrl)
+       + (href ? `<a href="${esc(href)}">${text}</a>` : text);
 }
 
 function teamScoreTable(d) {
@@ -2104,7 +2125,8 @@ function teamScoreTable(d) {
     }
     return `<tr>
       <td>${i + 1}</td>
-      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label)}${
+      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
+                       t.crest)}${
         t.divs
           ? ` <span class="t-divs" title="Coalesced: one squad, drawn from `
             + `these divisions and capped at seven.">${
@@ -2150,7 +2172,7 @@ function finishTable(d) {
             : esc(r.name || "Unknown")}</td>
       <td>${esc(r.grade_label || " - ")}</td>
       <td>${schoolCell(r.school, r.school_state, r.school_href,
-                       r.school_label)}</td>
+                       r.school_label, r.crest)}</td>
       <td class="no-break">${fmtTime(r.seconds)}${
         r.lo !== undefined && r.lo !== null
           ? `<span class="pred-band">${fmtTime(r.lo)}–${
@@ -2568,6 +2590,10 @@ async function addTeam(school, div) {
     }
     e.field.teams.push({
       school: school,
+      // ! AND ITS CREST, or a team added by hand is the one card on the page
+      //   without one. schoolSquad stamps it from the same cache meetField
+      //   uses.
+      crest: squad.crest,
       runners: squad.runners.slice(0, 7),
       // The rest of the squad, offered under the card rather than discarded --
       // "add anyone from their squad" is the point of having fetched it.

@@ -7001,6 +7001,29 @@ def api_predict_athletes():
     return jsonify({"athletes": out})
 
 
+# ⚠ EVERY NOTE ABOUT THIS QUERY LIVES OUT HERE, IN PYTHON, and that is not
+#   tidiness -- it is the bug the owner hit ("Athlete search failed: argument
+#   formats can't be mixed"). psycopg2 parses % in the WHOLE query string,
+#   SQL comments included, and a `--` comment inside this one said
+#   `ILIKE '%tok%'`. It read %t as a positional placeholder, saw %(prefix)s
+#   beside it, and refused the statement outright. A comment saying "+18%"
+#   took every athlete page down the same way on 2026-09-03. A Python comment
+#   never reaches the driver, so it cannot do this.
+#
+# ! THE LIMIT STAYS INSIDE THE SUBQUERY, AND MOVING IT OUT WAS A BAD TRADE.
+#   Outside, the DISTINCT ON had to materialise EVERY athlete-season matching
+#   the name before anything could be cut -- and the name match is a
+#   leading-wildcard ILIKE, so a common name scanned the join twice over.
+#   Inside, the scan stops. Ranking a bounded set is worth having; paying an
+#   unbounded scan for it is not.
+#
+# ! DISTINCT ON MUST ORDER BY ITS KEY FIRST, so the inner ORDER BY only picks
+#   the athlete's most recent season; the outer one does the ranking.
+#
+# ! RANKED WITHIN WHAT CAME BACK. A name that STARTS with what was typed wins
+#   outright; ties go to the better athlete, who is who a bare name most
+#   often means. 200 to rank rather than 40, so a common surname has room for
+#   the right person to be in the set at all.
 def _athleteSearchRows(where, params):
     """/api/predict/athletes' one query. Split out so the route can report a
     failure as JSON rather than letting it become an HTML error page."""
@@ -7016,25 +7039,9 @@ def _athleteSearchRows(where, params):
                     FROM   athlete_season s
                     JOIN   athletes a ON a.athlete_id = s.person_id
                     WHERE  {' AND '.join(where)}
-                    -- DISTINCT ON must order by its key first; this only
-                    -- picks the athlete's most recent season.
                     ORDER  BY s.person_id, s.year DESC
-                    -- ⚠ THE LIMIT STAYS INSIDE, AND MOVING IT OUT WAS A BAD
-                    --   TRADE. Outside, the DISTINCT ON had to materialise
-                    --   EVERY athlete-season matching the name before
-                    --   anything could be cut -- and the name match is an
-                    --   unindexed ILIKE '%tok%' until idx_athletes_name_trgm
-                    --   exists, so a common name scanned the join twice
-                    --   over. Inside, the scan stops. Ranking a bounded set
-                    --   is worth having; paying an unbounded scan for it is
-                    --   not.
                     LIMIT  200
                 ) x
-                -- ! RANKED WITHIN WHAT CAME BACK. A name that STARTS with
-                --   what was typed wins outright; ties go to the better
-                --   athlete, who is who a bare name most often means. 200 to
-                --   rank rather than 40, so a common surname has room for
-                --   the right person to be in the set at all.
                 ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s
                                 THEN 0 ELSE 1 END),
                           mean_rating DESC NULLS LAST,
