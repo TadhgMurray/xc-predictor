@@ -97,27 +97,54 @@ def normalAt(cur, lat, lon, day, hour, window_days=14):
     signed = "(CASE WHEN cell_lon > 180 THEN cell_lon - 360 ELSE cell_lon END)"
     local = f"mod(mod(hour + round({signed} / 15.0)::int, 24) + 24, 24)"
     doy = d.timetuple().tm_yday
+    # ⚠ EVERY COLUMN IS ALIASED, AND THAT IS NOT STYLE (owner, 2026-09-16:
+    #   every prediction died on "IndexError: list index out of range").
+    #
+    #   Postgres labels an unaliased avg() as just "avg" -- so eight of these
+    #   nine columns came back with the SAME NAME. Under RealDictCursor,
+    #   which every web route uses, the row is a DICT: the eight collapse
+    #   into one key, list(r.values()) yields two values rather than nine,
+    #   and r[8] is off the end.
+    #
+    # ! IT WORKS PERFECTLY UNDER A TUPLE CURSOR, which is how a script would
+    #   reach it, so the fault only ever appeared through the website. That
+    #   is also why it hid: /api/predict/weather catches everything and
+    #   reports "no weather", so this read as a missing forecast for weeks
+    #   rather than as a crash, until the prediction path hit it without a
+    #   catch.
+    #
+    # ! AND THE ROW IS READ BY NAME NOW, not by position. Aliasing alone
+    #   would fix today's bug and leave the next column added in the middle
+    #   to silently shift every field after it.
+    cols = ("temp_c", "dew_point_c", "humidity", "apparent_temp_c",
+            "precipitation_mm", "pressure_hpa", "cloud_cover",
+            "wind_speed_kmh", "n_hours")
     try:
         cur.execute(f"""
-            SELECT avg(temperature_2m), avg(dew_point_2m), avg(relative_humidity_2m),
-                   avg(apparent_temperature), avg(precipitation), avg(surface_pressure),
-                   avg(cloud_cover), avg(wind_speed_10m), count(*)
+            SELECT avg(temperature_2m)        AS temp_c,
+                   avg(dew_point_2m)          AS dew_point_c,
+                   avg(relative_humidity_2m)  AS humidity,
+                   avg(apparent_temperature)  AS apparent_temp_c,
+                   avg(precipitation)         AS precipitation_mm,
+                   avg(surface_pressure)      AS pressure_hpa,
+                   avg(cloud_cover)           AS cloud_cover,
+                   avg(wind_speed_10m)        AS wind_speed_kmh,
+                   count(*)                   AS n_hours
             FROM   weather_grid
             WHERE  cell_lat = %s AND cell_lon = %s AND {local} = %s
               AND  abs(extract(doy FROM date) - %s) <= %s
         """, (clat, clon, int(hour), doy, window_days))
         r = cur.fetchone()
-        if isinstance(r, dict):
-            r = list(r.values())
+        if r is not None and not isinstance(r, dict):
+            r = dict(zip(cols, r))            # a plain tuple cursor
     except Exception:                                    # noqa: BLE001
         cur.connection.rollback()
         return None
-    if not r or not r[8]:
+    if not r or not r.get("n_hours"):
         return None
-    row = {"temp_c": r[0], "dew_point_c": r[1], "humidity": r[2],
-           "apparent_temp_c": r[3], "precipitation_mm": r[4], "pressure_hpa": r[5],
-           "cloud_cover": r[6], "wind_speed_kmh": r[7], "wind_dir": None,
-           "n_hours": int(r[8]), "kind": "normal", "hour_local": int(hour)}
+    row = {k: r.get(k) for k in cols[:-1]}
+    row.update({"wind_dir": None, "n_hours": int(r["n_hours"]),
+                "kind": "normal", "hour_local": int(hour)})
     _memPut(key, row, 24 * 3600)
     return row
 
