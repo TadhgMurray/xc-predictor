@@ -191,3 +191,83 @@ class TheSplitIsAthleteDisjoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------------------------------ #
+# --chunk-range: training a corpus too big for the disk, in shifts
+# ------------------------------------------------------------------ #
+
+def test_a_window_is_the_same_examples_as_the_matching_slice():
+    """★ 125 GB OF CHUNKS, 100 GB OF POD (owner, 2026-09-16: "can we train
+    on the other chunks too separately?"). The corpus only reaches the GPU
+    in shifts -- train 0:3000, swap the files, resume on 3000:6000 -- so a
+    window must be exactly the examples that window names, and the val mask
+    must be read at their TRUE global indices.
+
+    ⚠ THE FAILURE IF IT IS NOT is silent and total: a window starting at
+      chunk 3000 that read val_mask.pt from index 0 gives every example
+      somebody else's verdict, trains on held-out athletes, and reports the
+      result as a validation score."""
+    import tempfile
+    import torch
+    import fake_chunks
+    import train
+
+    with tempfile.TemporaryDirectory() as d:
+        fake_chunks.write(d, n_chunks=6, chunk_size=200)
+
+        train.CHUNK_RANGE, train.MAX_CHUNKS = None, None
+        full = train.ChunkedRaceDataset(d)
+        train.CHUNK_RANGE = (3, 6)
+        win = train.ChunkedRaceDataset(d)
+
+        assert win.base_index == 600
+        assert len(win) == 600
+        for i in (0, 1, 199, 200, 599):
+            for a, b in zip(full[600 + i], win[i]):
+                assert torch.equal(torch.as_tensor(a), torch.as_tensor(b)), i
+        assert torch.equal(win.lengths, full.lengths[600:1200])
+
+        # the val split, at the window's global indices
+        train.DATA_DIR = d
+        train.CHUNK_RANGE = None
+        _, va_full = train.splitTrainVal(full)
+        train.CHUNK_RANGE = (3, 6)
+        tr_win, va_win = train.splitTrainVal(win)
+        va_all = set(va_full.indices)
+        assert {600 + i for i in va_win.indices} <= va_all
+        assert not ({600 + i for i in tr_win.indices} & va_all), \
+            "a held-out athlete leaked into training"
+        train.CHUNK_RANGE = None
+
+
+def test_the_file_of_stats_follows_the_model_across_a_shift():
+    """⚠ TWO SOURCES OF TRUTH FOR ONE NUMBER. _loadCheckpoint restores the
+    calibration buffers -- right, a resumed run must keep scoring the same
+    target -- but main() had already written THIS window's stats to
+    target_stats.pkl. Nothing errors: inference reads the file, inverts with
+    a std that is close but not equal, and every prediction is quietly
+    wrong. The model's buffers are the truth, so the file is what moves."""
+    import train
+
+    class FakeModel:
+        target_mean, target_std, fallback_seconds = 0.5, 0.25, 900.0
+        seq_mean = seq_std = ctx_mean = ctx_std = None
+
+        def __getattribute__(self, k):
+            import torch
+            v = object.__getattribute__(self, k)
+            if k in ("seq_mean", "seq_std", "ctx_mean", "ctx_std"):
+                return torch.ones(3)
+            if k in ("target_mean", "target_std", "fallback_seconds"):
+                return torch.tensor(v)
+            return v
+
+    window = {"mean": -0.9, "std": 0.11, "fallback_seconds": 1.0,
+              "seq_mean": None, "seq_std": None, "ctx_mean": None,
+              "ctx_std": None, "n_examples": 7, "n_chunks": 1}
+    out = train._statsFromModel(FakeModel(), window)
+    assert out["mean"] == 0.5 and out["std"] == 0.25, out
+    assert out["fallback_seconds"] == 900.0
+    # the fields the buffers do not carry still come from the run
+    assert out["n_examples"] == 7 and out["n_chunks"] == 1

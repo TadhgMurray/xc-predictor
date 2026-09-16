@@ -140,6 +140,29 @@ VAL_FRACTION = 0.1
 #   Chunks are corpus-wide shuffles, so a chunk prefix is a fair sample.
 MAX_CHUNKS = None
 
+# ★ A WINDOW OF CHUNKS, NOT ONLY A PREFIX (owner, 2026-09-16: "can we train
+#   on the other chunks too separately?"). The corpus is 125 GB and the pod
+#   holds 100 GB, so the whole of it can only reach the GPU in shifts: train
+#   on 0:3000, swap those files for 3000:6000 on disk, resume from the
+#   checkpoint and keep going. The model sees all the data; the disk never
+#   holds more than a third of it.
+#
+# ! WHICH IS MORE TRAINING, NOT A SECOND MODEL. Chunks are corpus-wide
+#   shuffles, so every window is an i.i.d. sample of the same corpus -- a
+#   shift boundary is not a distribution change and the loss curve runs
+#   straight through it. Two models trained on halves and averaged would be
+#   strictly worse than one model that saw both.
+#
+# ⚠ AND THE VALIDATION SET STAYS HONEST ACROSS A SHIFT, which is the part
+#   that could have quietly broken. val_mask.pt is keyed by ATHLETE, so a
+#   val athlete is a val athlete in every window -- the held-out people
+#   never leak into training when the files change. That only holds because
+#   the mask is read at the example's TRUE global index, which is what
+#   base_index below exists for.
+#
+# (lo, hi) half-open, in chunk numbers. None means everything.
+CHUNK_RANGE = None
+
 # Fixed seed so the random train/val split is identical every run —
 # makes results reproducible and comparable.
 SEED = 42
@@ -239,15 +262,36 @@ class ChunkedRaceDataset(Dataset):
         self.chunk_size     = meta.get("chunk_size", 10_000)
         self.num_chunks = meta["num_chunks"]
 
-        # The smoke-run cap: read only the first MAX_CHUNKS files. Valid
-        # because extraction shuffles corpus-wide before chunking, so a
-        # prefix of chunks is a fair sample rather than a run of athletes.
-        if MAX_CHUNKS is not None and MAX_CHUNKS < self.num_chunks:
-            self.num_chunks     = MAX_CHUNKS
-            self.total_examples = min(self.total_examples,
-                                      MAX_CHUNKS * self.chunk_size)
-            print(f"  MAX_CHUNKS={MAX_CHUNKS}: training on "
-                  f"{self.total_examples:,} examples")
+        # ★ WHICH CHUNKS THIS RUN SEES. --max-chunks N is the prefix 0:N,
+        #   which is what a smoke run wants; --chunk-range LO:HI is the
+        #   general case, and the two are the same mechanism.
+        lo, hi = 0, self.num_chunks
+        if CHUNK_RANGE is not None:
+            lo, hi = CHUNK_RANGE
+        elif MAX_CHUNKS is not None:
+            hi = MAX_CHUNKS
+        lo = max(0, lo)
+        hi = min(hi, meta["num_chunks"])
+        if lo >= hi:
+            raise SystemExit(f"chunk range {lo}:{hi} is empty "
+                             f"({meta['num_chunks']} chunks exist)")
+
+        # ⚠ base_index IS THE ONE THING A WINDOW ADDS, AND EVERYTHING ELSE
+        #   FOLLOWS FROM IT. Dataset index i is global example
+        #   base_index + i; lengths.pt and val_mask.pt are written in GLOBAL
+        #   order, so both are sliced to the window here rather than offset
+        #   at every lookup -- an offset applied in three places is an
+        #   offset forgotten in one of them.
+        self.base_index = lo * self.chunk_size
+        self.num_chunks = hi - lo
+        self.total_examples = (min(hi * self.chunk_size,
+                                   meta["total_examples"])
+                               - self.base_index)
+        if (lo, hi) != (0, meta["num_chunks"]):
+            print(f"  chunks {lo}:{hi} of {meta['num_chunks']}: training on "
+                  f"{self.total_examples:,} examples "
+                  f"(global {self.base_index:,}"
+                  f"..{self.base_index + self.total_examples:,})")
 
         # One-chunk cache: remember the last chunk we loaded so repeated
         # nearby lookups reuse it instead of re-reading the file.
@@ -261,6 +305,11 @@ class ChunkedRaceDataset(Dataset):
         #   plain shuffling and simply runs slower.
         lp = os.path.join(data_dir, "lengths.pt")
         self.lengths = (torch.load(lp) if os.path.exists(lp) else None)
+        if self.lengths is not None:
+            # sliced to the window, so the sampler indexes it with a plain
+            # dataset index like everything else
+            self.lengths = self.lengths[
+                self.base_index:self.base_index + self.total_examples]
 
      # __len__
     # Purpose: Tell the DataLoader the total number of examples. It uses
@@ -297,8 +346,12 @@ class ChunkedRaceDataset(Dataset):
     def __getitem__(self, i: int):
         # Which chunk file holds example i, and which row within it.
         # e.g. i=25_000 with chunk_size 10_000 -> chunk 2, row 5_000.
-        chunk_idx = i // self.chunk_size   # // = integer division
-        row       = i %  self.chunk_size   # %  = remainder
+        # ! THROUGH base_index, so a window names the file it really is.
+        #   Dataset index 0 of --chunk-range 3000:6000 is chunk_3000 row 0,
+        #   not chunk_0000 -- which is not on disk during that shift.
+        g = self.base_index + i
+        chunk_idx = g // self.chunk_size   # // = integer division
+        row       = g %  self.chunk_size   # %  = remainder
 
         chunk = self._loadChunk(chunk_idx)
 
@@ -708,6 +761,29 @@ def zScore(values: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     return (values - mean) / std
 
 
+# _statsFromModel
+# Purpose: the stats a trained model is ACTUALLY using, read back off its
+#          buffers, in the shape saveTargetStats writes.
+# Detail:
+#   ! THE BUFFERS ARE THE TRUTH. They are what normalises an input and
+#     inverts an output inside the network; target_stats.pkl only exists so
+#     inference can do the same arithmetic without loading the model. When
+#     the two can disagree -- a resume onto different chunks -- the file is
+#     what gets corrected, never the model.
+#   `fallback` supplies the fields the buffers do not carry (counts, and
+#   max_year when an older checkpoint has none).
+def _statsFromModel(model, fallback: dict) -> dict:
+    out = dict(fallback)
+    out["mean"] = float(model.target_mean)
+    out["std"] = float(model.target_std)
+    out["fallback_seconds"] = float(model.fallback_seconds)
+    out["seq_mean"] = model.seq_mean.detach().cpu()
+    out["seq_std"] = model.seq_std.detach().cpu()
+    out["ctx_mean"] = model.ctx_mean.detach().cpu()
+    out["ctx_std"] = model.ctx_std.detach().cpu()
+    return out
+
+
 def saveTargetStats(stats: dict, path: str) -> None:
     """Persist the target stats beside model.pt.
 
@@ -764,7 +840,14 @@ def splitTrainVal(dataset):
     #   example order; splitting on it makes validation actual unseen people.
     vm_path = os.path.join(DATA_DIR, "val_mask.pt")
     if os.path.exists(vm_path):
-        mask = torch.load(vm_path)[:len(dataset)]   # MAX_CHUNKS may cap us
+        # ⚠ SLICED AT THE WINDOW, NOT FROM ZERO. val_mask.pt is written in
+        #   GLOBAL example order; a window starting at chunk 3000 that read
+        #   from index 0 would hand every example somebody else's verdict,
+        #   putting held-out athletes into training and calling the result a
+        #   validation score. base is 0 for a prefix, so this is the old
+        #   behaviour exactly whenever there is no window.
+        base = getattr(dataset, "base_index", 0)
+        mask = torch.load(vm_path)[base:base + len(dataset)]
         val_idx   = mask.nonzero(as_tuple=True)[0].tolist()
         train_idx = (~mask).nonzero(as_tuple=True)[0].tolist()
         print(f"  athlete-disjoint split: {len(train_idx):,} train / "
@@ -1152,6 +1235,23 @@ def main():
     # 2. Split FIRST, so the stats can use train indices only.
     train_subset, val_subset = splitTrainVal(dataset)
 
+    # ⚠ AN EMPTY VAL SPLIT REPORTS PERFECTION, AND SAVES ON IT. With no val
+    #   examples the epoch line reads `val 0.0000`, every epoch is a "new
+    #   best", and a later run measuring real val loss can never beat the
+    #   zero -- so patience burns out immediately and the best model on disk
+    #   is whichever one happened to be saved against nothing.
+    #
+    # ! ONLY REACHABLE WITH A WINDOW, which is why it appears with one. A
+    #   full corpus splits ~10% val by athlete; a window narrow enough to
+    #   contain none of them is a mistake, and the run should say so rather
+    #   than produce numbers.
+    if len(val_subset) == 0:
+        raise SystemExit(
+            "  no validation examples in this window -- val_mask.pt holds "
+            "none of these\n  athletes, so val loss would be meaningless "
+            "and early stopping would not work.\n  Widen --chunk-range, or "
+            "drop it to train on the whole corpus.")
+
     # 3. Input and target stats from the TRAIN side of a chunk prefix, saved
     #    beside the model and stamped into the model's buffers.
     is_train = _trainSideMask(dataset, train_subset)
@@ -1195,6 +1295,23 @@ def main():
 
     start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
         CHECKPOINT, model, optimizer, scheduler)
+
+    # ★ AND target_stats.pkl IS REWRITTEN FROM THE RESUMED MODEL, not left
+    #   as the numbers computed above (owner, 2026-09-16, training the
+    #   corpus in shifts). _loadCheckpoint restores the calibration buffers
+    #   -- correctly, a resumed run must keep scoring the same target -- but
+    #   saveTargetStats had already written THIS window's numbers to disk.
+    #
+    # ⚠ THE MODEL WOULD THEN PREDICT IN ONE z-SPACE AND INFERENCE WOULD
+    #   INVERT IN ANOTHER. Nothing would error: racecast/predict.py reads the
+    #   file, multiplies by a std that is close but not equal, and every
+    #   prediction comes back slightly wrong forever. Two sources of truth
+    #   for one number, so the model's own buffers are made the only one.
+    if start_epoch > 0:
+        saveTargetStats(_statsFromModel(model, stats), STATS_OUT)
+        print(f"  target_stats.pkl rewritten from the checkpoint: "
+              f"mean {float(model.target_mean):+.4f} "
+              f"std {float(model.target_std):.4f}")
 
     for epoch in range(start_epoch, EPOCHS):
         train_loss, st = _trainOneEpoch(model, train_loader, optimizer,
@@ -1263,6 +1380,11 @@ if __name__ == "__main__":
                           "each). Chunks are corpus-wide shuffles, so a "
                           "prefix is a fair sample -- this is the smoke run "
                           "and the cheap-subset run both.")
+    _ap.add_argument("--chunk-range", default=None, metavar="LO:HI",
+                     help="train on chunks LO..HI-1 instead of a prefix, "
+                          "e.g. 3000:6000. For a corpus too big to keep on "
+                          "disk: train a window, swap the files, resume "
+                          "from --checkpoint with the next window.")
     _ap.add_argument("--batch", type=int, default=None,
                      help=f"batch size (default {BATCH_SIZE}). 512-1024 "
                           f"suits a 24GB GPU; scale --lr with it.")
@@ -1294,6 +1416,12 @@ if __name__ == "__main__":
         STATS_OUT = os.path.join(DATA_DIR, "target_stats.pkl")
     if _args.max_chunks:
         MAX_CHUNKS = _args.max_chunks
+    if _args.chunk_range:
+        try:
+            _lo, _hi = (int(x) for x in _args.chunk_range.split(":"))
+        except ValueError:
+            raise SystemExit("--chunk-range wants LO:HI, e.g. 3000:6000")
+        CHUNK_RANGE = (_lo, _hi)
     if _args.batch:
         BATCH_SIZE = _args.batch
     if _args.lr:
@@ -1307,6 +1435,8 @@ if __name__ == "__main__":
     USE_AMP = _args.amp
     CHECKPOINT = _args.checkpoint
 
+    # ⚠ NAMED IN THE HEADER, because a shift boundary is otherwise
+    #   invisible in the log and two windows' epochs read as one run.
     print(f"device {DEVICE}  batch {BATCH_SIZE}  lr {LEARNING_RATE}  "
           f"workers {NUM_WORKERS}  amp {USE_AMP}  "
           f"epochs<={EPOCHS} patience {PATIENCE}"
