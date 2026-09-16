@@ -162,13 +162,24 @@ def sectionA(rows, preds, seasonRating):
         inv, _n = inversions(series, actual)
         print(f"   {label:<28}{rho:>10.3f}{inv * 100:>11.1f}%")
 
-    inv, n = inversions(model, actual, groups=teams)
-    if n:
-        print(f"\n   WITHIN A TEAM: {inv * 100:.1f}% of {n:,} teammate pairs "
-              f"come out backwards.")
-        print("   ★ This is the owner's complaint, counted. A teammate pair "
-              "is the\n     cleanest test there is -- same coach, same "
-              "schedule, same races.")
+    # ⚠ A WITHIN-TEAM RATE MEANS NOTHING ON ITS OWN, and reading it that way
+    #   was a hole in the first version of this script. Teammates are CLOSER
+    #   IN ABILITY than two random runners, so a higher inversion rate among
+    #   them is expected of any predictor -- the pairs are simply harder. The
+    #   question is whether the model is worse on them THAN THE BASELINES
+    #   ARE, which is the only comparison that isolates the model.
+    print(f"\n   {'WITHIN A TEAM':<28}{'inversions':>12}   "
+          f"(teammates are closer, so every row here is higher)")
+    for label, series in (("the model", model),
+                          ("their last race alone", last),
+                          ("season mean rating", rating)):
+        if not any(series):
+            continue
+        inv, n = inversions(series, actual, groups=teams)
+        if inv is not None:
+            print(f"   {label:<28}{inv * 100:>11.1f}%   ({n:,} pairs)")
+    print("   ★ This is the owner's complaint, counted -- same coach, same"
+          "\n     schedule, same races. Compare the ROWS, not the number.")
 
 
 # ------------------------------------------------------------------ #
@@ -236,6 +247,20 @@ def sectionC(cur, target, ids, preds, predictTimes):
     finally:
         predict._historyRows = real
 
+    # ! HOW MUCH TRACK WAS THERE TO REMOVE. "Removing it changed nothing" and
+    #   "there was nothing to remove" print the same number, and they are
+    #   different findings. This was missing from the first version.
+    n_tf = [p.get("n_tf") or 0 for p in preds if p.get("n_tf") is not None]
+    if n_tf:
+        n_tf.sort()
+        with_any = sum(1 for x in n_tf if x)
+        print(f"   track rows in history: median {n_tf[len(n_tf) // 2]}, "
+              f"max {n_tf[-1]}, {with_any}/{len(n_tf)} athletes have any")
+        if not with_any:
+            print("   ⚠ NOBODY HAD A TRACK RACE. This race cannot test the")
+            print("     question; try a field with a track season behind it.")
+            return
+
     moved = [abs(float(b["seconds"]) - float(a["seconds"]))
              / float(a["seconds"])
              for a, b in zip(preds, ablated)
@@ -291,6 +316,18 @@ def sectionD(rows, preds, cur, sport):
         print(f"   {label:<16}{len(errs):>6}"
               f"{statistics.median(abs(e) for e in errs) * 100:>13.1f}%"
               f"{med * 100:>9.1f}%")
+    allerr = [(float(p["seconds"]) - float(r["time_seconds"]))
+              / float(r["time_seconds"]) for r, p in got]
+    allerr.sort()
+    overall = allerr[len(allerr) // 2]
+    print(f"\n   OVERALL BIAS {overall * 100:+.1f}% over {len(allerr)} "
+          f"athletes")
+    if abs(overall) > 0.02:
+        print("   ⚠ THAT IS NOT A BREAKS PROBLEM, IT IS A CALIBRATION ONE.")
+        print("     A bias this size applies to everybody and has nothing to")
+        print("     do with gaps. Re-run with --weather none: if it vanishes,")
+        print("     the weather features are the cause, not the model.")
+
     print("\n   ★ READ THE BIAS COLUMN, NOT THE ERROR. A model that handles")
     print("     breaks correctly has no TREND down that column: a five-month")
     print("     gap in October is the normal off-season and should cost")
@@ -331,9 +368,24 @@ def sectionE(cur, target, ids, predictTimes):
         if not d:
             continue
         d.sort()
+        med = d[len(d) // 2]
         print(f"   {want:<10} vs no-weather: median "
-              f"{d[len(d) // 2] * 100:+.2f}%   p05 {d[int(0.05 * len(d))] * 100:+.2f}%"
+              f"{med * 100:+.2f}%   p05 {d[int(0.05 * len(d))] * 100:+.2f}%"
               f"   p95 {d[int(0.95 * len(d))] * 100:+.2f}%")
+        if all(abs(x) < 1e-9 for x in d):
+            print(f"      ! IDENTICAL TO NO-WEATHER. _weatherVariants could "
+                  f"not build a\n        {want} row -- a forecast reaches 16 "
+                  f"days out, so a past date\n        always lands here -- "
+                  f"and fell back to the no-weather shape.")
+        elif abs(med) > 0.02 and (d[-1] - d[0]) < abs(med):
+            print("      ⚠ A NEAR-UNIFORM SHIFT, WHICH IS NOT WEATHER "
+                  "MODELLING.")
+            print("        Real conditions help some athletes more than "
+                  "others; a constant")
+            print("        offset for everybody is the signature of a FEATURE "
+                  "DISTRIBUTION")
+            print("        the model never saw in training, not of a race "
+                  "being harder.")
     print("\n   ⚠ THE TRAIN/SERVE SKEW TO LOOK FOR. In TRAINING the target's")
     print("     weather is what was actually MEASURED that day. At inference")
     print("     the headline is the venue's CLIMATOLOGICAL NORMAL -- an")
@@ -345,6 +397,62 @@ def sectionE(cur, target, ids, predictTimes):
 
 
 # ------------------------------------------------------------------ #
+#  F. THE NORMAL AGAINST THE DAY
+# ------------------------------------------------------------------ #
+
+def sectionF(cur, spec, sport):
+    """What the venue's climatological normal says, beside what that day
+    actually was.
+
+    ⚠ THIS IS THE TRAIN/SERVE SKEW, MADE CONCRETE. In training the target's
+      weather is the row the backfill MEASURED for that meet. At inference
+      the headline is normalAt: an average over years at that hour. If the
+      two differ much, the model is being asked about a day that never
+      happens.
+    """
+    print("\n" + "=" * 70)
+    print("F. THE NORMAL vs THE DAY -- is inference asked about a real day?")
+    print("=" * 70)
+    import forecast as fc
+    hour = fc.raceHour(sport)
+    normal = fc.normalAt(cur, spec.get("gps_lat"), spec.get("gps_long"),
+                         spec.get("date"), hour)
+    if not normal:
+        print("   the grid has no normal for this venue/date")
+        return
+    cur.execute("""
+        SELECT temp_c, dew_point_c, humidity, apparent_temp_c,
+               precipitation_mm, pressure_hpa, cloud_cover,
+               wind_speed_km, wind_dir
+        FROM   weather
+        WHERE  meet_id = %(m)s
+        LIMIT  1
+    """, {"m": spec.get("meet_id")})
+    row = cur.fetchone()
+    print(f"   {'feature':<20}{'normal':>12}{'that day':>12}")
+    keys = (("temp_c", "temp_c"), ("dew_point_c", "dew_point_c"),
+            ("humidity", "humidity"), ("apparent_temp_c", "apparent_temp_c"),
+            ("precipitation_mm", "precipitation_mm"),
+            ("pressure_hpa", "pressure_hpa"), ("cloud_cover", "cloud_cover"),
+            ("wind_speed_kmh", "wind_speed_km"), ("wind_dir", "wind_dir"))
+    for nk, dk in keys:
+        nv = normal.get(nk)
+        dv = (row or {}).get(dk)
+        print(f"   {nk:<20}{('--' if nv is None else f'{float(nv):.1f}'):>12}"
+              f"{('--' if dv is None else f'{float(dv):.1f}'):>12}")
+    if not row:
+        print("\n   ! THIS MEET HAS NO MEASURED WEATHER AT ALL, so in "
+              "training every\n     example targeting it carried the "
+              "all-zero weather shape. Feeding\n     a real normal at "
+              "inference asks the model a question it was never\n     asked "
+              "about this race.")
+    print("\n   ⚠ AND 0.0 MEANS TWO THINGS IN THIS CORPUS. _orZero turns a "
+          "NULL into\n     0.0, so pressure 0 hPa -- physically impossible "
+          "-- is how 'we do not\n     know' is spelled, in the same slot "
+          "where 1013 is a real reading. Any\n     systematic gap between "
+          "the weather-on and weather-off predictions\n     is that "
+          "ambiguity, not meteorology.")
+
 
 def seasonRatings(cur, ids, sport, year):
     cur.execute("""
@@ -362,6 +470,12 @@ def main():
     ap.add_argument("--sport", default="XC")
     ap.add_argument("--skip", default="",
                     help="comma-separated section letters to skip, e.g. C,E")
+    ap.add_argument("--weather", default="all",
+                    choices=("none", "normal", "forecast", "both", "all"),
+                    help="which weather A-D are measured under. 'all' takes "
+                         "the NORMAL variant as the headline, which is what "
+                         "the page shows; pass none to measure the model "
+                         "with the weather features zeroed.")
     a = ap.parse_args()
     skip = {s.strip().upper() for s in a.skip.split(",") if s.strip()}
 
@@ -385,8 +499,9 @@ def main():
                   "that date")
 
             target = {"meet_id": a.meet, "div_id": a.div, "sport": a.sport,
-                      "date": date, "mode": "rerun_exact", "weather": "all",
-                      "field": None}
+                      "date": date, "mode": "rerun_exact",
+                      "weather": a.weather, "field": None}
+            print(f"weather basis for sections A-D: {a.weather}")
             ids = [r["person_id"] for r in rows]
             preds = predict._predictTimes(cur, ids, target)
 
@@ -413,6 +528,11 @@ def main():
                 sectionD(rows, preds, cur, a.sport)
             if "E" not in skip:
                 sectionE(cur, target, ids, predict._predictTimes)
+            if "F" not in skip:
+                try:
+                    sectionF(cur, predict._targetSpec(cur, target), a.sport)
+                except Exception as exc:                    # noqa: BLE001
+                    print(f"\nF. unavailable ({exc})")
 
     print("\n" + "=" * 70)
     print("TWO FINDINGS THAT NEEDED NO RUN -- see this file's header")
