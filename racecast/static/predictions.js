@@ -615,6 +615,41 @@ function applyScale() {
   }
 }
 
+/*
+ * ★ A RESPONSE IS NOT ALWAYS JSON, WHATEVER THE ENDPOINT PROMISED (owner,
+ *   2026-09-16, the first prediction after the model reached the server).
+ *   nginx answers a timeout or a dead worker with its OWN html page, before
+ *   Flask is reached at all -- so `await res.json()` throws inside the
+ *   parser and the reader is shown
+ *
+ *       Could not reach the server: Unexpected token '<', "<html> <h"...
+ *
+ *   which names neither what failed nor anything they could do about it.
+ *
+ * ! THE STATUS IS THE MESSAGE when the body is not JSON. 504 means the
+ *   request outran the timeout and a smaller field may not; 502/503 mean the
+ *   app is restarting and waiting will fix it. Both are things a person can
+ *   act on. A parser error is not.
+ */
+async function readJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    if (res.status === 504) {
+      throw new Error("The server took too long (504). A very large field "
+                      + "can outrun the timeout - try fewer teams.");
+    }
+    if (res.status === 502 || res.status === 503) {
+      throw new Error(`The site is restarting (${res.status}). `
+                      + "Try again in a moment.");
+    }
+    throw new Error(`The server returned ${res.status}`
+                    + (res.statusText ? ` ${res.statusText}` : "")
+                    + " instead of a result.");
+  }
+}
+
 /* Seconds -> 16:27.8. The model predicts seconds; a time is what people read. */
 function fmtTime(s) {
   if (s === null || s === undefined) return " - ";
@@ -1315,7 +1350,7 @@ async function fetchField(div) {
   if (div) q.set("div_id", div);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) {
       setStatus(data.error || res.statusText, true);
       return null;
@@ -1773,7 +1808,7 @@ async function predict() {
     const parts = [];
     for (const div of targets) {
       const res = await fetch(path + "?" + buildQuery(div).toString());
-      const data = await res.json();
+      const data = await readJson(res);
       if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
 
       // available:false is the expected answer until the model is trained,
@@ -1798,7 +1833,12 @@ async function predict() {
     const share = state.who === "team" ? shareBox(buildQuery(targets[0])) : "";
     $("output").innerHTML = share + parts.join("");
   } catch (err) {
-    setStatus("Could not reach the server: " + err.message, true);
+    /* ! A REAL NETWORK FAILURE AND A BAD RESPONSE READ DIFFERENTLY. fetch
+         itself rejects with a TypeError when the request never landed;
+         readJson throws a sentence that already says what happened. */
+    setStatus(err && err.name === "TypeError"
+              ? "Could not reach the server."
+              : (err.message || "The prediction failed."), true);
   } finally {
     state.busy = false;
     $("predict").disabled = false;

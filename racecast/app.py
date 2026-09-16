@@ -6990,6 +6990,21 @@ def api_predict_individual():
         #   checkpoint -- because from the outside they are the same thing.
         return jsonify({"available": False,
                         "reason": "The prediction model is not wired up yet."})
+    except Exception:                                # noqa: BLE001
+        # ⚠ A JSON ENDPOINT MUST NEVER ANSWER IN HTML. Anything but
+        #   NotImplementedError fell through to Flask's 500 page, and the
+        #   page does `await res.json()` on it -- so a real traceback on the
+        #   server showed up in the browser as
+        #   "Unexpected token '<', "<html> <h"... is not valid JSON",
+        #   which names neither the failure nor the endpoint that had it.
+        #   (owner, 2026-09-16, the first prediction after the model landed.)
+        #
+        # ! THE TRACEBACK GOES TO THE LOG, THE SENTENCE GOES TO THE PAGE. A
+        #   reader cannot act on a stack trace and must not be shown internal
+        #   paths; journalctl is where it is useful.
+        app.logger.exception("/api/predict/individual failed")
+        return jsonify({"error": "The prediction failed. This has been "
+                                 "logged."}), 500
     return jsonify(out)
 
 
@@ -7027,6 +7042,12 @@ def api_predict_team():
     except NotImplementedError:
         return jsonify({"available": False,
                         "reason": "The prediction model is not wired up yet."})
+    except Exception:                                # noqa: BLE001
+        # see /api/predict/individual: HTML out of a JSON route is a failure
+        # the page cannot report and a reader cannot act on
+        app.logger.exception("/api/predict/team failed")
+        return jsonify({"error": "The prediction failed. This has been "
+                                 "logged."}), 500
     return jsonify(out)
 
 
