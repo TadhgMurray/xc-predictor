@@ -1240,7 +1240,19 @@ choice is what is new: they take a median where we take a mean.**
    `topFractionWeights`. Not obvious that it wins — the field is already
    trimmed to the top fraction, and a median of three voters is noisier than
    their mean — so the held-out score decides.
-2. **🔎 The outdoor-track-5000 anchor.** I dismissed this twice as display and
+2. **❌ The outdoor-track-5000 anchor — MEASURED AND DEAD.** Only **356 of
+   4,045,851** rated XC athletes have one (0.009%), and those that do rate
+   **120.2 mean against 101.2** for everyone else — nineteen points, far out
+   on the tail. Pinning a corpus of everyone to that slice would move the
+   gauge onto the fast half of the fast half. The argument below stays true
+   and the solution does not survive it. ⚠ One caveat on the count: 219
+   college athletes with an outdoor 5000 is low enough to suspect the query
+   (`meets_tf.distance_meters BETWEEN 4900 AND 5100` may miss rows that
+   record the event in `event_short` instead), but the *selection* effect is
+   what kills it and that would survive a bigger count.
+
+   The reasoning, kept because the PROBLEM is real and still unsolved:
+   I dismissed this twice as display and
    was wrong twice. `speed_ratings` re-centres to **result-weighted mean
    zero**, so "difficulty 0" means *the average course in our corpus right
    now* — a number that moves when the corpus changes. A physical reference
@@ -1268,7 +1280,7 @@ choice is what is new: they take a median where we take a mean.**
    because the back of a field is not a measurement of the *course*; it is
    not a measurement of the *runner* either. League/qualifier/final are
    already fitted and unused here.
-5. **🔎 Stop imputing `d = 0` silently.** An unfitted course asserted to be
+5. **❌ Stop imputing `d = 0` silently — DEFERRED, my number was wrong.** An unfitted course asserted to be
    exactly average pushes its difficulty into the ability of everyone who
    raced it, and because the solve is joint that leaks into every other
    course they ran. `diag_engine_counts.py` section A counts the share.

@@ -94,7 +94,7 @@ def test_the_default_is_unchanged_behaviour():
     assert "num / np.maximum(cnt, 1)" in body, body
 
 
-def test_the_counts_diagnostic_asks_both_questions():
+def test_the_counts_diagnostic_asks_its_questions():
     d = io.open(os.path.join(ROOT, "scripts", "diag_engine_counts.py"),
                 encoding="utf-8").read()
     # A: how much of the corpus is rated against an unmeasured course
@@ -103,6 +103,31 @@ def test_the_counts_diagnostic_asks_both_questions():
     assert "is_indoor, 0) = 0" in d, d
     assert "BETWEEN 4900 AND 5100" in d, d
     assert "median_rating" in d, d
+    # C: does the model's extraction see what the engine rates
+    assert "in_meets" in d, d
+
+
+def test_section_a_joins_the_venue_the_engine_joins():
+    """⚠ THE FIRST VERSION JOINED ONLY `meets` AND REPORTED 26.7% OF COLLEGE
+    ROWS AS HAVING NO VENUE. That was this query's bug, not the engine's:
+    `meets` is the anet table and tfrrs XC venues live in meets_tfrrs, keyed
+    on meet_id alone. speed_ratings_db._xcQuery COALESCEs the two.
+
+    ! Measuring an engine with a join the engine does not use measures
+      nothing, and the number it produced looked like a finding.
+    """
+    d = io.open(os.path.join(ROOT, "scripts", "diag_engine_counts.py"),
+                encoding="utf-8").read()
+    i = d.index("def sectionA(")
+    body = d[i:d.index("\n# ---", i)]
+    assert "meets_tfrrs" in body, body
+    assert "COALESCE(m.course_name, mt.venue_name)" in body, body
+    assert "COALESCE(m.gps_lat, mt.gps_lat)" in body, body
+
+    # ...and the engine really does coalesce them, so this mirrors it
+    eng = io.open(os.path.join(ROOT, "engine", "speed_ratings_db.py"),
+                  encoding="utf-8").read()
+    assert "COALESCE(m.course_name, mt.venue_name)" in eng, "engine changed"
 
 
 if __name__ == "__main__":
@@ -111,6 +136,7 @@ if __name__ == "__main__":
                test_a_race_with_no_voters_is_zero_not_a_crash,
                test_the_breakdown_point_is_the_whole_argument,
                test_the_default_is_unchanged_behaviour,
-               test_the_counts_diagnostic_asks_both_questions]:
+               test_the_counts_diagnostic_asks_its_questions,
+               test_section_a_joins_the_venue_the_engine_joins]:
         fn()
     print("  ok")

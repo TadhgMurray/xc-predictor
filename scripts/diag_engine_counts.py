@@ -82,15 +82,29 @@ def sectionA(cur, sample):
         LEFT   JOIN meets m ON m.meet_id = r.meet_id
                            AND m.div_id  = r.div_id
                            AND m.source  = r.source
+        -- ⚠ AND meets_tfrrs, WHICH THE FIRST VERSION OF THIS QUERY MISSED.
+        --   `meets` is the anet table; tfrrs XC venues live in meets_tfrrs,
+        --   keyed on meet_id alone. Joining only `meets` reported 26.7% of
+        --   COLLEGE rows as having no venue -- which was this query's bug,
+        --   not the engine's: speed_ratings_db._xcQuery COALESCEs the two
+        --   exactly as below. Measuring the engine with a join the engine
+        --   does not use measures nothing.
+        LEFT   JOIN meets_tfrrs mt ON r.source = 'tfrrs'
+                                  AND mt.meet_id = r.meet_id
+                                  AND mt.sport = 'XC'
         LEFT   JOIN course_canonical cc
-                    ON cc.course_name = m.course_name
+                    ON cc.course_name = COALESCE(m.course_name, mt.venue_name)
                    AND round(cc.gps_lat::numeric,  5)
-                       = round(m.gps_lat::numeric,  5)
+                       = round(COALESCE(m.gps_lat, mt.gps_lat)::numeric,  5)
                    AND round(cc.gps_long::numeric, 5)
-                       = round(m.gps_long::numeric, 5)
+                       = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
         LEFT   JOIN course_difficulties cd
                     ON cd.canonical_id = cc.canonical_id
-                   AND cd.distance_m = (round(m.distance / 100.0) * 100)::int
+                   AND cd.distance_m = (round(COALESCE(
+                           m.distance,
+                           (mt.division_distances -> r.div_id::text
+                              ->> 'distance')::real,
+                           mt.distance) / 100.0) * 100)::int
         WHERE  r.speed_rating IS NOT NULL
         GROUP  BY 1
         ORDER  BY 2 DESC
@@ -207,6 +221,91 @@ def sectionB(cur):
           "safer zero.")
 
 
+# ------------------------------------------------------------------ #
+#  C. does the MODEL's extraction see the same corpus the engine rates?
+# ------------------------------------------------------------------ #
+
+def sectionC(cur, sample):
+    """⚠ A HYPOTHESIS WITH TWO READINGS, AND ONLY A COUNT SETTLES IT.
+
+    feature_extraction._XC_SQL joins the venue with a bare
+
+        JOIN meets m ON r.div_id = m.div_id
+                    AND r.meet_id = m.meet_id
+                    AND r.source  = m.source
+
+    -- an INNER join, and the file contains ZERO references to meets_tfrrs.
+    The engine's own _xcQuery LEFT JOINs both tables and COALESCEs them.
+
+    Reading one: speed_ratings_db's header lists "INNER JOIN meets --
+    anet-only table; deleted tfrrs again" among the bugs it FIXED, and
+    build_course_canonical UNIONs meets with meets_tfrrs, which would be
+    pointless if `meets` already held tfrrs venues. If that is right, every
+    tfrrs-sourced XC result is dropped from the TRAINING CORPUS -- and
+    college XC is largely tfrrs.
+
+    Reading two: extraction's own comment says "`meets` is disambiguated by
+    source", implying `meets` carries more than one source and the join is
+    fine.
+
+    Both cannot be true. This counts it.
+
+    ★ IT IS A MODEL BUG IF IT IS ONE, NOT AN ENGINE BUG. The engine rates
+      these rows correctly; the question is whether the transformer was ever
+      shown them.
+    """
+    print("\n" + "=" * 70)
+    print("C. DOES THE MODEL'S EXTRACTION SEE THE WHOLE CORPUS?")
+    print("=" * 70)
+    tbl = "results r" + (f" TABLESAMPLE SYSTEM ({sample})" if sample else "")
+    if sample:
+        print(f"   ({sample}% sample)")
+    cur.execute(f"""
+        SELECT r.source,
+               split_part(split_part(r.rating_pool, '|', 1), '_', 1) AS lvl,
+               count(*) AS rated,
+               count(*) FILTER (WHERE m.meet_id IS NOT NULL) AS in_meets
+        FROM   {tbl}
+        LEFT   JOIN meets m ON m.meet_id = r.meet_id
+                           AND m.div_id  = r.div_id
+                           AND m.source  = r.source
+        WHERE  r.speed_rating IS NOT NULL
+        GROUP  BY 1, 2
+        ORDER  BY 3 DESC
+    """)
+    rows = [dict(x) for x in cur.fetchall()]
+    if not rows:
+        print("   nothing rated")
+        return
+    print(f"\n   {'source':<10}{'level':<10}{'rated':>12}"
+          f"{'in `meets`':>13}{'REACHES TRAINING':>19}")
+    tot = keep = 0
+    for r in rows:
+        tot += r["rated"]
+        keep += r["in_meets"]
+        print(f"   {str(r['source'] or '?'):<10}{str(r['lvl'] or '?'):<10}"
+              f"{r['rated']:>12,}{r['in_meets']:>13,}"
+              f"{pct(r['in_meets'], r['rated']):>19}")
+    print(f"\n   OVERALL {pct(keep, tot)} of rated XC rows can survive "
+          f"extraction's INNER JOIN.")
+    lost = 1.0 - (keep / tot if tot else 1.0)
+    if lost < 0.02:
+        print("   → `meets` carries every source. The extraction join is "
+              "fine and\n     reading two is right.")
+    else:
+        print("   ⚠ READING ONE. Those rows are rated by the engine, shown "
+              "on the site,")
+        print("     and INVISIBLE TO THE MODEL -- an inner join to a table "
+              "that does not")
+        print("     hold their source drops them before a single feature is "
+              "built.")
+        print("     The engine's header lists this exact bug among ones it "
+              "already fixed")
+        print("     once: 'INNER JOIN meets -- anet-only table; deleted "
+              "tfrrs again.'")
+        print("     Fix is extraction-side and needs a RE-EXTRACTION.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exact", action="store_true",
@@ -224,6 +323,8 @@ def main():
                 sectionA(cur, None if a.exact else a.sample)
             if "B" not in skip:
                 sectionB(cur)
+            if "C" not in skip:
+                sectionC(cur, None if a.exact else a.sample)
     print()
 
 
