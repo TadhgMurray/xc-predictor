@@ -1742,3 +1742,40 @@ string `'none'` suppresses the crest entirely.
   state had no assignment row at all, so the site's COALESCE fell through to
   the **primary** cluster — which for a contested name is now sometimes the
   college. LEFT JOIN, and only a row no source can place is dropped.
+
+### ✅ P. "Williams is not in anet" was a query matching on a name
+
+Owner, with a link to athletic.net team 21570: *"Like idk why you think williams
+isn't on anet."* They're right, and the reason is worth writing down because it
+is the same defect the section above is about.
+
+The query I asked for filtered `anet_team` on
+`lower(btrim(school)) IN ('oregon','williams')` and returned one row, so I said
+Williams College isn't in anet. That tests **anet's spelling**. anet stores the
+college as `Williams College`; the filter walked past it. A conclusion keyed on
+a name, in the middle of fixing a bug about keying on names.
+
+**And `authoritativeStates` had the same flaw.** It grouped `anet_team` by
+`lower(btrim(school))` and matched that against the **feed's** school string —
+so a team anet calls `Williams College` never joined the rows that say
+`Williams`, and the college half of that collision was invisible to the anet
+leg. (Williams became contested anyway, via the college directory, which is why
+it split at all. Oregon worked because anet happens to spell the university
+`Oregon`.)
+
+The rows carry the join that needs no spelling: **`team_id`**. The states now
+come from `results`/`results_tf` joined to `anet_team` on `team_id`, grouped by
+the **feed's own string**. It cannot miss a team over a name and cannot invent
+one. Cost: one aggregate pass over both row tables, joined to a 40k-row table —
+`buildTeamStates`' scan is still filtered by the list this produces.
+
+**Check whether we hold the team at all**, which is a different question from
+whether anet has it — `anet_team` only holds teams a run has fetched, and the
+queue only asks for the modal team of a `(school, state)` pair with ≥3
+athletes:
+
+```sql
+SELECT team_id, school, state, anet_state, level, mascot_url IS NOT NULL
+FROM   anet_team WHERE team_id IN (21570, 21242, 16586, 685);
+SELECT team_id, count(*) FROM results_tf WHERE team_id IN (21570) GROUP BY 1;
+```

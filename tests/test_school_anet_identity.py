@@ -113,6 +113,24 @@ def test_contested_names_only_so_every_other_name_is_unchanged():
     assert "lower(btrim(r.school)) = ANY(%s)" in team and "r.team_id <> 0" in team
 
 
+def test_the_anet_states_come_from_the_rows_not_from_anets_spelling():
+    """⚠ OWNER, 2026-09-16, with a link to athletic.net team 21570: "Like idk
+    why you think williams isn't on anet". The list grouped anet_team by
+    lower(btrim(school)) and matched that against the FEED's school string,
+    so a team anet calls "Williams College" never joined rows that say
+    "Williams" -- and the college half of the collision went missing over a
+    spelling, in the middle of a fix about keying on names. team_id is the
+    join that needs no spelling."""
+    body = _SRC[_SRC.index("def authoritativeStates("):_SRC.index("def _schoolNames(")]
+    assert "JOIN   anet_team t ON t.team_id = r.team_id" in body
+    assert "lower(btrim(r.school)) AS name" in body
+    # the old shape must not come back
+    assert "FROM   anet_team\n            WHERE  school IS NOT NULL" not in body
+    # both feeds, and never the unattached sentinel
+    assert 'for table in ("results", "results_tf")' in body
+    assert "r.team_id <> 0" in body
+
+
 def test_it_all_degrades_without_either_source():
     body = _SRC[_SRC.index("def authoritativeStates("):_SRC.index("def _schoolNames(")]
     assert "to_regclass('anet_team')" in body

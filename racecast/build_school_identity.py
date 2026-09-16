@@ -99,27 +99,55 @@ MERGE_MIN_FRACTION = 0.20     # ...as a share of the smaller cluster's races
 #   built and already read by applyCollegeDirectory. So the authoritative
 #   states for a name are anet's AND the directory's, together.
 def authoritativeStates(cur):
-    """{normalised school name: {state}} for names that more than one
-    NAMED school wears -- anet's teams' states union the college
-    directory's. Empty when neither source exists.
+    """{feed school string, lowered: {state}} for names that more than one
+    NAMED school wears -- the states of the anet teams the rows themselves
+    use, union the college directory's. Empty when neither source exists.
 
     These are the states a name's clusters may not be merged across, and
-    the states a merged group resolves to. A home state that is in
-    neither is a travel state, as before."""
+    the states a merged group resolves to. A home state in neither is a
+    travel state, as before.
+
+    ⚠ FROM THE ROWS' team_id, NOT FROM anet's SPELLING (owner, 2026-09-16,
+      with a link to athletic.net team 21570: "Like idk why you think
+      williams isn't on anet"). This grouped `anet_team` by
+      lower(btrim(school)) and matched that against the feed's school
+      string -- so a team anet calls "Williams College" never joined the
+      rows that say "Williams", and the college half of the collision was
+      invisible again. I concluded "Williams is not in anet" from a query
+      with that same flaw in it.
+
+      The rows already carry the join that needs no spelling: team_id.
+      Grouping by the FEED's own string and taking the states of the anet
+      teams its rows actually use cannot miss a team over a name, and
+      cannot invent one either.
+
+    ! ONE AGGREGATE PASS over results and results_tf, joined to a 40k-row
+      table. It is the price of a correct list; buildTeamStates' scan is
+      still filtered by the list this produces."""
     by_name = {}
     cur.execute("SELECT to_regclass('anet_team')")
     if cur.fetchone()[0] is not None:
-        cur.execute("""
-            SELECT lower(btrim(school)) AS name,
-                   upper(btrim(COALESCE(state, anet_state))) AS st
-            FROM   anet_team
-            WHERE  school IS NOT NULL AND btrim(school) <> ''
-              AND  COALESCE(state, anet_state) IS NOT NULL
-              AND  btrim(COALESCE(state, anet_state)) <> ''
-            GROUP  BY 1, 2
-        """)
-        for name, st in cur.fetchall():
-            by_name.setdefault(name, set()).add(st)
+        for table in ("results", "results_tf"):
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+                  AND column_name = 'team_id'
+            """, (table,))
+            if cur.fetchone() is None:
+                continue
+            cur.execute(f"""
+                SELECT lower(btrim(r.school)) AS name,
+                       upper(btrim(COALESCE(t.state, t.anet_state))) AS st
+                FROM   {table} r
+                JOIN   anet_team t ON t.team_id = r.team_id
+                WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
+                  AND  r.school IS NOT NULL AND btrim(r.school) <> ''
+                  AND  COALESCE(t.state, t.anet_state) IS NOT NULL
+                  AND  btrim(COALESCE(t.state, t.anet_state)) <> ''
+                GROUP  BY 1, 2
+            """)
+            for name, st in cur.fetchall():
+                by_name.setdefault(name, set()).add(st)
     n_anet = len(by_name)
 
     # ★ AND THE DIRECTORY, THROUGH ITS OWN MATCHER. lookup() is the
@@ -143,7 +171,8 @@ def authoritativeStates(cur):
               f"({type(exc).__name__}: {exc})", flush=True)
 
     contested = {k: v for k, v in by_name.items() if len(v) >= 2}
-    print(f"  school_identity: {n_anet:,} names placed by anet and {n_dir:,} by "
+    print(f"  school_identity: {n_anet:,} school strings carry anet teams "
+          f"(by the rows' team_id, not by anet's spelling) and {n_dir:,} match "
           f"the college directory; {len(contested):,} are worn by schools in "
           f"more than one state", flush=True)
     return contested, dir_states
