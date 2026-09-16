@@ -1299,35 +1299,104 @@ choice is what is new: they take a median where we take a mean.**
    and `ms` 3.7% figures are anet-sourced so less affected, but are not
    quotable until the re-run either.
 
-#### 🔎 And a bigger question fell out of it — in the MODEL, not the engine
+#### ⏳ G. The model could not see a quarter of college cross country — **CONFIRMED**
 
-Chasing section A's bad number surfaced this, and it is a hypothesis with
-two readings that only a count settles.
+`diag_engine_counts.py` section C, 1% sample:
 
-`feature_extraction._XC_SQL` joins the venue with a bare
+| source | level | rated | in `meets` | reaches training |
+|---|---|---|---|---|
+| anet | college | 19,389 | 19,389 | 100.0% |
+| **tfrrs** | **college** | **6,505** | **0** | **0.0%** |
+| tfrrs | hs | 2,564 | 0 | 0.0% |
 
-```
-    JOIN meets m ON r.div_id = m.div_id AND r.meet_id = m.meet_id
-                AND r.source = m.source
-```
+**6,505 of 25,894 — 25.1% of all rated college XC rows** — rated by the
+engine, shown on the site, invisible to the model. College is the level the
+model performs worst on. hs and ms lose ~1% each.
 
-an **INNER** join, and the file contains **zero** references to
-`meets_tfrrs`. The engine's `_xcQuery` LEFT JOINs both and COALESCEs them.
+★ **It took four separate filters to let them in**, and fixing any one alone
+changes nothing while looking like a fix:
 
-* **Reading one:** `speed_ratings_db`'s header lists *"INNER JOIN meets —
-  anet-only table; deleted tfrrs again"* among bugs it already **fixed**, and
-  `build_course_canonical` UNIONs `meets` with `meets_tfrrs` — which is
-  pointless if `meets` already held tfrrs venues. If so, **every
-  tfrrs-sourced XC result is dropped from the training corpus**, and college
-  XC is largely tfrrs. The transformer would barely have seen college cross
-  country, which would explain a great deal about the D3 championship.
-* **Reading two:** extraction's own comment says *"`meets` is disambiguated
-  by source"*, implying it carries more than one source and the join is fine.
+1. `JOIN meets` was an **INNER** join and `meets` is the anet table; tfrrs XC
+   venues live in `meets_tfrrs`, one row per (meet_id, sport).
+2. the `WHERE` required a distance from the same two-term COALESCE, so a
+   tfrrs row would have been filtered straight back out.
+3. `r.athlete_id IS NOT NULL` — and **tfrrs XC has `athlete_id` NULL on 100%
+   of rows**. Written to drop profile-less AAU entries; it deleted a source.
+4. gender came off a LATERAL keyed on `athlete_id`, so every tfrrs row would
+   have had NULL gender — and gender feeds `resolvePool`, which picks the
+   pool the target was normalized in. Now `COALESCE(pg.gender, a.gender)`
+   from `person_gender`, stubbed like `weather` when the table is absent.
 
-Both cannot be true. `diag_engine_counts.py` **section C** counts rated XC
-rows per source against how many survive that inner join. If reading one
-holds it is an extraction bug needing a **re-extraction**, so it belongs
-bundled with **A**, **B** and **C** above rather than done alone.
+The engine already did all of this — `speed_ratings_db._xcQuery` LEFT JOINs
+both meet tables and COALESCEs them, and its header lists this exact bug
+among ones it fixed once: *"INNER JOIN meets — anet-only table; deleted tfrrs
+again."* The extraction never got the same fix.
+
+⚠ **Needs a re-extraction to take effect, and the SQL has not been executed.**
+`corrections` is server-only and 51 MB, so the query cannot be built off the
+server; `tests/test_extraction_sees_tfrrs.py` pins the structure of all four
+parts but a smoke extraction over a few chunks is still required before a
+full run.
+
+★ **This reorders the rest of the list.** Any model change measured against
+college fields before this lands is measured on a model that never saw a
+quarter of them.
+
+### ✅ H. The distance spline is NOT the problem
+
+ISSUES B's premise was *"the distance spline is just off. I think we need to
+entirely just redo it."* `diag_conversion_gain.py --sport XC --pool hs_m`
+says otherwise:
+
+* **half B (time ↔ normalized_time): mean |err| 0.081%.** Clean. That is the
+  distance curve and the difficulty, and they reproduce times to within a
+  tenth of a percent.
+* **half A (page ↔ engine applied effect): mean |err| 2.312%**, median
+  +0.081%, IQR −2.21…+1.76.
+
+By the diagnostic's own rule — *"half A off → the page's pool mean or engine
+scale, a racecast bug; half B off with A clean → the distance curve or the
+difficulty, an engine bug"* — this is **a page bug, not a spline bug**. The
+median is near zero so the two agree on average; the ±2% is per-row scatter
+in `venueEffect`/`engineScale` against what the engine actually applied.
+
+**Independent corroboration.** Our equivalents against VDOT for a 29:53 10K:
+
+| | VDOT | ours | diff |
+|---|---|---|---|
+| 5000 | 14:21 | 14:13.12 | −0.9% |
+| 3200 | 8:51 | 8:51.23 | ~0 |
+| 3000 | 8:15 | 8:15.10 | ~0 |
+| Mile | 4:10 | 4:07.96 | −0.8% |
+| 1500 | 3:51 | 3:49.05 | −0.8% |
+
+Within ~1% of Daniels everywhere, exact at 3000–3200. One mild systematic:
+ours is faster at **both** ends, so the curve is slightly **over-curved**
+about its 3000–3200 anchor — ~0.9%, worth a look, nothing like "redo it".
+
+*So a re-extraction for the spline is not justified.* **G** justifies one on
+its own.
+
+### 🔎 I. The grass-cost anchor is an unweighted mean, and outliers drag it
+
+From the same run: *"every difficulty is anchored on the **unweighted mean**
+over outdoor track cells. Wild per-venue track estimates drag that mean, and
+the shift lands on every XC course at once — which is a conversion error with
+a correct normalized_time behind it."*
+
+So the engine **already anchors XC to outdoor track** — the thing I spent two
+turns proposing. `anchor_shift = −0.05830`, identical across every pool. The
+open question was never *whether* to anchor there; it is that the anchor is a
+**mean**, and ISSUES A says track difficulty is the least believable cell we
+fit.
+
+Measured grass cost vs the expected 5.83%: hs_m +0.04, hs_f +0.08, college_f
++0.21, college_m −0.29, ms −0.36/−0.43, pro −0.40/−0.48, **elem_f −1.19 and
+elem_m −1.14** (flagged).
+
+★ **This is the median-vs-mean argument again**, pointed at the anchor rather
+than at a race's voters — same fix as ⏳ F.1, same reason, and here a single
+wild track venue moves *every XC course at once*. Cheap and targeted.
 
 #### Not taking
 

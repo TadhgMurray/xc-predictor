@@ -61,6 +61,19 @@ from corrections import distanceOverrideSQL
 # corrections._DISTANCE_OVERRIDES_XC header).
 _OV_JOIN_XC, _OV_COALESCE_XC = distanceOverrideSQL(
     "r", "XC", stored_expr="m.distance")
+
+# ★ THE XC DISTANCE, ONE EXPRESSION, USED BY BOTH THE SELECT AND THE
+#   DIFFICULTY JOIN. They must agree -- the target was normalized at this
+#   distance and the difficulty cell is keyed by it -- and two copies of a
+#   four-term COALESCE is two chances to disagree.
+#
+# ! THE TFRRS DISTANCE IS PER DIVISION, IN JSONB. meets_tfrrs has one row per
+#   (meet_id, sport) and carries every division's distance in
+#   division_distances; mt.distance is the meet-level fallback. Same order
+#   speed_ratings_db._xcQuery uses, so the model's distance is the engine's.
+_XC_DIST = (f"COALESCE({_OV_COALESCE_XC} m.distance,"
+            " (mt.division_distances -> r.div_id::text ->> 'distance')::real,"
+            " mt.distance)")
 _OV_JOIN_TF, _OV_COALESCE_TF = distanceOverrideSQL(
     "r", "TF", stored_expr="m.distance_meters")
 
@@ -283,18 +296,35 @@ _XC_SQL = f"""
                 -- Per-race features that go into the sequence.
                 r.grade,
                 r.time_seconds,
-                a.gender,
+                -- ⚠ THE LATERAL READS athlete_id, WHICH tfrrs XC HAS NONE OF,
+                --   so a.gender is NULL on every tfrrs row -- and gender
+                --   feeds resolvePool, which picks the pool the target was
+                --   normalized in. person_gender is the cross-source answer,
+                --   keyed on person_id, and is what the engine's pack uses
+                --   (person_gender.packGenderExpr).
+                --
+                -- ! THE SPLIT-PERSON REFINEMENT IS NOT REPLICATED. packGenderExpr
+                --   prefers the ROW's own division label for a person the
+                --   table marks `split`; doing that here means importing the
+                --   label machinery into a module that is careful about its
+                --   imports. Splits are rare and this is their only
+                --   difference, so it is a known, bounded divergence rather
+                --   than an oversight.
+                COALESCE(pg.gender, a.gender) AS gender,
                 
                 -- Meet features.
-                m.meet_id,
-                m.course_name,
+                -- ⚠ FROM `results`, NOT FROM `meets`. A tfrrs row has no
+                --   `meets` row at all (see the join below), so m.meet_id
+                --   would be NULL on a quarter of college cross country.
+                r.meet_id,
+                COALESCE(m.course_name, mt.venue_name) AS course_name,
                 -- AS renames the column in the query result,
                 -- from distance to distance_meters.
                 -- ★ THE OVERRIDDEN DISTANCE, when one exists. The target was
                 --   normalized at it; the feature must agree with the target.
-                COALESCE({_OV_COALESCE_XC} m.distance) AS distance_meters,
-                m.gps_lat,
-                m.gps_long,
+                {_XC_DIST} AS distance_meters,
+                COALESCE(m.gps_lat,  mt.gps_lat)  AS gps_lat,
+                COALESCE(m.gps_long, mt.gps_long) AS gps_long,
                 
                 -- Course difficulty - how much harder/easier than flat.
                 -- LEFT JOIN means NULL if course not yet rated, which COALESCE
@@ -372,9 +402,35 @@ _XC_SQL = f"""
         -- div_id alone matches a tfrrs row against whatever anet meet happens
         -- to hold that div_id: wrong course, wrong distance, wrong gps,
         -- silently. speed_ratings_db._xcQuery joins on all three.
-        JOIN meets     m  ON r.div_id       = m.div_id
+        --
+        -- ⚠⚠ AND IT IS A **LEFT** JOIN NOW, WITH meets_tfrrs BESIDE IT.
+        --   `meets` is the ANET table and holds no tfrrs rows at all, so an
+        --   INNER join here dropped every tfrrs-sourced XC result before a
+        --   single feature was built. Measured 2026-09-17
+        --   (scripts/diag_engine_counts.py section C): 0.0% of tfrrs rows
+        --   reached training, which is **25.1% of all rated COLLEGE cross
+        --   country** -- the level the model performs worst on. Those rows
+        --   are rated by the engine and shown on the site; only the model
+        --   could not see them.
+        --
+        --   speed_ratings_db's own header lists this exact bug among ones it
+        --   fixed once already: "INNER JOIN meets -- anet-only table;
+        --   deleted tfrrs again." The extraction never got the same fix.
+        --
+        -- ! NO FAN-OUT EITHER WAY. meets is keyed on all three parts above;
+        --   meets_tfrrs is one row per (meet_id, sport) -- no div_id, which
+        --   is why its distances live in a per-division JSONB blob. And the
+        --   two are mutually exclusive: mt is guarded on source = 'tfrrs'
+        --   and m matches source too, so a row takes one or the other.
+        LEFT JOIN meets m ON r.div_id       = m.div_id
                          AND r.meet_id      = m.meet_id
                          AND r.source       = m.source
+        LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs'
+                                AND mt.meet_id = r.meet_id
+                                AND mt.sport   = 'XC'
+        -- see the gender column above. Stubbed out by _corpusSql when the
+        -- table has not been built, exactly as `weather` is.
+        LEFT JOIN person_gender pg ON pg.person_id = r.person_id
         -- The hand-verified distance overrides (source, meet_id, div_id) ->
         -- corrected distance; referenced by the SELECT and the difficulty
         -- join below, so it must appear before them.
@@ -392,23 +448,29 @@ _XC_SQL = f"""
         -- Woodward Parks), which fans out and DUPLICATES training examples.
         -- The real key is (canonical_id, distance_m), resolved the same way
         -- the website and the engine resolve it.
+        -- ! COALESCED, LIKE THE SELECT ABOVE. build_course_canonical builds
+        --   this table from meets UNION meets_tfrrs, so a tfrrs venue IS in
+        --   it -- reachable only under its own name and coordinates.
         LEFT JOIN course_canonical cc
-               ON cc.course_name = m.course_name
-              AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
-              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+               ON cc.course_name = COALESCE(m.course_name, mt.venue_name)
+              AND round(cc.gps_lat::numeric,  5)
+                = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
+              AND round(cc.gps_long::numeric, 5)
+                = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
         LEFT JOIN course_difficulties cd
                ON cd.canonical_id = cc.canonical_id
               -- The overridden distance again: the difficulty cell is keyed
               -- by the distance actually raced, not the scraped label.
-              AND cd.distance_m   =
-                  (round(COALESCE({_OV_COALESCE_XC} m.distance) / 100.0)
-                   * 100)::int
+              AND cd.distance_m   = (round({_XC_DIST} / 100.0) * 100)::int
         
         -- LEFT JOIN weather at the default XC race hour (9am local time).
         -- meet_id matches, hour matches our XC default.
+        -- ! KEYED OFF `results`, NOT OFF `meets`. m is NULL for every tfrrs
+        --   row now, and m.meet_id = w.meet_id would have silently made
+        --   weather unreachable for all of them.
         LEFT JOIN weather w
-            ON  m.meet_id = w.meet_id
-            AND w.source  = m.source
+            ON  r.meet_id = w.meet_id
+            AND w.source  = r.source
             AND w.hour    = %s
                        
         -- ★ THE FIVE FACTS resolvePool NEEDS. Byte-for-byte the joins in
@@ -461,7 +523,10 @@ _XC_SQL = f"""
         --   override covers it, and _buildSequenceVector calls bare
         --   float() on it -- which killed a 68-minute run at the one
         --   athlete in the corpus who had such a race behind them.
-        WHERE COALESCE({_OV_COALESCE_XC} m.distance) IS NOT NULL
+        -- ! _XC_DIST, NOT THE TWO-TERM COALESCE. Fixing the join without
+        --   fixing this would have filtered every tfrrs row straight back
+        --   out -- a "fix" that changed nothing, silently.
+        WHERE {_XC_DIST} IS NOT NULL
         AND   r.normalized_time IS NOT NULL
         -- Makes normalized time be a reasonable value.
         AND   r.normalized_time > %s
@@ -471,7 +536,19 @@ _XC_SQL = f"""
         -- with NULL athlete_id — they have no stable identity, can't be
         -- tracked across races, and are useless/polluting to a per-athlete
         -- sequence model. (See 6/25 diagnostics: ~2.5M such TF rows.)
-        AND   r.athlete_id IS NOT NULL
+        -- ⚠⚠ AND tfrrs XC HAS athlete_id NULL ON 100% OF ROWS
+        --   (speed_ratings_db's header). So this line, written to drop
+        --   profile-less AAU entries, was a SECOND filter deleting every
+        --   tfrrs result -- and fixing the meets join alone would have
+        --   changed nothing at all.
+        --
+        -- ! THE INTENT IS "HAS A STABLE IDENTITY", and for tfrrs that is
+        --   person_id, the cross-source id (anet 100%, tfrrs ~70%). anet
+        --   behaviour is byte-for-byte unchanged: an anet row still needs
+        --   athlete_id, so the AAU/junior rows this was written for are
+        --   still dropped.
+        AND   (r.athlete_id IS NOT NULL
+               OR (r.source = 'tfrrs' AND r.person_id IS NOT NULL))
         -- ★★ CHAIR AND ADAPTIVE ATHLETES ARE NOT IN THE TRAINING SET (14,
         --    2026-09-09). A racing chair covers 1500m far faster than a pair
         --    of legs, so a chair time is not a slow runner or a fast one --
@@ -533,6 +610,26 @@ def weatherlessSql(sql):
                        f"LEFT JOIN {_WEATHER_STUB} w")
 
 
+# ! SAME TREATMENT AS `weather`. person_gender is built by
+#   engine/person_gender.py --write and a database that has not run it must
+#   still extract -- falling back to the profile lateral, which is exactly
+#   what packGenderExpr(available=False) does.
+_GENDER_STUB = "(SELECT NULL::bigint AS person_id, NULL::text AS gender)"
+
+
+def genderlessSql(sql):
+    return sql.replace("LEFT JOIN person_gender pg",
+                       f"LEFT JOIN {_GENDER_STUB} pg")
+
+
+def hasPersonGender(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.person_gender')")
+    row = cur.fetchone()
+    v = row[0] if not isinstance(row, dict) else row.get("to_regclass")
+    return v is not None
+
+
 def hasWeatherTable(conn):
     cur = conn.cursor()
     cur.execute("SELECT to_regclass('public.weather')")
@@ -542,6 +639,12 @@ def hasWeatherTable(conn):
 
 
 def _corpusSql(conn, sql):
+    if not hasPersonGender(conn):
+        print("WARNING: no person_gender table -- tfrrs XC rows have no "
+              "athlete profile, so their gender (and therefore their pool) "
+              "falls back to NULL. engine/person_gender.py --write builds "
+              "it.")
+        sql = genderlessSql(sql)
     if hasWeatherTable(conn):
         return sql
     print("WARNING: no weather table in this database -- weather "
