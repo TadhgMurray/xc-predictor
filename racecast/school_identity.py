@@ -77,6 +77,11 @@ def loadLabels(conn_factory, force=False):
                 if _tableExists(cur, "college_directory"):
                     from build_college_directory import loadDirectory
                     _LABELS["college"] = loadDirectory(cur, "state")
+                # ! WHETHER THE ASSIGNMENT TABLE EXISTS, asked once per
+                #   process here rather than per query: stateFilterSql is a
+                #   pure SQL builder with no cursor, and a clause naming a
+                #   table that is not there is an error on every page.
+                _LABELS["athlete_state"] = _tableExists(cur, "school_athlete_state")
     except Exception:                    # noqa: BLE001 -- labels are optional
         pass
     _LABELS["loaded"] = True
@@ -412,16 +417,40 @@ def stateChips(cur, school, include=None):
     return (real if len(real) >= 2 else []), primary
 
 
-def stateFilterSql(alias, state, primary):
+def stateFilterSql(alias, state, primary, school=None):
     """(clause, params) restricting rows to athletes ASSIGNED to
-    `state`: their home state matches, or they are unassigned and this
-    is the primary chip (unknowns follow the majority)."""
+    `state`: the school's own assignment for them, else their home state,
+    else the primary chip (unknowns follow the majority).
+
+    ★ THE ASSIGNMENT COMES FIRST NOW (owner, 2026-09-16: "Oregon(IL) and
+      Oregon(or) are colliding"). This used to read person_home_state
+      alone -- where the athlete RACES -- so a roster narrowed to
+      Oregon (OR) meant "athletes who race mostly in Oregon", which for a
+      college is a travel mode: half the university missing, an Illinois
+      kid or two added, and the roster not adding up to the chip beside
+      it. school_athlete_state (build_school_identity.buildAthleteState)
+      is the same COALESCE the clusters were COUNTED from, so the page and
+      the counts are one answer.
+
+    ⚠ IT IS ONLY CONSULTED WHEN THE CALLER NAMES THE SCHOOL AND THE TABLE
+      EXISTS. Without either, this is byte-for-byte the old clause -- and
+      the table holds contested names only, so for every other school the
+      fallback IS the answer.
+    """
     if not state:
         return "", {}
-    clause = (f" AND COALESCE((SELECT ph.state FROM person_home_state ph"
+    params = {"sf_state": state, "sf_primary": primary or ""}
+    assigned = ""
+    if school is not None and _LABELS.get("athlete_state"):
+        assigned = (f"(SELECT sa.state FROM school_athlete_state sa"
+                    f" WHERE sa.person_id = {alias}.person_id"
+                    f" AND sa.school = %(sf_school)s), ")
+        params["sf_school"] = school
+    clause = (f" AND COALESCE({assigned}"
+              f"(SELECT ph.state FROM person_home_state ph"
               f" WHERE ph.person_id = {alias}.person_id),"
               f" %(sf_primary)s) = %(sf_state)s")
-    return clause, {"sf_state": state, "sf_primary": primary or ""}
+    return clause, params
 
 
 def homeStates(cur, person_ids):

@@ -157,7 +157,7 @@ def schoolRoster(cur, school, year, sport, state=None, primary=None,
 
     carry=False turns it off for a caller that wants the raced roster alone.
     """
-    sf, sfp = stateFilterSql("s", state, primary)
+    sf, sfp = stateFilterSql("s", state, primary, school)
 
     def fetch(yr, extra="", params=None):
         cur.execute(f"""
@@ -249,7 +249,7 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
     #   not from a join that would multiply the rows before it: meets_tf
     #   has ~21 rows per meet and meets one per division.
     year_clause = "AND rr.year = %(year)s" if year else ""
-    sf, sfp = stateFilterSql("rr", state, primary)
+    sf, sfp = stateFilterSql("rr", state, primary, school)
     if sport == "XC":
         name_sql = """
             SELECT COALESCE(
@@ -334,7 +334,7 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
       school's history. Collapsing to one row each answers a different
       question, and the roster tables above already answer that one.
     """
-    sf, sfp = stateFilterSql("rr", state, primary)
+    sf, sfp = stateFilterSql("rr", state, primary, school)
     cur.execute(f"""
         SELECT rr.person_id,
                COALESCE(a.first_name, '') || ' '
@@ -378,7 +378,7 @@ def schoolTopAthletes(cur, school, sport, limit=12,
       runners this school has had", which is a question about people. The
       performance table asks about races, and keeps every one.
     """
-    sf, sfp = stateFilterSql("s", state, primary)
+    sf, sfp = stateFilterSql("s", state, primary, school)
     cur.execute(f"""
         SELECT person_id, name, best, seasons, first_year, last_year
         FROM (

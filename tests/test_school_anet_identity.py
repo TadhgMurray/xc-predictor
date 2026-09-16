@@ -1,9 +1,10 @@
 # Project: xc-predictor / tests
 # File:    test_school_anet_identity.py
-# Purpose: two schools wearing one name are separated by anet's own team
-#          ids and locations, not by where their athletes happen to race
+# Purpose: two schools wearing one name are separated by the states NAMED
+#          schools actually sit in -- anet's teams and the college
+#          directory -- not by where their athletes happen to race.
 #          (owner, 2026-09-16: "Oregon(IL) and Oregon(or) are colliding
-#          despite hs vs college ... Williams (CA) vs (MA)"). No database.
+#          despite hs vs college ... Williams (CA) vs (MA)".) No database.
 #
 #   python -m pytest -q tests/test_school_anet_identity.py
 import os
@@ -19,58 +20,110 @@ import build_school_identity as bsi                            # noqa: E402
 
 _SRC = open(os.path.join(_ROOT, "racecast", "build_school_identity.py")).read()
 
-
-def test_anet_naming_both_states_means_two_schools():
-    contested = {"oregon": {"IL": 1, "OR": 1}, "kingston": {"WA": 1, "MO": 1}}
-    assert bsi.anetSaysTwoSchools(contested, "Oregon", "IL", "OR")
-    assert bsi.anetSaysTwoSchools(contested, " oregon ", "or", "il")   # either spelling
-    # a travel state anet does not name for the name is not a second school
-    assert not bsi.anetSaysTwoSchools(contested, "Oregon", "IL", "CA")
-    # a name anet places in one state, or does not know, never refuses
-    assert not bsi.anetSaysTwoSchools(contested, "Williams", "CA", "MA")
-    assert not bsi.anetSaysTwoSchools({}, "Oregon", "IL", "OR")
-    assert not bsi.anetSaysTwoSchools(contested, None, "IL", "OR")
+# what the first run measured, and what the fix has to change
+_CONTESTED = {"oregon": {"IL", "OR"}, "williams": {"CA", "MA"}}
 
 
-def test_the_merge_consults_it_before_the_shared_meets():
-    """The refusal has to come BEFORE the threshold, because the merge
-    spreads by union-find: one accepted pair pulls in every cluster
-    already joined to either side."""
+def test_a_clusters_state_is_authoritative_only_when_a_named_school_sits_there():
+    assert bsi.authStatesOf(_CONTESTED, "Oregon", "IL") == {"IL"}
+    assert bsi.authStatesOf(_CONTESTED, " oregon ", "or") == {"OR"}
+    assert bsi.authStatesOf(_CONTESTED, "Oregon", "TX") == set()   # a travel state
+    assert bsi.authStatesOf(_CONTESTED, "Kingston", "WA") == set() # not contested
+    assert bsi.authStatesOf({}, "Oregon", "IL") == set()
+    assert bsi.authStatesOf(_CONTESTED, None, "IL") == set()
+
+
+def test_the_guard_is_on_the_group_because_the_merge_is_transitive():
+    """⚠ THE BUG IN THE FIRST VERSION. Refusing the IL-OR pair does not keep
+    IL and OR apart: IL merges with CA, CA merges with OR, and all 36 of
+    Oregon's home states end in one group with the pair never tested. 737
+    refusals fired and Oregon still came out as a single cluster."""
+    assert bsi.wouldMergeTwoSchools({"IL"}, {"OR"})
+    # a travel state may join a named one, and travel states may join freely
+    assert not bsi.wouldMergeTwoSchools({"IL"}, set())
+    assert not bsi.wouldMergeTwoSchools(set(), set())
+    # ...and once a group HOLDS a named state it carries it: that is what
+    # makes the guard transitive
+    assert bsi.wouldMergeTwoSchools({"IL"} | set(), {"OR"})
+
+
+def test_the_merge_carries_each_groups_named_states_and_asks_before_uniting():
     body = _SRC[_SRC.index("def mergeCoRacingClusters("):
                 _SRC.index("# ★ THE DIRECTORY OUTRANKS THE DATA FOR A COLLEGE")]
-    assert body.index("anetSaysTwoSchools") < body.index("shared >= MERGE_MIN_SHARED")
-    assert "refused += 1" in body and "continue" in body
+    # the question is asked of find(a)/find(b), not of (s1, s2)
+    assert "wouldMergeTwoSchools(authOf(a), authOf(b))" in body
+    # and the union is recorded, or the guard would forget on the next pair
+    assert "auth[a] = authOf(a) | authOf(b)" in body
+    assert body.index("a, b = find(") < body.index("wouldMergeTwoSchools")
 
 
-def test_the_clusters_read_anets_state_first():
-    """COALESCE(ts.state, ph.state) -- the athlete's own team's state, and
-    the home-state inference only where there is no team id."""
-    assert "COALESCE(ts.state, ph.state)" in _SRC
-    assert "LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id" in _SRC
-    assert "GROUP  BY v.school, COALESCE(ts.state, ph.state)" in _SRC
+def test_a_group_holding_a_named_school_resolves_to_that_state():
+    """Without this the group holding OR resolves by row counts, and a
+    college's rows are mostly away -- which is how "Oregon (CA)" and
+    "Furman (FL)" happened (school_identity.teamState's docstring)."""
+    body = _SRC[_SRC.index("    rows, alias = [], []"):]
+    assert "if len(named) == 1:" in body
+    assert body.index("named = {st for st in states") < body.index("host = hosted.get(sc)")
+    assert body.index("if len(named) == 1:") < body.index("elif host and host[1] >= 2")
 
 
-def test_the_scan_is_filtered_to_contested_names_and_skips_the_zero_team():
-    """⚠ One pass over results is affordable only because the name list is
-    short; and team_id = 0 is not a school (pool_resolve)."""
-    body = _SRC[_SRC.index("def buildTeamStates("):_SRC.index("def anetSaysTwoSchools(")]
-    assert "lower(btrim(r.school)) = ANY(%s)" in body
-    assert "r.team_id <> 0" in body
-    assert "if not contested:" in body                     # no names, no scan
-    for table in ("results", "results_tf"):
-        assert f'for table in ("results", "results_tf")' in body
+def test_the_assignment_is_written_down_so_the_page_and_the_counts_agree():
+    """⚠ THE HALF THE FIRST ATTEMPT MISSED. The clusters were COUNTED from
+    the COALESCE, but the site re-derived membership from person_home_state
+    alone (stateFilterSql), so /school/Oregon?state=OR listed the athletes
+    who RACE in Oregon, not the ones who run for the university."""
+    src = open(os.path.join(_ROOT, "racecast", "school_identity.py")).read()
+    assert "def stateFilterSql(alias, state, primary, school=None):" in src
+    body = src[src.index('    if not state:\n        return "", {}'):
+               src.index("def homeStates(")]
+    assert body.index("school_athlete_state") < body.index("person_home_state")
+    assert '_LABELS.get("athlete_state")' in body      # absent table: old clause
+    assert '_LABELS["athlete_state"] = _tableExists(cur, "school_athlete_state")' in src
+    # the four school-page queries pass the school, or the clause cannot fire
+    school_py = open(os.path.join(_ROOT, "racecast", "school.py")).read()
+    assert school_py.count("stateFilterSql(") == 4          # all four queries
+    assert "stateFilterSql(\"s\", state, primary, school)" in school_py
+    assert "stateFilterSql(\"rr\", state, primary, school)" in school_py
+    # and it is built from si_assign AFTER the merge and the directory folded
+    assert "def buildAthleteState(cur, contested):" in _SRC
+    assert "LEFT   JOIN school_state_alias_new al" in _SRC
+    assert _SRC.index("buildSchoolLevel(cur)\n        conn.commit()\n\n        buildAthleteState")
+    assert "\"school_athlete_state\"):" in _SRC            # swapped with the rest
 
 
-def test_it_all_degrades_without_anet_team():
-    """No anet_team -> no contested names -> no scan, empty si_team_state,
-    and every COALESCE falls through to the old answer."""
-    body = _SRC[_SRC.index("def anetContestedStates("):_SRC.index("def buildTeamStates(")]
-    assert "to_regclass('anet_team')" in body and "return {}" in body
+def test_the_directory_places_a_college_season_because_anet_cannot():
+    """★ WHY THE FIRST RUN CHANGED NOTHING: every hs-vs-college collision is
+    one anet school and one tfrrs school, tfrrs XC rows carry no anet team
+    id, and `results` has no team_slug -- so the half being placed was the
+    half that was already right."""
+    assert "LEFT   JOIN si_dir_state ds ON ds.school = v.school" in _SRC
+    assert "CASE WHEN v.college THEN ds.state END" in _SRC
+    # anet's own team first, the directory second, the inference last
+    start = _SRC.index("            CREATE TEMP TABLE si_assign AS")
+    cte = _SRC[start:_SRC.index("CREATE TABLE school_identity_new AS")]
+    assert cte.index("ts.state") < cte.index("ds.state") < cte.index("ph.state")
+    # and the college-season flag comes from the pool, without a LIKE pattern
+    assert "starts_with(rr.pool, 'college')" in _SRC
+
+
+def test_contested_names_only_so_every_other_name_is_unchanged():
+    body = _SRC[_SRC.index("def buildDirStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
+    assert "if key in contested and key in dir_states:" in body
+    team = _SRC[_SRC.index("def buildTeamStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
+    assert "lower(btrim(r.school)) = ANY(%s)" in team and "r.team_id <> 0" in team
+
+
+def test_it_all_degrades_without_either_source():
+    body = _SRC[_SRC.index("def authoritativeStates("):_SRC.index("def _schoolNames(")]
+    assert "to_regclass('anet_team')" in body
+    assert "except Exception as exc" in body          # no directory: keep going
+    assert "if len(v) >= 2" in body
 
 
 def test_the_build_orders_them_before_the_clusters():
-    i_anet = _SRC.index("        contested = anetContestedStates(cur)")
+    i_auth = _SRC.index("        contested, dir_states = authoritativeStates(cur)")
     i_team = _SRC.index("        buildTeamStates(cur, contested)")
+    i_dir = _SRC.index("        buildDirStates(cur, contested, dir_states)")
     i_clusters = _SRC.index("CREATE TABLE school_identity_new AS")
     i_merge = _SRC.index("        mergeCoRacingClusters(cur, contested)")
-    assert i_anet < i_team < i_clusters < i_merge
+    assert i_auth < i_team < i_dir < i_clusters < i_merge

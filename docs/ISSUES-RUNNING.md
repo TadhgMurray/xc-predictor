@@ -1630,3 +1630,60 @@ high schooler's season, and a sponsor's youth squad (`HOKA Aggie Running
 Club`, `Asics Aggies` — grades 9-12) pools pro when its athletes race mostly
 for it. Owner: *"these atheltes don't matter enough for me to let them corrupt
 boards."*
+
+### ⏳ N. The first identity fix changed nothing, and the data says exactly why
+
+Owner ran 10b: *"oregon and williams are still exactly the same."* They were.
+What the tables said afterwards:
+
+```
+school_identity          school_state_alias
+ Oregon   | IL | 1019 | 1.0000 | primary       Oregon   | 36 home states -> IL
+ Williams | CA | 1401 | 0.9986 | primary       Williams | 26 home states -> CA
+ Williams | AK |    1 | 0.0007                 (OR among Oregon's, MA among
+ Williams | SC |    1 | 0.0007                  Williams's)
+```
+
+Three separate defects, and the fix needed all three:
+
+**1. anet cannot see the college half.** Every hs-vs-college collision is one
+anet school and one tfrrs school — and tfrrs XC rows carry **no anet team
+id**, while `results` has no `team_slug` either (only `results_tf` does). So
+`buildTeamStates` placed 4.2M pairs and not one of them was the half that was
+wrong. anet knows both Oregons (16586 IL, 21242 Eugene OR) but only one
+Williams (685, CA). What knows the other is **`college_directory`** — 2,000
+NCAA/NAIA names and their states, already built, already read by
+`applyCollegeDirectory`. Authoritative states are now anet's **∪** the
+directory's, and a college-pooled season is placed by the directory in the
+assignment itself.
+
+**2. The refusal was pairwise; the merge is transitive.** Refusing IL↔OR does
+not keep IL and OR apart — IL merges with CA, CA merges with OR, and all 36 of
+Oregon's home states land in one group **with that pair never tested**. 737
+refusals fired and Oregon still came out as one cluster. The guard is now on
+the **group**: each union-find root carries the authoritative states inside it,
+and a merge whose result would hold two of them is refused. And a group holding
+a named school now **resolves to that state**, instead of by row counts — a
+college's rows are mostly away, which is how "Oregon (CA)" and "Furman (FL)"
+happened in the first place.
+
+**3. The site re-derived membership from `person_home_state`.** This is the one
+that would have kept it broken even with correct clusters.
+`stateFilterSql` — the roster, the chips, the splits — narrowed to *"athletes
+whose **home state** is OR"*, i.e. who races in Oregon, not who runs for the
+university. The clusters were counted from one expression and the page filtered
+by another. So the assignment is written down now:
+`school_athlete_state (school, person_id, state)`, built from the same
+`si_assign` the counts come from, **after** the merge and directory folds, and
+swapped in the same transaction as `school_identity`. `stateFilterSql` reads it
+first and falls back to the old clause when the caller names no school or the
+table is absent. Contested names only.
+
+⚠ **`_LABELS` is a per-process cache.** `loadLabels` fills it once per gunicorn
+worker, so no rebuild shows on the site until the workers recycle. Restart the
+app after 10b.
+
+**Still keyed on the name:** `school.py`'s own header says *"KEYED ON THE
+SCHOOL NAME, NOT AN ID"*. `/school/Oregon` is one URL; the state arrives as a
+query parameter that the label, crest and link now agree on. Giving a school a
+real id in the URL is a bigger change and is not this.

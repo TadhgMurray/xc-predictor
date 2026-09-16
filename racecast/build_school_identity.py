@@ -81,31 +81,102 @@ MERGE_MIN_FRACTION = 0.20     # ...as a share of the smaller cluster's races
 # ! CONTESTED NAMES ONLY. A name anet places in a single state has nothing
 #   to disambiguate, and the scan below is a filtered one for that reason:
 #   with every name it would be a full pass over results for no gain.
-def anetContestedStates(cur):
-    """{normalised school name: {state: n teams}} for names anet gives
-    teams in MORE THAN ONE state. Empty without anet_team."""
-    cur.execute("SELECT to_regclass('anet_team')")
-    if cur.fetchone()[0] is None:
-        print("  school_identity: no anet_team -- school states stay inferred",
-              flush=True)
-        return {}
-    cur.execute("""
-        SELECT lower(btrim(school)) AS name,
-               upper(btrim(COALESCE(state, anet_state))) AS st,
-               count(*)
-        FROM   anet_team
-        WHERE  school IS NOT NULL AND btrim(school) <> ''
-          AND  COALESCE(state, anet_state) IS NOT NULL
-          AND  btrim(COALESCE(state, anet_state)) <> ''
-        GROUP  BY 1, 2
-    """)
+# ⚠ ANET ALONE WAS NOT ENOUGH, AND THE FIRST RUN PROVED IT (2026-09-16).
+#   Every high-school-vs-college collision is ONE anet school and ONE tfrrs
+#   school, and tfrrs XC rows carry no anet team id at all (`results` has no
+#   team_slug either -- only results_tf does). So placing rows by team_id
+#   placed the half that was already fine. Measured on the owner's two
+#   examples after that run:
+#
+#     Oregon    ONE cluster, IL, share 1.0000 -- 36 home states, OR among
+#               them, all folded into IL
+#     Williams  CA 1401 (0.9986), AK 1, SC 1 -- 26 states folded into CA,
+#               and MA, where Williams College is, was one of them
+#
+#   anet knows both Oregons (16586 IL, and 21242 in Eugene OR). It knows
+#   only one Williams (685, CA). What knows the other is
+#   college_directory -- 2,000 NCAA/NAIA names and their states, already
+#   built and already read by applyCollegeDirectory. So the authoritative
+#   states for a name are anet's AND the directory's, together.
+def authoritativeStates(cur):
+    """{normalised school name: {state}} for names that more than one
+    NAMED school wears -- anet's teams' states union the college
+    directory's. Empty when neither source exists.
+
+    These are the states a name's clusters may not be merged across, and
+    the states a merged group resolves to. A home state that is in
+    neither is a travel state, as before."""
     by_name = {}
-    for name, st, n in cur.fetchall():
-        by_name.setdefault(name, {})[st] = int(n)
+    cur.execute("SELECT to_regclass('anet_team')")
+    if cur.fetchone()[0] is not None:
+        cur.execute("""
+            SELECT lower(btrim(school)) AS name,
+                   upper(btrim(COALESCE(state, anet_state))) AS st
+            FROM   anet_team
+            WHERE  school IS NOT NULL AND btrim(school) <> ''
+              AND  COALESCE(state, anet_state) IS NOT NULL
+              AND  btrim(COALESCE(state, anet_state)) <> ''
+            GROUP  BY 1, 2
+        """)
+        for name, st in cur.fetchall():
+            by_name.setdefault(name, set()).add(st)
+    n_anet = len(by_name)
+
+    # ★ AND THE DIRECTORY, THROUGH ITS OWN MATCHER. lookup() is the
+    #   three-step one applyCollegeDirectory uses (exact name_norm, then the
+    #   feed's spelling expanded, then token containment), and it answers
+    #   None rather than guessing when several states share a name.
+    dir_states, n_dir = {}, 0
+    try:
+        from build_college_directory import loadDirectory, lookup
+        entries = loadDirectory(cur, "state")
+        if entries:
+            for name in _schoolNames(cur):
+                st = lookup(entries, name)
+                if st:
+                    key = name.strip().lower()
+                    dir_states[key] = str(st).strip().upper()
+                    by_name.setdefault(key, set()).add(dir_states[key])
+            n_dir = len(dir_states)
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"  school_identity: college_directory unavailable "
+              f"({type(exc).__name__}: {exc})", flush=True)
+
     contested = {k: v for k, v in by_name.items() if len(v) >= 2}
-    print(f"  school_identity: anet places {len(by_name):,} school names; "
-          f"{len(contested):,} of them in more than one state", flush=True)
-    return contested
+    print(f"  school_identity: {n_anet:,} names placed by anet and {n_dir:,} by "
+          f"the college directory; {len(contested):,} are worn by schools in "
+          f"more than one state", flush=True)
+    return contested, dir_states
+
+
+def _schoolNames(cur):
+    """Every school string the boards carry. One pass over athlete_season,
+    which is the small table this step reads for everything else."""
+    cur.execute("""
+        SELECT DISTINCT school FROM athlete_season
+        WHERE  COALESCE(TRIM(school), '') <> ''
+    """)
+    return [r[0] for r in cur.fetchall()]
+
+
+def buildDirStates(cur, contested, dir_states):
+    """si_dir_state(school, state): where the college directory says a
+    CONTESTED name's college is. Contested only, so every other name's
+    clusters come out byte-for-byte as before -- applyCollegeDirectory
+    still places those, after the merge, as it always did."""
+    cur.execute("DROP TABLE IF EXISTS si_dir_state")
+    cur.execute("CREATE TEMP TABLE si_dir_state (school text, state text)")
+    rows = []
+    for name in _schoolNames(cur):
+        key = name.strip().lower()
+        if key in contested and key in dir_states:
+            rows.append((name, dir_states[key]))
+    if rows:
+        cur.executemany("INSERT INTO si_dir_state VALUES (%s, %s)", rows)
+        cur.execute("CREATE INDEX si_dir_state_idx ON si_dir_state (school)")
+    print(f"  school_identity: {len(rows):,} contested names have a college "
+          f"the directory can place", flush=True)
+    return len(rows)
 
 
 def buildTeamStates(cur, contested):
@@ -166,18 +237,29 @@ def buildTeamStates(cur, contested):
     return n
 
 
-# ! PURE, SO IT CAN BE TESTED WITHOUT A DATABASE. Two clusters of one name
-#   that anet places in two different states are two SCHOOLS, and the
-#   co-racing merge must not join them however many meets they share --
-#   Oregon (IL) and Oregon (OR) are the case, and a shared meet_id between
-#   the feeds or a transfer's rows is enough to start a merge that then
-#   spreads by union-find.
-def anetSaysTwoSchools(contested, school, state_a, state_b):
-    """True when anet names teams for `school` in BOTH states."""
+# ⚠ AND THE PAIRWISE VERSION OF THIS WAS USELESS, WHICH THE FIRST RUN ALSO
+#   SHOWED. The merge is union-find, so refusing the IL-OR pair does not keep
+#   IL and OR apart: IL merges with CA, CA merges with OR, and all 36 of
+#   Oregon's home states end in one group with the pair never tested. 737
+#   refusals fired and Oregon still came out as one cluster.
+#
+# ★ SO THE GUARD IS ON THE GROUP. Each root carries the set of AUTHORITATIVE
+#   states in its group (authoritativeStates: anet's teams and the college
+#   directory), and a merge whose result would hold two of them is refused.
+#   A group may still gather any number of travel states -- those are one
+#   school's away meets, which is what the merge is for.
+def authStatesOf(contested, school, state):
+    """{state} when this cluster's state is one a NAMED school sits in,
+    else empty. Pure."""
     states = contested.get((school or "").strip().lower())
-    if not states:
-        return False
-    return (state_a or "").upper() in states and (state_b or "").upper() in states
+    st = (state or "").upper()
+    return {st} if states and st in states else set()
+
+
+def wouldMergeTwoSchools(a_states, b_states):
+    """True when joining two groups would put two named schools in one.
+    Pure: the whole guard, in one line, so it can be tested."""
+    return len(set(a_states) | set(b_states)) >= 2
 
 
 def mergeCoRacingClusters(cur, contested=None):
@@ -224,16 +306,27 @@ def mergeCoRacingClusters(cur, contested=None):
         return x
 
     refused = 0
+    contested = contested or {}
+    # the authoritative states inside each group, keyed by its root
+    auth = {}
+
+    def authOf(key):
+        if key not in auth:
+            auth[key] = authStatesOf(contested, key[0], key[1])
+        return auth[key]
+
     for sc, s1, s2, shared in cur.fetchall():
         small = min(n_races.get((sc, s1), 0), n_races.get((sc, s2), 0))
-        # ★ ANET'S WORD BEATS A SHARED MEET (see anetSaysTwoSchools)
-        if anetSaysTwoSchools(contested or {}, sc, s1, s2):
-            refused += 1
-            continue
         if shared >= MERGE_MIN_SHARED and shared >= MERGE_MIN_FRACTION * small:
             a, b = find((sc, s1)), find((sc, s2))
             if a != b:
+                # ★ THE NAMED SCHOOLS' WORD BEATS A SHARED MEET, and it is
+                #   asked of the GROUPS, not of this pair
+                if wouldMergeTwoSchools(authOf(a), authOf(b)):
+                    refused += 1
+                    continue
                 parent[b] = a
+                auth[a] = authOf(a) | authOf(b)
     groups = {}
     for key in list(parent) + [k for k in n_races if k not in parent]:
         root = find(key)
@@ -241,8 +334,9 @@ def mergeCoRacingClusters(cur, contested=None):
             groups.setdefault(root, set()).add(key)
     groups = {r: m | {r} for r, m in groups.items() if len(m | {r}) >= 2}
     if refused:
-        print(f"  school_identity: {refused:,} co-racing merges refused -- anet "
-              f"names teams for the name in both states", flush=True)
+        print(f"  school_identity: {refused:,} co-racing merges refused -- they "
+              f"would have put two NAMED schools of one name in one cluster",
+              flush=True)
     if not groups:
         print("  school_identity: no co-racing clusters to merge", flush=True)
         return
@@ -284,8 +378,17 @@ def mergeCoRacingClusters(cur, contested=None):
     for root, members in groups.items():
         sc = root[0]
         states = {st for _sc, st in members}
+        # ★ A NAMED SCHOOL'S OWN STATE WINS OUTRIGHT (2026-09-16). Without
+        #   this the group holding OR resolves by row counts -- and a
+        #   college's rows are mostly away, which is how "Oregon (CA)" and
+        #   "Furman (FL)" happened in the first place (teamState's
+        #   docstring). The guard above means a group has at most one.
+        named = {st for st in states
+                 if st in (contested.get((sc or "").strip().lower()) or ())}
         host = hosted.get(sc)
-        if host and host[1] >= 2 and host[0] in states:
+        if len(named) == 1:
+            state = next(iter(named))
+        elif host and host[1] >= 2 and host[0] in states:
             state = host[0]
         else:
             counts = {st: row_state.get(sc, {}).get(st, 0) for st in states}
@@ -631,6 +734,48 @@ def buildSchoolLevel(cur):
           f"in {time.time() - t0:.0f}s", flush=True)
 
 
+# ★ WHO IS IN WHICH CLUSTER, WRITTEN DOWN (2026-09-16). The site's roster,
+#   chips and splits all narrow by "athletes ASSIGNED to this state", and
+#   the only assignment they had was person_home_state -- where the athlete
+#   RACES. So even with the right clusters, /school/Oregon?state=OR listed
+#   the athletes who race in Oregon rather than the ones who run for the
+#   University of Oregon. This is the same COALESCE the clusters were
+#   counted from, after the merge and the directory have folded states, so
+#   the page and the counts cannot disagree.
+#
+# ! CONTESTED NAMES ONLY -- every other name's assignment IS its home state,
+#   which the fallback already answers. Keeps the table small enough to be
+#   a lookup rather than a second person_home_state.
+def buildAthleteState(cur, contested):
+    """school_athlete_state_new(school, person_id, state)."""
+    t0 = time.time()
+    cur.execute("DROP TABLE IF EXISTS school_athlete_state_new")
+    cur.execute("""
+        CREATE TABLE school_athlete_state_new (
+            school    text   NOT NULL,
+            person_id bigint NOT NULL,
+            state     text   NOT NULL,
+            PRIMARY KEY (school, person_id))
+    """)
+    if contested:
+        cur.execute("""
+            INSERT INTO school_athlete_state_new (school, person_id, state)
+            SELECT a.school, a.person_id, COALESCE(al.state, a.state)
+            FROM   si_assign a
+            LEFT   JOIN school_state_alias_new al
+                   ON al.school = a.school AND al.home_state = a.state
+            WHERE  lower(btrim(a.school)) = ANY(%s)
+              AND  COALESCE(al.state, a.state) IS NOT NULL
+            ON CONFLICT DO NOTHING
+        """, (sorted(contested),))
+    cur.execute("CREATE INDEX school_athlete_state_new_person_idx "
+                "ON school_athlete_state_new (person_id)")
+    cur.execute("SELECT count(*), count(DISTINCT school) FROM school_athlete_state_new")
+    n, ns = cur.fetchone()
+    print(f"  school_athlete_state: {n:,} (athlete, school) assignments over "
+          f"{ns:,} contested names in {time.time() - t0:.0f}s", flush=True)
+
+
 def main():
     t0 = time.time()
     with getConn() as conn:
@@ -678,32 +823,67 @@ def main():
         # ★ ANET FIRST: which names it places in two states, and where
         #   each athlete's own team for those names is. Both feed the
         #   clusters CTE below and the co-racing merge after it.
-        contested = anetContestedStates(cur)
+        contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
+        buildDirStates(cur, contested, dir_states)
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
         cur.execute("DROP TABLE IF EXISTS school_identity_new")
+        # ★ THE ASSIGNMENT IS A TABLE NOW, NOT A CTE -- and that is the half
+        #   the first attempt missed (2026-09-16). The clusters were counted
+        #   from this expression, but the SITE re-derives who is in which
+        #   cluster from person_home_state alone
+        #   (school_identity.stateFilterSql), so a roster filtered to
+        #   Oregon (OR) still meant "athletes who RACE mostly in Oregon" --
+        #   half the university missing and an Illinois kid or two added.
+        #   One expression, written down, read by both.
+        cur.execute("DROP TABLE IF EXISTS si_assign")
         cur.execute("""
-            CREATE TABLE school_identity_new AS
+            CREATE TEMP TABLE si_assign AS
             WITH votes AS (
-                SELECT DISTINCT rr.school, rr.person_id
+                -- ! bool_or, NOT DISTINCT: one vote per (school, athlete)
+                --   still, plus whether any of that athlete's seasons under
+                --   the name was a COLLEGE one.
+                -- ! starts_with, NOT LIKE 'college%': this query takes no
+                --   parameters, so psycopg2 does not un-escape a doubled
+                --   percent and a LIKE pattern here would search for a
+                --   literal one (tests/test_no_stray_percent_in_sql.py)
+                SELECT rr.school, rr.person_id,
+                       bool_or(starts_with(rr.pool, 'college')
+                            OR starts_with(rr.pool, 'pro')) AS college
                 FROM   athlete_season rr
                 WHERE  COALESCE(TRIM(rr.school), '') <> ''
                   AND  rr.person_id IS NOT NULL
-            ),
-            clusters AS (
-                -- ★ ANET'S STATE FOR THE ATHLETE'S OWN TEAM FIRST, the
-                --   home-state inference only where there is no team id
-                --   (tfrrs, team_id = 0, a name anet places in one state).
-                --   See anetContestedStates and buildTeamStates.
-                SELECT v.school, COALESCE(ts.state, ph.state) AS state,
-                       count(*) AS n_athletes
-                FROM   votes v
-                JOIN   person_home_state_new ph USING (person_id)
-                LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
-                                            AND ts.school = v.school
-                GROUP  BY v.school, COALESCE(ts.state, ph.state)
+                GROUP  BY 1, 2
+            )
+            -- ★ THE ATHLETE'S OWN anet TEAM FIRST (buildTeamStates), THEN
+            --   THE COLLEGE DIRECTORY for a college-pooled season
+            --   (buildDirStates), THEN the home-state inference.
+            --
+            -- ⚠ THE DIRECTORY LEG IS THE ONE THE FIRST RUN LACKED. Every
+            --   high-school-vs-college collision is one anet school and one
+            --   tfrrs school; a tfrrs XC row carries no anet team id, and
+            --   `results` has no team_slug -- so anet alone placed only the
+            --   half that was already right. Williams College and the
+            --   University of Oregon were still being placed by where their
+            --   athletes RACE, which for a college is a travel mode.
+            SELECT v.school, v.person_id,
+                   COALESCE(ts.state,
+                            CASE WHEN v.college THEN ds.state END,
+                            ph.state) AS state
+            FROM   votes v
+            JOIN   person_home_state_new ph USING (person_id)
+            LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
+                                        AND ts.school = v.school
+            LEFT   JOIN si_dir_state ds ON ds.school = v.school
+        """)
+        cur.execute("CREATE INDEX si_assign_idx ON si_assign (school, person_id)")
+        cur.execute("""
+            CREATE TABLE school_identity_new AS
+            WITH clusters AS (
+                SELECT school, state, count(*) AS n_athletes
+                FROM   si_assign GROUP BY school, state
             )
             SELECT school, state, n_athletes,
                    round(n_athletes::numeric
@@ -739,6 +919,9 @@ def main():
         buildSchoolLevel(cur)
         conn.commit()
 
+        buildAthleteState(cur, contested)
+        conn.commit()
+
         # ---- the swap: old tables serve until the new ones are whole ----
         #
         # ⚠ THIS HAD NO RETRY AT ALL, AND IT DEADLOCKED (2026-09-01). The
@@ -765,13 +948,24 @@ def main():
                             "IN ACCESS EXCLUSIVE MODE")
                 cur.execute("DROP TABLE IF EXISTS school_state_alias")
                 for t in ("person_home_state", "school_identity",
-                          "school_state_alias", "school_level"):
+                          "school_state_alias", "school_level",
+                          # ! IN THE SAME TRANSACTION AS school_identity. The
+                          #   counts and the membership are one answer; a page
+                          #   reading the new clusters against the old
+                          #   assignments would show a roster that does not
+                          #   add up to the chip beside it.
+                          "school_athlete_state"):
                     cur.execute(f"DROP TABLE IF EXISTS {t}")
                     cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
                 cur.execute("ALTER INDEX school_identity_new_school_idx "
                             "RENAME TO school_identity_school_idx")
                 cur.execute("ALTER INDEX school_level_new_idx "
                             "RENAME TO school_level_idx")
+                cur.execute("ALTER TABLE school_athlete_state RENAME CONSTRAINT "
+                            "school_athlete_state_new_pkey TO "
+                            "school_athlete_state_pkey")
+                cur.execute("ALTER INDEX school_athlete_state_new_person_idx "
+                            "RENAME TO school_athlete_state_person_idx")
                 cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
                             "person_home_state_new_pkey TO "
                             "person_home_state_pkey")
