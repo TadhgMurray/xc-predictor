@@ -1130,6 +1130,59 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
              "elapsed": elapsed}
     return total_loss / max(n_batches, 1), stats
 
+# How close two athletes' baselines must be, in log time, to count as a
+# "close pair". 0.02 is 2% -- about 18 seconds on a 15:00 runner, which is
+# two teammates rather than two strangers.
+CLOSE_PAIR_LN = 0.02
+
+
+# Purpose:   how often the model orders two SIMILAR athletes correctly, and
+#            how often its own baseline does.
+# Output:    (model correct, baseline correct, pairs counted).
+#
+# ⚠ BECAUSE MAE CANNOT SEE THE FAULT THE OWNER IS REPORTING. Measured on a
+#   real 152-athlete championship (2026-09-17), within teammate pairs:
+#
+#       the model            20.7% inverted
+#       its baseline alone   20.0%
+#       season mean rating   19.1%
+#
+#   The model is WORSE THAN DOING NOTHING on close pairs -- its correction is
+#   noise at that resolution -- and every number train.py printed said the
+#   run was fine. "it has me losing to my teamate who I beat in every single
+#   race that season" is this, and it has to be visible per epoch or a
+#   retrain cannot be judged on it.
+#
+# ★ PAIRED ON THE BASELINE, NOT ON THE TRUTH. Pairing on what actually
+#   happened would select for pairs the model was always going to find hard;
+#   pairing on the anchor asks the question the race asks -- two athletes who
+#   LOOK the same beforehand, which one wins.
+#
+# ! SORTED AND ADJACENT, so every example is used once and no RNG enters the
+#   validation metric. The gate then keeps only genuinely close neighbours.
+def _closePairOrder(base, lr_pred, lr_true):
+    lb = torch.log(base.to(torch.float32).clamp(min=1.0))
+    order = torch.argsort(lb)
+    lb = lb[order]
+    # absolute predicted and true log-times: the anchor plus the ratio
+    pred = lb + lr_pred.to(torch.float32)[order]
+    true = lb + lr_true.to(torch.float32)[order]
+    a, b = slice(0, -1), slice(1, None)
+    if lb.numel() < 2:
+        return 0, 0, 0
+    close = (lb[b] - lb[a]).abs() <= CLOSE_PAIR_LN
+    d_true = true[b] - true[a]
+    close &= d_true != 0                       # a tie orders nobody
+    if not bool(close.any()):
+        return 0, 0, 0
+    s_true = torch.sign(d_true[close])
+    s_pred = torch.sign(pred[b][close] - pred[a][close])
+    s_base = torch.sign(lb[b][close] - lb[a][close])
+    return (int((s_pred == s_true).sum()),
+            int((s_base == s_true).sum()),
+            int(close.sum()))
+
+
 # _validateOneEpoch
 # Purpose: Run one full pass over the validation data, measuring loss
 #          WITHOUT learning — no backward, no optimizer step. Tells us
@@ -1161,6 +1214,7 @@ def _validateOneEpoch(model, loader, criterion):
     band_err = [0.0] * len(GAP_BANDS)   # sum |error| per horizon band
     band_base = [0.0] * len(GAP_BANDS)  # and the last-race baseline's
     band_n = [0] * len(GAP_BANDS)
+    pair_model = pair_base = pair_n = 0
 
     with torch.no_grad():
 
@@ -1202,6 +1256,13 @@ def _validateOneEpoch(model, loader, criterion):
             # ! THE BAND COMES OFF THE RAW CONTEXT, not off a normalised
             #   copy. setFeatureStats normalises inside forward(); the
             #   tensor here is what extraction wrote, so this is days.
+            # ★ CAN IT ORDER TWO SIMILAR ATHLETES? See _closePairOrder.
+            pm, pb, pn = _closePairOrder(
+                model.baselineSeconds(sequences, masks), lr_pred, lr_true)
+            pair_model += pm
+            pair_base += pb
+            pair_n += pn
+
             gap = context[:, CONTEXT_GAP_INDEX]
             for b, (lo, hi, _lab) in enumerate(GAP_BANDS):
                 m = (gap >= lo) & (gap < hi)
@@ -1224,7 +1285,11 @@ def _validateOneEpoch(model, loader, criterion):
             {"rmse_pct": 100.0 * (sq_err / n_ex) ** 0.5,
              "sigma_pct": 100.0 * (sq_sig / n_ex) ** 0.5,
              "inside_1s": 100.0 * inside / n_ex,
-             "bands": bands})
+             "bands": bands,
+             # ordering on similar athletes -- see _closePairOrder
+             "pair_n": pair_n,
+             "pair_model": 100.0 * pair_model / max(pair_n, 1),
+             "pair_base": 100.0 * pair_base / max(pair_n, 1)})
 
 
 # ------------------------------------------------------------------ #
@@ -1453,7 +1518,10 @@ def main():
               f"{pct_base:.2f}%  "
               f"rmse {cal['rmse_pct']:.2f}% vs sigma {cal['sigma_pct']:.2f}% "
               f"({cal['inside_1s']:.0f}% inside 1s)  "
-              f"{st['examples_per_s']:,.0f} ex/s  "
+              + (f"close-pair {cal['pair_model']:.1f}% vs "
+                 f"{cal['pair_base']:.1f}% (n={cal['pair_n']:,})  "
+                 if cal["pair_n"] else "")
+              + f"{st['examples_per_s']:,.0f} ex/s  "
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "
               + (f"clamped {st['clamped']:,}  " if st.get("clamped") else "")
