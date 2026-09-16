@@ -2024,38 +2024,159 @@ function renderIndividual(d) {
   </div>`;
 }
 
-function renderTeam(d) {
+/* ------------------------------------------------------------------ *
+ *  THE RESULT, WHICH IS A RESULTS PAGE
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ IT READS EXACTLY LIKE A RACE PAGE, AND THAT IS THE SPEC (owner,
+ *   2026-09-16: "the actual ui kind of sucks donkey dick. It should read
+ *   exactly like a results page!").
+ *
+ *   What it used to be: one table, with every scorer crammed into a single
+ *   "Scorers" cell as a run-on line of "3. Name 15:42.1". Nobody reads a
+ *   race that way. A race page reads as TWO tables -- team scores with one
+ *   column per scoring position, then every finisher, one per row -- and
+ *   people already know how to read those, because they read them for every
+ *   race on the site.
+ *
+ * ! SO THE MARKUP IS race.html's MARKUP: plain <table>, the same column
+ *   order, the same " - " for an empty cell, the same .displacer on
+ *   positions 6 and 7, the same .meta note underneath. Not a lookalike
+ *   restyled under .predict2 -- the same elements, so the global table rules
+ *   in style.css style them identically and they cannot drift apart.
+ *
+ * ★ AND EVERY LINK IS LIVE, because a results page's are. The school href
+ *   and label come resolved from the server (schoolHref knows Amherst the
+ *   college from Amherst the middle school; the browser does not), and the
+ *   athlete cell links to the profile.
+ */
+
+/* One school cell: crest-less, but the same resolved link and label the
+   race page draws. `href` null means labels were not loaded server-side --
+   then it renders as a bare name, exactly as race.html does for a
+   non-team. */
+function schoolCell(school, state, href, label) {
+  if (!school) return " - ";
+  const text = esc(label || schoolWithState(school, state));
+  return href ? `<a href="${esc(href)}">${text}</a>` : text;
+}
+
+function teamScoreTable(d) {
   const scored = (d.teams || []).some((t) => t.actual_score !== undefined
                                           && t.actual_score !== null);
-  const note = d.mode === "head_to_head"
-    ? `<p class="hint">Scored as if only these teams raced.</p>`
-    : `<p class="hint">Scored against the full field.</p>`;
+  /* ⚠ AN INCOMPLETE TEAM IS NOT A ROW, IT IS A SENTENCE -- which is what
+       race.html does, and the reason is visible the moment you try the
+       other way. A team that cannot score has no scoring places, so its
+       seven cells fall back to FINISHING places: Houghton read "4 13 18 21"
+       across the scorer columns, which is exactly what a team that took
+       those places would look like. The note says it instead, in words. */
+  const full = (d.teams || []).filter((t) => t.score !== null);
+  const short = (d.teams || []).filter((t) => t.score === null);
+  const shortList = short.map((t) => `${esc(
+      t.school_label || schoolWithState(t.team, t.state))} (${
+      esc(t.note || "incomplete")})`).join(", ");
 
-  const rows = (d.teams || []).map((t, i) => `
-    <tr>
-      <td class="rank">${t.score === null ? " - " : i + 1}</td>
-      <td>${esc(schoolWithState(t.team, t.state))}${t.divs
+  if (!full.length) {
+    /* race.html's own wording for the same situation. */
+    return `<h2>Predicted team scores</h2>
+      <p class="meta">No team has five runners in this race, so nothing can
+        be scored.${short.length ? ` Runners per team: ${shortList}.` : ""}</p>`;
+  }
+
+  const rows = full.map((t, i) => {
+    /* ! ONE CELL PER SCORING POSITION, 1..7, and a team that has fewer shows
+         " - " in the rest. A fixed seven columns is what makes two teams
+         comparable down the page; a variable-length list is not. */
+    const runners = t.runners || [];
+    const cells = [];
+    for (let k = 0; k < 7; k++) {
+      const r = runners[k];
+      /* score_place, NOT place: the number the points are summed from. A
+         complete team's shown places have to add up to its own score, and
+         they only do once unattached runners and incomplete teams are
+         lifted out. */
+      const n = r ? (r.score_place || r.place) : null;
+      cells.push(`<td${k >= 5 ? ' class="displacer"' : ""}>${
+        r ? `<a href="/athlete/${encodeURIComponent(r.person_id)}" title="${
+              esc(r.name || "")} – ${fmtTime(r.seconds)}">${n}</a>`
+          : " - "}</td>`);
+    }
+    return `<tr>
+      <td>${i + 1}</td>
+      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label)}${
+        t.divs
           ? ` <span class="t-divs" title="Coalesced: one squad, drawn from `
             + `these divisions and capped at seven.">${
               esc(t.divs.join(" + "))}</span>`
           : ""}</td>
-      <td>${t.score === null ? esc(t.note || "incomplete") : t.score}</td>
+      <td>${t.score}</td>
       ${scored ? `<td class="actual">${t.actual_score ?? " - "}</td>` : ""}
-      <td class="runners">${(t.runners || []).map((r) =>
-        /* ! score_place, NOT place -- the number the points are summed from.
-             A complete team's displayed places have to add up to its own
-             score, and they only do once unattached runners and incomplete
-             teams are lifted out. An incomplete team has no scoring place,
-             so it falls back to where its runners finish. */
-        `<span class="runner">${r.score_place || r.place}. ${esc(r.name || "")}` +
-        ` <em>${fmtTime(r.seconds)}</em></span>`).join("")}</td>
-    </tr>`).join("");
+      ${cells.join("")}
+    </tr>`;
+  }).join("");
 
-  return note + `<table class="rk">
-    <thead><tr><th>#</th><th>Team</th><th>Predicted</th>
-      ${scored ? "<th>Actual</th>" : ""}<th>Scorers</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  /* The same sentence race.html prints under its scores, plus the teams that
+     could not score and why -- which is now a real answer, since a lone
+     qualifier with their squad added reads "only 1 entered". */
+  const note = `<p class="meta">Computed: five scorers, two displacers,
+    incomplete teams removed.${
+      short.length ? ` Not scored: ${shortList}.` : ""}</p>`;
+
+  return `<h2>Predicted team scores</h2>
+    <table>
+      <thead><tr>
+        <th>Place</th><th>Team</th><th>Points</th>
+        ${scored ? "<th>Actual</th>" : ""}
+        <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>${note}`;
+}
+
+/* Every predicted finisher, one per row -- race.html's second table.
+   ★ THE BAND STAYS. A single race carries about +-4 rating points, so a time
+     quoted to a tenth with no range claims a precision the model does not
+     have. It rides UNDER the time rather than in its own column, so the
+     column set is the race page's exactly. */
+function finishTable(d) {
+  const runners = d.runners || [];
+  if (!runners.length) return "";
+  const rows = runners.map((r) => `<tr>
+      <td>${r.place}</td>
+      <td>${r.person_id
+            ? `<a href="/athlete/${encodeURIComponent(r.person_id)}">${
+                esc(r.name || "Unknown")}</a>`
+            : esc(r.name || "Unknown")}</td>
+      <td>${esc(r.grade_label || " - ")}</td>
+      <td>${schoolCell(r.school, r.school_state, r.school_href,
+                       r.school_label)}</td>
+      <td class="no-break">${fmtTime(r.seconds)}${
+        r.lo !== undefined && r.lo !== null
+          ? `<span class="pred-band">${fmtTime(r.lo)}–${
+              fmtTime(r.hi)}</span>` : ""}</td>
+      <td class="no-break">${rv(r.rating, r.hs_rating) || " - "}</td>
+      <td>${r.score_place || " - "}</td>
+    </tr>`).join("");
+  return `<h2>Predicted results</h2>
+    <table>
+      <thead><tr>
+        <th>Place</th><th>Athlete</th><th>Grade</th><th>School</th>
+        <th>Time</th><th>Rating</th><th>Points</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="meta">Each time is the model's prediction with its likely range
+      underneath. Points is the scoring place: the gap from Place is the
+      unattached runners, the incomplete teams and the eighth runners.</p>`;
+}
+
+function renderTeam(d) {
+  /* The mode line first, because it changes what every number below means. */
+  const note = d.mode === "head_to_head"
+    ? `<p class="meta">Scored as if only these teams raced.</p>`
+    : `<p class="meta">Scored against the full field.</p>`;
+  return note + teamScoreTable(d) + finishTable(d);
 }
 
 
@@ -2750,7 +2871,15 @@ document.addEventListener("click", (e) => {
           const qs = new URLSearchParams({ q: q, sport: state.meet.sport });
           if (state.field?.gender) qs.set("gender", state.field.gender);
           const res = await fetch("/api/predict/athletes?" + qs.toString());
-          const hits = ((await res.json()) || {}).athletes || [];
+          /* ! readJson, NOT res.json (owner, 2026-09-16: "the add anyone box
+               says it could not search for anything I write into it"). nginx
+               answers a slow query with its OWN html page, so res.json()
+               threw and the catch below reported "Could not search." for
+               every keystroke -- the one message that says nothing about
+               what happened. readJson turns that into the server's text. */
+          const data = await readJson(res);
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          const hits = (data || {}).athletes || [];
           rows.innerHTML = hits.length
             /* ★ TWO LINES, NOT ONE (owner, 2026-09-01). Name, rating and
                school on a single flex row left the name about forty pixels
@@ -2772,8 +2901,11 @@ document.addEventListener("click", (e) => {
             : `<div class="squad-loading">No athlete by that name.</div>`;
           applyScale();
         } catch (err) {
-          rows.innerHTML =
-            `<div class="squad-loading">Could not search.</div>`;
+          /* ★ AND IT SAYS WHICH FAILURE. "Could not search." is true of a
+               timeout, a 500, a typo in the SQL and a dropped connection
+               alike, so it sent the reader nowhere. */
+          rows.innerHTML = `<div class="squad-loading">Could not search: ${
+            esc(err.message || err)}</div>`;
         }
       }, 180);
     });

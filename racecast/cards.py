@@ -1112,9 +1112,15 @@ def predictionCardData(cur, args):
         return None
     teams = [{"school": schoolLabel(t["team"]), "points": t["score"]}
              for t in out.get("teams") or [] if t.get("score") is not None][:7]
-    runners = [dict(r, school=t["team"]) for t in out.get("teams") or [] for r in t.get("runners") or []]
-    runners.sort(key=lambda r: (r.get("place") or 10 ** 6))
-    athletes = [{"name": (r.get("name") or "Unknown").strip(), "school": schoolLabel(r["school"]),
+    # ★ THE TOP FIVE OF THE RACE, NOT OF THE SCORING TEAMS. predictTeam now
+    #   returns the whole field in predicted order, so an unattached runner
+    #   or a lone qualifier who is predicted to win appears on the card --
+    #   which was impossible while this rebuilt the order from each team's
+    #   own seven, since a runner on no team is in nobody's seven.
+    runners = sorted(out.get("runners") or [],
+                     key=lambda r: (r.get("place") or 10 ** 6))
+    athletes = [{"name": (r.get("name") or "Unknown").strip(),
+                 "school": schoolLabel(r["school"]) if r.get("school") else "",
                  "time": _clock(r.get("seconds"))} for r in runners[:5]]
     if not teams and not athletes:
         return None

@@ -31,7 +31,7 @@ def _row(pid, school, entered=None):
 
 def _run(field):
     preds = [{"seconds": 900 + i} for i in range(len(field))]
-    return {t["team"]: t for t in predict._score(field, preds)}
+    return {t["team"]: t for t in predict._score(field, preds)[0]}
 
 
 def test_a_lone_qualifier_plus_a_whole_squad_is_still_a_lone_qualifier():

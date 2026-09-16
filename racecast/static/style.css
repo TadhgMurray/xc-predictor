@@ -4943,3 +4943,59 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 @media (max-width: 600px) {
     .coach-home .coach-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- the prediction result IS a results page --------------------------- *
+ * Owner, 2026-09-16: "the actual ui kind of sucks donkey dick. It should
+ * read exactly like a results page!"
+ *
+ * ★ SO THERE IS ALMOST NOTHING HERE, AND THAT IS THE POINT. renderTeam now
+ *   emits race.html's own markup -- plain <table>, the same columns, the
+ *   same .displacer on positions 6 and 7, the same <p class="meta"> note --
+ *   so the global table rules at the top of this file style it identically.
+ *   A second set of rules that merely LOOKED like the race page is what
+ *   drifts; reusing the first set cannot.
+ *
+ * ! WHAT IS LEFT IS THE MEASURE AND THE BAND. #output has to be as wide as
+ *   .page-wide or a seven-scorer table wraps where the race page's does not,
+ *   and the prediction carries one thing a result does not: a range. */
+/* ⚠ THE MEASURE IS THE RESULTS PAGE'S, 1080px, and it is set on the PAGE
+ *   rather than on #output. Breaking one child out of a 940px column with a
+ *   negative margin has to guess the padding to stay centred, and guesses
+ *   wrong at every other viewport. The pickers inside carry their own
+ *   max-widths (380/520px), so widening the column widens only the tables
+ *   that wanted widening. */
+.predict2 { max-width: 1080px; }
+
+.predict2 #output h2 {
+    font-size: 1.25rem;
+    margin: 2rem 0 0.6rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--line-2, #ddd);
+}
+.predict2 #output h2:first-child { margin-top: 1.4rem; }
+.predict2 #output > .meta { margin: 0.5rem 0 0; }
+
+/* ★ THE BAND UNDER THE TIME, NOT BESIDE IT. A single race carries about
+ *   +-4 rating points, so a time to the tenth with no range overstates what
+ *   the model knows -- but a Range COLUMN is a column the race page does not
+ *   have, and matching it column for column is the whole ask. */
+.predict2 #output .pred-band {
+    display: block;
+    color: #767676;
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    margin-top: 1px;
+}
+
+/* An incomplete team's reason ("only 1 entered") sits where its points
+   would, so it must not read as a score. */
+.predict2 #output .muted { color: #767676; font-size: 0.85em; }
+.predict2 #output td.actual { color: #374151; }
+.predict2 #output .t-divs { color: #767676; font-size: 0.8em; }
+
+@media (max-width: 1019px) {
+    /* Ten columns do not fit a phone, so the table scrolls rather than
+       crushing the school column to nothing. */
+    .predict2 #output { overflow-x: auto; }
+    .predict2 #output table { min-width: 660px; }
+}

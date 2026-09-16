@@ -232,9 +232,64 @@ def predictTeam(cur, schools, target, head_to_head=False,
     if target.get("coalesce") and len(target.get("div_ids") or []) > 1:
         field, preds = _capCoalesced(field, preds)
 
+    teams, finishers = _score(field, preds)
+
+    # ★ THE PAGE RENDERS WHAT A RESULTS PAGE RENDERS, so the row carries what
+    #   race.html's row carries: the school's resolved link and label, the
+    #   grade spelled for its own level, and the rating on both scales.
+    #
+    # ! RESOLVED HERE, NOT IN THE BROWSER. schoolHref/schoolLabelIn take the
+    #   POOL into account -- Amherst (MA) is a NESCAC college and a middle
+    #   school, and a college row's link has to say so. gradeLabel turns "12"
+    #   into "Sr" in a high school pool and "SO-2" in a college one. Both are
+    #   rules with one correct spelling; a JS twin of either is a second
+    #   spelling waiting to drift.
+    _decorate(finishers, (target.get("sport") or "XC").upper())
+    for t in teams:
+        t.update(_schoolLink(t.get("team"), t.get("state"), None))
+
     return {"available": True,
             "mode": "head_to_head" if head_to_head else "meet",
-            "teams": _score(field, preds)}
+            "teams": teams,
+            "runners": finishers}
+
+
+# Purpose:   the href and label a MENTION of a school gets, site-wide.
+# ! THE SAME TWO FUNCTIONS race.html CALLS. A bare /school/Name sends Oregon
+#   (OR) and Oregon (IL) to one page -- see school_identity.schoolHref, which
+#   is where that was fixed once.
+def _schoolLink(school, state, pool):
+    if not school:
+        return {"school_href": None, "school_label": None}
+    try:
+        from school_identity import schoolHref, schoolLabelIn
+        return {"school_href": schoolHref(school, state, pool=pool),
+                "school_label": schoolLabelIn(school, state)}
+    except Exception:                                   # noqa: BLE001
+        # Labels not loaded (a script importing predict without the app).
+        # A bare name and no link is the old behaviour, not a crash.
+        return {"school_href": None, "school_label": school}
+
+
+# Purpose:   put on each predicted row what a results-page row shows.
+# ! THE HS-EQUIVALENT COMES FROM pool_view, the one place that owns it, so the
+#   site-wide scale toggle switches these ratings with every other rating on
+#   the page (owner, 2026-09-15).
+def _decorate(rows, sport):
+    from grade_label import gradeLabel
+    for r in rows:
+        r["grade_label"] = gradeLabel(r.get("grade"), r.get("pool"))
+        r.update(_schoolLink(r.get("school"), r.get("school_state"),
+                             r.get("pool")))
+    rated = [r for r in rows if r.get("rating") is not None]
+    if rated:
+        try:
+            from pool_view import stampBoardRows
+            stampBoardRows(rated, rating_keys=("rating",), sport=sport)
+        except Exception:                               # noqa: BLE001
+            # No conversion available for this pool -- the raw rating shows,
+            # which is what the column did before the toggle existed.
+            pass
 
 
 def _fromDivs(from_div, team):
@@ -254,6 +309,10 @@ def _score(field, preds):
       every later finisher's place up, which is the whole tactical point of
       team depth. Dropping them would make a deep team and a top-heavy one
       score identically.
+
+    Returns (teams, finishers) -- the scored teams, and every predicted
+    runner in finish order. ONE numbering serves both, because `place` and
+    `score_place` are computed here and nowhere else.
     """
     # An athlete the corpus cannot predict (no rated rows) is left out of
     # the predicted race rather than handed an invented time.
@@ -317,9 +376,27 @@ def _score(field, preds):
     taken = {}
     state = {}
     from_div = {}
+    # ★ AND THE FINISH ORDER ITSELF (owner, 2026-09-16: "it should read
+    #   exactly like a results page"). A results page is TWO tables -- team
+    #   scores, then every finisher -- and the second one needs the whole
+    #   field in predicted order, unattached runners included.
+    #
+    # ! BUILT IN THIS LOOP, NOT IN A SECOND PASS. `place` and `score_place`
+    #   are two different numbers computed here once; deriving them again
+    #   somewhere else is exactly how the page came to show 82 teams while
+    #   the model scored 400.
+    finishers = []
     for runner, pred in order:
         place += 1
         team = runner.get("school")
+        row = {"person_id": runner["person_id"], "name": runner.get("name"),
+               "place": place, "seconds": pred["seconds"],
+               "lo": pred.get("lo"), "hi": pred.get("hi"),
+               "school": team if isTeam(team) else None,
+               "school_state": runner.get("school_state"),
+               "grade": runner.get("grade"), "pool": runner.get("pool"),
+               "rating": runner.get("rating"), "score_place": None}
+        finishers.append(row)
         if not isTeam(team):
             continue
         entry = {"person_id": runner["person_id"], "name": runner.get("name"),
@@ -347,6 +424,7 @@ def _score(field, preds):
             taken[team] = taken.get(team, 0) + 1
             score_place += 1
             entry["score_place"] = score_place
+            row["score_place"] = score_place
         by_team.setdefault(team, []).append(entry)
 
     out = []
@@ -386,7 +464,7 @@ def _score(field, preds):
     # Incomplete teams sort last; ties broken by the sixth runner, as in the
     # real rules.
     out.sort(key=lambda t: (t["score"] is None, t["score"] or 0))
-    return out
+    return out, finishers
 
 
 # ------------------------------------------------------------------ #
@@ -1078,9 +1156,19 @@ def _fieldLevels(cur, person_ids, sport):
 
 
 # A level has to be this much of the field to count as one of its levels.
-# 10%: a championship with a handful of mis-pooled rows still comes back
-# {"college"}; a genuine open meet with a quarter high schoolers keeps both.
-_LEVEL_MIN_SHARE = 0.10
+#
+# ⚠ 10% WAS FAR TOO LENIENT (owner, 2026-09-16: "make it more than 10%, maybe
+#   more like 50-70%"). It is the share at which a level is kept, so at 0.10 a
+#   college championship with 12% mis-pooled rows comes back {"college","ms"}
+#   -- both levels pass, and a filter that keeps both filters nothing. The
+#   middle schoolers the threshold exists to remove are exactly the rows most
+#   likely to sit in that 10%.
+#
+# ★ AT 0.60 ONLY ONE LEVEL CAN PASS, so the answer is "the level this race is
+#   clearly at, or nothing". A genuinely mixed meet -- an open race half high
+#   school and half college -- clears the bar for neither and is not filtered,
+#   which is the right answer: there is no single level to narrow to.
+_LEVEL_MIN_SHARE = 0.60
 
 
 def _fieldGender(cur, person_ids, sport):
@@ -1380,14 +1468,21 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                 entered[school] = int(n)
             for pid in ids:
                 by_id.setdefault(int(pid), school)
-        named = {e["person_id"]: e.get("name")
+        # ! THE SCHOOL STILL COMES FROM THE PAGE; only the columns the page
+        #   does not send are looked up. Resolving the school again is the
+        #   divergence this whole branch exists to prevent.
+        known = {e["person_id"]: e
                  for e in _athleteEntries(cur, list(by_id), sport,
                                           _currentSeason(cur, sport))}
-        entries = [{"person_id": pid, "school": school,
-                    "name": named.get(pid) or "Unknown",
-                    "entered": entered.get(school),
-                    "school_state": _stateOf(school)}
-                   for pid, school in by_id.items()]
+        entries = []
+        for pid, school in by_id.items():
+            k = known.get(pid) or {}
+            entries.append({"person_id": pid, "school": school,
+                            "name": k.get("name") or "Unknown",
+                            "grade": k.get("grade"), "pool": k.get("pool"),
+                            "rating": k.get("rating"),
+                            "entered": entered.get(school),
+                            "school_state": _stateOf(school)})
         return entries
 
     # ★ SEVERAL DIVISIONS AS ONE RACE (issue #86). Each division's roster is
@@ -1819,6 +1914,10 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
             "person_id": r["person_id"], "school": r["school"],
             # Carried for the cross-pool sort below, not for display.
             "pool": r.get("pool"),
+            # ! AND FOR DISPLAY: a results page has a Grade column, and the
+            #   prediction's results table is the same table (owner,
+            #   2026-09-16). gradeLabel spells it for the row's own level.
+            "grade": r.get("grade"),
             "name": (r["name"] or "").strip() or "Unknown",
             "rating": (round(float(r["mean_rating"]), 1)
                        if r["mean_rating"] is not None else None),
@@ -1893,14 +1992,22 @@ def _bestFirst(rows, sport):
 
 def _athleteEntries(cur, person_ids, sport, season_year):
     """name + school for hand-added athletes: this season's row first,
-    the athletes table for anyone without one."""
+    the athletes table for anyone without one.
+
+    ★ AND grade/rating/pool, BECAUSE THE RESULTS TABLE HAS THOSE COLUMNS
+      (owner, 2026-09-16: "it should read exactly like a results page"). They
+      are on the athlete_season row this already reads, so they cost nothing;
+      the athletes-table fallback has none and the columns render blank,
+      which is what a results page does for a runner it knows nothing about.
+    """
     ids = sorted(person_ids)
     if not ids:
         return []
     out, seen = [], set()
     if season_year is not None:
         cur.execute(f"""
-            SELECT s.person_id, s.school,
+            SELECT s.person_id, s.school, s.grade, s.pool,
+                   s.mean_rating AS rating,
                    COALESCE(a.first_name, '') || ' '
                        || COALESCE(a.last_name, '') AS name
             FROM   athlete_season s
@@ -1913,6 +2020,8 @@ def _athleteEntries(cur, person_ids, sport, season_year):
                 continue
             seen.add(r["person_id"])
             out.append({"person_id": r["person_id"], "school": r["school"],
+                        "grade": r["grade"], "pool": r["pool"],
+                        "rating": r["rating"],
                         "name": (r["name"] or "").strip() or "Unknown"})
     rest = [i for i in ids if i not in seen]
     if rest:

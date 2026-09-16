@@ -6941,11 +6941,33 @@ def api_predict_athletes():
 
     # ! EVERY TOKEN MUST APPEAR, so "smith jane" finds Jane Smith the way the
     #   topbar's search does. Order-free, because these are stored either way.
+    #
+    # ⚠ THE EXPRESSION IS COALESCE'D, AND THAT IS NOT COSMETIC (owner,
+    #   2026-09-16: "the add anyone box says it could not search for anything
+    #   I write into it"). Two separate bugs in one line:
+    #
+    #   1. idx_athletes_name_trgm is a GIN trigram index ON THE EXPRESSION
+    #      `COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')`, and a
+    #      planner only uses an expression index when the query's expression
+    #      matches it CHARACTER FOR CHARACTER. `a.first_name || ' ' ||
+    #      a.last_name` does not, so the index built for this query was never
+    #      used and every keystroke sequentially scanned `athletes` joined to
+    #      `athlete_season` -- long enough for nginx to answer with its own
+    #      HTML error page, which the browser then failed to parse as JSON.
+    #      add_page_indexes.py's own comment warns about exactly this.
+    #
+    #   2. NULL || ' ' || 'Smith' IS NULL, and NULL ILIKE anything is NULL,
+    #      never true. So anyone with a missing first OR last name was
+    #      unfindable by any spelling of their name.
+    #
+    #   The SELECT list has always been COALESCE'd; only the filter was not,
+    #   which is why the results LOOKED right whenever they arrived at all.
     tokens = [t for t in q.split() if t][:4]
     where = ["s.sport = %(sport)s", "s.mean_rating IS NOT NULL"]
     params = {"sport": sport}
     for i, t in enumerate(tokens):
-        where.append(f"(a.first_name || ' ' || a.last_name) ILIKE %(t{i})s")
+        where.append("(COALESCE(a.first_name,'') || ' '"
+                     f" || COALESCE(a.last_name,'')) ILIKE %(t{i})s")
         params[f"t{i}"] = f"%{t}%"
     if gender:
         where.append("upper(right(s.pool, 1)) = %(gender)s")
@@ -6953,6 +6975,35 @@ def api_predict_athletes():
     # For the ranking below: does the name START with what was typed.
     params["prefix"] = q.lower() + "%"
 
+    # ⚠ JSON, WHATEVER HAPPENS. This route had no handler at all, so a
+    #   timeout or any exception became Flask's (or nginx's) HTML page -- and
+    #   the box's `await res.json()` threw on it, reporting the one message
+    #   that cannot be acted on: "Could not search." Same fix the predict
+    #   routes got earlier today.
+    try:
+        rows = _athleteSearchRows(where, params)
+    except Exception as exc:                             # noqa: BLE001
+        app.logger.exception("athlete search failed")
+        return jsonify({"error": f"Athlete search failed: {exc}"}), 500
+    # ★ BOTH SCALES, SO "add anyone" READS LIKE THE REST OF THE PAGE. Every
+    #   other rating on the predictions page now carries its HS-equivalent;
+    #   a picker that hands back only the pool number would put an ms_m 128
+    #   next to an hs_m 128 and let a coach think they had found two of the
+    #   same runner. `pool` rides along because it is what the factor is
+    #   looked up by.
+    out = [{"person_id": r["person_id"],
+            "name": (r["name"] or "").strip() or "Unknown",
+            "school": r["school"], "year": r["year"],
+            "pool": r["pool"],
+            "rating": round(float(r["mean_rating"]), 1)}
+           for r in rows[:25]]
+    stampBoardRows(out, rating_keys=("rating",), sport=sport)
+    return jsonify({"athletes": out})
+
+
+def _athleteSearchRows(where, params):
+    """/api/predict/athletes' one query. Split out so the route can report a
+    failure as JSON rather than letting it become an HTML error page."""
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(f"""
@@ -6990,21 +7041,7 @@ def api_predict_athletes():
                           person_id
                 LIMIT  40
             """, params)
-            rows = cur.fetchall()
-    # ★ BOTH SCALES, SO "add anyone" READS LIKE THE REST OF THE PAGE. Every
-    #   other rating on the predictions page now carries its HS-equivalent;
-    #   a picker that hands back only the pool number would put an ms_m 128
-    #   next to an hs_m 128 and let a coach think they had found two of the
-    #   same runner. `pool` rides along because it is what the factor is
-    #   looked up by.
-    out = [{"person_id": r["person_id"],
-            "name": (r["name"] or "").strip() or "Unknown",
-            "school": r["school"], "year": r["year"],
-            "pool": r["pool"],
-            "rating": round(float(r["mean_rating"]), 1)}
-           for r in rows[:25]]
-    stampBoardRows(out, rating_keys=("rating",), sport=sport)
-    return jsonify({"athletes": out})
+            return cur.fetchall()
 
 
 @app.route("/api/predict/weather")

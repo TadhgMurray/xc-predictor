@@ -1063,6 +1063,60 @@ whether this is the curve or the page:
 ⚠ Same warning as A, more so: `normalized_time` is the model's TARGET. A
 new spline means a new extraction and new weights.
 
+### C. Every predicted time is a 5K equivalent, and the page does not say so
+
+> "why do ppl predct so fast it's predicting an 8k adn knows it right? (is it
+> bcs of most 8ks they run are mislableed 5ks?)"
+>
+> — owner, 2026-09-16. Deferred by the owner the same day ("you can ignore
+> the second thing that is wrong for now jsut log it"), so this is the log.
+
+**What the code does.** `XCPredictor.predictInterval` returns
+`baselineSeconds * exp(mu)`, and `baselineSeconds` is the athlete's last
+visible race's `normalized_time`. `normalize_distance` defines that as
+`raw * (5000/d)**k` with course difficulty divided out. So the model's
+output is a flat-5K equivalent end to end — and `predictions.js` prints it
+through `fmtTime` with no label. **Nothing anywhere converts it to the
+target race's distance.** A prediction for an 8K championship is a 5K
+number in an 8K's clothing.
+
+**Why it nonetheless looked like a correct 8K.** The conversions page puts a
+137.7 HS-equivalent rating at a 14:55.89 normalized 5K. A 138-rated athlete
+was predicted 24:16. 24:16 / 14:55 ≈ 1.63, which is almost exactly the 8K/5K
+ratio — so the numbers are plausible 8K times, which is the opposite of
+reassuring. They can only be that if the corpus rows behind them are raw 8K
+times, and `normalizeTime`'s factor is `(5000/d)**k`, so a race recorded as
+`d = 5000` gets factor 1.0 and is not normalized at all.
+
+**That is a claim about data, so measure it first.**
+
+```
+    /srv/venv/bin/python scripts/diag_distance_labels.py \
+        --skip-sample --person <person_id>
+```
+
+* `n/raw` ≈ 0.66 → a true 8K, normalized down correctly. The display is the
+  only bug: the page is showing a 5K equivalent where a reader expects a
+  race time.
+* `n/raw` ≈ 1.00 on a 24-minute college race → the distance label is wrong,
+  the engine never normalized those rows, and the model trained on raw 8K
+  times as though they were 5K equivalents. That is a corpus bug, not a
+  display one, and it invalidates the college half of an extraction.
+
+**Two fixes, and which one is needed depends on the answer above.**
+
+1. **Label it.** Say "5K equivalent" on the predictions page, the way the
+   rankings boards already name their scale. Cheap, honest, and correct
+   whatever the data says.
+2. **De-normalize for display.** Invert the distance factor and the venue
+   difficulty for the target race, so an 8K prediction reads as an 8K time.
+   This is what a reader actually wants, and it needs the same distance
+   spline that issue **B** above says is off — so B comes first.
+
+⚠ And if the diagnostic says the labels are wrong, that is a third thing:
+a distance repair over the college corpus, which invalidates an extraction
+exactly as A and B do.
+
 ### The ordering that follows
 
 The model run comes first, and it is a PREFIX run, not the full corpus

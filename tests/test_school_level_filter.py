@@ -26,8 +26,12 @@ case college)."
 import io
 import os
 import re
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in ("engine", "scripts", "racecast"):
+    sys.path.insert(0, os.path.join(ROOT, _p))
+import predict                                                  # noqa: E402
 
 
 def read(*p):
@@ -47,7 +51,44 @@ def test_the_level_comes_off_the_field_like_the_gender_does():
     #   carry the wrong pool, so demanding one level exactly would hand back
     #   every level and filter nothing -- the same trap _fieldGender avoids.
     assert "_LEVEL_MIN_SHARE" in fn, fn
-    assert "_LEVEL_MIN_SHARE = 0.10" in pred
+
+
+class LevelCursor:
+    """Answers _fieldLevels' one query from a {level: count} fixture."""
+
+    def __init__(self, counts):
+        self.counts = counts
+
+    def execute(self, sql, params=None):
+        assert "athlete_season" in sql, sql
+
+    def fetchall(self):
+        return [{"lvl": k, "n": v} for k, v in self.counts.items()]
+
+
+def test_only_a_clear_majority_level_counts():
+    """⚠ 10% WAS FAR TOO LENIENT (owner, 2026-09-16: "make it more than 10%,
+    maybe more like 50-70%"). A college championship with 12% mis-pooled rows
+    passed BOTH levels at 0.10, and a filter that keeps both filters nothing
+    -- while the middle schoolers the threshold exists to remove are exactly
+    the rows in that 12%.
+    """
+    assert 0.5 <= predict._LEVEL_MIN_SHARE <= 0.7, predict._LEVEL_MIN_SHARE
+
+    def levels(counts):
+        return predict._fieldLevels(LevelCursor(counts), [1, 2], "XC")
+
+    # the real case: a college field with a slice of mis-pooled rows
+    assert levels({"college": 880, "ms": 120}) == {"college"}
+    # and at 0.10 that returned {"college", "ms"} -- the regression
+    assert "ms" not in levels({"college": 880, "ms": 120})
+    # a genuinely mixed open meet narrows to NOTHING, which is the right
+    # answer: there is no single level to pick.
+    assert levels({"college": 520, "hs": 480}) == set()
+    # a clean high school race is still filtered
+    assert levels({"hs": 1000}) == {"hs"}
+    # no rows at all -> no filter, never a crash
+    assert levels({}) == set()
 
 
 def test_every_squad_path_can_narrow_by_level():

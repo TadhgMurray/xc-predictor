@@ -232,7 +232,7 @@ def test_coalesced_team_names_the_divisions_it_came_from():
         {"person_id": 10, "name": "J", "school": "Beta", "div_label": "D2"},
     ]
     preds = [{"seconds": 900 + i} for i in range(len(field))]
-    out = predict._score(field, preds)
+    out, _finishers = predict._score(field, preds)
     by = {t["team"]: t for t in out}
 
     # Alpha ran both divisions and was coalesced into one squad.
@@ -249,7 +249,7 @@ def test_divs_is_absent_without_labels():
     field = [{"person_id": i, "name": str(i), "school": "Alpha"}
              for i in range(1, 8)]
     preds = [{"seconds": 900 + i} for i in range(7)]
-    out = predict._score(field, preds)
+    out, _finishers = predict._score(field, preds)
     assert out[0]["divs"] is None, out[0]
     print("  a single-division race says nothing extra ......... OK")
 
