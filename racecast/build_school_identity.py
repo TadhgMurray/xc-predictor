@@ -188,6 +188,54 @@ def _schoolNames(cur):
     return [r[0] for r in cur.fetchall()]
 
 
+# ★ A STATE IS A PROPERTY OF THE SCHOOL, NOT OF ITS ATHLETES (owner,
+#   2026-09-16: "The state of a school comes from the anet gps. Otherwise it
+#   comes from most raced state, and only the most raced state. It should be
+#   a school still, and it should be stable for athletes across races. A race
+#   with the same name but diff state for an athlete is the same name and
+#   most common state").
+#
+# ⚠ THIS IS THE RULE EVERY VERSION OF THIS STEP HAS BROKEN. Clustering a name
+#   by its ATHLETES' home states makes the school's identity a property of
+#   whoever raced: MIT's New England away meets gave it a CT cluster, Tufts
+#   the same, and splitCollisionTeams then scored them as separate teams.
+#   Amherst had already shown it in 2026-09-13 -- seven runners across four
+#   pseudo-teams, none scoreable. Each time the fix was another patch on the
+#   clustering; the clustering was the bug.
+#
+#   So a name with no anet team and no directory entry is ONE school in ONE
+#   state: the state its rows were mostly run in. Two athletes of that name
+#   can never land in different states, and no athlete moves between races.
+def buildNameStates(cur, contested):
+    """si_name_state(school, state): the single state a contested name's
+    rows were mostly run in, weighted by races. The fallback for every
+    athlete of that name whom neither anet nor the directory places."""
+    cur.execute("DROP TABLE IF EXISTS si_name_state")
+    cur.execute("CREATE TEMP TABLE si_name_state (school text, state text)")
+    if not contested:
+        return 0
+    cur.execute("""
+        INSERT INTO si_name_state (school, state)
+        SELECT school, state FROM (
+            SELECT rr.school, rr.state,
+                   row_number() OVER (PARTITION BY rr.school
+                                      ORDER BY sum(rr.n_races) DESC,
+                                               rr.state) AS rk
+            FROM   athlete_season rr
+            WHERE  COALESCE(TRIM(rr.school), '') <> ''
+              AND  rr.state IS NOT NULL
+              AND  lower(btrim(rr.school)) = ANY(%s)
+            GROUP  BY 1, 2) x
+        WHERE  rk = 1
+    """, (sorted(contested),))
+    cur.execute("CREATE INDEX si_name_state_idx ON si_name_state (school)")
+    cur.execute("SELECT count(*) FROM si_name_state")
+    n = cur.fetchone()[0]
+    print(f"  school_identity: {n:,} contested names have one most-raced "
+          f"state, which is where their unplaced athletes go", flush=True)
+    return n
+
+
 def buildDirStates(cur, contested, dir_states):
     """si_dir_state(school, state): where the college directory says a
     CONTESTED name's college is. Contested only, so every other name's
@@ -855,6 +903,7 @@ def main():
         contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
         buildDirStates(cur, contested, dir_states)
+        buildNameStates(cur, contested)
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
@@ -911,6 +960,7 @@ def main():
             SELECT v.school, v.person_id,
                    COALESCE(ts.state,
                             CASE WHEN v.college THEN ds.state END,
+                            ns.state,
                             ph.state) AS state
             FROM   votes v
             -- ! LEFT, NOT INNER (2026-09-16). An athlete with no racing
@@ -923,8 +973,16 @@ def main():
             LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
                                         AND ts.school = v.school
             LEFT   JOIN si_dir_state ds ON ds.school = v.school
+            -- ★ THE SCHOOL'S OWN STATE, not this athlete's: see
+            --   buildNameStates. For a CONTESTED name this is what every
+            --   athlete anet and the directory cannot place gets, so the
+            --   name cannot fragment by who raced where. ph.state is left
+            --   as the last term for names si_name_state does not cover
+            --   (every non-contested one), where it is today's behavior.
+            LEFT   JOIN si_name_state ns ON ns.school = v.school
             WHERE  COALESCE(ts.state,
                             CASE WHEN v.college THEN ds.state END,
+                            ns.state,
                             ph.state) IS NOT NULL
         """)
         cur.execute("CREATE INDEX si_assign_idx ON si_assign (school, person_id)")

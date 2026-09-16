@@ -1919,3 +1919,59 @@ the *meet's* state on every row the stamp could not place. It is
 (`meet.html`, the boards, search). They were wrong before this too, and each
 needs the same stamp on its own rows; the race page is done because that is
 where a collision is visible.
+
+## 2026-09-16 (later) — the model, stated by the owner
+
+### ⏳ S. A state belongs to the school, and a level belongs in the key
+
+Owner, after three rounds of patching the clustering:
+
+> *"The state of a school comes from the anet gps. Otherwise it comes from most
+> raced state, and only the most raced state. It should be a school still, and
+> it should be stable for athletes across races. A race with the same name but
+> diff state for an athlete is the same name and most common state. (hell even
+> if the name is a substring of the other point stands (brooks). The anet pools
+> should match our school pools. If they don't, separate them."*
+
+> *"team id: separates teams and coalesces athletes towards standardization
+> across a season. If an athlete runs for a team with similar name but diff id,
+> coalesce. if = 0, do by name, state... link with tfrrs by linked athletes and
+> races... Always take anet's info as most important."*
+
+**This is the rule every version of this step has broken**, including all of
+mine. Clustering a name by its **athletes'** home states makes a school's
+identity a property of whoever raced: MIT's New England away meets gave it a CT
+cluster, Tufts the same, and `splitCollisionTeams` then scored them as separate
+teams. Amherst showed it on 2026-09-13 — seven runners across four
+pseudo-teams, none scoreable — and each time the answer was another patch on
+the clustering. The clustering was the bug.
+
+**Done now:** a contested name with no anet team and no directory entry is ONE
+school in ONE state — the state its rows were mostly run in (`buildNameStates`,
+`si_name_state`), read **before** the athlete's home state. Two athletes of
+that name cannot land in different states and no athlete moves between races.
+Splits come from **team ids**, which is what a split should mean.
+
+**The Amherst logo regression, and why it is the same point.** The crest queue
+picks the **modal team** of a `(school, state)` pair. Amherst Regional High
+School has far more rows than Amherst College and both are `(Amherst, MA)`, so
+the high school wins — and because "ANET WINS" is the default, its Falcons
+mascot **replaced** the college's real crest, which had come from the college's
+own athletics site (`kind='athletics'`, rank 1, against anet's 2). Right to
+wrong in one run. anet no longer replaces a crest on a pair that holds more than
+one institution (`school_level`, ≥2 non-bucket levels); it may still fill an
+empty one, which is a coin flip we were already taking.
+
+⏳ **What is left, and it is the owner's own sentence:** *"The anet pools should
+match our school pools. If they don't, separate them."* `school_logo`,
+`school_identity` and `/school/<name>` are keyed on `(school, state)`, which
+**cannot hold two institutions** — one key, one crest, one page for Amherst
+College and Amherst Regional. The key has to carry the level:
+`(school, state, level)`. `school_level` already computes exactly that triple
+and marks a primary. That change touches the crest key, the school route, the
+search index and meet scoring, so it is the next piece of work rather than a
+patch inside this one.
+
+Also still open from the owner's list: **coalescing an athlete's season onto one
+team** when they appear under similar names with different ids, and the
+`link_tfrrs_to_anet` output being wired in as the authority above the directory.

@@ -292,3 +292,41 @@ def test_only_anet_college_teams_are_candidates():
     assert "r.team_id = ANY(%(teams)s)" in src
     assert "r.source = 'tfrrs'" in src
     assert "anet.yr = tf.yr" in src
+
+
+def test_a_state_belongs_to_the_school_not_to_its_athletes():
+    """★ OWNER, 2026-09-16: "The state of a school comes from the anet gps.
+    Otherwise it comes from most raced state, and only the most raced state.
+    It should be a school still, and it should be stable for athletes across
+    races." Clustering a name by its ATHLETES' home states made identity a
+    property of whoever raced -- MIT's away meets gave it a CT cluster and
+    the scoring split then scored it as another team."""
+    assert "def buildNameStates(cur, contested):" in _SRC
+    body = _SRC[_SRC.index("def buildNameStates("):_SRC.index("def buildDirStates(")]
+    # ONE state per name, by races, deterministic on a tie
+    assert "row_number() OVER (PARTITION BY rr.school" in body
+    assert "ORDER BY sum(rr.n_races) DESC," in body and "rr.state) AS rk" in body
+    assert "WHERE  rk = 1" in body
+    assert "lower(btrim(rr.school)) = ANY(%s)" in body          # contested only
+    # and the assignment prefers it over the athlete's home state
+    cte = _SRC[_SRC.index("            CREATE TEMP TABLE si_assign AS"):
+               _SRC.index("CREATE TABLE school_identity_new AS")]
+    assert cte.index("ns.state") < cte.index("ph.state")
+    assert "LEFT   JOIN si_name_state ns ON ns.school = v.school" in cte
+    assert _SRC.index("buildNameStates(cur, contested)\n") > _SRC.index("buildDirStates(cur, contested, dir_states)\n")
+
+
+def test_anet_never_replaces_a_crest_on_a_two_institution_pair():
+    """★ OWNER, 2026-09-16: "Amherst college changed from actual to the
+    falcons logo". The queue picks the MODAL team of a (school, state), and
+    Amherst Regional High School has far more rows than Amherst College --
+    both (Amherst, MA) -- so the high school won and, because "ANET WINS" is
+    the default, its mascot replaced the college's real athletics-site
+    crest."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    assert "multi_level = set()" in src
+    assert "FROM school_level" in src and "HAVING count(*) >= 2" in src
+    assert "keep = args.keep_better or (school, state) in multi_level" in src
+    # it may still FILL an empty key -- that coin flip is already taken
+    body = src[src.index("keep = args.keep_better"):]
+    assert "kindRank(\"anet\") > kindRank(" in body[:200]

@@ -569,6 +569,38 @@ def main():
             if args.ignore_robots:
                 manners.allowed = lambda url: (True, 0.0)
                 print("  robots.txt IGNORED by --ignore-robots", flush=True)
+            # ★ WHICH (school, state) PAIRS HOLD MORE THAN ONE INSTITUTION
+            #   (owner, 2026-09-16: "it is weird that it changes from right to
+            #   wrong with new scrape -- Amherst college changed from actual
+            #   to the falcons logo").
+            #
+            # ⚠ THE QUEUE PICKS THE MODAL TEAM OF A PAIR, and Amherst Regional
+            #   High School has far more rows than Amherst College while both
+            #   are (Amherst, MA) -- so the high school wins, and because
+            #   "ANET WINS" is the default its Falcons mascot OVERWROTE the
+            #   college's real crest, which had come from the college's own
+            #   athletics site (kind 'athletics', rank 1, against anet's 2).
+            #   Right to wrong, in one run.
+            #
+            # ! SO ON SUCH A PAIR, ANET DOES NOT WIN. school_logo is keyed on
+            #   (school, state) and cannot hold two crests for one key, so
+            #   whichever mascot goes there is wrong for the other
+            #   institution. Filling an empty key is a coin flip we already
+            #   take; REPLACING a better-ranked crest is a regression, and
+            #   that is what stops here. The real answer is a level in the
+            #   key -- see docs/ISSUES-RUNNING.md S.
+            multi_level = set()
+            if _tableExists(cur, "school_level"):
+                cur.execute("""
+                    SELECT school, state FROM school_level
+                    WHERE  NOT is_bucket
+                    GROUP  BY school, state HAVING count(*) >= 2
+                """)
+                multi_level = {(r[0], r[1]) for r in cur.fetchall()}
+                print(f"  {len(multi_level):,} (school, state) pairs hold more "
+                      f"than one institution: anet's mascot may fill an empty "
+                      f"crest there but never replace one", flush=True)
+
             meta = crests = addrs = units = missed = 0
             kept = placeholder = stateless = 0
             t0 = time.time()
@@ -647,7 +679,9 @@ def main():
                     #   swap one picture for another: it leaves the school
                     #   with none. --replace overrides even that.
                     if png and args.write and not args.replace:
-                        if args.keep_better and kindRank("anet") > kindRank(
+                        # a pair with two institutions is always keep-better
+                        keep = args.keep_better or (school, state) in multi_level
+                        if keep and kindRank("anet") > kindRank(
                                 storedKind(cur, school, state)):
                             kept += 1
                             png = None
