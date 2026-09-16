@@ -144,6 +144,8 @@ def test_a_corrupt_time_cannot_end_a_run():
       clean and the real run was not. This is the guard, not the sample.
     """
     import torch
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model"))
     from transformer import XCPredictor, TARGET_Z_CLAMP, SEQ_NORM_TIME
 
     m = XCPredictor(n_venues=8)
@@ -171,6 +173,8 @@ def test_the_clamp_lives_on_the_model_so_inference_shares_it():
     clamp cannot live in the training loop -- it has to be the same code
     path racecast/predict.py reaches through."""
     import inspect
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model"))
     from transformer import XCPredictor
     src = inspect.getsource(XCPredictor.targetZ)
     assert "clamp" in src, src

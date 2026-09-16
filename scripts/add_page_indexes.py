@@ -44,6 +44,21 @@ WANTED = [
     #   extrapolated past a day. With it, each query is a handful of
     #   index probes and the full --all build becomes an hour, not a day.
     ("results",         "div_id",  "idx_results_div", None),
+    # ★ THE PREDICTION'S OWN LOOKUP (owner, 2026-09-16: the predictions page
+    #   504'd on a championship field). _historyRows asks both result tables
+    #   for one field's athletes by id -- and NEITHER TABLE HAD AN INDEX ON
+    #   EITHER ID COLUMN, so each prediction seq-scanned 54M rows and then
+    #   did it again for track.
+    #
+    # ! FOUR, BECAUSE THE FILTER HAS TWO BRANCHES AND THERE ARE TWO SPORTS.
+    #   personResultsSql matches `person_id = ANY(...) OR (person_id IS NULL
+    #   AND athlete_id = ANY(...))`; the planner BitmapOrs the two index
+    #   scans, so both columns need one. Measured on a 2M-row stand-in:
+    #   2,938 ms seq-scanned against 7.2 ms with these.
+    ("results",         "person_id",  "idx_results_person", None),
+    ("results",         "athlete_id", "idx_results_athlete", None),
+    ("results_tf",      "person_id",  "idx_results_tf_person", None),
+    ("results_tf",      "athlete_id", "idx_results_tf_athlete", None),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
     # ★ AND THE COMPOSITE THE FIELD ENDPOINT NEEDS (owner, 2026-09-15:
     #   /api/predict/field took 6.5 s on a 396-school meet). _squadsForYear

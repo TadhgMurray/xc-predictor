@@ -547,8 +547,10 @@ def _historyRows(cur, person_ids):
                    else row.get("to_regclass")) is not None
     out = {}
     for sport, hour in (("XC", fx.XC_DEFAULT_HOUR), ("TF", fx.TF_DEFAULT_HOUR)):
+        # ids TWICE: the filter is two indexable branches now, not one
+        # COALESCE the planner cannot index through. See personResultsSql.
         cur.execute(fx.personResultsSql(sport, has_weather=has_weather),
-                    (hour, fx.MIN_NORMALIZED_TIME, ids))
+                    (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
         for r in cur.fetchall():
             row = dict(r)
             pid = row.get("person_id") or row.get("athlete_id")

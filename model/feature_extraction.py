@@ -763,9 +763,32 @@ def personResultsSql(sport, has_weather=True):
     base = _XC_SQL if sport == "XC" else _TF_SQL
     if not has_weather:
         base = weatherlessSql(base)
+    # ★ TWO INDEXABLE BRANCHES, NOT ONE COALESCE (owner, 2026-09-16: the
+    #   predictions page 504'd on a championship field).
+    #
+    # ⚠ COALESCE(r.person_id, r.athlete_id) = ANY(%s) IS AN EXPRESSION, and
+    #   no index on either column can serve it -- so this filter seq-scanned
+    #   `results` (54M rows) and then `results_tf`, on every prediction.
+    #   Measured on a 2M-row stand-in: 2,938 ms and 1,999,789 rows discarded
+    #   by the join filter, against 7.2 ms for the form below. At the real
+    #   table's size that is well past gunicorn's 60 s, twice over.
+    #
+    #   It is the same fault that made EXTRACTION appear to hang: an
+    #   expression the planner cannot reach an index through.
+    #
+    # ! AND IT IS THE SAME SET OF ROWS. `person_id = ANY(...)` is already
+    #   false when person_id IS NULL, so the second branch adds exactly the
+    #   legacy rows the COALESCE was there for. Verified row-for-row against
+    #   the old predicate on a Postgres fixture with NULL person_ids in it:
+    #   zero rows differ either direction. The planner BitmapOrs the two
+    #   index scans.
+    #
+    # ⚠ THE ID ARRAY IS NOW BOUND TWICE, so callers pass it twice. There is
+    #   one caller (racecast/predict._historyRows) and it does.
     return base.replace(
         _ORDER_BY,
-        "        AND COALESCE(r.person_id, r.athlete_id) = ANY(%s)\n"
+        "        AND (r.person_id = ANY(%s)\n"
+        "             OR (r.person_id IS NULL AND r.athlete_id = ANY(%s)))\n"
         + _ORDER_BY)
 
 
