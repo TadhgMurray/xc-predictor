@@ -1230,6 +1230,42 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     div = int(div) if div and str(div).isdigit() else None
 
     entries = []
+
+    # ★ THE LINEUP THE PAGE IS SHOWING WINS, WHEN IT SENDS ONE (owner,
+    #   2026-09-16: "you can literally see the correct list there. Why not
+    #   just take those athletes?").
+    #
+    # ⚠ EVERYTHING BELOW IS A SECOND DERIVATION OF THE FIELD, and the page
+    #   has already made the first one -- it fetched it, rendered it, let a
+    #   person edit it, and they pressed Predict on what they could see. When
+    #   the two disagree the model scores a race nobody asked for: at the D3
+    #   championships the page showed 82 teams and this scored 400+, with
+    #   middle schoolers in a college championship.
+    #
+    # ! SO THE SCHOOL COMES FROM THE PAGE TOO, not from a fresh lookup. The
+    #   card says which team a runner is on; resolving it again could put
+    #   them on a different one and re-open the same divergence one level
+    #   down. Only the NAME is fetched, because the page does not send it and
+    #   the scorers list needs it.
+    #
+    # ! AND THE EDITS ARE ALREADY IN IT. add/remove describe changes to a
+    #   field the page derived; when the page sends the field itself they are
+    #   redundant, and applying them again would remove someone twice.
+    explicit = target.get("field")
+    if explicit:
+        by_id = {}
+        for school, ids in explicit:
+            for pid in ids:
+                by_id.setdefault(int(pid), school)
+        named = {e["person_id"]: e.get("name")
+                 for e in _athleteEntries(cur, list(by_id), sport,
+                                          _currentSeason(cur, sport))}
+        entries = [{"person_id": pid, "school": school,
+                    "name": named.get(pid) or "Unknown",
+                    "school_state": _stateOf(school)}
+                   for pid, school in by_id.items()]
+        return entries
+
     # ★ SEVERAL DIVISIONS AS ONE RACE (issue #86). Each division's roster is
     #   built exactly as a single division's is, then they are put in one
     #   field. Nothing about the per-division build changes -- this is a

@@ -1811,6 +1811,42 @@ function buildQuery(div) {
     if (e.removed.size) q.set("remove", [...e.removed].join(","));
     if (e.added.length)
       q.set("add", e.added.map((a) => a.person_id).join(","));
+
+    /*
+     * ★ AND THE FIELD ITSELF -- THE LINEUP ON SCREEN (owner, 2026-09-16:
+     *   "you can literally see the correct list there. Why not just take
+     *   those athletes?").
+     *
+     * ⚠ SENDING ONLY THE EDITS MEANT TWO ANSWERS TO ONE QUESTION. The
+     *   comment above says the server already knows the meet's own field --
+     *   and it does derive one, independently, in _teamRosters. When the two
+     *   derivations disagree the page shows Amherst's seven and the model
+     *   scores seven other people, which is exactly what happened at the D3
+     *   championships: 82 teams on screen, 400+ scored, middle schoolers in
+     *   a college race.
+     *
+     * ! THE CARDS ARE THE TRUTH. They are what a person read, edited and
+     *   pressed Predict on. Anything the server re-derives is a second
+     *   opinion about a question the reader has already answered.
+     *
+     * ! AND IT FITS NOW. This was rejected as "a large request" when every
+     *   prediction had to be a URL; sendQuery POSTs past 1,800 bytes, and a
+     *   294-runner field is about 2.3 KB.
+     *
+     * ⚠ REMOVED RUNNERS ARE FILTERED HERE. Removing one deletes its row from
+     *   the DOM but leaves it in t.runners -- the removal lives in e.removed
+     *   -- so reading t.runners raw would send back the very people the
+     *   reader took out.
+     */
+    const teams = (e.field && e.field.teams) || [];
+    if (teams.length) {
+      const shown = teams
+        .map((t) => [t.school, (t.runners || [])
+          .map((r) => String(r.person_id))
+          .filter((id) => !e.removed.has(id))])
+        .filter((pair) => pair[1].length);
+      if (shown.length) q.set("field", JSON.stringify(shown));
+    }
   }
   return q;
 }

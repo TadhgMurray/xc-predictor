@@ -6642,6 +6642,13 @@ def api_predict_status():
     return jsonify(modelStatus())
 
 
+# How big a hand-sent field may be. A championship is ~400 runners across
+# ~80 teams; these are generous ceilings that still stop a request asking
+# the model to predict the entire corpus.
+MAX_FIELD_TEAMS = 400
+MAX_FIELD_RUNNERS = 3000
+
+
 def _target(args):
     """The target race, from the request. See predict.py for the three modes.
 
@@ -6694,6 +6701,52 @@ def _target(args):
         t["weather"] = (args.get("weather") or "both").strip().lower()
         if not t["date"]:
             return None, "date is required for a manual target"
+
+    # ★ THE LINEUP THE PAGE IS SHOWING, WHEN IT SENDS ONE (owner, 2026-09-16:
+    #   "you can literally see the correct list there. Why not just take
+    #   those athletes?"). [[school, [person_id, ...]], ...].
+    #
+    # ⚠ THE SERVER USED TO RE-DERIVE THE FIELD AND GET A DIFFERENT ANSWER.
+    #   The page sent only its edits, on the reasoning that the server
+    #   already knew the meet's own field -- and it does derive one, which is
+    #   a second opinion about a question the reader has already answered. At
+    #   the D3 championships the page showed 82 teams and the model scored
+    #   400+, middle schoolers included.
+    #
+    # ! VALIDATED, NOT TRUSTED. It is a request parameter: ids must be
+    #   digits, schools must be strings, and the whole thing is bounded. A
+    #   malformed field is a 400, never a silent fallback to the old
+    #   behaviour -- a prediction that quietly scored a different lineup than
+    #   the one asked for is the bug being fixed.
+    raw = (args.get("field") or "").strip()
+    if raw:
+        import json as _json
+        try:
+            parsed = _json.loads(raw)
+        except ValueError:
+            return None, "field must be JSON"
+        if not isinstance(parsed, list):
+            return None, "field must be a list of [school, [person_id, ...]]"
+        if len(parsed) > MAX_FIELD_TEAMS:
+            return None, f"field takes at most {MAX_FIELD_TEAMS} teams"
+        field, n = [], 0
+        for pair in parsed:
+            if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                    or not isinstance(pair[0], str)
+                    or not isinstance(pair[1], list)):
+                return None, "field entries are [school, [person_id, ...]]"
+            ids = []
+            for pid in pair[1]:
+                if not str(pid).isdigit():
+                    return None, "field person_ids must be numbers"
+                ids.append(int(pid))
+            n += len(ids)
+            if n > MAX_FIELD_RUNNERS:
+                return None, f"field takes at most {MAX_FIELD_RUNNERS} runners"
+            if ids:
+                field.append((pair[0], ids))
+        if field:
+            t["field"] = field
     return t, None
 
 
