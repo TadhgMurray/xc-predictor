@@ -24,8 +24,23 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 #   corrections.py -- neither of which exists on the GPU box this file is
 #   written to run on. tests/test_context_width.py keeps the copies honest.
 from transformer import (XCPredictor, SEQUENCE_FEATURES,
-                         SEQ_NORM_TIME, CONTEXT_YEAR_INDEX,
-                         TARGET_Z_CLAMP, CONTEXT_GAP_INDEX)
+                         SEQ_NORM_TIME, SEQ_DAYS_AGO, CONTEXT_YEAR_INDEX,
+                         TARGET_Z_CLAMP, CONTEXT_GAP_INDEX,
+                         BASELINE_LAST, BASELINE_EWMA,
+                         BASELINE_HALF_LIFE_DAYS, baselineWeights)
+
+# ★ WHAT PREDICTIONS ARE ANCHORED ON. See transformer.BASELINE_LAST for the
+#   measurement that made this a choice: the model beats "their last race
+#   alone" and loses to "season mean rating", which is what being anchored on
+#   one race looks like from the outside.
+#
+# ! CHANGING IT NEEDS A RETRAIN, NOT A RE-EXTRACTION, and that is the whole
+#   reason it is worth trying. The chunks store raw targets in seconds;
+#   _chunkBaselines and XCPredictor.baselineSeconds both DERIVE the baseline
+#   from the sequence, and targetZ recomputes ln(target/base) on the fly. The
+#   125 GB stays where it is.
+BASELINE = BASELINE_LAST
+BASELINE_HALF_LIFE = BASELINE_HALF_LIFE_DAYS
 
 # ★ THE HORIZON BANDS VALIDATION IS REPORTED IN (2026-09-16). One MAE over
 #   the whole val set averages three different jobs: predicting Saturday
@@ -657,28 +672,67 @@ def _trainSideMask(dataset, train_subset) -> torch.Tensor:
     return m
 
 
-def _chunkBaselines(chunk):
-    """(baseline seconds [N], real sequence rows [R, F]) for one chunk.
+def _chunkBaselines(chunk, mode=None, half_life=None):
+    """(baseline seconds [N], real sequence rows [R, F], lengths [N]).
 
-    ★ THE SAME RULE AS XCPredictor.baselineSeconds: the LAST real row's
-      normalized_time. Rows are chronological with the most recent last, in
-      both the ragged (offsets) layout and the legacy padded one.
+    ★ THE SAME RULE AS XCPredictor.baselineSeconds, and the same weights: the
+      ragged layout here and the padded one there both call
+      transformer.baselineWeights, so the rule has one definition and two
+      reductions. tests/test_baseline_rule.py builds the same history in both
+      shapes and asserts the answers match.
+
+    ⚠ AND IT CANNOT READ THE RULE OFF THE MODEL, because this runs BEFORE the
+      model exists -- computeStats needs ln(target/baseline) to set the target
+      stats the model is then built with. So the caller passes it, and train()
+      passes the same values to model.setBaselineRule.
     """
+    mode = BASELINE if mode is None else mode
+    half_life = BASELINE_HALF_LIFE if half_life is None else half_life
     seqs = chunk["sequences"].to(torch.float32)
     if "offsets" in chunk:
         off = chunk["offsets"].to(torch.long)
         lengths = off[1:] - off[:-1]
-        has = lengths > 0
-        base = torch.zeros(lengths.shape[0])
-        base[has] = seqs[off[1:][has] - 1, SEQ_NORM_TIME]
+        if float(mode) == BASELINE_EWMA:
+            base = _ewmaRagged(seqs, lengths, half_life)
+        else:
+            has = lengths > 0
+            base = torch.zeros(lengths.shape[0])
+            base[has] = seqs[off[1:][has] - 1, SEQ_NORM_TIME]
         return base, seqs, lengths
     masks = chunk["masks"].to(torch.bool)
     lengths = masks.sum(dim=1)
     n = seqs.shape[0]
-    last = (lengths - 1).clamp(min=0)
-    base = seqs[torch.arange(n), last, SEQ_NORM_TIME]
-    base[lengths == 0] = 0.0
+    if float(mode) == BASELINE_EWMA:
+        t = seqs[:, :, SEQ_NORM_TIME]
+        d = seqs[:, :, SEQ_DAYS_AGO]
+        w = baselineWeights(d, masks & (t > 0), half_life)
+        den = w.sum(dim=1)
+        num = (w * torch.log(t.clamp(min=1.0))).sum(dim=1)
+        base = torch.where(den > 0, torch.exp(num / den.clamp(min=1e-12)),
+                           torch.zeros_like(den))
+    else:
+        last = (lengths - 1).clamp(min=0)
+        base = seqs[torch.arange(n), last, SEQ_NORM_TIME]
+        base[lengths == 0] = 0.0
     return base, seqs[masks], lengths
+
+
+# Purpose:   the EWMA baseline over the RAGGED chunk layout.
+# ! A SEGMENT REDUCTION, because the rows of every example are concatenated
+#   into one [R, F] tensor with an offsets index. index_add_ over a segment
+#   id is the portable way to do it -- no torch version gates, no padding the
+#   whole chunk back out to a rectangle it was flattened to avoid.
+def _ewmaRagged(seqs, lengths, half_life):
+    n = lengths.shape[0]
+    t = seqs[:, SEQ_NORM_TIME]
+    d = seqs[:, SEQ_DAYS_AGO]
+    w = baselineWeights(d, t > 0, half_life)
+    seg = torch.repeat_interleave(torch.arange(n), lengths)
+    den = torch.zeros(n).index_add_(0, seg, w)
+    num = torch.zeros(n).index_add_(0, seg,
+                                    w * torch.log(t.clamp(min=1.0)))
+    return torch.where(den > 0, torch.exp(num / den.clamp(min=1e-12)),
+                       torch.zeros(n))
 
 
 def computeStats(dataset, is_train: torch.Tensor,
@@ -1338,6 +1392,11 @@ def main():
         print("  venue_vocab.pkl not found -- venue embedding disabled")
 
     model = XCPredictor(n_venues=n_venues)
+    # ⚠ BEFORE setTargetStats, AND WITH THE SAME VALUES computeStats USED.
+    #   The target is ln(target/baseline), so the stats below are properties
+    #   of the rule; measuring under one and un-z-scoring under another puts
+    #   every prediction off by the difference between two centres.
+    model.setBaselineRule(BASELINE, BASELINE_HALF_LIFE)
     model.setFeatureStats(stats["seq_mean"], stats["seq_std"],
                           stats["ctx_mean"], stats["ctx_std"])
     model.setTargetStats(stats["mean"], stats["std"],
@@ -1473,6 +1532,17 @@ if __name__ == "__main__":
                           f"here: with 0 the GPU waits on every disk read.")
     _ap.add_argument("--amp", action="store_true",
                      help="bf16 mixed precision on CUDA. No-op on CPU.")
+    _ap.add_argument("--baseline", choices=("last", "ewma"), default=None,
+                     help="what a prediction is anchored on. 'last' is the "
+                          "most recent race alone, which is what shipped; "
+                          "'ewma' is a recency-weighted geometric mean of "
+                          "the history. Changing it needs a RETRAIN, not a "
+                          "re-extraction.")
+    _ap.add_argument("--baseline-half-life", type=float, default=None,
+                     metavar="DAYS",
+                     help="for --baseline ewma: a race this many days ago "
+                          f"counts half as much as one today. Default "
+                          f"{BASELINE_HALF_LIFE_DAYS:.0f}.")
     _ap.add_argument("--checkpoint", default=None,
                      help="path to save/resume optimizer+weights+epoch "
                           "every epoch. REQUIRED for spot instances: "
@@ -1505,6 +1575,11 @@ if __name__ == "__main__":
         NUM_WORKERS = _args.workers
     USE_AMP = _args.amp
     CHECKPOINT = _args.checkpoint
+    if _args.baseline:
+        BASELINE = (BASELINE_EWMA if _args.baseline == "ewma"
+                    else BASELINE_LAST)
+    if _args.baseline_half_life:
+        BASELINE_HALF_LIFE = _args.baseline_half_life
 
     # ⚠ NAMED IN THE HEADER, because a shift boundary is otherwise
     #   invisible in the log and two windows' epochs read as one run.
@@ -1513,4 +1588,12 @@ if __name__ == "__main__":
           f"epochs<={EPOCHS} patience {PATIENCE}"
           + (f"  checkpoint {CHECKPOINT}" if CHECKPOINT else
              "  NO CHECKPOINT -- an interrupted run starts over"))
+    # ⚠ NAMED TOO, because two runs over the same chunks with different
+    #   baselines are not comparable and the log is the only place that says
+    #   which one produced a given model.pt.
+    print("baseline "
+          + ("ewma, half-life "
+             f"{BASELINE_HALF_LIFE:.0f}d" if BASELINE == BASELINE_EWMA
+             else "last race alone")
+          + "  (a retrain, not a re-extraction -- see transformer.BASELINE_LAST)")
     main()

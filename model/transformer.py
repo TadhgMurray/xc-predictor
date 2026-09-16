@@ -99,6 +99,60 @@ CONTEXT_GAP_INDEX = 4          # days_since_last_race, raw days
 SEQ_NORM_TIME = 0
 SEQ_DAYS_AGO = 2
 
+# ★ WHAT THE PREDICTION IS ANCHORED ON, AND WHY IT IS NOW A CHOICE.
+#
+#   forward() predicts a ratio, and predictInterval returns
+#   baselineSeconds * exp(mu). So the baseline is not a detail -- it is the
+#   whole prediction, with the network supplying a correction on top.
+#
+# ⚠ AND THE CORRECTION IS SMALL. Measured on a real 152-athlete championship
+#   (scripts/diag_model_quality.py, 2026-09-17): exp(mu) has an interquartile
+#   range of 0.972-1.023, about one race's noise. So whatever the baseline
+#   says, the answer mostly agrees with it.
+#
+#   The same run scored the ordering three ways against what the day did:
+#
+#       their last race alone     spearman 0.792
+#       THE MODEL                 spearman 0.899
+#       season mean rating        spearman 0.904
+#
+#   That places the fault exactly. The model beats the last race and loses to
+#   the season average -- it is anchored on one race and only partly corrected
+#   toward the season, when the season is the better answer. A fluke last race
+#   is injected straight into the prediction and the network has to spend its
+#   small correction undoing it.
+#
+#   Owner, 2026-09-17: "it has me losing to my teamate who I beat in every
+#   single race that season". That is this, exactly.
+#
+# ★ SO THE BASELINE IS SELECTABLE, AND THE CHOICE RIDES IN THE CHECKPOINT.
+#   Both buffers are in the state_dict, so inference cannot use a different
+#   rule from the one the weights were trained under -- which would be
+#   silently catastrophic rather than loud.
+BASELINE_LAST = 0.0      # the most recent race, alone. What shipped.
+BASELINE_EWMA = 1.0      # recency-weighted geometric mean of the history.
+
+# Half-life in days for BASELINE_EWMA: a race this long ago counts half as
+# much as one today. 60 days weights a whole cross country season with a
+# recency tilt, rather than letting the last Saturday decide everything.
+BASELINE_HALF_LIFE_DAYS = 60.0
+
+
+# Purpose:   the weight each prior race gets in an EWMA baseline.
+# ★ ONE DEFINITION OF THE RULE, TWO LAYOUTS. The model sees padded [B,S]
+#   tensors and train.py's chunks are ragged [R]; both call this for the
+#   weights and do their own reduction. tests/test_baseline_rule.py builds
+#   the same history in both shapes and asserts the baselines match, because
+#   two spellings of a rule is how they come to disagree.
+# ! CLAMPED AT ZERO. days_ago is days BEFORE the target and is never
+#   negative in a well-formed sequence, but a bad date would otherwise make
+#   exp() blow up rather than merely be wrong.
+def baselineWeights(days, valid, half_life):
+    import math as _math
+    lam = _math.log(2.0) / max(float(half_life), 1e-6)
+    w = torch.exp(-lam * days.clamp(min=0.0).to(torch.float32))
+    return torch.where(valid, w, torch.zeros_like(w))
+
 # ★ VENUE EMBEDDING. course_difficulty stays as the PRIOR -- it is solved from
 #   athletes who raced here and elsewhere, which is cross-athlete linkage this
 #   model cannot reconstruct from its own loss. The embedding is for the
@@ -234,6 +288,12 @@ class XCPredictor(nn.Module):
         # For an example with no usable last race (an empty history row):
         # the mean raw target of the training set, in seconds.
         self.register_buffer("fallback_seconds", torch.full((), 1000.0))
+        # ★ THE BASELINE RULE TRAVELS WITH THE WEIGHTS. See BASELINE_LAST.
+        #   Defaulting to LAST means a checkpoint trained before this existed
+        #   loads and behaves exactly as it always did.
+        self.register_buffer("baseline_mode", torch.full((), BASELINE_LAST))
+        self.register_buffer("baseline_half_life",
+                             torch.full((), BASELINE_HALF_LIFE_DAYS))
 
     # ---- calibration ----------------------------------------------- #
 
@@ -250,6 +310,18 @@ class XCPredictor(nn.Module):
         self.seq_std.copy_(seq_std.to(torch.float32))
         self.ctx_mean.copy_(torch.as_tensor(ctx_mean, dtype=torch.float32))
         self.ctx_std.copy_(ctx_std.to(torch.float32))
+
+    def setBaselineRule(self, mode: float,
+                        half_life: float = BASELINE_HALF_LIFE_DAYS):
+        """Pick what predictions are anchored on. See BASELINE_LAST.
+
+        ⚠ CALL THIS BEFORE computeStats. The target is ln(target/baseline),
+          so target_mean and target_std are properties OF THE RULE -- stats
+          measured under one baseline and used under another un-z-score the
+          network's output against the wrong centre.
+        """
+        self.baseline_mode.fill_(float(mode))
+        self.baseline_half_life.fill_(max(float(half_life), 1e-6))
 
     def setTargetStats(self, mean: float, std: float,
                        fallback_seconds: float = None):
@@ -274,13 +346,39 @@ class XCPredictor(nn.Module):
         ! AN EMPTY HISTORY is one all-zero row with mask True (collateRagged's
           NaN guard). Its seconds read 0, and the fallback takes over.
         """
-        n_real = masks.sum(dim=1).clamp(min=1)                   # [B]
-        idx = (n_real - 1).view(-1, 1, 1).expand(-1, 1,
-                                                  sequences.shape[2])
-        last_row = sequences.gather(1, idx).squeeze(1)           # [B, F]
-        base = last_row[:, SEQ_NORM_TIME].to(torch.float32)
+        if float(self.baseline_mode) == BASELINE_EWMA:
+            base = self._ewmaBaseline(sequences, masks)
+        else:
+            n_real = masks.sum(dim=1).clamp(min=1)               # [B]
+            idx = (n_real - 1).view(-1, 1, 1).expand(-1, 1,
+                                                      sequences.shape[2])
+            last_row = sequences.gather(1, idx).squeeze(1)       # [B, F]
+            base = last_row[:, SEQ_NORM_TIME].to(torch.float32)
         return torch.where(base > 0, base,
                            self.fallback_seconds.expand_as(base))
+
+    def _ewmaBaseline(self, sequences: torch.Tensor,
+                      masks: torch.Tensor) -> torch.Tensor:
+        """Recency-weighted GEOMETRIC mean of the visible history. [B]
+
+        ★ GEOMETRIC, NOT ARITHMETIC, because the target is a LOG ratio. The
+          natural centre of ln(t) is the geometric mean, so this makes the
+          thing the network predicts a deviation from the middle of its own
+          distribution rather than from an arbitrary point beside it.
+
+        ! A ROW WITH NO TIME IS NOT A ZERO-SECOND RACE. Padding is zeros and
+          _orZero writes 0.0 for a missing normalized_time, so `t > 0` is
+          part of what makes a row real -- the mask alone is not enough.
+        """
+        t = sequences[:, :, SEQ_NORM_TIME].to(torch.float32)     # [B,S]
+        d = sequences[:, :, SEQ_DAYS_AGO].to(torch.float32)      # [B,S]
+        valid = masks.to(torch.bool) & (t > 0)
+        w = baselineWeights(d, valid, float(self.baseline_half_life))
+        den = w.sum(dim=1)
+        num = (w * torch.log(t.clamp(min=_MIN_SECONDS))).sum(dim=1)
+        out = torch.exp(num / den.clamp(min=1e-12))
+        # no usable row at all -> 0, and baselineSeconds swaps in the fallback
+        return torch.where(den > 0, out, torch.zeros_like(out))
 
     def logRatio(self, sequences, masks, targets) -> torch.Tensor:
         """ln(target / baseline), in natural-log units. [B]"""

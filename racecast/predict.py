@@ -123,7 +123,22 @@ def _loadModel():
             "state_dict" in blob else blob
         n_venues = state["venue_embedding.weight"].shape[0]
         model = XCPredictor(n_venues=n_venues)
-        model.load_state_dict(state)
+        # ★ THE BASELINE RULE RIDES IN THE STATE DICT, so inference cannot use
+        #   a different one from the weights (see transformer.BASELINE_LAST).
+        #   A checkpoint trained before those buffers existed simply does not
+        #   carry them, and the constructor's default -- the last race alone --
+        #   is exactly what it was trained under.
+        #
+        # ! TOLERATED BY NAME, NOT BY strict=False. Accepting ANY missing key
+        #   would let a genuinely broken checkpoint load and predict noise;
+        #   these two are the only ones a valid older file can be short of.
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        surprise = (set(missing) - {"baseline_mode", "baseline_half_life"}) \
+            | set(unexpected)
+        if surprise:
+            raise RuntimeError(
+                "checkpoint does not match the model: "
+                + ", ".join(sorted(surprise)))
         model.eval()
 
         with open(stats_path, "rb") as f:

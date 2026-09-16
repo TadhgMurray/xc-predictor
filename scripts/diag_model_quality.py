@@ -470,6 +470,12 @@ def main():
     ap.add_argument("--sport", default="XC")
     ap.add_argument("--skip", default="",
                     help="comma-separated section letters to skip, e.g. C,E")
+    ap.add_argument("--model", default=None, metavar="PATH",
+                    help="score a DIFFERENT checkpoint, so two baseline "
+                         "rules can be compared on the same race. "
+                         "target_stats.pkl, encoders.pkl and venue_vocab.pkl "
+                         "must sit beside it -- predict.MODEL_DATA is the "
+                         "checkpoint's own directory.")
     ap.add_argument("--weather", default="all",
                     choices=("none", "normal", "forecast", "both", "all"),
                     help="which weather A-D are measured under. 'all' takes "
@@ -479,7 +485,14 @@ def main():
     a = ap.parse_args()
     skip = {s.strip().upper() for s in a.skip.split(",") if s.strip()}
 
+    # ! BEFORE importing predict, which reads RACECAST_MODEL at import time
+    #   and caches the loaded model on the module.
+    if a.model:
+        os.environ["RACECAST_MODEL"] = os.path.abspath(a.model)
+
     import predict
+    if a.model:
+        print(f"scoring checkpoint {predict.MODEL_PATH}")
     st = predict.modelStatus()
     if not st.get("available"):
         print("model unavailable:", st.get("reason"))
@@ -502,6 +515,15 @@ def main():
                       "date": date, "mode": "rerun_exact",
                       "weather": a.weather, "field": None}
             print(f"weather basis for sections A-D: {a.weather}")
+            try:
+                predict._loadModel()
+                mode = float(predict._model.baseline_mode)
+                hl = float(predict._model.baseline_half_life)
+                print("baseline rule in this checkpoint: "
+                      + ("ewma, half-life "
+                         f"{hl:.0f}d" if mode else "last race alone"))
+            except Exception:                               # noqa: BLE001
+                pass
             ids = [r["person_id"] for r in rows]
             preds = predict._predictTimes(cur, ids, target)
 
