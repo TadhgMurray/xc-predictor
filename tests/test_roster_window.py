@@ -212,3 +212,77 @@ def test_carry_can_be_turned_off():
         meets={"Alpha": 0})
     out = school_mod.schoolRoster(cur, "Alpha", LIVE, "XC", carry=False)
     assert [r["name"] for r in out] == ["Raced Already"]
+
+
+# ------------------------------------------------------------------ #
+# the season lookup: a label is not a stored year, and the fallback
+# must not scan the corpus
+# ------------------------------------------------------------------ #
+
+class SeasonCursor:
+    """homepage_meta plus a bounded athlete_season probe."""
+    def __init__(self, meta=None, years=()):
+        self.meta = meta or {}
+        self.years = set(years)
+        self.rows = []
+        self.queries = []
+
+    def execute(self, sql, params=None):
+        flat = " ".join(sql.split())
+        self.queries.append(flat)
+        if "homepage_meta" in flat:
+            v = self.meta.get((params or ())[0])
+            self.rows = [{"value": v}] if v else []
+        else:
+            y = (params or {}).get("year")
+            n = predict.SEASON_MIN_RESULTS if y in self.years else 0
+            self.rows = [{"n": n}]
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_the_meta_label_becomes_a_stored_year():
+    """⚠ TWO YEARS FOR ONE SEASON. panels.py publishes the LABEL -- a track
+    season stored as 2025 is named 2026 everywhere a person reads it -- and
+    every caller of _currentSeason compares the answer against
+    athlete_season.year, which is STORED. Reading the label back raw asked
+    track for a season one year ahead of the one that exists.
+
+    ! XC's label and stored year are equal, which is why this never showed:
+      the sport it breaks is the one nobody had predicted yet."""
+    xc = SeasonCursor({"season_year_XC": "2026"})
+    assert predict._currentSeasonUncached(xc, "XC") == 2026
+
+    tf = SeasonCursor({"season_year_TF": "2026"})
+    assert predict._currentSeasonUncached(tf, "TF") == 2025, \
+        "the 2026 track season is stored as 2025"
+
+
+def test_the_fallback_probes_rather_than_aggregating():
+    """★ 6,199 ms INSIDE A 14 s PREDICTION (owner, 2026-09-16). Grouping
+    `results` by year to find the newest real season is 54M rows of work,
+    and caching it only moved the cost to one request an hour per worker."""
+    cur = SeasonCursor({}, years={LIVE - 1})
+    assert predict._currentSeasonUncached(cur, "XC") == LIVE - 1
+
+    probes = [q for q in cur.queries if "athlete_season" in q]
+    assert probes, cur.queries
+    for q in probes:
+        # ⚠ the whole point: an index probe, not an aggregate over the corpus
+        assert "GROUP BY" not in q.upper(), q
+        assert "FROM results" not in q, q
+        # bounded work per probe, so the corrupt-row floor stays cheap
+        assert "LIMIT %(floor)s" in q, q
+    # newest first, and it stops at the first year that has a season
+    assert len(probes) == 2, [p[:60] for p in probes]
+
+
+def test_the_floor_still_rejects_one_corrupt_row():
+    """A single result dated 2223 once won a max() and every squad query
+    then asked for season 2223: 396 teams, 0 runners, no error anywhere."""
+    cur = SeasonCursor({}, years=set())          # no year clears the floor
+    assert predict._currentSeasonUncached(cur, "XC") == LIVE

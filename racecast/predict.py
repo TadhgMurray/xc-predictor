@@ -1095,6 +1095,12 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
 _SEASON_CACHE = {}
 _SEASON_TTL = 3600.0
 
+# How many seasons back the fallback will probe before giving up and
+# answering with the academic year we are in. Six covers a database mid
+# rebuild; beyond that the answer is not "an older season", it is "the
+# boards are empty", and the ceiling is the honest reply.
+_SEASON_LOOKBACK = 6
+
 
 def _currentSeason(cur, sport):
     """The season the boards are showing, so the field agrees with them."""
@@ -1112,7 +1118,19 @@ def _currentSeasonUncached(cur, sport):
                 (f"season_year_{sport}",))
     row = cur.fetchone()
     if row and row["value"]:
-        return int(row["value"])
+        # ⚠ THE META HOLDS THE LABEL, AND THIS WANTS THE STORED YEAR. A track
+        #   season is stored under the year it OPENS in (Dec 2025 - Jul 2026
+        #   is 2025) and named year + 1 everywhere a person reads it;
+        #   panels.py publishes the label on purpose, for the home page. Every
+        #   caller of this function compares the result against
+        #   athlete_season.year, which is STORED -- so reading the label back
+        #   raw asked track for a season one year ahead of the one that
+        #   exists, and found nobody in it.
+        #
+        # ! XC's label and stored year are the same, which is why this never
+        #   showed: the sport it breaks is the one nobody has predicted yet.
+        from school import storedYear
+        return storedYear(sport, row["value"])
 
     # ⚠ THE FALLBACK USED TO BE max(substring(date,1,4)) AND ONE BAD ROW
     #   TOOK THE PAGE DOWN (owner, 2026-09-15: "0 athletes for all teams").
@@ -1126,21 +1144,41 @@ def _currentSeasonUncached(cur, sport):
     #   in the column. A real season has tens of thousands of results; a
     #   typo has one. And nothing ahead of the academic year we are actually
     #   in can be a current season, whatever the data says.
+    # ★ AND THE FALLBACK PROBES AN INDEX INSTEAD OF SCANNING THE CORPUS
+    #   (owner, 2026-09-16: 6,199 ms inside a 14 s prediction). Grouping
+    #   `results` by year to find the newest real season is the right ANSWER
+    #   and 54M rows of work; caching it only moved the cost to one request
+    #   an hour per worker, where it sat at six seconds.
+    #
+    # ! ASKED OF athlete_season, NEWEST YEAR FIRST, THROUGH as_board_mean_idx
+    #   (pool, sport, year, ...) -- so each probe is an index lookup, and the
+    #   answer is found at the first year that has one. A handful of probes
+    #   instead of a full aggregate.
+    #
+    # ⚠ AND STILL BOUNDED BY A FLOOR, because that is what this fallback is
+    #   FOR: one corrupt row dated 2223 once won a max() and every squad
+    #   query then asked for season 2223 and found nobody -- 396 teams, 0
+    #   runners, no error anywhere. The LIMIT inside the subquery caps the
+    #   work at SEASON_MIN_RESULTS index rows per probe, so the guard costs
+    #   a bounded amount rather than an aggregate.
     from season_year import academicYear
     ceiling = academicYear(datetime.date.today())
-    table = "results" if sport == "XC" else "results_tf"
-    cur.execute(f"""
-        SELECT substring(date, 1, 4)::int AS y
-        FROM   {table}
-        WHERE  date ~ '^[0-9]{{4}}-'
-        GROUP  BY 1
-        HAVING count(*) >= %(floor)s
-           AND substring(date, 1, 4)::int <= %(ceiling)s
-        ORDER  BY 1 DESC
-        LIMIT  1
-    """, {"floor": SEASON_MIN_RESULTS, "ceiling": ceiling})
-    row = cur.fetchone()
-    return row["y"] if row else ceiling
+    pools = [f"{lvl}_{g}" for lvl in ("hs", "college", "ms") for g in ("m", "f")]
+    for year in range(ceiling, ceiling - _SEASON_LOOKBACK, -1):
+        cur.execute("""
+            SELECT count(*) AS n FROM (
+                SELECT 1 FROM athlete_season
+                WHERE  pool = ANY(%(pools)s)
+                  AND  sport = %(sport)s
+                  AND  year  = %(year)s
+                LIMIT  %(floor)s
+            ) x
+        """, {"pools": pools, "sport": sport, "year": year,
+              "floor": SEASON_MIN_RESULTS})
+        row = cur.fetchone()
+        if row and int(row["n"]) >= SEASON_MIN_RESULTS:
+            return year
+    return ceiling
 
 
 # Purpose:   a school's HOME state, for display beside its name.
