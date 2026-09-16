@@ -1840,11 +1840,21 @@ function buildQuery(div) {
      */
     const teams = (e.field && e.field.teams) || [];
     if (teams.length) {
+      /* ★ AND HOW MANY EACH SCHOOL ACTUALLY ENTERED, which is not how many
+         are in the list (owner, 2026-09-16: "if there's an indiv who
+         qualifies and runs, and then we add entire roster, that team should
+         not get a place or displace anybody else"). The list is the lineup
+         on screen, additions included; t.entered is the fact about the meet,
+         and only it decides whether the school is a team there.
+         ! null WHEN THE FIELD DID NOT COME FROM A MEET, so the server falls
+           back to counting the runners rather than reading a 0 as "nobody
+           entered" and un-scoring every team. */
       const shown = teams
         .map((t) => [t.school, (t.runners || [])
           .map((r) => String(r.person_id))
-          .filter((id) => !e.removed.has(id))])
-        .filter((pair) => pair[1].length);
+          .filter((id) => !e.removed.has(id)),
+          typeof t.entered === "number" ? t.entered : null])
+        .filter((row) => row[1].length);
       if (shown.length) q.set("field", JSON.stringify(shown));
     }
   }

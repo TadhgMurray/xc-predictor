@@ -269,12 +269,36 @@ def _score(field, preds):
     #   because none of them has a school, so scoring them together invents a
     #   squad out of exactly the athletes who have none. Same isTeam the race
     #   page's scoreRows uses.
-    counts = {}
+    # ★ AND "ENOUGH RUNNERS" MEANS ENOUGH ON THE START LINE, NOT ENOUGH IN
+    #   THIS LIST (owner, 2026-09-16: "if there's an indiv who qualifies and
+    #   runs, and then we add entire roster, that team should not get a place
+    #   or displace anybody else"). A school that sent ONE qualifier to a
+    #   championship is not a team there. Pressing "add whole squad" to see
+    #   what its other six would have run does not enter them -- but it used
+    #   to, because the only number here was len(runners), so one qualifier
+    #   plus a what-if became a complete team that scored and pushed every
+    #   real team's runners down a place.
+    #
+    # ! SO THE FIELD CARRIES `entered`: how many that school actually had on
+    #   the line, stamped by whoever built the roster (see _teamRosters). It
+    #   is per team, so every runner of a team carries the same number and
+    #   the max is that number -- the added ones carry nothing.
+    # ! NO STAMP MEANS NO MEET TO COUNT, which is the manual target: the
+    #   named teams ARE the entry list, so the runners present are it.
+    counts, entered = {}, {}
     for runner, _pred in order:
         team = runner.get("school")
-        if isTeam(team):
-            counts[team] = counts.get(team, 0) + 1
-    full = {t for t, n in counts.items() if n >= TEAM_SCORERS}
+        if not isTeam(team):
+            continue
+        counts[team] = counts.get(team, 0) + 1
+        n = runner.get("entered")
+        if n:
+            entered[team] = max(entered.get(team, 0), int(n))
+
+    def onLine(team):
+        return entered.get(team, counts.get(team, 0))
+
+    full = {t for t in counts if onLine(t) >= TEAM_SCORERS}
 
     # ★ PASS 2 -- TWO DIFFERENT PLACES, AND THEY ARE NOT THE SAME NUMBER.
     #
@@ -290,6 +314,7 @@ def _score(field, preds):
     #   finishing places, so every predicted score was inflated by whoever
     #   happened to be running unattached that day.
     by_team, place, score_place = {}, 0, 0
+    taken = {}
     state = {}
     from_div = {}
     for runner, pred in order:
@@ -309,21 +334,44 @@ def _score(field, preds):
             from_div.setdefault(team, set()).add(runner["div_label"])
         # An incomplete team's runners keep a finishing place but never take
         # a scoring one -- they are lifted out exactly like the unattached.
-        if team in full:
+        #
+        # ⚠ AND A COMPLETE TEAM ONLY TAKES AS MANY SCORING PLACES AS IT
+        #   ENTERED, CAPPED AT SEVEN (owner, 2026-09-16: "gotta make it
+        #   respect the top 7 who actually ran thing"). A team enters seven;
+        #   an eighth runner does not exist to the scorers and cannot
+        #   displace. Adding four runners to a school that entered six used
+        #   to give it ten displacers -- ten places taken off every team
+        #   behind it -- which is an advantage no real team can have.
+        if team in full and taken.get(team, 0) < min(onLine(team),
+                                                     MAX_PER_TEAM):
+            taken[team] = taken.get(team, 0) + 1
             score_place += 1
             entry["score_place"] = score_place
         by_team.setdefault(team, []).append(entry)
 
     out = []
     for team, runners in by_team.items():
-        scorers = runners[:TEAM_SCORERS]
+        # ! THE SCORERS ARE THE ONES WHO TOOK A SCORING PLACE, not the first
+        #   five in the list. Past a team's entry cap the rest have no
+        #   score_place at all, so reading by position would sum a KeyError.
+        scorers = [r for r in runners if r.get("score_place")][:TEAM_SCORERS]
         if len(scorers) < TEAM_SCORERS:
             # An incomplete team cannot score. Shown, not silently dropped --
             # "you are two runners short" is useful information.
+            #
+            # ! AND THE NUMBER IS THE ONE THAT DECIDED IT. "only 1 entered"
+            #   when a person has added six more is the honest note; "only 7
+            #   runners" beside seven visible runners reads as a bug.
+            # ! WHICHEVER TRUTH IS THE LIMITING ONE. A lone qualifier with
+            #   six what-ifs beside them is short on ENTRIES; a school that
+            #   entered six and had three taken off the card is short on
+            #   RUNNERS. Naming the other number reads as a bug either way.
+            n = min(onLine(team), len(runners))
+            word = "entered" if onLine(team) < len(runners) else "runners"
             out.append({"team": team, "state": state.get(team),
                         "divs": _fromDivs(from_div, team),
                         "score": None, "runners": runners,
-                        "note": f"only {len(runners)} runners"})
+                        "note": f"only {n} {word}"})
             continue
         out.append({
             "team": team,
@@ -882,6 +930,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                        key=lambda t: (-len(t["runners"]), t["school"]))
         for t in teams:
             t["runners"].sort(key=lambda x: x["name"])
+            # "As it ran" IS the entry list, so what is shown is what entered.
+            t["entered"] = len(t["runners"])
         return {"season_year": season_year, "when": when, "teams": teams}
 
     originals = _exactField(cur, meet_id, div_id, sport)
@@ -908,6 +958,11 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         cap = squadCap(at_meet_counts.get(school, 0))
         by_school[school] = {"school": school,
                              "state": _stateOf(school),
+                             # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
+                             #   LINE. The page sends it back so _score can
+                             #   tell a team from a lone qualifier with six
+                             #   what-ifs added beside them.
+                             "entered": at_meet_counts.get(school, 0),
                              "runners": sq[:cap],
                              "dropped": list(sq[cap:])}
     # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
@@ -926,6 +981,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
             continue
         team = by_school.setdefault(r["school"], {"school": r["school"],
                                                   "state": _stateOf(r["school"]),
+                                                  "entered": at_meet_counts.get(
+                                                      r["school"], 0),
                                                   "runners": [],
                                                   "dropped": []})
         prev = last_seen.get(r["person_id"], {})
@@ -1311,8 +1368,16 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     #   redundant, and applying them again would remove someone twice.
     explicit = target.get("field")
     if explicit:
-        by_id = {}
-        for school, ids in explicit:
+        # ! AND HOW MANY EACH SCHOOL ENTERED, WHICH IS NOT len(ids). The page
+        #   shows a lone qualifier's whole squad when a person asks for it;
+        #   the ids are then seven and the entry is still one. _score needs
+        #   the entry count to know that team cannot score or displace.
+        by_id, entered = {}, {}
+        for row in explicit:
+            school, ids = row[0], row[1]
+            n = row[2] if len(row) > 2 else None
+            if n is not None:
+                entered[school] = int(n)
             for pid in ids:
                 by_id.setdefault(int(pid), school)
         named = {e["person_id"]: e.get("name")
@@ -1320,6 +1385,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                           _currentSeason(cur, sport))}
         entries = [{"person_id": pid, "school": school,
                     "name": named.get(pid) or "Unknown",
+                    "entered": entered.get(school),
                     "school_state": _stateOf(school)}
                    for pid, school in by_id.items()]
         return entries
@@ -1334,6 +1400,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     elif target.get("meet_id"):
         originals = _exactField(cur, int(target["meet_id"]), div, sport)
         if mode == "rerun_exact":
+            # The exact field IS the entry list, so counting it is counting
+            # who entered -- no stamp needed, and _score falls back to it.
             entries = originals
         else:
             at_meet = sorted({r["school"] for r in originals
@@ -1348,9 +1416,15 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
-            entries = [e for sch in sorted(squads)
-                       for e in squads[sch][:squadCap(
-                           at_meet_counts.get(sch, 0))]]
+            entries = []
+            for sch in sorted(squads):
+                for e in squads[sch][:squadCap(at_meet_counts.get(sch, 0))]:
+                    # ! WHAT THE SCHOOL ENTERED, carried on every runner so
+                    #   _score can tell a team from a lone qualifier. The cap
+                    #   above already keeps the lineup honest; `add` is what
+                    #   can push it past what the school brought.
+                    e["entered"] = at_meet_counts.get(sch, 0)
+                    entries.append(e)
     elif schools:
         squads = _currentSquads(cur, schools, sport,
                                 _currentSeason(cur, sport))

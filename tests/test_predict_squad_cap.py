@@ -58,18 +58,22 @@ def _install(monkey_originals, monkey_squads, last_seen=None, gender=None):
     """
     saved = (predict._exactField, predict._currentSquads,
              predict._currentSeason, predict._lastKnownRatings,
-             predict._fieldGender)
+             predict._fieldGender, predict._fieldLevels)
     predict._exactField = lambda cur, m, d, s: monkey_originals
-    predict._currentSquads = lambda cur, schools, s, y, gender=None: {
-        k: v for k, v in monkey_squads.items() if k in schools}
+    predict._currentSquads = lambda cur, schools, s, y, gender=None,         levels=None: {k: v for k, v in monkey_squads.items() if k in schools}
     predict._currentSeason = lambda cur, s: 2026
     predict._lastKnownRatings = lambda cur, ids, sport: last_seen or {}
     predict._fieldGender = lambda cur, ids, sport: gender
+    # ! STUBBED LIKE _fieldGender, and for the same reason: the field's LEVEL
+    #   is read off a real athlete_season query, and these fixtures have no
+    #   cursor. What it answers does not matter here -- _currentSquads is
+    #   stubbed too -- only that it does not go to the database.
+    predict._fieldLevels = lambda cur, ids, sport: set()
 
     def undo():
         (predict._exactField, predict._currentSquads,
          predict._currentSeason, predict._lastKnownRatings,
-         predict._fieldGender) = saved
+         predict._fieldGender, predict._fieldLevels) = saved
     return undo
 
 

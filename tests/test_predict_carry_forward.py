@@ -124,7 +124,11 @@ def _spyOn(empty_for):
     saved = predict._squadsForYear
 
     def spy(cur, schools, sport, year, exclude_terminal=False,
-            active_year=None, gender=None):
+            active_year=None, gender=None, levels=None):
+        # ! levels IS ACCEPTED AND NOT RECORDED. This file is about the
+        #   carry-forward WINDOW; which level a squad is filtered to is
+        #   test_school_level_filter's question, and recording it here would
+        #   only make every expected dict in this file carry a None.
         calls.append({"year": year, "terminal": exclude_terminal,
                       "active": active_year, "gender": gender})
         return ({} if year in empty_for

@@ -50,10 +50,25 @@ def target(**args):
 
 
 def test_the_field_arrives_as_school_and_ids():
+    """The third element is the school's ENTRY COUNT, and it is optional -- an
+    older page, or a manual target with no meet to count, sends two."""
     t, err = target(field=json.dumps([["Amherst (MA)", ["11", "12"]],
                                       ["Chicago (IL)", ["21"]]]))
     assert err is None, err
-    assert t["field"] == [("Amherst (MA)", [11, 12]), ("Chicago (IL)", [21])]
+    assert t["field"] == [("Amherst (MA)", [11, 12], None),
+                          ("Chicago (IL)", [21], None)]
+
+
+def test_the_entry_count_rides_along():
+    """Owner, 2026-09-16: a lone qualifier with their whole squad added must
+    not score. The ids are the lineup on screen; the count is the fact about
+    the meet, and only it decides whether the school is a team there."""
+    t, err = target(field=json.dumps([["Solo", ["11", "12", "13"], 1]]))
+    assert err is None, err
+    assert t["field"] == [("Solo", [11, 12, 13], 1)], t["field"]
+
+    _t, err = target(field=json.dumps([["Solo", ["11"], "two"]]))
+    assert err == "field entry counts must be numbers", err
 
 
 def test_a_malformed_field_is_refused_not_ignored():

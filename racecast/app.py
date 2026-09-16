@@ -6704,7 +6704,8 @@ def _target(args):
 
     # ★ THE LINEUP THE PAGE IS SHOWING, WHEN IT SENDS ONE (owner, 2026-09-16:
     #   "you can literally see the correct list there. Why not just take
-    #   those athletes?"). [[school, [person_id, ...]], ...].
+    #   those athletes?").
+    #   [[school, [person_id, ...], n_entered], ...] -- n_entered optional.
     #
     # ⚠ THE SERVER USED TO RE-DERIVE THE FIELD AND GET A DIFFERENT ANSWER.
     #   The page sent only its edits, on the reasoning that the server
@@ -6731,7 +6732,8 @@ def _target(args):
             return None, f"field takes at most {MAX_FIELD_TEAMS} teams"
         field, n = [], 0
         for pair in parsed:
-            if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+            if (not isinstance(pair, (list, tuple))
+                    or len(pair) not in (2, 3)
                     or not isinstance(pair[0], str)
                     or not isinstance(pair[1], list)):
                 return None, "field entries are [school, [person_id, ...]]"
@@ -6743,8 +6745,20 @@ def _target(args):
             n += len(ids)
             if n > MAX_FIELD_RUNNERS:
                 return None, f"field takes at most {MAX_FIELD_RUNNERS} runners"
+            # ★ AND HOW MANY THAT SCHOOL ACTUALLY ENTERED, WHICH IS NOT
+            #   len(ids) (owner, 2026-09-16: "if there's an indiv who
+            #   qualifies and runs, and then we add entire roster, that team
+            #   should not get a place"). The list is the lineup a person is
+            #   looking at, edits included; the entry count is a fact about
+            #   the meet, and only it decides whether the school is a team
+            #   there. Optional, because a manual target has no meet to count.
+            entered = None
+            if len(pair) == 3 and pair[2] is not None:
+                if not str(pair[2]).isdigit():
+                    return None, "field entry counts must be numbers"
+                entered = min(int(pair[2]), MAX_FIELD_RUNNERS)
             if ids:
-                field.append((pair[0], ids))
+                field.append((pair[0], ids, entered))
         if field:
             t["field"] = field
     return t, None
