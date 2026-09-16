@@ -556,7 +556,7 @@ def main():
                 manners.allowed = lambda url: (True, 0.0)
                 print("  robots.txt IGNORED by --ignore-robots", flush=True)
             meta = crests = addrs = units = missed = 0
-            kept = placeholder = 0
+            kept = placeholder = stateless = 0
             t0 = time.time()
             for i, (school, state, team_id, stored_url) in enumerate(todo, 1):
                 raw = why = None
@@ -640,6 +640,18 @@ def main():
                         elif sharedAlready(cur, sha):
                             placeholder += 1
                             png = None
+                    # ⚠ NEVER UNDER AN EMPTY STATE (2026-09-16, the first
+                    #   --unfetched run: "Exeter ()", "Eastlake ()"). A crest
+                    #   row with no state is the fallback school_logo.crestState
+                    #   serves for ANY mention of the name -- so filing one is
+                    #   how a name-wide badge gets made, which is the bug this
+                    #   whole split exists to fix. The METADATA is still worth
+                    #   the call (level and mascot_url feed the pooling and the
+                    #   contested list), so the team is fetched and only the
+                    #   crest is held back.
+                    if png and not (state or "").strip():
+                        stateless += 1
+                        png = None
                     if png:
                         crests += 1
                         if args.write:
@@ -672,7 +684,8 @@ def main():
                   f"{(time.time() - t0) / 60:.1f} min")
             print(f"  left alone: {kept:,} already had a better crest "
                   f"(--keep-better), {placeholder:,} would have replaced a "
-                  f"crest with a picture several schools already wear")
+                  f"crest with a picture several schools already wear, "
+                  f"{stateless:,} had no state to file one under")
             print("  next: scripts/anet_units.py --report  (learns what anet's "
                   "unit ids mean from the units we already infer)")
 

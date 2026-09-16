@@ -231,3 +231,16 @@ def test_the_teams_our_rows_name_can_be_fetched_at_all():
     assert src.count("def _stateSource(") == 1
     assert src.count("_stateSource(cur)") == 2
     assert "unfetchedTeams(cur, args.limit, args.min_rows)" in src
+
+
+def test_a_crest_is_never_filed_under_an_empty_state():
+    """⚠ FROM THE FIRST --unfetched RUN: "Exeter ()", "Eastlake ()". A
+    school_logo row with no state is the fallback crestState serves for ANY
+    mention of the name, so filing one MAKES a name-wide badge -- the exact
+    failure the split exists to fix. The metadata is still fetched."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    guard = 'if png and not (state or "").strip():'
+    assert guard in src
+    # before the write, not after
+    assert src.index(guard) < src.index("name = writeFile(school, state, png")
+    assert "stateless += 1" in src and "had no state to file one under" in src
