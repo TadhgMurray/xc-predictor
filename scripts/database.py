@@ -594,6 +594,18 @@ def _createTFTables(cursor):
             div_id          BIGINT,
             meet_id         BIGINT,
             meet_name       TEXT,
+            -- ★ THE VENUE'S NAME, AND IT WAS NEVER MISSING FROM THE SCRAPE
+            --   (owner, 2026-09-16: "make sure tf venue names go in so we
+            --   can not label our id as venue"). anet's Location.Name has
+            --   been landing in meets_tf_meta.venue_name all along; it was
+            --   this table -- the one the engine and the site join -- that
+            --   had nowhere to put it, so the TF venue key came out as
+            --   'loc:<location_id>:out' and that id is what a page showed.
+            --   Filled here for new rows and backfilled from meets_tf_meta
+            --   for old ones: no re-scrape, it is a JOIN we never made.
+            venue_name      TEXT,
+            -- the meet's own page, for auditing a bad parse after the fact
+            meet_url        TEXT,
             event_short     TEXT,
             event_id        BIGINT,
             distance_meters REAL,
@@ -990,6 +1002,40 @@ def saveResult(conn, resultData: dict, meetData: dict, school: str = None):
 #           distance_meters: float, or None/-1 for field/failed events.
 #           division: division name string, or None (per-div fallback path).
 # Output: None.
+# ★ THE MEET'S OWN PAGE (owner, 2026-09-16: approved with the venue
+#   columns). Worth one text column: when a parse comes out wrong -- a
+#   column shift, a distance that cannot be right -- the first question is
+#   always "what did the page actually say", and reconstructing the URL from
+#   an id months later is guesswork about a URL scheme that has changed.
+def meetUrlTF(meet_info):
+    """anet's own URL for a TF meet, or None."""
+    mid = meet_info.get("ID")
+    if mid in (None, ""):
+        return None
+    season = meet_info.get("SeasonID") or ""
+    url = f"https://www.athletic.net/TrackAndField/meet/{mid}/results"
+    return f"{url}?season={season}" if season else url
+
+
+# ★ AND THE OLD ROWS NEED NO SCRAPE AT ALL. meets_tf_meta already holds
+#   venue_name for every meet it has seen, so the backfill is one UPDATE
+#   ... FROM. Run it once after the migration; it is idempotent and only
+#   touches rows whose name is still missing.
+def backfillMeetsTFVenueNames(conn):
+    """Copy meets_tf_meta.venue_name onto meets_tf. Returns rows filled."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE meets_tf t SET venue_name = m.venue_name
+        FROM   meets_tf_meta m
+        WHERE  m.meet_id = t.meet_id
+          AND  t.venue_name IS NULL
+          AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
+    """)
+    n = cursor.rowcount
+    conn.commit()
+    return n
+
+
 def saveMeetTF(conn, meet_info: dict, div_id: int, event_id: int,
                event_short: str, distance_meters, division=None):
 
@@ -1003,8 +1049,10 @@ def saveMeetTF(conn, meet_info: dict, div_id: int, event_id: int,
                             state, is_indoor, location_id,
                             track_type, track_length, ustfccca_id,
                             division, level_mask,
+                            venue_name, meet_url,
                             source, id_system)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s)
         ON CONFLICT (meet_id, div_id, event_id) DO NOTHING
     """, (
         div_id,
@@ -1023,6 +1071,11 @@ def saveMeetTF(conn, meet_info: dict, div_id: int, event_id: int,
         meet_info.get("UstfcccaID"),
         division,
         meet_info.get("LevelMask"),
+        # ★ Location.Name IS THE VENUE NAME. saveMeetTFMeta has been storing
+        #   it as venue_name since it landed; this is the same value, in the
+        #   table its consumers actually read.
+        location.get("Name"),
+        meetUrlTF(meet_info),
         "anet",                        # source     — NOT NULL
         "anet",                        # id_system  — NOT NULL
     ))

@@ -748,10 +748,29 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
         SELECT r.result_id, r.person_id, r.normalized_time,
                {_ageBandGrade()}, r.source, r.school, r.date,
                'TF' AS sport,
-               CASE WHEN m.location_id IS NULL THEN NULL
-                    ELSE 'loc:' || m.location_id::text ||
-                         CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN ':in'
-                              ELSE ':out' END
+               -- ★ THE LOCATION ID IS THE BETTER KEY, AND THE NAME IS THE
+               --   FALLBACK (owner, 2026-09-16: "make sure tf venue names go
+               --   in so we can not label our id as venue"). anet's location
+               --   id is stable and unambiguous, so it stays the identity --
+               --   two spellings of one track are one cell, which is the
+               --   thing course_canonical has to work for on the XC side.
+               --   What was wrong is that a row with NO location id had no
+               --   venue at all, so every one of them fell into the sport's
+               --   average instead of its own track, and a page showed
+               --   'loc:12345:out' because the key was all there was.
+               --   meets_tf.venue_name now carries the name (database.py:
+               --   it was always in meets_tf_meta, never joined), so a
+               --   nameless-id row keeps its id and a nameless row gets a
+               --   name-and-place key instead of nothing.
+               CASE WHEN m.location_id IS NOT NULL
+                         THEN 'loc:' || m.location_id::text ||
+                              CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                                   THEN ':in' ELSE ':out' END
+                    WHEN COALESCE(btrim(m.venue_name), '') <> ''
+                         THEN 'tfv:' || lower(btrim(m.venue_name)) ||
+                              CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                                   THEN ':in' ELSE ':out' END
+                    ELSE NULL
                END AS venue,
                {_pg.packGenderExpr('TF', _personGenderAvailable())} AS gender,
                -- ★ THE EVENT'S METRES, FROM THE NAME WHEN meets_tf HAS NONE
