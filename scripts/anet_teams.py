@@ -474,6 +474,10 @@ def main():
                          "queue cannot reach, because that one starts from "
                          "school_identity pairs that already exist. Use with "
                          "--limit.")
+    ap.add_argument("--queue-only", action="store_true",
+                    help="print the queue and stop: how many teams, what they "
+                         "are, no network and no writes. What to run before "
+                         "choosing a --limit.")
     ap.add_argument("--min-rows", type=int, default=1,
                     help="with --unfetched: skip a team our rows name fewer "
                          "than this many times")
@@ -500,8 +504,8 @@ def main():
                     help="fetch even where anet's robots.txt disallows it")
     ap.add_argument("--dir", default=None)
     args = ap.parse_args()
-    if not (args.write or args.dry_run or args.probe):
-        ap.error("pass --probe, --dry-run or --write")
+    if not (args.write or args.dry_run or args.probe or args.queue_only):
+        ap.error("pass --probe, --queue-only, --dry-run or --write")
     season = args.season or time.gmtime().tm_year
     if args.probe:
         manners = Manners(rate=0)
@@ -550,6 +554,16 @@ def main():
                   + ("  [--missing: only pairs with no crest]"
                      if args.missing else ""),
                   flush=True)
+
+            # ! BEFORE ANY REQUEST. The whole point is to size the job.
+            if args.queue_only:
+                for i, (school, state, team_id, murl) in enumerate(todo, 1):
+                    print(f"  {i:>6}  team {team_id:<9} {school!r} "
+                          f"({state or '--'})"
+                          + ("  [mascot_url stored]" if murl else ""))
+                print(f"\n  {len(todo):,} teams in the queue. No requests "
+                      f"made, nothing written.\n")
+                return
 
             manners = Manners(rate=args.rate)
             if args.ignore_robots:

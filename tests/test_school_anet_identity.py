@@ -244,3 +244,51 @@ def test_a_crest_is_never_filed_under_an_empty_state():
     # before the write, not after
     assert src.index(guard) < src.index("name = writeFile(school, state, png")
     assert "stateless += 1" in src and "had no state to file one under" in src
+
+
+def test_the_queue_can_be_sized_without_fetching_anything():
+    """--dry-run still makes its requests (that is what it is for). Sizing a
+    job must not: the first --unfetched run fetched 5 teams just to find out
+    how many there were."""
+    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    assert '"--queue-only"' in src
+    assert src.index("if args.queue_only:") < src.index("manners = Manners(rate=args.rate)")
+    assert "args.queue_only" in src[src.index("if not (args.write"):
+                                    src.index("season = args.season")]
+
+
+def test_a_tfrrs_school_links_to_an_anet_team_by_its_athletes():
+    """★ THE OWNER'S PLAN (2026-09-16): "combine with tfrrs using our already
+    combined athletes that contain both schools with races from tfrrs and
+    anet ... any remaining tfrrs schools just put as their own schools"."""
+    sys.path.insert(0, os.path.join(_ROOT, "scripts"))
+    import link_tfrrs_to_anet as L
+    teams = {21570: ("Williams College", "MA"), 685: ("Williams", "CA"),
+             999: ("Thin", "NY"), 1: ("A", "AL"), 2: ("B", "AK")}
+    counted = {
+        # the case: 40 athletes agree, and one stray high-school vote loses
+        "Williams College": {21570: [40, 6], 685: [1, 1]},
+        "Thin College": {999: [3, 1]},            # a witness, not a majority
+        "Split College": {1: [10, 2], 2: [9, 2]},  # no clear winner
+    }
+    links, rejected = L.decide(counted, teams)
+    assert [(r[0], r[1]) for r in links] == [("Williams College", 21570)]
+    assert {r[0] for r in rejected} == {"Thin College", "Split College"}
+    # the bars are what does it, and they are arguable from the outside
+    assert L.MIN_ATHLETES >= 3 and 0.5 < L.MIN_SHARE <= 1.0
+    tight, _r = L.decide(counted, teams, min_athletes=100)
+    assert tight == []
+
+
+def test_only_anet_college_teams_are_candidates():
+    """⚠ THE TRAP: a person's HIGH SCHOOL anet rows and their COLLEGE tfrrs
+    rows share a calendar year -- spring track, then autumn cross country --
+    so a shared person and year alone would marry a high school to a
+    college."""
+    src = open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")).read()
+    body = src[src.index("def collegeTeams("):src.index("_SQL = ")]
+    assert 'if lv == "college"' in body and "loadTeamLevels" in body
+    # the votes query can only see those teams
+    assert "r.team_id = ANY(%(teams)s)" in src
+    assert "r.source = 'tfrrs'" in src
+    assert "anet.yr = tf.yr" in src

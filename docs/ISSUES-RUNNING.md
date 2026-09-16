@@ -1801,3 +1801,60 @@ python scripts/anet_teams.py --write --unfetched --limit 2000
 ⚠ It scans both row tables, so it is a maintenance command, not a pipeline
 step. The biggest-first order is the point — a few thousand teams carry most of
 the corpus's weight.
+
+### ⏳ Q. The plan: identity is `(team_id, name, location)`, and tfrrs links in through athletes
+
+Owner, 2026-09-16: *"We have a bunch of teams, which currently we are combining
+by name/location. We need to combine by (team id, name, location) to help tfrrs
+combine. What we should do is scrape anet for all the team ids we need. Then we
+combine with tfrrs using our already combined athletes that contain both
+schools with races from tfrrs and anet. That should get us over the hump, and
+any remaining tfrrs schools just put as their own schools still but keep
+separate and under current logic so they don't fuck with the overwhelming
+majority. Same for any team id = 0 teams."*
+
+This is the frame the last four attempts were missing. Every one of them tried
+to join the two feeds **by a string**, and each failed in a different direction,
+silently:
+
+| attempt | what it joined on | how it failed |
+|---|---|---|
+| home-state clusters | athletes' racing mode | a college's mode is a travel state |
+| `anet_team` by name | anet's spelling | `Williams College` never met `Williams` |
+| college directory | Wikipedia's spelling | 895 of 3,620 contested names |
+| `crestState` fallback | one crest per name | gave the university's badge to the high school |
+
+**The athletes are the join that needs no spelling.** `person_id` is already
+merged across the feeds, so an athlete with anet rows on a team and tfrrs rows
+in the same season *is* that team's athlete, and the tfrrs string they wear is
+that team's name.
+
+**Step 1 — every team id our rows name.** `anet_teams.py --write --unfetched`,
+no limit. `--queue-only` sizes it first without making a single request
+(`--dry-run` fetches; that is what it is for, and it is why the first
+`--unfetched --limit 5` run fetched 5 teams just to count them).
+
+**Step 2 — the link.** `scripts/link_tfrrs_to_anet.py`, dry run by default,
+writes `school_team_link (tfrrs_school, team_id, state, level, n_athletes,
+n_seasons, share)`.
+
+⚠ **The trap, and the guard.** A person's HIGH SCHOOL anet rows and their
+COLLEGE tfrrs rows share a calendar year — spring track for the high school,
+autumn cross country for the college. A shared person and year alone would
+therefore marry a high school to a college, which is the collision this is
+meant to end. So a vote only counts when **the anet team's own level is
+college** (`loadTeamLevels`; measured from the owner's query, `4 = hs`,
+`8 = college`). A high school team cannot be voted onto a tfrrs college string
+at all. Plus a majority: `MIN_ATHLETES = 5` and `MIN_SHARE = 0.60`, so one
+transfer, one mis-merged person or one guest runner cannot mint a link.
+
+**Step 3 — the remainder stays separate.** A tfrrs string with no link, and
+`team_id = 0`, keep the name/home-state logic and their own clusters. That is
+the owner's rule and it is also the safe one: the fallback is what the
+overwhelming majority of schools already use correctly, and nothing that fails
+the bars above should be allowed to move it.
+
+**Then** `school_team_link` becomes the third source in
+`authoritativeStates` — better than the directory, because it is measured on
+our own athletes rather than matched on a name — and the crest queue keys on
+the linked team.
