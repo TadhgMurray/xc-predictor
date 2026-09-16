@@ -1285,6 +1285,44 @@ choice is what is new: they take a median where we take a mean.**
    raced it, and because the solve is joint that leaks into every other
    course they ran. `diag_engine_counts.py` section A counts the share.
 
+   ⚠ **The first run said 26.7% of COLLEGE rows and that was my query's
+   bug.** It joined only `meets` — the anet table — while tfrrs XC venues
+   live in `meets_tfrrs`, keyed on `meet_id` alone. The engine's own
+   `_xcQuery` COALESCEs the two; measuring an engine with a join the engine
+   does not use measures nothing. Fixed and needs re-running. The `hs` 1.5%
+   and `ms` 3.7% figures are anet-sourced so less affected, but are not
+   quotable until the re-run either.
+
+#### 🔎 And a bigger question fell out of it — in the MODEL, not the engine
+
+Chasing section A's bad number surfaced this, and it is a hypothesis with
+two readings that only a count settles.
+
+`feature_extraction._XC_SQL` joins the venue with a bare
+
+```
+    JOIN meets m ON r.div_id = m.div_id AND r.meet_id = m.meet_id
+                AND r.source = m.source
+```
+
+an **INNER** join, and the file contains **zero** references to
+`meets_tfrrs`. The engine's `_xcQuery` LEFT JOINs both and COALESCEs them.
+
+* **Reading one:** `speed_ratings_db`'s header lists *"INNER JOIN meets —
+  anet-only table; deleted tfrrs again"* among bugs it already **fixed**, and
+  `build_course_canonical` UNIONs `meets` with `meets_tfrrs` — which is
+  pointless if `meets` already held tfrrs venues. If so, **every
+  tfrrs-sourced XC result is dropped from the training corpus**, and college
+  XC is largely tfrrs. The transformer would barely have seen college cross
+  country, which would explain a great deal about the D3 championship.
+* **Reading two:** extraction's own comment says *"`meets` is disambiguated
+  by source"*, implying it carries more than one source and the join is fine.
+
+Both cannot be true. `diag_engine_counts.py` **section C** counts rated XC
+rows per source against how many survive that inner join. If reading one
+holds it is an extraction bug needing a **re-extraction**, so it belongs
+bundled with **A**, **B** and **C** above rather than done alone.
+
 #### Not taking
 
 * **Pairwise differencing as a replacement** for the joint solve. It throws
