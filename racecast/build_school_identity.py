@@ -57,7 +57,130 @@ MERGE_MIN_SHARED = 3          # races two clusters ran together
 MERGE_MIN_FRACTION = 0.20     # ...as a share of the smaller cluster's races
 
 
-def mergeCoRacingClusters(cur):
+# ★ ANET KNOWS WHERE ITS SCHOOLS ARE, AND WE WERE GUESSING (owner,
+#   2026-09-16: "we need to use the school locations from anet and the
+#   school ids/names to separate schools (where id != 0) and separate them
+#   by location otherwise ... currently Oregon(IL) and Oregon(or) are
+#   colliding despite hs vs college, and this happens to Williams (CA) vs
+#   (MA)").
+#
+# ⚠ THE HEADER OF school_identity.py SAYS "THE DATA HAS NO SCHOOL IDS".
+#   That stopped being true when scripts/anet_teams.py landed: anet_team
+#   carries a team_id per school with its own level, state, city and zip,
+#   and `results.team_id` puts every anet row on one of them. The home-state
+#   inference is still the only answer for tfrrs and for anet rows with no
+#   team, but it must not outvote an id.
+#
+#   And the inference cannot separate these cases even in principle:
+#     * an athlete has ONE home state, so a kid who ran high school in CA
+#       and then Williams College in MA is one state for both names;
+#     * a college's home state is a travel mode (Air Force came out OK,
+#       Oregon CA, Furman FL -- see school_identity.teamState);
+#     * two schools of one name in one state never separate at all.
+#
+# ! CONTESTED NAMES ONLY. A name anet places in a single state has nothing
+#   to disambiguate, and the scan below is a filtered one for that reason:
+#   with every name it would be a full pass over results for no gain.
+def anetContestedStates(cur):
+    """{normalised school name: {state: n teams}} for names anet gives
+    teams in MORE THAN ONE state. Empty without anet_team."""
+    cur.execute("SELECT to_regclass('anet_team')")
+    if cur.fetchone()[0] is None:
+        print("  school_identity: no anet_team -- school states stay inferred",
+              flush=True)
+        return {}
+    cur.execute("""
+        SELECT lower(btrim(school)) AS name,
+               upper(btrim(COALESCE(state, anet_state))) AS st,
+               count(*)
+        FROM   anet_team
+        WHERE  school IS NOT NULL AND btrim(school) <> ''
+          AND  COALESCE(state, anet_state) IS NOT NULL
+          AND  btrim(COALESCE(state, anet_state)) <> ''
+        GROUP  BY 1, 2
+    """)
+    by_name = {}
+    for name, st, n in cur.fetchall():
+        by_name.setdefault(name, {})[st] = int(n)
+    contested = {k: v for k, v in by_name.items() if len(v) >= 2}
+    print(f"  school_identity: anet places {len(by_name):,} school names; "
+          f"{len(contested):,} of them in more than one state", flush=True)
+    return contested
+
+
+def buildTeamStates(cur, contested):
+    """si_team_state(person_id, school, state): where the athlete's OWN
+    anet team for that school string is, for contested names. The modal
+    state across both sports' rows, so one stray row cannot move it.
+
+    ⚠ ONE FILTERED PASS OVER results AND results_tf. Everything else in
+      this step reads athlete_season for a reason (owner, 2026-09-15: the
+      gateway timeout), but team_id exists only on the raw tables and the
+      name filter is what keeps it cheap.
+    """
+    cur.execute("DROP TABLE IF EXISTS si_team_state")
+    cur.execute("CREATE TEMP TABLE si_team_state "
+                "(person_id bigint, school text, state text)")
+    if not contested:
+        return 0
+    names = sorted(contested)
+    cur.execute("DROP TABLE IF EXISTS si_team_raw")
+    cur.execute("CREATE TEMP TABLE si_team_raw "
+                "(person_id bigint, school text, state text, n bigint)")
+    for table in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+              AND column_name = 'team_id'
+        """, (table,))
+        if cur.fetchone() is None:
+            continue
+        cur.execute(f"""
+            INSERT INTO si_team_raw (person_id, school, state, n)
+            SELECT r.person_id, r.school,
+                   upper(btrim(COALESCE(t.state, t.anet_state))), count(*)
+            FROM   {table} r
+            JOIN   anet_team t ON t.team_id = r.team_id
+            WHERE  r.person_id IS NOT NULL
+              AND  r.team_id IS NOT NULL AND r.team_id <> 0
+              AND  r.school IS NOT NULL
+              AND  lower(btrim(r.school)) = ANY(%s)
+              AND  COALESCE(t.state, t.anet_state) IS NOT NULL
+              AND  btrim(COALESCE(t.state, t.anet_state)) <> ''
+            GROUP  BY 1, 2, 3
+        """, (names,))
+    cur.execute("""
+        INSERT INTO si_team_state (person_id, school, state)
+        SELECT person_id, school, state FROM (
+            SELECT person_id, school, state,
+                   row_number() OVER (PARTITION BY person_id, school
+                                      ORDER BY sum(n) DESC, state) AS rk
+            FROM   si_team_raw GROUP BY 1, 2, 3) x
+        WHERE  rk = 1
+    """)
+    cur.execute("CREATE INDEX si_team_state_idx ON si_team_state (person_id, school)")
+    cur.execute("SELECT count(*) FROM si_team_state")
+    n = cur.fetchone()[0]
+    print(f"  school_identity: {n:,} (athlete, school) pairs placed by anet's "
+          f"own team id rather than by where the athlete races", flush=True)
+    return n
+
+
+# ! PURE, SO IT CAN BE TESTED WITHOUT A DATABASE. Two clusters of one name
+#   that anet places in two different states are two SCHOOLS, and the
+#   co-racing merge must not join them however many meets they share --
+#   Oregon (IL) and Oregon (OR) are the case, and a shared meet_id between
+#   the feeds or a transfer's rows is enough to start a merge that then
+#   spreads by union-find.
+def anetSaysTwoSchools(contested, school, state_a, state_b):
+    """True when anet names teams for `school` in BOTH states."""
+    states = contested.get((school or "").strip().lower())
+    if not states:
+        return False
+    return (state_a or "").upper() in states and (state_b or "").upper() in states
+
+
+def mergeCoRacingClusters(cur, contested=None):
     from school_identity import MIN_ATHLETES, MIN_SHARE
     t0 = time.time()
     cur.execute("""
@@ -100,8 +223,13 @@ def mergeCoRacingClusters(cur):
             x = parent[x]
         return x
 
+    refused = 0
     for sc, s1, s2, shared in cur.fetchall():
         small = min(n_races.get((sc, s1), 0), n_races.get((sc, s2), 0))
+        # ★ ANET'S WORD BEATS A SHARED MEET (see anetSaysTwoSchools)
+        if anetSaysTwoSchools(contested or {}, sc, s1, s2):
+            refused += 1
+            continue
         if shared >= MERGE_MIN_SHARED and shared >= MERGE_MIN_FRACTION * small:
             a, b = find((sc, s1)), find((sc, s2))
             if a != b:
@@ -112,6 +240,9 @@ def mergeCoRacingClusters(cur):
         if root != key or key in parent:
             groups.setdefault(root, set()).add(key)
     groups = {r: m | {r} for r, m in groups.items() if len(m | {r}) >= 2}
+    if refused:
+        print(f"  school_identity: {refused:,} co-racing merges refused -- anet "
+              f"names teams for the name in both states", flush=True)
     if not groups:
         print("  school_identity: no co-racing clusters to merge", flush=True)
         return
@@ -544,6 +675,12 @@ def main():
               f"({(time.time() - t0) / 60:.1f} min)", flush=True)
         conn.commit()
 
+        # ★ ANET FIRST: which names it places in two states, and where
+        #   each athlete's own team for those names is. Both feed the
+        #   clusters CTE below and the co-racing merge after it.
+        contested = anetContestedStates(cur)
+        buildTeamStates(cur, contested)
+
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
         cur.execute("DROP TABLE IF EXISTS school_identity_new")
@@ -556,10 +693,17 @@ def main():
                   AND  rr.person_id IS NOT NULL
             ),
             clusters AS (
-                SELECT v.school, ph.state, count(*) AS n_athletes
+                -- ★ ANET'S STATE FOR THE ATHLETE'S OWN TEAM FIRST, the
+                --   home-state inference only where there is no team id
+                --   (tfrrs, team_id = 0, a name anet places in one state).
+                --   See anetContestedStates and buildTeamStates.
+                SELECT v.school, COALESCE(ts.state, ph.state) AS state,
+                       count(*) AS n_athletes
                 FROM   votes v
                 JOIN   person_home_state_new ph USING (person_id)
-                GROUP  BY v.school, ph.state
+                LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
+                                            AND ts.school = v.school
+                GROUP  BY v.school, COALESCE(ts.state, ph.state)
             )
             SELECT school, state, n_athletes,
                    round(n_athletes::numeric
@@ -588,7 +732,7 @@ def main():
               f"{multi:,} names split across states", flush=True)
         conn.commit()
 
-        mergeCoRacingClusters(cur)
+        mergeCoRacingClusters(cur, contested)
         conn.commit()
         applyCollegeDirectory(cur)
         conn.commit()

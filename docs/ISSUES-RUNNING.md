@@ -1542,10 +1542,14 @@ And a level the feed **states** no longer trips the three "we do not know"
 verdicts into returning no pool — that kill exists because the fallback is
 the school name, and this is not that.
 
-`team_id = 0` is anet's *no team*. It reads as `'club'`, not straight to pro,
-which is the owner's own earlier rule (2026-09-14, the season-majority gate):
-one unattached summer race must not make a tenth grader a professional. A
-tfrrs slug still outranks a zero.
+`team_id = 0` is anet's *no team*, and it is **pro, unconditionally** — asked
+whether to gate it on the season majority like the club rules, owner:
+*"unconditional (these atheltes don't matter enough for me to let them corrupt
+boards)"*. So it does **not** go through `team_level='club'`, which would hand
+it to the majority gate and the grade guards; `resolvePool` takes it as
+`no_team`, decided before every grade, verdict and field rule. ⚠ The cost,
+stated: a high schooler's one unattached summer race is a professional row and
+their season splits across two pools. `--zero` prices it.
 
 **Measure it before the next go-live**: `scripts/diag_school_collisions.py`
 — B lists the colliding names with each team's level/state/city, C says how
@@ -1553,20 +1557,76 @@ many of those teams the name map levels **wrong**, and `--zero` answers
 whether `team_id = 0` really is unattached (if it turns out to be a sentinel
 on ordinary school rows, the `'club'` read must go).
 
-**The identity half — NOT done, and it is the one the owner sees on the
-site.** `school_identity` is keyed on the school **string**, clustered by
-athletes' home state and then merged when two clusters co-race
-(`build_school_identity.py`). That is a state clustering, not an identity: it
-cannot separate two schools whose athletes race in the same state, and the
-co-racing merge can join two real schools that meet. The right key is anet's
-`team_id`, with `(name, state)` where there is none — it changes school
-pages, crests, search and meet scoring, so it needs a decision first.
+**The identity half — done too** (owner: *"go ahead"*).
+`school_identity.py`'s header says *"THE DATA HAS NO SCHOOL IDS"*. That
+stopped being true when `scripts/anet_teams.py` landed: `anet_team` carries a
+`team_id` per school with its own level, **state**, city and zip, and
+`results.team_id` puts every anet row on one of them. The clusters were still
+being drawn from `person_home_state` — the state an athlete *races* in most —
+which cannot separate these cases even in principle:
 
-### 🔎 M. A club's professional with a `no_evidence` verdict is dropped, not pooled pro
+* an athlete has **one** home state, so a kid who ran high school in CA and
+  then Williams College in MA is one state for both names;
+* a college's home state is a **travel mode** (Air Force came out OK, Oregon
+  CA, Furman FL — `school_identity.teamState`'s own docstring);
+* two schools of one name **in one state** never separate at all.
 
-Found while testing L, pre-existing, left alone. The verdict kill runs
-*before* the pro repool, so `resolvePool(None, grade_verdict="no_evidence",
-team_level="club")` returns `None` even though `is_pro` was already set. The
-row is a gradeless club row — the `no_grades → pro` verdict's own case — so
-pooling it pro is arguably right. Pinned as-is in
-`tests/test_team_level_pool.py`; not changed in the same commit as L.
+So `build_school_identity` now:
+
+1. `anetContestedStates` — the names anet places in **more than one state**.
+2. `buildTeamStates` — for those names only, the modal state of the athlete's
+   **own anet team**, over both sports' raw rows (`si_team_state`). ⚠ One
+   filtered pass over `results`/`results_tf`; everything else in this step
+   reads `athlete_season` because of the 15 Sep gateway timeout, and the name
+   filter is what keeps this affordable. `team_id = 0` is excluded — it is not
+   a school.
+3. The clusters CTE reads `COALESCE(ts.state, ph.state)` — anet's state for
+   the athlete's own team, the inference only where there is no team id
+   (tfrrs, `team_id = 0`, a name anet places in one state).
+4. `anetSaysTwoSchools` — the co-racing merge **refuses** to join two clusters
+   of one name that anet places in two different states, *before* the
+   shared-meet threshold, because the merge spreads by union-find: one
+   accepted pair pulls in every cluster already joined to either side.
+
+Everything degrades: no `anet_team` → no contested names → no scan → every
+`COALESCE` falls through to exactly the old answer.
+
+**Still inferred, on purpose:** tfrrs rows (no anet team id — the slug's state
+token is the obvious next step) and names anet places in a single state.
+
+### ✅ M. The verdict kill was dropping professionals, and two other pro rows never had a pool
+
+Found while testing L. Three separate ways a row established as professional
+still failed to reach a pro pool:
+
+1. **The verdict kill ran before the pro repool.** A gradeless row with a
+   `no_evidence` verdict returned `None` even though `is_pro` was already set
+   — dropped because `grade_sanity` could not name a *grade* for it. Of course
+   it could not: there is no grade to name. Both rules approved on 16 Sep
+   (unconditional `no_team`, and a club season sweeping every grade) land in
+   exactly this case, so `is_pro` is decisive here now.
+2. **Stage 2 repools a pro by *swapping the level* of the pool the grade or
+   the school produced** — so when neither could produce one, there was
+   nothing to swap and the row was dropped. That silently undid the rule for
+   the rows it matters most for: an unattached entry whose `school` is
+   whatever the athlete typed, and **the elite squads in `_PRO_TEAMS`** —
+   `HOKA NAZ Elite` is in no school level map because it is not a school, so
+   the hand-written list was catching rows that then vanished. `_proPoolFor`
+   builds `pro_m`/`pro_f` from the sex alone. Only with a known sex:
+   `pro_unknown_gender` is not a pool anything can rate against.
+3. And **a club season now sweeps every grade** (rule 2 above), so an elite
+   squad's "11" no longer stays on the high school boards.
+
+### The rules the owner approved on 2026-09-16
+
+| | rule | gate |
+|---|---|---|
+| 1 | `team_id = 0` → pro | **none** — before every other rule |
+| 2 | a club with a professional in it → *every* row of that season pro | the season majority (`clubSeason`), upstream |
+| 3 | school identity keyed on anet's team id and location | — |
+
+The cost of 1 and 2 is real and was priced: an unattached summer race splits a
+high schooler's season, and a sponsor's youth squad (`HOKA Aggie Running
+Club`, `Asics Aggies` — grades 9-12) pools pro when its athletes race mostly
+for it. Owner: *"these atheltes don't matter enough for me to let them corrupt
+boards."*

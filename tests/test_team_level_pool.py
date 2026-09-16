@@ -35,6 +35,9 @@ def test_the_slug_and_the_table_name_a_level():
     assert pr.teamLevelOf("456", None, levels) == "college"
     assert pr.teamLevelOf(0, "CT_college_f_Conn_College", levels) == "college"
     assert pr.teamLevelOf(None, None, levels) is None
+    # a zero names no level -- the pro repool is resolvePool's `no_team`
+    assert pr.teamLevelOf(0, None, levels) is None
+    assert pr.teamLevelOf(0, None, {0: "hs"}) is None
 
 
 def test_a_gradeless_club_row_is_professional_and_a_graded_one_is_not():
@@ -56,21 +59,27 @@ def test_a_college_teams_row_is_a_college_season():
     assert pr.resolvePool("8", team_level="college", **kw) == "ms_f|XC"
 
 
-def test_a_club_with_professionals_has_no_middle_schoolers():
+def test_a_club_with_professionals_has_no_schoolchildren_at_all():
     """★ OWNER, 2026-09-14: club runners labelled ms because they are in
-    their "6th" pro year. On a team with a professional in it, a grade of
-    1-8 or none is professional; a high-school grade is kept; a college
-    team is never touched."""
+    their "6th" pro year. ★ AND 2026-09-16, asked whether a grade 9-12 row
+    on such a team should be swept in too: "DO do this, only when they run
+    a majority of races at that club". The majority is the only gate and it
+    is upstream (clubSeason), so by the time team_has_pros is True here the
+    season is the club's and every row of it is professional."""
     kw = dict(gender="M", source="anet", school="Nomad Intl Elite", sport="TF",
               poolfor=_poolfor, season=2025)
     assert pr.resolvePool("6", **kw) == "ms_m|TF"                          # the old answer
     assert pr.resolvePool("6", team_has_pros=True, **kw) == "pro_m|TF"
     assert pr.resolvePool(None, team_has_pros=True, **kw) == "pro_m|TF"
-    assert pr.resolvePool("11", team_has_pros=True, **kw) == "hs_m|TF"      # a youth squad's junior
+    # ★ WHAT CHANGED: a school grade on the team no longer keeps the row
+    assert pr.resolvePool("11", team_has_pros=True, **kw) == "pro_m|TF"
+    assert pr.resolvePool("12", team_has_pros=True, **kw) == "pro_m|TF"
+    assert pr.resolvePool("6", team_has_pros=True, fixed_level="hs", **kw) == "pro_m|TF"
+    # a college is never a club
     assert pr.resolvePool("6", team_has_pros=True, team_level="college", **kw) == "ms_m|TF"
-    # a grade_sanity verdict of hs on the season stops the rule (the grade
-    # itself still decides the pool as it always did: ms here, never pro)
-    assert pr.resolvePool("6", team_has_pros=True, fixed_level="hs", **kw) != "pro_m|TF"
+    # (an hs grade on a college team is a college season -- the older rule)
+    assert pr.resolvePool("11", team_has_pros=True,
+                          team_level="college", **kw) == "college_m|TF"
 
 
 def test_the_club_rules_fire_only_in_a_season_raced_mostly_for_the_club(monkeypatch):
@@ -127,23 +136,51 @@ def test_a_stated_team_level_answers_the_verdicts_that_killed_the_row(monkeypatc
                               team_level="hs", **kw) == "hs_f|XC"
         assert pr.resolvePool(None, grade_verdict=verdict,
                               team_level="college", **kw) == "college_f|XC"
-    # ! A CLUB IS NOT A SCHOOL LEVEL, so the verdict still refuses the row --
-    #   unchanged behaviour, and the kill runs before the pro repool, so even
-    #   the club's professional is dropped rather than pooled pro. Left as it
-    #   was on purpose: see docs/ISSUES-RUNNING.md K.
+    # ! A CLUB IS NOT A SCHOOL LEVEL -- but the row is already professional,
+    #   and the kill may not drop a professional (ISSUES M). It used to.
     assert pr.resolvePool(None, grade_verdict="no_evidence",
-                          team_level="club", **kw) is None
+                          team_level="club", **kw) == "pro_f|XC"
 
 
 def test_anets_zero_team_is_no_school_at_all():
     """★ OWNER, 2026-09-16: "If any school has id == 0 we should just put
-    them in pro". Read as 'club', so the season-majority gate and the
-    grade guards still apply -- one unattached summer race is not a
-    professional season."""
-    assert pr.teamLevelOf(0, None, {1: "hs"}) == "club"
-    assert pr.teamLevelOf("0", None, None) == "club"
-    assert pr.teamLevelOf(0, "CT_college_f_Conn_College", None) == "college"
+    them in pro", and asked whether to gate it on the season majority like
+    the club rules: "unconditional". So it is not the club path -- it is
+    decided before every grade, verdict and field rule."""
     kw = dict(gender="M", source="anet", school="Unattached", sport="XC",
               poolfor=_poolfor, season=2025)
-    assert pr.resolvePool(None, team_level=pr.teamLevelOf(0, None, None), **kw) == "pro_m|XC"
-    assert pr.resolvePool("10", team_level=pr.teamLevelOf(0, None, None), **kw) == "hs_m|XC"
+    assert pr.resolvePool(None, no_team=True, **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", no_team=True, **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", no_team=True, fixed_level="hs", **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", no_team=True, season_level="hs", **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", no_team=True, grade_verdict="no_evidence", **kw) == "pro_m|XC"
+    assert pr.resolvePool("10", **kw) == "hs_m|XC"              # the same row with a team
+    # and the pack decides it from the id, not from the level
+    assert pr.teamLevelOf(0, None, None) is None
+
+
+def test_a_professional_with_an_unlevellable_school_is_still_a_professional():
+    """Stage 2 repools a pro by swapping the LEVEL of the pool the grade or
+    the school produced, so when neither produced one there was nothing to
+    swap and the row was dropped -- silently undoing the rule for the rows
+    it matters most for: an unattached entry whose school is whatever the
+    athlete typed, and the elite squads in _PRO_TEAMS, which are in no
+    school level map because they are not schools."""
+    import normalize_distance as nd
+    kw = dict(source="anet", sport="XC", season=2025)
+    assert pr.resolvePool(None, gender="F", school="HOKA NAZ Elite", **kw) == "pro_f|XC"
+    assert pr.resolvePool(None, gender="M", school="Zzz Nothing Club",
+                          no_team=True, **kw) == "pro_m|XC"
+    # ! ONLY WITH A KNOWN SEX: pro_unknown_gender is not a pool
+    assert pr.resolvePool(None, gender=None, school="Zzz Nothing Club",
+                          no_team=True, **kw) is None
+    # and a row that is NOT professional still drops, as before
+    assert pr.resolvePool(None, gender="M", school="Zzz Nothing Club", **kw) is None
+    assert pr._proPoolFor("f") == "pro_f" and pr._proPoolFor("") is None
+
+
+def test_the_pack_passes_the_zero_through(monkeypatch):
+    """The rule is only real if packResults reads the id."""
+    src = open(os.path.join(_ROOT, "engine", "speed_ratings.py")).read()
+    assert "UNATTACHED_TEAM_ID" in src and "no_team=no_team" in src
+    assert 'census["no_team_pro"]' in src

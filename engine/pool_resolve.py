@@ -406,14 +406,20 @@ def teamLevelFromSlug(slug):
 #   `school` is whatever the athlete typed, and the school-name map is being
 #   asked to level a name that names nothing.
 #
-# ! IT IS READ AS 'club', NOT WRITTEN STRAIGHT TO pro, WHICH IS THE OWNER'S
-#   OWN EARLIER RULE (2026-09-14: "it should only be if they run the
-#   majority of their races with their club / national team. So any
-#   collegiate runner running the Euros would be fine"). 'club' means
-#   exactly "a gradeless row here is a professional", and it arrives at the
-#   pro repool through the season-majority gate (speed_ratings.clubSeason)
-#   and the grade guards. Straight to pro would make one unattached summer
-#   race a professional season for a tenth grader.
+# ★ AND IT IS UNCONDITIONAL (owner, 2026-09-16, asked whether to gate it on
+#   the season majority like the club rules: "unconditional -- these
+#   atheltes don't matter enough for me to let them corrupt boards"). So it
+#   does NOT go through team_level='club', which would hand it to the
+#   majority gate and the grade guards. resolvePool takes it as `no_team`,
+#   decided before anything else: a row with no team is not a school row,
+#   whatever its grade, its verdict or the field it raced says.
+#
+# ⚠ THE COST, STATED. A high schooler's one unattached summer race is a
+#   professional row, and their season is split across two pools. That is
+#   the trade the owner chose over the same row reaching a school board.
+#   scripts/diag_school_collisions.py --zero prices it before the go-live:
+#   if team_id = 0 turns out to be a sentinel on ordinary school rows
+#   rather than "unattached", this rule has to go.
 UNATTACHED_TEAM_ID = 0
 
 
@@ -427,16 +433,41 @@ def teamLevelOf(team_id, team_slug, anet_levels=None):
         except (TypeError, ValueError):
             tid = None
         if tid == UNATTACHED_TEAM_ID:
-            # ! A SLUG STILL WINS OVER A ZERO. A tfrrs row carries no anet
-            #   team at all, and 0 means "anet named no team", not "this is
-            #   not a school" -- so an identity that DOES name a level is
-            #   still the better witness.
-            return teamLevelFromSlug(team_slug) or "club"
+            # ! A ZERO NAMES NO LEVEL. It is not read as 'club' here: the
+            #   pro repool is resolvePool's `no_team`, which is
+            #   UNCONDITIONAL (owner, 2026-09-16) and the club path would
+            #   weaken it. A tfrrs slug still names what it names; a tfrrs
+            #   row carries no anet team_id at all, so in practice only
+            #   anet reaches this branch.
+            return teamLevelFromSlug(team_slug)
         if anet_levels and tid is not None:
             got = anet_levels.get(tid)
             if got:
                 return got
     return teamLevelFromSlug(team_slug)
+
+
+# ★ A PROFESSIONAL WHOSE SCHOOL STRING CANNOT BE LEVELLED IS STILL A
+#   PROFESSIONAL (2026-09-16). Stage 2 repools a pro by SWAPPING the level
+#   of the pool the grade or the school produced -- so when neither can
+#   produce one, there was nothing to swap and the row was dropped. That
+#   silently undid the rule for exactly the rows it matters most for: an
+#   unattached entry (no_team) whose `school` is whatever the athlete
+#   typed, and the elite squads in _PRO_TEAMS, whose names are in no school
+#   level map because they are not schools.
+#
+# ! ONLY WITH A KNOWN SEX. 'pro_unknown_gender' is not a pool anything can
+#   rate against, so a row with no sex still drops -- one junk pool is not
+#   better than one missing row.
+def _proPoolFor(gender):
+    """'pro_m' / 'pro_f' from the sex alone, or None. The same spelling
+    proPool produces, so the two can never disagree."""
+    g = str(gender or "").strip().upper()
+    if g == "M":
+        return "pro_m"
+    if g == "F":
+        return "pro_f"
+    return None
 
 
 def _gradeLevel(grade):
@@ -456,15 +487,18 @@ def resolvePool(grade, gender, source, school, sport,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
                 grade_verdict=None, person_id=None, team_level=None,
-                team_has_pros=False):
+                team_has_pros=False, no_team=False):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
 
     team_level: the team's level from the feeds (teamLevelOf): 'club'
     makes a gradeless row professional, 'college' makes the row a college
-    season; anything else changes nothing. team_has_pros: the team has a
-    professional in it (speed_ratings_db.loadClubPros): its rows with a
-    grade of 1-8 or none are professional too -- an elite squad's "6" is
-    a sixth year, not a sixth grader -- unless the team is a college.
+    season, a school level decides where the school NAME would have (see
+    below); anything else changes nothing. team_has_pros: the team has a
+    professional in it (speed_ratings_db.loadClubPros) and the season is
+    raced mostly for it -- then EVERY row of it is professional, whatever
+    grade it carries (owner, 2026-09-16), unless the team is a college.
+    no_team: anet wrote team_id = 0, so there is no school at all;
+    professional, unconditionally.
 
     `poolfor` is injectable so the engine can hand in a memoised poolFor. It
     defaults to the real one, so a caller that does not care never notices.
@@ -551,6 +585,11 @@ def resolvePool(grade, gender, source, school, sport,
     if isParaSchool(school):
         return None
 
+    # ! NO TEAM, NO SCHOOL. Before every other rule and ungated: see
+    #   UNATTACHED_TEAM_ID for why it is not the club path.
+    if no_team:
+        is_pro = True
+
     # ! A PRO IS REPOOLED, NOT DROPPED -- the same treatment pro_flag gives a
     #   flagged season. They stop dragging the school pools' 100 point and
     #   get measured against each other instead of being thrown away.
@@ -569,10 +608,26 @@ def resolvePool(grade, gender, source, school, sport,
     if team_level == "club" and (school_grade is None or grade_untrusted) \
             and fixed_level not in ("hs", "ms", "elem"):
         is_pro = True
-    # ★ A CLUB WITH PROFESSIONALS HAS NO MIDDLE SCHOOLERS (owner, 2026-09-14):
-    #   its grade 1-8 is a year count, its gradeless row a professional
-    if team_has_pros and team_level != "college" and not is_pro \
-            and school_grade in (None, "elem", "ms") and fixed_level != "hs":
+    # ★ A CLUB WITH PROFESSIONALS HAS NO SCHOOLCHILDREN AT ALL (owner,
+    #   2026-09-14: its grade 1-8 is a year count, its gradeless row a
+    #   professional; then 2026-09-16, asked whether a grade 9-12 row on
+    #   such a team should be swept in too -- "DO do this, only when they
+    #   run a majority of races at that club").
+    #
+    # ! THE MAJORITY IS THE ONLY GATE, AND IT IS NOT HERE. team_has_pros
+    #   arrives False unless the athlete-year raced mostly for the team
+    #   (speed_ratings.clubSeason, loadClubMajority), so by the time it is
+    #   True the season has been established as the club's -- and a grade
+    #   on it is a year count rather than a school year. The guards that
+    #   used to stand here (a grade of 9-12 kept, a grade_fix level of 'hs'
+    #   kept) were a second opinion about that same season, and they are
+    #   what left an elite squad's "11" on the high school boards.
+    #
+    # ⚠ A SPONSOR'S YOUTH SQUAD IS THE COST. "HOKA Aggie Running Club" and
+    #   "Asics Aggies" carry grades 9-12 (see _PRO_TEAMS), so a real high
+    #   schooler racing mostly for such a club now pools pro. The owner
+    #   priced that against the boards and chose this.
+    if team_has_pros and team_level != "college" and not is_pro:
         is_pro = True
     elif team_level == "college" and not is_pro and school_grade in (None, "hs", "college"):
         fixed_level = fixed_level or "college"
@@ -643,9 +698,18 @@ def resolvePool(grade, gender, source, school, sport,
     #   refuse -- and an athlete-season whose every race was killed this
     #   way is the owner's report of 2026-09-16 ("a lot of them have all
     #   their races killed bcs their grade is untrusted").
+    # ! AND IT MAY NOT DROP A PROFESSIONAL (ISSUES M, 2026-09-16). The kill
+    #   ran before the pro repool, so a row already established as
+    #   professional -- no team at all, or a season raced mostly for a club
+    #   with professionals in it -- was dropped rather than pooled pro,
+    #   purely because grade_sanity could not name a GRADE for it. Of course
+    #   it could not: there is no grade to name. Both rules the owner
+    #   approved on 2026-09-16 land in exactly this case, so is_pro is
+    #   decisive here as it is everywhere else.
     told = team_level in ("elem", "ms", "hs", "college")
     if grade_verdict in ("no_evidence", "contradicted", "thin_field",
-                         "lone_word") and not above_hs and not told:
+                         "lone_word") and not above_hs and not told \
+            and not is_pro:
         return None
 
     if fixed_grade is not None:
@@ -685,7 +749,11 @@ def resolvePool(grade, gender, source, school, sport,
     pool = poolfor(None if grade_untrusted else grade,
                    gender, source, school, season_level=season_for_pool)
     if pool is None:
-        return None
+        # see _proPoolFor: there is nothing for stage 2 to swap, and a
+        # professional is not a row we have failed to level
+        pool = _proPoolFor(gender) if is_pro else None
+        if pool is None:
+            return None
 
     # -- stage 1b: UNTRUSTING MAY NOT PROMOTE -----------------------
     #

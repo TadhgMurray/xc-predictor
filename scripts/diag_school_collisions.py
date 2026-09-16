@@ -24,6 +24,10 @@ SECTIONS
   B  the collisions: one name, several anet teams, different levels
   C  what the name map says about each of those teams, i.e. how many are
      levelled wrong today. No results scan: anet_team and the pickle.
+  D  what school_identity currently says about those names: its clusters,
+     which home states were folded into which, and whether anet's states
+     survived. This is the before/after for the identity fix -- run it,
+     rebuild (pipeline 10b), run it again.
 
 ⚠ A AND --rows SCAN results. B and C do not touch it at all, so the default
   run is seconds. Nothing is written.
@@ -105,6 +109,67 @@ def rowCounts(cur, team_ids):
     return out
 
 
+# ★ THE BEFORE/AFTER. school_identity is the table the site's labels,
+#   crests and links all resolve through (school_identity.contextState,
+#   teamState, schoolHref). A collision shows up here as ONE cluster where
+#   anet names two schools, or as a school_state_alias row folding one
+#   school's state into the other's.
+def sectionD(ranked, meaning, show):
+    print("\n=== D. what school_identity says about those names ========")
+    from database import getConn
+    names = [n for n, _t in ranked[:show]]
+    if not names:
+        print("  (no collisions to look up)")
+        return
+    try:
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('school_identity')")
+            if cur.fetchone()[0] is None:
+                print("  school_identity does not exist -- run pipeline 10b")
+                return
+            cur.execute("""
+                SELECT lower(btrim(school)), state, n_athletes, share, is_primary
+                FROM   school_identity
+                WHERE  lower(btrim(school)) = ANY(%s)""", (names,))
+            clusters = {}
+            for name, st, n, share, prim in cur.fetchall():
+                clusters.setdefault(name, []).append((st, n, float(share or 0), prim))
+            folds = {}
+            cur.execute("SELECT to_regclass('school_state_alias')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("""
+                    SELECT lower(btrim(school)), home_state, state
+                    FROM   school_state_alias
+                    WHERE  lower(btrim(school)) = ANY(%s)""", (names,))
+                for name, home, st in cur.fetchall():
+                    folds.setdefault(name, []).append((home, st))
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"  unavailable: {type(exc).__name__}: {exc}")
+        return
+
+    for name, teams in ranked[:show]:
+        anet = sorted({(st or "--", meaning.get(code, f"code {code}"))
+                       for _t, code, st, _c in teams})
+        got = sorted(clusters.get(name, []), key=lambda r: -r[1])
+        print(f"\n  {name!r}")
+        print("      anet      " + "  ".join(f"{st}:{lv}" for st, lv in anet))
+        if not got:
+            print("      identity  (no cluster at all)")
+        else:
+            print("      identity  " + "  ".join(
+                f"{st}:{n}{'*' if prim else ''}" for st, n, _sh, prim in got))
+        for home, st in sorted(folds.get(name, [])):
+            print(f"      folded    {home} -> {st}")
+        anet_states = {st for st, _lv in anet}
+        have = {st for st, *_ in got}
+        missing = sorted(anet_states - have - {"--"})
+        if missing:
+            print(f"      ⚠ anet names a school in {', '.join(missing)} and the "
+                  "identity has no cluster there")
+    print("\n  * = is_primary, the state every stateless mention of the name "
+          "renders and links as.\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -144,6 +209,9 @@ def main():
             n = f"{counts.get(team_id, 0):,} rows" if counts else ""
             print(f"      team {team_id:<9} {lvl:<8} {state or '--':<4} "
                   f"{(city or ''):<18} {n}")
+
+    # ----------------------------------------------------------------- #
+    sectionD(ranked, meaning, args.show)
 
     # ----------------------------------------------------------------- #
     print("\n=== C. what the NAME map says about those teams ==========")

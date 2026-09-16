@@ -820,7 +820,7 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
            person_id=None, season=None, race_date=None, team_level=None,
-           team_has_pros=False):
+           team_has_pros=False, no_team=False):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -911,7 +911,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         merge=merge,
         poolfor=_cachedPoolFor,
         team_level=team_level,
-        team_has_pros=team_has_pros)
+        team_has_pros=team_has_pros,
+        no_team=no_team)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1174,15 +1175,27 @@ def packResults(batches, today, merge=False):
             if d is None or (today - d).days < 0:
                 census["bad_or_future_date"] += 1
                 continue
-            team_level, has_pros = None, False
+            team_level, has_pros, no_team = None, False, False
             if len(r) > _SLUG:
-                from pool_resolve import teamLevelOf
+                from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
                 team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
+                # ★ NO TEAM AT ALL (owner, 2026-09-16: "If any school has
+                #   id == 0 we should just put them in pro"), and ungated --
+                #   see pool_resolve.UNATTACHED_TEAM_ID. Counted, because it
+                #   is a rule whose cost has to stay visible.
+                try:
+                    no_team = int(r[_TEAM]) == UNATTACHED_TEAM_ID
+                except (TypeError, ValueError):
+                    no_team = False
+                if no_team:
+                    census["no_team_pro"] += 1
                 if team_level:
                     census[f"team_level_{team_level}"] += 1
                 has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
                 # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE
                 #   CLUB (clubSeason): one national-team race is one row
+                # ! THE MAJORITY GATE DOES NOT APPLY TO no_team. A row with
+                #   no team is not a club row: there is no club.
                 if (team_level == "club" or has_pros) and not clubSeason(r[_PID], d.year):
                     has_pros = False
                     if team_level == "club":
@@ -1191,7 +1204,8 @@ def packResults(batches, today, merge=False):
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
-                          race_date=d, team_level=team_level, team_has_pros=has_pros)
+                          race_date=d, team_level=team_level, team_has_pros=has_pros,
+                          no_team=no_team)
             if has_pros and pool and pool.startswith("pro_"):
                 census["club_with_pros_repooled_pro"] += 1
             if pool is None:
