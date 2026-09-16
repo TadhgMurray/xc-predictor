@@ -694,7 +694,15 @@ class Migrations(unittest.TestCase):
         got = self.alters(S.DDL)
         self.assertIn("ALTER TABLE school_logo ADD COLUMN IF NOT EXISTS "
                       "shared boolean NOT NULL DEFAULT false", got)
-        self.assertEqual(len(got), 12)
+        # 13 with `level` (2026-09-16): one (school, state) holds two
+        # institutions -- Amherst College and Amherst Regional -- so the
+        # crest key carries which one. See scrape_school_logos.DDL.
+        self.assertEqual(len(got), 13)
+        self.assertIn("ALTER TABLE school_logo ADD COLUMN IF NOT EXISTS "
+                      "level text NOT NULL DEFAULT ''", got)
+        # ⚠ AND NOTHING NAMED `--`: the DDL body may hold no SQL comments,
+        #   because every line of it becomes an ALTER.
+        self.assertFalse([g for g in got if "EXISTS --" in g])
 
     def test_the_column_that_broke_the_server_run(self):
         self.assertIn("ALTER TABLE anet_division ADD COLUMN IF NOT EXISTS "
@@ -2182,7 +2190,9 @@ class Wiring(unittest.TestCase):
     def test_the_route_exists_takes_a_path_and_a_size(self):
         app = read("racecast", "app.py")
         self.assertIn('@app.route("/img/school/<path:school_name>.png")', app)
-        self.assertIn("school_logo.logoPath(cur, school_name, state)", app)
+        self.assertIn("school_logo.logoPath(cur, school_name, state, level)", app)
+        # the level rides in the URL, or the route cannot re-derive the name
+        self.assertIn('request.args.get("level")', app)
         self.assertIn('school_logo.thumbPath(path, request.args.get("px"', app)
 
     def test_the_cache_is_loaded_at_start_up_beside_the_labels(self):

@@ -59,10 +59,26 @@ _HAVE_TTL = 300
 _CRESTS = {"loaded": False, "map": {}}
 
 
-def fileFor(school, state=None):
+# ★ AND A LEVEL IN THE KEY (owner, 2026-09-16: "The anet pools should match
+#   our school pools. If they don't, separate them", after Amherst College
+#   started wearing Amherst Regional High School's Falcons). One
+#   (school, state) pair can hold TWO INSTITUTIONS -- Amherst College and
+#   Amherst Regional, both (Amherst, MA) -- and one key can hold one crest,
+#   so whichever mascot lands there is wrong for the other. The level is the
+#   third part of a school's identity, and school_level already computes the
+#   triple.
+#
+# ! AN EMPTY LEVEL HASHES EXACTLY AS BEFORE, so every crest already on disk
+#   keeps its file name and goes on serving. A level-less row is the
+#   FALLBACK for any level (crestState), which is what the website-driven
+#   scrape keeps writing: it matched the school by NAME, so it cannot say
+#   which institution it found.
+def fileFor(school, state=None, level=None):
     """The file name for one school, the scraper's and the site's shared
-    convention: sha1(school|state) truncated, plus .png."""
+    convention: sha1(school|state[|level]) truncated, plus .png."""
     key = f"{school}|{(state or '').upper()}"
+    if level:
+        key += f"|{str(level).strip().lower()}"
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16] + ".png"
 
 
@@ -105,12 +121,14 @@ def loadCrests(conn_factory, force=False):
             with conn.cursor() as cur:
                 if tableExists(cur, force=True):
                     cur.execute("""
-                        SELECT school, state, sha, path FROM school_logo
+                        SELECT school, state, sha, path,
+                               COALESCE(level, '') AS level
+                        FROM   school_logo
                         WHERE  path IS NOT NULL
                           AND  COALESCE(lower(override), '') <> 'none'
                           AND  (NOT shared OR override IS NOT NULL)
                     """)
-                    for school, state, sha, path in cur.fetchall():
+                    for school, state, sha, path, level in cur.fetchall():
                         # ★ ONLY A FILE THE DISK HAS (2026-09-13). The route
                         #   checked the disk and 404'd; this cache did not,
                         #   so a row whose PNG was gone drew a tag on every
@@ -121,26 +139,27 @@ def loadCrests(conn_factory, force=False):
                         if full is None or not os.path.exists(full):
                             continue
                         got.setdefault(school, []).append(
-                            ((state or "").upper(), (sha or "")[:8], full))
+                            ((state or "").upper(), (sha or "")[:8], full,
+                             (level or "").lower()))
     except Exception:                              # noqa: BLE001 -- optional
         got = {}
     _CRESTS["map"] = got
     _CRESTS["loaded"] = True
 
 
-def crestPath(school, state=None):
+def crestPath(school, state=None, level=None):
     """The stored file for a mention, from the start-up cache and nothing
     else: the image route answers from this, so a page naming forty
     schools costs forty file sends and no query (2026-09-13). None when
     the cache has no such crest -- or is not loaded, when the caller may
     still ask the database."""
-    got = crestState(school, state)
+    got = crestState(school, state, level=level)
     if got is None or len(got) < 3:
         return None
     return got[2]
 
 
-def crestState(school, state=None, pool=None, trusted=False):
+def crestState(school, state=None, pool=None, trusted=False, level=None):
     """(state, version) whose crest answers for this mention, or None.
 
     ★ THE SAME RESOLVER THE LABEL USES, and that is the whole point (owner,
@@ -170,6 +189,19 @@ def crestState(school, state=None, pool=None, trusted=False):
     #   without this every crest on the site disappears whenever the label
     #   cache is empty (mid-rebuild, a fresh process, an old database).
     st = (st or state or "").upper()
+    lv = (level or "").strip().lower()
+    # ★ THE LEVEL FIRST, THEN THE LEVEL-LESS ROW (see fileFor). A pair that
+    #   holds two institutions has one crest per level once anet has filed
+    #   them; until then the level-less row -- the one matched by NAME from
+    #   the school's own site -- answers for both, which is the old
+    #   behaviour and is right more often than a mascot picked by row count.
+    if st and lv:
+        for row in rows:
+            if row[0] == st and len(row) > 3 and row[3] == lv:
+                return row
+    for row in rows:
+        if st and row[0] == st and (len(row) <= 3 or not row[3]):
+            return row
     for row in rows:
         if st and row[0] == st:
             return row
@@ -198,7 +230,8 @@ def crestLoaded():
     return bool(_CRESTS["loaded"])
 
 
-def crestUrl(school, state=None, px=None, pool=None, trusted=False):
+def crestUrl(school, state=None, px=None, pool=None, trusted=False,
+             level=None):
     """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
     every table on the site.
@@ -211,11 +244,11 @@ def crestUrl(school, state=None, px=None, pool=None, trusted=False):
       Two sizes are two URLs, which is exactly how one page can disagree
       with another. `v` is the image's own hash: new picture, new URL.
     """
-    got = crestState(school, state, pool, trusted)
+    got = crestState(school, state, pool, trusted, level)
     if got is None:
         return None
     st, version = got[0], got[1]
-    url = logoUrl(school, st or None)
+    url = logoUrl(school, st or None, got[3] if len(got) > 3 else None)
     if px:
         url += ("&" if "?" in url else "?") + f"px={int(px)}"
     if version:
@@ -224,7 +257,7 @@ def crestUrl(school, state=None, px=None, pool=None, trusted=False):
 
 
 def crestImg(school, state=None, px=64, size=18, cls="school-mark",
-             pool=None, trusted=False):
+             pool=None, trusted=False, level=None):
     """The little crest that goes before a school's name, or "" (305). The
     template global `crest`.
 
@@ -236,7 +269,7 @@ def crestImg(school, state=None, px=64, size=18, cls="school-mark",
     ⚠ IT RETURNS MARKUP, SO EVERYTHING IN IT IS ESCAPED HERE. School names
       are scraped free text and genuinely contain quotes and ampersands.
     """
-    url = crestUrl(school, state, px, pool, trusted)
+    url = crestUrl(school, state, px, pool, trusted, level)
     if not url:
         return ""
     from markupsafe import Markup, escape
@@ -298,7 +331,7 @@ def thumbPath(path, px):
         return path
 
 
-def logoRow(cur, school, state=None):
+def logoRow(cur, school, state=None, level=None):
     """The stored row for one school, or None. The state is the identity's
     (school_identity's cluster), and a row stored with no state answers for
     every state: a school named once has one logo.
@@ -318,7 +351,8 @@ def logoRow(cur, school, state=None):
     st = (state or "").upper()
     try:
         cur.execute("""
-            SELECT school, state, path, kind, source_url, shared, override
+            SELECT school, state, path, kind, source_url, shared, override,
+                   COALESCE(level, '') AS level
             FROM   school_logo WHERE school = %s
         """, (school,))
         rows = cur.fetchall() or []
@@ -330,17 +364,32 @@ def logoRow(cur, school, state=None):
         return None
     rows = [r if isinstance(r, dict) else {
         "school": r[0], "state": r[1], "path": r[2], "kind": r[3],
-        "source_url": r[4], "shared": r[5], "override": r[6]} for r in rows]
-    return pickRow(rows, st)
+        "source_url": r[4], "shared": r[5], "override": r[6],
+        "level": r[7]} for r in rows]
+    return pickRow(rows, st, level)
 
 
-def pickRow(rows, state):
-    """The row that answers for `state`: the one stored under it, else a
-    row stored under no state at all, else -- only when the name has just
-    one row -- that row."""
+def pickRow(rows, state, level=None):
+    """The row that answers for `state` (and `level` where one is asked
+    for): the one stored under both, then under the state with no level,
+    then under the state, then a row stored under no state at all, else --
+    only when the name has just one row -- that row. The same order
+    crestState uses on the cache, so the query fallback and the cache
+    cannot disagree."""
     if not rows:
         return None
     st = (state or "").upper()
+    lv = (level or "").strip().lower()
+    if st and lv:
+        for r in rows:
+            if (r.get("state") or "").upper() == st \
+                    and (r.get("level") or "").lower() == lv:
+                return r
+    if st:
+        for r in rows:
+            if (r.get("state") or "").upper() == st \
+                    and not (r.get("level") or ""):
+                return r
     if st:
         for r in rows:
             if (r.get("state") or "").upper() == st:
@@ -351,11 +400,11 @@ def pickRow(rows, state):
     return rows[0] if len(rows) == 1 else None
 
 
-def logoPath(cur, school, state=None):
+def logoPath(cur, school, state=None, level=None):
     """The absolute path of this school's logo PNG, or None. Every failure
     -- no table, no row, an override of "none", a shared district crest, a
     file the disk no longer has -- is None."""
-    row = logoRow(cur, school, state)
+    row = logoRow(cur, school, state, level)
     if row is None:
         return None
     if (row.get("override") or "").strip().lower() == "none":
@@ -368,7 +417,7 @@ def logoPath(cur, school, state=None):
     return path
 
 
-def logoUrl(school, state=None):
+def logoUrl(school, state=None, level=None):
     """The route a page's <img src> points at. Built without a query, so a
     template can call it before anything has been fetched -- the caller
     decides whether to draw the tag by asking logoPath first."""
@@ -376,4 +425,8 @@ def logoUrl(school, state=None):
     url = "/img/school/" + quote(school or "", safe="") + ".png"
     if state:
         url += "?state=" + quote(str(state).upper(), safe="")
+    # ! THE LEVEL RIDES IN THE URL OR THE ROUTE CANNOT FIND THE FILE: the
+    #   name is a hash of (school, state, level) and the route re-derives it.
+    if level:
+        url += ("&" if "?" in url else "?") + "level=" + quote(str(level), safe="")
     return url

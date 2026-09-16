@@ -704,10 +704,25 @@ def refetch(manners, source_url, etag=None, modified=None):
 #  STORE                                                                #
 # ===================================================================== #
 
+# ★ `level` IS THE THIRD PART OF A SCHOOL'S IDENTITY (owner, 2026-09-16:
+#   "The anet pools should match our school pools. If they don't, separate
+#   them"). (Amherst, MA) is Amherst College AND Amherst Regional High
+#   School; one key held one crest, so whichever mascot landed there was
+#   wrong for the other -- and anet's row-count-modal team for the pair is
+#   the high school, which is how the college came to wear the Falcons.
+#   '' means "any level", which is all a match by NAME from the school's own
+#   website can honestly claim.
+#
+# ⚠ NO SQL COMMENTS INSIDE THIS STRING. ensureTable derives an
+#   ADD COLUMN IF NOT EXISTS from every line of the body (that is the point
+#   -- the migration cannot drift from the DDL), and _ddlColumns reads a
+#   `--` line as a column named `--`. Three of them, and the first ALTER on
+#   a real server is a syntax error. Notes go here instead.
 DDL = """
 CREATE TABLE IF NOT EXISTS school_logo (
     school     text NOT NULL,
     state      text NOT NULL DEFAULT '',
+    level      text NOT NULL DEFAULT '',
     path       text,
     source_url text,
     kind       text,
@@ -718,8 +733,52 @@ CREATE TABLE IF NOT EXISTS school_logo (
     etag       text,
     modified   text,
     fetched    date,
-    PRIMARY KEY (school, state))
+    PRIMARY KEY (school, state, level))
 """
+
+# ⚠ ensureTable ADDS COLUMNS, NEVER KEYS. A table made before the level
+#   existed keeps PRIMARY KEY (school, state), and then the first INSERT
+#   with ON CONFLICT (school, state, level) fails -- on the server,
+#   mid-run, with no matching unique constraint. Migrated here, once,
+#   idempotently: the old key is dropped and the three-column one added,
+#   which is safe because every existing row has level '' and was already
+#   unique on (school, state).
+def ensureLevelKey(cur):
+    """Move school_logo's primary key to (school, state, level). True when
+    it moved it.
+
+    ! IN A SAVEPOINT, AND IT NEVER RAISES. This runs at the top of every
+      job, including the ones that only READ, so a probe it cannot make
+      sense of must mean "leave the key alone" rather than end the run --
+      and a failed ALTER must not poison the caller's transaction, which is
+      what an un-savepointed error does to every statement after it.
+    """
+    try:
+        cur.execute("SAVEPOINT school_logo_key")
+        cur.execute("""
+            SELECT count(*) AS n FROM information_schema.key_column_usage
+            WHERE  table_schema = 'public'
+              AND  constraint_name = 'school_logo_pkey'
+        """)
+        row = cur.fetchone()
+        got = row["n"] if isinstance(row, dict) else row[0]
+        if int(got) >= 3:
+            cur.execute("RELEASE SAVEPOINT school_logo_key")
+            return False
+        cur.execute("UPDATE school_logo SET level = '' WHERE level IS NULL")
+        cur.execute("ALTER TABLE school_logo "
+                    "DROP CONSTRAINT IF EXISTS school_logo_pkey")
+        cur.execute("ALTER TABLE school_logo "
+                    "ADD PRIMARY KEY (school, state, level)")
+        cur.execute("RELEASE SAVEPOINT school_logo_key")
+        return True
+    except Exception:                              # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT school_logo_key")
+        except Exception:                          # noqa: BLE001
+            pass
+        return False
+
 
 SHA_INDEX = "CREATE INDEX IF NOT EXISTS idx_school_logo_sha ON school_logo (sha)"
 
@@ -789,8 +848,45 @@ def _tableExists(cur, name):
     return (row[0] if not isinstance(row, dict) else row.get("to_regclass")) is not None
 
 
+# ★ THE PAIRS ANET DAMAGED, AND YES THEY CAN BE RE-ASKED (owner,
+#   2026-09-16: "I stopped the scrape until we can fix amherst type issues
+#   (can we rescrape them?)").
+#
+#   A crest is never one-way: the row is a file name and a hash, and asking
+#   the school's own site again replaces both. What to re-ask is knowable
+#   exactly -- a (school, state) that holds MORE THAN ONE INSTITUTION
+#   (school_level, two or more non-bucket levels) whose stored crest is
+#   anet's mascot filed under NO level. That is the shape of the damage:
+#   anet's modal team for the pair is the bigger institution, its mascot
+#   went in as the pair's one crest, and "anet wins" replaced whatever the
+#   colleges' own athletics sites had given.
+#
+# ! IT RETURNS PAIRS, NOT NAMES, so a district with one good crest and one
+#   bad one is not re-asked wholesale.
+def damagedPairs(cur):
+    """[(school, state)] whose crest is an anet mascot on a pair holding
+    two institutions. Empty without school_level."""
+    if not _tableExists(cur, "school_level"):
+        return []
+    cur.execute("""
+        WITH multi AS (
+            SELECT school, state FROM school_level
+            WHERE  NOT is_bucket
+            GROUP  BY school, state HAVING count(*) >= 2
+        )
+        SELECT l.school, l.state
+        FROM   school_logo l JOIN multi m
+               ON m.school = l.school AND m.state = l.state
+        WHERE  l.kind = 'anet' AND COALESCE(l.level, '') = ''
+          AND  l.path IS NOT NULL
+        ORDER  BY l.school, l.state
+    """)
+    return [((r["school"], r["state"]) if isinstance(r, dict) else (r[0], r[1]))
+            for r in cur.fetchall()]
+
+
 def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
-            retry_failed=False):
+            retry_failed=False, pairs=None):
     """The schools still to do, BIGGEST PROGRAMME FIRST.
 
     ★ THE ORDER IS THE POINT. Alphabetical spent the first hour on
@@ -802,6 +898,7 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
       window is up: `fetched` is stamped on a failure too. --retry-failed
       (or --redo) when the picking has changed and it is worth re-asking."""
     ensureTable(cur, DDL)
+    ensureLevelKey(cur)
     cur.execute(SHA_INDEX)
     rank = ("COALESCE(si.n_athletes, 0)" if _tableExists(cur, "school_identity")
             else "0")
@@ -818,6 +915,13 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
     if state:
         where.append("w.state = %s")
         params.append(state.upper())
+    if pairs:
+        # (school, state) pairs, as a VALUES list rather than two ANYs: the
+        # cross product of the two columns is not the same set
+        where.append("(w.school, w.state) IN (SELECT school, state FROM "
+                     "unnest(%s::text[], %s::text[]) AS t(school, state))")
+        params.append([p[0] for p in pairs])
+        params.append([p[1] for p in pairs])
     sql = f"""
         SELECT w.school, w.state, w.url, w.direct_logo, l.override,
                l.source_url, l.etag, l.modified, l.status
@@ -837,12 +941,12 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
             for r in cur.fetchall()]
 
 
-def writeFile(school, state, png, directory=None):
+def writeFile(school, state, png, directory=None, level=None):
     """The PNG on disk under its derived name; returns the bare file name,
     which is what the row stores and what the site re-derives."""
     directory = directory or LOGO_DIR
     os.makedirs(directory, exist_ok=True)
-    name = fileFor(school, state)
+    name = fileFor(school, state, level)
     path = os.path.join(directory, name)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "wb") as fh:
@@ -890,11 +994,19 @@ def sharedAlready(cur, sha, minimum=SHARED_MIN):
     return (n or 0) >= minimum
 
 
-def storedKind(cur, school, state):
-    """The kind of the crest already stored for this school, or None."""
+def storedKind(cur, school, state, level=None):
+    """The kind of the crest already stored for this school, or None.
+
+    ! THE LEVEL-LESS ROW COUNTS. A crest matched by name from the school's
+      own site is stored with level '' and serves every level, so a mascot
+      about to be filed under a LEVEL must still be ranked against it --
+      otherwise "anet wins" wins against nothing and replaces it anyway."""
     cur.execute("""SELECT kind FROM school_logo
                    WHERE school = %s AND state = %s AND path IS NOT NULL
-                     AND status = 'ok'""", (school, state))
+                     AND status = 'ok'
+                     AND (level = %s OR level = '')
+                   ORDER BY (level = %s) DESC, kind LIMIT 1""",
+                (school, state, level or "", level or ""))
     row = cur.fetchone()
     if row is None:
         return None
@@ -902,17 +1014,18 @@ def storedKind(cur, school, state):
 
 
 def record(cur, school, state, name, source_url, kind, sha, status,
-           etag=None, modified=None):
+           etag=None, modified=None, level=None):
     cur.execute("""
-        INSERT INTO school_logo (school, state, path, source_url, kind, sha,
-                                 status, etag, modified, fetched)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, current_date)
-        ON CONFLICT (school, state) DO UPDATE
+        INSERT INTO school_logo (school, state, level, path, source_url, kind,
+                                 sha, status, etag, modified, fetched)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, current_date)
+        ON CONFLICT (school, state, level) DO UPDATE
         SET path = EXCLUDED.path, source_url = EXCLUDED.source_url,
             kind = EXCLUDED.kind, sha = EXCLUDED.sha,
             status = EXCLUDED.status, etag = EXCLUDED.etag,
             modified = EXCLUDED.modified, fetched = current_date
-    """, (school, state, name, source_url, kind, sha, status, etag, modified))
+    """, (school, state, level or "", name, source_url, kind, sha, status,
+          etag, modified))
 
 
 def touch(cur, school, state):
@@ -1116,7 +1229,15 @@ def main():
     ap.add_argument("--dir", default=None, help="where the PNGs go (default XCP_LOGO_DIR)")
     ap.add_argument("--sweep-only", action="store_true",
                     help="re-run the shared-crest sweep and stop")
+    ap.add_argument("--fix-multi", action="store_true",
+                    help="re-ask only the (school, state) pairs whose crest is "
+                         "an anet mascot on a pair holding TWO INSTITUTIONS -- "
+                         "the Amherst case, where anet's modal team is the "
+                         "bigger school and its mascot replaced the other's "
+                         "real crest. Implies --redo. See damagedPairs.")
     args = ap.parse_args()
+    if args.fix_multi:
+        args.redo = True
     if args.redo:
         # -1, not 0: "fetched < today - 0" skips everything fetched TODAY,
         # which is exactly the row you are trying to redo an hour later
@@ -1136,8 +1257,14 @@ def main():
                 conn.commit()
                 print(f"  shared crests: {n:,} images worn by {SHARED_MIN}+ schools")
                 return
+            pairs = damagedPairs(cur) if args.fix_multi else None
+            if args.fix_multi:
+                print(f"  {len(pairs):,} (school, state) pairs wear an anet "
+                      f"mascot while holding two institutions", flush=True)
+                if not pairs:
+                    return
             todo = targets(cur, args.refresh_days, args.only, args.state,
-                           args.limit, args.retry_failed)
+                           args.limit, args.retry_failed, pairs)
             conn.commit()
             print(f"  {len(todo):,} schools, biggest programme first, "
                   f"{args.workers} at a time, {args.rate}s per host", flush=True)

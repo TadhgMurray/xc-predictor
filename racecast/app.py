@@ -4759,6 +4759,11 @@ def img_school(school_name):
     """
     from flask import send_file
     state = (request.args.get("state") or "").strip().upper()[:2] or None
+    # ! THE LEVEL IS PART OF THE FILE NAME (school_logo.fileFor): one
+    #   (school, state) can hold two institutions, so the crest a page draws
+    #   carries which one it meant. Absent, the level-less row answers, as
+    #   it always did.
+    level = (request.args.get("level") or "").strip().lower()[:12] or None
     # ★ FROM THE START-UP CACHE, NO DATABASE (2026-09-13: "new images make
     #   some page loads super slow"). Every crest on a page was a request
     #   into a sync worker that opened a pooled connection and ran a query
@@ -4767,12 +4772,12 @@ def img_school(school_name):
     #   The template already draws the tag from this cache, so the same
     #   cache answers the request; the query is the fallback for a process
     #   whose cache never loaded.
-    path = school_logo.crestPath(school_name, state)
+    path = school_logo.crestPath(school_name, state, level)
     if path is None and not school_logo.crestLoaded():
         try:
             with getConn() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    path = school_logo.logoPath(cur, school_name, state)
+                    path = school_logo.logoPath(cur, school_name, state, level)
         except Exception as exc:                          # noqa: BLE001
             print(f"logo: {school_name} failed ({type(exc).__name__}: {exc})", flush=True)
     if path is None:

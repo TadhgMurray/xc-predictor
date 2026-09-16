@@ -1962,15 +1962,51 @@ wrong in one run. anet no longer replaces a crest on a pair that holds more than
 one institution (`school_level`, ≥2 non-bucket levels); it may still fill an
 empty one, which is a coin flip we were already taking.
 
-⏳ **What is left, and it is the owner's own sentence:** *"The anet pools should
-match our school pools. If they don't, separate them."* `school_logo`,
-`school_identity` and `/school/<name>` are keyed on `(school, state)`, which
-**cannot hold two institutions** — one key, one crest, one page for Amherst
-College and Amherst Regional. The key has to carry the level:
-`(school, state, level)`. `school_level` already computes exactly that triple
-and marks a primary. That change touches the crest key, the school route, the
-search index and meet scoring, so it is the next piece of work rather than a
-patch inside this one.
+✅ **The crest key carries the level now** — *"The anet pools should match our
+school pools. If they don't, separate them."*
+
+* `school_logo` gains `level text NOT NULL DEFAULT ''` and its primary key
+  becomes `(school, state, level)`. `''` means "any level", which is all a
+  match by NAME from a school's own website can honestly claim.
+* **Every crest already on disk keeps its file name:** `fileFor` folds the
+  level into the hash only when it is non-empty, so an empty level reproduces
+  the old digest exactly. Pinned by a test, because getting it wrong orphans
+  the whole store.
+* `crestState` and `pickRow` read `(state, level)` first, then the level-less
+  row, then the old fallbacks — one order, on the cache and on the query, so
+  the two cannot disagree about which crest a mention gets. `logoUrl` carries
+  `&level=` or the route cannot re-derive the file name.
+* `anet_teams` files a mascot under **its own team's level**, so Amherst
+  College's crest and Amherst Regional's are two rows and neither can shadow
+  the other.
+
+**Yes, the damaged ones can be re-asked** — a crest is never one-way, and what
+to re-ask is knowable exactly: a pair holding two institutions whose stored
+crest is anet's mascot filed under no level (`damagedPairs`). That is the shape
+of the damage: anet's modal team for the pair is the *bigger* institution, its
+mascot went in as the pair's one crest, and "anet wins" replaced whatever the
+colleges' own athletics sites had given.
+
+```bash
+python scripts/scrape_school_logos.py --write --fix-multi
+```
+
+It re-asks those **pairs**, not their names, so a district with one good crest
+and one bad one is not re-asked wholesale. `--fix-multi` implies `--redo`, since
+the point is to ignore what was stored last time.
+
+⚠ **Two bugs of mine that the existing tests caught**, both worth keeping in
+mind: `ensureTable` derives an `ADD COLUMN` from **every line** of the DDL body,
+so an SQL comment inside it becomes a column named `--` and the first ALTER on a
+real server is a syntax error (notes go above the string). And
+`ensureLevelKey` runs at the top of every job including read-only ones, so the
+probe is savepointed and returns False on anything it cannot read — an
+un-savepointed failure poisons every statement after it in the caller's
+transaction.
+
+⏳ Still on `(school, state)`: `school_identity` itself, `/school/<name>`, the
+search index and meet scoring. The crest was the visible half; the page is the
+next one.
 
 Also still open from the owner's list: **coalescing an athlete's season onto one
 team** when they appear under similar names with different ids, and the

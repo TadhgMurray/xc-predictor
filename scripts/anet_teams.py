@@ -589,6 +589,15 @@ def main():
             #   take; REPLACING a better-ranked crest is a regression, and
             #   that is what stops here. The real answer is a level in the
             #   key -- see docs/ISSUES-RUNNING.md S.
+            # the anet level NAME per team, for the crest's third key part
+            anet_levels = {}
+            try:
+                from speed_ratings_db import loadTeamLevels
+                anet_levels, _meaning, _rows = loadTeamLevels()
+            except Exception as exc:                          # noqa: BLE001
+                print(f"  team levels unavailable ({type(exc).__name__}: {exc}) "
+                      f"-- crests file under no level, as before", flush=True)
+
             multi_level = set()
             if _tableExists(cur, "school_level"):
                 cur.execute("""
@@ -678,11 +687,22 @@ def main():
                     #   sweep, so installing it OVER a good crest does not
                     #   swap one picture for another: it leaves the school
                     #   with none. --replace overrides even that.
+                    # ★ UNDER THE TEAM'S OWN LEVEL (owner, 2026-09-16: "The
+                    #   anet pools should match our school pools. If they
+                    #   don't, separate them"). anet_team.level, named by
+                    #   loadTeamLevels, says which institution this mascot
+                    #   belongs to -- so Amherst College's crest and Amherst
+                    #   Regional's are two rows, and neither can shadow the
+                    #   other. Unknown level -> '' , the level-less row that
+                    #   answers for any level, which is the old behaviour.
+                    lv = anet_levels.get(team_id) or ""
+                    if lv not in ("elem", "ms", "hs", "college"):
+                        lv = ""
                     if png and args.write and not args.replace:
                         # a pair with two institutions is always keep-better
                         keep = args.keep_better or (school, state) in multi_level
                         if keep and kindRank("anet") > kindRank(
-                                storedKind(cur, school, state)):
+                                storedKind(cur, school, state, lv)):
                             kept += 1
                             png = None
                         elif sharedAlready(cur, sha):
@@ -703,9 +723,11 @@ def main():
                     if png:
                         crests += 1
                         if args.write:
-                            name = writeFile(school, state, png, args.dir)
+                            name = writeFile(school, state, png, args.dir,
+                                             level=lv)
                             record(cur, school, state, name,
-                                   mascotUrls(team)[0], "anet", sha, "ok")
+                                   mascotUrls(team)[0], "anet", sha, "ok",
+                                   level=lv)
                 if i == ABORT_AFTER and meta == 0 and not args.logos_only:
                     conn.rollback()
                     raise SystemExit(
