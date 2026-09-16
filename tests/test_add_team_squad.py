@@ -58,10 +58,27 @@ ok("academicYear" in cs,
 ok("_squadsForYear" in cs, "and it reads a season through _squadsForYear")
 ok("exclude_terminal" in cs,
    "asking the previous season to drop its 12s/SRs")
-for what, needle in (("ages out the terminal grades", "_TERMINAL_GRADES"),
-                     ("drops transfers racing elsewhere", "NOT EXISTS")):
+# ! THE TWO CLAUSES LIVE IN roster.py NOW, because the school page applies
+#   the same rule and two spellings of "who graduated" is two rosters for one
+#   team. What _squadsForYear must still do is APPLY them.
+for what, needle in (("ages out the terminal grades",
+                      "roster.graduatedClause"),
+                     ("drops transfers racing elsewhere",
+                      "roster.transferredClause")):
     ok(needle in sy, f"_squadsForYear still {what} -- schoolSquad now "
                      f"depends on it doing so")
+
+# ★ AND THE CARRY-FORWARD IS A WINDOW, NOT AN EMPTINESS TEST (owner,
+#   2026-09-15). "Has this school any current-season row" meant one athlete
+#   running a September opener took the whole rest of the programme off the
+#   squad; the window is the TEAM's first three races.
+ok("carryingSchools" in cs,
+   "_currentSquads asks roster.py how many races the team has run")
+# ⚠ THE OLD TEST, BY ITS CODE AND NOT BY ITS NAME. The word "missing" still
+#   appears in _currentSquads -- in the comments explaining what this
+#   replaced, which is exactly where it belongs.
+ok("if not squads.get(" not in cs,
+   "and the all-or-nothing emptiness test is gone, not sitting beside it")
 
 # 3. The response shape the page reads is unchanged.
 ok('"runners"' in sq, "the payload still has runners")

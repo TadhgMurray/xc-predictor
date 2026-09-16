@@ -1431,7 +1431,11 @@ def _exactField(cur, meet_id, div_id, sport):
 #   answer to "who is a senior" comes back in: the next reader to reach for
 #   it would have got the list that MISSED "Sr." and "SR-4" -- the exact bug
 #   the keys were introduced to fix. One definition, and it is the key.
-_TERMINAL_KEYS = ("12", "sr")
+#
+# ! AND THE DEFINITION IS roster.py's NOW, because the school page needs the
+#   same one. Re-exported here so this module's callers and its tests do not
+#   have to know where the rule lives.
+from roster import TERMINAL_KEYS as _TERMINAL_KEYS
 
 
 def _currentSquads(cur, schools, sport, season_year, gender=None):
@@ -1476,15 +1480,50 @@ def _currentSquads(cur, schools, sport, season_year, gender=None):
                             exclude_terminal=stale,
                             active_year=now if stale else None,
                             gender=gender)
-    missing = [s for s in schools if not squads.get(s)]
-    if missing:
-        prev = _squadsForYear(cur, missing, sport, season_year - 1,
+
+    # ★ THE CARRY-FORWARD IS PER SCHOOL AND PER RACE NOW, NOT ALL-OR-NOTHING
+    #   (owner, 2026-09-15: "keep everybody else on the roster until they
+    #   either don't run the first 3 races or until they race for another
+    #   team... 2026 roster for a team after their first race should include
+    #   ppl from last year who got sick during the first race").
+    #
+    # ⚠ THE TEST USED TO BE "HAS THIS SCHOOL ANY ROW AT ALL", and that is
+    #   what was wrong with it. One athlete of a forty-person programme runs
+    #   a September opener, the school stops being `missing`, and the other
+    #   thirty-nine drop out of the field, the squad picker and the school
+    #   page in the same instant -- because a roster was being read off who
+    #   had happened to race, three weeks into a season.
+    #
+    # ! ONLY WHERE THE SEASON WE ARE READING IS THE LIVE ONE. A stale season
+    #   is a finished one: it has its full roster already, and carrying a
+    #   second season on top of it would age nobody out correctly (see the
+    #   one-year note above).
+    from roster import carryingSchools
+    carrying = ([] if stale
+                else sorted(carryingSchools(cur, schools, sport, season_year)))
+    if carrying:
+        prev = _squadsForYear(cur, carrying, sport, season_year - 1,
                               exclude_terminal=True,
-                              active_year=now, gender=gender)
+                              active_year=season_year, gender=gender)
         for sch, rows in prev.items():
-            for r in rows:
-                r["carried"] = True    # last season's roster, aged forward
-            squads[sch] = rows
+            # ! MERGED, NOT REPLACED. The school may already have runners
+            #   this season; those rows are the better ones -- this season's
+            #   rating, this season's grade -- so the carried set fills in
+            #   around them and never over them.
+            have = {r["person_id"] for r in squads.get(sch, [])}
+            add = [r for r in rows if r["person_id"] not in have]
+            for r in add:
+                r["carried"] = True   # last season's roster, aged forward
+            if add:
+                # ⚠ SORTED EXPLICITLY FIRST. _bestFirst only REORDERS a squad
+                #   that spans pools -- with one pool it hands the list back
+                #   untouched, which is right when the list came out of an
+                #   ORDER BY and wrong here, where two ordered lists have
+                #   just been concatenated. Without this the returners sit in
+                #   a block below everyone racing, whatever they ran.
+                merged = sorted(squads.get(sch, []) + add,
+                                key=lambda r: -(r.get("rating") or 0))
+                squads[sch] = _bestFirst(merged, sport)
     return squads
 
 
@@ -1498,24 +1537,12 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
     gender           -- "M"/"F": only that side of the school. A school has a
                         boys team and a girls team and they are not one squad.
     """
-    # ! AN UNGRADED ROW STAYS, and that is deliberate: a blank grade is not
-    #   evidence of graduation, and dropping them would shrink every squad
-    #   whose feed is thin on grades. They are flagged below instead.
-    from rankings import gradeKeySql
-    grade_clause = (f"""AND (s.grade IS NULL OR BTRIM(s.grade) = ''
-                          OR {gradeKeySql("s")} <> ALL(%(term_keys)s))"""
-                    if exclude_terminal else "")
-    # ★ A TRANSFER HAS ALREADY RACED SOMEWHERE ELSE; A GRADUATE HAS NOT
-    #   (issue #83). The carry-forward only runs for a school with NO row in
-    #   the current season, so any current-season row this person has is
-    #   necessarily at a DIFFERENT school -- which is exactly the signal that
-    #   separates the two cases. Aging-out alone could never do it: a
-    #   transfer is not a terminal grade, so they were carried onto the old
-    #   school's squad while racing for the new one.
-    move_clause = ("""AND NOT EXISTS (SELECT 1 FROM athlete_season c
-                                      WHERE c.person_id = s.person_id
-                                        AND c.year  = %(active_yr)s
-                                        AND c.sport = %(sport)s)"""
+    # ! BOTH CLAUSES COME FROM roster.py. They are the carry-forward RULE,
+    #   and the school page applies the same one -- two spellings of "who
+    #   graduated" is two rosters for one team.
+    import roster
+    grade_clause = roster.graduatedClause("s") if exclude_terminal else ""
+    move_clause = (roster.transferredClause("s")
                    if active_year is not None else "")
     # ★ A SCHOOL IS TWO TEAMS. Without this the boys squad and the girls squad
     #   come back as one list and the top seven of it is a mixed team.

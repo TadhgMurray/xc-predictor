@@ -4369,6 +4369,25 @@ p.meta .dv-day::after, p.meta .dv-day::before { z-index: 70; }
 /* the school roster split by level (2026-09-06) */
 .roster-level { margin: 1.1rem 0 0.3rem; font-size: 1rem; }
 
+/* ★ A ROSTER ROW FOR A RETURNER WHO HAS NOT RACED YET (owner, 2026-09-15:
+   "in the schools roster too"). They ARE on the team -- that is the whole
+   point of carrying them -- so the row is not hidden and not struck through;
+   it is muted, the way the predictions page mutes a runner it is presuming
+   about, and the year tag beside the rating says which season that number is
+   from. Anything louder would read as a warning about the athlete rather
+   than a note about the data.
+
+   ! THE NAME KEEPS ITS LINK COLOUR. Greying it too made the row look
+     disabled, and it is not: the athlete page is the thing a reader
+     checking "are they back?" wants next. */
+tr.is-carried td { color: #6b6b6b; }
+tr.is-carried td a { color: var(--link); }
+
+/* The season a carried number is from. Same tag the predictions page puts on
+   a dropped runner's last known rating, and for the same reason: a rating
+   with no year on it reads as this year's. */
+.r-year { color: #767676; font-size: 0.68rem; }
+
 /* the two weathers on a prediction (forecast.py, 2026-09-06) */
 .predict2 .wx-line { font-size: 0.82rem; color: #555; margin: 0.35rem 0 0; line-height: 1.5; }
 .predict2 .wx-line .wx-forecast { display: block; }

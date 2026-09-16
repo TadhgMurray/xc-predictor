@@ -134,38 +134,98 @@ def schoolHeader(cur, school):
     return row if row and row["athletes"] else None
 
 
-def schoolRoster(cur, school, year, sport, state=None, primary=None):
+def schoolRoster(cur, school, year, sport, state=None, primary=None,
+                 carry=True):
     """Everyone who raced for this school in one season, best first.
     `state` narrows to athletes ASSIGNED to that home-state cluster --
-    the same-name-two-schools chips (school_identity)."""
+    the same-name-two-schools chips (school_identity).
+
+    ★ AND, IN A SEASON THAT HAS ONLY JUST STARTED, LAST SEASON'S RETURNERS
+      TOO (owner, 2026-09-15: "in the schools roster too"). athlete_season
+      only knows who has RACED, so for the first few weeks of a year this
+      table answered "who happened to run already" and called it the roster:
+      a programme of forty showed the four who ran the opener. roster.py owns
+      the rule -- last season minus the graduating class, minus anyone racing
+      elsewhere, until the team's third race -- and the predictions field
+      applies the same one, so the two cannot disagree about who is on a team.
+
+    ⚠ ONLY FOR THE SEASON THAT IS ACTUALLY LIVE. A picked year from the year
+      bar is history and gets exactly what it raced; and a school that has
+      not opened its season at all still reads as LAST year here, because
+      currentSeason returns the newest year it has rows for -- the page is
+      then labelled with that year and is telling the truth about it.
+
+    carry=False turns it off for a caller that wants the raced roster alone.
+    """
     sf, sfp = stateFilterSql("s", state, primary)
-    cur.execute(f"""
-        SELECT s.person_id,
-               COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '')  AS name,
-               s.grade,
-               s.pool,
-               s.mean_rating,
-               s.best_rating,
-               s.n_races,
-               s.first_race,
-               s.last_race
-        FROM   athlete_season s
-        LEFT JOIN LATERAL (
-            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
-                   NULLIF(TRIM(x.last_name),  '') AS last_name
-            FROM   athletes x
-            WHERE  x.athlete_id = s.person_id
-            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
-            LIMIT  1
-        ) a ON TRUE
-        WHERE  s.school = %(school)s
-          AND  s.year   = %(year)s
-          AND  s.sport  = %(sport)s
-          {sf}
-        ORDER  BY s.mean_rating DESC NULLS LAST
-    """, {"school": school, "year": year, "sport": sport, **sfp})
-    return cur.fetchall()
+
+    def fetch(yr, extra="", params=None):
+        cur.execute(f"""
+            SELECT s.person_id,
+                   COALESCE(a.first_name, '') || ' '
+                       || COALESCE(a.last_name, '')  AS name,
+                   s.grade,
+                   s.pool,
+                   s.mean_rating,
+                   s.best_rating,
+                   s.n_races,
+                   s.first_race,
+                   s.last_race
+            FROM   athlete_season s
+            LEFT JOIN LATERAL (
+                SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
+                       NULLIF(TRIM(x.last_name),  '') AS last_name
+                FROM   athletes x
+                WHERE  x.athlete_id = s.person_id
+                ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
+                LIMIT  1
+            ) a ON TRUE
+            WHERE  s.school = %(school)s
+              AND  s.year   = %(year)s
+              AND  s.sport  = %(sport)s
+              {sf}
+              {extra}
+            ORDER  BY s.mean_rating DESC NULLS LAST
+        """, {"school": school, "year": yr, "sport": sport, **sfp,
+              **(params or {})})
+        return cur.fetchall()
+
+    rows = fetch(year)
+    if not carry or year is None:
+        return rows
+
+    import datetime
+    import roster as roster_rules
+    from season_year import academicYear
+    if year != academicYear(datetime.date.today()):
+        return rows                       # a finished season is complete
+    if school not in roster_rules.carryingSchools(cur, [school], sport, year):
+        return rows                       # past the window: the roster is real
+
+    prev = fetch(year - 1,
+                 roster_rules.graduatedClause("s")
+                 + roster_rules.transferredClause("s"),
+                 {"term_keys": list(roster_rules.TERMINAL_KEYS),
+                  "active_yr": year})
+    have = {r["person_id"] for r in rows}
+    # ! THE RETURNER'S ROW IS LAST SEASON'S, AND IT SAYS SO. Rating, grade,
+    #   races and last-raced all describe the year they did race -- this page
+    #   has nothing else to show about them, and pretending otherwise would
+    #   invent a current rating out of an absence.
+    add = []
+    for r in prev:
+        if r["person_id"] in have:
+            continue
+        r = dict(r)
+        r["carried"] = True
+        r["carried_year"] = year - 1
+        add.append(r)
+    if not add:
+        return rows
+    merged = list(rows) + add
+    merged.sort(key=lambda r: (r.get("mean_rating") is None,
+                               -(r.get("mean_rating") or 0)))
+    return merged
 
 
 def schoolMeets(cur, school, sport, year=None, limit=2000,

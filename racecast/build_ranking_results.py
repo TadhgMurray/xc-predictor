@@ -1913,6 +1913,12 @@ _CANONICAL_INDEXES = {
 
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
         ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+        # ★ THE ROSTER CARRY-FORWARD WINDOW (roster.racesRun, 2026-09-16):
+        #   count(DISTINCT meet_id) per school for ONE season. Asked of every
+        #   school in a field -- 396 at a championship -- and without `year`
+        #   in the key each one's whole history is read to count one season.
+        #   meet_id rides along so the count is index-only.
+        ("rr_school_season_idx", "(school, sport, year, meet_id)"),
         # ★ THE PAGE INDEXES, HERE AND NOT ONLY IN 11b (2026-09-06). These
         #   three were add_page_indexes' (step 11b), built AFTER the swap;
         #   run12's finish was re-run by hand after a crash, 11b never

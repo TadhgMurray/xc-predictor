@@ -102,6 +102,22 @@ def test_transfers_are_excluded_only_when_asked():
     print("  transfers excluded only with active_year ........... OK")
 
 
+class MeetCountCursor:
+    """Answers roster.racesRun and nothing else: how many meets the school
+    has run this season, which is what decides the carry-forward window."""
+    def __init__(self, n):
+        self.n = n
+        self.rows = []
+
+    def execute(self, sql, params=None):
+        assert "count(DISTINCT rr.meet_id)" in " ".join(sql.split()), sql
+        self.rows = [{"school": s, "n": self.n}
+                     for s in ((params or {}).get("schools") or [])]
+
+    def fetchall(self):
+        return self.rows
+
+
 def _spyOn(empty_for):
     """Swap _squadsForYear for a recorder. Returns (calls, restore)."""
     calls = []
@@ -112,7 +128,8 @@ def _spyOn(empty_for):
         calls.append({"year": year, "terminal": exclude_terminal,
                       "active": active_year, "gender": gender})
         return ({} if year in empty_for
-                else {"Alpha": [{"person_id": 1}]})
+                else {"Alpha": [{"person_id": 1, "rating": 120.0,
+                                 "pool": "hs_m"}]})
 
     predict._squadsForYear = spy
     return calls, lambda: setattr(predict, "_squadsForYear", saved)
@@ -129,7 +146,7 @@ def test_currentSquads_asks_for_both_on_the_carry_path():
     now = _now()
     calls, restore = _spyOn(empty_for={now})
     try:
-        out = predict._currentSquads(None, ["Alpha"], "XC", now)
+        out = predict._currentSquads(MeetCountCursor(0), ["Alpha"], "XC", now)
     finally:
         restore()
 
@@ -141,6 +158,31 @@ def test_currentSquads_asks_for_both_on_the_carry_path():
                         "gender": None}, calls
     assert out["Alpha"][0]["carried"] is True
     print(f"  carry path: {now} plain, then {now - 1} aged+active={now} . OK")
+
+
+def test_the_window_is_races_run_not_an_empty_roster():
+    """★ THE CARRY IS PER SCHOOL AND PER RACE (owner, 2026-09-15). A school
+    that HAS raced still carries its returners, because the roster of a
+    season two meets old is still mostly a question about the future."""
+    now = _now()
+    calls, restore = _spyOn(empty_for=set())   # the school HAS current rows
+    try:
+        predict._currentSquads(MeetCountCursor(2), ["Alpha"], "XC", now)
+    finally:
+        restore()
+    assert len(calls) == 2, ("two races in, the returners still carry", calls)
+    assert calls[1]["year"] == now - 1 and calls[1]["terminal"] is True
+
+    # ⚠ AND THE THIRD RACE CLOSES IT. Past the window, the roster is whoever
+    #   has actually run -- which is exactly "ran none of the first three",
+    #   since anyone who ran any race has a row of their own.
+    calls, restore = _spyOn(empty_for=set())
+    try:
+        predict._currentSquads(MeetCountCursor(3), ["Alpha"], "XC", now)
+    finally:
+        restore()
+    assert len(calls) == 1, ("three races in, no carry", calls)
+    print("  the window is the team's first three races ......... OK")
 
 
 def test_a_finished_season_is_aged_out_on_the_MAIN_path():
@@ -155,11 +197,13 @@ def test_a_finished_season_is_aged_out_on_the_MAIN_path():
     stale = now - 1
     calls, restore = _spyOn(empty_for=set())      # every school HAS a row
     try:
+        # ! NO CURSOR NEEDED: a stale season never asks for the race count,
+        #   because a finished season is not a window into anything.
         predict._currentSquads(None, ["Alpha"], "XC", stale)
     finally:
         restore()
 
-    assert len(calls) == 1, "no carry-forward should run -- rows exist"
+    assert len(calls) == 1, "no carry-forward should run -- the season is over"
     assert calls[0] == {"year": stale, "terminal": True, "active": now,
                         "gender": None}, \
         f"a finished season must be aged out on the main path: {calls[0]}"
@@ -172,7 +216,7 @@ def test_the_current_season_is_not_aged_out():
     now = _now()
     calls, restore = _spyOn(empty_for=set())
     try:
-        predict._currentSquads(None, ["Alpha"], "XC", now)
+        predict._currentSquads(MeetCountCursor(9), ["Alpha"], "XC", now)
     finally:
         restore()
     assert calls[0] == {"year": now, "terminal": False, "active": None,
@@ -181,11 +225,12 @@ def test_the_current_season_is_not_aged_out():
 
 
 if __name__ == "__main__":
-    for fn in [test_terminal_grades_are_normalised_spellings,
-               test_aging_out_compares_normalised,
+    for fn in [test_terminal_grades_are_keys_not_spellings,
+               test_aging_out_compares_the_grade_key,
                test_no_grade_clause_when_not_aging_out,
                test_transfers_are_excluded_only_when_asked,
                test_currentSquads_asks_for_both_on_the_carry_path,
+               test_the_window_is_races_run_not_an_empty_roster,
                test_a_finished_season_is_aged_out_on_the_MAIN_path,
                test_the_current_season_is_not_aged_out]:
         fn()

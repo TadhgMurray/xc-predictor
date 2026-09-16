@@ -283,7 +283,12 @@ def test_schoolSquad_filters_too():
     cur = FakeCursorSQL()
     predict.schoolSquad(cur, "Alpha", "XC", season_year=2026, gender="M")
 
-    first_sql, first_params = cur.queries[0]
+    # ! THE ROSTER QUERIES, NOT EVERY QUERY. _currentSquads now asks
+    #   roster.racesRun how many meets the school has run before deciding
+    #   whether to carry, and that one counts ranking_results -- it has no
+    #   athlete and no gender to filter on.
+    squad_queries = [(q, p) for q, p in cur.queries if "athlete_season" in q]
+    first_sql, first_params = squad_queries[0]
     assert "upper(right(s.pool, 1)) = %(gender)s" in first_sql, first_sql
     assert first_params["gender"] == "M"
     # and it really is the shared path, not a copy that happens to match
@@ -293,12 +298,16 @@ def test_schoolSquad_filters_too():
     #   other-gender count fires -- which is the whole point of it: a boys
     #   race correctly finds nobody at an all-girls school, and "has not
     #   raced this season" was a false explanation of a true result.
-    # FOUR, not two: _currentSquads reads the current season and then falls
-    # back to the previous one when a school has no rows (#82), and the
-    # other-gender count repeats that pair without the filter.
-    gendered = ["upper(right(s.pool, 1))" in q for q, _ in cur.queries]
+    # FOUR, not two: _currentSquads reads the current season and then carries
+    # last season's returners in (#82), and the other-gender count repeats
+    # that pair without the filter.
+    gendered = ["upper(right(s.pool, 1))" in q for q, _ in squad_queries]
     assert gendered == [True, True, False, False], (gendered,
-                                                    len(cur.queries))
+                                                    len(squad_queries))
+    # ⚠ AND THE WINDOW WAS ACTUALLY CONSULTED. This fake reports no meets, so
+    #   the school is inside it -- which is why the carry ran at all.
+    assert any("count(DISTINCT rr.meet_id)" in q for q, _ in cur.queries), \
+        [q[:60] for q, _ in cur.queries]
     print("  schoolSquad filters on pool ........................ OK")
     print("  and counts the other side when it finds nobody ..... OK")
 

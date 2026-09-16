@@ -166,11 +166,20 @@
         </thead>
         <tbody>
             {% for r in rows %}
-            <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
+            {# ★ A RETURNER WHO HAS NOT RACED YET IS ON THE ROSTER AND MARKED
+                 AS SUCH. Their numbers are LAST season's -- there is nothing
+                 else to show about a season they have not run -- so the row
+                 says which year it is quoting rather than letting a stale
+                 rating read as a current one. #}
+            {%- set cls = [] -%}
+            {%- if loop.index0 >= 15 %}{% set _ = cls.append('row-hidden') %}{% endif -%}
+            {%- if r.carried %}{% set _ = cls.append('is-carried') %}{% endif -%}
+            <tr{% if cls %} class="{{ cls|join(' ') }}"{% endif %}>
                 <td>{{ loop.index }}</td>
                 <td><a href="/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
                 <td>{{ r.grade|grade_label(r.pool) if r.grade else "" }}</td>
-                <td>{% if r.mean_rating is not none %}{{ rv(r.mean_rating, r.hs_mean_rating) }}{% endif %}</td>
+                <td>{% if r.mean_rating is not none %}{{ rv(r.mean_rating, r.hs_mean_rating) }}{% endif %}{%
+                    if r.carried and r.carried_year %}<span class="r-year">&thinsp;'{{ "%02d"|format(r.carried_year % 100) }}</span>{% endif %}</td>
                 <td>{% if r.best_rating is not none %}{{ rv(r.best_rating, r.hs_best_rating) }}{% endif %}</td>
                 <td>{{ r.n_races }}</td>
                 <td>{{ r.last_race if r.last_race else "" }}</td>
@@ -185,6 +194,14 @@
             {% endif %}
         </tbody>
     </table>
+    {% set n_carried = rows|selectattr('carried')|list|length %}
+    {% if n_carried %}
+    <p class="meta">{{ n_carried }} of these have not raced yet this season.
+      They are last season's roster minus the graduating class, and they stay
+      here until the team's third race or until they turn out for someone
+      else - an athlete who misses an opener should not drop off their own
+      team. Their ratings and grades are last season's.</p>
+    {% endif %}
     {% endfor %}
     {{ view_all("ability") }}
 {% endif %}

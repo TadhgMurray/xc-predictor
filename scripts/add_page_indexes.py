@@ -65,6 +65,15 @@ WANTED = [
     #   specless entry and this composite would never be built.
     ("athlete_season",  "school",  "idx_athlete_season_school_sport_year",
      "(school, sport, year)"),
+    # ★ HOW MANY RACES A TEAM HAS RUN THIS SEASON (roster.racesRun,
+    #   2026-09-16). The carry-forward window asks that of every school on
+    #   the page -- 396 of them for a championship field -- and the existing
+    #   rr_school_sport_idx (school, sport) leaves `year` as a heap filter,
+    #   so each school's ENTIRE history is read to count one season of it.
+    # ! SPEC GIVEN, for the same reason as the entry above: idx_rr_school
+    #   leads on (school) and would satisfy a specless entry forever.
+    ("ranking_results", "school", "idx_rr_school_sport_year_meet",
+     "(school, sport, year, meet_id)"),
     # ★ THE PREDICTIONS FIELD ENDPOINT (2026-09-01). meetField gained two
     #   lookups that filter athlete_season by PERSON -- _fieldGender, which
     #   reads a race's gender off the people who ran it, and
