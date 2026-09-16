@@ -68,7 +68,7 @@ def _install(monkey_originals, monkey_squads, last_seen=None, gender=None):
     #   is read off a real athlete_season query, and these fixtures have no
     #   cursor. What it answers does not matter here -- _currentSquads is
     #   stubbed too -- only that it does not go to the database.
-    predict._fieldLevels = lambda cur, ids, sport: set()
+    predict._fieldLevels = lambda cur, ids, sport, yr=None: set()
 
     def undo():
         (predict._exactField, predict._currentSquads,

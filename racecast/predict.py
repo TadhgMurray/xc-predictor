@@ -1068,7 +1068,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     # ★ AND THE LEVEL, for the same reason: a school NAME is both a college
     #   and a high school often enough that "everyone at Amherst" is two
     #   different teams. See _fieldLevels.
-    levels = _fieldLevels(cur, [r["person_id"] for r in originals], sport)
+    levels = _fieldLevels(cur, _lineupIds(originals), sport, season_year)
     squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender,
                             levels=levels)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
@@ -1188,18 +1188,44 @@ _GENDER_SUPERMAJORITY = 0.9
 #   back {"college"} and filters to it; a genuinely mixed meet comes back
 #   with several and filters to none of them, which is right -- there is no
 #   one answer to narrow to.
-def _fieldLevels(cur, person_ids, sport):
+def _fieldLevels(cur, person_ids, sport, season_year=None):
     ids = sorted({p for p in person_ids if p is not None})
     if not ids:
         return set()
-    cur.execute("""
-        SELECT split_part(split_part(s.pool, '|', 1), '_', 1) AS lvl,
-               count(*) AS n
-        FROM   athlete_season s
-        WHERE  s.person_id = ANY(%(ids)s) AND s.sport = %(sport)s
-          AND  s.pool IS NOT NULL
-        GROUP  BY 1
-    """, {"ids": ids, "sport": sport})
+    # ⚠ ONE ROW PER ATHLETE, THEIR MOST RECENT, AND THAT IS THE WHOLE BUG
+    #   (owner, 2026-09-16, on a D3 championship that came back full of
+    #   seventh graders: "it's bcs when you expand it it adds them all, and
+    #   most are hsers, so it's able to pass the 60%").
+    #
+    #   This used to count EVERY athlete_season row, over every year. A D3
+    #   sophomore has four hs_m rows and one college_m row, so a field of
+    #   nothing but college runners came back about 80% `hs` -- and at a 60%
+    #   threshold that does not merely fail to filter, it filters to the
+    #   WRONG level. Every shared name then resolved to its high school:
+    #   Amherst Regional, Knox, Utica, Houghton. The archive outvoted the
+    #   start line.
+    #
+    #   It was invisible at 10% because both levels passed and nothing was
+    #   narrowed. Raising the threshold is what made the latent bug bite.
+    #
+    # ! AND <= THE SEASON BEING PREDICTED, not simply the newest row. Running
+    #   last year's meet must read last year's levels, or a prediction of a
+    #   2019 race is filtered by who those people are in 2026.
+    year_clause = "AND s.year <= %(yr)s" if season_year else ""
+    cur.execute(f"""
+        SELECT lvl, count(*) AS n
+        FROM (
+            SELECT DISTINCT ON (s.person_id)
+                   split_part(split_part(s.pool, '|', 1), '_', 1) AS lvl
+            FROM   athlete_season s
+            WHERE  s.person_id = ANY(%(ids)s) AND s.sport = %(sport)s
+              AND  s.pool IS NOT NULL
+              {year_clause}
+            ORDER  BY s.person_id, s.year DESC
+        ) x
+        WHERE  lvl <> ''
+        GROUP  BY lvl
+    """, {"ids": ids, "sport": sport, "yr": season_year})
     rows = [(r["lvl"], int(r["n"])) for r in cur.fetchall() if r["lvl"]]
     total = sum(n for _l, n in rows)
     if not total:
@@ -1209,6 +1235,28 @@ def _fieldLevels(cur, person_ids, sport):
     #   pool, so demanding purity would hand back everything and filter
     #   nothing -- the same reason _fieldGender takes a supermajority.
     return {lvl for lvl, n in rows if n / total >= _LEVEL_MIN_SHARE}
+
+
+# Purpose:   the ids whose level decides the field's, i.e. the LINEUP.
+# ★ THE TOP SEVEN PER SCHOOL, NOT EVERY NAME ON THE ENTRY LIST (owner,
+#   2026-09-16: "the 60% shoild be for current top 7 me thinks, and it
+#   applied to the expanded rosters"). A meet where one school enters forty
+#   in an open race and twenty schools enter seven would otherwise be voted
+#   on by that one school. A team enters seven; seven is what it gets to say.
+# ! ORDER IS THE ORDER GIVEN, which for _exactField is finishing order -- so
+#   the seven that count are the seven that scored, not an arbitrary seven.
+def _lineupIds(rows, per_team=None):
+    per_team = MAX_PER_TEAM if per_team is None else per_team
+    seen, out = {}, []
+    for r in rows:
+        school = r.get("school")
+        if school:
+            if seen.get(school, 0) >= per_team:
+                continue
+            seen[school] = seen.get(school, 0) + 1
+        if r.get("person_id") is not None:
+            out.append(r["person_id"])
+    return out
 
 
 # A level has to be this much of the field to count as one of its levels.
@@ -1568,10 +1616,12 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             # ★ SAME GENDER AS meetField DERIVES, or the page shows one
             #   lineup and the model scores another.
             ids = [r["person_id"] for r in originals]
-            squads = _currentSquads(cur, at_meet, sport,
-                                    _currentSeason(cur, sport),
+            year = _currentSeason(cur, sport)
+            squads = _currentSquads(cur, at_meet, sport, year,
                                     gender=_fieldGender(cur, ids, sport),
-                                    levels=_fieldLevels(cur, ids, sport))
+                                    levels=_fieldLevels(
+                                        cur, _lineupIds(originals), sport,
+                                        year))
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
@@ -2085,7 +2135,17 @@ def _athleteEntries(cur, person_ids, sport, season_year):
             seen.add(r["person_id"])
             out.append({"person_id": r["person_id"], "school": r["school"],
                         "grade": r["grade"], "pool": r["pool"],
-                        "rating": r["rating"],
+                        # ⚠ ROUNDED, LIKE EVERY OTHER RATING ON THE SITE
+                        #   (owner, 2026-09-16: "the ratings are off even for
+                        #   real athletes"). mean_rating is a REAL, so the
+                        #   raw value prints as 110.451996 and 115.118004 --
+                        #   float32 noise rendered as five decimal places of
+                        #   false precision. _squadsForYear has always
+                        #   rounded here; this path was added later and did
+                        #   not, so the same athlete read differently
+                        #   depending on which query found them.
+                        "rating": (round(float(r["rating"]), 1)
+                                   if r["rating"] is not None else None),
                         "name": (r["name"] or "").strip() or "Unknown"})
     rest = [i for i in ids if i not in seen]
     if rest:

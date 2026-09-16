@@ -111,7 +111,83 @@ def test_the_field_derives_it_and_hands_it_back():
     # and the prediction path derives the same thing, for a request that
     # sends no explicit field
     tr = body(pred, "_teamRosters")
-    assert "_fieldLevels(cur, ids, sport)" in tr, tr
+    assert "_fieldLevels(" in tr, tr
+    # ! AND IT VOTES ON THE LINEUP, not on the whole entry list. See
+    #   test_the_level_is_read_off_the_lineup_not_the_archive.
+    assert "_lineupIds(originals)" in tr, tr
+
+
+class SeasonCursor:
+    """Answers _fieldLevels' query from {person_id: [(year, pool), ...]},
+    applying the DISTINCT ON / ORDER BY the real query asks for."""
+
+    def __init__(self, career):
+        self.career = career
+        self.rows = []
+
+    def execute(self, sql, params=None):
+        assert "DISTINCT ON (s.person_id)" in sql, sql
+        assert "ORDER  BY s.person_id, s.year DESC" in sql, sql
+        yr = (params or {}).get("yr")
+        ids = set((params or {}).get("ids") or [])
+        counts = {}
+        for pid, seasons in self.career.items():
+            if pid not in ids:
+                continue
+            got = [s for s in seasons if yr is None or s[0] <= yr]
+            if not got:
+                continue
+            # newest season wins -- one row per athlete
+            pool = max(got)[1]
+            lvl = pool.split("|")[0].split("_")[0]
+            counts[lvl] = counts.get(lvl, 0) + 1
+        self.rows = [{"lvl": k, "n": v} for k, v in counts.items()]
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_the_level_is_read_off_the_lineup_not_the_archive():
+    """⚠ THE BUG THAT PUT SEVENTH GRADERS IN A D3 CHAMPIONSHIP (owner,
+    2026-09-16: "it's bcs when you expand it it adds them all, and most are
+    hsers, so it's able to pass the 60%").
+
+    _fieldLevels counted EVERY athlete_season row over every year. A D3
+    sophomore carries four hs_m rows and one college_m row, so a field of
+    nothing but college runners came back about 80% `hs` -- and at 60% that
+    does not merely fail to filter, it filters to the WRONG level. Every
+    shared name then resolved to its high school.
+
+    Two fixes, and the test needs both: ONE ROW PER ATHLETE (their most
+    recent), and the vote taken over the LINEUP rather than the entry list.
+    """
+    # twelve college sophomores, each with four years of high school behind
+    # them -- the archive is 48 hs rows against 12 college ones
+    career = {}
+    for pid in range(1, 13):
+        career[pid] = [(2022, "hs_m"), (2023, "hs_m"), (2024, "hs_m"),
+                       (2025, "hs_m"), (2026, "college_m")]
+    got = predict._fieldLevels(SeasonCursor(career), list(career), "XC", 2026)
+    assert got == {"college"}, got
+
+    # ...and running the 2024 edition of the meet reads 2024's levels
+    got = predict._fieldLevels(SeasonCursor(career), list(career), "XC", 2024)
+    assert got == {"hs"}, got
+
+
+def test_the_vote_is_seven_per_school():
+    """Owner: "the 60% shoild be for current top 7 me thinks". One school
+    entering forty in an open race must not outvote twenty schools of seven.
+    """
+    rows = ([{"person_id": i, "school": "Big"} for i in range(1, 41)]
+            + [{"person_id": 100 + i, "school": "Small"} for i in range(7)])
+    ids = predict._lineupIds(rows)
+    assert len([i for i in ids if i < 100]) == predict.MAX_PER_TEAM, ids
+    assert len(ids) == 2 * predict.MAX_PER_TEAM, ids
+    # an unattached runner has no school and is never capped away
+    ids = predict._lineupIds([{"person_id": 1, "school": None},
+                              {"person_id": 2, "school": ""}])
+    assert ids == [1, 2], ids
 
 
 def test_the_squad_endpoint_takes_it_and_validates_it():
