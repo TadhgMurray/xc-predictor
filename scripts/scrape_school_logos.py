@@ -529,11 +529,80 @@ def _svgToPng(raw, px):
         return None
 
 
+# ★ A FLAT BACKGROUND COMES OFF, WHATEVER COLOUR IT IS (owner, 2026-09-16:
+#   "the backgrounds are black but the background on anet are white, so idk
+#   where the black is coming from (I also don't like it)").
+#
+#   The black is in the FILE, not in the page: .school-mark already sets
+#   `background: #fff`, so a crest with real transparency renders white.
+#   What puts an opaque ground there is the source: a mascot that was stored
+#   as a transparent PNG and came back as a JPEG has had its alpha flattened
+#   by whoever re-encoded it, and a flatten with no colour given is BLACK.
+#   anet's own page shows the untouched original, which is why theirs looks
+#   white and ours does not.
+#
+# ⚠ AND IT SILENTLY BROKE THE CROP TOO. normalise promises "transparent
+#   margins come off", and getbbox() can only crop what is transparent -- so
+#   for every opaque source the margin stayed, the mark was shrunk to fit a
+#   box it was already inside, and a logo with a wide ground rendered tiny
+#   at 18 px. Keying the ground out fixes the crop and the colour together.
+#
+# ! ONLY A GROUND ALL FOUR CORNERS AGREE ON, and only on an image that has
+#   no alpha of its own. A mark that reaches its own corners has no flat
+#   ground to key, and disagreeing corners mean a photograph or a gradient,
+#   where keying one colour would punch holes in it. TOLERANCE is tight for
+#   the same reason: a JPEG's ground is not one exact value, but it is
+#   within a few levels of itself.
+KEY_TOLERANCE = 16          # per channel, against the corners' mean
+KEY_MAX_SPREAD = 10         # the corners must agree this closely
+
+
+def _flatGround(im):
+    """The (r, g, b) of a flat background every corner agrees on, or None.
+    Pure; `im` is RGBA."""
+    w, h = im.size
+    if w < 4 or h < 4:
+        return None
+    px = im.load()
+    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+    if any(c[3] < 250 for c in corners):
+        return None                      # it already has its own alpha
+    mean = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
+    for c in corners:
+        if max(abs(c[i] - mean[i]) for i in range(3)) > KEY_MAX_SPREAD:
+            return None                  # a gradient or a photograph
+    return mean
+
+
+def _keyGround(im, ground, tol=KEY_TOLERANCE):
+    """`im` with every pixel within `tol` of `ground` made transparent.
+    Returns (image, pixels keyed)."""
+    lo = tuple(max(0, c - tol) for c in ground)
+    hi = tuple(min(255, c + tol) for c in ground)
+    r, g, b, a = im.split()
+    from PIL import Image, ImageChops
+
+    def band(ch, i):
+        return ch.point(lambda v, i=i: 255 if lo[i] <= v <= hi[i] else 0)
+
+    mask = ImageChops.multiply(ImageChops.multiply(band(r, 0), band(g, 1)),
+                              band(b, 2))
+    # ! getdata() is deprecated in Pillow 12 and gone in 14; a histogram
+    #   counts the same thing and is faster
+    n = mask.histogram()[255] if mask.mode == "L" else 0
+    if not n:
+        return im, 0
+    keyed = im.copy()
+    keyed.putalpha(ImageChops.subtract(a, mask))
+    return keyed, n
+
+
 def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     """(png_bytes, sha256, (w, h)) for a fetched image, or (None, None,
-    reason). Transparent margins come off and the mark is centred in a
-    square of `px` on a transparent ground, so every crest the site draws
-    is the same box whatever shape it arrived in."""
+    reason). A flat opaque ground is keyed out, transparent margins come
+    off, and the mark is centred in a square of `px` on a transparent
+    ground, so every crest the site draws is the same box whatever shape it
+    arrived in."""
     try:
         from PIL import Image, ImageOps
     except ImportError:                                   # pragma: no cover
@@ -548,6 +617,19 @@ def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     except Exception:                                     # noqa: BLE001
         return None, None, f"unreadable {ctype or 'image'}"
     im = im.convert("RGBA")
+    # ⚠ AND ONLY WHEN SOMETHING SURVIVES IT. An image that is ENTIRELY its
+    #   ground -- a solid block, a one-colour badge -- has no ground to key:
+    #   keying it leaves nothing, every colour normalises to the same empty
+    #   square, and the district sweep would then see a thousand schools
+    #   wearing one crest (tests/test_school_logos: "the same bytes hash the
+    #   same and different ones do not"). So the key is kept only if what is
+    #   left is still a usable mark, and reverted otherwise.
+    ground = _flatGround(im)
+    if ground is not None:
+        keyed, n = _keyGround(im, ground)
+        kbox = keyed.getbbox() if n else None
+        if kbox and acceptable(kbox[2] - kbox[0], kbox[3] - kbox[1], kind):
+            im = keyed
     box = im.getbbox()                       # transparent margin off
     if box:
         im = im.crop(box)

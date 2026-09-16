@@ -26,12 +26,68 @@ from season_floor import floorSql, DEFAULT_FLOOR
 
 POOLS = ("hs_m", "hs_f")
 SPORTS = ("XC", "TF")
+# ★ FOUR WAYS TO SAY "IMPROVED", BECAUSE THEY DISAGREE (owner, 2026-09-16:
+#   "I see that a lot of things like the big gain are mostly bad athletes
+#   getting better, is that actually true percentage wise, like is gaining 30
+#   speed rating at 80 vs 110 the same amount of improvement percentage
+#   wise?").
+#
+#   No, and not in the direction the board suggests. speed_rating is
+#   100 * pool_mean / adjusted_time, so a rating is the RECIPROCAL of a time
+#   and a gain of d from r is a fractional time improvement of exactly
+#   d / (r + d):
+#
+#       80 -> 110   +30   25:50 -> 18:47   -27.3%   (hs_m 5k equivalent)
+#      110 -> 140   +30   18:47 -> 14:46   -21.4%
+#
+#   So thirty points at the bottom is a BIGGER time gain than thirty at the
+#   top, in percent and in seconds both. Equal rating steps are not equal
+#   percentage steps.
+#
+# ★ AND NEITHER NUMBER IS "IMPROVEMENT", which is the real answer. Moving
+#   25:50 -> 18:47 is roughly the 5th to the 55th percentile of high school
+#   boys; 18:47 -> 14:46 is the 55th to the 99.7th. Same thirty points,
+#   wildly different rarity. The only currency that compares across the range
+#   is movement through the FIELD.
+#
+# ⚠ AND RANKING BY RAW GAIN SELECTS FOR ERROR. Three things put weak athletes
+#   at the top of it and only the first is improvement:
+#     headroom   an 80 has sixty points under the pool ceiling, a 130 has ten,
+#                and untrained athletes really do improve fastest. Real.
+#     noise      a rating off one or two races carries large error, and one
+#                bad early race (first race ever, sick, wrong distance)
+#                inflates the gain.
+#     selection  sorting by max delta selects for max ERROR. This is why
+#                every most-improved list in every sport is full of people
+#                who were mismeasured.
+#
+#   So the views are offered side by side rather than one being declared
+#   correct, and the two that answer the owner's question are the last two.
 SORTS = {
     "rating": "j.mean_rating DESC NULLS LAST, j.person_id",
+    # the raw points, kept: it is what a coach means by "improved"
     "gain":   "j.gain DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    # the same gain as a share of TIME -- gain / new rating, from the
+    # reciprocal above. Favours the bottom of the range even harder.
+    "gain_pct": "j.gain_pct DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    # movement through the FIELD: standard deviations of the pool gained
+    # between the two seasons. Scale-free, and the honest "how much better
+    # are they than they were".
+    "gain_z": "j.gain_z DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    # improved MORE THAN PEOPLE AT THEIR LEVEL NORMALLY DO: the gain minus
+    # the average gain for that starting rating, over its spread. This is
+    # the one that does not just rediscover the bottom of the range, and the
+    # same instrument the recruiting projection wants.
+    "gain_resid": "j.gain_resid DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
     "best":   "j.best_rating DESC NULLS LAST, j.person_id",
     "grad":   "j.grad_year ASC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
 }
+
+# a starting-rating band for the expected-gain curve: five points is fine
+# enough to separate an 80 from a 110 and coarse enough that every band has
+# a population to average over
+GAIN_BAND = 5
+MIN_BAND_N = 20          # below this the band's expectation is not one
 LIMIT, MAX_LIMIT = 100, 200
 TIMEOUT_MS = 12000
 COLLEGE_DIVISIONS = ("NCAA DI", "NCAA DII", "NCAA DIII", "NAIA")
@@ -142,6 +198,7 @@ def searchRecruits(cur, f):
     # page: the savepoint keeps the connection usable after a cancel
     cur.execute("SAVEPOINT recruit_search")
     cur.execute(f"SET LOCAL statement_timeout = {int(TIMEOUT_MS)}")
+    band, min_band_n = GAIN_BAND, MIN_BAND_N
     cur.execute(f"""
         WITH cur AS (
             SELECT s.person_id, s.school, s.state, s.grade, s.year,
@@ -158,13 +215,68 @@ def searchRecruits(cur, f):
             FROM   cur c
             {grad_where}
         ),
+        -- ★ THE FIELD, BOTH YEARS, so a gain can be expressed as movement
+        --   through it rather than as points. Two index-only aggregates on
+        --   as_board_mean_idx (pool, sport, year, mean_rating).
+        fld AS (
+            SELECT s.year, avg(s.mean_rating) AS mu,
+                   stddev_samp(s.mean_rating) AS sd
+            FROM   athlete_season s
+            WHERE  s.pool = %(pool)s AND s.sport = %(sport)s
+              AND  s.year IN (%(year)s, %(year)s - 1)
+              AND  s.mean_rating IS NOT NULL
+            GROUP  BY s.year
+        ),
+        -- ★ AND WHAT A GAIN NORMALLY IS AT EACH STARTING RATING. The same
+        --   year-pair the page already joins, banded by where the athlete
+        --   STARTED -- which is the whole point: an 80 and a 110 are not
+        --   drawn from one distribution of gains, so one average cannot
+        --   judge both.
+        --
+        -- ! THE WHOLE POOL, NOT THE FILTERED SEARCH. An expectation built
+        --   from the rows a user happened to filter to would move with the
+        --   filter, and "improved more than expected" would mean something
+        --   different on every page.
+        curve AS (
+            SELECT (round(p2.mean_rating / {band}) * {band})::real AS band,
+                   avg(c2.mean_rating - p2.mean_rating) AS exp_gain,
+                   stddev_samp(c2.mean_rating - p2.mean_rating) AS sd_gain,
+                   count(*) AS n
+            FROM   athlete_season p2
+            JOIN   athlete_season c2
+                   ON c2.person_id = p2.person_id AND c2.pool = p2.pool
+                  AND c2.sport = p2.sport AND c2.year = p2.year + 1
+            WHERE  p2.pool = %(pool)s AND p2.sport = %(sport)s
+              AND  p2.year = %(year)s - 1
+              AND  p2.mean_rating IS NOT NULL AND c2.mean_rating IS NOT NULL
+            GROUP  BY 1
+            HAVING count(*) >= {min_band_n}
+        ),
         j AS (
             SELECT g.*, p.mean_rating AS prev_rating,
-                   (g.mean_rating - p.mean_rating)::real AS gain
+                   (g.mean_rating - p.mean_rating)::real AS gain,
+                   -- rating is 100*mean/time, so the time improvement is
+                   -- gain / the NEW rating. See SORTS.
+                   CASE WHEN p.mean_rating IS NOT NULL AND g.mean_rating > 0
+                        THEN ((g.mean_rating - p.mean_rating)
+                              / g.mean_rating)::real END AS gain_pct,
+                   CASE WHEN p.mean_rating IS NOT NULL
+                             AND fn.sd > 0 AND fp.sd > 0
+                        THEN (((g.mean_rating - fn.mu) / fn.sd)
+                              - ((p.mean_rating - fp.mu) / fp.sd))::real
+                        END AS gain_z,
+                   cv.exp_gain::real AS exp_gain,
+                   CASE WHEN p.mean_rating IS NOT NULL AND cv.sd_gain > 0
+                        THEN ((g.mean_rating - p.mean_rating - cv.exp_gain)
+                              / cv.sd_gain)::real END AS gain_resid
             FROM   g
             LEFT JOIN athlete_season p
                    ON p.person_id = g.person_id AND p.pool = %(pool)s
                   AND p.sport = %(sport)s AND p.year = %(year)s - 1
+            LEFT JOIN fld fn ON fn.year = %(year)s
+            LEFT JOIN fld fp ON fp.year = %(year)s - 1
+            LEFT JOIN curve cv
+                   ON cv.band = (round(p.mean_rating / {band}) * {band})::real
             {gain_where}
         )
         SELECT j.*, a.name
