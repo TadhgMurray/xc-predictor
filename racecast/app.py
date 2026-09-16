@@ -2940,7 +2940,8 @@ def raceDayEffect(cur, sport, header, race_date):
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
 def race_xc(meet_id, div_id):
     from meet_compile import (scoreRows, publishedScores, annotateScoring,
-                              splitCollisionTeams, unsplitTeams)
+                              splitCollisionTeams, unsplitTeams,
+                              stampSchoolStates)
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
@@ -2955,6 +2956,11 @@ def race_xc(meet_id, div_id):
                 sources, request.args.get("alt"))
             header  = get_race_header(cur, meet_id, div_id, source=src)
             results = get_race_results(cur, meet_id, div_id, source=src)
+            # ★ WHICH school each row MEANS, from the athlete's own
+            #   assignment rather than from the meet's state: see
+            #   meet_compile.stampSchoolStates. The template falls back to
+            #   header.state for a row it cannot place.
+            stampSchoolStates(cur, results)
             published = publishedScores(cur, meet_id)
             extras = (raceExtras(cur, meet_id, div_id, header.get("source"))
                       if header else {"withheld": False, "weather": None})

@@ -1858,3 +1858,45 @@ the bars above should be allowed to move it.
 `authoritativeStates` — better than the directory, because it is measured on
 our own athletes rather than matched on a name — and the crest queue keys on
 the linked team.
+
+### ✅ R. The race page asked the meet where a school is
+
+Owner mid-`--unfetched`: *"I see Williams has a logo now, and their athletes
+has correct school, but the races still say Williams(CA). I can also see things
+like MIT(CT) and Tufts(CT) which have become diff 'schools' in races."*
+
+The athlete page was right because a **season** line resolves through
+`schoolLabelFor(school, pool, state)` → `teamState`, which asks the college
+directory when the pool is a college one. A **race** page has neither a pool nor
+a season: `race.html` labelled, linked and crested every school with
+`header.state` — the meet's state. For a college that is a travel state, so a
+Williams College row at a Connecticut meet asked "Williams in CT", found no CT
+cluster, and fell back to the name's primary: the California high school.
+
+And `MIT (CT)` is the same thing one step worse — CT *is* a cluster of MIT's
+athletes' home states (New England away meets clear `CONTEXT_MIN_SHARE`), so
+the context answer was CT, and `splitCollisionTeams` then scored it as a
+separate team. That is the Amherst failure in this file's own comment, one layer
+down: the alias fixed a name whose travel states were **merged away**, but a
+name that legitimately **splits** keeps both clusters, so the split shatters the
+team again.
+
+**The row has a `person_id`**, and `school_athlete_state` says which cluster
+that athlete of that school is in. Not a context to guess from — the answer.
+
+* `meet_compile.stampSchoolStates` sets `row["school_state"]` for every row,
+  and `race.html` prefers it (`{% set sst = row.school_state or header.state %}`)
+  so the label, the link and the crest read one answer — `contextState`'s own
+  "a mention resolves ONCE" rule.
+* `splitCollisionTeams` reads the assignment before the home state. It is
+  already folded through the merge, so it needs neither the alias nor the
+  clamp — the clamp stays as the last resort, because nobody may vanish from
+  scoring.
+
+Both are no-ops without the table, and for a one-school name the assignment
+*is* the only cluster, so nothing changes and it costs one indexed lookup.
+
+⚠ **Still on the meet's state:** every other template that mentions a school
+(`meet.html`, the boards, search). They were wrong before this too, and each
+needs the same stamp on its own rows; the race page is done because that is
+where a collision is visible.

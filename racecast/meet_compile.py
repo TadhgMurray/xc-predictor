@@ -425,6 +425,47 @@ def annotateScoring(rows):
 _KEYSEP = "\x00"
 
 
+# ★ WHICH SCHOOL A RESULT ROW'S MENTION MEANS (owner, 2026-09-16: "the races
+#   still say Williams(CA)"). race.html labels, links and crests every school
+#   with the MEET's state -- header.state -- through contextState, because
+#   that was the only context a row had. For a college that is a travel
+#   state: a Williams College row at a Connecticut meet asks for "Williams in
+#   CT", finds no CT cluster, and falls back to the name's primary -- the
+#   California high school.
+#
+#   The row carries a person_id, and school_athlete_state says which cluster
+#   that athlete of that school is in. That is not a context to guess from,
+#   it is the answer. Stamped as `school_state` so the template can prefer it
+#   and fall back to the meet's state exactly as before.
+#
+# ! EVERY ROW, NOT ONLY COLLIDING ONES, and a no-op without the table: a
+#   one-school name's assignment IS its only cluster, so stamping it changes
+#   nothing and costs one indexed lookup per page.
+def stampSchoolStates(cur, rows):
+    """Set r["school_state"] from school_athlete_state, in place."""
+    pairs = {(r["school"], r["person_id"]) for r in rows
+             if r.get("school") and r.get("person_id")}
+    if not pairs:
+        return
+    cur.execute("SELECT to_regclass('school_athlete_state') IS NOT NULL AS ok")
+    got = cur.fetchone()
+    if not bool(got["ok"] if isinstance(got, dict) else got[0]):
+        return
+    cur.execute(
+        "SELECT school, person_id, state FROM school_athlete_state "
+        "WHERE  school = ANY(%s) AND person_id = ANY(%s)",
+        (sorted({x[0] for x in pairs}), sorted({x[1] for x in pairs})))
+    seen = {}
+    for row in cur.fetchall():
+        sc, pid, st = ((row["school"], row["person_id"], row["state"])
+                       if isinstance(row, dict) else (row[0], row[1], row[2]))
+        seen[(sc, pid)] = st
+    for r in rows:
+        st = seen.get((r.get("school"), r.get("person_id")))
+        if st:
+            r["school_state"] = st
+
+
 def splitCollisionTeams(cur, rows):
     """Stamp rows of colliding school names with a home-state identity.
     Mutates rows in place (callers score COPIES). No-op mid-rebuild."""
@@ -473,6 +514,30 @@ def splitCollisionTeams(cur, rows):
                 if isinstance(row, dict) else (row[0], row[1])
             home[p] = st
 
+    # ★ AND THE ASSIGNMENT OUTRANKS THE HOME STATE (owner, 2026-09-16: "I can
+    #   also see things like MIT(CT) and Tufts(CT) which have become diff
+    #   'schools' in races"). school_athlete_state says which cluster each
+    #   athlete of a school IS in -- their own anet team, then the college
+    #   directory, then the racing mode -- and it is already folded through
+    #   the merge, so it needs neither the alias nor the clamp. The home
+    #   state stays for the names it does not cover.
+    #
+    # ⚠ THE SAME FAILURE THE AMHERST NOTE ABOVE DESCRIBES, ONE LAYER DOWN.
+    #   The alias fixed the case where the merge had folded the travel states
+    #   away; a name that legitimately SPLITS keeps both clusters, so MIT's
+    #   New England away meets put its athletes in CT and the split shattered
+    #   the team again.
+    assigned = {}
+    if pids and _has("school_athlete_state"):
+        cur.execute(
+            "SELECT school, person_id, state FROM school_athlete_state "
+            "WHERE  school = ANY(%s) AND person_id = ANY(%s)",
+            (sorted(multi), pids))
+        for row in cur.fetchall():
+            sc, p, st = ((row["school"], row["person_id"], row["state"])
+                         if isinstance(row, dict) else (row[0], row[1], row[2]))
+            assigned[(sc, p)] = st
+
     # ⚠ A RAW HOME STATE SHATTERS A COLLEGE TEAM (owner, 2026-09-13: Amherst
     #   scored 318 at a DIII meet with all seven place columns blank, while
     #   its seven runners sat in the results right there). A home state is
@@ -503,8 +568,10 @@ def splitCollisionTeams(cur, rows):
             # school_identity already did, then clamped to a cluster the
             # name actually has -- an unknown or a travel state falls to
             # the biggest, so nobody vanishes from scoring
-            st = home.get(r.get("person_id"))
-            st = alias.get((s, st), st)
+            st = assigned.get((s, r.get("person_id")))
+            if st is None:
+                st = home.get(r.get("person_id"))
+                st = alias.get((s, st), st)
             if st not in clus[s]:
                 st = clus[s][0]
             r["school"] = f"{s}{_KEYSEP}{st}"
