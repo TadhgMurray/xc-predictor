@@ -1210,6 +1210,87 @@ fixes:
 `diag_model_quality.py --model`, whose "its baseline alone" row now reads the
 rule off the checkpoint rather than assuming the last race.
 
+### 🔎 F. What to take from LACCTiC, and what not (engine only)
+
+Owner, 2026-09-17, on `lacctic.com` — Bijan Mazaheri's NCAA ratings site.
+⚠ Read from its FAQ only: the site and the author's page are both blocked from
+the dev environment, so the method below is a reconstruction, not a reading.
+
+**How it probably works.** *"we can look at the median difference in times
+between courses… comparing all possible runners and courses"* reads as
+**pairwise differencing**: for each course pair, take runners who ran both,
+median `ln(t_A) − ln(t_B)` over them, then reconcile the graph. Differencing
+within a runner *eliminates* ability rather than estimating it. Their
+"races are not included until there is enough data to score them" is that
+graph's connectivity.
+
+★ That structure is not new to us — `bracket_engine.py` is the same family
+(Tully's method) and goes further, subtracting a form curve so a fitness
+change between two races is not charged to the course. **The robustness
+choice is what is new: they take a median where we take a mean.**
+
+#### Taking
+
+1. **⏳ Median over a race's voters.** `bracket_engine` had *no* medians while
+   `joint_solve` has five and `conversions.default_difficulty` takes a
+   weighted one. A mean has no breakdown point: five honest voters at +0.018
+   plus one scraped 1-second row read as **−0.652** — "this course is 65%
+   easy" — where the median moves 0.005. *Landed as a rung:*
+   `fit(..., voter_agg="median")`, default `"mean"`, same shape as
+   `topFractionWeights`. Not obvious that it wins — the field is already
+   trimmed to the top fraction, and a median of three voters is noisier than
+   their mean — so the held-out score decides.
+2. **🔎 The outdoor-track-5000 anchor.** I dismissed this twice as display and
+   was wrong twice. `speed_ratings` re-centres to **result-weighted mean
+   zero**, so "difficulty 0" means *the average course in our corpus right
+   now* — a number that moves when the corpus changes. A physical reference
+   does not. And with two sports it stops being a pure gauge: XC is anchored
+   to its own average, TF to "average outdoor track", and the sport gap
+   between them is a *fitted* parameter with no external check. One physical
+   zero makes that gap testable instead. ⚠ Risk: the 5000 population is
+   selective, and ISSUES A says track difficulty is the least believable cell
+   in the engine — anchoring to the shakiest thing we fit. **Measure first:**
+   `scripts/diag_engine_counts.py` section B counts how many rated XC
+   athletes have an outdoor 5000 *and whether they rate like everyone else*.
+3. **🔎 Quantile, not mean, for athlete ability.**
+   `computeAthleteAbilities` takes a weighted mean. Performance is
+   `ability − shortfall` with shortfall ≥ 0, so a mean estimates
+   `ability − mean(shortfall)` — and **the bias differs per athlete**,
+   because it depends how many junk races their schedule contained. Two
+   identical runners get different ratings from different schedules, which is
+   what inverts head-to-heads. The principled form is a fixed quantile, not
+   LACCTiC's "best two" (which is your top 50% at four races and your top 10%
+   at twenty) — and a top-25% quantile is **Slaney's filter pointed at the
+   athlete axis**, already tested and accepted on the course axis. Costs:
+   noisier for few-race athletes, wants shrinkage by race count, and
+   invalidates every rating on the site. Planted worlds first.
+4. **🔎 Race importance as a weight on ability.** `abilityWeights` exists
+   because the back of a field is not a measurement of the *course*; it is
+   not a measurement of the *runner* either. League/qualifier/final are
+   already fitted and unused here.
+5. **🔎 Stop imputing `d = 0` silently.** An unfitted course asserted to be
+   exactly average pushes its difficulty into the ability of everyone who
+   raced it, and because the solve is joint that leaks into every other
+   course they ran. `diag_engine_counts.py` section A counts the share.
+
+#### Not taking
+
+* **Pairwise differencing as a replacement** for the joint solve. It throws
+  away every runner who raced one course and is far less efficient. We have
+  both; keep both as rungs.
+* **Freezing closed seasons.** Right in principle — a published number should
+  not move, and an A/B against historical races currently measures model
+  change and corpus drift together. ❌ **Deliberately deferred** (owner:
+  "freeze — not until methodology correct"): freezing before the methodology
+  is right makes the wrong numbers permanent.
+* **Crowd-sourced injury/community input.** Well designed — the report clears
+  when they race again — but it does not feed their ratings and should not
+  feed ours.
+* **Their gap handling.** "Ask, don't infer" is right for *is this athlete
+  injured*, which is genuinely unidentifiable from results. It is wrong for
+  *is this gap normal*, which IS identifiable because we have the field. That
+  one is ours and it is better than theirs.
+
 ### The ordering that follows
 
 The model run comes first, and it is a PREFIX run, not the full corpus

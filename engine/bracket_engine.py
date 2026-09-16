@@ -256,19 +256,65 @@ def fitPriors(D_race, w_race, ok_race, race_base, base_pg, n_base,
     return out
 
 
+# Purpose:   a race's reading from its voters, as a MEDIAN over each race.
+# Input:     race ids and readings for the voting rows only; n_race.
+# Output:    (reading per race, voter count per race).
+#
+# ★ A RUNG, NOT A REPLACEMENT -- the same shape as topFractionWeights in
+#   joint_solve, which took Slaney's filter verbatim so it could be tested
+#   rather than argued about. voter_agg="mean" is what shipped and stays the
+#   default; the held-out score decides.
+#
+# ⚠ WHY IT MIGHT WIN. A mean has NO BREAKDOWN POINT: one absurd row moves a
+#   race's difficulty without limit, and this corpus demonstrably contains
+#   absurd rows -- a scraped 1-second time is what took the first full-corpus
+#   training run to NaN. A median has a 50% breakdown point. The rest of the
+#   engine already knows this: joint_solve uses medians in five places and
+#   conversions.default_difficulty takes a weighted median. This file was the
+#   holdout, with none.
+#
+# ⚠ AND WHY IT MIGHT NOT. The reading is already trimmed to the top fraction
+#   of each field, so the tail a median defends against has partly been cut
+#   already; and a median of three voters (min_voters) is noisier than their
+#   mean when they are all honest. It is not obvious, which is the reason to
+#   run it rather than reason about it.
+#
+# ! GROUPED MEDIAN WITHOUT A PYTHON LOOP. lexsort puts every race's readings
+#   contiguous and ascending, so the middle element of each run is a slice
+#   index. Races with no voters come back 0.0 and are gated by `ok` upstream
+#   exactly as the mean's are.
+def _raceMedian(race_v, r_v, n_race):
+    cnt = np.bincount(race_v, minlength=n_race).astype(np.float64)
+    if r_v.size == 0:
+        return np.zeros(n_race), cnt
+    order = np.lexsort((r_v, race_v))
+    rr, vv = race_v[order], r_v[order]
+    start = np.searchsorted(rr, np.arange(n_race), side="left")
+    n = cnt.astype(np.int64)
+    last = vv.size - 1
+    mid = np.minimum(start + n // 2, last)
+    hi = vv[mid]
+    lo = vv[np.maximum(mid - 1, 0)]
+    even = (n % 2 == 0) & (n > 0)
+    out = np.where(even, 0.5 * (lo + hi), hi)
+    return np.where(n > 0, out, 0.0), cnt
+
+
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
-        prior_place=PRIOR_PLACE):
+        prior_place=PRIOR_PLACE, voter_agg="mean"):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
     prior_races / prior_group / race_sat: see the notes above; prior_group
     is "fit" (per group, estimated after prior_warmup passes), one number
     for every group, or a dict / "XC=1,TF:out=2.5,TF:in=1" per group;
-    prior_rows is the old name of prior_races and still accepted. min_voters: a race
+    voter_agg: "mean" (what shipped) or "median" -- how a race's reading is
+    taken over its voters. See _raceMedian for why it is a rung rather than a
+    change. prior_rows is the old name of prior_races and still accepted. min_voters: a race
     with fewer voters casts no vote (3: with top=0.5 a race of six counts,
     at weight 3/8 of a full race; a course with no such race sits at its
     sport's average). z: the response per
@@ -419,10 +465,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         full step."""
         vote_ = voters & np.isfinite(a)
         r_i = (z - a) / h
-        num = np.bincount(race[vote_], weights=r_i[vote_], minlength=n_race)
-        cnt = np.bincount(race[vote_], minlength=n_race).astype(np.float64)
-        ok = cnt >= min_voters
-        D_r = np.where(ok, num / np.maximum(cnt, 1), 0.0)
+        if voter_agg == "median":
+            D_r, cnt = _raceMedian(race[vote_], r_i[vote_], n_race)
+            ok = cnt >= min_voters
+            D_r = np.where(ok, D_r, 0.0)
+        else:
+            num = np.bincount(race[vote_], weights=r_i[vote_],
+                              minlength=n_race)
+            cnt = np.bincount(race[vote_],
+                              minlength=n_race).astype(np.float64)
+            ok = cnt >= min_voters
+            D_r = np.where(ok, num / np.maximum(cnt, 1), 0.0)
         # a race's weight saturates in its voters: one reading, many witnesses
         w_r = np.where(ok, cnt / (cnt + race_sat), 0.0)
         # the course's history, shrunk toward ITS GROUP's average course by
