@@ -98,8 +98,18 @@ def write(out_dir, n_chunks=3, chunk_size=DEFAULT_CHUNK_SIZE,
                      "chunk_size": chunk_size,
                      "num_chunks": n_chunks,
                      "max_len": MAX_HISTORY}, f)
+    # ! BOTH KEYS. train.py reads n_venues to size the embedding; predict.py
+    #   reads `vocab` to map a course to its row, and refuses the whole load
+    #   without it -- so a fixture carrying only the first cannot smoke-test
+    #   the inference half at all. Found 2026-09-17 doing exactly that.
     with open(os.path.join(out_dir, "venue_vocab.pkl"), "wb") as f:
-        pickle.dump({"n_venues": n_venues}, f)
+        pickle.dump({"n_venues": n_venues,
+                     "vocab": {f"fake:{i}": i for i in range(n_venues)}}, f)
+    # ! AND THE ENCODERS, for the same reason: predict.py wants four
+    #   artifacts beside the checkpoint or it will not load one of them.
+    with open(os.path.join(out_dir, "encoders.pkl"), "wb") as f:
+        pickle.dump({"grade": {"None": 0}, "school": {"None": 0},
+                     "pool": {"None": 0}}, f)
 
     # ★ THE TWO SIDECARS THE REAL EXTRACTION WRITES, because their absence
     #   silently changes what train.py does:

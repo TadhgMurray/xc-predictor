@@ -1371,10 +1371,14 @@ def main():
     is_train = _trainSideMask(dataset, train_subset)
     stats = computeStats(dataset, is_train)
     saveTargetStats(stats, STATS_OUT)
+    # ! THE LABEL NAMES THE RULE, because under --baseline ewma "ln(t/last)"
+    #   and "last-race error" are both false and the number would be read as
+    #   a comparison it is not.
+    _bl = "ewma" if BASELINE == BASELINE_EWMA else "last"
     print(f"  stats from {stats['n_chunks']} chunks, "
-          f"{stats['n_examples']:,} train examples: ln(t/last) mean "
-          f"{stats['mean']:+.4f} std {stats['std']:.4f}; last-race error "
-          f"alone is about {100.0 * stats['std']:.1f}% of a time")
+          f"{stats['n_examples']:,} train examples: ln(t/{_bl}) mean "
+          f"{stats['mean']:+.4f} std {stats['std']:.4f}; the baseline's own "
+          f"error is about {100.0 * stats['std']:.1f}% of a time")
 
     # 4. One loader per split.
     train_loader = buildDataLoader(train_subset, shuffle=True)
@@ -1444,7 +1448,9 @@ def main():
         #   model has to sit clearly under the second to be worth having.
         print(f"epoch {epoch + 1:2d}/{EPOCHS}  "
               f"train {train_loss:.4f}  val {val_loss:.4f}  "
-              f"model {pct_model:.2f}%  last-race {pct_base:.2f}%  "
+              f"model {pct_model:.2f}%  "
+              f"{'baseline' if BASELINE == BASELINE_EWMA else 'last-race'} "
+              f"{pct_base:.2f}%  "
               f"rmse {cal['rmse_pct']:.2f}% vs sigma {cal['sigma_pct']:.2f}% "
               f"({cal['inside_1s']:.0f}% inside 1s)  "
               f"{st['examples_per_s']:,.0f} ex/s  "
@@ -1543,6 +1549,14 @@ if __name__ == "__main__":
                      help="for --baseline ewma: a race this many days ago "
                           f"counts half as much as one today. Default "
                           f"{BASELINE_HALF_LIFE_DAYS:.0f}.")
+    _ap.add_argument("--out-dir", default=None, metavar="DIR",
+                     help="where to WRITE model.pt and target_stats.pkl. "
+                          "Defaults to --data, which is how it has always "
+                          "behaved -- pass this to train a second model "
+                          "WITHOUT overwriting the one already serving. "
+                          "encoders.pkl and venue_vocab.pkl are copied in, "
+                          "so the directory is a complete artifact set that "
+                          "racecast/predict.py can load on its own.")
     _ap.add_argument("--checkpoint", default=None,
                      help="path to save/resume optimizer+weights+epoch "
                           "every epoch. REQUIRED for spot instances: "
@@ -1555,6 +1569,27 @@ if __name__ == "__main__":
         DATA_DIR = _args.data
         MODEL_OUT = os.path.join(DATA_DIR, "model.pt")
         STATS_OUT = os.path.join(DATA_DIR, "target_stats.pkl")
+    # ★ AND THE OUTPUT CAN LIVE SOMEWHERE ELSE (2026-09-17). --data set both
+    #   the input chunks AND the output, so training a second model to
+    #   compare against would have OVERWRITTEN the one currently serving the
+    #   site. An A/B that destroys the A is not an A/B.
+    if _args.out_dir:
+        OUT_DIR = _args.out_dir
+        os.makedirs(OUT_DIR, exist_ok=True)
+        MODEL_OUT = os.path.join(OUT_DIR, "model.pt")
+        STATS_OUT = os.path.join(OUT_DIR, "target_stats.pkl")
+        # ! THE SET HAS TO BE COMPLETE OR IT CANNOT BE LOADED.
+        #   predict._loadModel reads encoders and the venue vocabulary from
+        #   the CHECKPOINT'S OWN DIRECTORY, and refuses when one is missing.
+        #   Copying them is cheap and turns the output into something
+        #   --model can be pointed at directly.
+        import shutil as _shutil
+        for _name in ("encoders.pkl", "venue_vocab.pkl"):
+            _src = os.path.join(DATA_DIR, _name)
+            _dst = os.path.join(OUT_DIR, _name)
+            if os.path.exists(_src) and not os.path.exists(_dst):
+                _shutil.copy2(_src, _dst)
+                print(f"  copied {_name} -> {OUT_DIR}")
     if _args.max_chunks:
         MAX_CHUNKS = _args.max_chunks
     if _args.chunk_range:
@@ -1591,6 +1626,8 @@ if __name__ == "__main__":
     # ⚠ NAMED TOO, because two runs over the same chunks with different
     #   baselines are not comparable and the log is the only place that says
     #   which one produced a given model.pt.
+    print(f"reading chunks from {DATA_DIR}")
+    print(f"writing model.pt to   {MODEL_OUT}")
     print("baseline "
           + ("ewma, half-life "
              f"{BASELINE_HALF_LIFE:.0f}d" if BASELINE == BASELINE_EWMA
