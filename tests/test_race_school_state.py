@@ -56,6 +56,42 @@ def test_it_is_a_no_op_without_the_table_or_without_rows():
     mc.stampSchoolStates(_Cur([]), [{"school": None, "person_id": None}])
 
 
+def test_a_trusted_state_is_not_re_judged_by_size():
+    """⚠ WHY THE STAMP ALONE DID NOTHING (owner: "nOpe didn\'t work").
+    contextState only accepts a state that holds CONTEXT_MIN_SHARE of the
+    name's athletes -- a bar on a GUESS, to stop a stray away meet from
+    labelling a school. Williams College is a few dozen athletes against a
+    California high school's 1,401, so MA is under 3% and the right answer
+    was discarded one function after being worked out."""
+    import school_identity as si
+    saved = dict(si._LABELS)
+    try:
+        si._LABELS.update({"loaded": True, "map": {"Williams": "CA"},
+                           "clusters": {"Williams": {"CA": 0.98, "MA": 0.019}}})
+        assert si.schoolLabelIn("Williams", "MA") == "Williams (CA)"
+        assert si.schoolLabelIn("Williams", "MA", True) == "Williams (MA)"
+        # a venue state is still a guess and still judged
+        assert si.schoolLabelIn("Williams", "CT") == "Williams (CA)"
+        assert si.contextState("Williams", "MA", trusted=True) == "MA"
+        assert si.schoolHref("Williams", "MA", trusted=True).endswith("state=MA")
+    finally:
+        si._LABELS.clear(); si._LABELS.update(saved)
+
+
+def test_undefined_is_not_a_trusted_state():
+    """Jinja gives Undefined for a missing key, and `Undefined is not none`
+    is TRUE -- which would have trusted the meet's state on every row the
+    stamp could not place."""
+    from jinja2 import Environment
+    tpl = Environment().from_string(
+        "{% set sst = row.school_state or header.state %}"
+        "{% set sok = row.school_state is defined and row.school_state %}"
+        "{{ sst }}|{{ 'Y' if sok else 'n' }}")
+    assert tpl.render(row={"school_state": "MA"}, header={"state": "CT"}) == "MA|Y"
+    assert tpl.render(row={}, header={"state": "CT"}) == "CT|n"
+    assert tpl.render(row={"school_state": ""}, header={"state": "CT"}) == "CT|n"
+
+
 def test_the_template_prefers_it_and_falls_back_to_the_meet():
     html = open(os.path.join(_ROOT, "racecast", "templates", "race.html")).read()
     assert "{% set sst = row.school_state or header.state %}" in html
@@ -67,6 +103,9 @@ def test_the_template_prefers_it_and_falls_back_to_the_meet():
     # answer -- school_identity.contextState's "a mention resolves ONCE"
     assert cell.count("sst") == 5
     assert cell.count("header.state") == 1          # only inside the set
+    # and the trust flag rides with it, on all three readers
+    assert "{% set sok = row.school_state is defined and row.school_state %}" in cell
+    assert cell.count("sok") == 5      # the set, then four readers
 
 
 def test_the_race_route_stamps_before_it_renders():

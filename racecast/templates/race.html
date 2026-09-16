@@ -180,7 +180,7 @@
                     {% endif %}
                 </td>
                 <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
-                <td>{% set sst = row.school_state or header.state %}{% if row.school and row.school|is_team %}{{ crest(row.school, sst) }}<a href="{{ school_href(row.school, sst) }}">{{ row.school|school_label_in(sst) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
+                <td>{% set sst = row.school_state or header.state %}{% set sok = row.school_state is defined and row.school_state %}{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
                 <td class="no-break">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
                 <td>{{ row.score_place if row.score_place else " - " }}</td>

@@ -140,7 +140,7 @@ def crestPath(school, state=None):
     return got[2]
 
 
-def crestState(school, state=None, pool=None):
+def crestState(school, state=None, pool=None, trusted=False):
     """(state, version) whose crest answers for this mention, or None.
 
     ★ THE SAME RESOLVER THE LABEL USES, and that is the whole point (owner,
@@ -157,8 +157,10 @@ def crestState(school, state=None, pool=None):
         return None
     try:
         from school_identity import contextState, teamState
+        # `trusted`: the row's own assignment, not the meet's state -- see
+        # school_identity.contextState
         st = (teamState(school, pool, state) if pool
-              else contextState(school, state))
+              else contextState(school, state, trusted))
     except Exception:                              # noqa: BLE001
         st = None
     # ! AND THE CALLER'S OWN STATE IS THE FLOOR. The resolver answers None
@@ -196,7 +198,7 @@ def crestLoaded():
     return bool(_CRESTS["loaded"])
 
 
-def crestUrl(school, state=None, px=None, pool=None):
+def crestUrl(school, state=None, px=None, pool=None, trusted=False):
     """The <img src> for a mention of this school, or None -- with no
     query, from the start-up cache, because this is called once per row of
     every table on the site.
@@ -209,7 +211,7 @@ def crestUrl(school, state=None, px=None, pool=None):
       Two sizes are two URLs, which is exactly how one page can disagree
       with another. `v` is the image's own hash: new picture, new URL.
     """
-    got = crestState(school, state, pool)
+    got = crestState(school, state, pool, trusted)
     if got is None:
         return None
     st, version = got[0], got[1]
@@ -222,7 +224,7 @@ def crestUrl(school, state=None, px=None, pool=None):
 
 
 def crestImg(school, state=None, px=64, size=18, cls="school-mark",
-             pool=None):
+             pool=None, trusted=False):
     """The little crest that goes before a school's name, or "" (305). The
     template global `crest`.
 
@@ -234,7 +236,7 @@ def crestImg(school, state=None, px=64, size=18, cls="school-mark",
     ⚠ IT RETURNS MARKUP, SO EVERYTHING IN IT IS ESCAPED HERE. School names
       are scraped free text and genuinely contain quotes and ampersands.
     """
-    url = crestUrl(school, state, px, pool)
+    url = crestUrl(school, state, px, pool, trusted)
     if not url:
         return ""
     from markupsafe import Markup, escape

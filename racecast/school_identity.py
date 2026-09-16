@@ -102,7 +102,7 @@ def schoolLabel(school):
 CONTEXT_MIN_SHARE = 0.03
 
 
-def contextState(school, state=None):
+def contextState(school, state=None, trusted=False):
     """WHICH school a mention means, given where the mention appears.
 
     ★ THE ONE RESOLVER FOR A MENTION (owner, 2026-09-13: a race page showed
@@ -117,6 +117,18 @@ def contextState(school, state=None):
     and NOT the context state, because a row's state is the VENUE's."""
     if not school:
         return None
+    # ★ A TRUSTED STATE IS NOT A CONTEXT (owner, 2026-09-16: the race page
+    #   still said Williams (CA) after every row was stamped with its
+    #   athlete's own cluster). CONTEXT_MIN_SHARE exists to stop a stray
+    #   AWAY MEET's state from labelling a school -- it is a bar on a GUESS.
+    #   school_athlete_state is not a guess: it is the same assignment the
+    #   clusters were counted from, per athlete, so re-judging it by size is
+    #   how a small school loses to a big one wearing its name. Williams
+    #   College is a few dozen athletes against a California high school's
+    #   1,401, i.e. under 3%, so the bar discarded the right answer and
+    #   returned the primary.
+    if trusted and state:
+        return str(state).upper()
     if state:
         clusters = _LABELS.get("clusters") or {}
         share = (clusters.get(school) or {}).get(state)
@@ -142,13 +154,17 @@ def splitsByState(school):
                if share >= CONTEXT_MIN_SHARE) > 1
 
 
-def schoolLabelIn(school, state):
+def schoolLabelIn(school, state, trusted=False):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
-    labelled three Missouri schools WA, MI and CA)."""
+    labelled three Missouri schools WA, MI and CA).
+
+    `trusted`: the state is the ROW's own answer (meet_compile
+    .stampSchoolStates), not the meet's -- so it is used as given. See
+    contextState."""
     if not school:
         return school
-    st = contextState(school, state)
+    st = contextState(school, state, trusted)
     return f"{school} ({st})" if st else school
 
 
@@ -221,7 +237,7 @@ def schoolLabelFor(school, pool, state=None):
     return f"{school} ({st})" if st else school
 
 
-def schoolHref(school, state=None, pool=None, sport=None):
+def schoolHref(school, state=None, pool=None, sport=None, trusted=False):
     """The URL for a MENTION of a school -- the same school the label
     names and the crest pictures.
 
@@ -242,7 +258,8 @@ def schoolHref(school, state=None, pool=None, sport=None):
     """
     if not school:
         return "#"
-    st = teamState(school, pool, state) if pool else contextState(school, state)
+    st = (teamState(school, pool, state) if pool
+          else contextState(school, state, trusted))
     # ! quote(safe="/") is exactly what Jinja's |urlencode did here, and
     #   the route is a <path:> converter -- a school string genuinely
     #   contains a slash ("Chisago Lakes/Rush City").

@@ -1896,6 +1896,25 @@ that athlete of that school is in. Not a context to guess from — the answer.
 Both are no-ops without the table, and for a one-school name the assignment
 *is* the only cluster, so nothing changes and it costs one indexed lookup.
 
+⚠ **AND THE STAMP ALONE DID NOTHING** (owner: *"nOpe didn't work"*).
+`contextState` **re-judges the state it is handed**: it accepts it only when
+that state holds `CONTEXT_MIN_SHARE` (3%) of the name's athletes. That bar
+exists to stop a stray away meet from labelling a school — it is a bar on a
+**guess**. Williams College is a few dozen athletes against a California high
+school's 1,401, so MA sits under 3% and the right answer was discarded one
+function after being worked out.
+
+So `contextState`, `schoolLabelIn`, `schoolHref`, `crestState`, `crestUrl` and
+`crestImg` all take `trusted=False`, and a state that came from
+`school_athlete_state` is used as given. A venue state is still a guess and
+still judged. Every other caller is unchanged.
+
+⚠ And `row.school_state is not none` was wrong in Jinja: a missing key is
+`Undefined`, and `Undefined is not none` is **True** — which would have trusted
+the *meet's* state on every row the stamp could not place. It is
+`is defined and row.school_state`, verified against Jinja in
+`tests/test_race_school_state.py`.
+
 ⚠ **Still on the meet's state:** every other template that mentions a school
 (`meet.html`, the boards, search). They were wrong before this too, and each
 needs the same stamp on its own rows; the race page is done because that is
