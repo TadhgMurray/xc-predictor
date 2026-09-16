@@ -437,6 +437,12 @@ def _score(field, preds):
         team = runner.get("school")
         row = {"person_id": runner["person_id"], "name": runner.get("name"),
                "place": place, "seconds": pred["seconds"],
+               # ! WHICH CLOCK THIS IS. `seconds` is the time at the target
+               #   race when the conversion succeeded and the flat-5K
+               #   equivalent when it did not, so the page can only label the
+               #   column honestly if the row says which.
+               "normalized": pred.get("normalized"),
+               "is_race_time": pred.get("is_race_time"),
                "lo": pred.get("lo"), "hi": pred.get("hi"),
                "school": team if isTeam(team) else None,
                "school_state": runner.get("school_state"),
@@ -524,9 +530,17 @@ def _predictTimes(cur, person_ids, target):
       feature_extraction.py writes -- the corpus row SQL filtered to
       these athletes, the same base-vector/context builders, the venue
       vocabulary index, is_forecast=1 -- runs the network, un-z-scores.
-      `seconds` is a NORMALIZED time (the flat-5K-equivalent the model
-      trains on), which is also what makes fields on different courses
-      comparable; the page formats it as a time.
+    ★ `seconds` IS THE TIME AT THIS RACE, ON THIS COURSE, AT THIS DISTANCE
+      (owner, 2026-09-16: "we need to fix the 8k issue"). The model predicts
+      a NORMALIZED time -- the flat-5K equivalent it trains on, with course
+      difficulty divided out -- and the page used to print that straight,
+      unlabelled, whatever the target race actually was. An 8K championship
+      came back as a 5K number, and it looked plausible only because the
+      corpus rows behind it were themselves suspect. See _raceSeconds.
+
+      The normalized value stays on the entry as `normalized`, because that
+      is the number that makes different courses comparable and the one a
+      rating is derived from.
 
     An athlete the corpus has no rated rows for gets {"seconds": None,
     "reason": ...} -- no fallback number, the module's standing rule.
@@ -551,13 +565,43 @@ def _predictTimes(cur, person_ids, target):
     variants = _weatherVariants(cur, spec, target.get("weather") or "both")
     headline = "normal" if "normal" in variants else "none"
 
+    # ⚠ NOTHING AFTER THE DATE BEING PREDICTED (owner, 2026-09-16: "when you
+    #   do a race as it ran, it includes all races the athlete has ever run
+    #   in the prediction. Even past the date of the meet we're predicting...
+    #   This filter should apply to the other way too bcs any race after the
+    #   date we're predicting shouldn't count").
+    #
+    #   This is the difference between a prediction and a memory. Re-running
+    #   the 2025 championship "as it ran" fed the model that athlete's 2026
+    #   season -- including the championship itself -- and then the page
+    #   printed the error against the real result as if it meant something.
+    #   It did not: the model had been shown the answer.
+    #
+    # ★ AND IT IS NOT ONLY THE RETROSPECTIVE MODE. A target date is a date;
+    #   every race after it is information nobody could have had. For a
+    #   future date the cut removes nothing, which is why this was never
+    #   visible on the ordinary path.
+    #
+    # ! STRICTLY BEFORE, so the race being predicted is never its own input.
+    # ! THE FULL HISTORY STAYS for `actual`, which has to find the result on
+    #   the day -- the one row the cut is there to hide from the model.
+    cut = _asDate(spec.get("date"))
+
+    def _before(rows):
+        if cut is None:
+            return rows
+        return [r for r in rows if (_asDate(r.get("date")) or cut) < cut]
+
     entries = [None] * len(person_ids)
     batch = []                        # (slot, sequence, {variant: context}, venue)
     for slot, pid in enumerate(person_ids):
-        hist = by_person.get(pid)
+        full = by_person.get(pid)
+        hist = _before(full) if full else None
         if not hist:
-            entries[slot] = {"seconds": None,
-                             "reason": "No rated races in the corpus."}
+            entries[slot] = {
+                "seconds": None,
+                "reason": ("No rated races in the corpus." if not full
+                           else "No rated races before this date.")}
             continue
         ctxs_by = {}
         venue = None
@@ -568,26 +612,38 @@ def _predictTimes(cur, person_ids, target):
             ctxs_by[name] = ctx
             if venue is None:
                 venue = fx.venueIndex(target_row, vocab)
-        batch.append((slot, seq, ctxs_by, venue))
+        batch.append((slot, seq, ctxs_by, venue, _targetClock(hist, spec)))
         if target.get("mode") in ("rerun", "rerun_exact"):
-            orig = [r for r in hist if r.get("meet_id") == spec.get("meet_id")]
+            # ! OFF THE FULL HISTORY. The result on the day is exactly what
+            #   the cut removed, and it is what this line is looking for.
+            orig = [r for r in full if r.get("meet_id") == spec.get("meet_id")]
             if orig:
-                entries[slot] = {"actual": float(orig[-1]["normalized_time"])}
+                # ★ THE RAW TIME THEY RAN, NOT ITS NORMALIZED FORM. The
+                #   corpus row carries both, and the prediction beside it is
+                #   now a race time -- comparing it against a 5K equivalent
+                #   would have printed an error that was mostly the
+                #   conversion. Falls back to the normalized value only when
+                #   the raw one is missing.
+                raw = orig[-1].get("time_seconds")
+                entries[slot] = {
+                    "actual": float(raw) if raw else
+                              float(orig[-1]["normalized_time"]),
+                    "actual_is_normalized": not raw}
 
     if batch:
-        longest = max(len(s) for _i, s, _c, _v in batch)
+        longest = max(len(s) for _i, s, _c, _v, _d in batch)
         width = fx.SEQUENCE_FEATURES
         seqs = torch.zeros(len(batch), longest, width)
         masks = torch.zeros(len(batch), longest, dtype=torch.bool)
         vens = torch.zeros(len(batch), dtype=torch.long)
-        for i, (_slot, s, _c, v) in enumerate(batch):
+        for i, (_slot, s, _c, v, _d) in enumerate(batch):
             seqs[i, :len(s)] = torch.tensor(s, dtype=torch.float32)
             masks[i, :len(s)] = True
             vens[i] = v
         by_variant = {}
         for name in variants:
             ctxs = torch.zeros(len(batch), len(batch[0][2][name]))
-            for i, (_slot, _s, c, _v) in enumerate(batch):
+            for i, (_slot, _s, c, _v, _d) in enumerate(batch):
                 ctxs[i] = torch.tensor(c[name], dtype=torch.float32)
             with torch.no_grad():
                 if art.get("kind") == "log_ratio" and hasattr(model,
@@ -599,25 +655,51 @@ def _predictTimes(cur, person_ids, target):
                     lo = hi = sig = None
             by_variant[name] = (secs, lo, hi, sig)
         secs, lo, hi, sig = by_variant[headline]
-        for i, ((slot, s, _c, _v), si) in enumerate(zip(batch, secs)):
+        for i, ((slot, s, _c, _v, clock), si) in enumerate(zip(batch, secs)):
             entry = entries[slot] or {}
+            norm = float(si)
+
+            # ★ EVERY NUMBER ON THE ROW GOES THROUGH THE SAME CONVERSION, or
+            #   the band stops bracketing the prediction. The transform is
+            #   monotone in the normalized time, so converting lo and hi
+            #   separately keeps the interval an interval.
+            # ! ONE FAILURE MEANS NONE. If the target time cannot be made,
+            #   the row keeps the normalized number and says so, rather than
+            #   mixing a race time with a 5K-equivalent band.
+            race = _onClock(norm, clock)
             entry.update({
-                "seconds": round(float(si), 1),
+                "seconds": round(race if race else norm, 1),
+                "normalized": round(norm, 1),
+                # ⚠ THE PAGE HAS TO BE ABLE TO SAY WHICH IT IS SHOWING. A 5K
+                #   equivalent printed as an 8K time is the bug being fixed;
+                #   printing it unlabelled when the conversion fails would be
+                #   the same bug with extra steps.
+                "is_race_time": race is not None,
+                "time_basis": (clock or {}).get("basis"),
                 "n_races": len(s),
                 "weather_basis": headline})
             if sig is not None:
+                blo, bhi = float(lo[i]), float(hi[i])
+                if race is not None:
+                    blo = _onClock(blo, clock) or blo
+                    bhi = _onClock(bhi, clock) or bhi
                 entry.update({
-                    "lo": round(float(lo[i]), 1),
-                    "hi": round(float(hi[i]), 1),
+                    "lo": round(blo, 1),
+                    "hi": round(bhi, 1),
+                    # the band is multiplicative in log time, so its WIDTH is
+                    # unchanged by a monotone rescaling -- sigma still reads
+                    # as a percentage of whichever time is shown
                     "sigma_pct": round(100.0 * float(sig[i]), 2)})
             if "normal" in variants:
                 entry["normal_weather"] = _fc().describe(variants["normal"])
             if "forecast" in variants:
-                fsecs = float(by_variant["forecast"][0][i])
+                fnorm = float(by_variant["forecast"][0][i])
+                fsecs = _onClock(fnorm, clock) if race is not None else None
+                fsecs = fsecs if fsecs is not None else fnorm
                 fc_row = variants["forecast"]
                 entry["forecast"] = {
                     "seconds": round(fsecs, 1),
-                    "delta": round(fsecs - float(si), 1),
+                    "delta": round(fsecs - entry["seconds"], 1),
                     "conditions": _fc().describe(fc_row),
                     "hour_local": fc_row.get("hour_local"),
                     "fetched_at": fc_row.get("fetched_at"),
@@ -629,6 +711,182 @@ def _predictTimes(cur, person_ids, target):
 def _fc():
     import forecast
     return forecast
+
+
+# How close a past race has to be to the target distance to speak for it.
+# 6%: 8000 and 8047 (five miles) are 0.6% apart and are the same race; 5000
+# and 6000 are 20% apart and are not. courses.py uses the same reasoning for
+# what counts as "this distance".
+_DIST_TOL = 0.06
+
+# At least this many of the athlete's own races before the ratio is trusted.
+# One row is an anecdote and could be a mistimed race; two agreeing rows are
+# a measurement.
+_RATIO_MIN_ROWS = 2
+
+
+# Purpose:   how THIS athlete's normalized times turn into times at THIS
+#            distance, measured on their own races rather than modelled.
+# Output:    a multiplier, or None when they have not raced near it.
+#
+# ⚠ THIS EXISTS BECAUSE THE CURVE WOULD HAVE MADE IT WORSE, AND THE NUMBERS
+#   SAY SO. The engine defines normalized = raw * (5000/d)**k, so inverting
+#   through the spline turns a 24:16 into 39:57 at 8000 m. But 24:16 is
+#   already a believable 8K, and its 5K equivalent (14:45) rates 139.7 --
+#   which is the rating the athlete actually carries. The number on the page
+#   was ALREADY behaving like a raw 8K time.
+#
+#   That is only possible if the corpus rows behind it are raw 8K times
+#   recorded at 5000 m, which is exactly what the owner guessed on
+#   2026-09-16: "is it bcs most 8ks they run are mislableed 5ks?" With d
+#   recorded as 5000 the forward factor is (5000/5000)**k = 1 and nothing was
+#   ever normalized.
+#
+# ★ SO MEASURE THE CONVERSION, DO NOT MODEL IT. Every corpus row carries both
+#   time_seconds and normalized_time, so their ratio is what the engine
+#   ACTUALLY did to that race -- whatever its label claims. Take the median of
+#   that ratio over the athlete's own races near the target distance and the
+#   answer is right under either world:
+#
+#     labels correct   -> ratio is 1/(5000/8000)**k, and the curve's answer
+#                         is recovered exactly
+#     labels wrong     -> ratio is ~1.0, and the prediction passes through
+#                         unchanged, which is the believable 8K already shown
+#
+#   It cannot be fooled by a mislabelled TARGET either: a target recorded at
+#   5000 that is really 8000 matches the athlete's 8K rows recorded at 5000,
+#   and the ratio measured on them is the right one.
+#
+# ! MEDIAN, NOT MEAN. A single scraped 1-second time -- the same class of row
+#   that took the first full-corpus training run to NaN -- would drag a mean
+#   anywhere.
+def _distanceRatio(rows, distance):
+    if not rows or not distance:
+        return None
+    lo, hi = distance * (1.0 - _DIST_TOL), distance * (1.0 + _DIST_TOL)
+    got = []
+    for r in rows:
+        d = r.get("distance_meters")
+        raw, norm = r.get("time_seconds"), r.get("normalized_time")
+        if not d or not raw or not norm:
+            continue
+        if lo <= float(d) <= hi and float(norm) > 0 and float(raw) > 0:
+            got.append(float(raw) / float(norm))
+    if len(got) < _RATIO_MIN_ROWS:
+        return None
+    got.sort()
+    mid = len(got) // 2
+    return (got[mid] if len(got) % 2
+            else 0.5 * (got[mid - 1] + got[mid]))
+
+
+# Purpose:   everything needed to put one athlete's prediction on the target's
+#            clock: their own measured ratio first, the fitted curve second.
+# Output:    {"ratio"|"ctx", "basis"} -- basis is "own" or "curve".
+def _targetClock(rows, spec):
+    ratio = _distanceRatio(rows, spec.get("distance_meters"))
+    if ratio:
+        return {"ratio": ratio, "ctx": None, "basis": "own"}
+    ctx = _denormContext(spec, rows[-1] if rows else None)
+    if ctx:
+        return {"ratio": None, "ctx": ctx, "basis": "curve"}
+    return None
+
+
+# Purpose:   one normalized time, on the target's clock.
+def _onClock(norm, clock):
+    if norm is None or not clock:
+        return None
+    if clock.get("ratio"):
+        return float(norm) * clock["ratio"]
+    return _raceSeconds(norm, clock.get("ctx"))
+
+
+# Purpose:   a normalized time, expressed as a time at the target race.
+# Input:     norm seconds; ctx as _denormContext builds it.
+# Output:    seconds on that course at that distance, or None.
+#
+# ⚠ THE FALLBACK, NOT THE FIRST ANSWER. See _distanceRatio for why the curve
+#   is the second choice: it is right only if the corpus distances are, and
+#   the evidence says many are not. This runs when the athlete has never
+#   raced near the target distance, where there is nothing to measure.
+#
+# ★ THE INVERSE IS ALREADY WRITTEN AND ALREADY SHIPS. conversions.py turns a
+#   normalized_time into a raw time for every row of the conversions page:
+#   forward is norm = time * factor / wmult, so time = norm / factor * wmult,
+#   then the course difficulty multiplies. Writing a second one here is how
+#   two pages come to disagree about what a 24:16 is.
+#
+# ⚠ AND IT LEANS ON THE DISTANCE SPLINE, WHICH ISSUE B SAYS IS OFF. That is a
+#   reason to fix the spline, not a reason to keep printing a 5K number over
+#   an 8K race: the error in the curve is bounded and visible, while an
+#   unlabelled 5K equivalent is silently the wrong question's answer.
+#
+# ! None IS AN ANSWER. No pool, no fitted factor, an unknown distance -- the
+#   caller keeps the normalized time and says which it is showing, rather
+#   than inventing a conversion.
+def _raceSeconds(norm, ctx):
+    if norm is None or not ctx:
+        return None
+    try:
+        import conversions
+        out = conversions.normalized_to_time(float(norm), ctx)
+    except Exception:                                   # noqa: BLE001
+        return None
+    return float(out) if out and out > 0 else None
+
+
+# Purpose:   the context _raceSeconds converts INTO -- the target race.
+# ! THE POOL IS THE ATHLETE'S, not the race's, because the distance curve is
+#   per pool: a 13-year-old's 8K is relatively worse than their 5K, and that
+#   is exactly what the curve encodes. It comes off their most recent row the
+#   same way the engine derived it when it normalized that row.
+# ! THE WEATHER IS DELIBERATELY NOT PASSED. The forward normalization divides
+#   a weather multiplier out, so the strict inverse would multiply it back --
+#   but the model has ALREADY been given the target's weather in its context
+#   vector, and the two weather variants differ by exactly that. Applying it
+#   twice would make the forecast delta wrong.
+def _denormContext(spec, last_row):
+    dist = spec.get("distance_meters")
+    if not dist:
+        return None
+    try:
+        from normalize_distance import getPool
+        pool = getPool((last_row or {}).get("grade"),
+                       (last_row or {}).get("gender"))
+    except Exception:                                   # noqa: BLE001
+        pool = None
+    if not pool or pool == "unknown_level":
+        return None
+    date = _asDate(spec.get("date"))
+    return {"distance": float(dist), "pool": pool,
+            "sport": spec.get("sport"),
+            "season": date.year if date else None,
+            "difficulty": spec.get("course_difficulty"),
+            "canonical_id": spec.get("canonical_id"),
+            "location_id": spec.get("location_id"),
+            "is_indoor": spec.get("is_indoor"),
+            "course": spec.get("course_name")}
+
+
+# Purpose:   a date out of whatever the row or the request is carrying.
+# ! TOLERANT ON PURPOSE. Corpus rows store the date as TEXT and the target's
+#   may arrive as a real date off a meet row; a comparison that raises on the
+#   second shape would take the whole prediction down over a type.
+# ! None FOR ANYTHING UNREADABLE, and the caller treats that as "not after the
+#   cut" -- a row with no usable date is not evidence that it happened later.
+def _asDate(value):
+    import datetime as _dt
+    if value is None or value == "":
+        return None
+    if isinstance(value, _dt.datetime):
+        return value.date()
+    if isinstance(value, _dt.date):
+        return value
+    try:
+        return _dt.datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
 
 
 def _weatherVariants(cur, spec, want):

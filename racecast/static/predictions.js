@@ -2161,6 +2161,29 @@ function teamScoreTable(d) {
      quoted to a tenth with no range claims a precision the model does not
      have. It rides UNDER the time rather than in its own column, so the
      column set is the race page's exactly. */
+/* ★ SAY WHICH CLOCK THIS IS (owner, 2026-09-16: "we need to fix the 8k
+     issue"). The model predicts a NORMALIZED time -- the flat-5K equivalent
+     it trains on, course difficulty divided out -- and the server now turns
+     that into a time at the target's own distance and course. When it
+     cannot (no pool on record, no fitted factor for that distance) the row
+     keeps the 5K equivalent, and printing that unlabelled over an 8K race
+     is exactly the bug being fixed. */
+function timeBasisNote(runners) {
+  const known = runners.filter((r) => r.seconds !== null
+                                   && r.seconds !== undefined);
+  if (!known.length) return "";
+  const equiv = known.filter((r) => r.is_race_time === false).length;
+  if (!equiv) return "";
+  if (equiv === known.length) {
+    return `<p class="meta">Times are <b>flat-5K equivalents</b>, not times at
+      this distance - this race's distance or course could not be converted
+      for. They are comparable with each other, not with a result.</p>`;
+  }
+  return `<p class="meta">Times are at this race's distance and course, except
+    for ${equiv} runner${equiv === 1 ? "" : "s"} shown as a flat-5K
+    equivalent because their level or this distance has no conversion.</p>`;
+}
+
 function finishTable(d) {
   const runners = d.runners || [];
   if (!runners.length) return "";
@@ -2188,6 +2211,7 @@ function finishTable(d) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    ${timeBasisNote(runners)}
     <p class="meta">Each time is the model's prediction with its likely range
       underneath. Points is the scoring place: the gap from Place is the
       unattached runners, the incomplete teams and the eighth runners.</p>`;
