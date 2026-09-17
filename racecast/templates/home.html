@@ -104,7 +104,16 @@
                                dead end that looks like a live one. #}
                             <div class="cell c-school">
                                 {% if r.school %}
-                                    {% if r.school|is_team %}{{ crest(r.school) }}<a href="{{ school_href(r.school) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school|school_label }}{% endif %}
+                                    {# ★ THE POOL AND THE ROW'S STATE, NOT THE BARE NAME
+                                       (owner, 2026-09-17: the panels said
+                                       "Oregon (WI)" for a runner whose race and
+                                       athlete pages both said "Oregon (OR)").
+                                       school_label has no context to work with, so
+                                       it answers with the name's BIGGEST cluster --
+                                       a Wisconsin high school. The label, the crest
+                                       and the link now resolve off ONE answer, the
+                                       same one the athlete page's season lines use. #}
+                                    {% if r.school|is_team %}{{ crest(r.school, r.state, pool=r.pool) }}<a href="{{ school_href(r.school, r.state, pool=r.pool) }}">{{ r.school|school_label_for(r.pool, r.state) }}</a>{% else %}{{ r.school|school_label_for(r.pool, r.state) }}{% endif %}
                                 {% else %} - {% endif %}
                             </div>
                             <div class="cell c-rating">{{ rv(r.rating, r.hs_rating) }}</div>

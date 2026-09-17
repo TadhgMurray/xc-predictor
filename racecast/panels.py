@@ -991,6 +991,9 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
                 "person_id":   row["person_id"],
                 "name":        _fullName(row),
                 "school":      row.get("school"),
+                # the row's own state: a CONTEXT for school_identity, never
+                # a label on its own -- see the note on homepage_panels.state
+                "state":       row.get("state"),
                 # SEASON year, not calendar: matches _yearCounts above and
                 # ranking_results.year, so this board, the season-detection and
                 # the /rankings page all agree on what "2026" contains.
@@ -1131,6 +1134,9 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
                 "person_id":   row["person_id"],
                 "name":        _fullName(row),
                 "school":      row.get("school"),
+                # the row's own state: a CONTEXT for school_identity, never
+                # a label on its own -- see the note on homepage_panels.state
+                "state":       row.get("state"),
                 # ! str(), AND THIS EXACT BUG HAS NOW HAPPENED TWICE.
                 #   _seasonYear() returns TEXT from SQL. The old athlete query
                 #   built `yr` with substring(), also text, so the comparison
@@ -1175,6 +1181,18 @@ CREATE TABLE IF NOT EXISTS homepage_panels (
     person_id   bigint,
     name        text,
     school      text,
+    -- ★ WHERE THE ROW HAPPENED, SO THE SCHOOL CAN BE RESOLVED AT RENDER
+    --   TIME (owner, 2026-09-17: the panels called Simeon Birnbaum's school
+    --   "Oregon (WI)" while his race and athlete pages said "Oregon (OR)").
+    --   The board stored only the bare name, so home.html had nothing to
+    --   pass school_label_for and fell back to schoolLabel -- the name's
+    --   BIGGEST cluster, which for "Oregon" is a Wisconsin high school with
+    --   459 athletes against the university's 400. This is a CONTEXT, not a
+    --   verdict: school_identity.teamState takes the college directory
+    --   first for a college pool, then a cluster the name really has here,
+    --   and only then the primary. Same inputs, same function, as the
+    --   season lines on the athlete page -- so the two cannot disagree.
+    state       text,
     rating      real,
     season_year text,
     detail      text,
@@ -1429,11 +1447,20 @@ def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
             visible = note is None
             rows.append((board, scope, sport, pool, entry["rank"],
                          entry["person_id"], entry["name"], entry["school"],
+                         entry["state"],
                          entry["rating"], entry["season_year"],
                          entry["detail"], entry["link"], entry["name_link"], visible, note))
 
     with conn.cursor() as cur:
         cur.execute(_DDL)
+        # ⚠ CREATE TABLE IF NOT EXISTS NEVER ADDS A COLUMN. The DDL above
+        #   declares `state`; on a database that already has homepage_panels
+        #   it is a no-op, and the INSERT below would die naming a column the
+        #   table lacks. homepage_panels is a few thousand rows and is
+        #   rewritten wholesale here anyway, so the ALTER is instant and
+        #   contends with nothing.
+        cur.execute("ALTER TABLE homepage_panels "
+                    "ADD COLUMN IF NOT EXISTS state text")
         # ★ ONLY THE SPORTS THIS PROCESS BUILT (2026-09-06): the two sports
         #   run as two processes in the pipeline now, so each replaces its
         #   own rows and leaves the other's; meta is site-wide and either
@@ -1442,7 +1469,7 @@ def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
         psycopg2.extras.execute_values(cur, """
             INSERT INTO homepage_panels
                 (board, scope, sport, pool, rank, person_id, name,
-                 school, rating, season_year, detail, link, name_link,
+                 school, state, rating, season_year, detail, link, name_link,
                  visible, note)
             VALUES %s
         """, rows, page_size=1000)

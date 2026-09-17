@@ -624,15 +624,39 @@ def get_homepage_panels(cur):
     """Every visible panel row, flat. panels.py already ranked and filtered
     these, so the route does no work beyond reshaping. `visible` hides boards
     suppressed in panels.py (the all-time performance board, for now)."""
-    cur.execute("""
+    # ! state IS SELECTED ONLY WHEN IT IS THERE. It was added to
+    #   homepage_panels on 2026-09-17 so the board can resolve a shared
+    #   school name (see the note in panels.py); a site running against a
+    #   database whose last panels build predates it still renders, with the
+    #   old stateless label, rather than 500ing on every request to "/".
+    has_state = _panelsHaveState(cur)
+    cur.execute(f"""
         SELECT board, scope, sport, pool, rank,
-               person_id, name, school, rating, season_year,
+               person_id, name, school,
+               {"state" if has_state else "NULL::text AS state"},
+               rating, season_year,
                detail, link, name_link
         FROM   homepage_panels
         WHERE  visible
         ORDER  BY sport, scope, board, pool, rank
     """)
     return cur.fetchall()
+
+
+_PANELS_STATE = {}
+
+
+def _panelsHaveState(cur):
+    """Does homepage_panels carry `state` yet? Asked once per process."""
+    if "yes" not in _PANELS_STATE:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'homepage_panels'
+                              AND column_name = 'state'""")
+            _PANELS_STATE["yes"] = cur.fetchone() is not None
+        except Exception:                             # noqa: BLE001
+            _PANELS_STATE["yes"] = False
+    return _PANELS_STATE["yes"]
 
 def group_panels(rows):
     """Flat rows -> panels[sport][scope][board][pool] = [rows].
