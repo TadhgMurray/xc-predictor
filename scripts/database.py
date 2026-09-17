@@ -870,7 +870,15 @@ def _createCoreTables(cursor):
             grade           TEXT,
             date            TEXT,
             normalized_time REAL DEFAULT NULL,
-            speed_rating    REAL DEFAULT NULL
+            speed_rating    REAL DEFAULT NULL,
+            -- ★ WHY A ROW HAS NO TIME. DNF/DNS/DQ/SCR and friends, normalised
+            --   by scripts/result_status.py. It was added by hand in
+            --   _migrateResultsAddStatus and NOT declared here, so
+            --   ensureCoreColumns -- which derives its ALTERs from this text
+            --   -- could not know it was wanted, and the audit rightly
+            --   reported the INSERT writing a column the database lacked.
+            --   Declared here, it is created and back-added automatically.
+            status          TEXT
         )
     """)
 
@@ -972,7 +980,10 @@ def _createTFTables(cursor):
             date            TEXT,
             is_relay        INTEGER DEFAULT 0,
             normalized_time REAL DEFAULT NULL,
-            speed_rating    REAL DEFAULT NULL
+            speed_rating    REAL DEFAULT NULL,
+            -- ★ THE SAME COLUMN, FOR TRACK. saveResultsTFBulk names it in
+            --   its INSERT; see the note on results.status above.
+            status          TEXT
         )
     """)
 
