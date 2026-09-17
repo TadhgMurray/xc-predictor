@@ -334,20 +334,43 @@ def buildDirStates(cur, contested, dir_states):
 #   Oregons. An Illinois high schooler has their own anet team id, so
 #   si_team_state places them first and they never reach this leg; the
 #   college-pooled gate below is the second belt.
-def buildLinkStates(cur, contested):
-    """si_link_state(school, state): where the anet team a CONTESTED tfrrs
-    string links to actually is. Empty when link_tfrrs_to_anet has not been
-    run -- the table is optional and its absence is today's behaviour."""
+# ⚠⚠ EVERY LINKED STRING, NOT ONLY THE CONTESTED ONES (owner, 2026-09-17:
+#    "Penn State still has no logo at all"). The first run of this leg was
+#    contested-only, matching its neighbours, and the cluster table showed
+#    what that costs:
+#
+#      Penn State   PA 238 (65%), IN 19, OH 14, NY 12, NJ 9, IA 9, CA 8,
+#                   KY 5, OR 5, FL 5 ... ID 1   -- TWENTY-EIGHT clusters
+#
+#    anet places Penn State in one state and the directory cannot match it
+#    ("penn state" has no token in common with "pennsylvania state
+#    university"), so the name is NOT contested -- and a name that is not
+#    contested falls all the way through to ph.state, the athlete's home
+#    state. A college recruits nationally, so its roster shatters into one
+#    cluster per home state. That is the BYU failure this file was written
+#    to end, arriving through the one door left open.
+#
+# ★ AND CONTESTED-NESS IS THE WRONG GATE FOR THIS LEG. The link is a
+#   statement about where a COLLEGE is, carried by five-plus athletes at 60%
+#   agreement against an anet team whose own level is college. That is just
+#   as true of a name nobody disputes. The leg is gated on `v.college`
+#   instead, which is what actually bounds it.
+#
+# ! COST IS NOT A REASON TO NARROW IT. si_link_state is one row per linked
+#   string -- 4,658 on the live database -- and it is hash-joined.
+def buildLinkStates(cur, contested=None):
+    """si_link_state(school, state): where the anet team each tfrrs string
+    links to actually is. Returns the set of names covered, so the athlete
+    assignment can record them too. Empty when link_tfrrs_to_anet has not
+    been run -- the table is optional and its absence is today's behaviour."""
     cur.execute("DROP TABLE IF EXISTS si_link_state")
     cur.execute("CREATE TEMP TABLE si_link_state (school text, state text)")
-    if not contested:
-        return 0
     cur.execute("SELECT to_regclass('school_team_link')")
     if cur.fetchone()[0] is None:
         print("  school_identity: no school_team_link -- tfrrs strings are "
               "placed by the directory and the home state, as before "
               "(scripts/link_tfrrs_to_anet.py --write builds it)", flush=True)
-        return 0
+        return set()
     # ! THE LINK'S OWN state COLUMN, NOT A RE-JOIN TO anet_team. It is
     #   written from the same COALESCE(anet_state, state) buildTeamStates
     #   uses, so the two legs cannot disagree about where a team is.
@@ -356,14 +379,17 @@ def buildLinkStates(cur, contested):
         SELECT tfrrs_school, upper(btrim(state))
         FROM   school_team_link
         WHERE  state IS NOT NULL AND btrim(state) <> ''
-          AND  lower(btrim(tfrrs_school)) = ANY(%s)
-    """, (sorted(contested),))
+    """)
     cur.execute("CREATE INDEX si_link_state_idx ON si_link_state (school)")
-    cur.execute("SELECT count(*) FROM si_link_state")
-    n = cur.fetchone()[0]
-    print(f"  school_identity: {n:,} contested tfrrs strings are linked to an "
-          f"anet college team by their shared athletes", flush=True)
-    return n
+    cur.execute("SELECT school FROM si_link_state")
+    names = {r[0] for r in cur.fetchall()}
+    n_contested = len(names & {n for n in (contested or ())}) if contested else 0
+    print(f"  school_identity: {len(names):,} tfrrs strings are linked to an "
+          f"anet college team by their shared athletes -- their "
+          f"college-pooled seasons go to the TEAM's state, not the "
+          f"athletes' ({n_contested:,} of them are contested names)",
+          flush=True)
+    return names
 
 
 # ⚠⚠ `lower(btrim(school)) = ANY(<thousands of names>)` IS A PER-ROW WALK OF
@@ -970,9 +996,17 @@ def buildSchoolLevel(cur):
 #   counted from, after the merge and the directory have folded states, so
 #   the page and the counts cannot disagree.
 #
-# ! CONTESTED NAMES ONLY -- every other name's assignment IS its home state,
-#   which the fallback already answers. Keeps the table small enough to be
-#   a lookup rather than a second person_home_state.
+# ⚠⚠ AND A LINKED NAME IS NOT ITS HOME STATE EITHER. The note below used to
+#    say "contested names only -- every other name's assignment IS its home
+#    state", and that stopped being true the moment the link leg placed a
+#    college the inference could not. Miss those here and the site goes
+#    straight back to the bug this table exists for: right clusters, wrong
+#    roster, because stateFilterSql falls back to person_home_state. So the
+#    caller passes the contested names UNION the linked ones.
+#
+# ! CONTESTED AND LINKED NAMES ONLY -- every other name's assignment IS its
+#   home state, which the fallback already answers. Keeps the table small
+#   enough to be a lookup rather than a second person_home_state.
 def buildAthleteState(cur, contested):
     """school_athlete_state_new(school, person_id, state)."""
     t0 = time.time()
@@ -1054,9 +1088,14 @@ def main():
               "(12 GB and 72 GB). Each says which table it is on.", flush=True)
         contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
-        buildLinkStates(cur, contested)
+        linked = buildLinkStates(cur, contested)
         buildDirStates(cur, contested, dir_states)
         buildNameStates(cur, contested)
+        # ! THE NAMES THE ASSIGNMENT TABLE HAS TO COVER. A linked college is
+        #   placed by its anet team, so its athletes are NOT at their home
+        #   state -- and the site re-derives cluster membership from that
+        #   table. Contested OR linked.
+        assigned = set(contested) | {str(n).strip().lower() for n in linked}
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
@@ -1200,7 +1239,7 @@ def main():
         buildSchoolLevel(cur)
         conn.commit()
 
-        buildAthleteState(cur, contested)
+        buildAthleteState(cur, assigned)
         conn.commit()
 
         # ---- the swap: old tables serve until the new ones are whole ----

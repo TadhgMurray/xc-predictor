@@ -441,8 +441,8 @@ def test_the_link_feeds_the_contested_list():
 
 
 def test_the_link_is_its_own_assignment_leg():
-    assert "def buildLinkStates(cur, contested):" in _SRC
-    assert "buildLinkStates(cur, contested)" in _SRC
+    assert "def buildLinkStates(cur, contested=None):" in _SRC
+    assert "linked = buildLinkStates(cur, contested)" in _SRC
     assert "LEFT   JOIN si_link_state ls ON ls.school = v.school" in _SRC
 
 
@@ -470,7 +470,36 @@ def test_an_absent_link_table_is_todays_behaviour():
     i = _SRC.index("def buildLinkStates(")
     body = _SRC[i:_SRC.index("\ndef buildTeamStates", i)]
     assert "if cur.fetchone()[0] is None:" in body
-    assert "return 0" in body
+    assert "return set()" in body
+
+
+def test_the_link_covers_every_linked_name_not_only_contested_ones():
+    """⚠ THE MEASURED FAILURE (owner, 2026-09-17, cluster table):
+
+        Penn State   PA 238 (65%), IN 19, OH 14, NY 12, NJ 9, IA 9, CA 8,
+                     KY 5, OR 5, FL 5 ... ID 1   -- TWENTY-EIGHT clusters
+
+    anet places Penn State in one state and the directory cannot match it
+    ("penn state" shares no token with "pennsylvania state university"), so
+    the name is not CONTESTED -- and a non-contested name falls through to
+    ph.state, the athlete's home state. A college recruits nationally, so
+    its roster shatters. That is the BYU failure arriving through the one
+    door left open."""
+    i = _SRC.index("def buildLinkStates(")
+    body = _SRC[i:_SRC.index("\ndef buildTeamStates", i)]
+    assert "lower(btrim(tfrrs_school)) = ANY(%s)" not in body, \
+        "the link leg must not be narrowed to contested names"
+    # and the gate that DOES bound it is the college season, in si_assign
+    assert "CASE WHEN v.college THEN ls.state END" in _SRC
+
+
+def test_a_linked_name_is_recorded_in_the_athlete_assignment():
+    """Right clusters, wrong roster is the bug school_athlete_state exists
+    for: stateFilterSql falls back to person_home_state for any name the
+    table does not cover, so a linked college must be in it."""
+    assert "linked = buildLinkStates(cur, contested)" in _SRC
+    assert "assigned = set(contested) | {str(n).strip().lower() for n in linked}" in _SRC
+    assert "buildAthleteState(cur, assigned)" in _SRC
 
 
 def test_the_pipeline_builds_the_link_before_it_reads_it():
