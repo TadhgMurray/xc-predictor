@@ -4266,9 +4266,16 @@ def get_course_header(cur, course_name, dist=None):
       (course, distance) CELL, so the old LIMIT 1 read served one
       arbitrary cell's fit-sample counts as the whole course's, right
       above a distance table it visibly disagreed with."""
+    # * AND WHERE THE COURSE IS (owner, 2026-09-17). A course sits in one
+    #   place, so its state is the right context for every school named on
+    #   the page -- the same thing compiled.html passes as header.state. The
+    #   page had none, so course.html rendered bare names through
+    #   schoolLabel and answered with each name's BIGGEST cluster.
+    #   mode() over the course's own meets, not one arbitrary row.
     cur.execute("""
         SELECT count(*)                    AS n_results,
-               count(DISTINCT r.person_id) AS n_athletes
+               count(DISTINCT r.person_id) AS n_athletes,
+               mode() WITHIN GROUP (ORDER BY m.state) AS state
         FROM results r
         JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
         WHERE m.course_name = %(course)s

@@ -119,7 +119,7 @@
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
-                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school) }}<a href="{{ school_href(r.school) }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% elif r.school %}{{ r.school|school_label }}{% else %} - {% endif %}</td>
+                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="{{ school_href(r.school, header.state) }}" title="{{ r.school }}">{{ r.school|school_label_in(header.state) }}</a>{% elif r.school %}{{ r.school|school_label_in(header.state) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
@@ -148,7 +148,7 @@
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td>{% if t.school|is_team %}{{ crest(t.school) }}<a href="{{ school_href(t.school) }}" title="{{ t.school }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+                        <td>{% if t.school|is_team %}{{ crest(t.school, header.state) }}<a href="{{ school_href(t.school, header.state) }}" title="{{ t.school }}">{{ t.school|school_label_in(header.state) }}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                         <td>{{ "%.1f"|format(t.avg5) }}</td>
                         <td>{{ t.distance }}m</td>
                         <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
@@ -189,7 +189,7 @@
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td>{{ r.grade if r.grade else " - " }}</td>
-                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school) }}<a href="{{ school_href(r.school) }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% elif r.school %}{{ r.school|school_label }}{% else %} - {% endif %}</td>
+                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="{{ school_href(r.school, header.state) }}" title="{{ r.school }}">{{ r.school|school_label_in(header.state) }}</a>{% elif r.school %}{{ r.school|school_label_in(header.state) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
@@ -218,7 +218,7 @@
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
-                        <td>{% if t.school|is_team %}{{ crest(t.school) }}<a href="{{ school_href(t.school) }}" title="{{ t.school }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+                        <td>{% if t.school|is_team %}{{ crest(t.school, header.state) }}<a href="{{ school_href(t.school, header.state) }}" title="{{ t.school }}">{{ t.school|school_label_in(header.state) }}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                         <td class="no-break">{{ t.display_total }}</td>
                         <td class="no-break">{{ t.display_avg }}</td>
                         <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
@@ -256,7 +256,7 @@
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.grade if r.grade else " - " }}</td>
-                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school) }}<a href="{{ school_href(r.school) }}" title="{{ r.school }}">{{ r.school|school_label }}</a>{% elif r.school %}{{ r.school|school_label }}{% else %} - {% endif %}</td>
+                        <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="{{ school_href(r.school, header.state) }}" title="{{ r.school }}">{{ r.school|school_label_in(header.state) }}</a>{% elif r.school %}{{ r.school|school_label_in(header.state) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}

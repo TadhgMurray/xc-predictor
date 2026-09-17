@@ -207,6 +207,13 @@ def athleteCard(cur, pid):
         "name": name,
         "school": school,
         "grade": grade,
+        # ★ THE CARD KEPT THE POOL AND DROPPED THE STATE, so compare.html had
+        #   only a bare name to render and fell back to schoolLabel -- the
+        #   name's BIGGEST cluster (owner, 2026-09-17: "Oregon (WI)" on the
+        #   panels, same cause). _SEASONS_SQL has selected `state` all along.
+        #   It is a CONTEXT for school_identity, not a label: teamState takes
+        #   the college directory first for a college pool.
+        "state": (current or {}).get("state"),
         "pool": (current or {}).get("pool"),
         "season_label": (f"{displayYear(current['sport'], current['year'])} "
                          f"{current['sport']}") if current else None,
