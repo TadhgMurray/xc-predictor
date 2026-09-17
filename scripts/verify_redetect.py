@@ -246,9 +246,14 @@ def _verifySport(sport, in_dir, corr, limit):
     if regressed:
         sysmic = len(regressed) > _MAX_DIV_REGRESSIONS
         tag = "STOP" if sysmic else "warn"
+        # ! ONE LINE, BECAUSE A MULTI-LINE EXPRESSION INSIDE AN f-STRING IS
+        #   PYTHON 3.12 (PEP 701) AND THIS PROJECT RUNS 3.11 -- the file was a
+        #   SyntaxError on the deploy's own interpreter, so it could not be
+        #   imported or run at all.
+        why = ("systemic -- corrections may not reach re-rating; STOP"
+               if sysmic else "bounded -- inspect each with --dump")
         print(f"  [{tag}] {len(regressed)} overridden divisions STILL flag "
-              f"({'systemic -- corrections may not reach re-rating; STOP'
-                 if sysmic else 'bounded -- inspect each with --dump'}):")
+              f"({why}):")
         for key, c in regressed[:10]:
             print(f"       meet/div {key[0]}/{key[1]}  c={c}%")
         verdict = max(verdict, 2 if sysmic else 1)
