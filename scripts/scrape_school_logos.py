@@ -114,6 +114,106 @@ def _isSocial(host):
 
 
 # ===================================================================== #
+#  DOES THIS HOST BELONG TO THIS SCHOOL?                                #
+# ===================================================================== #
+#
+# ★ THE BUG THIS EXISTS FOR (owner, 2026-09-17: "it was giving random ass
+#   pictures that are not on anet. Lawrence hs got the world athletics
+#   picture?"). The scraper does not invent a crest: candidates come from
+#   school_website, it fetches that URL, and it takes whatever the page
+#   DECLARES as its mark. Point it at the wrong domain and it faithfully
+#   returns that domain's logo. So the defect is upstream, in the address
+#   book -- but the crest is where it shows, and this is the cheapest place
+#   to catch it.
+#
+# ! markShared WAS THE ONLY DEFENCE, AND IT IS NOT ENOUGH. It hides an image
+#   worn by SHARED_MIN (4) or more schools, so one governing body's logo on
+#   three schools sails through -- and it only ever fires AFTER the bad crest
+#   is already stored and served.
+#
+# ★ THE TEST IS THE SCHOOL'S OWN NAME IN THE DOMAIN, or a host that is
+#   self-evidently a school's. A domain has to earn the crest:
+#     - a real name token of the school appears in the registrable domain, or
+#     - the host is educational or governmental (.edu, .k12.*.us, .sch.*,
+#       *.gov), or
+#     - it is plainly a district or school host (contains "school",
+#       "district", "isd", "usd", "academy", ...)
+#   Everything else is refused, which costs nothing: a school whose real site
+#   is unrecognisable simply keeps no crest, and no crest beats a wrong one.
+#
+# ⚠ NOT APPLIED TO anet. An athletic.net crest is fetched by TEAM ID, so it is
+#   already tied to the right team by construction; the name test would refuse
+#   every one of them because the host is athletic.net.
+
+# hosts that are somebody's logo but never a school's
+_GENERIC_HOSTS = {
+    "worldathletics.org", "iaaf.org", "olympics.com", "teamusa.org",
+    "usatf.org", "ncaa.org", "ncaa.com", "nfhs.org", "naia.org", "njcaa.org",
+    "milesplit.com", "maxpreps.com", "athletic.net", "tfrrs.org",
+    "runnerspace.com", "flosports.tv", "flotrack.org", "hudl.com",
+    "8to18.com", "rankonesport.com", "schedulegalaxy.com", "arbitersports.com",
+    "wordpress.com", "squarespace.com", "wixsite.com", "weebly.com",
+    "godaddy.com", "gstatic.com", "googleusercontent.com", "cloudflare.com",
+}
+
+# words that say nothing about WHICH school this is
+_NAME_STOPWORDS = {
+    "high", "school", "schools", "hs", "middle", "ms", "elementary", "junior",
+    "senior", "academy", "college", "university", "institute", "the", "of",
+    "and", "at", "saint", "st", "mount", "mt", "north", "south", "east",
+    "west", "central", "county", "district", "area", "regional", "public",
+    "charter", "prep", "preparatory", "catholic", "christian", "lutheran",
+    "community", "unified", "consolidated", "township", "city", "new",
+    "old", "upper", "lower", "great", "fort", "ft", "lake", "valley", "park",
+}
+
+# a host that is self-evidently a school's, whatever its name
+_SCHOOLY = ("school", "district", "academy", "isd", "usd", "csd", "sd",
+            "collegiate", "univ", "college")
+
+
+def _registrable(host):
+    """The last two labels of a host, lowercased and portless -- the same
+    reduction _isSocial uses, so "x.com" cannot match phoenix.com."""
+    return ".".join((host or "").lower().split(":")[0].split(".")[-2:])
+
+
+def nameTokens(school):
+    """The words of a school name that identify WHICH school it is: at least
+    four letters and not a stopword. Pure."""
+    words = re.split(r"[^a-z0-9]+", (school or "").lower())
+    return {w for w in words if len(w) >= 4 and w not in _NAME_STOPWORDS}
+
+
+def plausibleHost(school, url, kind=None):
+    """Whether `url` is plausibly this school's own site. Pure; no network.
+
+    Returns True for an anet crest whatever the host -- see the note above.
+    """
+    if (kind or "").split(":")[0] == "anet":
+        return True
+    try:
+        host = urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    if not host:
+        return False
+    host = host.lower()
+    if _registrable(host) in _GENERIC_HOSTS or _isSocial(host):
+        return False
+    # educational or governmental: nobody else gets these
+    if re.search(r"\.(edu|edu\.[a-z]{2}|gov)$", host) or \
+            re.search(r"\.k12\.[a-z]{2}\.us$", host) or \
+            re.search(r"\.sch\.[a-z]{2}$", host):
+        return True
+    labels = host.split(".")
+    stem = "".join(labels[:-1])          # everything but the TLD, run together
+    if any(tok in stem for tok in nameTokens(school)):
+        return True
+    return any(word in stem for word in _SCHOOLY)
+
+
+# ===================================================================== #
 #  WHAT A PAGE DECLARES                                                 #
 # ===================================================================== #
 
@@ -827,7 +927,7 @@ def _fromText(manners, text, page_url, tag):
     return None, None, None, reason
 
 
-def fetchLogo(manners, home_url, direct=None):
+def fetchLogo(manners, home_url, direct=None, school=None):
     """(png, sha, kind, source_url) for one school, or (None, None, None,
     reason).
 
@@ -841,13 +941,22 @@ def fetchLogo(manners, home_url, direct=None):
     ! THE LINK IS READ BEFORE ANY ICON IS FETCHED. Taking the school's own
       icon first and then going to athletics anyway spent an image request
       per school on a picture we were about to throw away."""
-    if direct:
+    # ★ THE HOST HAS TO EARN IT (owner: "it was giving random ass pictures").
+    #   Checked BEFORE the request, not after: a host that cannot be this
+    #   school's is not worth a fetch either. `school` is optional so a caller
+    #   that has no name to check against behaves exactly as before.
+    def mine(url, kind=None):
+        return school is None or plausibleHost(school, url, kind)
+
+    if direct and mine(direct, "direct"):
         raw, ctype = manners.get(direct)
         png, sha, why = normalise(raw, ctype=ctype) if raw is not None else (None, None, ctype)
         if png is not None:
             return png, sha, "direct", direct
         if not home_url:
             return None, None, None, f"logo {why}"
+    elif direct and not home_url:
+        return None, None, None, "logo host is not this school's"
     if not home_url:
         return None, None, None, "no address"
 
@@ -855,9 +964,18 @@ def fetchLogo(manners, home_url, direct=None):
     if text is None:
         return None, None, None, why
 
+    # ! AND THE PAGE WE LANDED ON. A redirect or a wrong address book entry
+    #   means `home` is not this school at all, and every icon it declares is
+    #   somebody else's mark -- which is how a high school ended up wearing
+    #   the World Athletics logo.
+    if not mine(home, "school"):
+        return None, None, None, f"address is not this school's ({home})"
+
     ath_url = athleticsLink(text, home)
     if ath_url:
         ath_text, ath, _why = _fetchPage(manners, ath_url, "athletics")
+        # an athletics site on a vendor host is normal and fine -- it is
+        # linked FROM the school's own page, which is the evidence
         if ath_text is not None:
             got = _fromText(manners, ath_text, ath, "athletics")
             if got[0] is not None:
@@ -1391,8 +1509,12 @@ def _workOne(manners, row, rediscover=False):
                     "sha": again[1], "kind": "refresh", "src": had_url,
                     "etag": manners.etag, "modified": manners.modified}
     target = override_url or direct or url
+    # ! AN OVERRIDE IS A PERSON'S DECISION AND IS NEVER SECOND-GUESSED. The
+    #   host check exists to catch a wrong ADDRESS BOOK entry; a URL somebody
+    #   typed on purpose skips it by passing no name to check against.
     png, sha, kind, src = fetchLogo(manners, url,
-                                    direct=(target if target != url else None))
+                                    direct=(target if target != url else None),
+                                    school=(None if override_url else school))
     return {"school": school, "state": state, "png": png, "sha": sha,
             "kind": kind, "src": src if png else None,
             "why": None if png else src,

@@ -290,3 +290,92 @@ class TheOpaqueRegion(unittest.TestCase):
             self.assertNotIn(banned, body, f"{banned} in the repair pass")
         # and it only writes with --write
         self.assertIn("if write:", body)
+
+
+# ===================================================================== #
+#  DOES THIS HOST BELONG TO THIS SCHOOL? (2026-09-17)                   #
+# ===================================================================== #
+
+class ThePlausibleHost(unittest.TestCase):
+    """★ THE BUG (owner: "it was giving random ass pictures that are not on
+    anet. Lawrence hs got the world athletics picture?"). The scraper takes
+    whatever the page it was sent to DECLARES as its mark, so a wrong
+    school_website row returns that domain's logo, faithfully."""
+
+    def test_a_governing_bodys_logo_is_refused(self):
+        for url in ("https://www.worldathletics.org/x.png",
+                    "https://www.milesplit.com/logo.png",
+                    "https://www.maxpreps.com/icon.png",
+                    "https://www.ncaa.com/apple-touch-icon.png"):
+            self.assertFalse(S.plausibleHost("Lawrence High School", url), url)
+
+    def test_the_schools_own_name_in_the_domain_earns_it(self):
+        self.assertTrue(S.plausibleHost(
+            "Lawrence High School", "https://lawrencehs.org/logo.png"))
+        self.assertTrue(S.plausibleHost(
+            "Amherst College", "https://athletics.amherst.edu/x.png"))
+
+    def test_an_educational_or_government_host_earns_it(self):
+        for url in ("https://x.ku.edu/a.png", "https://a.usd497.k12.ks.us/b.png",
+                    "https://schools.nyc.gov/c.png"):
+            self.assertTrue(S.plausibleHost("Lawrence High School", url), url)
+
+    def test_a_plainly_schooly_host_earns_it_without_the_name(self):
+        self.assertTrue(S.plausibleHost(
+            "Lawrence High School", "https://www.usd497schools.org/l.png"))
+
+    def test_an_unrecognisable_host_is_refused_and_that_is_the_right_cost(self):
+        """No crest beats a wrong one."""
+        self.assertFalse(S.plausibleHost(
+            "Lawrence High School", "https://random-cdn.example.net/l.png"))
+
+    def test_a_social_host_is_still_refused(self):
+        self.assertFalse(S.plausibleHost(
+            "Lawrence High School", "https://facebook.com/x.png"))
+
+    def test_stopwords_alone_never_match(self):
+        """"High School" in a domain says nothing about WHICH school, so a
+        name made only of stopwords earns nothing by name."""
+        self.assertEqual(S.nameTokens("The High School"), set())
+        # the apostrophe splits, so the token is "mary" -- which still finds
+        # stmarys.org, since the match is a substring of the domain stem
+        self.assertEqual(S.nameTokens("Saint Mary's High School"), {"mary"})
+        self.assertTrue(S.plausibleHost("Saint Mary's High School",
+                                        "https://www.stmarys.org/l.png"))
+        self.assertFalse(S.plausibleHost(
+            "The High School", "https://somecdn.example.net/x.png"))
+
+    def test_anet_is_exempt_because_it_is_fetched_by_team_id(self):
+        """⚠ An athletic.net crest is tied to the right team by construction,
+        and the name test would refuse every one -- the host is athletic.net."""
+        self.assertTrue(S.plausibleHost(
+            "Lawrence High School", "https://athletic.net/logo.png", "anet"))
+        self.assertTrue(S.plausibleHost(
+            "Lawrence High School", "https://x.athletic.net/l.png",
+            "anet:apple-touch"))
+        # and without that kind it is refused, so the exemption is explicit
+        self.assertFalse(S.plausibleHost(
+            "Lawrence High School", "https://athletic.net/logo.png"))
+
+    def test_no_name_to_check_against_behaves_as_before(self):
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        self.assertIn("return school is None or plausibleHost(", src)
+        # an override is a person's decision and skips the check
+        self.assertIn("school=(None if override_url else school)", src)
+
+    def test_the_landed_page_is_checked_not_just_the_address(self):
+        """A redirect can land somewhere else entirely, and every icon that
+        page declares is then somebody else's mark."""
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        self.assertIn('if not mine(home, "school"):', src)
+        self.assertIn("address is not this school's", src)
+
+    def test_it_is_pure_so_it_can_be_checked_without_a_network(self):
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        i = src.index("def plausibleHost(")
+        body = src[i:src.index("\n\n\n", i)]
+        for banned in ("manners", "urlopen", "requests", "cur.execute"):
+            self.assertNotIn(banned, body, banned)
