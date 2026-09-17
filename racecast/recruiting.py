@@ -23,6 +23,7 @@
 #   number the HS-equivalent view multiplies college rows by, so the
 #   placement here agrees with the mixed boards.
 from season_floor import floorSql, DEFAULT_FLOOR
+from us_state import fiftyStateList
 
 POOLS = ("hs_m", "hs_f")
 SPORTS = ("XC", "TF")
@@ -278,7 +279,8 @@ def searchRecruits(cur, f):
     gain, the graduation year, the best race and the race count."""
     from rankings import nameLateral
     params = {"pool": f["pool"], "sport": f["sport"], "year": f["year"],
-              "min_races": f["min_races"], "limit": f["limit"], "offset": f["offset"]}
+              "min_races": f["min_races"], "limit": f["limit"],
+              "offset": f["offset"], "fifty": fiftyStateList()}
     where = []
     if f["states"]:
         params["states"] = f["states"]
@@ -320,11 +322,21 @@ def searchRecruits(cur, f):
     # ! AND THE PROJECTION, ON THE SAME TERMS. A missing table is not an
     #   error: the build needs a trained model and may not have run, and the
     #   page falls back to the rating sort rather than 500-ing.
+    # ⚠ AND IT USED TO FALL BACK IN SILENCE (owner, 2026-09-17: "is the
+    #   predicted gain thing actually wired bcs I don't see it anywhere,
+    #   like I press the model predicted section but it doesn't show
+    #   anythign"). It is wired end to end -- the join, the JSON, the
+    #   column in recruiting-search.js -- but when recruit_projection has
+    #   not been built the sort quietly became "rating" and the projection
+    #   column, which only appears when some row HAS a projection, quietly
+    #   did not. Two silences look exactly like a dead button.
+    projection_missing = False
     if wantsProjection(f.get("sort")):
         if _tableExists(cur, "recruit_projection"):
             view_cols += _PROJ_COLS
             view_joins += _PROJ_JOIN
         else:
+            projection_missing = True
             f = dict(f, sort="rating")
     cur.execute(f"""
         WITH cur AS (
@@ -334,6 +346,13 @@ def searchRecruits(cur, f):
             FROM   athlete_season s
             WHERE  s.pool = %(pool)s AND s.sport = %(sport)s AND s.year = %(year)s
               AND  s.state IS NOT NULL AND s.mean_rating IS NOT NULL
+              -- ★ THE FIFTY STATES (owner, 2026-09-17). The boards keep a
+              --   row they cannot prove foreign, because dropping a real
+              --   one costs a ranking; a recruiting list is a list of
+              --   people a US college may sign, so it asks the narrower
+              --   question. See racecast/us_state.py, which is its own set
+              --   precisely so changing it cannot move the boards.
+              AND  upper(s.state) = ANY(%(fifty)s)
               AND  {floorSql(f['min_races_explicit'])}
               {' '.join(where)}
         ),
@@ -361,6 +380,10 @@ def searchRecruits(cur, f):
     """, params)
     rows = [dict(r) for r in cur.fetchall()]
     cur.execute("RELEASE SAVEPOINT recruit_search")
+    if projection_missing and rows:
+        # carried on the rows so searchOrTimeout's signature does not change;
+        # the route lifts it off the first one and drops it.
+        rows[0]["_projection_missing"] = True
     return rows
 
 
@@ -681,18 +704,71 @@ def ratingFromTime(seconds, event, gender):
 
 
 # ---- the schools ------------------------------------------------------ #
+# ★ RECENCY HALF-LIFE, IN RECRUITING CLASSES (owner, 2026-09-17: "it
+#   probably is an overestimate, needs to weight recent years much more
+#   heavily"). A class this many years older than the newest one counts
+#   half as much; six classes back counts about a fourteenth. A program
+#   that was good four years ago and is not now used to read as though it
+#   still were, because every class in the window counted the same.
+#
+#   1.5 -> weights 1.00, 0.63, 0.40, 0.25, 0.16, 0.10 across the six
+#   classes build_recruiting keeps. One number, here, to tune.
+RECENCY_HALF_LIFE = 1.5
+
+# ! WEIGHTED PERCENTILES, WHICH POSTGRES HAS NO AGGREGATE FOR.
+#   percentile_cont cannot take a weight, so the quantile is found by
+#   walking the ratings in order and taking the first one at which the
+#   running weight crosses the share. `min(...) FILTER (WHERE cum >= q *
+#   tot)` is exactly that, because cum only increases with the ordering.
+#   The result is the weighted LOWER quantile -- an actual recruit's
+#   rating rather than an interpolation between two, which is also the
+#   honest thing to print beside a name.
 _AGG_SQL = """
+    WITH src AS (
+        SELECT school, state, division, conference, recruit_rating, source,
+               first_year
+        FROM   college_recruit
+        WHERE  gender = %(gender)s AND sport = %(sport)s {extra}
+    ),
+    -- ⚠ THE NEWEST CLASS IN THE WHOLE POOL, NOT IN `src`. {extra} scopes
+    --   src to one school for the single-college page; anchoring the decay
+    --   to that school's own newest class would give a program that stopped
+    --   recruiting three years ago full weight on its stale top class, and
+    --   the college page would then disagree with the table it came from.
+    --   One anchor, both views.
+    newest AS (
+        SELECT max(first_year) AS y FROM college_recruit
+        WHERE  gender = %(gender)s AND sport = %(sport)s
+    ),
+    w AS (
+        SELECT src.*,
+               power(0.5, (newest.y - src.first_year)::float
+                          / %(half_life)s)::float AS wt
+        FROM   src CROSS JOIN newest
+    ),
+    c AS (
+        SELECT w.*,
+               sum(wt) OVER (PARTITION BY school, state
+                             ORDER BY recruit_rating
+                             ROWS BETWEEN UNBOUNDED PRECEDING
+                                      AND CURRENT ROW) AS cum,
+               sum(wt) OVER (PARTITION BY school, state) AS tot
+        FROM   w
+    )
     SELECT school, state, min(division) AS division, min(conference) AS conference,
            count(*)::int AS n,
            sum(CASE WHEN source = 'hs' THEN 1 ELSE 0 END)::int AS n_hs,
            min(recruit_rating)::real AS min,
-           percentile_cont(0.25) WITHIN GROUP (ORDER BY recruit_rating)::real AS p25,
-           percentile_cont(0.5)  WITHIN GROUP (ORDER BY recruit_rating)::real AS median,
-           percentile_cont(0.75) WITHIN GROUP (ORDER BY recruit_rating)::real AS p75,
+           min(recruit_rating) FILTER (WHERE cum >= 0.25 * tot)::real AS p25,
+           min(recruit_rating) FILTER (WHERE cum >= 0.50 * tot)::real AS median,
+           min(recruit_rating) FILTER (WHERE cum >= 0.75 * tot)::real AS p75,
            max(recruit_rating)::real AS max,
-           min(first_year) AS first_year, max(first_year) AS last_year
-    FROM   college_recruit
-    WHERE  gender = %(gender)s AND sport = %(sport)s {extra}
+           min(first_year) AS first_year, max(first_year) AS last_year,
+           -- how much of the verdict is the newest two classes, so the page
+           -- can say when a school's number is really an old school's
+           (sum(wt) FILTER (WHERE first_year >= (SELECT y FROM newest) - 1)
+            / nullif(sum(wt), 0))::real AS recent_share
+    FROM   c
     GROUP  BY school, state
     HAVING count(*) >= %(min_n)s
 """
@@ -733,7 +809,9 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
             return hit[1]
     if not _tableExists(cur, "college_recruit"):
         return []
-    cur.execute(_AGG_SQL.format(extra=""), {"gender": gender, "sport": sport, "min_n": int(min_n)})
+    cur.execute(_AGG_SQL.format(extra=""),
+                {"gender": gender, "sport": sport, "min_n": int(min_n),
+                 "half_life": float(RECENCY_HALF_LIFE)})
     rows = _rowsOf(cur)
     for r in rows:
         for k in ("min", "p25", "median", "p75", "max"):
@@ -821,7 +899,8 @@ def schoolRecruits(cur, school, state, gender, sport):
     from school_identity import schoolLabelIn
     if not _tableExists(cur, "college_recruit"):
         return None, []
-    params = {"gender": gender, "sport": sport, "min_n": 1, "school": school}
+    params = {"gender": gender, "sport": sport, "min_n": 1, "school": school,
+              "half_life": float(RECENCY_HALF_LIFE)}
     extra = "AND school = %(school)s"
     if state:
         params["state"] = state

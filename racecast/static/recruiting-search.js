@@ -118,6 +118,20 @@
          when a proj_* sort is chosen, so this is what "we asked" looks like
          from here. */
     const anyProj = rows.some((r) => r.proj_rating != null);
+    /* ⚠ A DEAD-LOOKING BUTTON HAS TWO CAUSES, AND BOTH WERE SILENT
+         (owner, 2026-09-17: "I press the model predicted section but it
+         doesn't show anythign"). Either recruit_projection is not built --
+         the server says so in d.note and sorts by rating -- or it is built
+         and nobody in THIS result has a projection, so the column above
+         never appears. Neither is an error, and neither should look like
+         nothing happened. */
+    if (d.note) {
+      status(d.note, false);
+    } else if (String($("r-sort").value).startsWith("proj") && !anyProj) {
+      status("No athlete in these results has a model projection yet: the "
+             + "model needs rated races this season, and the projection "
+             + "table is built per pool and season.", false);
+    }
     const body = rows.map((r, i) => `
       <tr>
         <td class="num rc-dim">${offset + i + 1}</td>

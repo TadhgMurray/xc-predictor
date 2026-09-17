@@ -55,6 +55,8 @@ from dbfast import swapTable                            # noqa: E402
 from season_floor import floorSql, DEFAULT_FLOOR        # noqa: E402
 from grade_label import gradeLabel                      # noqa: E402
 from panels import isTeamName                           # noqa: E402
+from us_state import isFiftyState                       # noqa: E402
+from build_college_directory import loadDirectory, lookup  # noqa: E402
 
 CLASSES = 6              # recruiting classes kept, newest first
 MIN_GAIN_PAIRS = 50      # linked pairs before the freshman gain is trusted
@@ -144,6 +146,7 @@ def recruitSql(season_units):
                COALESCE(si.state, p.state) AS state,
                hs.mean_rating AS hs_rating, hs.year AS hs_year,
                hs.school AS hs_school, hs.state AS hs_state,
+               (u.is_college_unit IS TRUE)              AS unit_college,
                COALESCE(u.division, p.row_division)     AS division,
                COALESCE(u.conference, p.row_conference) AS conference,
                COALESCE(u.region, p.row_region)         AS region
@@ -154,7 +157,8 @@ def recruitSql(season_units):
             WHERE  i.school = p.school AND i.is_primary
             ORDER  BY n_athletes DESC LIMIT 1) si ON true
         LEFT JOIN LATERAL (
-            SELECT division, conference, region FROM school_unit u
+            SELECT division, conference, region, true AS is_college_unit
+            FROM   school_unit u
             WHERE  u.school = p.school AND u.is_college
             ORDER  BY (u.sport = p.sport) DESC, u.votes DESC LIMIT 1) u ON true
     """
@@ -188,8 +192,37 @@ def isRecruitSeason(grade, pool):
     return (label or "").upper() not in _NOT_RECRUIT_GRADES
 
 
-def keepSchool(school):
-    return bool(school) and isTeamName(school) and "club" not in school.lower()
+# * A COLLEGE, NOT MERELY A COLLEGE-POOLED SEASON (owner, 2026-09-17:
+#   "recruit page has non-college teams"). The pool is the engine's verdict
+#   about an ATHLETE, and it is sometimes wrong about a school: a post-grad
+#   academy, a prep team, a road club and a plain high school whose runners
+#   were mispooled all arrived here and got a recruiting profile. The old
+#   gate asked only "is this a team name, and does it not say club", which
+#   none of those fail.
+#
+# ! TWO WITNESSES, EITHER WILL DO. The college directory (the same one
+#   school_identity resolves a college's state with) is authoritative but
+#   not complete -- it thins out at NAIA and NJCAA -- so school_unit's own
+#   is_college verdict, which is voted from championship meets, is accepted
+#   as well. Requiring BOTH would drop real small colleges; requiring
+#   neither is where we were.
+def isCollege(school, state, directory, unit_college=False):
+    if not school:
+        return False
+    if unit_college:
+        return True
+    return bool(directory) and lookup(directory, school, state) is not None
+
+
+def keepSchool(school, state=None, directory=None, unit_college=False):
+    if not (school and isTeamName(school) and "club" not in school.lower()):
+        return False
+    # ⚠ directory=None MEANS "NOT ASKED", NOT "NOTHING MATCHES". Callers that
+    #   have no directory (tests, an old database) keep the pre-2026-09-17
+    #   behaviour rather than silently dropping every school on earth.
+    if directory is None and not unit_college:
+        return True
+    return isCollege(school, state, directory, unit_college)
 
 
 def measureGain(rows):
@@ -208,16 +241,33 @@ def measureGain(rows):
     return out
 
 
-def shapeRows(raw, factors):
+def shapeRows(raw, factors, directory=None):
     """The database rows -> the table's rows, with the HS-scale numbers
     filled and the non-recruits dropped. Returns (rows, dropped) where
     dropped counts by reason."""
-    dropped = {"grade": 0, "school": 0, "no_scale": 0}
+    dropped = {"grade": 0, "school": 0, "not_college": 0,
+               "foreign": 0, "no_scale": 0}
     rows = []
     for r in raw:
         pool = r["pool"].split("|", 1)[0]
-        if not keepSchool(r["school"]):
+        if not (r["school"] and isTeamName(r["school"])
+                and "club" not in r["school"].lower()):
             dropped["school"] += 1
+            continue
+        if not keepSchool(r["school"], r.get("state"), directory,
+                          bool(r.get("unit_college"))):
+            dropped["not_college"] += 1
+            continue
+        # ★ THE FIFTY STATES, ON BOTH ENDS (owner, 2026-09-17). The college
+        #   must be American and, when we know where the recruit went to
+        #   high school, so must they. A recruit with no linked HS season
+        #   has no hs_state to judge, and is kept on the college's state
+        #   alone rather than guessed at.
+        if not isFiftyState(r.get("state")):
+            dropped["foreign"] += 1
+            continue
+        if r.get("hs_state") and not isFiftyState(r.get("hs_state")):
+            dropped["foreign"] += 1
             continue
         if not isRecruitSeason(r.get("grade"), pool):
             dropped["grade"] += 1
@@ -282,9 +332,18 @@ def main():
         conn.rollback()
         print(f"  first college seasons: {len(raw):,}")
 
+        with conn.cursor() as cur:
+            directory = loadDirectory(cur, "state")
+        conn.rollback()
+        if not directory:
+            print("  college_directory missing -- the college gate falls back "
+                  "to school_unit alone (run the directory build).")
+        else:
+            print(f"  college directory: {len(directory):,} names")
+
         factors = _factors()
         print(f"  HS-scale factors: {factors}")
-        rows, dropped, gains = shapeRows(raw, factors)
+        rows, dropped, gains = shapeRows(raw, factors, directory)
         print(f"  recruits kept: {len(rows):,}  dropped: {dropped}")
         linked = sum(1 for r in rows if r["source"] == "hs")
         print(f"  linked to a high-school season: {linked:,} of {len(rows):,}")

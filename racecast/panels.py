@@ -12,6 +12,7 @@ Python. That is a full-corpus scan, which is fine once per engine run and
 impossible per page load.
 """
 
+import re
 import sys
 import heapq
 import datetime
@@ -213,6 +214,26 @@ _NOT_A_TEAM_EXACT = frozenset({"unat", "none", "n/a", "na", "no team",
 _NOT_A_TEAM_FRAGMENTS = ("unattached", "individual", "independent",
                          "no team", "no school")
 
+# * MATCHED ON THE WORD, NOT THE WHOLE SPELLING (owner, 2026-09-17:
+#   "Unattatched still getting team page"). The fragment list above only
+#   caught the string spelled exactly "unattached", and the corpus does not
+#   spell it one way: "Unattatched", "Un-attached", "UNATT", "Unat.",
+#   "Unattached-CA". Every one of them is the same non-team, and each new
+#   spelling was a new page listing every unattached runner in the country.
+#
+# ! A PREFIX ON A WORD, so it cannot fire inside a real name. A bare
+#   substring test for "unatt" would also match a school that merely
+#   contained the letters; requiring a WORD to start with it means only a
+#   name that actually says "unattached" is refused.
+_NOT_A_TEAM_PREFIXES = ("unatt", "unnatt", "unath")
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _notATeamWord(word):
+    return (word in _NOT_A_TEAM_EXACT
+            or any(word.startswith(p) for p in _NOT_A_TEAM_PREFIXES))
+
 
 def isTeamName(school):
     """True when the string names a team a page can be built for."""
@@ -221,7 +242,15 @@ def isTeamName(school):
     s = school.strip().lower()
     if _is_non_school(s) or s in _NOT_A_TEAM_EXACT:
         return False
-    return not any(frag in s for frag in _NOT_A_TEAM_FRAGMENTS)
+    if any(frag in s for frag in _NOT_A_TEAM_FRAGMENTS):
+        return False
+    # ! AND WITH THE SEPARATORS TAKEN OUT, because "Un-attached" is two
+    #   words -- "un" and "attached" -- and neither is the one to refuse.
+    #   STARTS WITH, so this cannot fire inside "Union" or "Unity".
+    squashed = re.sub(r"[^a-z0-9]", "", s)
+    if any(squashed.startswith(p) for p in _NOT_A_TEAM_PREFIXES):
+        return False
+    return not any(_notATeamWord(w) for w in _WORD_RE.findall(s))
 
 
 # ===================================================================== #

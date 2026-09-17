@@ -7566,6 +7566,14 @@ def api_recruiting():
             rows, err = R.searchOrTimeout(cur, f)
             if err:
                 return jsonify({"error": err}), 200
+    # ★ SAY SO WHEN THE MODEL HAS NOTHING TO SHOW. A proj_* sort against a
+    #   database with no recruit_projection falls back to the rating sort;
+    #   without this the page just looks broken (owner, 2026-09-17).
+    note = None
+    if rows and rows[0].pop("_projection_missing", False):
+        note = ("The model's projections have not been built yet, so this is "
+                "sorted by rating. They arrive with the next pipeline run "
+                "(step 10f2).")
     for r in rows:
         r["school_label"] = schoolLabelIn(r["school"], r.get("state")) if r.get("school") else ""
         r["grade_label"] = _grade_label.gradeLabel(r.get("grade"), f["pool"]) if r.get("grade") else ""
@@ -7579,7 +7587,7 @@ def api_recruiting():
         if r.get("proj_resid") is not None:
             r["proj_resid"] = round(float(r["proj_resid"]), 2)
     return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
-                    "limit": f["limit"], "offset": f["offset"]})
+                    "limit": f["limit"], "offset": f["offset"], "note": note})
 
 
 @app.route("/recruit/<int:person_id>")
