@@ -8,6 +8,7 @@
 #          use the same interface as before so scraper code doesn't change.
 
 import re
+import sys
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -1532,7 +1533,12 @@ def saveMeetTeams(conn, meet_id, sport, teams_array):
         ON CONFLICT (meet_id, sport) DO UPDATE
             SET teams_json = EXCLUDED.teams_json
         """,
-        (meet_id, sport, Json(teams_array)),    # Json(...) → real JSONB, not text
+        # ⚠ psycopg2.extras.Json, NOT a bare Json. This module imports
+        #   psycopg2.extras and never binds the name, so the bare call was a
+        #   NameError the first time saveMeetTeams ran -- pre-existing, found
+        #   by sweeping every file this session touched for names used and
+        #   never imported (the sweep that found the missing `import sys`).
+        (meet_id, sport, psycopg2.extras.Json(_cleanJson(teams_array))),
     )
 
 # saveMeetTFMeta
