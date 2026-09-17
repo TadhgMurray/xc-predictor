@@ -79,6 +79,20 @@ SORTS = {
     # the one that does not just rediscover the bottom of the range, and the
     # same instrument the recruiting projection wants.
     "gain_resid": "j.gain_resid DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    # ★ WHAT THE MODEL THINKS IS LEFT (owner: "the underrated runners --
+    #   underrated as in they could progress the most in college type"). Every
+    #   gain_* view above reads two seasons that HAPPENED; these read
+    #   recruit_projection, which is the network asked what this athlete runs
+    #   a year from now. Backward-looking and forward-looking are different
+    #   questions and a coach wants both.
+    #
+    # ! proj IS THE DEFAULT OF THE THREE, and it is the RESIDUAL, because
+    #   everybody at 80 is projected to gain more than everybody at 115 --
+    #   ranking the raw projection just re-sorts the bottom of the range,
+    #   which is the trap gain_resid exists to avoid.
+    "proj":      "j.proj_resid DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    "proj_gain": "j.proj_gain DESC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
+    "proj_rating": "j.proj_rating DESC NULLS LAST, j.person_id",
     "best":   "j.best_rating DESC NULLS LAST, j.person_id",
     "grad":   "j.grad_year ASC NULLS LAST, j.mean_rating DESC NULLS LAST, j.person_id",
 }
@@ -155,6 +169,34 @@ _VIEW_CTE = """
             HAVING count(*) >= {min_band_n}
         ),
 """
+
+
+# ★ THE PROJECTION IS A JOIN, NOT A MODEL CALL. recruit_projection is built
+#   offline by build_recruit_projection.py -- running the network over a
+#   search's worth of athletes inside a 12-second statement timeout is not a
+#   page, it is a batch job. So the page reads a column.
+#
+# ! LEFT JOINED AND PAY-PER-USE, exactly like the gain views. A search that
+#   sorts by rating must not grow a join, and an athlete with no projection
+#   sorts last rather than disappearing -- the table is built per pool and
+#   season and can legitimately be missing a row.
+_PROJ_COLS = """,
+                   x.proj_rating::real  AS proj_rating,
+                   x.proj_gain::real    AS proj_gain,
+                   x.proj_gain_pct::real AS proj_gain_pct,
+                   x.proj_resid::real   AS proj_resid,
+                   x.proj_sigma_pct::real AS proj_sigma_pct,
+                   x.horizon_weeks      AS proj_weeks"""
+
+_PROJ_JOIN = """
+            LEFT JOIN recruit_projection x
+                   ON x.person_id = g.person_id AND x.sport = %(sport)s
+                  AND x.pool = %(pool)s AND x.year = %(year)s"""
+
+
+def wantsProjection(sort):
+    """Whether this sort needs recruit_projection joined in."""
+    return str(sort or "").startswith("proj")
 
 
 def gradeNumSql(alias):
@@ -275,6 +317,15 @@ def searchRecruits(cur, f):
         view_joins = _VIEW_JOINS.format(band=band)
     else:
         view_cte = view_cols = view_joins = ""
+    # ! AND THE PROJECTION, ON THE SAME TERMS. A missing table is not an
+    #   error: the build needs a trained model and may not have run, and the
+    #   page falls back to the rating sort rather than 500-ing.
+    if wantsProjection(f.get("sort")):
+        if _tableExists(cur, "recruit_projection"):
+            view_cols += _PROJ_COLS
+            view_joins += _PROJ_JOIN
+        else:
+            f = dict(f, sort="rating")
     cur.execute(f"""
         WITH cur AS (
             SELECT s.person_id, s.school, s.state, s.grade, s.year,

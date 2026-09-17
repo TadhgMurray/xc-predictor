@@ -811,6 +811,10 @@ step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
 # recruiting (282): each college's recruits from athlete_season, on the
 # HS scale; reads school_identity (10b) and school_unit (10d)
 step 10f_recruits     "$PY" -u racecast/build_recruiting.py
+# who the MODEL thinks has room left (the coach's "underrated" sort). Needs a
+# trained model; without one it says so and exits clean, and the search falls
+# back to the rating sort while the table is absent.
+step 10f2_projection  "$PY" -u racecast/build_recruit_projection.py
 # the athlete page's rank line, precomputed (311): every season's place in
 # every scope, one row per season, so the page runs no scoped counts
 step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py

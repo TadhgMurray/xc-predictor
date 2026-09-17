@@ -7538,8 +7538,15 @@ def api_recruiting():
     for r in rows:
         r["school_label"] = schoolLabelIn(r["school"], r.get("state")) if r.get("school") else ""
         r["grade_label"] = _grade_label.gradeLabel(r.get("grade"), f["pool"]) if r.get("grade") else ""
-        for k in ("mean_rating", "prev_rating", "best_rating", "gain"):
-            r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+        for k in ("mean_rating", "prev_rating", "best_rating", "gain",
+                  # the model's projection, when a proj_* sort joined it in
+                  "proj_rating", "proj_gain", "proj_sigma_pct"):
+            if k in r:
+                r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+        # ! TWO DECIMALS, because it is a z and the interesting range is
+        #   0-3: rounded to one, half the column reads the same.
+        if r.get("proj_resid") is not None:
+            r["proj_resid"] = round(float(r["proj_resid"]), 2)
     return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
                     "limit": f["limit"], "offset": f["offset"]})
 

@@ -81,6 +81,29 @@
     return `<td class="num ${cls}">${g > 0 ? "+" : ""}${g.toFixed(1)}</td>`;
   }
 
+  /* The model's projection, shown only when the sort asked for it.
+     ★ THE BAND IS PART OF THE NUMBER. A projection of +6.2 with a 4% sigma
+       is not a promise, and a column that prints the middle of a band as a
+       bare number invites reading it as one -- so the title carries the
+       spread and the horizon.
+     ⚠ "IF THEY KEEP RACING", which is the honest caveat. The model projects
+       an athlete forward; it does not know whether they will compete in
+       college, get injured, or change events. */
+  function projCell(r) {
+    if (r.proj_rating == null)
+      return `<td class="num rc-dim" title="No projection: the model needs rated races this season, and the table is built per pool and season."> - </td>`;
+    const gain = r.proj_gain == null ? null : r.proj_gain;
+    const bits = [`projected ${r.proj_rating.toFixed(1)} in ${
+      r.proj_weeks || 52} weeks if they keep racing`];
+    if (gain != null) bits.push(`${gain > 0 ? "+" : ""}${gain.toFixed(1)} on this season`);
+    if (r.proj_sigma_pct != null) bits.push(`band ${r.proj_sigma_pct.toFixed(1)}% of time`);
+    if (r.proj_resid != null) bits.push(`${r.proj_resid > 0 ? "+" : ""}${
+      r.proj_resid.toFixed(2)} sd vs others starting where they are`);
+    const cls = gain == null ? "" : (gain > 0 ? "gain-up" : (gain < 0 ? "gain-down" : ""));
+    return `<td class="num ${cls}" title="${esc(bits.join("\n"))}">${
+      r.proj_rating.toFixed(1)}</td>`;
+  }
+
   function render(d) {
     const rows = d.rows || [];
     if (!rows.length) {
@@ -89,6 +112,12 @@
       return;
     }
     const label = d.season, prev = d.season - 1;
+    /* ! THE COLUMN FOLLOWS THE SORT, not the presence of the table. Joining
+         recruit_projection on every search would grow the default page's
+         query for a column nobody asked for; the server splices it in only
+         when a proj_* sort is chosen, so this is what "we asked" looks like
+         from here. */
+    const anyProj = rows.some((r) => r.proj_rating != null);
     const body = rows.map((r, i) => `
       <tr>
         <td class="num rc-dim">${offset + i + 1}</td>
@@ -99,14 +128,21 @@
         <td class="num rc-strong">${r.mean_rating == null ? " - " : r.mean_rating.toFixed(1)}</td>
         <td class="num rc-dim">${r.prev_rating == null ? " - " : r.prev_rating.toFixed(1)}</td>
         ${gainCell(r.gain)}
+        ${anyProj ? projCell(r) : ""}
         <td class="num">${r.best_rating == null ? " - " : r.best_rating.toFixed(1)}</td>
         <td class="num rc-dim">${r.n_races}</td>
       </tr>`).join("");
-    $("r-out").innerHTML = `<p class="meta rc-count">${d.pool === "hs_f" ? "Girls" : "Boys"}, ${label} ${d.sport === "XC" ? "cross country" : "track"}. Ratings are season averages; the gain is against ${prev}.</p>
+    $("r-out").innerHTML = `<p class="meta rc-count">${d.pool === "hs_f" ? "Girls" : "Boys"}, ${label} ${d.sport === "XC" ? "cross country" : "track"}. Ratings are season averages; the gain is against ${prev}.${
+      anyProj ? ` Projections come from the prediction model, asked what each
+      athlete runs about a year out -- which for a senior is a freshman
+      college season. They assume the athlete keeps racing.` : ""}</p>
       <div class="r-scroll"><table class="rk rc-tbl">
       <thead><tr><th class="num">#</th><th>Athlete</th><th>School</th><th>Grade</th>
         <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th><th class="num" title="the same athlete a year earlier">${prev}</th>
-        <th class="num">Gain</th><th class="num" title="best single race">Best</th><th class="num">Races</th></tr></thead>
+        <th class="num">Gain</th>${anyProj ? `<th class="num" title="What the
+          model projects this athlete runs about a year from now, on this
+          season's scale, if they keep racing. Hover a number for its band.">
+          Projected</th>` : ""}<th class="num" title="best single race">Best</th><th class="num">Races</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
     $("r-pager").hidden = false;
     $("r-prev").disabled = offset === 0;
