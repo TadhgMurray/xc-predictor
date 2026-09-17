@@ -323,10 +323,114 @@ def test_anet_never_replaces_a_crest_on_a_two_institution_pair():
     both (Amherst, MA) -- so the high school won and, because "ANET WINS" is
     the default, its mascot replaced the college's real athletics-site
     crest."""
-    src = open(os.path.join(_ROOT, "scripts", "anet_teams.py")).read()
+    with open(os.path.join(_ROOT, "scripts", "anet_teams.py")) as fh:
+        src = fh.read()
     assert "multi_level = set()" in src
     assert "FROM school_level" in src and "HAVING count(*) >= 2" in src
-    assert "keep = args.keep_better or (school, state) in multi_level" in src
+    assert "contested_key = not lv and (school, state) in multi_level" in src
+    assert "keep = args.keep_better or contested_key" in src
     # it may still FILL an empty key -- that coin flip is already taken
     body = src[src.index("keep = args.keep_better"):]
     assert "kindRank(\"anet\") > kindRank(" in body[:200]
+
+
+def test_the_two_institution_guard_survives_replace():
+    """⚠ AND --replace SKIPPED THE WHOLE BLOCK, so --keep-better beside it was
+    silently a no-op -- which is what the handoff's own recommended command
+    passed (`--redo --replace --keep-better`, 2026-09-17). The pair guard is
+    not a preference, it is arithmetic: with an UNKNOWN level the crest key is
+    (school, state) alone and one key holds one crest, so replacing a
+    better-ranked one there is a loss, not a swap. With a known level the two
+    institutions are separate rows and anet wins as intended."""
+    with open(os.path.join(_ROOT, "scripts", "anet_teams.py")) as fh:
+        src = fh.read()
+    assert ("if png and args.write and (not args.replace\n"
+            "                                               or contested_key):"
+            in src)
+    # the placeholder rule IS a preference, and --replace does override it
+    assert "elif not args.replace and sharedAlready(cur, sha):" in src
+
+
+def test_replace_and_keep_better_cannot_be_passed_together():
+    """They are contradictory instructions. Refused, rather than one of them
+    being dropped without a word."""
+    with open(os.path.join(_ROOT, "scripts", "anet_teams.py")) as fh:
+        src = fh.read()
+    assert "if args.replace and args.keep_better:" in src
+    assert "contradict each other" in src
+
+
+# ===================================================================== #
+#  THE tfrrs LINK -- the leg that was built and never read               #
+# ===================================================================== #
+#
+# ⚠ THE HOLE, STATED EXACTLY (owner, 2026-09-17: "Oregon(or) ... hasn't been
+#   separated according to team id", and "tfrrs/anet not linked (could this
+#   be an issue with 1)" -- it is, they are the same issue).
+#
+#   authoritativeStates learned a name's states two ways, and BOTH abstain on
+#   precisely the schools this file exists for:
+#
+#     * anet's leg reads the states of the anet teams THE ROWS USE, via
+#       results.team_id. A tfrrs XC row carries no anet team id, so the
+#       University of Oregon contributed nothing and "oregon" came back {IL}.
+#     * the college directory's lookup() answers None rather than guess when
+#       two states share a name -- which is the definition of contested.
+#
+#   {IL} is ONE state, so `len(v) >= 2` was false and "oregon" was not a
+#   contested name at all. si_team_state, si_dir_state and si_name_state are
+#   every one of them built for contested names ONLY, so not one of them ran,
+#   and the clustering fell all the way back to athlete home states: one
+#   Oregon, IL, share 1.0000, with the university folded into it.
+#
+# ★ school_team_link CLOSES IT. scripts/link_tfrrs_to_anet.py has built that
+#   table since 2026-09-16 and nothing read it (handoff §3.3, "still
+#   unwired"). It is the owner's own plan: combine by team id, carried across
+#   the feeds by the athletes who appear in both.
+
+def test_the_link_feeds_the_contested_list():
+    """Without it the name is never even contested, and every other leg in
+    this file is dead code for exactly the schools it was written for."""
+    assert "SELECT to_regclass('school_team_link')" in _SRC
+    assert "lower(btrim(tfrrs_school)), upper(btrim(state))" in _SRC
+    assert "by_name.setdefault(name, set()).add(st)" in _SRC
+
+
+def test_the_link_is_its_own_assignment_leg():
+    assert "def buildLinkStates(cur, contested):" in _SRC
+    assert "buildLinkStates(cur, contested)" in _SRC
+    assert "LEFT   JOIN si_link_state ls ON ls.school = v.school" in _SRC
+
+
+def test_the_link_outranks_the_directory_and_loses_to_the_athlete_s_own_team():
+    """★ ts FIRST, THEN ls, THEN ds. The link is a claim about the STRING,
+    and the string "Oregon" is worn by both Oregons -- so an athlete with
+    their own anet team id is placed by it and never reaches the link."""
+    i = _SRC.index("SELECT v.school, v.person_id,")
+    order = _SRC[i:i + 400]
+    assert order.index("ts.state") < order.index("ls.state") < order.index("ds.state")
+    assert order.index("ls.state") < order.index("ns.state")
+    assert order.index("ns.state") < order.index("ph.state")
+
+
+def test_the_link_leg_is_gated_on_a_college_season():
+    """The second belt: school_team_link only ever names COLLEGE teams
+    (link_tfrrs_to_anet refuses a high school candidate outright), so a high
+    schooler wearing the same string must not be placed by it."""
+    assert "CASE WHEN v.college THEN ls.state END" in _SRC
+
+
+def test_an_absent_link_table_is_todays_behaviour():
+    """It is optional: a database that has never run link_tfrrs_to_anet must
+    build exactly the clusters it built before."""
+    i = _SRC.index("def buildLinkStates(")
+    body = _SRC[i:_SRC.index("\ndef buildTeamStates", i)]
+    assert "if cur.fetchone()[0] is None:" in body
+    assert "return 0" in body
+
+
+def test_the_pipeline_builds_the_link_before_it_reads_it():
+    with open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")) as fh:
+        sh = fh.read()
+    assert sh.index("10b0_tfrrs_link") < sh.index("10b_school_ids")
+    assert "scripts/link_tfrrs_to_anet.py --write" in sh

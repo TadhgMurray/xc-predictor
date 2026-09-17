@@ -796,6 +796,16 @@ step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finis
 #   over the pool's own top seasons, the XC/TF gap. A hard finding FAILS
 #   the step (no "|| true"): a wrong board is not a board.
 step 10a_board_sanity "$PY" -u scripts/board_sanity.py --top "${XCP_SANITY_TOP:-60}"
+# ! BEFORE 10b, BECAUSE 10b READS IT. school_team_link says which anet
+#   college TEAM each tfrrs school string is, learned from athletes who
+#   appear in both feeds -- the join that needs no spelling. It is what
+#   separates the University of Oregon from Oregon (IL): a tfrrs XC row
+#   carries no anet team id, so without this the college half of every
+#   collision is placed by where its athletes RACE, and for a college that
+#   is a travel mode. Additive and idempotent, and it exits 0 with nothing
+#   done on a database that has not run anet_teams yet -- there are no anet
+#   college teams to link, which is a state of the data and not a failure.
+step 10b0_tfrrs_link  "$PY" -u scripts/link_tfrrs_to_anet.py --write
 step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # measured for telemetry only: the joint level is not steered by the json

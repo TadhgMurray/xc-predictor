@@ -245,6 +245,8 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
     if not _tableExists(cur, "school_identity"):
         raise SystemExit("school_identity is missing; run pipeline step 10b first")
     home, state_expr = _stateSource(cur)
+    # ! ASKED OF THE RESOLVED TEAM. `a` is joined on COALESCE(modal, link)
+    #   below, so this still reads "anet_team has never seen this team".
     done = "" if redo else "AND a.team_id IS NULL"
     # ! A PAIR THAT ALREADY HAS A CREST ON DISK IS NOT MISSING ONE. The
     #   same three conditions school_logo.loadCrests serves on, so this
@@ -256,6 +258,12 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
                      AND g.path IS NOT NULL AND g.status = 'ok'
                      AND COALESCE(lower(g.override), '') <> 'none'
                      AND (NOT g.shared OR g.override IS NOT NULL))""")
+    # ! OPTIONAL TABLE, STUBBED WHEN ABSENT. link_tfrrs_to_anet has to have
+    #   run for the join below to have anything in it, and a database where
+    #   it has not must queue exactly what it queued before.
+    link_src = ("school_team_link" if _tableExists(cur, "school_team_link")
+                else "(SELECT NULL::text AS tfrrs_school, NULL::int AS team_id,"
+                     " NULL::text AS state WHERE false)")
     where_state = "AND si.state = %(state)s" if state else ""
     lim = "LIMIT %(limit)s" if limit else ""
     cur.execute(f"""
@@ -276,11 +284,39 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
             SELECT DISTINCT ON (school, state) school, state, team_id
             FROM   counted ORDER BY school, state, n DESC
         )
-        SELECT si.school, si.state, modal.team_id, a.mascot_url
+        SELECT si.school, si.state,
+               COALESCE(modal.team_id, link.team_id) AS team_id, a.mascot_url
         FROM   school_identity si
-        JOIN   modal ON modal.school = si.school AND modal.state = si.state
-        LEFT   JOIN anet_team a ON a.team_id = modal.team_id
+        -- ⚠⚠ LEFT, AND THE LINK BESIDE IT (owner, 2026-09-17: "Penn state
+        --    still has no logo at all"; and 2026-09-16 of Williams, "they
+        --    just have no logo anymore"). This was an INNER join to `modal`,
+        --    which is built from results.team_id -- so a cluster whose rows
+        --    carry NO anet team id was not in this queue AT ALL, was never
+        --    asked about, and could never be given a crest.
+        --
+        --    That is not an edge case; it is the college half of every
+        --    collision. A tfrrs XC row carries no anet team id (and
+        --    `results` has no team_slug), so the University of Oregon,
+        --    Williams College and Penn State's college cluster each joined
+        --    to nothing. --missing hid it rather than showing it: a pair
+        --    that is not in the queue is not reported as missing either.
+        --
+        -- ! school_team_link IS THAT MISSING team_id, learned from the
+        --   athletes who appear in both feeds (scripts/link_tfrrs_to_anet.py,
+        --   pipeline step 10b0). ITS OWN STATE MUST MATCH THE CLUSTER'S, so
+        --   the link for the string "Oregon" -- the university, in OR --
+        --   supplies a team for (Oregon, OR) and can never reach
+        --   (Oregon, IL), which keeps its own modal team.
+        LEFT   JOIN modal ON modal.school = si.school AND modal.state = si.state
+        LEFT   JOIN {link_src} link
+               ON link.tfrrs_school = si.school
+              AND upper(btrim(link.state)) = si.state
+        -- the resolved team, so mascot_url is the linked team's where the
+        -- cluster had none of its own
+        LEFT   JOIN anet_team a ON a.team_id = COALESCE(modal.team_id,
+                                                        link.team_id)
         WHERE  si.n_athletes >= 3 {done} {where_state} {gap}
+          AND  COALESCE(modal.team_id, link.team_id) IS NOT NULL
         ORDER  BY si.n_athletes DESC
         {lim}
     """, {"limit": limit, "state": (state or "").upper()})
@@ -506,6 +542,16 @@ def main():
     args = ap.parse_args()
     if not (args.write or args.dry_run or args.probe or args.queue_only):
         ap.error("pass --probe, --queue-only, --dry-run or --write")
+    # ! CONTRADICTORY, SO IT IS REFUSED RATHER THAN RESOLVED. --replace says
+    #   "install anet's mascot whatever is there" and --keep-better says
+    #   "leave a better-ranked crest alone". Passing both used to mean
+    #   --replace and --keep-better did nothing at all, silently.
+    if args.replace and args.keep_better:
+        ap.error("--replace and --keep-better contradict each other: the "
+                 "first installs anet's mascot over whatever is stored, the "
+                 "second leaves a better-ranked crest alone. Pick one. "
+                 "(--keep-better is the one that fills gaps without "
+                 "overwriting a school's own athletics mark.)")
     season = args.season or time.gmtime().tm_year
     if args.probe:
         manners = Manners(rate=0)
@@ -698,14 +744,35 @@ def main():
                     lv = anet_levels.get(team_id) or ""
                     if lv not in ("elem", "ms", "hs", "college"):
                         lv = ""
-                    if png and args.write and not args.replace:
-                        # a pair with two institutions is always keep-better
-                        keep = args.keep_better or (school, state) in multi_level
+                    # ⚠⚠ --replace DID NOT COMPOSE, AND THE HANDOFF'S OWN
+                    #    COMMAND PASSED BOTH (2026-09-17: `--redo --replace
+                    #    --keep-better`). This whole block was skipped under
+                    #    --replace, so --keep-better was silently a no-op --
+                    #    the run did the OPPOSITE of what its flags said, and
+                    #    "right to wrong on a new scrape" is what that looks
+                    #    like from the site. The two are contradictory
+                    #    instructions, so they are refused together in main()
+                    #    rather than one of them being quietly dropped.
+                    #
+                    # ★ AND THE TWO-INSTITUTION GUARD IS NOT A PREFERENCE, so
+                    #   --replace does not override it. It is arithmetic:
+                    #   where the level is UNKNOWN the crest key is
+                    #   (school, state) alone, one key holds one crest, and
+                    #   (Amherst, MA) is Amherst College AND Amherst Regional
+                    #   High -- whichever mascot lands there is wrong for the
+                    #   other. Replacing a better-ranked crest on such a key
+                    #   is not a swap, it is a loss. With a KNOWN level the
+                    #   two are separate rows and nothing is contested, so
+                    #   the guard does not apply and anet wins as intended.
+                    contested_key = not lv and (school, state) in multi_level
+                    if png and args.write and (not args.replace
+                                               or contested_key):
+                        keep = args.keep_better or contested_key
                         if keep and kindRank("anet") > kindRank(
                                 storedKind(cur, school, state, lv)):
                             kept += 1
                             png = None
-                        elif sharedAlready(cur, sha):
+                        elif not args.replace and sharedAlready(cur, sha):
                             placeholder += 1
                             png = None
                     # ⚠ NEVER UNDER AN EMPTY STATE (2026-09-16, the first

@@ -191,8 +191,18 @@ def main():
     with getConn() as conn, conn.cursor() as cur:
         teams = collegeTeams(cur)
         if not teams:
-            print("no anet college teams -- run anet_teams.py --unfetched first")
-            return 1
+            # ! NOT A FAILURE, AND IT IS A PIPELINE STEP NOW (10b0, before
+            #   10b reads school_team_link). A database on which anet_teams
+            #   has never run has no college teams to link -- a state of the
+            #   data, not an error -- and the identity build falls back to
+            #   the directory and the home state exactly as it did before
+            #   this table existed. Exiting 1 here would put a red step in
+            #   every summary of a correct run.
+            print("  nothing to link: no anet team is marked college yet. "
+                  "Run scripts/anet_teams.py --unfetched --write first; "
+                  "school_identity falls back to the college directory and "
+                  "the home-state inference until then.")
+            return 0
         counted = votes(cur, teams)
         links, rejected = decide(counted, teams, args.min_athletes, args.min_share)
         print(f"\n  {len(counted):,} tfrrs school strings share an athlete-year "

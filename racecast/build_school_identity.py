@@ -170,10 +170,44 @@ def authoritativeStates(cur):
         print(f"  school_identity: college_directory unavailable "
               f"({type(exc).__name__}: {exc})", flush=True)
 
+    # ★ AND THE LINK'S STATES, OR THE NAME IS NEVER EVEN CONTESTED (owner,
+    #   2026-09-17: "Oregon(or) ... hasn't been separated according to team
+    #   id"). This is the hole that made every leg below moot for exactly the
+    #   schools they were written for:
+    #
+    #     * the anet leg sees only teams the ROWS carry, and a tfrrs XC row
+    #       has no team id -- so "oregon" contributed {IL} and nothing else;
+    #     * the directory's lookup() answers None rather than guess when two
+    #       states share a name, which is what a contested name IS -- so it
+    #       adds nothing here either.
+    #
+    #   {IL} is one state, len(v) >= 2 is false, and "oregon" therefore was
+    #   NOT a contested name: si_team_state, si_dir_state and si_name_state
+    #   are all built for contested names only, so none of them ran, and the
+    #   clustering fell all the way back to athlete home states -- one Oregon,
+    #   IL, share 1.0000, with the university folded into it.
+    #
+    # ! THE LINK IS AN AUTHORITATIVE STATEMENT ABOUT A STRING: five athletes
+    #   agreed, 60% of the string's votes, and the team's own anet level is
+    #   college. It names the state the merge may not cross, which is exactly
+    #   what this set is for.
+    n_link = 0
+    cur.execute("SELECT to_regclass('school_team_link')")
+    if cur.fetchone()[0] is not None:
+        cur.execute("""
+            SELECT lower(btrim(tfrrs_school)), upper(btrim(state))
+            FROM   school_team_link
+            WHERE  state IS NOT NULL AND btrim(state) <> ''
+        """)
+        for name, st in cur.fetchall():
+            by_name.setdefault(name, set()).add(st)
+            n_link += 1
+
     contested = {k: v for k, v in by_name.items() if len(v) >= 2}
     print(f"  school_identity: {n_anet:,} school strings carry anet teams "
-          f"(by the rows' team_id, not by anet's spelling) and {n_dir:,} match "
-          f"the college directory; {len(contested):,} are worn by schools in "
+          f"(by the rows' team_id, not by anet's spelling), {n_dir:,} match "
+          f"the college directory and {n_link:,} are linked to an anet college "
+          f"team by shared athletes; {len(contested):,} are worn by schools in "
           f"more than one state", flush=True)
     return contested, dir_states
 
@@ -254,6 +288,69 @@ def buildDirStates(cur, contested, dir_states):
     print(f"  school_identity: {len(rows):,} contested names have a college "
           f"the directory can place", flush=True)
     return len(rows)
+
+
+# ★ THE LINK THE OWNER ASKED FOR, FINALLY READ (2026-09-16: "We need to
+#   combine by (team id, name, location) to help tfrrs combine ... we combine
+#   with tfrrs using our already combined athletes that contain both schools
+#   with races from tfrrs and anet").
+#
+# ⚠ scripts/link_tfrrs_to_anet.py HAS BUILT school_team_link FOR A DAY AND
+#   NOTHING READ IT (handoff 2026-09-17 §3.3, "still unwired"). That is the
+#   whole of "tfrrs/anet not linked", and it is why the college half of every
+#   collision was still being placed by where its athletes RACE:
+#
+#     * buildTeamStates joins results.team_id -> anet_team, and a tfrrs XC row
+#       carries NO anet team id, so the University of Oregon contributed
+#       nothing to it;
+#     * the directory leg is a NAME match, which answers None whenever two
+#       states share a name -- exactly the contested case;
+#     * so Oregon fell through to si_name_state, one state for the whole
+#       name, and the name's most-raced state is the Illinois high school's.
+#
+#   school_team_link is the join that needs no spelling: person_id is already
+#   merged across the feeds, so an athlete with anet rows on team 21242 and
+#   tfrrs rows the same season IS Oregon's athlete, and the tfrrs string they
+#   wear IS that team's name. Five athletes must agree and the winner must
+#   hold 60% of the string's votes (link_tfrrs_to_anet.MIN_ATHLETES /
+#   MIN_SHARE), and the candidate team's own anet level must be COLLEGE -- so
+#   a high school can never be voted onto a college string.
+#
+# ! PER NAME, NOT PER ATHLETE, AND THAT IS WHY IT SITS BELOW ts. A link is a
+#   claim about the whole string, and the string "Oregon" is worn by BOTH
+#   Oregons. An Illinois high schooler has their own anet team id, so
+#   si_team_state places them first and they never reach this leg; the
+#   college-pooled gate below is the second belt.
+def buildLinkStates(cur, contested):
+    """si_link_state(school, state): where the anet team a CONTESTED tfrrs
+    string links to actually is. Empty when link_tfrrs_to_anet has not been
+    run -- the table is optional and its absence is today's behaviour."""
+    cur.execute("DROP TABLE IF EXISTS si_link_state")
+    cur.execute("CREATE TEMP TABLE si_link_state (school text, state text)")
+    if not contested:
+        return 0
+    cur.execute("SELECT to_regclass('school_team_link')")
+    if cur.fetchone()[0] is None:
+        print("  school_identity: no school_team_link -- tfrrs strings are "
+              "placed by the directory and the home state, as before "
+              "(scripts/link_tfrrs_to_anet.py --write builds it)", flush=True)
+        return 0
+    # ! THE LINK'S OWN state COLUMN, NOT A RE-JOIN TO anet_team. It is
+    #   written from the same COALESCE(state, anet_state) buildTeamStates
+    #   uses, so the two legs cannot disagree about where a team is.
+    cur.execute("""
+        INSERT INTO si_link_state (school, state)
+        SELECT tfrrs_school, upper(btrim(state))
+        FROM   school_team_link
+        WHERE  state IS NOT NULL AND btrim(state) <> ''
+          AND  lower(btrim(tfrrs_school)) = ANY(%s)
+    """, (sorted(contested),))
+    cur.execute("CREATE INDEX si_link_state_idx ON si_link_state (school)")
+    cur.execute("SELECT count(*) FROM si_link_state")
+    n = cur.fetchone()[0]
+    print(f"  school_identity: {n:,} contested tfrrs strings are linked to an "
+          f"anet college team by their shared athletes", flush=True)
+    return n
 
 
 def buildTeamStates(cur, contested):
@@ -902,6 +999,7 @@ def main():
         #   clusters CTE below and the co-racing merge after it.
         contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
+        buildLinkStates(cur, contested)
         buildDirStates(cur, contested, dir_states)
         buildNameStates(cur, contested)
 
@@ -947,7 +1045,8 @@ def main():
                 FROM   levels ORDER BY school, person_id, n DESC, college DESC
             )
             -- ★ THE ATHLETE'S OWN anet TEAM FIRST (buildTeamStates), THEN
-            --   THE COLLEGE DIRECTORY for a college-pooled season
+            --   THE anet TEAM THIS tfrrs STRING LINKS TO (buildLinkStates),
+            --   THEN THE COLLEGE DIRECTORY for a college-pooled season
             --   (buildDirStates), THEN the home-state inference.
             --
             -- ⚠ THE DIRECTORY LEG IS THE ONE THE FIRST RUN LACKED. Every
@@ -957,8 +1056,26 @@ def main():
             --   half that was already right. Williams College and the
             --   University of Oregon were still being placed by where their
             --   athletes RACE, which for a college is a travel mode.
+            --
+            -- ⚠⚠ AND THE DIRECTORY IS A NAME MATCH, which is why it was not
+            --    enough either (owner, 2026-09-17: "Oregon(or) ... hasn't
+            --    been separated according to team id"). build_college_
+            --    directory.lookup answers None rather than guess whenever a
+            --    name is worn in two states -- which is the definition of a
+            --    contested name, so on exactly these schools the leg abstains
+            --    and Oregon fell through to si_name_state: ONE state for the
+            --    whole name, and the name's most-raced state is the Illinois
+            --    high school's. ls IS the team id the owner asked for,
+            --    carried across the feeds by shared athletes rather than by
+            --    spelling. See buildLinkStates.
+            --
+            -- ! GATED ON v.college LIKE THE DIRECTORY. school_team_link is
+            --   keyed on the STRING, and "Oregon" is worn by both Oregons;
+            --   an anet-rostered high schooler is already placed by ts above,
+            --   and this is the second belt for one who is not.
             SELECT v.school, v.person_id,
                    COALESCE(ts.state,
+                            CASE WHEN v.college THEN ls.state END,
                             CASE WHEN v.college THEN ds.state END,
                             ns.state,
                             ph.state) AS state
@@ -972,6 +1089,7 @@ def main():
             LEFT   JOIN person_home_state_new ph USING (person_id)
             LEFT   JOIN si_team_state ts ON ts.person_id = v.person_id
                                         AND ts.school = v.school
+            LEFT   JOIN si_link_state ls ON ls.school = v.school
             LEFT   JOIN si_dir_state ds ON ds.school = v.school
             -- ★ THE SCHOOL'S OWN STATE, not this athlete's: see
             --   buildNameStates. For a CONTESTED name this is what every
@@ -981,6 +1099,7 @@ def main():
             --   (every non-contested one), where it is today's behavior.
             LEFT   JOIN si_name_state ns ON ns.school = v.school
             WHERE  COALESCE(ts.state,
+                            CASE WHEN v.college THEN ls.state END,
                             CASE WHEN v.college THEN ds.state END,
                             ns.state,
                             ph.state) IS NOT NULL

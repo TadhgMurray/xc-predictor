@@ -144,6 +144,35 @@ def _isSocial(host):
 # ⚠ NOT APPLIED TO anet. An athletic.net crest is fetched by TEAM ID, so it is
 #   already tied to the right team by construction; the name test would refuse
 #   every one of them because the host is athletic.net.
+#
+# ⚠⚠ AND NOT APPLIED TO AN ADDRESS anet RESOLVED EITHER (owner, 2026-09-17:
+#    "Penn state still has no logo at all"). This is the same construction one
+#    step earlier, and missing it threw away most of the college corpus.
+#
+#    anet_teams.storeAddress writes anet's `WebsiteSport` -- the ATHLETICS
+#    site, handed over per team id -- into school_website with source 'anet'.
+#    A college athletics site is branded by its MASCOT, not by its school:
+#    gopsusports.com, goducks.com, rolltide.com, guhoyas.com, gohuskies.com,
+#    hawkeyesports.com, und.com, cuse.com, byucougars.com. Not one carries a
+#    name token, none is .edu, and none reads as "schooly" -- so the name test
+#    refuses 10 of 15 real programmes, measured
+#    (tests/test_school_logo_host.py). Penn State's own row is
+#    "address is not this school's (https://gopsusports.com/)", and then no
+#    crest at all.
+#
+#    The same trade the crest ranking already made: RESOLUTION LOSES TO
+#    PROVENANCE. This test exists to catch a WRONG ADDRESS-BOOK ROW -- a
+#    guessed one, from Wikidata or a search -- and an address that came back
+#    from anet keyed on the team, or that a person typed, is not a guess. So
+#    the NAME test is skipped for those, and the blocklist below is not: if
+#    anet's WebsiteSport points at a hosting vendor or a governing body, that
+#    is still nobody's crest.
+#
+# ! fetchLogo ALREADY RELIES ON THIS REASONING one level down -- the athletics
+#   site it finds by following a link from the school's own page is fetched
+#   without a name test, "because it is linked FROM the school's own page,
+#   which is the evidence". An anet team id is the better evidence.
+_TRUSTED_ADDRESS = {"anet", "manual", "override"}
 
 # hosts that are somebody's logo but never a school's
 _GENERIC_HOSTS = {
@@ -185,10 +214,15 @@ def nameTokens(school):
     return {w for w in words if len(w) >= 4 and w not in _NAME_STOPWORDS}
 
 
-def plausibleHost(school, url, kind=None):
+def plausibleHost(school, url, kind=None, source=None):
     """Whether `url` is plausibly this school's own site. Pure; no network.
 
     Returns True for an anet crest whatever the host -- see the note above.
+
+    `source` is the PROVENANCE of the address (school_website.source): one of
+    _TRUSTED_ADDRESS means it was resolved by anet's team id or set by hand,
+    so only the blocklist applies and the school's name need not appear in
+    the domain. Anything else -- a guess -- must still earn the crest.
     """
     if (kind or "").split(":")[0] == "anet":
         return True
@@ -201,6 +235,9 @@ def plausibleHost(school, url, kind=None):
     host = host.lower()
     if _registrable(host) in _GENERIC_HOSTS or _isSocial(host):
         return False
+    # ★ THE ADDRESS WAS NOT GUESSED: the name test has nothing to add
+    if str(source or "").strip().lower() in _TRUSTED_ADDRESS:
+        return True
     # educational or governmental: nobody else gets these
     if re.search(r"\.(edu|edu\.[a-z]{2}|gov)$", host) or \
             re.search(r"\.k12\.[a-z]{2}\.us$", host) or \
@@ -927,7 +964,7 @@ def _fromText(manners, text, page_url, tag):
     return None, None, None, reason
 
 
-def fetchLogo(manners, home_url, direct=None, school=None):
+def fetchLogo(manners, home_url, direct=None, school=None, source=None):
     """(png, sha, kind, source_url) for one school, or (None, None, None,
     reason).
 
@@ -946,7 +983,7 @@ def fetchLogo(manners, home_url, direct=None, school=None):
     #   school's is not worth a fetch either. `school` is optional so a caller
     #   that has no name to check against behaves exactly as before.
     def mine(url, kind=None):
-        return school is None or plausibleHost(school, url, kind)
+        return school is None or plausibleHost(school, url, kind, source)
 
     if direct and mine(direct, "direct"):
         raw, ctype = manners.get(direct)
@@ -1235,9 +1272,13 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
                      "unnest(%s::text[], %s::text[]) AS t(school, state))")
         params.append([p[0] for p in pairs])
         params.append([p[1] for p in pairs])
+    # ! AND WHERE THE ADDRESS CAME FROM. An address anet resolved by team id
+    #   is not a guess, and the host check must not treat it as one -- see
+    #   plausibleHost. Selected LAST so every existing positional unpack of
+    #   this row is unchanged.
     sql = f"""
         SELECT w.school, w.state, w.url, w.direct_logo, l.override,
-               l.source_url, l.etag, l.modified, l.status
+               l.source_url, l.etag, l.modified, l.status, w.source
         FROM   school_website w
         LEFT   JOIN school_logo l ON l.school = w.school AND l.state = w.state
         {join}
@@ -1249,7 +1290,7 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
         params.append(int(limit))
     cur.execute(sql, params)
     keys = ("school", "state", "url", "direct_logo", "override",
-            "source_url", "etag", "modified", "status")
+            "source_url", "etag", "modified", "status", "source")
     return [tuple(r[k] for k in keys) if isinstance(r, dict) else tuple(r)
             for r in cur.fetchall()]
 
@@ -1515,8 +1556,12 @@ def workOne(manners, row, rediscover=False):
 
 
 def _workOne(manners, row, rediscover=False):
+    # ! TOLERANT OF THE SHORTER ROW. `source` is the last column and a caller
+    #   holding a row built before it existed (a test, a saved queue) must
+    #   still work: no provenance means "a guess", the old behaviour exactly.
     (school, state, url, direct, override,
-     had_url, etag, modified, status0) = row
+     had_url, etag, modified, status0) = row[:9]
+    source = row[9] if len(row) > 9 else None
     override_url = override if (override or "").startswith("http") else None
     # ⚠ --redo MUST NOT TAKE THE CHEAP PATH. The refresh asks the file we
     #   kept last time and a 304 ends it -- which is right for a quarterly
@@ -1537,7 +1582,8 @@ def _workOne(manners, row, rediscover=False):
     #   typed on purpose skips it by passing no name to check against.
     png, sha, kind, src = fetchLogo(manners, url,
                                     direct=(target if target != url else None),
-                                    school=(None if override_url else school))
+                                    school=(None if override_url else school),
+                                    source=source)
     return {"school": school, "state": state, "png": png, "sha": sha,
             "kind": kind, "src": src if png else None,
             "why": None if png else src,
