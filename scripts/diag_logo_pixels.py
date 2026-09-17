@@ -168,6 +168,26 @@ def main():
         print("\n  DARKEST FIRST")
         for lum, name, verdict in got[:a.limit]:
             print(f"    lum {lum:>5.0f}  {name}  {verdict}")
+        # ★ AND THE CENSUS, which is the number that decides what to do
+        #   (owner, 2026-09-17: a scan is unreadable at a few hundred files).
+        #   "Black" turns out to be three different things and only two of
+        #   them are ours to fix.
+        tally, dark = {}, {}
+        for lum, _name, verdict in got:
+            key = verdict.split(" -- ")[0]
+            tally[key] = tally.get(key, 0) + 1
+            if lum <= 60:
+                dark[key] = dark.get(key, 0) + 1
+        print("\n  CENSUS")
+        for key in sorted(tally, key=lambda k: -tally[k]):
+            n = tally[key]
+            print(f"    {n:>6,}  {n / max(len(got), 1):>5.1%}  {key}"
+                  + (f"   ({dark.get(key, 0):,} of them dark)" if dark.get(key)
+                     else ""))
+        print(f"\n  {sum(dark.values()):,} files read darker than lum 60."
+              " A DARK GROUND is keyed on rewrite; a dark MARK on\n"
+              "  transparency is the school's own logo and there is nothing"
+              " to fix.")
         return 0
 
     from database import getConn

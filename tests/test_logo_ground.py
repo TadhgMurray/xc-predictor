@@ -42,6 +42,43 @@ def _png(ground, flatten, size=(300, 240), mark=(90, 70, 120, 100)):
 @unittest.skipIf(Image is None, "Pillow not installed")
 class TheGround(unittest.TestCase):
 
+    def test_the_owners_real_corner_sets_are_judged_correctly(self):
+        """⚠ FROM THE 2026-09-17 SCAN OF THE LIVE DIRECTORY. The thresholds
+        were 16/10 and 10 was too tight to be useful: 015113a0's corners are
+        (9,13,22) (0,4,7) (11,11,11) (8,8,8) -- one flat near-black ground by
+        eye, refused because its channels differ by 11. A JPEG's flat ground
+        is a few levels of noise around one value."""
+        def corners(cs):
+            im = Image.new("RGBA", (80, 80), (200, 40, 40, 255))
+            for (x, y), c in zip([(0, 0), (79, 0), (0, 79), (79, 79)], cs):
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        im.putpixel((min(max(x + dx, 0), 79),
+                                     min(max(y + dy, 0), 79)), (*c, 255))
+            return im
+        keyed = {
+            "near-black, noisy": [(9, 13, 22), (0, 4, 7), (11, 11, 11), (8, 8, 8)],
+            "charcoal": [(36, 32, 33), (37, 33, 34), (36, 32, 33), (33, 29, 30)],
+            "dark green": [(11, 69, 55)] * 4,
+            "navy": [(17, 14, 83)] * 4,
+        }
+        for label, cs in keyed.items():
+            self.assertIsNotNone(S._flatGround(corners(cs)), label)
+        left = {
+            "a real blue gradient": [(41, 96, 150), (3, 64, 129), (0, 66, 126),
+                                     (1, 65, 127)],
+            "white with a yellow corner": [(255, 255, 255), (255, 214, 81),
+                                           (241, 246, 242), (253, 255, 252)],
+            "a grey ramp": [(255, 255, 255), (216, 216, 216), (239, 239, 239),
+                            (134, 134, 134)],
+        }
+        for label, cs in left.items():
+            self.assertIsNone(S._flatGround(corners(cs)), label)
+
+    def test_the_tolerance_is_at_least_as_wide_as_the_spread_it_accepts(self):
+        """Or the corners themselves survive the key they just authorised."""
+        self.assertGreaterEqual(S.KEY_TOLERANCE, S.KEY_MAX_SPREAD // 2)
+
     def test_a_flat_ground_is_found_whatever_colour_it_is(self):
         for colour in ((0, 0, 0, 255), (255, 255, 255, 255), (17, 34, 51, 255)):
             im = Image.open(io.BytesIO(_png(colour, True))).convert("RGBA")

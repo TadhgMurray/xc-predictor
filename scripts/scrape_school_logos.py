@@ -553,8 +553,19 @@ def _svgToPng(raw, px):
 #   where keying one colour would punch holes in it. TOLERANCE is tight for
 #   the same reason: a JPEG's ground is not one exact value, but it is
 #   within a few levels of itself.
-KEY_TOLERANCE = 16          # per channel, against the corners' mean
-KEY_MAX_SPREAD = 10         # the corners must agree this closely
+# ⚠ MEASURED AGAINST REAL FILES, NOT CHOSEN (2026-09-17, the owner's
+#   --worst scan). These were 16 and 10, and 10 was too tight to be useful:
+#
+#       015113a0  corners (9,13,22) (0,4,7) (11,11,11) (8,8,8)
+#
+#   -- one flat near-black ground by eye, refused because its channels
+#   differ by 11. A JPEG's flat ground is not one exact value; it is a few
+#   levels of noise around one. 28 keeps the four corners of a REAL gradient
+#   apart (the scan's (41,96,150)/(0,66,126) blue spreads 41) while
+#   accepting the noise, and the tolerance has to be at least as wide as the
+#   spread it just accepted or the corners themselves survive the key.
+KEY_TOLERANCE = 24          # per channel, against the corners' mean
+KEY_MAX_SPREAD = 28         # the corners must agree this closely
 
 
 def _flatGround(im):
