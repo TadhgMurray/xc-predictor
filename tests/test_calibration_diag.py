@@ -115,3 +115,49 @@ def test_it_calls_the_names_train_actually_exports():
         assert f"T.{name}" in src, name
         assert (f"class {name}(" in train or f"def {name}(" in train), name
     assert "T.ChunkDataset(" not in src and "T.collate)" not in src
+
+
+def test_the_venue_count_comes_from_the_checkpoint_not_the_default():
+    """The run died here: XCPredictor's n_venues defaults to 1, so a bare
+    constructor plus a real checkpoint is
+      size mismatch for venue_embedding.weight: [36571,16] vs [1,16].
+    The count has to be read off the saved embedding, the way
+    predict._loadModel reads it."""
+    class Fake:
+        shape = (36_571, 16)
+    assert C.venueCount({"venue_embedding.weight": Fake()}) == 36_571
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    assert "XCPredictor()" not in src
+    assert "XCPredictor(n_venues=venueCount(state))" in src
+
+
+def test_it_unwraps_every_spelling_train_and_predict_write():
+    """train.py saves model.pt as a bare state_dict and its resume file under
+    "model"; predict.py also accepts "state_dict"."""
+    weights = {"venue_embedding.weight": object()}
+    assert C.unwrapState(weights) is weights
+    assert C.unwrapState({"epoch": 7, "model": weights}) is weights
+    assert C.unwrapState({"state_dict": weights}) is weights
+    # a state dict that happens to contain neither key is returned whole
+    assert C.unwrapState({"a": 1}) == {"a": 1}
+
+
+def test_only_the_baseline_buffers_may_be_missing():
+    """strict=False accepts ANY missing key, which would report calibration
+    for a model that is partly random."""
+    assert C.surpriseKeys(["baseline_mode", "baseline_half_life"], []) == []
+    assert C.surpriseKeys(["encoder.layers.0.self_attn.in_proj_weight"], []) \
+        == ["encoder.layers.0.self_attn.in_proj_weight"]
+    assert C.surpriseKeys([], ["leftover"]) == ["leftover"]
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    assert "load_state_dict(state, strict=False)" in src   # with the check
+    assert "surpriseKeys(missing, unexpected)" in src
+
+
+def test_the_default_checkpoint_is_the_one_train_writes():
+    """T.MODEL_PATH does not exist; the name is MODEL_OUT, and getattr of the
+    wrong one silently fell through to a path that only happened to match."""
+    import train as T
+    assert hasattr(T, "MODEL_OUT")
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    assert 'getattr(T, "MODEL_OUT"' in src

@@ -65,6 +65,43 @@ DEFAULT_BANDS = (0, 2, 8, 20, 44, 104, 208, 10_000)
 Z_BANDS = ((1.0, 0.6827), (1.645, 0.90))
 
 
+# the two keys a valid older checkpoint may be short of, and nothing else;
+# see predict._loadModel -- the baseline rule rides in the state dict and a
+# file trained before those buffers existed was trained under the default.
+TOLERATED_MISSING = ("baseline_mode", "baseline_half_life")
+
+
+def unwrapState(blob):
+    """The weights out of whatever torch.load returned.
+
+    train.py writes model.pt as a BARE state_dict and its resume checkpoint
+    as {"epoch", "model", "optimizer", ...}; predict.py additionally accepts
+    an older {"state_dict": ...} wrapper. Take any of the three."""
+    if not isinstance(blob, dict):
+        return blob
+    for key in ("state_dict", "model"):
+        inner = blob.get(key)
+        if isinstance(inner, dict):
+            return inner
+    return blob
+
+
+def venueCount(state):
+    """n_venues FROM THE CHECKPOINT ITSELF, the way predict._loadModel does
+    it. XCPredictor's default is 1, so constructing it bare and then loading
+    a real checkpoint is a size mismatch on venue_embedding.weight -- and
+    any OTHER guess silently reindexes every venue."""
+    w = state["venue_embedding.weight"]
+    return int(w.shape[0])
+
+
+def surpriseKeys(missing, unexpected):
+    """! TOLERATED BY NAME, NOT BY strict=False. Accepting any missing key
+    would let a genuinely broken checkpoint load and report calibration for
+    a model that is partly random."""
+    return sorted((set(missing) - set(TOLERATED_MISSING)) | set(unexpected))
+
+
 def _bandLabel(lo, hi):
     if hi >= 10_000:
         return f"{lo}w+"
@@ -157,16 +194,16 @@ def main():
     print(f"[calibration] {data_dir}: {len(val):,} held-out examples, "
           f"scoring {n:,}")
 
-    model_path = a.model or getattr(T, "MODEL_PATH", None) or \
+    model_path = a.model or getattr(T, "MODEL_OUT", None) or \
         os.path.join(data_dir, "model.pt")
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    state = torch.load(model_path, map_location=dev)
-    if isinstance(state, dict) and "model" in state:
-        state = state["model"]
-    model = XCPredictor()
-    # ! tolerant: a checkpoint from before a buffer existed still loads, the
-    #   same way predict.py loads one
-    model.load_state_dict(state, strict=False)
+    state = unwrapState(torch.load(model_path, map_location=dev))
+    model = XCPredictor(n_venues=venueCount(state))
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    bad = surpriseKeys(missing, unexpected)
+    if bad:
+        raise RuntimeError("checkpoint does not match the model: "
+                           + ", ".join(bad))
     model.to(dev).eval()
     print(f"[calibration] {model_path} on {dev}")
 
