@@ -59,13 +59,13 @@ What I learned/would change:
    hundred example pages would have done me better. For example, we still have data where the athletes are times, the times are schools, etc. (although this is rare).
    
 
-3. Honestly, the weather went pretty good, no complaints.
+2. Honestly, the weather went pretty good, no complaints.
 
-4. This went pretty well too. I think the main things I would've changed here are looking at my inputs, making sure they actually looked sane, because the
+3. This went pretty well too. I think the main things I would've changed here are looking at my inputs, making sure they actually looked sane, because the
    outputs just kind of fall out when they are sane (turns out Solarflare for the dataset I used is like 1000x). I also would've used a fitness curve here
    immediately if I was going through this again.
 
-5. So many things went wrong here. We started with an iterative convergence engine ping-ponging from difficulty to ability. This did not go well.
+4. So many things went wrong here. We started with an iterative convergence engine ping-ponging from difficulty to ability. This did not go well.
    I noticed early season races were getting crazy difficulties, at which point I noticed that removing fitness from difficulty would probably be a good
    idea, and the fitness/rust curve was born. Then it just still wasn't right, it was way underrating tf, and the obvious reason became that the engine
    had no way to know tf was easier and that people were fitter. So we needed a per-sport offset, which had a lot of issues still but was much better.
@@ -102,9 +102,13 @@ What I learned/would change:
    At this point I definitely got caught up in myself and felt like this was impossible, but I just really needed to give myself some time to think out a
    solution, and if that didn't work, just try the naive solution.
 
-6. This went pretty well (and also is still going on oopsy), so no comments yet.
+   The hardest part of this section is that fact there's no actual source of truth for these things. I was only able to measure my accuracy through
+   other's work like LACCTIC, and mainly through my eyes. Personally, I still see a lot wrong in those ratings, but I'll keep working on it.
+   I imagine it will never actually be exactly right in my eyes (or anybody's eyes), but hopefully I cna get pretty darn close.
 
-7. This went great; I was really happy with how the website looks and how it went. I think the biggest issue was just loading times. I had many issues
+5. This went pretty well (and also is still going on oopsy), so no comments yet.
+
+6. This went great; I was really happy with how the website looks and how it went. I think the biggest issue was just loading times. I had many issues
    with the loading times becoming insane during the pipeline or just being really slow otherwise. A big thing I have taken out of this about DBs, which
    applies to every section here, is to always explain your queries when you write them, and also have indices ready if you need them. When doing the pipeline
    which updates the DB, a big mistake I made was not having the indices first, making the website insanely slow while the pipeline went through multiple steps without
