@@ -71,12 +71,21 @@ _NAMELESS = """
     LIMIT  20
 """
 
+# ⚠ meets_tfrrs ON THE XC SIDE TOO, and leaving it out made this
+#   diagnostic lie: every tfrrs cross country row came back with a blank
+#   meet name, which looked like the site's bug and was this query's. `meets`
+#   is anet-only; app.py joins meets_tfrrs for a tfrrs row (_tfrrs_join) and
+#   so must anything claiming to show what the page shows.
 _PERSON = """
     SELECT 'XC' AS sport, r.date, r.meet_id, r.div_id,
            NULL::bigint AS event_id, NULL::text AS event_short,
-           r.time_seconds, r.source, m.meet_name
+           r.time_seconds, r.source,
+           COALESCE(m.meet_name, mx.meet_name) AS meet_name
     FROM   results r
     LEFT   JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+    LEFT   JOIN meets_tfrrs mx
+           ON  r.source = 'tfrrs' AND mx.meet_id = r.meet_id
+           AND mx.sport = 'XC'
     WHERE  r.person_id = %(pid)s
     UNION ALL
     SELECT 'TF', t.date, t.meet_id, t.div_id, t.event_id, t.event_short,
@@ -89,6 +98,58 @@ _PERSON = """
     LEFT   JOIN meets_tf_meta mt ON mt.meet_id = t.meet_id
     WHERE  t.person_id = %(pid)s
     ORDER  BY 2, 1
+"""
+
+
+# ★ IS THE 3.4M REALLY MISSING, OR IS IT THE source CONDITION? The
+#   nameless count above joins meets_tf on (meet_id, div_id, event_id,
+#   source), and meets_tf.source was added to that table LATER -- every row
+#   written before it is NULL, which fails the join and counts as "no
+#   meets_tf row" whether or not one exists. This measures the join both
+#   ways so the number means something.
+_JOIN_STRICTNESS = """
+    WITH s AS (SELECT meet_id, div_id, event_id, source FROM results_tf
+               WHERE source = 'anet' LIMIT 2000000)
+    SELECT count(*)                                  AS sampled,
+           count(m4.meet_id)                         AS matched_with_source,
+           count(m3.meet_id)                         AS matched_without_source
+    FROM   s
+    LEFT   JOIN meets_tf m4
+           ON  m4.meet_id = s.meet_id AND m4.div_id = s.div_id
+           AND m4.event_id = s.event_id AND m4.source = s.source
+    LEFT   JOIN meets_tf m3
+           ON  m3.meet_id = s.meet_id AND m3.div_id = s.div_id
+           AND m3.event_id = s.event_id
+"""
+
+_MEETS_TF_SOURCE = """
+    SELECT source, count(*) AS n FROM meets_tf GROUP BY source ORDER BY n DESC
+"""
+
+# The anet-on-anet duplicates, in full: one person, one day, one time, in
+# both tables. A 1600m cannot also be a cross country race, so one of the
+# two rows is in the wrong table -- these print the pair so we can see
+# WHICH, and what meet each side thinks it was.
+_ANET_PAIRS = """
+    SELECT x.meet_id   AS xc_meet, x.div_id AS xc_div, mx.meet_name AS xc_name,
+           t.meet_id   AS tf_meet, t.div_id AS tf_div, t.event_id,
+           t.event_short, mt.meet_name     AS tf_name,
+           x.date, x.time_seconds
+    FROM   results_tf t
+    JOIN   results    x
+           ON  x.person_id = t.person_id
+           AND x.date      = t.date
+           AND abs(x.time_seconds - t.time_seconds) < 0.01
+    LEFT   JOIN meets mx
+           ON  mx.div_id = x.div_id AND mx.source = x.source
+    LEFT   JOIN meets_tf mt
+           ON  mt.meet_id = t.meet_id AND mt.div_id = t.div_id
+           AND mt.event_id = t.event_id
+    WHERE  t.source = 'anet' AND x.source = 'anet'
+      AND  t.time_seconds IS NOT NULL AND x.time_seconds IS NOT NULL
+      AND  t.person_id IS NOT NULL
+    ORDER  BY x.date DESC
+    LIMIT  25
 """
 
 
@@ -128,6 +189,24 @@ def main():
             print("  track rows with no meet name anywhere -- what the athlete "
                   "page prints as \"Race Results\":", flush=True)
             cur.execute(_NAMELESS)
+            _table(cur, cur.fetchall())
+
+            print()
+            print("  meets_tf rows by source (a NULL source fails the join "
+                  "and fakes a missing row):", flush=True)
+            cur.execute(_MEETS_TF_SOURCE)
+            _table(cur, cur.fetchall())
+
+            print()
+            print("  the same join with and without the source condition, "
+                  "over 2M anet rows:", flush=True)
+            cur.execute(_JOIN_STRICTNESS)
+            _table(cur, cur.fetchall())
+
+            print()
+            print("  anet-on-anet pairs in full -- a 1600m cannot be a cross "
+                  "country race, so one side is in the wrong table:", flush=True)
+            cur.execute(_ANET_PAIRS)
             _table(cur, cur.fetchall())
         conn.rollback()
 

@@ -35,10 +35,18 @@ sys.path.insert(0, "scripts")
 
 from database import getConn                            # noqa: E402
 
+# ⚠ meets_tfrrs, NOT meets. The first version of this query looked for
+#   `meets WHERE source = 'tfrrs'` and found nothing -- because TFRRS meet
+#   metadata does not go in `meets` at all. save_tfrrs writes it to its own
+#   table, meets_tfrrs, with a `sport` column; `meets` is anet-only, which
+#   is exactly what app.py's _tfrrs_join exists to work around. So the
+#   script reported "nothing was written into the track tables" over a meet
+#   that had 436 rows of it.
 _FIND = """
-    SELECT mt.meet_id
+    SELECT DISTINCT mt.meet_id
     FROM   (SELECT DISTINCT meet_id FROM meets_tf WHERE source = 'tfrrs') mt
-    JOIN   (SELECT DISTINCT meet_id FROM meets    WHERE source = 'tfrrs') mx
+    JOIN   (SELECT DISTINCT meet_id FROM meets_tfrrs
+            WHERE sport = 'XC') mx
            ON mx.meet_id = mt.meet_id
 """
 
