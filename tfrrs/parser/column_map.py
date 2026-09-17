@@ -149,15 +149,52 @@ def _rowVote(cells, from_header):
                                 else others[0])
 
     ints = [i for i, cell in enumerate(cells) if _INT_ONLY.match(_text(cell))]
-    if "athlete" in seen:
-        before = [i for i in ints if i < seen["athlete"]]
-        if before:
-            seen["place"] = before[-1]
+    # ! PLACE IS DECIDED AT TABLE LEVEL, NOT HERE -- see _pickPlace. Within one
+    #   row a bib number and a finishing position are both just integers before
+    #   the athlete, and the first version picked the LAST of them, which is
+    #   the bib in `PL | BIB | NAME`. What separates them is that places count
+    #   up the table and bibs do not.
     if "time" in seen:
         after = [i for i in ints if i > seen["time"]]
         if after:
             seen["score"] = after[0]
-    return seen
+    return seen, ints
+
+
+# ★ A PLACE COUNTS UP THE TABLE; A BIB DOES NOT. Given every integer column
+#   left of the athlete, the place is the one whose values ascend down the
+#   sampled rows -- which is true of a finishing order by definition and true
+#   of a bib only by accident.
+#
+# ! TIES AND BLANKS ARE NORMAL. Two athletes can share a place, a DNF has
+#   none: the test is non-decreasing over the values that ARE there, not
+#   strictly increasing over all of them.
+def _pickPlace(rows, athlete_idx, int_cols, from_header):
+    if from_header.get("place") is not None:
+        return from_header["place"]
+    cands = sorted({i for i in int_cols
+                    if athlete_idx is None or i < athlete_idx})
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0]
+    best, best_score = None, None
+    for i in cands:
+        vals = []
+        for cells in rows:
+            if i < len(cells):
+                t = _text(cells[i])
+                if _INT_ONLY.match(t):
+                    vals.append(int(t))
+        if len(vals) < 2:
+            continue
+        ascends = all(b >= a for a, b in zip(vals, vals[1:]))
+        # a finishing order starts near the top of the race
+        starts_low = vals[0] <= 5
+        score = (2 if ascends else 0) + (1 if starts_low else 0)
+        if best_score is None or score > best_score:
+            best, best_score = i, score
+    return best if best is not None else cands[0]
 
 
 def detectColumns(rows, header=None, default=None):
@@ -172,9 +209,11 @@ def detectColumns(rows, header=None, default=None):
     """
     default = XC_DEFAULT if default is None else default
     from_header = headerMap(header)
-    votes = {}
+    votes, int_cols = {}, set()
     for cells in rows or ():
-        for field, idx in _rowVote(cells, from_header).items():
+        seen, ints = _rowVote(cells, from_header)
+        int_cols.update(ints)
+        for field, idx in seen.items():
             votes.setdefault(field, {})
             votes[field][idx] = votes[field].get(idx, 0) + 1
 
@@ -188,6 +227,16 @@ def detectColumns(rows, header=None, default=None):
             out[field] = from_header[field]
         elif field in default:
             out[field] = default[field]
+
+    # the place, from the table rather than from any one row
+    _athlete = out.get("athlete")
+    _place = _pickPlace(rows or (), _athlete, int_cols, from_header)
+    if _place is not None:
+        out["place"] = _place
+    elif "place" in default and (_athlete is None or default["place"] < _athlete):
+        out["place"] = default["place"]
+    else:
+        out.pop("place", None)
 
     moved = {f: (default.get(f), out.get(f))
              for f in FIELDS

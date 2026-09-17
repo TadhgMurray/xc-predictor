@@ -8,6 +8,7 @@
  
 import re
 from parse_time import parseTimeToSeconds
+from column_map import XC_DEFAULT, trustworthy
 
 # ------------------------------------------------------------------ #
 # WHAT ONE TFRRS XC INDIVIDUAL ROW LOOKS LIKE  (verified against real HTML)
@@ -84,38 +85,65 @@ MIN_XC_CELL_COUNT = 7
 # Output:   a dict of parsed fields with ok=True, OR {ok=False, note} when the row
 #           has too few cells to read safely. Never raises — one bad row must not
 #           kill a meet's parse.
-def parseXCRow(row):
+# ★ colmap: WHICH COLUMN IS WHICH, worked out once per table from what the
+#   cells CONTAIN (column_map.detectColumns). None means "today's layout",
+#   which is byte-for-byte the behaviour this function has always had -- every
+#   existing caller and test is unaffected.
+def parseXCRow(row, colmap=None):
     # Direct cells of this row.
     cells = row.find_all("td")
 
-    # Shape check FIRST. We need the 7 fixed columns to read fields by index; a
-    # shorter row would misalign (a place could land in the time slot). Splits
-    # (index 7+) are optional, so the bar is ">= 7", not "== 7".
+    # ⚠ THE SHAPE CHECK CATCHES TOO FEW CELLS AND NOTHING ELSE. A row with
+    #   MORE cells than expected -- which is what a tfrrs column insertion
+    #   looks like -- sails through it, and then every index past the new
+    #   column reads the wrong thing. That is what colmap is for.
     if len(cells) < MIN_XC_CELL_COUNT:
         return {"ok": False, "note": f"too few cells {len(cells)}"}
 
-    # [0] place — plain integer; _toIntOrNone tolerates a blank/tie marker.
-    place = _toIntOrNone(_cellText(cells[0]))
+    # ★ THE COLUMNS, BY CONTENT WHERE THE CALLER WORKED THEM OUT. Falling back
+    #   to XC_DEFAULT keeps the old behaviour exactly for any caller that does
+    #   not pass one.
+    cm = colmap or XC_DEFAULT
+    if not trustworthy(cm):
+        return {"ok": False, "note": "column layout not recognised"}
 
-    # [1] athlete — <a href> holds the native id, link text the name; native_id
+    def _at(field):
+        """The cell for a field, or None when this table has no such column."""
+        i = cm.get(field)
+        return cells[i] if i is not None and i < len(cells) else None
+
+    def _textAt(field):
+        c = _at(field)
+        return _cellText(c) if c is not None else ""
+
+    # place — plain integer; _toIntOrNone tolerates a blank/tie marker.
+    place = _toIntOrNone(_textAt("place"))
+
+    # athlete — <a href> holds the native id, link text the name; native_id
     # is None for name-only ancient rows (no <a>).
-    athlete_native_id, name = _extractAthlete(cells[1])
+    _a = _at("athlete")
+    athlete_native_id, name = _extractAthlete(_a) if _a is not None else (None, "")
 
-    # [2] year/eligibility — e.g. "SR-4"; often blank on old meets. Keep raw.
-    year_raw = _cellText(cells[2])
+    # year/eligibility — e.g. "SR-4"; often blank on old meets. Keep raw.
+    year_raw = _textAt("year")
 
-    # [3] team — href encodes state/level/gender/name; _extractTeam returns slug,
+    # team — href encodes state/level/gender/name; _extractTeam returns slug,
     # display name, and gender decoded from the slug.
-    team_slug, team_name, gender = _extractTeam(cells[3])
+    _t = _at("team")
+    team_slug, team_name, gender = (_extractTeam(_t) if _t is not None
+                                    else (None, "", None))
 
-    # [5] finish time — the SECOND time cell. [4] (avg mile) is deliberately skipped.
-    time_seconds = parseTimeToSeconds(_cellText(cells[5]))
+    # ⚠ THE FINISH TIME, NOT THE AVG MILE. They are adjacent and both parse as
+    #   times; reading the wrong one stores a per-mile pace as a race time.
+    #   column_map picks it by the header, else by being the larger value.
+    time_seconds = parseTimeToSeconds(_textAt("time"))
 
-    # [6] score — blank for non-scoring (displaced) runners.
-    score = _toIntOrNone(_cellText(cells[6]))
+    # score — blank for non-scoring (displaced) runners.
+    score = _toIntOrNone(_textAt("score"))
 
-    # [7:] splits — zero or more segment columns; count varies by race distance.
-    splits = _extractSplits(cells[7:])
+    # splits — zero or more segment columns after the last known field.
+    _last = max((i for i in cm.values() if i is not None), default=6)
+    splits = _extractSplits(cells[_last + 1:])
 
     return {
         "ok":                True,

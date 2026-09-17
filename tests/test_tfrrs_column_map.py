@@ -97,6 +97,51 @@ class AShiftedTable(unittest.TestCase):
         self.assertEqual(rows[0][got["time"]][0], "21:26.1")
 
 
+class APlaceIsNotABib(unittest.TestCase):
+    """⚠ CAUGHT BY THE WIRING TEST, not by design. Within one row a bib and a
+    finishing position are both just integers left of the athlete, and the
+    first version took the LAST of them -- which is the bib in `PL | BIB |
+    NAME`. What separates them is that places count up the table."""
+
+    def test_the_ascending_column_is_the_place(self):
+        rows = [[("13", []), ("1041", []), ("A", A), ("SR", []), ("T", T),
+                 ("5:44.9", []), ("21:26.1", []), ("11", [])],
+                [("14", []), ("0307", []), ("B", A), ("JR", []), ("T", T),
+                 ("5:47.2", []), ("21:35.0", []), ("12", [])],
+                [("15", []), ("2210", []), ("C", A), ("SO", []), ("T", T),
+                 ("5:49.0", []), ("21:44.0", []), ("13", [])]]
+        got, _ = C.detectColumns(rows)
+        self.assertEqual(got["place"], 0)
+
+    def test_even_when_the_bib_comes_first(self):
+        rows = [[("1041", []), ("1", []), ("A", A), ("SR", []), ("T", T),
+                 ("5:44.9", []), ("21:26.1", []), ("11", [])],
+                [("0307", []), ("2", []), ("B", A), ("JR", []), ("T", T),
+                 ("5:47.2", []), ("21:35.0", []), ("12", [])],
+                [("2210", []), ("3", []), ("C", A), ("SO", []), ("T", T),
+                 ("5:49.0", []), ("21:44.0", []), ("13", [])]]
+        got, _ = C.detectColumns(rows)
+        self.assertEqual(got["place"], 1)
+
+    def test_a_tie_is_not_a_disqualification(self):
+        """Two athletes can share a place; the test is non-decreasing."""
+        rows = [[("7", []), ("A", A), ("SR", []), ("T", T), ("5:1.0", []),
+                 ("20:00.0", []), ("", [])],
+                [("7", []), ("B", A), ("JR", []), ("T", T), ("5:1.0", []),
+                 ("20:00.0", []), ("", [])],
+                [("9", []), ("C", A), ("SO", []), ("T", T), ("5:2.0", []),
+                 ("20:10.0", []), ("", [])]]
+        got, _ = C.detectColumns(rows)
+        self.assertEqual(got["place"], 0)
+
+    def test_the_header_settles_it_outright_when_there_is_one(self):
+        rows = [[("1041", []), ("13", []), ("A", A), ("SR", []), ("T", T),
+                 ("5:44.9", []), ("21:26.1", []), ("11", [])]]
+        got, _ = C.detectColumns(rows, ["BIB", "PL", "NAME", "YR", "TEAM",
+                                        "Avg. Mile", "TIME", "SCORE"])
+        self.assertEqual(got["place"], 1)
+
+
 class OddRows(unittest.TestCase):
     """A single row can be strange; the table's map is what most agree on."""
 

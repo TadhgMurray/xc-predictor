@@ -14,6 +14,7 @@
 import re
 from bs4 import BeautifulSoup
 from parse_xc import parseXCRow, _cellText, _toIntOrNone, _extractTeam
+from column_map import detectColumns, trustworthy
 from parse_time import parseTimeToSeconds
  
 # ------------------------------------------------------------------ #
@@ -125,6 +126,34 @@ def _isIndividualTable(table):
     return "NAME" in headers
  
  
+# How many data rows to show the column detector. Enough that one odd row --
+# a name-only finisher, a blank year, a DNF with no time -- cannot move the
+# map, and few enough that it costs nothing on a 400-finisher race.
+_COLMAP_SAMPLE = 12
+
+
+def _headerTexts(table):
+    """The <th> texts of a table's header row, or None."""
+    head = table.find("thead")
+    if head is None:
+        return None
+    return [th.get_text().strip() for th in head.find_all("th")]
+
+
+def _sampleCells(rows):
+    """The first few data rows as (text, [href, ...]) tuples -- the plain
+    shape column_map takes, so that module needs no BeautifulSoup."""
+    out = []
+    for tr in rows[:_COLMAP_SAMPLE]:
+        cells = tr.find_all("td")
+        if not cells:
+            continue
+        out.append([(td.get_text().strip(),
+                     [a.get("href") or "" for a in td.find_all("a")])
+                    for td in cells])
+    return out
+
+
 # _parseRaceTable
 # Purpose: Parse one individual-results table into result rows, attaching the
 #          race context (event id/name, gender, distance) to each.
@@ -146,10 +175,24 @@ def _parseRaceTable(table, meet_id, event_id, event_name):
     if body is None:
         return []
  
+    rows = body.find_all("tr", recursive=False)
+
+    # ★ WHICH COLUMN IS WHICH, ONCE PER TABLE (column_map). Computed from what
+    #   the cells CONTAIN, so an inserted or reordered tfrrs column is followed
+    #   instead of silently misread -- see column_map's header for the shift
+    #   that would otherwise store the avg-mile pace as a finish time.
+    #
+    # ! ONCE, NOT PER ROW: it is a property of the table, one odd row must not
+    #   move it, and voting needs several rows anyway.
+    colmap, note = detectColumns(_sampleCells(rows), _headerTexts(table))
+    if note:
+        # ⚠ LOUD. A layout change is a thing to know about the same day, not a
+        #   thing to infer from the ratings a month later.
+        print(f"[tfrrs] meet {meet_id} event {event_id}: {note}", flush=True)
+
     out = []
-    # recursive=False: only this table's own rows, never rows of a nested table.
-    for tr in body.find_all("tr", recursive=False):
-        row = parseXCRow(tr)
+    for tr in rows:
+        row = parseXCRow(tr, colmap)
         # Attach race context to EVERY row (parsed or not) so nothing floats free.
         # gender is overridden from the title because the race defines it - more
         # reliable than parseXCRow's per-row slug guess (and present even when a
