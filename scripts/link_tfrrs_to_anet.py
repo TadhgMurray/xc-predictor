@@ -131,45 +131,102 @@ def collegeTeams(cur):
 #
 # ! DISTINCT PERSON PER (string, team), NOT ROWS. A tfrrs school with one
 #   prolific athlete is not a link; five athletes is.
-_SQL = """
-    WITH anet AS (
-        SELECT r.person_id, substr(r.date, 1, 4)::int AS yr, r.team_id
-        FROM   {table} r
-        WHERE  r.person_id IS NOT NULL
-          AND  r.team_id = ANY(%(teams)s)
-          AND  r.date ~ '^(19|20)[0-9][0-9]-'
-        GROUP  BY 1, 2, 3
-    ), tf AS (
-        SELECT r.person_id, substr(r.date, 1, 4)::int AS yr,
-               btrim(r.school) AS school
-        FROM   {table} r
-        WHERE  r.person_id IS NOT NULL AND r.source = 'tfrrs'
-          AND  r.school IS NOT NULL AND btrim(r.school) <> ''
-          AND  r.date ~ '^(19|20)[0-9][0-9]-'
-        GROUP  BY 1, 2, 3
-    )
-    SELECT tf.school, anet.team_id,
-           count(DISTINCT tf.person_id) AS n_athletes,
-           count(DISTINCT tf.yr)        AS n_seasons
-    FROM   tf JOIN anet ON anet.person_id = tf.person_id AND anet.yr = tf.yr
+#
+# ⚠⚠ AND IT HAD NEVER ONCE RUN (owner, 2026-09-17: "it's hanging now after
+#    the 2,034 teams are college"). It was not hanging -- until this morning
+#    collegeTeams returned {} and main() exited before reaching here, so the
+#    first time this query executed was the first time anybody waited on it.
+#
+#    As written it was two independent aggregates of the WHOLE table --
+#    `anet` over every row on a college team, `tf` over every tfrrs row in a
+#    54M-row table -- each materialised in full and then joined. The tfrrs
+#    side does not depend on the teams at all, so the expensive half was
+#    computed without ever being narrowed by the cheap half.
+#
+# ★ SO THE SMALL SIDE IS BUILT FIRST, INDEXED, AND THE BIG SIDE IS STREAMED
+#   THROUGH IT. The anet leg on 2,034 teams is small and reachable by index;
+#   materialise it, index (person_id, yr), ANALYZE so the planner knows it is
+#   small, and the tfrrs rows then hash-join against it in one scan instead
+#   of being grouped in their entirety first.
+#
+# ! THE COUNTS ARE UNCHANGED. The old `tf` CTE pre-grouped to distinct
+#   (person, yr, school); count(DISTINCT ...) is insensitive to duplicate
+#   rows, so folding that grouping into the join gives the same numbers.
+#
+# ! AND IT SAYS WHERE IT IS. This project has learnt the same lesson at least
+#   four times (rebuild_overrides, --reground, the extraction): a silent slow
+#   step is indistinguishable from a hung one, and the person waiting cannot
+#   tell whether to keep waiting.
+_ANET_SQL = """
+    CREATE TEMP TABLE ltl_anet AS
+    SELECT DISTINCT r.person_id, substr(r.date, 1, 4)::int AS yr, r.team_id
+    FROM   {table} r
+    WHERE  r.person_id IS NOT NULL
+      AND  r.team_id = ANY(%(teams)s)
+      AND  r.date ~ '^(19|20)[0-9][0-9]-'
+      AND  (%(since)s::int IS NULL OR substr(r.date, 1, 4)::int >= %(since)s)
+"""
+
+_VOTE_SQL = """
+    SELECT btrim(r.school) AS school, a.team_id,
+           count(DISTINCT r.person_id) AS n_athletes,
+           count(DISTINCT a.yr)        AS n_seasons
+    FROM   {table} r
+    JOIN   ltl_anet a ON a.person_id = r.person_id
+                     AND a.yr = substr(r.date, 1, 4)::int
+    WHERE  r.person_id IS NOT NULL AND r.source = 'tfrrs'
+      AND  r.school IS NOT NULL AND btrim(r.school) <> ''
+      AND  r.date ~ '^(19|20)[0-9][0-9]-'
+      AND  (%(since)s::int IS NULL OR substr(r.date, 1, 4)::int >= %(since)s)
     GROUP  BY 1, 2
 """
 
 
-def votes(cur, teams):
+def votes(cur, teams, since=None, verbose=True):
     """{tfrrs school: {team_id: (n_athletes, n_seasons)}} over both tables."""
+    import time
     out = {}
     for table in ("results", "results_tf"):
         cur.execute("""SELECT column_name FROM information_schema.columns
                        WHERE table_schema = 'public' AND table_name = %s
                          AND column_name = 'team_id'""", (table,))
         if cur.fetchone() is None:
+            if verbose:
+                print(f"  {table}: no team_id column, skipped", flush=True)
             continue
-        cur.execute(_SQL.format(table=table), {"teams": sorted(teams)})
-        for school, team_id, n_ath, n_seas in cur.fetchall():
+        t0 = time.time()
+        if verbose:
+            print(f"  {table}: collecting the college teams' athlete-years "
+                  f"(indexed on team_id, so this is the quick half)...",
+                  flush=True)
+        cur.execute("DROP TABLE IF EXISTS ltl_anet")
+        cur.execute(_ANET_SQL.format(table=table),
+                    {"teams": sorted(teams), "since": since})
+        cur.execute("CREATE INDEX ltl_anet_idx ON ltl_anet (person_id, yr)")
+        cur.execute("ANALYZE ltl_anet")
+        cur.execute("SELECT count(*), count(DISTINCT person_id) FROM ltl_anet")
+        n_rows, n_people = cur.fetchone()
+        if verbose:
+            print(f"    {n_rows:,} athlete-years over {n_people:,} people "
+                  f"({time.time() - t0:.0f}s)", flush=True)
+        if not n_rows:
+            cur.execute("DROP TABLE IF EXISTS ltl_anet")
+            continue
+        t1 = time.time()
+        if verbose:
+            print(f"    now scanning {table} for the tfrrs rows those same "
+                  f"people wrote -- ONE pass, several minutes on the big "
+                  f"table, no output until it lands", flush=True)
+        cur.execute(_VOTE_SQL.format(table=table), {"since": since})
+        got = cur.fetchall()
+        if verbose:
+            print(f"    {len(got):,} (string, team) pairs "
+                  f"({time.time() - t1:.0f}s)", flush=True)
+        for school, team_id, n_ath, n_seas in got:
             cell = out.setdefault(school, {}).setdefault(int(team_id), [0, 0])
             cell[0] += int(n_ath)
             cell[1] = max(cell[1], int(n_seas))
+        cur.execute("DROP TABLE IF EXISTS ltl_anet")
     return out
 
 
@@ -217,6 +274,12 @@ def main():
     ap.add_argument("--show", type=int, default=30)
     ap.add_argument("--min-athletes", type=int, default=MIN_ATHLETES)
     ap.add_argument("--min-share", type=float, default=MIN_SHARE)
+    ap.add_argument("--since", type=int, default=None, metavar="YEAR",
+                    help="only athlete-years from YEAR on. The whole corpus "
+                         "is two full passes over 54M rows; --since 2015 is "
+                         "the same answer for any team still running, in a "
+                         "fraction of the time. Fewer years is less "
+                         "evidence, so a link may drop below MIN_ATHLETES.")
     args = ap.parse_args()
 
     from database import getConn
@@ -235,7 +298,10 @@ def main():
                   "school_identity falls back to the college directory and "
                   "the home-state inference until then.")
             return 0
-        counted = votes(cur, teams)
+        print(f"\n  the evidence pass: two tables, one scan each. The tfrrs "
+              f"half is the slow one and says nothing while it runs."
+              + (f" (--since {args.since})" if args.since else ""), flush=True)
+        counted = votes(cur, teams, since=args.since)
         links, rejected = decide(counted, teams, args.min_athletes, args.min_share)
         print(f"\n  {len(counted):,} tfrrs school strings share an athlete-year "
               f"with an anet college team")

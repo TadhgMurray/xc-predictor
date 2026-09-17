@@ -285,13 +285,50 @@ def test_only_anet_college_teams_are_candidates():
     rows share a calendar year -- spring track, then autumn cross country --
     so a shared person and year alone would marry a high school to a
     college."""
-    src = open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")).read()
-    body = src[src.index("def collegeTeams("):src.index("_SQL = ")]
+    with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
+        src = fh.read()
+    body = src[src.index("def collegeTeams("):src.index("_ANET_SQL = ")]
     assert 'if lv == "college"' in body and "loadTeamLevels" in body
-    # the votes query can only see those teams
+    # the anet side of the evidence can only hold those teams...
     assert "r.team_id = ANY(%(teams)s)" in src
+    # ...and the year must still match on both sides, which is the guard
+    # itself: a high school spring and a college autumn share a year, so the
+    # team's LEVEL is what keeps them apart, not the year alone.
+    assert "a.yr = substr(r.date, 1, 4)::int" in src
     assert "r.source = 'tfrrs'" in src
-    assert "anet.yr = tf.yr" in src
+
+
+def test_the_evidence_pass_narrows_the_big_table_with_the_small_one():
+    """⚠ IT HAD NEVER RUN (owner, 2026-09-17: "it's hanging now after the
+    2,034 teams are college"). Until the level fix, collegeTeams returned {}
+    and main() exited before reaching the query -- so the first execution was
+    the first time anybody waited on it.
+
+    It was two independent aggregates of the WHOLE table, and the expensive
+    one (every tfrrs row of 54M) did not depend on the teams at all. The
+    small side is built first and indexed; the big side streams through it.
+    """
+    with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
+        src = fh.read()
+    assert "CREATE TEMP TABLE ltl_anet" in src
+    assert "CREATE INDEX ltl_anet_idx ON ltl_anet (person_id, yr)" in src
+    assert "ANALYZE ltl_anet" in src
+    # the old shape is gone: no second full aggregate of the tfrrs side
+    assert "), tf AS (" not in src
+    # and it says where it is
+    i = src.index("def votes(")
+    body = src[i:src.index("\ndef decide(", i)]
+    assert body.count("flush=True") >= 3, "a silent slow pass reads as a hung one"
+
+
+def test_the_whole_corpus_is_not_the_only_option():
+    """--since: fewer years is less evidence, but an answer beats a terminal
+    that has printed nothing for an hour."""
+    with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
+        src = fh.read()
+    assert '"--since"' in src
+    assert src.count("%(since)s::int IS NULL") == 2, "both halves, or the " \
+        "anet side is narrowed and the tfrrs side is not"
 
 
 def test_a_state_belongs_to_the_school_not_to_its_athletes():
