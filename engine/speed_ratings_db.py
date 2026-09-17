@@ -861,6 +861,32 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
 #   apart by tfrrs: a school whose tfrrs slug says college is a college.
 #   The table is printed, and XCP_ANET_LEVELS="4=college,3=hs,5=club"
 #   states any code outright.
+# ★ THE NAMING, ON ITS OWN AND PURE, so the decision can be tested against a
+#   real code table without a corpus (tests/test_team_levels.py). The shares
+#   come from loadTeamLevels' tally; `c_share` is how many of the code's
+#   teams wear a school name we know to be a college.
+def nameLevelCode(shares, n, c_share, min_rows=200, share=0.5,
+                  college_share=0.25):
+    """'hs' / 'ms' / 'elem' / 'college' / 'club', or None when the evidence
+    does not name this code."""
+    if n < min_rows:
+        return None
+    name = None
+    for lv in ("hs", "ms", "elem"):
+        if shares.get(lv, 0.0) >= share:
+            name = lv
+    # ★ A CLASS YEAR SAYS COLLEGE ON ITS OWN -- no second table, no name
+    #   matching, no threshold on somebody else's spelling. Checked AFTER the
+    #   numeric grades so a code that looks like a high school never lands
+    #   here on a stray FR/SO.
+    if name is None and shares.get("coll", 0.0) >= share:
+        name = "college"
+    # the old indirect test, kept for a feed that really is ungraded
+    if name is None and shares.get("none", 0.0) >= share:
+        name = "college" if c_share >= college_share else "club"
+    return name
+
+
 def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
     """({anet team_id: level name}, {code: level name}, table rows). level
     names: 'college', 'hs', 'ms', 'elem', 'club'; a code that cannot be
@@ -873,11 +899,43 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
         cur.execute("SELECT team_id, level, school FROM anet_team WHERE level IS NOT NULL")
         teams = {int(t): (int(lv), sc) for t, lv, sc in cur.fetchall()}
         # the rows' grades per code, from the XC table (the anet grades)
+        # ⚠⚠ "A COLLEGE ROW CARRIES NO GRADE" IS FALSE, AND THE TABLE HID IT
+        #    (server, 2026-09-17). Code 8 -- 2,015,662 rows over 2,034 teams,
+        #    which is the college feed -- read hs 0%, ms 0%, elem 0%, none 3%.
+        #    Three percent. The other NINETY-SEVEN were in `other`, a bucket
+        #    nothing counted and printTeamLevels did not show, so the one
+        #    number that identified the code was invisible in the diagnostic
+        #    written to identify it.
+        #
+        #    College rows are not ungraded: they carry a CLASS YEAR, FR / SO /
+        #    JR / SR / RS, and every one of those fell through to `other`. So
+        #    no code could reach the `none >= share` test, no code was ever
+        #    named 'college', and link_tfrrs_to_anet had nothing to link.
+        #
+        # ★ SO THE CLASS YEAR IS ITS OWN BUCKET, AND IT IS DIRECT EVIDENCE --
+        #   better than the old indirect test ("ungraded, and a quarter of its
+        #   teams' schools are known colleges"), which needed a second table
+        #   that may not exist. The spellings are grade_sanity.classGrade's,
+        #   inlined rather than called: that function is created by a pipeline
+        #   step and this must work on a database where it has not run.
+        #
+        # ! THE NUMERIC GRADES STILL WIN FIRST. A high school CAN spell its
+        #   grades FR/SO/JR/SR -- but anet's does not (code 4 is 96% numeric
+        #   9-12, measured above), and the hs/ms/elem tests below are applied
+        #   before this one, so a code that looks numeric is never called
+        #   college. `other` is printed now too, so the next thing that hides
+        #   in it does not get to.
         cur.execute("""
             SELECT t.level,
                    CASE WHEN r.grade ~ '^(9|10|11|12)$' THEN 'hs'
                         WHEN r.grade ~ '^[678]$' THEN 'ms'
                         WHEN r.grade ~ '^[1-5]$' THEN 'elem'
+                        WHEN lower(rtrim(btrim(r.grade), '. ')) IN (
+                                 'fr', 'fresh', 'freshman', 'freshmen', 'fr-1',
+                                 'so', 'soph', 'sophomore', 'so-2',
+                                 'jr', 'junior', 'jr-3',
+                                 'sr', 'senior', 'sr-4',
+                                 'rs', 'redshirt') THEN 'coll'
                         WHEN r.grade IS NULL OR btrim(r.grade) IN ('', '-') THEN 'none'
                         ELSE 'other' END AS lv,
                    count(*)
@@ -918,13 +976,7 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
         shares = {k: v / n for k, v in t.items()} if n else {}
         c_teams = by_code_teams.get(code, [])
         c_share = (sum(c_teams) / len(c_teams)) if c_teams else 0.0
-        name = None
-        if n >= min_rows:
-            for lv in ("hs", "ms", "elem"):
-                if shares.get(lv, 0.0) >= share:
-                    name = lv
-            if name is None and shares.get("none", 0.0) >= share:
-                name = "college" if c_share >= college_share else "club"
+        name = nameLevelCode(shares, n, c_share, min_rows, share, college_share)
         rows.append((code, n, shares, len(c_teams), c_share, name))
         if name:
             meaning[code] = name
@@ -1125,11 +1177,16 @@ def isClubName(school, colleges=()):
 def printTeamLevels(meaning, rows):
     print("[engine] anet team levels (code -> meaning, from our rows' grades and "
           "tfrrs's college slugs; XCP_ANET_LEVELS=\"4=college,5=club\" states one):")
-    print(f"        {'code':>5}{'rows':>11}{'hs':>7}{'ms':>7}{'elem':>7}{'none':>7}"
-          f"{'teams':>8}{'tfrrs col.':>11}   meaning")
+    # ⚠ EVERY BUCKET, INCLUDING `other`. The version that printed four of
+    #   the six hid 97% of the college code's rows, which is the one number
+    #   that would have named it (2026-09-17).
+    cols = ("hs", "ms", "elem", "coll", "none", "other")
+    print(f"        {'code':>5}{'rows':>11}"
+          + "".join(f"{c:>7}" for c in cols)
+          + f"{'teams':>8}{'known col.':>11}   meaning")
     for code, n, shares, n_teams, c_share, name in rows:
         print(f"        {code:>5}{n:>11,}"
-              + "".join(f"{100 * shares.get(k, 0.0):>6.0f}%" for k in ("hs", "ms", "elem", "none"))
+              + "".join(f"{100 * shares.get(k, 0.0):>6.0f}%" for k in cols)
               + f"{n_teams:>8,}{100 * c_share:>10.0f}%   {meaning.get(code) or '(unnamed)'}")
 
 
