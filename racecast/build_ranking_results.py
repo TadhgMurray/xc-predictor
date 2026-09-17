@@ -968,6 +968,49 @@ def _isNonSchoolCached(school):
     return hit
 
 
+# ★ ONE TEAM, ONE SPELLING, ON THE BOARDS ONLY (owner, 2026-09-17: one
+#   athlete twice on one board, "La Jolla (CA)" at 15 and "La Jolla-CA" at
+#   16). scripts/merge_school_names.py decides which strings are one team --
+#   the name proposes, the shared athletes decide, an anet team id vetoes --
+#   and writes school_name_alias. This is where it is applied.
+#
+# ! HERE, AND NOT IN results. The project's standing rule (app.py: "the raw
+#   tables keep the raw strings -- the scrapers would fight anything else;
+#   the qualified label lives in the derived layer"). Folding at the board
+#   means the feeds keep their own spelling, the undo is a rerun with the
+#   table dropped, and nothing has to be backfilled.
+#
+# ! LOADED ONCE, INTO A DICT, because this is called per row of 61.6M. An
+#   absent table is an empty dict and every row passes through untouched --
+#   exactly today's behaviour.
+_NAME_ALIAS = {}
+
+
+def loadNameAliases(cur):
+    """{variant: canonical} from school_name_alias, or {} when it has not
+    been built. Returns how many it loaded."""
+    _NAME_ALIAS.clear()
+    cur.execute("SELECT to_regclass('school_name_alias')")
+    if cur.fetchone()[0] is None:
+        return 0
+    cur.execute("SELECT variant, canonical FROM school_name_alias")
+    for variant, canonical in cur.fetchall():
+        if variant and canonical and variant != canonical:
+            _NAME_ALIAS[variant] = canonical
+    # ⚠ NO CHAINS -- school_name.resolveChains, which is pure and tested.
+    from school_name import resolveChains
+    flat = resolveChains(dict(_NAME_ALIAS))
+    _NAME_ALIAS.clear()
+    _NAME_ALIAS.update({k: v for k, v in flat.items() if k != v})
+    return len(_NAME_ALIAS)
+
+
+def canonicalSchool(school):
+    """The spelling this team's rows are filed under. Identity when the
+    alias table is absent or has nothing to say."""
+    return _NAME_ALIAS.get(school, school)
+
+
 # COPY's TEXT format needs four characters escaped, and essentially no row
 # contains any of them. Measured over 2M strings: four chained .replace() calls
 # 0.36s, str.translate 2.02s (it always allocates), a membership guard that
@@ -1168,7 +1211,11 @@ def prepareRow(row, sport):
     EXTRACT(year FROM race_date) IS NO LONGER EQUIVALENT to this column; any
     SQL that assumes it is will be wrong for TF by one year.
     """
-    school = row.school
+    # ★ FOLDED BEFORE ANYTHING ELSE LOOKS AT IT, so the filters, the unit
+    #   lookup, the stored column and athlete_season's mode() all see one
+    #   spelling. Folding later would leave two schools everywhere but the
+    #   display.
+    school = canonicalSchool(row.school)
     if _isNonSchoolCached(school):
         return None
     # Hidden, not corrected -- see panels._DODEA_SCHOOLS.
@@ -2676,6 +2723,18 @@ def main():
         #   a property of cursors rather than of this query. See dbfast.
         tuneSession(conn)
         if stage in (None, "stream"):
+            # ★ IN EVERY STREAM PROCESS, AND THAT IS WHY IT IS HERE. The four
+            #   `--stage stream` runs are separate processes with their own
+            #   module state, so a load in `prepare` would leave all four of
+            #   them folding nothing. An absent table loads {} and every row
+            #   passes through untouched.
+            with conn.cursor() as _cur:
+                _n = loadNameAliases(_cur)
+            print(f"  {_n:,} school spellings fold onto another team's name "
+                  f"(school_name_alias; scripts/merge_school_names.py --write "
+                  f"builds it)" if _n else
+                  "  no school_name_alias -- every school string is its own "
+                  "team, as before", flush=True)
             with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
                 prepareGenderTemp(conn)
                 prepareXcTfrrsDistTemp(conn)

@@ -780,6 +780,14 @@ step 09b_fill         "$PY" -u engine/fill_ratings.py
 # ---- boards and pages ----------------------------------------------- #
 # the two sports stream side by side (each is a Python row walk of ~30M
 # rows); prepare makes the shadow once, finish indexes and swaps
+# ! BEFORE THE BOARDS, BECAUSE THE BOARDS APPLY IT. school_name_alias folds
+#   two spellings of one team onto one name -- "La Jolla (CA)" and
+#   "La Jolla-CA" put the same athlete twice on one board. The name only
+#   proposes; shared athletes decide and an anet team id vetoes, so the four
+#   schools called Oregon stay four schools. Additive: read the dry run
+#   (scripts/merge_school_names.py --show 80) before trusting a change to
+#   the bars, and drop the table to undo it on the next run.
+step 09c_school_names "$PY" -u scripts/merge_school_names.py --write
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in two halves on a date seam (XCP_RANK_SEAM), four streams
 # into one shadow: the row walk is Python per row and was 52 minutes
