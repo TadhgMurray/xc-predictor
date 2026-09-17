@@ -887,11 +887,26 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
         tally = {}
         for code, lv, n in cur.fetchall():
             tally.setdefault(int(code), {})[lv] = int(n)
-        # the schools tfrrs calls colleges
-        cur.execute("""SELECT DISTINCT lower(btrim(school)) FROM results_tf
-                       WHERE team_slug IS NOT NULL AND team_slug LIKE '%%\_college\_%%'
-                         AND school IS NOT NULL""")
-        colleges = {r[0] for r in cur.fetchall()}
+        # ⚠ THE ONLY PLACE THAT ASKED FOR team_slug WITHOUT PROBING FOR IT,
+        #   and on the server it is not there:
+        #
+        #     psycopg2.errors.UndefinedColumn: column "team_slug" does not
+        #     exist  (link_tfrrs_to_anet -> collegeTeams -> here, 2026-09-17)
+        #
+        #   database._migrateResultsAddTeamSlug adds it, and that migration
+        #   has not run on every database -- which is exactly why every OTHER
+        #   reader of the column (loadClubTeams, _teamColumns, _collegeNames)
+        #   checks information_schema first. This one did not, so a table
+        #   shape that is merely OLD took the whole job down.
+        #
+        # ★ AND _collegeNames IS ALREADY THAT QUESTION, thirty lines below.
+        #   It probes for the column on BOTH tables and unions the college
+        #   directory's 2,000 NCAA/NAIA names, so on a database with no slug
+        #   at all it still answers -- where this hand-rolled copy returned
+        #   the empty set, named no code 'college', and left link_tfrrs_to_anet
+        #   with nothing to link even once the crash was gone. One rule, one
+        #   spelling, and the better of the two.
+        colleges = _collegeNames(cur)
     # per code: the share of its TEAMS whose school tfrrs calls a college
     by_code_teams = {}
     for t, (code, sc) in teams.items():

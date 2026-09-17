@@ -434,3 +434,66 @@ def test_the_pipeline_builds_the_link_before_it_reads_it():
         sh = fh.read()
     assert sh.index("10b0_tfrrs_link") < sh.index("10b_school_ids")
     assert "scripts/link_tfrrs_to_anet.py --write" in sh
+
+
+# ===================================================================== #
+#  AN OPTIONAL COLUMN IS PROBED, NEVER ASSUMED                           #
+# ===================================================================== #
+#
+# ⚠ THE CRASH (server, 2026-09-17):
+#
+#     link_tfrrs_to_anet -> collegeTeams -> speed_ratings_db.loadTeamLevels
+#     psycopg2.errors.UndefinedColumn: column "team_slug" does not exist
+#
+#   results_tf.team_slug is added by database._migrateResultsAddTeamSlug and
+#   that migration has not run everywhere. Every OTHER reader of the column
+#   -- loadClubTeams, _teamColumns, _collegeNames -- checks
+#   information_schema first; loadTeamLevels was the one that did not, so a
+#   table shape that is merely OLD took the whole job down.
+#
+# ★ AND THE FIX IS NOT A PROBE, IT IS THE FUNCTION THAT ALREADY HAS ONE.
+#   _collegeNames asks the same question -- which school strings are colleges
+#   -- on both tables, guarded, AND unions the college directory's names. So
+#   on a database with no slug at all it still answers, where the hand-rolled
+#   copy returned the empty set and named no code 'college'.
+
+def _speedRatingsDbSource():
+    with open(os.path.join(_ROOT, "engine", "speed_ratings_db.py")) as fh:
+        return fh.read()
+
+
+def test_load_team_levels_does_not_assume_team_slug():
+    src = _speedRatingsDbSource()
+    i = src.index("def loadTeamLevels(")
+    body = src[i:src.index("\ndef loadClubPros(", i)]
+    assert "team_slug" not in body.split("★ AND _collegeNames")[-1], \
+        "loadTeamLevels queries team_slug again"
+    assert "colleges = _collegeNames(cur)" in body
+
+
+def test_every_team_slug_query_in_that_module_is_guarded():
+    """The rule, not the incident: no SQL in speed_ratings_db may name
+    team_slug without an information_schema check in the same function."""
+    import re
+    src = _speedRatingsDbSource()
+    funcs = re.split(r"\ndef ", src)
+    offenders = []
+    for chunk in funcs:
+        if "team_slug" not in chunk:
+            continue
+        # the column list builder names it to SELECT it, which is the probe
+        if "information_schema" in chunk or "column_name IN ('team_id'" in chunk:
+            continue
+        offenders.append(chunk.split("(")[0][:60])
+    assert not offenders, offenders
+
+
+def test_no_college_teams_says_which_kind_of_nothing_it_is():
+    """Three causes, three answers -- and the level table is printed rather
+    than pointed at."""
+    with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
+        src = fh.read()
+    assert "NO anet LEVEL CODE COULD BE NAMED 'college'" in src
+    assert "XCP_ANET_LEVELS" in src
+    assert "printTeamLevels(meaning, _rows)" in src
+    assert "_migrateResultsAddTeamSlug" in src

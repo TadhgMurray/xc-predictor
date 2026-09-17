@@ -79,12 +79,44 @@ CREATE TABLE IF NOT EXISTS school_team_link (
 def collegeTeams(cur):
     """{team_id: (school, state)} for anet teams whose LEVEL IS COLLEGE.
     The guard: a high school team is not a candidate at all."""
-    from speed_ratings_db import loadTeamLevels
+    from speed_ratings_db import loadTeamLevels, printTeamLevels
     by_team, meaning, _rows = loadTeamLevels()
     college = {t for t, lv in by_team.items() if lv == "college"}
     print(f"  anet level codes: {meaning}")
     print(f"  {len(college):,} anet teams are colleges")
     if not college:
+        # ⚠ SAY WHICH KIND OF NOTHING THIS IS. "No college teams" has three
+        #   causes and they need three different answers; printing one line
+        #   for all of them is how the last run looked like a no-op when it
+        #   was a table-shape problem (UndefinedColumn on results_tf.team_slug,
+        #   2026-09-17 -- speed_ratings_db.loadTeamLevels now probes for it,
+        #   but a database with NEITHER the slug NOR a college_directory
+        #   cannot name a college code at all and will land here).
+        print("\n  ! NO anet LEVEL CODE COULD BE NAMED 'college'.")
+        if not meaning:
+            print("    No code could be named at all -- anet_team is empty or "
+                  "has no `level`. Run scripts/anet_teams.py --unfetched "
+                  "--write first.")
+        else:
+            print(f"    Codes that WERE named: {meaning}. A code is called "
+                  f"college when its rows carry no grade AND a quarter of its "
+                  f"teams' schools are known colleges -- which needs either "
+                  f"results_tf.team_slug (added by "
+                  f"database._migrateResultsAddTeamSlug, and only on rows "
+                  f"scraped since) or the college_directory table "
+                  f"(scripts/build_college_directory.py).")
+        print("    Or state the codes outright and re-run, e.g.")
+        print('      XCP_ANET_LEVELS="8=college,4=hs" python '
+              'scripts/link_tfrrs_to_anet.py --show 60')
+        # ! THE EVIDENCE, HERE, NOT A POINTER TO IT. This is the table the
+        #   codes were judged from -- rows per code, the grade shares, and the
+        #   share of each code's teams whose school is a known college. It is
+        #   what says WHICH code should have been named, and a reader who has
+        #   to go and run something else to see it mostly does not.
+        if _rows:
+            print("")
+            printTeamLevels(meaning, _rows)
+        print("")
         return {}
     cur.execute("""
         SELECT team_id, school, upper(btrim(COALESCE(state, anet_state)))
