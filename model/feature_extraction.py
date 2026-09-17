@@ -273,6 +273,68 @@ MAX_SEQ_LEN = 512
 #   each career chronological.
 _STREAM_BATCH = 50_000
 
+
+# ------------------------------------------------------------------ #
+# ⚠⚠ A LITERAL `%` IN A QUERY IS A PLACEHOLDER, EVEN INSIDE A `--` COMMENT.
+#     psycopg2 does not parse SQL: `cur.execute(sql, params)` is, in effect,
+#     `sql % adapted_params`, so every `%` in the string is a format slot and
+#     a `--` comment hides nothing. Prose in these queries therefore COUNTS.
+#
+#     The measured failure (2026-09-17): the tfrrs-join fix (88ab8df) landed
+#     five ordinary percentages in the XC comments -- "0.0% of tfrrs rows",
+#     "25.1% of all rated COLLEGE cross country", "athlete_id NULL ON 100% OF
+#     ROWS", "anet 100%, tfrrs ~70%". That made the XC query want NINE format
+#     slots where the callers pass two (streamXCResults) or four
+#     (personResultsSql), and psycopg2 answers a short params tuple with
+#
+#         IndexError: tuple index out of range
+#
+#     which names neither the query nor the `%`. It took down
+#     build_recruit_projection, the predictions page and the XC half of
+#     extraction at once -- three symptoms, one comment.
+#
+# ! ESCAPED HERE, NOT POLICED IN THE PROSE. Demanding every future comment
+#   write `%%` is a rule that holds until the next person writes a
+#   percentage, and the failure it produces is the unreadable one above. So
+#   the builder doubles the literal `%` itself and the comments stay
+#   ordinary English. A `%` that opens a real placeholder -- `%s`, `%(name)s`
+#   or an already-escaped `%%` -- is left exactly as it is.
+#
+# ! RUN BEFORE personResultsSql ADDS ITS OWN `%s`, never after: that filter's
+#   two placeholders are query text, not prose, and doubling them would bind
+#   the id array to nothing.
+def escapeLiteralPercent(sql):
+    """Double every `%` that is not already starting a psycopg2 placeholder."""
+    out, i, n = [], 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch != "%":
+            out.append(ch)
+            i += 1
+            continue
+        nxt = sql[i + 1:i + 2]
+        if nxt in ("s", "%", "("):
+            out.append(sql[i:i + 2])
+            i += 2
+        else:
+            out.append("%%")
+            i += 1
+    return "".join(out)
+
+
+def placeholderCount(sql):
+    """How many params `sql` will consume -- the check the callers pin."""
+    i, n = 0, 0
+    while i < len(sql):
+        if sql[i] != "%":
+            i += 1
+        elif sql[i + 1:i + 2] == "%":
+            i += 2
+        else:
+            n += 1
+            i += 2
+    return n
+
 _ORDER_BY = """
         ORDER BY (r.person_id IS NULL) ASC,
                  COALESCE(r.person_id, r.athlete_id) ASC,
@@ -572,6 +634,9 @@ _XC_SQL = f"""
                           WHERE wp.person_id = r.person_id)
 {_ORDER_BY}
 """
+# The prose above is full of ordinary percentages; this is what keeps them
+# from being read as format slots. See escapeLiteralPercent.
+_XC_SQL = escapeLiteralPercent(_XC_SQL)
 
 
 def _streamRows(conn, sql, params, name):
@@ -849,6 +914,32 @@ _TF_SQL = f"""
                               WHERE wp.person_id = r.person_id)
 {_ORDER_BY}
 """
+_TF_SQL = escapeLiteralPercent(_TF_SQL)
+
+
+# ★ AND THE COUNT IS PINNED, because escaping only covers the failure mode
+#   this module can see. Each corpus query takes exactly two params -- the
+#   weather hour and the minimum normalized time -- and personResultsSql adds
+#   two more for the id array. Anything else means a placeholder arrived from
+#   somewhere that is NOT this file.
+#
+# ⚠ THE ONE PLACE IT CAN COME FROM IS corrections.py, which is GENERATED and
+#   not in the checkout: {_OV_JOIN_XC} is baked in above at import. A `%s` in
+#   an override expression is a real placeholder, so escapeLiteralPercent
+#   leaves it alone and correctly so -- and it is then a fifth hole nobody
+#   passes. Fail here, naming the file, rather than as an IndexError inside
+#   psycopg2 at the far end of a six-hour run.
+_CORPUS_PARAMS = 2
+for _name, _sql in (("_XC_SQL", _XC_SQL), ("_TF_SQL", _TF_SQL)):
+    _n = placeholderCount(_sql)
+    if _n != _CORPUS_PARAMS:
+        raise RuntimeError(
+            f"{_name} wants {_n} params, not {_CORPUS_PARAMS}. Every `%` in "
+            f"a query is a format slot -- comments included. If the extra "
+            f"one is a bare `%` in prose, escapeLiteralPercent should have "
+            f"caught it; if it is a `%s`, it came in with the generated "
+            f"engine/corrections.py distance-override join and belongs "
+            f"parameterised or inlined there.")
 
 
 def streamTFResults(conn):
