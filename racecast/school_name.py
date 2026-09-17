@@ -63,14 +63,73 @@ _DECORATION = re.compile(
         )\s*$""",
     re.X)
 
-# Words that say nothing about WHICH school a name means, so a spelling that
-# adds one is the same school ("Williams" / "Williams College"). Deliberately
-# short: anything that can distinguish two institutions stays in the key.
-_SUFFIX_NOISE = {
-    "hs", "h", "s", "high", "school", "schools", "ms", "middle", "jhs",
-    "junior", "senior", "college", "university", "univ", "academy",
-    "the", "team", "tc", "xc", "track",
-}
+# ⚠⚠ LEVEL WORDS ARE NOT NOISE, AND THE FIRST DRY RUN PROVED IT (2026-09-17).
+#    This set used to hold "middle", "ms", "high", "hs", "junior", "senior",
+#    "college", "university", "academy" -- on the theory that "Williams" and
+#    "Williams College" are one team. The corpus answered:
+#
+#      Adrian            <- Adrian College (38)  AND  Adrian Middle School (5)
+#      Cumberland        <- Cumberland High School  AND  Cumberland Middle School
+#      Norwell           <- Norwell Middle School (329 athletes)
+#      Sanford           <- Sanford High School  AND  Sanford School
+#
+#    A middle school is not its high school and a college is not either. That
+#    is the Amherst College / Amherst Regional split this whole branch is
+#    about, and the shared athletes are REAL -- a kid runs the middle school
+#    and then the high school -- which is exactly why the athlete evidence
+#    cannot be trusted to overrule a level word. `school_level` exists to
+#    keep these apart; this must not undo it.
+#
+# ★ SO ONLY DECORATION MERGES: a state suffix, case, and punctuation. That is
+#   narrower than intended and it is the case that was actually reported --
+#   "La Jolla (CA)" and "La Jolla-CA". A shortening like "Williams" /
+#   "Williams College" is a `prefix` candidate, which needs --prefix and a
+#   far higher bar.
+_SUFFIX_NOISE = {"the"}
+
+# ⚠⚠ A ROSTER STATUS IS NOT A TEAM, AND SHARED ATHLETES SAY NOTHING ABOUT IT.
+#    The first dry run folded FORTY spellings of "Unattached" into one
+#    "school" of several thousand athletes -- Unattached (IL), Unattached-IN,
+#    UNATTACHED, 42-UNATTACHED, "Unattached - High School" ... every one of
+#    them sharing athletes with every other, because they are all the same
+#    sentinel and not the same roster. The whole premise of this module ("the
+#    same people wear both spellings, so it is one team") is void for a string
+#    that means "no team".
+#
+# ! THE REPO ALREADY KNEW. racecast/panels.isTeamName is this exact judgement
+#   and is what the boards use; engine/normalize_distance._NON_SCHOOLS is the
+#   same list again. Copied rather than imported because this module is pure
+#   and panels is not -- tests/test_school_name_variants.py pins them equal so
+#   they cannot drift.
+_NOT_A_TEAM_EXACT = frozenset({
+    "unat", "none", "n/a", "na", "n a", "no team", "no school", "independent",
+    "individual", "individuals", "club", "open", "unattached",
+    "unattached runner", "alumni", "guest",
+})
+_NOT_A_TEAM_FRAGMENTS = ("unattached", "individual", "independent",
+                         "no team", "no school")
+
+# A name has to have some name in it. "-mi" and "MI" both reduce to "mi" and
+# were merged with each other; two letters is a state code or a typo, never a
+# school.
+MIN_KEY_CHARS = 3
+
+
+def isRosterStatus(school):
+    """True when the string means "no team" rather than naming one. Pure."""
+    s = (school or "").strip().lower()
+    if not s:
+        return True
+    if s in _NOT_A_TEAM_EXACT:
+        return True
+    return any(frag in s for frag in _NOT_A_TEAM_FRAGMENTS)
+
+
+def mergeable(school):
+    """May this string take part in a merge at all? Pure."""
+    if isRosterStatus(school):
+        return False
+    return len(nameKey(school).replace(" ", "")) >= MIN_KEY_CHARS
 
 
 def splitStateSuffix(school):

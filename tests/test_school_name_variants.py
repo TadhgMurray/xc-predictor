@@ -39,9 +39,70 @@ class Decoration(unittest.TestCase):
     def test_the_owners_two_rows_are_one_team(self):
         self.assertEqual(N.relation("La Jolla (CA)", "La Jolla-CA"), "same")
 
-    def test_a_trailing_level_word_is_decoration_too(self):
-        self.assertEqual(N.relation("La Jolla (CA)", "La Jolla HS"), "same")
-        self.assertEqual(N.relation("Williams", "Williams College"), "same")
+    def test_a_level_word_is_NOT_decoration(self):
+        """⚠⚠ THE FIRST DRY RUN (2026-09-17). Treating "middle", "high",
+        "college" as noise folded:
+
+            Adrian      <- Adrian College (38)  AND  Adrian Middle School (5)
+            Cumberland  <- Cumberland High School AND Cumberland Middle School
+            Norwell     <- Norwell Middle School (329 athletes)
+
+        A middle school is not its high school and a college is neither --
+        that is the Amherst College / Amherst Regional split this branch is
+        about. The shared athletes are REAL (a kid runs the middle school and
+        then the high school), which is exactly why the evidence cannot be
+        allowed to overrule a level word."""
+        for a, b in (("Adrian College", "Adrian Middle School"),
+                     ("Cumberland High School", "Cumberland Middle School"),
+                     ("Sanford School", "Sanford High School")):
+            self.assertIsNone(N.relation(a, b), f"{a} / {b}")
+        # a shortening is a prefix QUESTION, needing --prefix and a high bar
+        self.assertEqual(N.relation("Williams", "Williams College"), "prefix")
+
+
+class NotATeam(unittest.TestCase):
+    """⚠⚠ THE FIRST DRY RUN folded FORTY spellings of "Unattached" into one
+    "school" of several thousand athletes. They share athletes with each
+    other because they are the same SENTINEL, not the same roster -- so this
+    module's whole premise is void for them."""
+
+    def test_every_spelling_of_unattached_is_refused(self):
+        for name in ("Unattached", "unattached", "UNATTACHED",
+                     "Unattached (IL)", "Unattached-IN", "Unattached - MT",
+                     "42-UNATTACHED", "01 01-Unattached", "-Unattached",
+                     "Unattached High School", "unattached-co", "UNAT",
+                     "Independent", "Individual", "Alumni", "Open", "None"):
+            self.assertFalse(N.mergeable(name), name)
+
+    def test_they_are_not_even_candidates(self):
+        names = ["Unattached", "Unattached (IL)", "UNATTACHED", "Unattached-IN"]
+        self.assertEqual(M.candidates(names), [])
+        self.assertEqual(M.candidates(names, want_prefix=True), [])
+
+    def test_a_two_letter_string_is_a_state_code_or_a_typo(self):
+        """"-mi" and "MI" both reduce to "mi", and were merged with each
+        other."""
+        self.assertFalse(N.mergeable("-mi"))
+        self.assertFalse(N.mergeable("MI"))
+        self.assertEqual(M.candidates(["-mi", "MI"]), [])
+
+    def test_a_real_school_is_still_mergeable(self):
+        for name in ("La Jolla (CA)", "La Jolla-CA", "Adrian College",
+                     "Oregon", "Cumberland Middle School"):
+            self.assertTrue(N.mergeable(name), name)
+
+    def test_the_list_agrees_with_the_one_the_boards_use(self):
+        """panels.isTeamName is the same judgement and is what the boards
+        filter on; normalize_distance._NON_SCHOOLS is it again. Copied, not
+        imported -- so pinned equal here rather than left to drift."""
+        import io as _io
+        import re as _re
+        with _io.open(os.path.join(_ROOT, "racecast", "panels.py"),
+                      encoding="utf-8") as fh:
+            panels = fh.read()
+        frags = _re.search(r"_NOT_A_TEAM_FRAGMENTS = \(([^)]*)\)", panels).group(1)
+        for frag in _re.findall(r'"([^"]+)"', frags):
+            self.assertIn(frag, N._NOT_A_TEAM_FRAGMENTS, frag)
 
     def test_the_code_has_to_be_a_real_state(self):
         """"Mid-Pacific" and "Tri-Valley" end in a hyphen and letters too."""

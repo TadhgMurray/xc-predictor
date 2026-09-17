@@ -64,7 +64,8 @@ for _p in (_ROOT, _HERE, os.path.join(_ROOT, "racecast"),
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from school_name import canonicalOf, nameWords              # noqa: E402
+from school_name import (canonicalOf, mergeable,            # noqa: E402
+                         nameWords)
 
 # a decoration difference: believable on modest evidence
 MIN_SHARED = 3
@@ -161,6 +162,13 @@ def candidates(names, want_prefix=False):
     Pure -- takes the names, not a cursor."""
     by_key = {}
     for name in names:
+        # ⚠ A ROSTER STATUS NEVER MERGES. "Unattached" and its forty spellings
+        #   share athletes with each other because they are the same SENTINEL,
+        #   not the same roster -- so the evidence this module runs on means
+        #   nothing there. The first dry run folded all forty into one
+        #   "school" of several thousand people. See school_name.mergeable.
+        if not mergeable(name):
+            continue
         words = nameWords(name)
         if words:
             by_key.setdefault(words, []).append(name)
