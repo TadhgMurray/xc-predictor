@@ -234,7 +234,10 @@
 
                     </td>
 
-                    <td>{{ race.event|event_label }}</td>
+                    {# The round under the event: a prelim and a final are two
+                       races at one distance, and the page used to print the
+                       same "1600m" twice with no way to tell them apart. #}
+                    <td>{{ race.event|event_label }}{% set _rnd = race.round|round_label %}{% if _rnd and _rnd != (race.event|event_label) %}<span class="ev-round">{{ _rnd }}</span>{% endif %}</td>
                     <td>{{ race.result }}</td>
                     {# Derived within the division, ties share a place. No
                        place for field events or DNS/DNF sentinel rows.

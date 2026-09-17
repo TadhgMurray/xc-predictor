@@ -1911,6 +1911,7 @@ def get_races(cur, person_id):
                -- tfrrs keeps it PER DIVISION inside a jsonb blob.
                -- ::text so this column is text in BOTH halves (types must match).
                {_xc_distance_sql('r')}::text AS event,
+               NULL::text                    AS round,
                r.time_seconds                AS time_raw,     -- numeric, for PR comparison
                r.result_id                   AS result_id,
                r.time_seconds::text          AS result,
@@ -2006,6 +2007,13 @@ def get_races(cur, person_id):
                'TF'                          AS sport,
                COALESCE(NULLIF(btrim(m.meet_name), ''), mt.meet_name) AS meet,
                r.event_short                 AS event,
+               -- ★ WHICH ROUND (owner, 2026-09-17: "athlete page events
+               --   aren't just distance, include like prelims/finals").
+               --   anet has sent Round on every track result since the
+               --   column was added and database.py has been storing it;
+               --   nothing ever read it back, so a prelim and a final were
+               --   two identical "1600m" rows a day apart.
+               NULLIF(btrim(r.round), '')    AS round,
                r.time_seconds                AS time_raw,     -- same slot as XC
                r.result_id                   AS result_id,    -- same slot as XC
                -- a running row with no time is a non-finish whose letters
@@ -2277,6 +2285,36 @@ def ordinal(n):
     suf = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd",
                                             3: "rd"}.get(n % 10, "th")
     return f"{n}{suf}"
+
+
+# ★ THE ROUND, BESIDE THE EVENT. A number on its own ("2") means a heat
+#   and reads as nonsense next to 1600m, so it is spelled; a word anet
+#   already spells ("Prelims", "Finals", "Semifinal") is shown as it came.
+#   Anything that merely repeats the event is dropped rather than doubled.
+_ROUND_WORDS = {"f": "Final", "final": "Final", "finals": "Finals",
+                "p": "Prelims", "prelim": "Prelims", "prelims": "Prelims",
+                "s": "Semis", "semi": "Semis", "semis": "Semis",
+                "semifinal": "Semis", "semifinals": "Semis",
+                "q": "Quarters", "quarter": "Quarters",
+                "quarters": "Quarters", "trials": "Trials"}
+
+
+@app.template_filter("round_label")
+def round_label(rnd):
+    """'prelims' -> 'Prelims', '2' -> 'Heat 2', '' -> ''."""
+    if rnd is None:
+        return ""
+    text = str(rnd).strip()
+    if not text:
+        return ""
+    known = _ROUND_WORDS.get(text.lower())
+    if known:
+        return known
+    # ! A BARE NUMBER IS A HEAT, and saying so is the difference between
+    #   information and a stray digit in a table cell.
+    if re.fullmatch(r"\d{1,3}", text):
+        return f"Heat {int(text)}"
+    return text
 
 
 @app.template_filter("event_label")

@@ -707,6 +707,18 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
     event_id = event_div.get("e")
     div_id   = event_div.get("d")
 
+    # ★ THE DIVISION NAME, ON THE NORMAL PATH TOO (owner, 2026-09-17:
+    #   "athlete page events aren't just distance, include like
+    #   prelims/finals"). anet keeps the ROUND in the division, not in the
+    #   event: the event is "1600m" for both the prelim and the final, and
+    #   what tells them apart is Division ("Prelims", "Finals", "Open",
+    #   "Invitational", "Section 3"). getMeetDataTF has been stashing the
+    #   IDDiv -> name map on meet_info all along, and _saveMetaOnlyTF used
+    #   it -- but the path that scrapes an actual meet passed None, so
+    #   every real row lost the round and the site could only show a
+    #   distance. Same lookup, same map, same fallback to None.
+    division = (meet_info.get("_divisionByIdDiv") or {}).get(div_id)
+
     event_info = events_dict.get(event_id)
     if event_info is None:
         # NEW: this is a LOCAL dict lookup, no network call happened.
@@ -746,11 +758,11 @@ async def _collectTFEventDiv(page, meet_id: int, meet_info: dict,
         # meets_tf and tf_scraped_events. If says to only append
         # if the caller asked us to.
         if add_placeholder_on_failure:
-            meets_to_save.append((meet_info, div_id, event_id, event_short, -1, None))
+            meets_to_save.append((meet_info, div_id, event_id, event_short, -1, division))
 
         return False, failure_kind
 
-    meets_to_save.append((meet_info, div_id, event_id, event_short, distance_meters, None))
+    meets_to_save.append((meet_info, div_id, event_id, event_short, distance_meters, division))
 
     # Saves all results in the meet and the athelete they are attatched to for 
     # later bulk upload
@@ -1096,7 +1108,13 @@ def _saveDivisionsForRecovery(meet_id, meet_info, events_dict, event_divs):
         event_short = info.get("event_short")
 
         distance_meters = distanceFromEventShort(event_short)[0]
-        division = info.get("gender")      # whatever saveMeetTF expects as division
+        # ⚠ IT USED TO WRITE THE GENDER HERE. saveMeetTF's sixth argument is
+        #   the DIVISION -- "Open", "Invitational", "Prelims" -- and this
+        #   recovery path put "m"/"f" in it, so a recovered meet's division
+        #   column held a letter that means nothing to any reader of it.
+        #   The real map is on meet_info; None when it has no entry, which
+        #   is what an unknown division is.
+        division = (meet_info.get("_divisionByIdDiv") or {}).get(div_id)
 
         meets_to_save.append(
             (meet_info, div_id, event_id, event_short, distance_meters, division)
