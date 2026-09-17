@@ -1,10 +1,10 @@
 Xc-predictor/Racecast.co by Tadhg Murray (xc/tf athlete for Tufts University):
 
-This contains all the code for a website project that displays xc/tf races, rates them, and predicts future results. It was built in these steps:
+This contains all the code for a website project that displays xc/tf races, rates them (accounting for difficulty and distance), and predicts future results. It uses this stack/stats:
+~74M results across ~614k meets, 200+ GB of Postgres. Python, PostgreSQL, PyTorch, Flask, nginx, Cloudflare. It was built in these steps:
 
 1. The results scraper - This is the part where we got all of the data, using HTML and API scraping. We got results data, race data, athletes data,
-   school data, and venue data. This was over 200 GB of data, including over 200 million results, 1 million meets, and 60? million athletes. There
-   was a lot of VPN rotation and trying to avoid Cloudflare here. Got a pretty good thing going if someone wants to copy it.
+   school data, and venue data. This was over 200 GB of data, including over 70 million results, 1 million meets, and tens of millions of athletes.     I did many things to make the scraper rate-limited and resumable.
 
 2. The weather scraper - In this part we scraped/downloaded ERA5 data for our venues at different dates. We went in about 25 x 25 km blocks,
    taken from Earthmover's public Icechunk mirror.
@@ -17,7 +17,7 @@ This contains all the code for a website project that displays xc/tf races, rate
    another venue within 21 days (fitness effects).
    Era - Look at how much people improve YOY. Take this curve and find its derivative to find what growth changes with time. Combine this with
    the time of the top x% every year to see the rise of that, to fit the era curve.
-   Weather - Look how different weather affects normalized time just generally over the corpus, smooth the curve so there's not too many knots.
+   Weather - Look how different weather affects normalized time just generally over the corpus; smooth the curve so there aren't too many knots.
    Do this after the first normalization so we can accurately compare.
 
 4. The ratings engine - While I had many different conceptions about what would be the hardest thing in this project
@@ -25,7 +25,7 @@ This contains all the code for a website project that displays xc/tf races, rate
    course difficulty and an ability rating. We went through a lot of iterations (will discuss later), before ending up on a more bracketed approach a la Malcolm Slaney (tyvm).
    This just takes normalized times, and for each person, looks at how their normalized time at one course compares to another course, accounting for fitness gain
    (generally, with a fitness curve). There are a couple more bells and whistles (shrinkage, tilt where a course difficulty is not the same for different
-   ability thresholds, etc.), but that's the main idea. Rating is % better than the average hser (or whatever pool we're in college, ms, etc.). Diifuclty is %
+   ability thresholds, etc.), but that's the main idea. Rating is % better than the average user (or whatever pool we're in: college, MS, etc.). Difficulty is %
    harder/easier than a track.
 
 5. Prediction model - a transformer model that looks at previous normalized time for races, as well as a slew of other features, to predict what someone will
