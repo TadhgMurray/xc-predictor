@@ -70,7 +70,15 @@ def main():
                     help="without this, print the census and change nothing")
     a = ap.parse_args()
 
-    from database import getConn, backfillMeetsTFVenueNames
+    from database import (getConn, backfillMeetsTFVenueNames,
+                          ensureCoreColumns)
+    # ⚠ THE COLUMN FIRST. meets_tf.venue_name is declared in the DDL and
+    #   "CREATE TABLE IF NOT EXISTS" never added it to a table that already
+    #   existed, so this script's own census died with UndefinedColumn on the
+    #   server (2026-09-17). Third time that shape appeared in one day --
+    #   team_slug, status, venue_name -- so the ALTERs are derived from the
+    #   DDL now and this just asks for them.
+    ensureCoreColumns()
     with getConn() as conn, conn.cursor() as cur:
         census(cur)
         if not a.write:

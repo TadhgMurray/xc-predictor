@@ -7,6 +7,7 @@
 #          meet results. Replaces the old SQLite version. All functions
 #          use the same interface as before so scraper code doesn't change.
 
+import re
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -457,6 +458,233 @@ def _resolveSchool(obj):
 # Table creation
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ===================================================================== #
+#  EVERY COLUMN THE DDL DECLARES, ON EVERY DATABASE                      #
+# ===================================================================== #
+#
+# ⚠⚠ "CREATE TABLE IF NOT EXISTS" NEVER ADDS A COLUMN. A table made by last
+#    season's code keeps last season's shape for ever, and the first INSERT
+#    naming a newer column dies with UndefinedColumn -- on the server,
+#    mid-run. THREE TIMES IN ONE DAY (2026-09-17):
+#
+#      results_tf.team_slug   killed link_tfrrs_to_anet, and silently
+#                             degraded anet_teams' crest levels for weeks
+#      results.status         would have killed whichever scraper ran first
+#      meets_tf.venue_name    killed the venue backfill -- and saveMeetTF
+#                             INSERTs that column, so the anet TRACK SCRAPE
+#                             would have died on it too
+#
+#    The pattern each time: a column added to the CREATE TABLE text and to an
+#    INSERT, with no hand-written _migrate* beside it. The hand-written ones
+#    are the bug -- they are a thing to remember, and they get forgotten.
+#
+# ★ SO THE ALTERs ARE DERIVED FROM THE DDL ITSELF, which cannot drift from
+#   it: add a column to a CREATE TABLE and it appears on old databases too.
+#   scrape_school_logos.ensureTable has done exactly this for months and has
+#   never once produced this failure; this is that idea, brought to the
+#   tables everything else depends on.
+#
+# ! A NOT NULL WITH NO DEFAULT IS RELAXED for the ALTER, because Postgres
+#   cannot add one to a table that already has rows. The column arrives
+#   nullable; the DDL still states the intent for a fresh database.
+#
+# ! AND IT NEVER TOUCHES AN EXISTING COLUMN. ADD COLUMN IF NOT EXISTS only
+#   adds; no type is changed, no default applied, no data rewritten.
+_NOT_A_COLUMN = ("primary", "unique", "foreign", "check", "constraint",
+                 "exclude", "like", "--")
+
+# ⚠ IT CAPTURES THE NAME AND THE OPENING BRACKET, AND NOTHING MORE. The first
+#   version ended `\((.*)` under re.S, which is greedy: the first CREATE TABLE
+#   swallowed the rest of the file, finditer returned ONE match, and six of
+#   _createCoreTables' seven tables were invisible. _ddlColumns stops at its
+#   own closing bracket, so handing it everything after the `(` is enough.
+_CREATE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    re.I)
+
+
+def _ddlColumns(body):
+    """[(name, spec)] from the inside of a CREATE TABLE.
+
+    ⚠ COMMENTS COME OUT FIRST, BEFORE THE COMMA SPLIT. This project documents
+      a column on the lines ABOVE it, and that prose contains commas --
+      "(owner, 2026-09-16: ...)". Splitting on commas first therefore shreds
+      one column's entry into fragments of English, and the first version of
+      this function duly reported meets_tf as having columns called 'AND',
+      'so', 'it' and 'for', with no venue_name. Which sent me hunting for a
+      missing DDL that was never missing.
+
+    ! THE COMMA SPLIT IS DEPTH-AWARE, so numeric(4,1) survives it.
+    """
+    clean = "\n".join(ln.split("--")[0] for ln in (body or "").splitlines())
+
+    parts, depth, cur_ = [], 0, ""
+    for ch in clean:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                break                      # the CREATE TABLE's own closer
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur_)
+            cur_ = ""
+        else:
+            cur_ += ch
+    parts.append(cur_)
+
+    out = []
+    for part in parts:
+        bits = " ".join(part.split()).strip()
+        if not bits or bits.split()[0].lower() in _NOT_A_COLUMN:
+            continue
+        name, _, spec = bits.partition(" ")
+        if spec.strip() and name.isidentifier():
+            out.append((name, spec.strip()))
+    return out
+
+
+def _relaxed(spec):
+    """The column spec as an ALTER can use it: no NOT NULL without a DEFAULT,
+    no PRIMARY KEY (an existing table already has one)."""
+    out = re.sub(r"\bPRIMARY\s+KEY\b", "", spec, flags=re.I)
+    if re.search(r"\bDEFAULT\b", out, re.I) is None:
+        out = re.sub(r"\bNOT\s+NULL\b", "", out, flags=re.I)
+    return " ".join(out.split())
+
+
+def ensureDdlColumns(cursor, ddl, verbose=False):
+    """Add whatever columns `ddl`'s CREATE TABLE declares and the live table
+    lacks. Returns [(table, column)] added. Never raises on one bad column --
+    a spec Postgres refuses is skipped and the rest still land."""
+    added = []
+    text = ddl or ""
+    for m in _CREATE_RE.finditer(text):
+        table, body = m.group(1), text[m.end():]
+        cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        if cursor.fetchone()[0] is None:
+            continue                       # brand new; the CREATE made it whole
+        for name, spec in _ddlColumns(body):
+            try:
+                cursor.execute("SAVEPOINT ddlcol")
+                cursor.execute(
+                    f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS '
+                    f'"{name}" {_relaxed(spec)}')
+                cursor.execute("RELEASE SAVEPOINT ddlcol")
+            except Exception as exc:                          # noqa: BLE001
+                cursor.execute("ROLLBACK TO SAVEPOINT ddlcol")
+                if verbose:
+                    print(f"[DB] {table}.{name}: {type(exc).__name__} {exc}")
+                continue
+            added.append((table, name))
+    return added
+
+
+# ★ AND THE COLUMNS THE CODE WRITES THAT THE TABLE DOES NOT HAVE. The derived
+#   ALTERs above can only add what the DDL DECLARES -- and the recurring fault
+#   is a column added to an INSERT and never to the CREATE TABLE. meets_tf
+#   INSERTs track_type, track_length, ustfccca_id, division, level_mask,
+#   source and id_system, and its DDL mentions none of them.
+#
+# ! SO THIS REPORTS RATHER THAN ALTERS. A column the DDL never declared has no
+#   type to add it with, and guessing one is how a TEXT column becomes a
+#   BIGINT nobody can write to. It names them, loudly, at start-up -- which is
+#   the difference between a five-minute fix and UndefinedColumn eleven hours
+#   into a scrape.
+_INSERT_RE = re.compile(
+    r"INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.I | re.S)
+
+
+def _insertColumns(text):
+    """{table: {column, ...}} for every INSERT INTO ... (cols) in `text`."""
+    out = {}
+    for m in _INSERT_RE.finditer(text or ""):
+        # ! COMMENTS OUT PER LINE, BEFORE THE COMMA SPLIT -- the same trap
+        #   _ddlColumns fell into. "(a, -- why\n b, c)" split on commas first
+        #   gives " -- why\n b", whose text before the `--` is empty, and the
+        #   column is silently dropped.
+        body = "\n".join(ln.split("--")[0] for ln in m.group(2).splitlines())
+        cols = set()
+        for raw in body.split(","):
+            name = " ".join(raw.split()).strip().strip('"')
+            if name.isidentifier():
+                cols.add(name.lower())
+        if cols:
+            out.setdefault(m.group(1).lower(), set()).update(cols)
+    return out
+
+
+def auditInsertColumns(cursor, sources=None, verbose=True):
+    """[(table, column)] the code INSERTs and the live table lacks."""
+    if sources is None:
+        import inspect
+        sources = [inspect.getsource(sys.modules[__name__])]
+    wanted = {}
+    for text in sources:
+        for table, cols in _insertColumns(text).items():
+            wanted.setdefault(table, set()).update(cols)
+
+    missing = []
+    for table, cols in sorted(wanted.items()):
+        cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        if cursor.fetchone()[0] is None:
+            continue
+        cursor.execute("""SELECT lower(column_name)
+                          FROM   information_schema.columns
+                          WHERE  table_schema = 'public' AND table_name = %s""",
+                       (table,))
+        have = {r[0] for r in cursor.fetchall()}
+        for col in sorted(cols - have):
+            missing.append((table, col))
+    if missing and verbose:
+        print("[DB] ⚠ THE CODE WRITES COLUMNS THIS DATABASE DOES NOT HAVE. "
+              "An INSERT naming one dies mid-run:")
+        for table, col in missing:
+            print(f"[DB]     {table}.{col}")
+        print("[DB]   Add them to the CREATE TABLE in database.py (they are "
+              "then created automatically) or ALTER them in by hand.")
+    return missing
+
+
+# ! THE DDL IS READ FROM THE CREATOR FUNCTIONS' OWN SOURCE. It lives inside
+#   them as executed strings rather than as module constants, and lifting it
+#   out would be a large, risky edit to the one file every scraper depends on.
+#   inspect.getsource only READS -- it cannot change what those functions do,
+#   and if it ever fails the result is the old behaviour (no derived ALTERs),
+#   never a broken start-up.
+def _coreDdlText():
+    """The CREATE TABLE text of every core table, for ensureDdlColumns."""
+    import inspect
+    out = []
+    for fn in (_createCoreTables, _createTFTables, _createRecoveryTable,
+               _createMeetsTFMetaTable):
+        try:
+            out.append(inspect.getsource(fn))
+        except (OSError, TypeError):                       # pragma: no cover
+            continue
+    return out
+
+
+# ! THE SAME PASS, CALLABLE ON ITS OWN. A maintenance script that touches a
+#   column the DDL grew should not have to run the whole createTables (which
+#   builds indexes) just to be sure the column is there -- and it should not
+#   have to hope, either. scripts/backfill_tf_venues.py calls this.
+def ensureCoreColumns(verbose=True):
+    """Add every column the core DDL declares and the live tables lack.
+    Returns [(table, column)] added."""
+    grew = []
+    with getConn() as conn:
+        cur = conn.cursor()
+        for ddl in _coreDdlText():
+            grew += ensureDdlColumns(cur, ddl)
+        conn.commit()
+        if grew and verbose:
+            print("[DB] added missing columns: "
+                  + ", ".join(f"{t}.{c}" for t, c in grew))
+        auditInsertColumns(cur, verbose=verbose)
+    return grew
+
+
 # createTables()
 # Purpose: Creates all tables and indexes if they don't already exist.
 #          Safe to run multiple times.
@@ -476,6 +704,20 @@ def createTables():
             _migrateMeetExtrasAddSource(cursor)
             _migrateResultsAddTeamSlug(cursor)
             _migrateResultsAddStatus(cursor)
+            # ★ AND EVERY OTHER COLUMN THE DDL DECLARES. The two migrations
+            #   above are hand-written, which is the habit that lost
+            #   team_slug, status and venue_name in one day; this catches the
+            #   ones nobody remembered to write, from the CREATE TABLE text
+            #   itself. Both are kept: the hand-written pair also build
+            #   indexes and backfill, which a derived ALTER cannot.
+            _grew = []
+            for _ddl in _coreDdlText():
+                _grew += ensureDdlColumns(cursor, _ddl)
+            if _grew:
+                print("[DB] added missing columns: "
+                      + ", ".join(f"{t}.{c}" for t, c in _grew))
+            # and say so about the ones no DDL declares, which cannot be added
+            auditInsertColumns(cursor)
             _createMeetsTFMetaTable(cursor)
             _createIndexes(cursor)
             conn.commit()
