@@ -78,6 +78,8 @@ def main():
     #   server (2026-09-17). Third time that shape appeared in one day --
     #   team_slug, status, venue_name -- so the ALTERs are derived from the
     #   DDL now and this just asks for them.
+    print("  checking the schema (a catalogue read; it takes no locks "
+          "unless a column is genuinely missing)...", flush=True)
     ensureCoreColumns()
     with getConn() as conn, conn.cursor() as cur:
         census(cur)

@@ -185,3 +185,66 @@ class TheInsertAudit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ItNeverBecomesTheThingEverythingWaitsOn(unittest.TestCase):
+    """⚠⚠ THE OUTAGE (owner, 2026-09-17): two instances "both hung they're
+    not gonna run". Three mistakes compounding:
+
+      1. ADD COLUMN IF NOT EXISTS was issued for all 98 columns every time,
+         and it takes an ACCESS EXCLUSIVE LOCK even when the column is
+         already there and nothing changes;
+      2. ensureCoreColumns committed ONCE at the end, so it HELD those locks
+         on twelve tables at once -- results (39M) and results_tf (191M)
+         among them;
+      3. no lock_timeout, so it waited for ever behind an open reader WHILE
+         HOLDING exclusive locks, and everything queued behind it.
+
+    That is not a slow migration, it is a site outage with a progress bar."""
+
+    def test_it_reads_the_catalogue_before_it_takes_a_lock(self):
+        self.assertIn("def ddlPlan(cursor, ddl):", _SRC)
+        i = _SRC.index("def ddlPlan(")
+        body = _SRC[i:_SRC.index("\n\n\n", i)]
+        self.assertIn("_liveColumns(cursor, table)", body)
+        self.assertNotIn("ALTER TABLE", body, "the plan must take no locks")
+
+    def test_a_column_that_is_already_there_is_never_altered(self):
+        i = _SRC.index("def ddlPlan(")
+        body = _SRC[i:_SRC.index("\n\n\n", i)]
+        self.assertIn("if n.lower() not in have", body)
+
+    def test_every_alter_has_a_lock_timeout(self):
+        """It yields instead of queueing: the column is added next run."""
+        self.assertIn("_LOCK_TIMEOUT = ", _SRC)
+        # in BOTH functions that alter, the timeout is set before the ALTER
+        for fn in ("def ensureDdlColumns(", "def ensureCoreColumns("):
+            i = _SRC.index(fn)
+            body = _SRC[i:_SRC.index("\n\n\n", i)]
+            self.assertIn("SET LOCAL lock_timeout", body, fn)
+            self.assertLess(body.index("SET LOCAL lock_timeout"),
+                            body.index("ALTER TABLE {table}"), fn)
+
+    def test_locks_are_never_held_across_tables(self):
+        i = _SRC.index("def ensureCoreColumns(")
+        body = _SRC[i:_SRC.index("\n\n\n", i)]
+        self.assertIn("conn.commit()", body)
+        # the plan is read and committed BEFORE any ALTER is attempted
+        self.assertLess(body.index("conn.commit()"), body.index("ALTER TABLE"))
+        # and again after each column
+        self.assertGreaterEqual(body.count("conn.commit()"), 3)
+
+    def test_a_no_op_run_says_so_rather_than_going_quiet(self):
+        i = _SRC.index("def ensureCoreColumns(")
+        body = _SRC[i:_SRC.index("\n\n\n", i)]
+        self.assertIn("no locks taken", body)
+
+    def test_a_skipped_column_is_always_reported(self):
+        """A column skipped because the table was busy is a column the next
+        INSERT dies on; silence makes that a mystery at 3am."""
+        i = _SRC.index("def ensureDdlColumns(")
+        body = _SRC[i:_SRC.index("\n\n\n", i)]
+        self.assertIn("could not add", body)
+        # printed unconditionally, not behind `if verbose`
+        j = body.index("could not add")
+        self.assertNotIn("if verbose", body[max(0, j - 200):j])

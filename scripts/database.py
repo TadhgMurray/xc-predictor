@@ -554,30 +554,89 @@ def _relaxed(spec):
     return " ".join(out.split())
 
 
-def ensureDdlColumns(cursor, ddl, verbose=False):
-    """Add whatever columns `ddl`'s CREATE TABLE declares and the live table
-    lacks. Returns [(table, column)] added. Never raises on one bad column --
-    a spec Postgres refuses is skipped and the rest still land."""
-    added = []
+# ⚠⚠ IT ASKS BEFORE IT ALTERS, AND THAT IS NOT AN OPTIMISATION (owner,
+#    2026-09-17: two instances "both hung they're not gonna run"). The first
+#    version issued ADD COLUMN IF NOT EXISTS for all 98 columns every time,
+#    and `IF NOT EXISTS` still takes an ACCESS EXCLUSIVE LOCK when the column
+#    is already there and nothing changes. Three mistakes compounding:
+#
+#      1. 98 unconditional ALTERs, ~98 exclusive locks, for a no-op;
+#      2. ensureCoreColumns committed ONCE at the end, so it HELD those locks
+#         on twelve tables at once -- including results (39M) and results_tf
+#         (191M) -- for the whole run;
+#      3. no lock_timeout, so it waited for ever behind any open reader WHILE
+#         HOLDING exclusive locks, and everything touching those tables queued
+#         behind it. A second instance then queued behind the first.
+#
+#    That is not a slow migration, it is a site outage with a progress bar.
+#
+# ★ SO: read information_schema first (a catalogue query, no lock at all), and
+#   take a lock ONLY for a column that is genuinely missing. The common case
+#   -- every column already present -- now touches nothing and finishes in
+#   milliseconds.
+#
+# ! AND A SHORT lock_timeout, SO IT YIELDS. If a table is busy the ALTER gives
+#   up in seconds and says which one; it never becomes the thing everything
+#   else is waiting on. The column is added on the next run instead.
+_LOCK_TIMEOUT = "5s"
+
+
+def _liveColumns(cursor, table):
+    """{column} the live table actually has. A catalogue read: no locks."""
+    cursor.execute("""SELECT lower(column_name)
+                      FROM   information_schema.columns
+                      WHERE  table_schema = 'public' AND table_name = %s""",
+                   (table,))
+    return {r[0] for r in cursor.fetchall()}
+
+
+def ddlPlan(cursor, ddl):
+    """[(table, [(column, spec), ...])] -- what is genuinely missing. Read
+    only: this is what makes a no-op run cost nothing."""
+    plan = []
     text = ddl or ""
     for m in _CREATE_RE.finditer(text):
-        table, body = m.group(1), text[m.end():]
+        table = m.group(1)
         cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
         if cursor.fetchone()[0] is None:
             continue                       # brand new; the CREATE made it whole
-        for name, spec in _ddlColumns(body):
+        have = _liveColumns(cursor, table)
+        want = [(n, sp) for n, sp in _ddlColumns(text[m.end():])
+                if n.lower() not in have]
+        if want:
+            plan.append((table, want))
+    return plan
+
+
+def ensureDdlColumns(cursor, ddl, verbose=False):
+    """Add whatever columns `ddl` declares and the live tables lack. Returns
+    [(table, column)] added.
+
+    ! ONE LOCK PER MISSING COLUMN, AND NONE AT ALL WHEN NOTHING IS MISSING.
+      The caller should commit after each table -- see ensureCoreColumns --
+      so exclusive locks are never held across tables.
+    """
+    added = []
+    for table, want in ddlPlan(cursor, ddl):
+        for name, spec in want:
             try:
                 cursor.execute("SAVEPOINT ddlcol")
+                cursor.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
                 cursor.execute(
                     f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS '
                     f'"{name}" {_relaxed(spec)}')
                 cursor.execute("RELEASE SAVEPOINT ddlcol")
             except Exception as exc:                          # noqa: BLE001
                 cursor.execute("ROLLBACK TO SAVEPOINT ddlcol")
-                if verbose:
-                    print(f"[DB] {table}.{name}: {type(exc).__name__} {exc}")
+                # ⚠ SAY IT EVEN WHEN QUIET. A column skipped because the table
+                #   was busy is a column the next INSERT will die on, and
+                #   silence is how that becomes a mystery at 3am.
+                print(f"[DB] could not add {table}.{name}: "
+                      f"{type(exc).__name__} {exc}")
                 continue
             added.append((table, name))
+            if verbose:
+                print(f"[DB]   + {table}.{name}", flush=True)
     return added
 
 
@@ -672,17 +731,55 @@ def _coreDdlText():
 #   have to hope, either. scripts/backfill_tf_venues.py calls this.
 def ensureCoreColumns(verbose=True):
     """Add every column the core DDL declares and the live tables lack.
-    Returns [(table, column)] added."""
+    Returns [(table, column)] added.
+
+    ⚠ COMMITS PER TABLE. The first version did the whole sweep in ONE
+      transaction, so it held ACCESS EXCLUSIVE on twelve tables at once until
+      the end -- results and results_tf among them -- and anything that
+      touched them queued behind it. Two instances of the caller then queued
+      behind each other and neither ever ran.
+    """
     grew = []
     with getConn() as conn:
         cur = conn.cursor()
+        plan = []
         for ddl in _coreDdlText():
-            grew += ensureDdlColumns(cur, ddl)
-        conn.commit()
-        if grew and verbose:
-            print("[DB] added missing columns: "
-                  + ", ".join(f"{t}.{c}" for t, c in grew))
+            plan += ddlPlan(cur, ddl)
+        conn.commit()                       # the read is over; hold nothing
+
+        if not plan:
+            if verbose:
+                print("[DB] schema is current: every column the DDL declares "
+                      "is already there (no locks taken)")
+        else:
+            n = sum(len(cols) for _t, cols in plan)
+            if verbose:
+                print(f"[DB] {n} column(s) missing across {len(plan)} table(s); "
+                      f"adding them one table at a time", flush=True)
+            for table, want in plan:
+                if verbose:
+                    print(f"[DB]   {table}: {', '.join(c for c, _ in want)}",
+                          flush=True)
+                for name, spec in want:
+                    try:
+                        cur.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+                        cur.execute(
+                            f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS '
+                            f'"{name}" {_relaxed(spec)}')
+                        conn.commit()       # ! release before the next table
+                        grew.append((table, name))
+                    except Exception as exc:              # noqa: BLE001
+                        conn.rollback()
+                        print(f"[DB] could not add {table}.{name}: "
+                              f"{type(exc).__name__} {exc}")
+                        print(f"[DB]   (busy table -- it will be added on the "
+                              f"next run; nothing is blocked waiting)")
+            if grew and verbose:
+                print("[DB] added: "
+                      + ", ".join(f"{t}.{c}" for t, c in grew), flush=True)
+
         auditInsertColumns(cur, verbose=verbose)
+        conn.commit()
     return grew
 
 
@@ -1313,6 +1410,10 @@ def backfillMeetsTFVenueNames(conn, verbose=True):
     from_location, from_gps)."""
     cursor = conn.cursor()
 
+    import time as _t
+    _t0 = _t.time()
+    if verbose:
+        print("  pass 1/3: the meet's own meets_tf_meta row...", flush=True)
     cursor.execute("""
         UPDATE meets_tf t SET venue_name = m.venue_name
         FROM   meets_tf_meta m
@@ -1321,6 +1422,11 @@ def backfillMeetsTFVenueNames(conn, verbose=True):
           AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
     """)
     from_meta = cursor.rowcount
+    if verbose:
+        print(f"    {from_meta:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
+        _t0 = _t.time()
+        print("  pass 2/3: another meet at the same location_id "
+              "(one grouped scan of meets_tf)...", flush=True)
 
     # the same PLACE, named by whichever of its meets did say
     cursor.execute("""
@@ -1337,6 +1443,11 @@ def backfillMeetsTFVenueNames(conn, verbose=True):
           AND  t.venue_name IS NULL
     """)
     from_location = cursor.rowcount
+    if verbose:
+        print(f"    {from_location:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
+        _t0 = _t.time()
+        print("  pass 3/3: the same coordinates, for rows with no location id "
+              "(the slowest -- it rounds two numerics per row)...", flush=True)
 
     # ! AND THE SAME COORDINATES, for the rows that carry no location id at
     #   all. Rounded to five places, which is how course_canonical keys a
@@ -1358,6 +1469,8 @@ def backfillMeetsTFVenueNames(conn, verbose=True):
           AND  round(t.gps_long::numeric, 5) = src.lo
     """)
     from_gps = cursor.rowcount
+    if verbose:
+        print(f"    {from_gps:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
 
     conn.commit()
     if verbose:
