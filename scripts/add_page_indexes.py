@@ -59,6 +59,24 @@ WANTED = [
     ("results",         "athlete_id", "idx_results_athlete", None),
     ("results_tf",      "person_id",  "idx_results_tf_person", None),
     ("results_tf",      "athlete_id", "idx_results_tf_athlete", None),
+    # ★ AND THE anet TEAM ID, WHICH NOTHING INDEXED (owner, 2026-09-17:
+    #   link_tfrrs_to_anet "hangs on results_tf"). It was not hanging: every
+    #   query that filters `team_id = ANY(<2,034 college teams>)` was a
+    #   SEQUENTIAL SCAN of a 54M-row table, and there are three of them --
+    #   link_tfrrs_to_anet's evidence pass, build_school_identity's
+    #   authoritativeStates AND its buildTeamStates. The first leg measured
+    #   124 s on `results`; the join it feeds took 13 s, which is the shape
+    #   of a missing index rather than a slow query.
+    #
+    # ! PARTIAL, BECAUSE THE COLUMN IS MOSTLY ABSENT. tfrrs rows carry no
+    #   anet team, and 0 is anet's unattached sentinel rather than an id --
+    #   every caller already writes `team_id IS NOT NULL AND team_id <> 0`,
+    #   so an index over just those rows is a fraction of the size and
+    #   matches the predicate exactly.
+    ("results",         "team_id", "idx_results_team",
+     "(team_id) WHERE team_id IS NOT NULL AND team_id <> 0"),
+    ("results_tf",      "team_id", "idx_results_tf_team",
+     "(team_id) WHERE team_id IS NOT NULL AND team_id <> 0"),
     ("athlete_season",  "school",  "idx_athlete_season_school", None),
     # ★ AND THE COMPOSITE THE FIELD ENDPOINT NEEDS (owner, 2026-09-15:
     #   /api/predict/field took 6.5 s on a 396-school meet). _squadsForYear

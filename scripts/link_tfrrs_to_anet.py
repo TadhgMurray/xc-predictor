@@ -182,11 +182,11 @@ _VOTE_SQL = """
 """
 
 
-def votes(cur, teams, since=None, verbose=True):
+def votes(cur, teams, since=None, tables=None, verbose=True):
     """{tfrrs school: {team_id: (n_athletes, n_seasons)}} over both tables."""
     import time
     out = {}
-    for table in ("results", "results_tf"):
+    for table in (tables or ("results", "results_tf")):
         cur.execute("""SELECT column_name FROM information_schema.columns
                        WHERE table_schema = 'public' AND table_name = %s
                          AND column_name = 'team_id'""", (table,))
@@ -196,9 +196,28 @@ def votes(cur, teams, since=None, verbose=True):
             continue
         t0 = time.time()
         if verbose:
-            print(f"  {table}: collecting the college teams' athlete-years "
-                  f"(indexed on team_id, so this is the quick half)...",
-                  flush=True)
+            # ⚠ AND SAY WHETHER THIS IS A SCAN (owner, 2026-09-17: "it hangs
+            #   on results_tf"). It was not hanging -- NOTHING INDEXED
+            #   team_id, so `team_id = ANY(<2,034 teams>)` is a sequential
+            #   pass over the whole table. The previous version of this line
+            #   asserted the opposite ("indexed on team_id, so this is the
+            #   quick half"), which is worse than silence: it told the
+            #   person waiting that a ten-minute scan was the fast part.
+            cur.execute("""SELECT 1 FROM pg_indexes
+                           WHERE tablename = %s AND indexdef LIKE '%%(team_id%%'""",
+                        (table,))
+            indexed = cur.fetchone() is not None
+            cur.execute(f"SELECT reltuples::bigint FROM pg_class "
+                        f"WHERE oid = '{table}'::regclass")
+            approx = cur.fetchone()[0] or 0
+            print(f"  {table}: collecting the college teams' athlete-years"
+                  + (" (index scan on team_id)" if indexed else
+                     f" -- ⚠ NO INDEX ON {table}.team_id, so this is a "
+                     f"SEQUENTIAL SCAN of ~{approx:,} rows. "
+                     f"scripts/add_page_indexes.py declares it; running that "
+                     f"builds it CONCURRENTLY and makes this, "
+                     f"build_school_identity's two team_id passes and every "
+                     f"rerun fast."), flush=True)
         cur.execute("DROP TABLE IF EXISTS ltl_anet")
         cur.execute(_ANET_SQL.format(table=table),
                     {"teams": sorted(teams), "since": since})
@@ -274,6 +293,12 @@ def main():
     ap.add_argument("--show", type=int, default=30)
     ap.add_argument("--min-athletes", type=int, default=MIN_ATHLETES)
     ap.add_argument("--min-share", type=float, default=MIN_SHARE)
+    ap.add_argument("--tables", default="results,results_tf",
+                    help="which result tables to gather evidence from. "
+                         "`results` alone is the XC half and is much the "
+                         "smaller scan -- an answer from it is a real answer, "
+                         "just with less evidence behind it, so a borderline "
+                         "link may fall under MIN_ATHLETES.")
     ap.add_argument("--since", type=int, default=None, metavar="YEAR",
                     help="only athlete-years from YEAR on. The whole corpus "
                          "is two full passes over 54M rows; --since 2015 is "
@@ -301,7 +326,9 @@ def main():
         print(f"\n  the evidence pass: two tables, one scan each. The tfrrs "
               f"half is the slow one and says nothing while it runs."
               + (f" (--since {args.since})" if args.since else ""), flush=True)
-        counted = votes(cur, teams, since=args.since)
+        counted = votes(cur, teams, since=args.since,
+                        tables=[t.strip() for t in args.tables.split(",")
+                                if t.strip()])
         links, rejected = decide(counted, teams, args.min_athletes, args.min_share)
         print(f"\n  {len(counted):,} tfrrs school strings share an athlete-year "
               f"with an anet college team")
