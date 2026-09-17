@@ -373,6 +373,13 @@ shards() {
 # ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
 step 01_season_year   "$PY" -u engine/season_year.py
 step 02_drop_old      "$PY" -u engine/drop_old.py
+# ! BEFORE ANYTHING LABELS A VENUE. meets_tf.venue_name is NULL on a lot of
+#   anet track meets, and the engine then prints the LOCATION ID as if it
+#   were a venue name. The names are already in meets_tf_meta, or on another
+#   meet at the same location -- no scrape needed. Idempotent; a second run
+#   finds nothing. database.backfillMeetsTFVenueNames existed for weeks and
+#   was called by nothing, which is why the ids kept appearing.
+step 02b_tf_venues    "$PY" -u scripts/backfill_tf_venues.py --write
 step 03_pro_flag      "$PY" -u engine/pro_flag.py --skip-dist --write
 # ⚠ BEFORE grade_sanity: it decides whether "11-12" is grades or ages, and
 #   every rule downstream reads that answer.

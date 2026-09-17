@@ -1041,11 +1041,35 @@ def meetUrlTF(meet_info):
 
 # ★ AND THE OLD ROWS NEED NO SCRAPE AT ALL. meets_tf_meta already holds
 #   venue_name for every meet it has seen, so the backfill is one UPDATE
-#   ... FROM. Run it once after the migration; it is idempotent and only
-#   touches rows whose name is still missing.
-def backfillMeetsTFVenueNames(conn):
-    """Copy meets_tf_meta.venue_name onto meets_tf. Returns rows filled."""
+#   ... FROM. Idempotent, and it only touches rows whose name is still
+#   missing.
+#
+# ⚠⚠ AND IT WAS NEVER CALLED. Written, committed, wired to nothing -- so the
+#    engine went on labelling a LOCATION ID as a venue while the names sat in
+#    meets_tf_meta. (The same thing happened to school_team_link, which was
+#    built and read by nothing until 2026-09-17.)
+#
+# ★ THE SECOND PASS IS THE OWNER'S (2026-09-17: "make sure it backfills any
+#   meets where that venue currently has no name but id and such match"). A
+#   meet whose own meta row never carried a name can still be at a place we
+#   HAVE named from another meet: two meets at location 8891 are at the same
+#   venue whether or not both of them said so. The name is taken from the
+#   meets that DO have one at that location, and a rescrape is not needed for
+#   any of it.
+#
+# ! THE MODAL NAME, NOT AN ARBITRARY ONE. A location can carry a couple of
+#   spellings across the years; the most common one, ties broken
+#   alphabetically, is stable across runs so a rerun does not churn the
+#   column.
+#
+# ! AND ONLY EVER INTO A NULL. Nothing here overwrites a name a meet stated
+#   for itself -- the meet knows its own venue better than its neighbours do.
+def backfillMeetsTFVenueNames(conn, verbose=True):
+    """Fill meets_tf.venue_name where it is missing: from the meet's own meta
+    row, then from other meets at the same location. Returns (from_meta,
+    from_location, from_gps)."""
     cursor = conn.cursor()
+
     cursor.execute("""
         UPDATE meets_tf t SET venue_name = m.venue_name
         FROM   meets_tf_meta m
@@ -1053,9 +1077,55 @@ def backfillMeetsTFVenueNames(conn):
           AND  t.venue_name IS NULL
           AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
     """)
-    n = cursor.rowcount
+    from_meta = cursor.rowcount
+
+    # the same PLACE, named by whichever of its meets did say
+    cursor.execute("""
+        UPDATE meets_tf t SET venue_name = src.venue_name
+        FROM (
+            SELECT location_id,
+                   mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
+            FROM   meets_tf
+            WHERE  location_id IS NOT NULL
+              AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
+            GROUP  BY location_id
+        ) src
+        WHERE  src.location_id = t.location_id
+          AND  t.venue_name IS NULL
+    """)
+    from_location = cursor.rowcount
+
+    # ! AND THE SAME COORDINATES, for the rows that carry no location id at
+    #   all. Rounded to five places, which is how course_canonical keys a
+    #   venue -- about a metre, so it is the same field and not the same town.
+    cursor.execute("""
+        UPDATE meets_tf t SET venue_name = src.venue_name
+        FROM (
+            SELECT round(gps_lat::numeric, 5)  AS la,
+                   round(gps_long::numeric, 5) AS lo,
+                   mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
+            FROM   meets_tf
+            WHERE  gps_lat IS NOT NULL AND gps_long IS NOT NULL
+              AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
+            GROUP  BY 1, 2
+        ) src
+        WHERE  t.venue_name IS NULL
+          AND  t.gps_lat IS NOT NULL AND t.gps_long IS NOT NULL
+          AND  round(t.gps_lat::numeric, 5)  = src.la
+          AND  round(t.gps_long::numeric, 5) = src.lo
+    """)
+    from_gps = cursor.rowcount
+
     conn.commit()
-    return n
+    if verbose:
+        cursor.execute("""SELECT count(*) FILTER (WHERE venue_name IS NULL),
+                                 count(*) FROM meets_tf""")
+        left, total = cursor.fetchone()
+        print(f"  meets_tf venue names: {from_meta:,} from the meet's own "
+              f"meta row, {from_location:,} from another meet at the same "
+              f"location, {from_gps:,} from the same coordinates; "
+              f"{left:,} of {total:,} rows still have none", flush=True)
+    return from_meta, from_location, from_gps
 
 
 def saveMeetTF(conn, meet_info: dict, div_id: int, event_id: int,
