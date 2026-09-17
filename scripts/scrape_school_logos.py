@@ -197,8 +197,35 @@ _NAME_STOPWORDS = {
 }
 
 # a host that is self-evidently a school's, whatever its name
-_SCHOOLY = ("school", "district", "academy", "isd", "usd", "csd", "sd",
-            "collegiate", "univ", "college")
+#
+# ⚠ THE SHORT ONES ARE NOT SUBSTRINGS. `stem` runs the host's labels
+#   together, so a bare "sd" matched inside any longer word and admitted
+#   newsdaily.com, wisdomtree.com, sportsdesk.net and kidsdirect.org to a
+#   guard whose whole job is refusing domains like those. A district code is
+#   a WORD in a hostname -- lawrence-usd497.org, sd44.bc.ca, cusd.org -- so
+#   it is matched as a label or a hyphen/digit-delimited part of one, while
+#   the long words stay substrings because they cannot collide by accident.
+_SCHOOLY = ("school", "district", "academy", "collegiate", "univ", "college")
+_SCHOOLY_CODES = ("isd", "usd", "csd", "sd")
+
+
+def _schoolyHost(host):
+    """Does this host read as a school's or a district's? Pure."""
+    labels = host.split(".")
+    stem = "".join(labels[:-1])          # everything but the TLD, run together
+    if any(word in stem for word in _SCHOOLY):
+        return True
+    # the district codes as WORDS: each label split on hyphens and on the
+    # digit runs that carry the district number (usd497, sd44). A code is
+    # also allowed as the tail of a short acronym, which is how most real
+    # ones are spelled -- cusd, pusd, ccsd -- while staying far away from
+    # "newsdaily" and "wisdomtree".
+    parts = set()
+    for label in labels[:-1]:
+        parts.update(p for p in re.split(r"[^a-z]+", re.sub(r"\d+", " ", label))
+                     if p)
+    return any(p == code or (len(p) <= 5 and p.endswith(code))
+               for p in parts for code in _SCHOOLY_CODES)
 
 
 def _registrable(host):
@@ -243,11 +270,10 @@ def plausibleHost(school, url, kind=None, source=None):
             re.search(r"\.k12\.[a-z]{2}\.us$", host) or \
             re.search(r"\.sch\.[a-z]{2}$", host):
         return True
-    labels = host.split(".")
-    stem = "".join(labels[:-1])          # everything but the TLD, run together
+    stem = "".join(host.split(".")[:-1])  # everything but the TLD, run together
     if any(tok in stem for tok in nameTokens(school)):
         return True
-    return any(word in stem for word in _SCHOOLY)
+    return _schoolyHost(host)
 
 
 # ===================================================================== #

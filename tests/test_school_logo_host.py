@@ -79,6 +79,29 @@ class Guessed(unittest.TestCase):
                             "anet"))
 
 
+class DistrictCodes(unittest.TestCase):
+    """⚠ "sd" WAS A BARE SUBSTRING of a run-together hostname, so the guard
+    the owner asked for admitted newsdaily.com, wisdomtree.com,
+    sportsdesk.net and kidsdirect.org. A district code is a WORD."""
+
+    def test_a_two_letter_code_inside_a_longer_word_is_not_a_district(self):
+        for url in ("https://newsdaily.com/", "https://wisdomtree.com/",
+                    "https://sportsdesk.net/", "https://kidsdirect.org/",
+                    "https://goldsmiths.com/"):
+            self.assertFalse(S.plausibleHost("Lawrence", url, "school"), url)
+
+    def test_the_district_hosts_that_really_exist_still_pass(self):
+        for url in ("https://usd497.org/", "https://sd44.bc.ca/",
+                    "https://www.cusd.org/", "https://north-isd.net/",
+                    "https://www.ccsd.net/"):
+            self.assertTrue(S.plausibleHost("Anytown", url, "school"), url)
+
+    def test_the_long_words_are_still_substrings(self):
+        for url in ("https://mydistrict.org/", "https://someacademy.com/",
+                    "https://lawrenceschools.org/"):
+            self.assertTrue(S.plausibleHost("Anytown", url, "school"), url)
+
+
 class Provenance(unittest.TestCase):
     """The Penn State half: an address anet resolved by team id."""
 
