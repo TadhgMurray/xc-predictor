@@ -135,6 +135,14 @@ def authoritativeStates(cur):
             """, (table,))
             if cur.fetchone() is None:
                 continue
+            # ! IT SAYS WHERE IT IS. This is a full pass over results
+            #   (39M rows / 12 GB) and then results_tf (191M / 72 GB), and
+            #   it used to print nothing until both were done -- which is
+            #   indistinguishable from hung, and has now cost this project
+            #   two separate "it's hanging" reports in one afternoon.
+            _t = time.time()
+            print(f"    authoritativeStates: scanning {table} for the states "
+                  f"of the anet teams its rows use...", flush=True)
             cur.execute(f"""
                 -- ⚠⚠ anet_state FIRST -- see the note in buildTeamStates.
                 SELECT lower(btrim(r.school)) AS name,
@@ -147,8 +155,11 @@ def authoritativeStates(cur):
                   AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
                 GROUP  BY 1, 2
             """)
-            for name, st in cur.fetchall():
+            got = cur.fetchall()
+            for name, st in got:
                 by_name.setdefault(name, set()).add(st)
+            print(f"      {len(got):,} (name, state) pairs "
+                  f"({time.time() - _t:.0f}s)", flush=True)
     n_anet = len(by_name)
 
     # ★ AND THE DIRECTORY, THROUGH ITS OWN MATCHER. lookup() is the
@@ -407,6 +418,9 @@ def buildTeamStates(cur, contested):
         """, (table,))
         if cur.fetchone() is None:
             continue
+        _t = time.time()
+        print(f"    buildTeamStates: scanning {table} for the contested "
+              f"names' anet teams...", flush=True)
         cur.execute(f"""
             INSERT INTO si_team_raw (person_id, school, state, n)
             -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT anet's
@@ -431,6 +445,8 @@ def buildTeamStates(cur, contested):
               AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
             GROUP  BY 1, 2, 3
         """)
+        print(f"      {cur.rowcount:,} rows ({time.time() - _t:.0f}s)",
+              flush=True)
     cur.execute("""
         INSERT INTO si_team_state (person_id, school, state)
         SELECT person_id, school, state FROM (
@@ -1034,6 +1050,8 @@ def main():
         # ★ ANET FIRST: which names it places in two states, and where
         #   each athlete's own team for those names is. Both feed the
         #   clusters CTE below and the co-racing merge after it.
+        print("  the anet passes: four scans of results / results_tf "
+              "(12 GB and 72 GB). Each says which table it is on.", flush=True)
         contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
         buildLinkStates(cur, contested)
