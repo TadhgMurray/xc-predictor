@@ -1265,7 +1265,38 @@ HORIZON_GAP_MAX_WEEKS = 208.0    # four years: a full college career out
 #   equally often ("where does this sophomore land as a college freshman"
 #   and "as a senior" are the same question at different horizons), so a
 #   uniform draw over the window is the honest default.
-HORIZON_GAP_SKEW = 1.0
+# ⚠ WHY THIS IS NO LONGER FLAT (measured 2026-09-17). The draw is
+#   weeks = lo + random()**skew * (hi - lo), so skew 1.0 is uniform over
+#   whatever window the athlete's own history allows -- and for most athletes
+#   that window is short. scripts/diag_calibration.py, sampling the WHOLE
+#   validation split, found the realized horizons topping out at 52.1 weeks
+#   with 104w+ EMPTY: the twin exists, but the gap it lands on is almost
+#   always just under a year, because hi_weeks is the gap back to the
+#   athlete's SECOND race and most athletes in the corpus have one or two
+#   seasons.
+#
+#   So a projection past a year was extrapolation off the end of the measured
+#   range, which is exactly what the recruiting page wants to do. Below 1.0
+#   the draw favours the LONG end of whatever window each athlete has, which
+#   costs nothing (the same twin, a different cut) and puts population where
+#   there was none.
+HORIZON_GAP_SKEW = 0.5
+
+# ★ AND A THIRD TWIN FOR THE ATHLETES WHO CAN REACH FURTHER. Skewing long
+#   helps only within an athlete's own window; an athlete with a four-year
+#   career still contributes most of their twins under two years simply
+#   because that is where the window's mass is. This one refuses to be
+#   anything but far: it draws in [HORIZON_LONG_MIN_WEEKS, max], so a
+#   multi-year career yields a genuinely long example every time it can.
+#
+# ! IT RETURNS None FOR ALMOST EVERYONE, and that is the design. lo_weeks is
+#   clipped up to 104, hi_weeks is the gap to their second race, and
+#   hi <= lo means no twin -- so only a history that really spans two years
+#   produces one. They are scarce, so the rate is 1.0 and all of them are
+#   taken.
+HORIZON_LONG_MIN_WEEKS = 104.0   # two years
+HORIZON_LONG_TWIN_RATE = 1.0
+HORIZON_LONG_SKEW = 0.7          # still favours the long end of the window
 
 # ★ EMITTED FOR EVERY TARGET THAT CAN CARRY ONE, not sampled. These are
 #   RARE -- they need an athlete with a multi-year career and two races at
@@ -1890,6 +1921,17 @@ def _horizonTwin(prior_results, target_result, full_sequence, rng):
                     kind="horizon")
 
 
+def _horizonLongTwin(prior_results, target_result, full_sequence, rng):
+    """The two-to-four-year twin. Same construction as _horizonTwin with the
+    floor raised, so the 104w+ band has a population to be calibrated on at
+    all. See HORIZON_LONG_MIN_WEEKS."""
+    return _gapTwin(prior_results, target_result, full_sequence, rng,
+                    min_weeks=HORIZON_LONG_MIN_WEEKS,
+                    max_weeks=HORIZON_GAP_MAX_WEEKS,
+                    skew=HORIZON_LONG_SKEW,
+                    kind="horizon_long")
+
+
 def _baseVectors(athlete_results: list[dict], encoders: dict) -> list:
     """One sequence vector per race, with days_ago (index 2) left at 0.
 
@@ -1976,6 +2018,17 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
             far = _horizonTwin(prior_results, target_result, sequence, rng)
             if far is not None:
                 examples.append(far)
+
+        # ★ AND THE VERY LONG ONE (2026-09-17). Two to four years, for the
+        #   athletes whose history can reach it -- which is few, so the rate
+        #   is 1.0 and every one is taken. Without it the 104w+ band is
+        #   empty and a two-year projection is extrapolation; see
+        #   HORIZON_LONG_MIN_WEEKS.
+        if rng is not None and rng.random() < HORIZON_LONG_TWIN_RATE:
+            further = _horizonLongTwin(prior_results, target_result,
+                                       sequence, rng)
+            if further is not None:
+                examples.append(further)
 
     return examples
 
@@ -2454,6 +2507,16 @@ def saveAll(athletes, encoders: dict, vocab: dict,
         print("  ⚠ NO HORIZON TWINS. The 44-208 week examples the recruiting "
               "projection needs were not produced -- check HORIZON_GAP_MIN_WEEKS "
               "against the corpus, or that rng is being passed through.")
+    # ⚠ AND THE LONG ONES SEPARATELY, because their ABSENCE IS INVISIBLE in the
+    #   horizon count. The 2026-09-17 calibration found the realized horizons
+    #   topping out at 52.1 weeks with 104w+ empty while horizon twins were
+    #   being produced in quantity -- the twins existed, the long gaps did not.
+    #   A projection past a year is extrapolation without these.
+    if not kinds.get("horizon_long"):
+        print("  ⚠ NO TWO-YEAR TWINS. Nothing past HORIZON_LONG_MIN_WEEKS was "
+              "produced, so the 104w+ band will be empty and no projection "
+              "beyond about a year is measurable. Expected to be scarce, but "
+              "not zero: it needs athletes with two years of races.")
     print(f"Done. {total_examples:,} examples saved in {chunk_idx} chunks.")
 
 # _saveChunk
