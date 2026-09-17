@@ -8,6 +8,7 @@
 #   python -m pytest -q tests/test_logo_ground.py
 import io
 import os
+import re
 import sys
 import unittest
 
@@ -379,3 +380,64 @@ class ThePlausibleHost(unittest.TestCase):
         body = src[i:src.index("\n\n\n", i)]
         for banned in ("manners", "urlopen", "requests", "cur.execute"):
             self.assertNotIn(banned, body, banned)
+
+
+class TheAnetPreference(unittest.TestCase):
+    """★ owner, 2026-09-17: "Bro just take the anet one please." Resolution
+    loses to provenance: an anet crest is fetched BY TEAM ID and cannot be the
+    wrong school's, while anything off the open web is only as good as the
+    school_website row that pointed at it."""
+
+    def test_anet_now_outranks_the_open_web(self):
+        self.assertLess(S.kindRank("anet"), S.kindRank("athletics"))
+        self.assertLess(S.kindRank("anet"), S.kindRank("school"))
+        self.assertLess(S.kindRank("anet"), S.kindRank("direct"))
+
+    def test_an_owner_override_still_beats_everything(self):
+        for k in ("anet", "athletics", "direct", "school", "refresh"):
+            self.assertLess(S.kindRank("override"), S.kindRank(k), k)
+
+    def test_a_refresh_keeps_the_rank_of_what_it_refreshes(self):
+        """Or the quarterly re-ask would demote every crest it touched."""
+        self.assertEqual(S.kindRank("refresh"), S.kindRank("anet"))
+
+    def test_the_web_sources_keep_their_order_among_themselves(self):
+        self.assertLess(S.kindRank("athletics"), S.kindRank("direct"))
+        self.assertLess(S.kindRank("direct"), S.kindRank("school"))
+
+    def test_the_tagged_form_ranks_as_its_source(self):
+        self.assertEqual(S.kindRank("anet:apple-touch"), S.kindRank("anet"))
+        self.assertEqual(S.kindRank("athletics:og"), S.kindRank("athletics"))
+
+    def test_an_unknown_kind_ranks_last_rather_than_first(self):
+        self.assertGreater(S.kindRank("whatever"), S.kindRank("school"))
+        self.assertGreater(S.kindRank(None), S.kindRank("school"))
+
+    def test_the_comment_does_not_name_something_that_does_not_exist(self):
+        """I referenced an ANET_PLACEHOLDER_SHAS that was never written. The
+        real defence against an anet placeholder is markShared: a placeholder
+        is by definition worn by many schools."""
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        self.assertNotIn("ANET_PLACEHOLDER_SHAS", src)
+        self.assertIn("SHARED_MIN", src)
+        self.assertTrue(re.search(r"^SHARED_MIN\s*=", src, re.M))
+
+
+class TheRegroundProgress(unittest.TestCase):
+    """! A SILENT PROCESS IS INDISTINGUISHABLE FROM A WEDGED ONE (owner: "I
+    ctrl cd the reground one, I think it was hung")."""
+
+    def test_it_says_how_much_there_is_and_counts_through_it(self):
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        i = src.index("def regroundAll(")
+        body = src[i:src.index("\ndef main():", i)]
+        self.assertIn("crests to check in", body)
+        self.assertIn("re-keyed so far", body)
+        self.assertIn("PROGRESS_EVERY", body)
+        self.assertIn("flush=True", body)
+
+    def test_the_progress_step_is_small_enough_to_see(self):
+        self.assertLessEqual(S.PROGRESS_EVERY, 5000)
+        self.assertGreaterEqual(S.PROGRESS_EVERY, 100)

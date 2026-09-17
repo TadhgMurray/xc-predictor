@@ -1284,7 +1284,30 @@ def writeFile(school, state, png, directory=None, level=None):
 #   so re-running anet over a corpus that already has athletics-site
 #   crests improves the gaps and leaves the good ones alone. --replace
 #   overrides the rule where a caller means to.
-KIND_RANK = {"override": 0, "athletics": 1, "anet": 2, "refresh": 2,
+# ★ anet OUTRANKS THE OPEN WEB NOW (owner, 2026-09-17: "Bro just take the
+#   anet one please"). It was second to a school's own athletics site, which
+#   has the better image -- higher resolution, the real athletics mark rather
+#   than one small mascot. The trade was wrong:
+#
+#     - an anet crest is fetched BY TEAM ID, so it cannot be the wrong
+#       school's. Everything from the open web is only as good as the
+#       school_website row that pointed at it, and a wrong row returns that
+#       domain's logo faithfully -- which is how a high school ended up
+#       wearing the World Athletics mark.
+#     - anet covers every team in the corpus, because the corpus IS anet.
+#       A school website has to be found, reached and parsed first.
+#
+#   So resolution loses to provenance. plausibleHost now refuses the worst of
+#   the open web, but "refused" still costs a request and a judgement call per
+#   school, and anet needs neither.
+#
+# ! athletics IS STILL KEPT WHERE IT IS ALREADY STORED, and still beats
+#   `direct` and `school`. This changes which one WINS when both exist, not
+#   whether the others are worth having -- an anet placeholder for a team that
+#   never uploaded a mascot is worse than a real athletics-site crest. The
+#   defence there is markShared: a placeholder is by definition worn by many
+#   schools, so SHARED_MIN catches it and the site draws nothing.
+KIND_RANK = {"override": 0, "anet": 1, "refresh": 1, "athletics": 2,
              "direct": 3, "school": 4}
 
 
@@ -1522,14 +1545,27 @@ def _workOne(manners, row, rediscover=False):
             "modified": manners.modified if png else None}
 
 
+PROGRESS_EVERY = 2000       # rows between progress lines; see regroundAll
+
+
 def regroundAll(cur, directory=None, write=False, limit=None, only=None,
-                out=print):
+                out=None):
     """Re-key every stored crest's ground in place. Returns a census dict.
 
     ⚠ NO NETWORK. Every byte it needs is already on disk, so this is a repair
       and not a rescrape -- which is the whole point (owner: "I stopped the
       scrape until we can fix amherst type issues").
     """
+    # ! flush BY DEFAULT, for the same reason. A caller passing its own `out`
+    #   gets the plain one-argument signature.
+    if out is None:
+        def out(msg, flush=True):
+            print(msg, flush=flush)
+    else:
+        _given = out
+
+        def out(msg, flush=False, _f=_given):
+            _f(msg)
     directory = directory or LOGO_DIR
     params, where = {}, ["path IS NOT NULL"]
     if only:
@@ -1546,8 +1582,16 @@ def regroundAll(cur, directory=None, write=False, limit=None, only=None,
             if not isinstance(r, dict) else dict(r) for r in cur.fetchall()]
     census = {"rows": len(rows), "missing": 0, "fixed": 0, "unchanged": 0,
               "no_ground": 0, "refused": 0, "unreadable": 0}
+    # ! IT HAS TO SAY SOMETHING (owner: "I ctrl cd the reground one, I think
+    #   it was hung, or it wasn't printing anything at least"). Decoding and
+    #   re-keying tens of thousands of PNGs is minutes of work with nothing to
+    #   show, and a silent process is indistinguishable from a wedged one.
+    out(f"  {len(rows):,} crests to check in {directory}", flush=True)
     fixed = []
-    for row in rows:
+    for i, row in enumerate(rows):
+        if i and i % PROGRESS_EVERY == 0:
+            out(f"    {i:,}/{len(rows):,}  {len(fixed):,} re-keyed so far",
+                flush=True)
         full = os.path.join(directory, row["path"])
         try:
             with open(full, "rb") as fh:
