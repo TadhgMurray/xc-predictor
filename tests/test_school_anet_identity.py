@@ -85,9 +85,11 @@ def test_the_assignment_is_written_down_so_the_page_and_the_counts_agree():
     assert "stateFilterSql(\"s\", state, primary, school)" in school_py
     assert "stateFilterSql(\"rr\", state, primary, school)" in school_py
     # and it is built from si_assign AFTER the merge and the directory folded
-    assert "def buildAthleteState(cur, contested):" in _SRC
+    assert "def buildAthleteState(cur, names):" in _SRC
     assert "LEFT   JOIN school_state_alias_new al" in _SRC
-    assert _SRC.index("buildSchoolLevel(cur)\n        conn.commit()\n\n        buildAthleteState")
+    # after the merge, the directory and the levels have all folded states
+    assert (_SRC.index("buildSchoolLevel(cur)")
+            < _SRC.index("buildAthleteState(cur, assigned)"))
     assert "\"school_athlete_state\"):" in _SRC            # swapped with the rest
 
 
@@ -106,15 +108,42 @@ def test_the_directory_places_a_college_season_because_anet_cannot():
     assert "starts_with(rr.pool, 'college')" in _SRC
 
 
-def test_contested_names_only_so_every_other_name_is_unchanged():
+def test_the_directory_leg_is_still_contested_only():
+    """ds is a NAME match and can be wrong; it stays where someone has
+    already shown the name is disputed."""
     body = _SRC[_SRC.index("def buildDirStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
     assert "if key in contested and key in dir_states:" in body
+
+
+def test_the_anet_team_id_leg_is_not_gated_at_all():
+    """⚠ THE GATE WAS THE WHOLE BUG (owner, 2026-09-17: "all we're doing is
+    taking anet as source of truth for all schools/states ... and then
+    linking with tfrrs by athletes?" -- yes, and this was why it was not).
+
+    ts was CONTESTED NAMES ONLY, so for a name nobody had reported, ts, ds
+    and ns were all NULL and the assignment fell to ph.state -- the
+    athlete's home state -- WHILE THE ROW CARRIED anet's team_id. Penn
+    State's 28 clusters were that, and so was every unreported one.
+
+    ★ ts CANNOT MERGE TWO SCHOOLS, which is why ungating it is safe: it
+      separates by team_id, so two Kingstons with two anet teams get two
+      states from their own rows."""
     team = _SRC[_SRC.index("def buildTeamStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
-    assert "JOIN   si_names sn ON sn.name = lower(btrim(r.school))" in team
-    assert "r.team_id <> 0" in team
-    # the filter is still CONTESTED NAMES ONLY -- the table is built from
-    # exactly that list, which is what keeps the scan narrow
-    assert "_namesTemp(cur, names)" in _SRC
+    assert "JOIN   si_names sn" not in team, "ts must not be name-filtered"
+    assert "if not contested:" not in team, "ts must not abstain on quiet names"
+    assert "r.team_id <> 0" in team          # the unattached sentinel, still
+    assert "def buildTeamStates(cur, contested=None):" in _SRC
+
+
+def test_the_written_assignment_covers_the_names_that_actually_split():
+    """Derived from the finished clusters, not guessed before they exist --
+    and that is also what stops an ungated ts writing tens of millions of
+    rows for names with one cluster, where the filter is a no-op."""
+    assert "HAVING count(DISTINCT state) >= 2" in _SRC
+    assert "buildAthleteState(cur, assigned)" in _SRC
+    i = _SRC.index("assigned = {r[0] for r in cur.fetchall()}")
+    assert _SRC.index("CREATE TABLE school_identity_new AS") < i, \
+        "the clusters must exist before they are asked which names split"
 
 
 def test_the_anet_states_come_from_the_rows_not_from_anets_spelling():
@@ -496,9 +525,13 @@ def test_the_link_covers_every_linked_name_not_only_contested_ones():
 def test_a_linked_name_is_recorded_in_the_athlete_assignment():
     """Right clusters, wrong roster is the bug school_athlete_state exists
     for: stateFilterSql falls back to person_home_state for any name the
-    table does not cover, so a linked college must be in it."""
+    table does not cover, so a linked college must be in it.
+
+    ! ASKED OF THE CLUSTERS NOW, not of the link list -- a linked college
+      that split is in "names with >= 2 clusters" by construction, and one
+      that did not split needs no assignment at all."""
     assert "linked = buildLinkStates(cur, contested)" in _SRC
-    assert "assigned = set(contested) | {str(n).strip().lower() for n in linked}" in _SRC
+    assert "HAVING count(DISTINCT state) >= 2" in _SRC
     assert "buildAthleteState(cur, assigned)" in _SRC
 
 
@@ -596,14 +629,17 @@ def _identitySource():
         return fh.read()
 
 
-def test_the_contested_name_scans_hash_rather_than_walk_an_array():
-    """Both of these scan a big table, and the left-hand side is an
-    EXPRESSION -- lower(btrim(school)) -- so no index can serve it either
-    way. The array walk was the whole cost."""
+def test_the_contested_name_scan_hashes_rather_than_walks_an_array():
+    """The left-hand side is an EXPRESSION -- lower(btrim(school)) -- so no
+    index can serve it either way, and the array walk was the whole cost.
+
+    ! ONLY buildNameStates STILL NEEDS THIS. buildTeamStates used to filter
+      by name too and no longer filters at all, which is strictly cheaper
+      than any way of expressing the filter."""
     src = _identitySource()
     assert "def _namesTemp(cur, names, table=\"si_names\"):" in src
-    assert "JOIN   si_names sn ON sn.name = lower(btrim(r.school))" in src
     assert "JOIN   si_ns_names sn ON sn.name = lower(btrim(rr.school))" in src
+    assert "lower(btrim(rr.school)) = ANY(%s)" not in src
 
 
 def test_the_big_table_filters_no_longer_use_any_of_an_array():

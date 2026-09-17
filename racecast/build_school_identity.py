@@ -383,7 +383,10 @@ def buildLinkStates(cur, contested=None):
     cur.execute("CREATE INDEX si_link_state_idx ON si_link_state (school)")
     cur.execute("SELECT school FROM si_link_state")
     names = {r[0] for r in cur.fetchall()}
-    n_contested = len(names & {n for n in (contested or ())}) if contested else 0
+    # ! LOWERCASED ON BOTH SIDES. `contested` is keyed on lower(btrim(...));
+    #   si_link_state.school is the tfrrs string as stored. Comparing them
+    #   raw reported "1 of them are contested names" against 4,658.
+    n_contested = len({n.strip().lower() for n in names} & set(contested or ()))
     print(f"  school_identity: {len(names):,} tfrrs strings are linked to an "
           f"anet college team by their shared athletes -- their "
           f"college-pooled seasons go to the TEAM's state, not the "
@@ -416,23 +419,36 @@ def _namesTemp(cur, names, table="si_names"):
     return table
 
 
-def buildTeamStates(cur, contested):
+# ⚠⚠ NO NAME FILTER ANY MORE (owner, 2026-09-17: "isn't this quite easy to
+#    fix, all we're doing is taking anet as source of truth for all
+#    schools/states ... and then linking with tfrrs by athletes?" -- yes, and
+#    this gate was the reason it was not).
+#
+#    This leg was CONTESTED NAMES ONLY, like its neighbours. So for any name
+#    nobody had complained about, ts was NULL, ds was NULL, ns was NULL, and
+#    the assignment fell through to ph.state -- the athlete's home state --
+#    WHILE THE ROW CARRIED anet's team_id THE WHOLE TIME. We had the school's
+#    location on every row and only looked at it once someone reported the
+#    name as broken. Penn State's 28 clusters were that, and so is every
+#    unreported one.
+#
+# ★ AND ts CANNOT MERGE TWO SCHOOLS, WHICH IS WHY IT IS SAFE TO UNGATE. It
+#   separates by team_id: two Kingstons with two anet teams get two states
+#   from their own rows. The contested gate was never protecting anything
+#   here -- it was a cost decision, and the cost is an aggregate over a scan
+#   that already happens.
+def buildTeamStates(cur, contested=None):
     """si_team_state(person_id, school, state): where the athlete's OWN
-    anet team for that school string is, for contested names. The modal
-    state across both sports' rows, so one stray row cannot move it.
+    anet team for that school string is. The modal state across both
+    sports' rows, so one stray row cannot move it.
 
-    ⚠ ONE FILTERED PASS OVER results AND results_tf. Everything else in
-      this step reads athlete_season for a reason (owner, 2026-09-15: the
-      gateway timeout), but team_id exists only on the raw tables and the
-      name filter is what keeps it cheap.
+    ⚠ ONE PASS OVER results AND results_tf. Everything else in this step
+      reads athlete_season for a reason (owner, 2026-09-15: the gateway
+      timeout), but team_id exists only on the raw tables.
     """
     cur.execute("DROP TABLE IF EXISTS si_team_state")
     cur.execute("CREATE TEMP TABLE si_team_state "
                 "(person_id bigint, school text, state text)")
-    if not contested:
-        return 0
-    names = sorted(contested)
-    _namesTemp(cur, names)
     cur.execute("DROP TABLE IF EXISTS si_team_raw")
     cur.execute("CREATE TEMP TABLE si_team_raw "
                 "(person_id bigint, school text, state text, n bigint)")
@@ -449,21 +465,20 @@ def buildTeamStates(cur, contested):
               f"names' anet teams...", flush=True)
         cur.execute(f"""
             INSERT INTO si_team_raw (person_id, school, state, n)
-            -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT anet's
-        --    (anet_teams.storeTeam: `state` is the queue's (school, state)
-        --    pair, inferred from where the athletes RACE; `anet_state` is
-        --    team["State"], which is where the school IS). COALESCEing our
-        --    guess first lets the inference outvote the id -- the exact
-        --    thing this file's header forbids -- and the dry run showed it
-        --    plainly (2026-09-17): Cornell NC, Ithaca WI, Tiffin IA,
-        --    Hartnell TX, Cerritos AZ, Iowa Central CC IN. Every one a
-        --    travel state. Our pair is kept only as the fallback for a team
-        --    anet gave no State for.
-        SELECT r.person_id, r.school,
+            -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT
+            --    anet's (anet_teams.storeTeam: `state` is the queue's
+            --    (school, state) pair, inferred from where the athletes
+            --    RACE; `anet_state` is team["State"], which is where the
+            --    school IS). COALESCEing our guess first lets the inference
+            --    outvote the id -- the exact thing this file's header
+            --    forbids -- and the dry run showed it plainly (2026-09-17):
+            --    Cornell NC, Ithaca WI, Tiffin IA, Hartnell TX, Cerritos AZ,
+            --    Iowa Central CC IN. Every one a travel state. Our pair is
+            --    kept only as the fallback for a team anet gave no State for.
+            SELECT r.person_id, r.school,
                    upper(btrim(COALESCE(t.anet_state, t.state))), count(*)
             FROM   {table} r
             JOIN   anet_team t ON t.team_id = r.team_id
-            JOIN   si_names sn ON sn.name = lower(btrim(r.school))
             WHERE  r.person_id IS NOT NULL
               AND  r.team_id IS NOT NULL AND r.team_id <> 0
               AND  r.school IS NOT NULL
@@ -486,7 +501,8 @@ def buildTeamStates(cur, contested):
     cur.execute("SELECT count(*) FROM si_team_state")
     n = cur.fetchone()[0]
     print(f"  school_identity: {n:,} (athlete, school) pairs placed by anet's "
-          f"own team id rather than by where the athlete races", flush=True)
+          f"own team id rather than by where the athlete races -- EVERY name "
+          f"anet knows, not only the disputed ones", flush=True)
     return n
 
 
@@ -1007,8 +1023,9 @@ def buildSchoolLevel(cur):
 # ! CONTESTED AND LINKED NAMES ONLY -- every other name's assignment IS its
 #   home state, which the fallback already answers. Keeps the table small
 #   enough to be a lookup rather than a second person_home_state.
-def buildAthleteState(cur, contested):
-    """school_athlete_state_new(school, person_id, state)."""
+def buildAthleteState(cur, names):
+    """school_athlete_state_new(school, person_id, state) for the names in
+    `names` (lowercased) -- the ones holding more than one cluster."""
     t0 = time.time()
     cur.execute("DROP TABLE IF EXISTS school_athlete_state_new")
     cur.execute("""
@@ -1018,7 +1035,7 @@ def buildAthleteState(cur, contested):
             state     text   NOT NULL,
             PRIMARY KEY (school, person_id))
     """)
-    if contested:
+    if names:
         cur.execute("""
             INSERT INTO school_athlete_state_new (school, person_id, state)
             SELECT a.school, a.person_id, COALESCE(al.state, a.state)
@@ -1028,13 +1045,14 @@ def buildAthleteState(cur, contested):
             WHERE  lower(btrim(a.school)) = ANY(%s)
               AND  COALESCE(al.state, a.state) IS NOT NULL
             ON CONFLICT DO NOTHING
-        """, (sorted(contested),))
+        """, (sorted(names),))
     cur.execute("CREATE INDEX school_athlete_state_new_person_idx "
                 "ON school_athlete_state_new (person_id)")
     cur.execute("SELECT count(*), count(DISTINCT school) FROM school_athlete_state_new")
     n, ns = cur.fetchone()
     print(f"  school_athlete_state: {n:,} (athlete, school) assignments over "
-          f"{ns:,} contested names in {time.time() - t0:.0f}s", flush=True)
+          f"{ns:,} names that hold more than one cluster in "
+          f"{time.time() - t0:.0f}s", flush=True)
 
 
 def main():
@@ -1091,11 +1109,8 @@ def main():
         linked = buildLinkStates(cur, contested)
         buildDirStates(cur, contested, dir_states)
         buildNameStates(cur, contested)
-        # ! THE NAMES THE ASSIGNMENT TABLE HAS TO COVER. A linked college is
-        #   placed by its anet team, so its athletes are NOT at their home
-        #   state -- and the site re-derives cluster membership from that
-        #   table. Contested OR linked.
-        assigned = set(contested) | {str(n).strip().lower() for n in linked}
+        # (the assignment table's name list is derived from the finished
+        #  clusters, below -- see buildAthleteState's call)
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
@@ -1239,6 +1254,26 @@ def main():
         buildSchoolLevel(cur)
         conn.commit()
 
+        # ★ THE NAMES THAT ACTUALLY SPLIT, NOT THE ONES WE SUSPECTED.
+        #   This list used to be `contested`, then `contested | linked` --
+        #   both of them guesses made BEFORE the clusters existed. The real
+        #   question the table answers is "which state is this athlete's,
+        #   for a name that has more than one", and school_identity_new is
+        #   sitting right there with the answer.
+        #
+        # ! IT IS ALSO WHAT KEEPS IT SMALL. Ungating buildTeamStates places
+        #   every athlete anet knows; writing all of those into a real,
+        #   swapped table would be tens of millions of rows for nothing --
+        #   a name with ONE cluster needs no per-athlete assignment, because
+        #   the filter is a no-op there.
+        cur.execute("""
+            SELECT lower(btrim(school)) FROM school_identity_new
+            GROUP  BY 1 HAVING count(DISTINCT state) >= 2
+        """)
+        assigned = {r[0] for r in cur.fetchall()}
+        print(f"  school_identity: {len(assigned):,} names hold more than one "
+              f"cluster -- those are the ones whose athletes need a written "
+              f"assignment", flush=True)
         buildAthleteState(cur, assigned)
         conn.commit()
 
