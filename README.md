@@ -1,4 +1,4 @@
-Xc-predictor/Racecast.co by Tadhg Murray:
+Xc-predictor/Racecast.co by Tadhg Murray (xc/tf athlete for Tufts University):
 
 This contains all the code for a website project that displays xc/tf races, rates them, and predicts future results. It was built in these steps:
 
