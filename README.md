@@ -115,3 +115,6 @@ you get the data, how will you store it, what data are you even getting, how can
 etc. If I were to do this again, I'd plan that all out first, start the data collection (and make sure it parses correctly and your taking all you need!), 
 and then start coding the rest (although cleaning the data before coding might have been more useful and worthwhile if I had some foresight). 
 
+(I didn't even talk about the elevation backfill or the gps backfill or the id merging across scraping sources, or the race deduplicating or
+the school logo backfill or the school backfill itself. Sometimes I really feel quite useless when examining this project and feel some imposter
+syndrome when looking at other people, but I did do a lot of work on this project and I feel I have grown a lot and learned a lot (and made a lot)).
