@@ -10,6 +10,26 @@ import re
 from parse_time import parseTimeToSeconds
 from column_map import XC_DEFAULT, trustworthy
 
+# ★ THE NON-FINISH, FROM THE PAGE'S OWN LETTERS. tfrrs writes "DNF" / "DNS" /
+#   "DQ" in the time cell and parseTimeToSeconds correctly refuses to turn
+#   that into a number -- but the letters were then thrown away, so a tfrrs
+#   non-finisher reached the database as an indistinguishable blank. One
+#   vocabulary, shared with anet's saver and every reader:
+#   scripts/result_status.py.
+#
+# ! THE PATH INSERT IS DELIBERATE AND GUARDED. This package is imported with
+#   tfrrs/parser on sys.path (the parsers are kept dependency-light); the
+#   scrapers add scripts/ themselves, but a direct parser test does not.
+try:
+    from result_status import normalise as _statusText
+except ImportError:                                          # pragma: no cover
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__)))), "scripts"))
+    from result_status import normalise as _statusText
+
 # ------------------------------------------------------------------ #
 # WHAT ONE TFRRS XC INDIVIDUAL ROW LOOKS LIKE  (verified against real HTML)
 # ------------------------------------------------------------------ #
@@ -138,6 +158,13 @@ def parseXCRow(row, colmap=None):
     #   column_map picks it by the header, else by being the larger value.
     time_seconds = parseTimeToSeconds(_textAt("time"))
 
+    # ⚠ WHY THERE IS NO TIME, WHEN THERE IS NOT ONE. The cell says "DNF" or
+    #   "DNS" or "DQ"; parseTimeToSeconds refuses it (correctly) and returned
+    #   None, and the letters went in the bin. A DNS is not a DNF -- one is
+    #   no evidence about the athlete and the other is -- and after the scrape
+    #   the page is gone, so this is the only moment the distinction exists.
+    status = _statusText(_textAt("time"))
+
     # score — blank for non-scoring (displaced) runners.
     score = _toIntOrNone(_textAt("score"))
 
@@ -148,6 +175,7 @@ def parseXCRow(row, colmap=None):
     return {
         "ok":                True,
         "note":              None,
+        "status":            status,
         "place":             place,
         "athlete_native_id": athlete_native_id,
         "name":              name,

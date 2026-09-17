@@ -475,6 +475,7 @@ def createTables():
             _migrateMeetQueueAddSource(cursor)
             _migrateMeetExtrasAddSource(cursor)
             _migrateResultsAddTeamSlug(cursor)
+            _migrateResultsAddStatus(cursor)
             _createMeetsTFMetaTable(cursor)
             _createIndexes(cursor)
             conn.commit()
@@ -701,6 +702,27 @@ def _createRecoveryTable(cursor):
 # Arguments:
 #           cursor: open psycopg2 cursor.
 # Output:   None. Idempotent.
+# _migrateResultsAddStatus
+# Purpose: Add `status` to results AND results_tf -- WHY a row has no time, in
+#          the source's own letters (DNF / DNS / DQ / SCR / NH ...).
+#
+# ⚠ IT EXISTED ON ONE TABLE AND WAS CREATED BY THE SAVER, NOT BY A MIGRATION.
+#   `results.status` was added lazily by _ensureResultsStatus the first time
+#   anet's XC saver ran; results_tf never had one at all; and the tfrrs savers
+#   write both tables without going near either. So a database where tfrrs
+#   scraped first met `UndefinedColumn: column "status" does not exist` -- the
+#   same shape of failure results_tf.team_slug produced on the server this
+#   morning. A column two writers depend on belongs in createTables.
+#
+# ! ONLY NEW AND RE-SCRAPED ROWS GET A VALUE. Additive on purpose: NULL for
+#   everything already stored, and result_status.kind() falls back to the
+#   sentinel for those, which is all they have.
+def _migrateResultsAddStatus(cursor):
+    for table in ("results", "results_tf"):
+        cursor.execute(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+
+
 def _migrateResultsAddTeamSlug(cursor):
     for table in ("results", "results_tf"):
         cursor.execute(
@@ -1383,33 +1405,38 @@ def saveAthletesBulk(conn, athletes: list):
 #   letters; this keeps them in a `status` column beside the sentinel time,
 #   so the page can say which. Only the vocabulary below is stored -- a
 #   result string that is a real time is not a status.
-_STATUS_VOCAB = {"DNF", "DNS", "DQ", "DSQ", "NT", "SCR", "WD", "FS", "NH",
-                 "ND", "NM", "DNP"}
+# ! THE VOCABULARY MOVED TO result_status, WHOLE. It was defined here and
+#   used by the XC saver only, so the TF saver beside it captured nothing and
+#   every READER went on inferring a non-finish from the sentinel in five
+#   different spellings. One module now, shared by both savers, both tfrrs
+#   parsers and every consumer -- see scripts/result_status.py.
+from result_status import fromFields as _statusFields   # noqa: E402
 
 
 def _statusOf(resultData: dict):
-    for key in ("Result", "ShortCode", "Status", "ResultText"):
-        v = resultData.get(key)
-        if v is None:
-            continue
-        t = str(v).strip().upper().replace(".", "")
-        if t in _STATUS_VOCAB:
-            return "DQ" if t == "DSQ" else t
-    return None
+    """The non-finish token anet wrote, or None. It puts it in whichever of
+    these fields it feels like that season, so all four are offered."""
+    return _statusFields(*(resultData.get(k) for k in
+                           ("Result", "ShortCode", "Status", "ResultText")))
 
 
-_RESULTS_STATUS_READY = False
+_RESULTS_STATUS_READY = set()
 
 
-def _ensureResultsStatus(conn):
-    """results.status, added once per process. IF NOT EXISTS, so a database
-    that already has it is untouched."""
-    global _RESULTS_STATUS_READY
-    if _RESULTS_STATUS_READY:
+def _ensureResultsStatus(conn, table="results"):
+    """<table>.status, added once per process per table. IF NOT EXISTS, so a
+    database that already has it is untouched.
+
+    ⚠ results_tf WAS NEVER GIVEN ONE. The column has existed on `results`
+      since issue 59 and the TF saver sitting beside it captured nothing, so
+      every anet TRACK non-finish is still just the sentinel -- and track is
+      the bigger table (191M rows against 39M).
+    """
+    if table in _RESULTS_STATUS_READY:
         return
     cur = conn.cursor()
-    cur.execute("ALTER TABLE results ADD COLUMN IF NOT EXISTS status TEXT")
-    _RESULTS_STATUS_READY = True
+    cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+    _RESULTS_STATUS_READY.add(table)
 
 
 def saveResultsBulk(conn, results: list):
@@ -1576,6 +1603,13 @@ def saveResultsTFBulk(conn, results: list):
 
     if not results:
         return
+
+    # ⚠ THE TRACK TABLE HAD NO status COLUMN AT ALL. `results` has had one
+    #   since issue 59; results_tf, sitting beside it, kept the letters in
+    #   `mark` -- the same column a FIELD event's real mark lives in -- so
+    #   "NH" could be a no-height or a genuine result and nothing could tell.
+    #   191M rows, against 39M for XC.
+    _ensureResultsStatus(conn, "results_tf")
  
     scraped_at = datetime.datetime.now(datetime.timezone.utc)
  
@@ -1602,6 +1636,12 @@ def saveResultsTFBulk(conn, results: list):
  
         # school_source: 'scraped' if we resolved a school, else NULL (re-scrape target).
         school_source = "scraped" if school else None
+
+        # ★ THE STATUS, IN ITS OWN COLUMN, FOR EVERY EVENT KIND. _statusOf
+        #   returns None for a real result, so a field event's genuine mark is
+        #   untouched and an "NH" is recorded as the no-height it is. `mark`
+        #   keeps whatever it held, so no existing reader changes.
+        status = _statusOf(result)
 
         row = (                          # <-- this assignment must exist
             result.get("IDResult"),
@@ -1636,6 +1676,7 @@ def saveResultsTFBulk(conn, results: list):
             "anet",    # source
             "anet",    # id_system
             None if is_relay else result.get("AthleteID"),   # person_id: seed at insert; relays have no person
+            status,
         )
 
 
@@ -1658,7 +1699,7 @@ def saveResultsTFBulk(conn, results: list):
                             exhibition, official, wind, place, score, round,
                             heat, has_splits, is_field, mark, team_id,
                             event_type_id, video_count, age_grade, pr, sr,
-                            source, id_system, person_id)
+                            source, id_system, person_id, status)
         VALUES %s
         ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
@@ -1683,6 +1724,9 @@ def saveResultsTFBulk(conn, results: list):
             sr            = EXCLUDED.sr,
             school        = COALESCE(EXCLUDED.school, results_tf.school),
             school_source = COALESCE(EXCLUDED.school_source, results_tf.school_source),
+            -- ! COALESCE, LIKE school. A re-scrape that comes back without the
+            --   letters must not erase the ones we already have.
+            status        = COALESCE(EXCLUDED.status, results_tf.status),
             scraped_at    = EXCLUDED.scraped_at
     """, rows)
 

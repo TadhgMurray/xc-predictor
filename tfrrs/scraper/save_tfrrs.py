@@ -238,6 +238,12 @@ def buildTFRRSResultRow(parsed: dict, meet_meta: dict,
         # A real school id: state, level, gender and name in one stable token.
         # The parser has always read it; before this it was dropped here.
         "team_slug":     parsed.get("team_slug"),
+        # ★ WHY THERE IS NO TIME: "DNF" / "DNS" / "DQ", the page's own word.
+        #   Carried from the parser to the row so the saver can store it --
+        #   the same journey team_slug makes, and dropped in the same place
+        #   until now. A DNS is not a DNF, and after the scrape the page is
+        #   gone, so this is the only moment the difference exists.
+        "status":        parsed.get("status"),
     }
  
  
@@ -374,6 +380,12 @@ def _rowToTuple(row: dict, scraped_at) -> tuple:
 #           rows: list of normalized dicts from the transform half.
 # Output:   None. (Cannot run until _mintResultId + the migration columns exist.)
 def saveTFRRSResultsBulk(conn, rows: list) -> None:
+    # ! THE COLUMN, BEFORE THE INSERT THAT NEEDS IT. createTables carries the
+    #   migration, but these savers can be the first thing a database ever
+    #   runs -- and a missing column here is UndefinedColumn mid-scrape, which
+    #   is how results_tf.team_slug took the identity job down this morning.
+    from database import _ensureResultsStatus
+    _ensureResultsStatus(conn, "results_tf")
     if not rows:
         return
  
@@ -535,6 +547,11 @@ def _rowToTupleXC(row: dict, scraped_at) -> tuple:
         scraped_at,
         splits_value,
         row.get("team_slug"),        # the tfrrs team-page key, NULL if unlinked
+        # ★ WHY THERE IS NO TIME. The page said "DNF"/"DNS"/"DQ" in the time
+        #   cell; the parser kept the letters (parse_xc), and this is where
+        #   they land. Before this they were dropped and every tfrrs
+        #   non-finisher arrived indistinguishable from every other.
+        row.get("status"),
     )
  
  
@@ -548,6 +565,12 @@ def _rowToTupleXC(row: dict, scraped_at) -> tuple:
 #           rows: list of normalized dicts from buildTFRRSResultRows (XC meet).
 # Output:   None. One upserted `results` row per input row.
 def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
+    # ! THE COLUMN, BEFORE THE INSERT THAT NEEDS IT. createTables carries the
+    #   migration, but these savers can be the first thing a database ever
+    #   runs -- and a missing column here is UndefinedColumn mid-scrape, which
+    #   is how results_tf.team_slug took the identity job down this morning.
+    from database import _ensureResultsStatus
+    _ensureResultsStatus(conn, "results")
     if not rows:
         return
  
@@ -574,7 +597,7 @@ def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
                 result_id, athlete_id, person_id, source, id_system, native_id,
                 athlete_name, meet_id, div_id, time_seconds, grade, date,
                 school, school_source, place, score, has_splits,
-                scraped_at, splits_json, team_slug
+                scraped_at, splits_json, team_slug, status
             )
             VALUES %s
             ON CONFLICT (result_id) DO UPDATE SET
@@ -583,6 +606,9 @@ def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
                 score         = EXCLUDED.score,
                 has_splits    = EXCLUDED.has_splits,
                 native_id     = EXCLUDED.native_id,
+                -- ! COALESCE, like school: a re-scrape that comes back
+                --   without the letters must not erase the ones we have.
+                status        = COALESCE(EXCLUDED.status, results.status),
                 -- div_id MUST be refreshed on conflict: re-scraped rows mint the
                 -- SAME result_id, so they take the DO UPDATE path. Without this
                 -- line, an existing row's div_id (NULL from before the fix) is
