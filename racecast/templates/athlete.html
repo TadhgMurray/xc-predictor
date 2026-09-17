@@ -215,7 +215,11 @@
                             <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}?r={{ race.result_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.meet_id %}
-                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}{% if race.sport == 'TF' %}?r={{ race.result_id }}{% endif %}"
+                            {# ?r= ON BOTH SPORTS NOW. The XC meet page pins on it too -- the
+                               anet and tfrrs id spaces collide on 15,096 XC meet_ids,
+                               and without the pin the bigger feed's meet always won
+                               (owner, 2026-09-17: races that 404). #}
+                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}?r={{ race.result_id }}"
                                title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
                         {% else %}
                             <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or " - " }}</span>

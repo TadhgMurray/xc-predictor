@@ -2975,9 +2975,8 @@ def race_xc(meet_id, div_id):
             #   page uses, resolved over the same size-ordered list, so the
             #   division link from a meet page lands on that meet's race
             #   and not on the colliding one's rows merged in (2026-09-13)
-            sources = meet_sources(cur, "results", meet_id)
-            src, alt_idx, other_sources = pick_source(
-                sources, request.args.get("alt"))
+            src, alt_idx, other_sources = _xc_meet_sources(
+                cur, meet_id, request.args, div_id)
             header  = get_race_header(cur, meet_id, div_id, source=src)
             results = get_race_results(cur, meet_id, div_id, source=src)
             # ★ WHICH school each row MEANS, from the athlete's own
@@ -3284,15 +3283,65 @@ def _tf_meet_sources(cur, meet_id, args):
     return pick_source(sources, alt)
 
 
+def _xc_meet_sources(cur, meet_id, args, div_id=None):
+    """(src, alt_idx, others) for an XC meet or race page, with ?r= pinning.
+
+    ★ THE XC SIDE NEVER HAD THE PIN, AND THAT IS THE 404 (owner,
+      2026-09-17: "races on athlete profiles that just 404 if you visit
+      them"). The anet and tfrrs id spaces collide on 15,096 XC meet_ids --
+      one number, two different real meets. The athlete page has always
+      sent ?r=<result_id> so the page could tell which of the two the
+      reader clicked, exactly as the TF page does; race_xc read only
+      ?alt= and so always opened the BIGGER of the two. When the row came
+      from the smaller feed, the bigger meet has no such div_id,
+      get_race_header returns None, and the link the athlete page just
+      drew answers 404.
+
+    ! SAME SHAPE AS _tf_meet_sources, on purpose. Two routes answering
+      "which meet is this" two ways is how they drift; the only difference
+      is the table the pin is looked up in.
+    """
+    sources = meet_sources(cur, "results", meet_id)
+    alt = args.get("alt")
+    rid = _ridArg(args)
+    if rid is not None:
+        cur.execute("SELECT source FROM results "
+                    "WHERE result_id = %s AND meet_id = %s LIMIT 1",
+                    (rid, meet_id))
+        pin = cur.fetchone()
+        if pin and pin["source"]:
+            for i, s in enumerate(sources):
+                if s["source"] == pin["source"]:
+                    alt = i
+                    break
+    # ! AND FAILING THAT, THE SOURCE THAT ACTUALLY HAS THIS DIVISION. A
+    #   link can arrive without ?r= -- a shared URL, a search result, an
+    #   old bookmark -- and picking a source whose meet has no such
+    #   division is a 404 with the answer sitting one row away. Only used
+    #   when the default pick cannot serve the division.
+    if div_id is not None and len(sources) > 1:
+        chosen, _idx, _others = pick_source(sources, alt)
+        cur.execute("SELECT 1 FROM results WHERE meet_id = %s AND div_id = %s "
+                    "AND source = %s LIMIT 1", (meet_id, div_id, chosen))
+        if cur.fetchone() is None:
+            for i, s in enumerate(sources):
+                cur.execute("SELECT 1 FROM results WHERE meet_id = %s "
+                            "AND div_id = %s AND source = %s LIMIT 1",
+                            (meet_id, div_id, s["source"]))
+                if cur.fetchone() is not None:
+                    alt = i
+                    break
+    return pick_source(sources, alt)
+
+
 @app.route("/meet/xc/<int:meet_id>")
 def meet_xc(meet_id):
     from meet_compile import compiledIndex, publishedScores
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            sources = meet_sources(cur, "results", meet_id)
-            src, alt_idx, other_sources = pick_source(
-                sources, request.args.get("alt"))
+            src, alt_idx, other_sources = _xc_meet_sources(
+                cur, meet_id, request.args)
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
             # ★ ?school= (from the school page's meets table): the

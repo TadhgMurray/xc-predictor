@@ -113,21 +113,56 @@ def _returnConn(conn):
 #           html:         the fetched page HTML.
 #           requested_id: the id we fetched.
 # Output:   True if the page is a real meet page; else False.
-def _isMeetPage(html, requested_id):
+def _isMeetPage(html, requested_id, sport=None):
+    """Is this page a real meet page FOR THE SPORT WE CLAIMED IT AS?
+
+    ⚠ IT USED TO IGNORE THE SPORT, AND THAT IS WHY CROSS COUNTRY RACES
+      APPEARED TWICE -- once correctly, and once in TRACK under the name
+      "Race Results" (owner, 2026-09-17).
+
+      prefill_tfrrs_queue seeds EVERY id under BOTH sports, on purpose: an
+      id does not say what it is, so both are tried and the wrong one is
+      meant to be deleted here. But the XC branch below returned True for
+      ANY page carrying tablesaw-xc tables, whatever sport was asking --
+      and TFRRS serves an XC meet at the bare /results/<id> the TF claim
+      fetches. So the TF claim was told "yes, a real meet", handed the XC
+      page to _processTFMeet, and wrote the whole race into results_tf
+      under whatever heading the track parser could find.
+
+      The docstring said "the signal differs by sport" all along; the code
+      simply never looked at it.
+
+    ! sport=None KEEPS THE OLD ANSWER, for a caller that has no sport to
+      give. Every caller in this driver has one.
+    """
     soup = BeautifulSoup(html, "lxml")
+    requested = int(requested_id)
 
     # XC: a real meet renders tablesaw-xc result tables. (class_ matches a single
     # token, so "tablesaw-xc" hits even though the full class list is longer.)
-    if soup.find("table", class_="tablesaw-xc") is not None:
-        return True
+    # _XC_SELF_RE is the second witness: an /results/xc/<id>/ link to ITSELF.
+    is_xc = soup.find("table", class_="tablesaw-xc") is not None
+    if not is_xc:
+        is_xc = any(
+            (m := _XC_SELF_RE.search(a["href"])) is not None
+            and int(m.group(1)) == requested
+            for a in soup.find_all("a", href=True))
 
     # TF: self-link id-match (event leaves point to a different parent id).
-    requested = int(requested_id)
-    for a in soup.find_all("a", href=True):
-        match = _TF_SELF_RE.search(a["href"])
-        if match is not None and int(match.group(1)) == requested:
-            return True
-    return False
+    is_tf = any(
+        (m := _TF_SELF_RE.search(a["href"])) is not None
+        and int(m.group(1)) == requested
+        for a in soup.find_all("a", href=True))
+
+    if sport == SPORT_XC:
+        return is_xc
+    if sport == SPORT_TF:
+        # ★ AND NOT AN XC PAGE. A cross country meet page can still carry a
+        #   self-link the TF pattern matches; the tables are what say what
+        #   the meet IS, so an XC page is never a TF meet no matter what it
+        #   links to. This is the half that stops the duplicate.
+        return is_tf and not is_xc
+    return is_xc or is_tf
 
 
 # _deleteQueueRow
@@ -222,7 +257,7 @@ async def processMeet(conn, meet_id, sport, meet_url, page=None):
     except Exception as exc:
         return _meetBundle(meet_id, sport, False, [], [], note=f"error: {exc}")
 
-    if not _isMeetPage(html, meet_id):
+    if not _isMeetPage(html, meet_id, sport):
         # _deleteQueueRow + commit are blocking psycopg2 -> run in a thread.
         await asyncio.to_thread(_deleteQueueRow, conn, meet_id, sport)
         await asyncio.to_thread(conn.commit)
