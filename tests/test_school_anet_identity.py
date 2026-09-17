@@ -110,7 +110,11 @@ def test_contested_names_only_so_every_other_name_is_unchanged():
     body = _SRC[_SRC.index("def buildDirStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
     assert "if key in contested and key in dir_states:" in body
     team = _SRC[_SRC.index("def buildTeamStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
-    assert "lower(btrim(r.school)) = ANY(%s)" in team and "r.team_id <> 0" in team
+    assert "JOIN   si_names sn ON sn.name = lower(btrim(r.school))" in team
+    assert "r.team_id <> 0" in team
+    # the filter is still CONTESTED NAMES ONLY -- the table is built from
+    # exactly that list, which is what keeps the scan narrow
+    assert "_namesTemp(cur, names)" in _SRC
 
 
 def test_the_anet_states_come_from_the_rows_not_from_anets_spelling():
@@ -289,8 +293,10 @@ def test_only_anet_college_teams_are_candidates():
         src = fh.read()
     body = src[src.index("def collegeTeams("):src.index("_ANET_SQL = ")]
     assert 'if lv == "college"' in body and "loadTeamLevels" in body
-    # the anet side of the evidence can only hold those teams...
-    assert "r.team_id = ANY(%(teams)s)" in src
+    # the anet side of the evidence can only hold those teams -- carried in
+    # a TABLE now, not an array literal (see the plan test below)
+    assert "CREATE TEMP TABLE ltl_teams (team_id int PRIMARY KEY)" in src
+    assert "JOIN   ltl_teams t ON t.team_id = r.team_id" in src
     # ...and the year must still match on both sides, which is the guard
     # itself: a high school spring and a college autumn share a year, so the
     # team's LEVEL is what keeps them apart, not the year alone.
@@ -344,7 +350,8 @@ def test_a_state_belongs_to_the_school_not_to_its_athletes():
     assert "row_number() OVER (PARTITION BY rr.school" in body
     assert "ORDER BY sum(rr.n_races) DESC," in body and "rr.state) AS rk" in body
     assert "WHERE  rk = 1" in body
-    assert "lower(btrim(rr.school)) = ANY(%s)" in body          # contested only
+    # contested only -- carried as a hashable TABLE, not an array literal
+    assert "JOIN   si_ns_names sn ON sn.name = lower(btrim(rr.school))" in body
     # and the assignment prefers it over the athlete's home state
     cte = _SRC[_SRC.index("            CREATE TEMP TABLE si_assign AS"):
                _SRC.index("CREATE TABLE school_identity_new AS")]
@@ -534,3 +541,67 @@ def test_no_college_teams_says_which_kind_of_nothing_it_is():
     assert "XCP_ANET_LEVELS" in src
     assert "printTeamLevels(meaning, _rows)" in src
     assert "_migrateResultsAddTeamSlug" in src
+
+
+# ===================================================================== #
+#  = ANY(<thousands>) IS A PER-ROW WALK OF THE ARRAY                     #
+# ===================================================================== #
+#
+# ⚠⚠ THE MEASUREMENT (owner, 2026-09-17, twice: "it hangs on results_tf",
+#    then "that shit ain't going bruh. even with an index"):
+#
+#        filter `results` to 2,034 team ids with = ANY   124 s
+#        hash join reading the WHOLE table                13 s
+#
+#    The query that NARROWS the table was ten times slower than the one that
+#    does not. Postgres evaluates a scalar-array comparison by comparing
+#    against every element until one matches, so that filter is rows x ids
+#    comparisons -- single-threaded, because XCP_DB_QUIET sets
+#    max_parallel_workers_per_gather = 0. It is not a missing index, and I
+#    called it one twice before reading the timings properly.
+#
+# ★ THE IDS GO IN A TABLE AND THE PLANNER HASHES THEM. One probe per row.
+
+def _identitySource():
+    with open(os.path.join(_ROOT, "racecast", "build_school_identity.py")) as fh:
+        return fh.read()
+
+
+def test_the_contested_name_scans_hash_rather_than_walk_an_array():
+    """Both of these scan a big table, and the left-hand side is an
+    EXPRESSION -- lower(btrim(school)) -- so no index can serve it either
+    way. The array walk was the whole cost."""
+    src = _identitySource()
+    assert "def _namesTemp(cur, names, table=\"si_names\"):" in src
+    assert "JOIN   si_names sn ON sn.name = lower(btrim(r.school))" in src
+    assert "JOIN   si_ns_names sn ON sn.name = lower(btrim(rr.school))" in src
+
+
+def test_the_big_table_filters_no_longer_use_any_of_an_array():
+    """The two that scan results / results_tf / athlete_season. The small
+    lookups elsewhere in the file keep = ANY, which is correct for them:
+    an indexed column with a handful of values is an index scan."""
+    src = _identitySource()
+    for gone in ("lower(btrim(r.school)) = ANY(%s)",
+                 "lower(btrim(rr.school)) = ANY(%s)"):
+        assert gone not in src, gone
+
+
+def test_the_names_table_is_analyzed_or_it_is_costed_as_a_guess():
+    src = _identitySource()
+    i = src.index("def _namesTemp(")
+    body = src[i:src.index("\ndef buildTeamStates(", i)]
+    assert "ANALYZE" in body
+    assert "PRIMARY KEY" in body
+
+
+def test_there_is_a_way_to_see_the_plans():
+    """Opinions about query plans are worth nothing; this prints both
+    shapes side by side, with a timeout so it cannot hang."""
+    path = os.path.join(_ROOT, "scripts", "diag_link_plan.py")
+    assert os.path.exists(path)
+    with open(path) as fh:
+        src = fh.read()
+    assert "EXPLAIN (ANALYZE, BUFFERS, TIMING)" in src
+    assert "statement_timeout" in src
+    assert "_ANY_FORM" in src and "_JOIN_FORM" in src

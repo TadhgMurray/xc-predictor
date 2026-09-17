@@ -248,6 +248,7 @@ def buildNameStates(cur, contested):
     cur.execute("CREATE TEMP TABLE si_name_state (school text, state text)")
     if not contested:
         return 0
+    _namesTemp(cur, sorted(contested), "si_ns_names")
     cur.execute("""
         INSERT INTO si_name_state (school, state)
         SELECT school, state FROM (
@@ -256,12 +257,12 @@ def buildNameStates(cur, contested):
                                       ORDER BY sum(rr.n_races) DESC,
                                                rr.state) AS rk
             FROM   athlete_season rr
+            JOIN   si_ns_names sn ON sn.name = lower(btrim(rr.school))
             WHERE  COALESCE(TRIM(rr.school), '') <> ''
               AND  rr.state IS NOT NULL
-              AND  lower(btrim(rr.school)) = ANY(%s)
             GROUP  BY 1, 2) x
         WHERE  rk = 1
-    """, (sorted(contested),))
+    """)
     cur.execute("CREATE INDEX si_name_state_idx ON si_name_state (school)")
     cur.execute("SELECT count(*) FROM si_name_state")
     n = cur.fetchone()[0]
@@ -353,6 +354,30 @@ def buildLinkStates(cur, contested):
     return n
 
 
+# ⚠⚠ `lower(btrim(school)) = ANY(<thousands of names>)` IS A PER-ROW WALK OF
+#    THE ARRAY, and both of the queries that used it scan a big table.
+#    Postgres evaluates a scalar-array comparison by comparing against every
+#    element until one matches, so this is rows x names TEXT comparisons --
+#    and the expression on the left means no index can serve it either.
+#
+#    Measured in the sibling job the same afternoon (link_tfrrs_to_anet,
+#    2026-09-17): filtering `results` down to 2,034 team ids with = ANY took
+#    124 s, while a hash join reading the WHOLE table took 13 s. The query
+#    that narrows was ten times slower than the query that does not.
+#
+# ★ SO THE NAMES GO IN A TABLE AND THE PLANNER HASHES THEM: the expression is
+#   evaluated once per row and probed, instead of scanned against the whole
+#   list. ANALYZEd so it is costed as the small relation it is.
+def _namesTemp(cur, names, table="si_names"):
+    """A temp table of the contested names, hashable. Returns its name."""
+    cur.execute(f"DROP TABLE IF EXISTS {table}")
+    cur.execute(f"CREATE TEMP TABLE {table} (name text PRIMARY KEY)")
+    cur.execute(f"INSERT INTO {table} SELECT DISTINCT unnest(%s::text[])",
+                (list(names),))
+    cur.execute(f"ANALYZE {table}")
+    return table
+
+
 def buildTeamStates(cur, contested):
     """si_team_state(person_id, school, state): where the athlete's OWN
     anet team for that school string is, for contested names. The modal
@@ -369,6 +394,7 @@ def buildTeamStates(cur, contested):
     if not contested:
         return 0
     names = sorted(contested)
+    _namesTemp(cur, names)
     cur.execute("DROP TABLE IF EXISTS si_team_raw")
     cur.execute("CREATE TEMP TABLE si_team_raw "
                 "(person_id bigint, school text, state text, n bigint)")
@@ -386,14 +412,14 @@ def buildTeamStates(cur, contested):
                    upper(btrim(COALESCE(t.state, t.anet_state))), count(*)
             FROM   {table} r
             JOIN   anet_team t ON t.team_id = r.team_id
+            JOIN   si_names sn ON sn.name = lower(btrim(r.school))
             WHERE  r.person_id IS NOT NULL
               AND  r.team_id IS NOT NULL AND r.team_id <> 0
               AND  r.school IS NOT NULL
-              AND  lower(btrim(r.school)) = ANY(%s)
               AND  COALESCE(t.state, t.anet_state) IS NOT NULL
               AND  btrim(COALESCE(t.state, t.anet_state)) <> ''
             GROUP  BY 1, 2, 3
-        """, (names,))
+        """)
     cur.execute("""
         INSERT INTO si_team_state (person_id, school, state)
         SELECT person_id, school, state FROM (

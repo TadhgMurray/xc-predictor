@@ -157,12 +157,35 @@ def collegeTeams(cur):
 #   four times (rebuild_overrides, --reground, the extraction): a silent slow
 #   step is indistinguishable from a hung one, and the person waiting cannot
 #   tell whether to keep waiting.
+# ⚠⚠ NOT `team_id = ANY(<2,034 ids>)`, AND THAT WAS THE WHOLE PROBLEM
+#    (owner, 2026-09-17: "that shit ain't going bruh. even with an index").
+#
+#    Postgres evaluates a scalar-array comparison by WALKING THE ARRAY FOR
+#    EVERY ROW. 54M rows against 2,034 ids is up to 110 billion integer
+#    comparisons, single-threaded, because XCP_DB_QUIET sets
+#    max_parallel_workers_per_gather = 0. The measured timings said so
+#    plainly and I read them wrong twice:
+#
+#        filter 2,034 teams out of `results`   124 s
+#        hash join over the WHOLE table         13 s
+#
+#    The query that reads everything was ten times faster than the query
+#    that "narrows" it. That is not a missing index -- an index may not even
+#    be chosen for a 4%-selective filter, and it would not change the shape.
+#
+# ★ SO THE IDS GO IN A TABLE AND THE PLANNER HASHES THEM: one probe per row
+#   instead of a scan of 2,034. ANALYZEd so it is costed as the tiny relation
+#   it is. Same rows, same counts, a different algorithm.
+_TEAMS_SQL = """
+    CREATE TEMP TABLE ltl_teams (team_id int PRIMARY KEY)
+"""
+
 _ANET_SQL = """
     CREATE TEMP TABLE ltl_anet AS
     SELECT DISTINCT r.person_id, substr(r.date, 1, 4)::int AS yr, r.team_id
     FROM   {table} r
+    JOIN   ltl_teams t ON t.team_id = r.team_id
     WHERE  r.person_id IS NOT NULL
-      AND  r.team_id = ANY(%(teams)s)
       AND  r.date ~ '^(19|20)[0-9][0-9]-'
       AND  (%(since)s::int IS NULL OR substr(r.date, 1, 4)::int >= %(since)s)
 """
@@ -186,6 +209,12 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
     """{tfrrs school: {team_id: (n_athletes, n_seasons)}} over both tables."""
     import time
     out = {}
+    # the college ids as a RELATION, built once for every table below
+    cur.execute("DROP TABLE IF EXISTS ltl_teams")
+    cur.execute(_TEAMS_SQL)
+    cur.execute("INSERT INTO ltl_teams SELECT unnest(%s::int[])",
+                (sorted(teams),))
+    cur.execute("ANALYZE ltl_teams")
     for table in (tables or ("results", "results_tf")):
         cur.execute("""SELECT column_name FROM information_schema.columns
                        WHERE table_schema = 'public' AND table_name = %s
@@ -210,17 +239,18 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
             cur.execute(f"SELECT reltuples::bigint FROM pg_class "
                         f"WHERE oid = '{table}'::regclass")
             approx = cur.fetchone()[0] or 0
-            print(f"  {table}: collecting the college teams' athlete-years"
-                  + (" (index scan on team_id)" if indexed else
-                     f" -- ⚠ NO INDEX ON {table}.team_id, so this is a "
-                     f"SEQUENTIAL SCAN of ~{approx:,} rows. "
-                     f"scripts/add_page_indexes.py declares it; running that "
-                     f"builds it CONCURRENTLY and makes this, "
-                     f"build_school_identity's two team_id passes and every "
-                     f"rerun fast."), flush=True)
+            # ! HONEST ABOUT WHICH IT IS. Without an index this is a scan of
+            #   the table -- but a HASH JOIN against 2,034 ids, which is a
+            #   different thing from the per-row array walk it replaced.
+            #   scripts/diag_link_plan.py prints both plans side by side.
+            print(f"  {table}: collecting the college teams' athlete-years "
+                  f"-- hash join against {len(teams):,} team ids, "
+                  + (f"index scan on team_id" if indexed else
+                     f"scanning ~{approx:,} rows (no team_id index; "
+                     f"scripts/add_page_indexes.py declares one)")
+                  + "...", flush=True)
         cur.execute("DROP TABLE IF EXISTS ltl_anet")
-        cur.execute(_ANET_SQL.format(table=table),
-                    {"teams": sorted(teams), "since": since})
+        cur.execute(_ANET_SQL.format(table=table), {"since": since})
         cur.execute("CREATE INDEX ltl_anet_idx ON ltl_anet (person_id, yr)")
         cur.execute("ANALYZE ltl_anet")
         cur.execute("SELECT count(*), count(DISTINCT person_id) FROM ltl_anet")
@@ -246,6 +276,7 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
             cell[0] += int(n_ath)
             cell[1] = max(cell[1], int(n_seas))
         cur.execute("DROP TABLE IF EXISTS ltl_anet")
+    cur.execute("DROP TABLE IF EXISTS ltl_teams")
     return out
 
 
