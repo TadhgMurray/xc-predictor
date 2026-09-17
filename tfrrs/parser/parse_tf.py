@@ -9,6 +9,7 @@ import re
 from parse_time import parseTimeToSeconds
 from parse_xc import (_cellText, _toIntOrNone, _firstIntInPath,
                       _teamSlugFromHref)
+from column_map import TF_DEFAULT, trustworthy
  
 # ------------------------------------------------------------------ #
 # HOW TFRRS HIDES THE REAL TIME  (verified against raw HTML)
@@ -94,7 +95,16 @@ def collectHiddenClasses(soup):
 # Output:   a dict of fields with ok=True, or {"ok": False, "note": ...}. Never
 #           raises. note carries a decoy-scheme-change flag when the decoder
 #           found other than exactly one visible result column.
-def parseTFRow(row, hidden_classes, result_kind):
+# ★ colmap: THE FOUR FIXED COLUMNS IN FRONT OF THE RESULT, worked out once
+#   per table from what the cells contain (column_map). The result cell is NOT
+#   in it and must not be -- _realResultCellText picks that by reading the
+#   injected CSS, which is the crux of this parser and already content-driven.
+#   What this adds is that PL / NAME / YEAR / TEAM were read by index exactly
+#   like XC's, and would shift exactly like XC's.
+#
+# ! None means today's layout, which is byte-for-byte what this function has
+#   always done.
+def parseTFRow(row, hidden_classes, result_kind, colmap=None):
 
     # Finds all results for an event in the row.
     cells = row.find_all("td")
@@ -104,19 +114,39 @@ def parseTFRow(row, hidden_classes, result_kind):
     if len(cells) < 5:
         return {"ok": False, "note": f"only {len(cells)} cells (sub-row/spacer)"}
  
-    # [0] place — may be blank ("&nbsp;") for DNF/unplaced rows.
-    place = _toIntOrNone(_cellText(cells[0]))
- 
-    # [1] athlete — link gives (native_id, id_system); name-only gives None id.
-    athlete_native_id, id_system, name = _extractTFAthlete(cells[1])
- 
-    # [2] year — e.g. "Senior"/"SR-4"/blank. Kept raw for the grade normaliser.
-    year_raw = _cellText(cells[2])
- 
-    # [3] team — the raw team text (TF often has unattached/club names with no
+    # ⚠ AND THE CELL COUNT IS NOT A SHAPE CHECK. It catches a row with too
+    #   FEW cells; a row with an INSERTED column has more and sails through.
+    cm = colmap or TF_DEFAULT
+    # ! ("athlete",) ONLY. Requiring a `time` would refuse every well-formed
+    #   track row, because the result cell is the decoder's job below.
+    if not trustworthy(cm, ("athlete",)):
+        return {"ok": False, "note": "column layout not recognised"}
+
+    def _at(field):
+        i = cm.get(field)
+        return cells[i] if i is not None and i < len(cells) else None
+
+    def _textAt(field):
+        c = _at(field)
+        return _cellText(c) if c is not None else ""
+
+    # place — may be blank ("&nbsp;") for DNF/unplaced rows.
+    place = _toIntOrNone(_textAt("place"))
+
+    # athlete — link gives (native_id, id_system); name-only gives None id.
+    _a = _at("athlete")
+    athlete_native_id, id_system, name = (
+        _extractTFAthlete(_a) if _a is not None else (None, None, ""))
+
+    # year — e.g. "Senior"/"SR-4"/blank. Kept raw for the grade normaliser.
+    year_raw = _textAt("year")
+
+    # team — the raw team text (TF often has unattached/club names with no
     # link; we keep the text and the link/id when present).
+    _t = _at("team")
     (team_name, team_native_id, team_id_system,
-     team_slug) = _extractTFTeam(cells[3])
+     team_slug) = (_extractTFTeam(_t) if _t is not None
+                   else ("", None, None, None))
  
     # The ONE real result cell (decoder picks the non-hidden column). Its meaning
     # depends on result_kind: a TIME (running), a MARK (field), or a POINTS total

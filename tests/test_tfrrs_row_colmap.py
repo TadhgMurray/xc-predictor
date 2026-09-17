@@ -156,10 +156,111 @@ class TheWiring(unittest.TestCase):
                       self._src())
 
     def test_the_sample_is_bounded(self):
-        src = self._src()
-        self.assertIn("_COLMAP_SAMPLE", src)
-        self.assertIn("rows[:_COLMAP_SAMPLE]", src)
+        """! The adapters live in column_map now -- both page parsers need
+        them, and a second copy is a second thing to keep in step."""
+        import io as _io
+        with _io.open(os.path.join(_ROOT, "tfrrs", "parser", "column_map.py"),
+                      encoding="utf-8") as fh:
+            cm = fh.read()
+        self.assertIn("COLMAP_SAMPLE = 12", cm)
+        self.assertIn("rows[:limit]", cm)
+        self.assertIn("def sampleCells(rows, limit=COLMAP_SAMPLE):", cm)
+        self.assertIn("def headerTexts(table):", cm)
+        # and the XC page parser imports rather than redefines them
+        self.assertNotIn("def _sampleCells(", self._src())
+
+    def test_the_tf_page_parser_does_it_too(self):
+        """★ THE EXTENSION. TF's four fixed columns were read by index exactly
+        like XC's, and would shift exactly like XC's -- but its RESULT cell is
+        chosen by the decoy decoder and must not be second-guessed here."""
+        import io as _io
+        with _io.open(os.path.join(_ROOT, "tfrrs", "parser",
+                                   "parse_tf_page.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("default=TF_DEFAULT", src)
+        self.assertIn("parseTFRow(tr, hidden_classes, result_kind, colmap)", src)
+        with _io.open(os.path.join(_ROOT, "tfrrs", "parser", "parse_tf.py"),
+                      encoding="utf-8") as fh:
+            tf = fh.read()
+        # the result cell stays the decoder's
+        self.assertIn("_realResultCellText(cells, hidden_classes)", tf)
+        self.assertIn('trustworthy(cm, ("athlete",))', tf)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ===================================================================== #
+#  THE TRACK ROW -- four fixed columns in front of a decoy-guarded result #
+# ===================================================================== #
+#
+# ★ TF IS DIFFERENT AND ONLY HALF OF IT NEEDS THIS. TFRRS plants several
+#   decoy TIME cells per row and hides the fakes with injected CSS;
+#   parse_tf._realResultCellText reads that CSS to pick the real one. That
+#   decoder is already content-driven and is the crux of the TF parser, so
+#   column_map must not second-guess it. What TF gains is PL / NAME / YEAR /
+#   TEAM, which were read by index exactly like XC's.
+
+import parse_tf as PT                                          # noqa: E402
+
+TF_ATH = "https://www.tfrrs.org/athletes/track/8050334/Oregon/Cole_Hocker.html"
+TF_TEAM = "https://www.tfrrs.org/teams/tf/OR_college_m_Oregon.html"
+
+
+class _ClassedCell(_Cell):
+    """A <td> that also carries a class, which is how TF marks its decoys."""
+
+    def __init__(self, text, href=None, css=None):
+        super().__init__(text, href)
+        self.attrs = {"class": [css] if css else []}
+
+    def get(self, k, default=None):
+        return self.attrs.get(k, default)
+
+
+def tfRow(shifted=False):
+    cells = [_ClassedCell("1"), _ClassedCell("Cole Hocker", TF_ATH),
+             _ClassedCell("SO-2"), _ClassedCell("Oregon", TF_TEAM),
+             _ClassedCell("3:50.55", css="compiled_round_4_601_11"),
+             _ClassedCell("9:99.99", css="compiled_round_4_601_97")]
+    if shifted:
+        cells.insert(1, _ClassedCell("1041"))     # a bib column appears
+    return _Row(cells)
+
+
+class TheTrackRow(unittest.TestCase):
+
+    def test_todays_layout_is_unchanged_with_no_colmap(self):
+        got = PT.parseTFRow(tfRow(), {"compiled_round_4_601_97"}, "running")
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(got["place"], 1)
+        self.assertEqual(got["name"], "Cole Hocker")
+        self.assertEqual(got["year_raw"], "SO-2")
+        self.assertEqual(got["team_name"], "Oregon")
+
+    def test_a_shifted_track_row_is_read_wrong_without_the_map(self):
+        got = PT.parseTFRow(tfRow(shifted=True), {"compiled_round_4_601_97"}, "running")
+        self.assertNotEqual(got.get("name"), "Cole Hocker")
+
+    def test_and_right_with_it(self):
+        rows = tfRow(shifted=True)
+        cm, note = C.detectColumns([asTuples(rows)], default=C.TF_DEFAULT)
+        got = PT.parseTFRow(rows, {"compiled_round_4_601_97"}, "running", cm)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(got["place"], 1)
+        self.assertEqual(got["name"], "Cole Hocker")
+        self.assertEqual(got["year_raw"], "SO-2")
+        self.assertEqual(got["team_name"], "Oregon")
+        self.assertIn("layout moved", note or "")
+
+    def test_the_decoy_decoder_still_picks_the_result(self):
+        """The real time, not the hidden one -- with or without a map."""
+        for cm in (None, C.TF_DEFAULT):
+            got = PT.parseTFRow(tfRow(), {"compiled_round_4_601_97"}, "running", cm)
+            self.assertEqual(got["time_seconds"], 230.55)      # 3:50.55
+
+    def test_tf_does_not_require_a_time_column_to_be_trusted(self):
+        """Requiring one would refuse every well-formed track row."""
+        self.assertTrue(C.trustworthy(C.TF_DEFAULT, ("athlete",)))
+        self.assertFalse(C.trustworthy(C.TF_DEFAULT))          # the XC rule

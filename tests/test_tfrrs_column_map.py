@@ -190,3 +190,23 @@ class RefusingRatherThanGuessing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class NothingHereMayRaise(unittest.TestCase):
+    """! A detector that throws on one odd cell takes the whole meet with it
+    -- the opposite of the parsers' "ingest but flag" rule. Found when a test
+    passed ONE row where a list of rows was expected and `cell[0]` met an
+    empty list."""
+
+    def test_malformed_cells_are_no_evidence_rather_than_an_exception(self):
+        for rows in ([[]], [[()]], [[("",)]], [[None]], [[("x",)]],
+                     [["plain string"]], [[("a", None)]], None, []):
+            got, note = C.detectColumns(rows)
+            self.assertIsInstance(got, dict)
+
+    def test_a_ragged_table_does_not_raise(self):
+        rows = [[("1", []), ("A", A)],
+                [("2", []), ("B", A), ("SR", []), ("T", T), ("5:0.0", []),
+                 ("20:00.0", []), ("3", [])]]
+        got, _ = C.detectColumns(rows)
+        self.assertIn("athlete", got)

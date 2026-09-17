@@ -10,6 +10,8 @@
  
 from bs4 import BeautifulSoup
 from parse_tf import collectHiddenClasses, parseTFRow, _isResultCell
+from column_map import (detectColumns, headerTexts as _headerTexts,
+                        sampleCells as _sampleCells, TF_DEFAULT)
 from parse_tf_event import classifyTFEventTable
  
 # ------------------------------------------------------------------ #
@@ -173,11 +175,23 @@ def _parseEventTable(table, hidden_classes, meet_id):
     if body is None:
         return []
  
+    rows = body.find_all("tr", recursive=False)
+
+    # ★ WHICH COLUMN IS WHICH, ONCE PER TABLE. Only the four in front of the
+    #   result -- the decoy decoder owns the result cell itself (column_map's
+    #   TF_DEFAULT says why). Without this, PL / NAME / YEAR / TEAM were read
+    #   by index and an inserted tfrrs column would have put the team text in
+    #   the year field and the year in the name, quietly.
+    colmap, note = detectColumns(_sampleCells(rows), _headerTexts(table),
+                                 default=TF_DEFAULT)
+    if note:
+        print(f"[tfrrs] meet {meet_id} event {event_id}: {note}", flush=True)
+
     out = []
     # For each result in an event parse it and update 
     # event context.
-    for tr in body.find_all("tr", recursive=False):
-        row = parseTFRow(tr, hidden_classes, result_kind)
+    for tr in rows:
+        row = parseTFRow(tr, hidden_classes, result_kind, colmap)
         # Attach event context to every row (parsed or not) so nothing floats free.
         row.update({
             "meet_id":       meet_id,

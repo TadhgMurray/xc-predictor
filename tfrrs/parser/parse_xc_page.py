@@ -14,7 +14,8 @@
 import re
 from bs4 import BeautifulSoup
 from parse_xc import parseXCRow, _cellText, _toIntOrNone, _extractTeam
-from column_map import detectColumns, trustworthy
+from column_map import (detectColumns, headerTexts as _headerTexts,
+                        sampleCells as _sampleCells, trustworthy)
 from parse_time import parseTimeToSeconds
  
 # ------------------------------------------------------------------ #
@@ -126,34 +127,6 @@ def _isIndividualTable(table):
     return "NAME" in headers
  
  
-# How many data rows to show the column detector. Enough that one odd row --
-# a name-only finisher, a blank year, a DNF with no time -- cannot move the
-# map, and few enough that it costs nothing on a 400-finisher race.
-_COLMAP_SAMPLE = 12
-
-
-def _headerTexts(table):
-    """The <th> texts of a table's header row, or None."""
-    head = table.find("thead")
-    if head is None:
-        return None
-    return [th.get_text().strip() for th in head.find_all("th")]
-
-
-def _sampleCells(rows):
-    """The first few data rows as (text, [href, ...]) tuples -- the plain
-    shape column_map takes, so that module needs no BeautifulSoup."""
-    out = []
-    for tr in rows[:_COLMAP_SAMPLE]:
-        cells = tr.find_all("td")
-        if not cells:
-            continue
-        out.append([(td.get_text().strip(),
-                     [a.get("href") or "" for a in td.find_all("a")])
-                    for td in cells])
-    return out
-
-
 # _parseRaceTable
 # Purpose: Parse one individual-results table into result rows, attaching the
 #          race context (event id/name, gender, distance) to each.

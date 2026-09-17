@@ -58,6 +58,15 @@ FIELDS = ("place", "athlete", "year", "team", "avg_mile", "time", "score")
 XC_DEFAULT = {"place": 0, "athlete": 1, "year": 2, "team": 3,
               "avg_mile": 4, "time": 5, "score": 6}
 
+# ★ TF STOPS AT THE TEAM, ON PURPOSE. A track row's result cell is NOT found
+#   by looking at it: TFRRS plants several decoy TIME cells per row and hides
+#   the fakes with injected CSS, so parse_tf._realResultCellText picks the
+#   real one by reading that CSS. That decoder is already content-driven and
+#   already the crux of the TF parser -- this must not second-guess it. What
+#   TF gains here is the FOUR fixed columns in front of it, which were read by
+#   index exactly like XC's and would shift exactly like XC's.
+TF_DEFAULT = {"place": 0, "athlete": 1, "year": 2, "team": 3}
+
 _ATHLETE_HREF = re.compile(r"/athletes?/", re.I)
 _TEAM_HREF = re.compile(r"/teams?/", re.I)
 
@@ -83,8 +92,15 @@ _YEAR = re.compile(
 _INT_ONLY = re.compile(r"^\d{1,4}$")
 
 
+# ! NOTHING IN HERE MAY RAISE. This module is handed whatever a page produced,
+#   and a detector that throws on one odd cell takes the whole meet with it --
+#   the opposite of the "ingest but flag" rule the parsers work to. An empty
+#   or short cell is simply no evidence. (Found by a test that passed one row
+#   where a list of rows was expected: `cell[0]` on an empty list.)
 def _text(cell):
-    return (cell[0] if isinstance(cell, (tuple, list)) else str(cell or "")).strip()
+    if isinstance(cell, (tuple, list)):
+        return str(cell[0] if cell else "").strip()
+    return str(cell or "").strip()
 
 
 def _hrefs(cell):
@@ -249,8 +265,51 @@ def detectColumns(rows, header=None, default=None):
     return out, note
 
 
-def trustworthy(colmap):
-    """Is this map safe to parse with? The two anchors that cannot be guessed
-    from position are the athlete and the finish time; without them a row is
-    refused rather than read into the wrong fields."""
-    return "athlete" in colmap and "time" in colmap
+def trustworthy(colmap, require=("athlete", "time")):
+    """Is this map safe to parse with? Without its anchors a row is refused
+    rather than read into the wrong fields.
+
+    ! TF ASKS FOR LESS, and correctly: its result cell is chosen by the decoy
+      decoder rather than by this module, so requiring a `time` here would
+      refuse every well-formed track row. parse_tf passes ("athlete",).
+    """
+    return all(f in colmap for f in require)
+
+
+# ===================================================================== #
+#  TURNING A TABLE INTO WHAT detectColumns TAKES                         #
+# ===================================================================== #
+#
+# ! DUCK-TYPED, SO THIS MODULE STAYS IMPORT-FREE. These call get_text /
+#   find / find_all / get on whatever they are handed. BeautifulSoup tags
+#   satisfy that, and so does a forty-line stub in a test -- which is how
+#   the parsers are exercised with no bs4 installed.
+#
+# ! ONE HOME, because both page parsers need them and the XC one owned them
+#   first: a second copy in the TF parser is a second thing to keep in step.
+
+# How many data rows to show the detector. Enough that one odd row -- a
+# name-only finisher, a blank year, a DNF with no time -- cannot move the
+# map, and few enough that it costs nothing on a 400-finisher race.
+COLMAP_SAMPLE = 12
+
+
+def headerTexts(table):
+    """The <th> texts of a table's header row, or None."""
+    head = table.find("thead")
+    if head is None:
+        return None
+    return [th.get_text().strip() for th in head.find_all("th")]
+
+
+def sampleCells(rows, limit=COLMAP_SAMPLE):
+    """The first few data rows as (text, [href, ...]) tuples."""
+    out = []
+    for tr in rows[:limit]:
+        cells = tr.find_all("td")
+        if not cells:
+            continue
+        out.append([(td.get_text().strip(),
+                     [a.get("href") or "" for a in td.find_all("a")])
+                    for td in cells])
+    return out
