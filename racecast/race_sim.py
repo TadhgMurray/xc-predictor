@@ -72,6 +72,22 @@ def sigmaFromPred(pred, z=1.0):
       and hi on every row, so a page that has drawn a prediction has
       everything the simulation needs and never loads the model twice.
     """
+    # ★ sigma_pct FIRST, BECAUSE IT IS THE MODEL'S OWN NUMBER. predict.py
+    #   puts sigma_pct on the row straight off predictInterval, then converts
+    #   lo and hi onto the race clock with _onClock -- a monotone transform,
+    #   so the band stays a band, but NOT an exactly multiplicative one. Half
+    #   of log(hi/lo) after that conversion is a re-derivation of a number
+    #   that was already there, with the conversion's error added.
+    pct = pred.get("sigma_pct")
+    if pct is not None:
+        try:
+            sig = float(pct) / 100.0
+        except (TypeError, ValueError):
+            sig = None
+        # ! A ZERO IS FLOORED, NOT REJECTED -- that is what SIGMA_FLOOR is
+        #   for. A negative one is nonsense, so fall through to the band.
+        if sig is not None and math.isfinite(sig) and sig >= 0:
+            return min(max(sig, SIGMA_FLOOR), SIGMA_CEIL)
     secs, lo, hi = pred.get("seconds"), pred.get("lo"), pred.get("hi")
     for val in (secs, lo, hi):
         if not val or val <= 0:

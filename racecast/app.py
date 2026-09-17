@@ -7224,11 +7224,30 @@ def api_predict_team():
 
     h2h = (args.get("head_to_head") or "").lower() in ("1", "true", "yes")
 
+    # ★ THE SPREAD IS OPT-IN, because it costs draws x field arithmetic and
+    #   most callers (the card, a share link) only want the table. The page
+    #   asks for it; nothing else has to pay for it.
+    sim = (args.get("sim") or "").lower() in ("1", "true", "yes")
+    try:
+        draws = int(args.get("draws") or 0) or None
+    except (TypeError, ValueError):
+        draws = None
+    # ! CAPPED. draws is a public query parameter and the cost is linear in
+    #   it; 20,000 is already finer than a page can render.
+    if draws:
+        draws = max(200, min(draws, 20_000))
+    try:
+        rho = float(args.get("team_rho") or 0.0)
+    except (TypeError, ValueError):
+        rho = 0.0
+    rho = max(0.0, min(rho, 0.95))
+
     try:
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 out = predictTeam(cur, schools, target, head_to_head=h2h,
-                                  remove=remove, add=add)
+                                  remove=remove, add=add, sim=sim,
+                                  draws=draws, team_rho=rho)
     except NotImplementedError:
         return jsonify({"available": False,
                         "reason": "The prediction model is not wired up yet."})
@@ -7237,6 +7256,82 @@ def api_predict_team():
         # the page cannot report and a reader cannot act on
         app.logger.exception("/api/predict/team failed")
         return jsonify({"error": "The prediction failed. This has been "
+                                 "logged."}), 500
+    return jsonify(out)
+
+
+# ! THE SQUAD SIZES COME FROM predict.py, which owns the scoring rules; a
+#   second spelling of "seven" here is a second spelling waiting to drift.
+def _squadCaps():
+    from predict import MAX_PER_TEAM, TEAM_SCORERS
+    return TEAM_SCORERS, MAX_PER_TEAM
+
+
+@app.route("/api/predict/lineup", methods=["GET", "POST"])
+def api_predict_lineup():
+    """Which seven of a roster to run (owner: "given a roster the model
+    decides best lineup for a race using monte carlo").
+
+    ★ AND IT IS NOT "THE FASTEST SEVEN". Five score and two displace, so the
+      sixth and seventh runners' entire job is to push the OTHER teams'
+      scorers back a place -- which makes the best sixth man the one most
+      likely to land BETWEEN an opponent's fourth and fifth, not the fastest
+      one left. Ranking by predicted time cannot see that, and cannot see
+      that variance is worth more when you are behind than when you are
+      ahead, which is why this searches instead of sorting.
+
+    ⚠ THE REST OF THE FIELD IS HELD FIXED. That is the honest reading of the
+      question a coach asks -- "who do I run against these people" -- and not
+      a claim about what the other coaches would do in reply.
+    """
+    from predict import predictTeamLineup
+
+    args = request.values
+    target, err = _target(args)
+    if err:
+        return jsonify({"error": err}), 400
+
+    team = (args.get("team") or "").strip()
+    if not team:
+        return jsonify({"error": "Name the team whose lineup to choose."}), 400
+
+    schools = [s.strip() for s in (args.get("schools") or "").split(",")
+               if s.strip()]
+    if not schools and not target.get("meet_id"):
+        return jsonify({"error": "Pick a meet, or name at least one team."}), 400
+    if len(schools) > 20:
+        return jsonify({"error": "Twenty teams at most."}), 400
+    remove = {s for s in (args.get("remove") or "").split(",") if s}
+    add = {s for s in (args.get("add") or "").split(",") if s}
+
+    try:
+        k = int(args.get("k") or 0) or None
+    except (TypeError, ValueError):
+        k = None
+    if k:
+        floor_k, ceil_k = _squadCaps()
+        k = max(floor_k, min(k, ceil_k))
+    try:
+        draws = int(args.get("draws") or 0) or None
+    except (TypeError, ValueError):
+        draws = None
+    if draws:
+        draws = max(100, min(draws, 5_000))
+    objective = "score" if (args.get("objective") or "").lower() == "score" \
+        else "p_win"
+
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                out = predictTeamLineup(cur, schools, target, team,
+                                        remove=remove, add=add, k=k,
+                                        draws=draws, objective=objective)
+    except NotImplementedError:
+        return jsonify({"available": False,
+                        "reason": "The prediction model is not wired up yet."})
+    except Exception:                                # noqa: BLE001
+        app.logger.exception("/api/predict/lineup failed")
+        return jsonify({"error": "The lineup search failed. This has been "
                                  "logged."}), 500
     return jsonify(out)
 

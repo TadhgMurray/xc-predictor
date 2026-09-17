@@ -212,7 +212,7 @@ def predictIndividual(cur, person_id, target):
 # ------------------------------------------------------------------ #
 
 def predictTeam(cur, schools, target, head_to_head=False,
-                remove=None, add=None):
+                remove=None, add=None, sim=False, draws=None, team_rho=0.0):
     """Team scores at a target race.
 
     ★ THE WHOLE FIELD IS PREDICTED, NOT JUST THE TEAMS ASKED ABOUT. A place is
@@ -275,10 +275,147 @@ def predictTeam(cur, schools, target, head_to_head=False,
     _stampCrests(teams, "team", "state")
     _stampCrests(finishers, "school", "school_state")
 
+    out = {"available": True,
+           "mode": "head_to_head" if head_to_head else "meet",
+           "teams": teams,
+           "runners": finishers}
+    if sim:
+        out["sim"] = _stampSim(field, preds, teams, finishers,
+                               draws=draws, team_rho=team_rho)
+    return out
+
+
+# Purpose:   run the predicted race many times and put the spread on the rows
+#            (owner, 2026-09-16: "what are the chances this team beats this
+#            team", and "team score variance as a part of our model
+#            predictions (in like a nested tooltip)").
+#
+# ★ THE SCORE IS NOT THE PREDICTION, IT IS THE MIDDLE OF ONE. Every place in
+#   _score comes from a single predicted time per runner, so the table reads
+#   as though the race is decided. It is not: the model publishes a sigma per
+#   athlete, and a two-point gap between two teams whose scores move by
+#   fifteen is a coin flip that the page was rendering as a result.
+#
+# ★ AND IT IS THE SAME PREDICTION, NOT A SECOND ONE. race_sim draws out of
+#   the band predict.py already published (sigma_pct on each row), so this
+#   costs arithmetic and no model call.
+#
+# ⚠ GATED ON scripts/diag_calibration.py, WHICH PASSED. cover68 0.664-0.695
+#   against 0.683 and cover90 0.883-0.901 against 0.900, every band, with
+#   err/sigma at 0.80-0.84 against the Gaussian 0.798. A probability out of a
+#   dishonest sigma is worse than no probability, so if that table ever stops
+#   reading honest this comes back off the page.
+#
+# ! team_rho DEFAULTS TO ZERO AND THAT IS A FLOOR, NOT A MEASUREMENT. A
+#   UNIFORM race-day effect cannot change a single place -- scoring is by
+#   place, and a monotone transform of every time leaves the order alone
+#   (there is a test asserting exactly that). What moves a team score is
+#   WITHIN-team correlation: one squad travelling badly together. Nobody has
+#   measured that here yet, so the honest default is to leave it out and say
+#   so -- score_sd published at rho=0 is the narrowest the spread can
+#   honestly be, not the likeliest.
+def _stampSim(field, preds, teams, finishers, draws=None, team_rho=0.0):
+    """Merge the simulation onto the team and runner rows; return its
+    top-level summary. Never raises: a page that cannot simulate still shows
+    the prediction it already had."""
+    try:
+        import race_sim
+    except Exception as exc:                            # noqa: BLE001
+        return {"available": False, "reason": f"race_sim unavailable: {exc}"}
+    try:
+        kw = {"team_rho": float(team_rho or 0.0)}
+        if draws:
+            kw["draws"] = int(draws)
+        res = race_sim.simulate(field, preds, **kw)
+    except Exception:                                   # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("race_sim.simulate failed")
+        return {"available": False,
+                "reason": "The simulation failed. This has been logged."}
+    if not res:
+        return {"available": False,
+                "reason": "Nothing in this field could be simulated."}
+
+    by_team = res["teams"]
+    for t in teams:
+        s = by_team.get(t.get("team"))
+        if s:
+            t["sim"] = s
+    by_person = {r["person_id"]: r for r in res["runners"] if r.get("person_id")}
+    for r in finishers:
+        s = by_person.get(r.get("person_id"))
+        if s:
+            r["sim"] = {"place_mean": s["place_mean"],
+                        "place_p10": s["place_p10"],
+                        "place_p90": s["place_p90"]}
+    # ! A TUPLE KEY IS NOT JSON. h2h comes back keyed (a, b); the page needs
+    #   h2h[a][b], and a name with a comma in it would make a flat "a,b" key
+    #   ambiguous.
+    h2h = {}
+    for (a, b), pval in (res.get("h2h") or {}).items():
+        h2h.setdefault(a, {})[b] = pval
+    return {"available": True, "draws": res["draws"], "h2h": h2h,
+            "team_rho": float(team_rho or 0.0)}
+
+
+# Purpose:   the best k of a team's roster for one target race.
+# ★ SAME FIELD, SAME BAND, SAME SCORING as predictTeam -- the lineup is chosen
+#   against the race the page is already showing, not against a private one.
+def predictTeamLineup(cur, schools, target, team, remove=None, add=None,
+                      k=None, draws=None, objective="p_win"):
+    """{"available", "lineup": [row...], "bench": [row...], ...}.
+
+    The returned rows are the same decorated runner rows predictTeam serves,
+    so the page can render a lineup exactly the way it renders a field.
+    """
+    status = modelStatus()
+    if not status["available"]:
+        return status
+    try:
+        import race_sim
+    except Exception as exc:                            # noqa: BLE001
+        return {"available": False, "reason": f"race_sim unavailable: {exc}"}
+
+    roster = _teamRosters(cur, schools, target, remove or set(), add or set())
+    if not roster:
+        return {"available": False,
+                "reason": "No athletes found for those teams."}
+    field = _fullField(cur, roster, target)
+    preds = _predictTimes(cur, [r["person_id"] for r in field], target)
+
+    own = [f for f in field if f.get("school") == team]
+    if not own:
+        return {"available": False,
+                "reason": f"No runners found for {team} in this field."}
+
+    res = race_sim.bestLineup(field, preds, team,
+                              **{kk: vv for kk, vv in
+                                 (("k", k), ("draws", draws)) if vv},
+                              objective=objective)
+    if not res:
+        return {"available": False,
+                "reason": "Nothing in this roster could be simulated."}
+
+    # the decorated rows, so the page renders a lineup like any other field
+    _, finishers = _score(field, preds)
+    _decorate(finishers, (target.get("sport") or "XC").upper())
+    _stampCrests(finishers, "school", "school_state")
+    picked = set(res["lineup"])
+    mine = [r for r in finishers if r.get("school") == team]
     return {"available": True,
-            "mode": "head_to_head" if head_to_head else "meet",
-            "teams": teams,
-            "runners": finishers}
+            "team": team,
+            "objective": objective,
+            "lineup": [r for r in mine if r.get("person_id") in picked],
+            "bench": [r for r in mine if r.get("person_id") not in picked],
+            "p_win": res["p_win"],
+            "score_mean": res["score_mean"],
+            "considered": res["considered"],
+            "method": res["method"],
+            # ! THE MARGIN IS THE POINT, NOT THE WINNER. Five lineups within
+            #   a percentage point of each other means the choice does not
+            #   matter and a coach should not be told it does.
+            "alternatives": res["alternatives"],
+            "roster_size": len(own)}
 
 
 # Purpose:   the href and label a MENTION of a school gets, site-wide.

@@ -64,6 +64,18 @@ DEFAULT_BANDS = (0, 2, 8, 20, 44, 104, 208, 10_000)
 # the z for a two-sided band, and what it should cover
 Z_BANDS = ((1.0, 0.6827), (1.645, 0.90))
 
+# E|z| for a standard normal = sqrt(2/pi). A correct sigma makes the mean
+# absolute residual this fraction of itself, whatever the horizon -- which is
+# the scale-free way to ask "is this band the right width".
+GAUSS_MAD = math.sqrt(2.0 / math.pi)
+
+# how far err/sig may sit from GAUSS_MAD before it is a lie rather than a
+# tail. +-0.08 is roughly cover68 outside 0.63-0.73.
+RATIO_TOLERANCE = 0.08
+
+# sd(predicted)/sd(actual) below this is the mean-reversion failure
+SPREAD_FLOOR = 0.75
+
 
 # the two keys a valid older checkpoint may be short of, and nothing else;
 # see predict._loadModel -- the baseline rule rides in the state dict and a
@@ -162,7 +174,7 @@ def report(gaps_weeks, resid_log, sigma_log, pred_log, actual_log,
     import numpy as np
     out("")
     out(f"  {'band':>9} {'n':>9} {'cover68':>8} {'cover90':>8} "
-        f"{'sigma':>7} {'|err|':>7} {'spread':>7}")
+        f"{'sigma':>7} {'|err|':>7} {'err/sig':>8} {'spread':>7}")
     rows = []
     for lo, hi in zip(bands, bands[1:]):
         m = (gaps_weeks >= lo) & (gaps_weeks < hi)
@@ -174,14 +186,16 @@ def report(gaps_weeks, resid_log, sigma_log, pred_log, actual_log,
         sd_pred = float(np.std(pred_log[m]))
         sd_act = float(np.std(actual_log[m]))
         spread = (sd_pred / sd_act) if sd_act > 0 else float("nan")
+        mean_sig = float(np.mean(sigma_log[m]))
+        mean_err = float(np.mean(np.abs(resid_log[m])))
+        ratio = (mean_err / mean_sig) if mean_sig > 0 else float("nan")
         rows.append({"band": _bandLabel(lo, hi), "n": n, "c68": c68,
-                     "c90": c90, "sigma": float(np.mean(sigma_log[m])),
-                     "err": float(np.mean(np.abs(resid_log[m]))),
-                     "spread": spread})
+                     "c90": c90, "sigma": mean_sig, "err": mean_err,
+                     "ratio": ratio, "spread": spread})
         flag68 = "" if abs(c68 - 0.6827) < 0.05 else ("  <-- LOW" if c68 < 0.6827
                                                      else "  <-- WIDE")
         out(f"  {rows[-1]['band']:>9} {n:>9,} {c68:>8.3f} {c90:>8.3f} "
-            f"{rows[-1]['sigma']:>7.4f} {rows[-1]['err']:>7.4f} "
+            f"{mean_sig:>7.4f} {mean_err:>7.4f} {ratio:>8.3f} "
             f"{spread:>7.2f}{flag68}")
     out("")
     out("  cover68/90  the share of outcomes inside the band the model claims;"
@@ -189,16 +203,40 @@ def report(gaps_weeks, resid_log, sigma_log, pred_log, actual_log,
     out("  sigma       the mean predicted sigma in LOG time -- it must GROW"
         " down the table")
     out("  |err|       mean absolute residual in log time (0.01 = 1%)")
+    out(f"  err/sig     |err| / sigma. {GAUSS_MAD:.3f} is what a correct"
+        " Gaussian sigma gives (sqrt(2/pi));")
+    out("              ABOVE means the band is too tight for the error it"
+        " actually makes")
     out("  spread      sd(predicted) / sd(actual). 1.0 is honest;"
         " well under 1 is regression to the mean,")
     out("              which ranks nobody and is the failure a flat"
         " long-horizon draw invites")
-    # the monotonicity check, stated rather than left to the eye
-    sig = [r["sigma"] for r in rows]
-    if len(sig) >= 2 and any(b < a - 1e-9 for a, b in zip(sig, sig[1:])):
-        out("\n  ⚠ SIGMA DOES NOT GROW MONOTONICALLY WITH THE HORIZON. A band"
-            " further out that claims to be\n    more certain is a band that"
-            " is lying; anything race_sim publishes past it is overconfident.")
+    # ★ THE CHECK IS sigma AGAINST THE ERROR IT ACTUALLY MAKES, NOT AGAINST
+    #   THE BAND ORDERING. The first honest run tripped a naive "sigma must
+    #   grow with the horizon" test: sigma fell from 0.0588 at 20-44w to
+    #   0.0501 at 44-104w and the warning called it a lie. It was not -- the
+    #   error fell with it (0.0487 -> 0.0422) and coverage held at 0.664.
+    #   A gap of about a year is the SAME athlete at the SAME meet one season
+    #   later, which is a genuinely easier question than six months out at a
+    #   different distance in a different sport. Only a sigma that stops
+    #   tracking its own error is lying, and err/sig is what sees that.
+    bad = [r for r in rows if r["ratio"] == r["ratio"]
+           and abs(r["ratio"] - GAUSS_MAD) > RATIO_TOLERANCE]
+    if bad:
+        out("\n  ⚠ SIGMA IS NOT TRACKING THE ERROR IT MAKES in: "
+            + ", ".join(f"{r['band']} (err/sig {r['ratio']:.3f})" for r in bad)
+            + f"\n    A correct Gaussian sigma gives {GAUSS_MAD:.3f}."
+            " Above it the band is too tight and anything race_sim\n"
+            "    publishes off it is overconfident; below it the band is"
+            " padded and every probability is mush.")
+    thin = [r for r in rows if r["spread"] == r["spread"]
+            and r["spread"] < SPREAD_FLOOR]
+    if thin:
+        out("\n  ⚠ REGRESSION TO THE MEAN in: "
+            + ", ".join(f"{r['band']} (spread {r['spread']:.2f})" for r in thin)
+            + "\n    The model is predicting the pool mean out there. It"
+              " ranks nobody, so the recruiting\n    projection would be"
+              " noise however well calibrated it is.")
     return rows
 
 
@@ -302,7 +340,7 @@ def main():
     report(gaps, np.concatenate(resid), np.concatenate(sigma),
            np.concatenate(pred_l), np.concatenate(act_l), bands)
     print("  Nothing from racecast/race_sim.py should be published while a"
-          " band that matters reads LOW.\n")
+          " band that matters reads LOW\n  or carries a warning above.\n")
     return 0
 
 

@@ -58,24 +58,76 @@ def test_the_bands_are_cut_where_the_twins_are_generated():
     assert C.GAP_FEATURE == 3
 
 
-def test_the_report_flags_a_sigma_that_does_not_grow_with_the_horizon():
-    """A band further out that claims to be MORE certain is lying, and
-    anything published past it is overconfident."""
+def test_a_sigma_that_falls_with_the_horizon_is_not_flagged_when_the_error_falls_too():
+    """★ THE FALSE ALARM THE FIRST HONEST RUN TRIPPED. sigma fell from 0.0588
+    at 20-44w to 0.0501 at 44-104w and the naive monotonicity test called it
+    a lie -- but |err| fell with it (0.0487 -> 0.0422) and cover68 held at
+    0.664. A one-year gap is the same athlete at the same meet a season
+    later, which is genuinely easier than six months out at another
+    distance."""
     rng = np.random.default_rng(2)
     n = 8000
-    gaps = np.concatenate([np.full(n, 5.0), np.full(n, 100.0)])
-    # the far band claims a TIGHTER sigma than the near one
-    sigma = np.concatenate([np.full(n, 0.05), np.full(n, 0.02)])
-    resid = rng.standard_normal(2 * n) * sigma
+    gaps = np.concatenate([np.full(n, 30.0), np.full(n, 60.0)])
+    sigma = np.concatenate([np.full(n, 0.0588), np.full(n, 0.0501)])
+    resid = rng.standard_normal(2 * n) * sigma      # honest at both widths
     lines = []
     C.report(gaps, resid, sigma, resid, resid, out=lines.append)
     text = "\n".join(lines)
-    assert "SIGMA DOES NOT GROW MONOTONICALLY" in text
-    # and it does not cry wolf when sigma does grow
-    lines2 = []
-    C.report(gaps, resid, np.concatenate([np.full(n, 0.02), np.full(n, 0.05)]),
-             resid, resid, out=lines2.append)
-    assert "MONOTONICALLY" not in "\n".join(lines2)
+    assert "NOT TRACKING" not in text, text
+    assert "MONOTONIC" not in text
+
+
+def test_a_sigma_that_stops_tracking_its_error_is_flagged():
+    """The failure that matters: the band is too tight for the error the
+    model actually makes, whatever order the bands come in."""
+    rng = np.random.default_rng(5)
+    n = 8000
+    gaps = np.concatenate([np.full(n, 30.0), np.full(n, 60.0)])
+    true = np.concatenate([np.full(n, 0.05), np.full(n, 0.12)])
+    claimed = np.concatenate([np.full(n, 0.05), np.full(n, 0.05)])
+    resid = rng.standard_normal(2 * n) * true
+    lines = []
+    C.report(gaps, resid, claimed, resid, resid, out=lines.append)
+    text = "\n".join(lines)
+    assert "SIGMA IS NOT TRACKING THE ERROR" in text
+    assert "44-104w" in text
+
+
+def test_the_ratio_column_is_the_gaussian_constant_when_sigma_is_right():
+    rng = np.random.default_rng(6)
+    n = 60_000
+    sig = np.full(n, 0.04)
+    resid = rng.standard_normal(n) * sig
+    rows = C.report(np.full(n, 10.0), resid, sig, resid, resid,
+                    out=lambda _s: None)
+    assert abs(rows[0]["ratio"] - C.GAUSS_MAD) < 0.01
+    assert abs(C.GAUSS_MAD - 0.7979) < 1e-4
+
+
+def test_the_real_run_passes_its_own_check():
+    """The numbers the server actually printed, band by band. If a future
+    change makes this table fail, the change is wrong -- this is a model
+    that measured honest."""
+    bands = [(1.0, 0.0404, 0.0330), (5.0, 0.0417, 0.0336),
+             (14.0, 0.0466, 0.0371), (30.0, 0.0588, 0.0487),
+             (60.0, 0.0501, 0.0422)]
+    rng = np.random.default_rng(7)
+    gaps, resid, sigma = [], [], []
+    for g, s, _e in bands:
+        n = 6000
+        gaps.append(np.full(n, g))
+        sigma.append(np.full(n, s))
+        resid.append(rng.standard_normal(n) * s)
+    gaps = np.concatenate(gaps)
+    sigma = np.concatenate(sigma)
+    resid = np.concatenate(resid)
+    lines = []
+    rows = C.report(gaps, resid, sigma, resid, resid, out=lines.append)
+    assert len(rows) == 5
+    assert "⚠" not in "\n".join(lines)
+    # and every band the server reported was inside the tolerance
+    for _g, s, e in bands:
+        assert abs(e / s - C.GAUSS_MAD) < C.RATIO_TOLERANCE, (s, e, e / s)
 
 
 def test_the_spread_column_catches_regression_to_the_mean():
