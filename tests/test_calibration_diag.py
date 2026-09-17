@@ -104,3 +104,14 @@ def test_every_band_reported_carries_its_count():
     rows = C.report(gaps, resid, sigma, resid, resid, out=lambda _s: None)
     assert sum(r["n"] for r in rows) == 5000
     assert all(r["n"] > 0 for r in rows)
+
+
+def test_it_calls_the_names_train_actually_exports():
+    """I guessed ChunkDataset and collate; they are ChunkedRaceDataset and
+    collateRagged, and the run died on the first line that touched them."""
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    train = open(os.path.join(_ROOT, "model", "train.py")).read()
+    for name in ("ChunkedRaceDataset", "collateRagged", "splitTrainVal"):
+        assert f"T.{name}" in src, name
+        assert (f"class {name}(" in train or f"def {name}(" in train), name
+    assert "T.ChunkDataset(" not in src and "T.collate)" not in src

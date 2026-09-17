@@ -151,7 +151,7 @@ def main():
     bands = (tuple(int(x) for x in a.bands.split(",")) if a.bands
              else DEFAULT_BANDS)
 
-    ds = T.ChunkDataset(data_dir)
+    ds = T.ChunkedRaceDataset(data_dir)
     _train, val = T.splitTrainVal(ds)
     n = min(len(val), a.draws)
     print(f"[calibration] {data_dir}: {len(val):,} held-out examples, "
@@ -172,12 +172,13 @@ def main():
 
     loader = torch.utils.data.DataLoader(
         torch.utils.data.Subset(val, list(range(n))), batch_size=a.batch,
-        shuffle=False, collate_fn=T.collate)
+        shuffle=False, collate_fn=T.collateRagged)
 
     gaps, resid, sigma, pred_l, act_l = [], [], [], [], []
     done = 0
     with torch.no_grad():
         for batch in loader:
+            # collateRagged returns (padded, masks, context, target, venues)
             seqs, masks, ctx, tgt = batch[0], batch[1], batch[2], batch[3]
             ven = batch[4] if len(batch) > 4 else None
             seqs, masks, ctx = seqs.to(dev), masks.to(dev), ctx.to(dev)
