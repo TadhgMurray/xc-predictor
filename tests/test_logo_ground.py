@@ -179,3 +179,114 @@ class NothingSurvives(unittest.TestCase):
         data, _sha, wh = S.normalise(out.getvalue(), px=64, kind="icon")
         self.assertIsNotNone(data)
         self.assertEqual(wh, (200, 200), "a 6px survivor is not the mark")
+
+
+# ===================================================================== #
+#  THE BLACK BACKGROUND, AND WHY THE KEY WAS MISSING IT                 #
+# ===================================================================== #
+
+class TheOpaqueRegion(unittest.TestCase):
+    """★ THE BUG (owner, 2026-09-16: "the backgrounds are black but the
+    background on anet are white, so idk where the black is coming from").
+    normalise centres a crest on a TRANSPARENT square. So a dark card that is
+    not square -- or one that has been through here once already -- is an
+    opaque black rectangle with transparent margins beside it, and the CANVAS
+    corners are those margins. _flatGround saw alpha 0, said "it already has
+    its own alpha", and left the black ground alone."""
+
+    def _card(self, ground, size=(300, 240), card=(20, 40, 200, 120),
+              mark=(60, 70, 80, 60)):
+        """An opaque `ground` card inset in a transparent canvas, with a red
+        mark on the card -- what a stored non-square crest looks like."""
+        im = Image.new("RGBA", size, (0, 0, 0, 0))
+        im.paste(Image.new("RGBA", (card[2], card[3]), ground),
+                 (card[0], card[1]))
+        im.paste(Image.new("RGBA", (mark[2], mark[3]), (220, 30, 30, 255)),
+                 (mark[0], mark[1]))
+        return im
+
+    def test_a_dark_card_inside_a_transparent_canvas_is_found(self):
+        for ground in ((0, 0, 0, 255), (9, 13, 22, 255), (17, 17, 17, 255)):
+            im = self._card(ground)
+            self.assertIsNotNone(S._flatGround(im),
+                                 f"missed the ground {ground[:3]}")
+
+    def test_the_canvas_corners_really_are_transparent(self):
+        """The premise of the bug, asserted so the fixture cannot drift."""
+        im = self._card((0, 0, 0, 255))
+        w, h = im.size
+        for xy in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+            self.assertEqual(im.getpixel(xy)[3], 0)
+
+    def test_a_fully_opaque_image_is_probed_exactly_as_before(self):
+        im = Image.new("RGBA", (200, 200), (17, 34, 51, 255))
+        im.paste(Image.new("RGBA", (80, 60), (220, 30, 30, 255)), (60, 70))
+        self.assertEqual(S._opaqueBox(im), (0, 0, 200, 200))
+        self.assertEqual(S._flatGround(im), (17, 34, 51))
+
+    def test_a_crest_that_is_all_mark_is_not_a_ground(self):
+        """! A GROUND HAS SOMETHING ON IT. Once the probe moved to the opaque
+        region, a transparent crest started reporting its own mark's colour as
+        a ground -- and keying that empties the crest."""
+        im = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+        im.paste(Image.new("RGBA", (80, 60), (220, 30, 30, 255)), (40, 40))
+        self.assertIsNone(S._flatGround(im))
+        self.assertLess(S.GROUND_MAX_SHARE, 1.0)
+
+    def test_the_repair_keys_the_ground_and_keeps_the_mark(self):
+        out = io.BytesIO()
+        self._card((0, 0, 0, 255)).save(out, "PNG")
+        data, sha, why = S.regroundBytes(out.getvalue())
+        self.assertIsNotNone(data, why)
+        self.assertIn("keyed", why)
+        fixed = Image.open(io.BytesIO(data)).convert("RGBA")
+        # the black is gone...
+        self.assertEqual(S._opaqueBox(fixed) is None, False)
+        # ! getdata() is deprecated in Pillow 12 and gone in 14; the bands
+        #   say the same thing and the codebase already avoids it in
+        #   _keyGround.
+        r, g, b, alpha = fixed.split()
+        colours = {p[:3] for p in zip(r.tobytes(), g.tobytes(), b.tobytes(),
+                                      alpha.tobytes()) if p[3] > 200}
+        self.assertTrue(colours, "the mark was erased")
+        for c in colours:
+            self.assertGreater(max(c), 100, f"{c} is still the dark ground")
+        self.assertEqual(len(sha), 64)
+
+    def test_the_repair_is_idempotent(self):
+        """A second run must be a no-op, or the pass cannot be re-run."""
+        out = io.BytesIO()
+        self._card((0, 0, 0, 255)).save(out, "PNG")
+        once, _sha, _why = S.regroundBytes(out.getvalue())
+        twice, _s2, why2 = S.regroundBytes(once)
+        self.assertIsNone(twice, why2)
+        self.assertIn(why2, ("no flat ground", "unchanged"))
+
+    def test_the_repair_leaves_an_already_transparent_crest_alone(self):
+        im = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+        im.paste(Image.new("RGBA", (80, 60), (220, 30, 30, 255)), (40, 40))
+        out = io.BytesIO()
+        im.save(out, "PNG")
+        data, _sha, why = S.regroundBytes(out.getvalue())
+        self.assertIsNone(data)
+        self.assertEqual(why, "no flat ground")
+
+    def test_the_repair_refuses_when_keying_would_leave_nothing(self):
+        """A solid one-colour badge: keying it makes every colour hash the
+        same, which is the thousand-schools-one-crest bug."""
+        im = Image.new("RGBA", (64, 64), (12, 12, 12, 255))
+        out = io.BytesIO()
+        im.save(out, "PNG")
+        data, _sha, why = S.regroundBytes(out.getvalue())
+        self.assertIsNone(data, why)
+
+    def test_the_repair_never_touches_the_network(self):
+        src = open(os.path.join(_ROOT, "scripts",
+                                "scrape_school_logos.py")).read()
+        i = src.index("def regroundAll(")
+        j = src.index("def main():", i)
+        body = src[i:j]
+        for banned in ("requests", "urlopen", "fetch(", "source_url", "http"):
+            self.assertNotIn(banned, body, f"{banned} in the repair pass")
+        # and it only writes with --write
+        self.assertIn("if write:", body)

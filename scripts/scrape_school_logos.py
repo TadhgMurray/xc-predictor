@@ -567,22 +567,13 @@ def _svgToPng(raw, px):
 KEY_TOLERANCE = 24          # per channel, against the corners' mean
 KEY_MAX_SPREAD = 28         # the corners must agree this closely
 
-
-def _flatGround(im):
-    """The (r, g, b) of a flat background every corner agrees on, or None.
-    Pure; `im` is RGBA."""
-    w, h = im.size
-    if w < 4 or h < 4:
-        return None
-    px = im.load()
-    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
-    if any(c[3] < 250 for c in corners):
-        return None                      # it already has its own alpha
-    mean = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
-    for c in corners:
-        if max(abs(c[i] - mean[i]) for i in range(3)) > KEY_MAX_SPREAD:
-            return None                  # a gradient or a photograph
-    return mean
+# ★ A GROUND HAS SOMETHING ON IT. Once the probe moved to the corners of the
+#   OPAQUE region, a crest that arrived transparent started reporting a
+#   "ground" -- the colour of its own mark, because the opaque region IS the
+#   mark and all four of its corners agree. Keying that empties the crest.
+#   So a candidate colour that accounts for essentially the whole opaque
+#   region is not a ground: there is no mark inside it to keep.
+GROUND_MAX_SHARE = 0.995
 
 
 def _keyGround(im, ground, tol=KEY_TOLERANCE):
@@ -608,6 +599,56 @@ def _keyGround(im, ground, tol=KEY_TOLERANCE):
     return keyed, n
 
 
+def _opaqueBox(im):
+    """The bounding box of the pixels that are actually opaque, or None.
+
+    ★ WHY THE CANVAS CORNERS WERE THE WRONG PLACE TO LOOK, and this is the
+      black-background bug (owner, 2026-09-16: "the backgrounds are black but
+      the background on anet are white, so idk where the black is coming
+      from"). normalise centres a crest on a TRANSPARENT square. So a logo
+      that arrives as a dark card narrower than it is tall -- or one that has
+      already been through here once -- is an opaque black rectangle with
+      transparent margins beside it, and the canvas corners are those
+      margins: alpha 0, so _flatGround bailed with "it already has its own
+      alpha" and the ground it was looking at went untouched. Probing the
+      corners of the OPAQUE REGION finds it.
+
+    ! FOR A FULLY OPAQUE IMAGE THIS IS THE WHOLE IMAGE, so nothing about the
+      square case changes.
+    """
+    try:
+        alpha = im.getchannel("A")
+    except (ValueError, KeyError):
+        return (0, 0) + im.size
+    return alpha.point(lambda v: 255 if v >= 250 else 0).getbbox()
+
+
+def _flatGround(im):
+    """The (r, g, b) of a flat background every corner of the opaque region
+    agrees on, or None. Pure; `im` is RGBA."""
+    box = _opaqueBox(im)
+    if not box:
+        return None                      # nothing opaque: no ground to key
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    if w < 4 or h < 4:
+        return None
+    px = im.load()
+    corners = [px[x0, y0], px[x1 - 1, y0], px[x0, y1 - 1], px[x1 - 1, y1 - 1]]
+    if any(c[3] < 250 for c in corners):
+        return None                      # a ragged edge, not a card
+    mean = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
+    for c in corners:
+        if max(abs(c[i] - mean[i]) for i in range(3)) > KEY_MAX_SPREAD:
+            return None                  # a gradient or a photograph
+    # ! AND IT HAS TO SURROUND SOMETHING. See GROUND_MAX_SHARE.
+    inside = im.crop(box)
+    _keyed, n = _keyGround(inside, mean)
+    if n >= GROUND_MAX_SHARE * (w * h):
+        return None                      # all ground, no mark
+    return mean
+
+
 def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     """(png_bytes, sha256, (w, h)) for a fetched image, or (None, None,
     reason). A flat opaque ground is keyed out, transparent margins come
@@ -627,7 +668,18 @@ def normalise(raw, px=LOGO_PX, ctype="", kind=None):
         im.load()
     except Exception:                                     # noqa: BLE001
         return None, None, f"unreadable {ctype or 'image'}"
-    im = im.convert("RGBA")
+    return finish(im.convert("RGBA"), px=px, kind=kind)
+
+
+def finish(im, px=LOGO_PX, kind=None):
+    """(png_bytes, sha256, (w, h)) for an RGBA image, or (None, None, reason).
+
+    Key the ground out, crop the transparent margin, centre what is left in a
+    square of `px`. Split out of normalise so the repair pass can run the
+    same steps over a crest already on disk -- the ground is IN the stored
+    PNG, so fixing it needs no network and no rescrape.
+    """
+    from PIL import Image, ImageOps
     # ⚠ AND ONLY WHEN SOMETHING SURVIVES IT. An image that is ENTIRELY its
     #   ground -- a solid block, a one-colour badge -- has no ground to key:
     #   keying it leaves nothing, every colour normalises to the same empty
@@ -654,6 +706,44 @@ def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     canvas.save(out, format="PNG", optimize=True)
     data = out.getvalue()
     return data, hashlib.sha256(data).hexdigest(), (w, h)
+
+
+# ===================================================================== #
+#  THE REPAIR: re-key the grounds already on disk                       #
+# ===================================================================== #
+#
+# ★ NO NETWORK, NO RESCRAPE (owner, 2026-09-16: "I stopped the scrape until we
+#   can fix amherst type issues (can we rescrape them?)" -- and the answer for
+#   the black grounds is that we do not have to). The ground is baked into the
+#   stored PNG, and keying a FLAT ground out of an image cannot damage the
+#   mark on it: the mark is by definition the pixels that are not that colour.
+#   So the repair reads each file, runs `finish` over it again, and writes it
+#   back when the result is smaller in ink and still an acceptable mark.
+#
+# ! IDEMPOTENT. A crest with no flat ground comes back byte-identical, so the
+#   pass can be run as often as you like and a second run is a no-op.
+def regroundBytes(raw, px=LOGO_PX, kind=None):
+    """(new_png, sha, reason) for a stored crest, or (None, None, reason) when
+    there is nothing to do. `reason` is why, either way."""
+    try:
+        from PIL import Image
+    except ImportError:                                   # pragma: no cover
+        return None, None, "no Pillow"
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+        im = im.convert("RGBA")
+    except Exception:                                     # noqa: BLE001
+        return None, None, "unreadable"
+    ground = _flatGround(im)
+    if ground is None:
+        return None, None, "no flat ground"
+    data, sha, size = finish(im, px=px, kind=kind)
+    if data is None:
+        return None, None, f"would not survive ({size})"
+    if data == raw:
+        return None, None, "unchanged"
+    return data, sha, f"keyed rgb{ground}"
 
 
 # ===================================================================== #
@@ -1310,6 +1400,77 @@ def _workOne(manners, row, rediscover=False):
             "modified": manners.modified if png else None}
 
 
+def regroundAll(cur, directory=None, write=False, limit=None, only=None,
+                out=print):
+    """Re-key every stored crest's ground in place. Returns a census dict.
+
+    ⚠ NO NETWORK. Every byte it needs is already on disk, so this is a repair
+      and not a rescrape -- which is the whole point (owner: "I stopped the
+      scrape until we can fix amherst type issues").
+    """
+    directory = directory or LOGO_DIR
+    params, where = {}, ["path IS NOT NULL"]
+    if only:
+        params["only"] = f"%{only}%"
+        where.append("school ILIKE %(only)s")
+    cur.execute(f"""
+        SELECT school, state, COALESCE(level, '') AS level, path, kind, sha
+        FROM   school_logo
+        WHERE  {' AND '.join(where)}
+        ORDER  BY school, state, level
+        {"LIMIT %(limit)s" if limit else ""}
+    """, dict(params, limit=limit))
+    rows = [dict(zip(("school", "state", "level", "path", "kind", "sha"), r))
+            if not isinstance(r, dict) else dict(r) for r in cur.fetchall()]
+    census = {"rows": len(rows), "missing": 0, "fixed": 0, "unchanged": 0,
+              "no_ground": 0, "refused": 0, "unreadable": 0}
+    fixed = []
+    for row in rows:
+        full = os.path.join(directory, row["path"])
+        try:
+            with open(full, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            census["missing"] += 1
+            continue
+        data, sha, why = regroundBytes(raw, kind=row.get("kind"))
+        if data is None:
+            if why == "no flat ground":
+                census["no_ground"] += 1
+            elif why == "unchanged":
+                census["unchanged"] += 1
+            elif why == "unreadable":
+                census["unreadable"] += 1
+            else:
+                census["refused"] += 1
+            continue
+        census["fixed"] += 1
+        fixed.append((row, sha, why, len(raw), len(data)))
+        if write:
+            tmp = f"{full}.{os.getpid()}.tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, full)
+            cur.execute("""UPDATE school_logo SET sha = %s
+                           WHERE school = %s AND state = %s
+                             AND COALESCE(level, '') = %s""",
+                        (sha, row["school"], row["state"], row["level"]))
+    for row, _sha, why, was, now in fixed[:20]:
+        out(f"    {row['school']} ({row['state'] or '-'}"
+            f"{'/' + row['level'] if row['level'] else ''}): {why}, "
+            f"{was:,} -> {now:,} bytes")
+    if len(fixed) > 20:
+        out(f"    ... and {len(fixed) - 20:,} more")
+    out(f"  {census['rows']:,} crests: {census['fixed']:,} re-keyed, "
+        f"{census['no_ground']:,} already transparent or not a flat ground, "
+        f"{census['unchanged']:,} unchanged, {census['refused']:,} refused "
+        f"(keying would leave no mark), {census['unreadable']:,} unreadable, "
+        f"{census['missing']:,} file missing")
+    if not write:
+        out("  --dry-run: nothing was written.")
+    return census
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1340,6 +1501,12 @@ def main():
                          "the Amherst case, where anet's modal team is the "
                          "bigger school and its mascot replaced the other's "
                          "real crest. Implies --redo. See damagedPairs.")
+    ap.add_argument("--reground", action="store_true",
+                    help="re-key the ground out of the crests ALREADY ON "
+                         "DISK and stop. No network: the black background is "
+                         "in the stored PNG, so this is a repair rather than "
+                         "a rescrape. Idempotent -- a crest with no flat "
+                         "ground comes back byte-identical.")
     args = ap.parse_args()
     if args.fix_multi:
         args.redo = True
@@ -1347,14 +1514,26 @@ def main():
         # -1, not 0: "fetched < today - 0" skips everything fetched TODAY,
         # which is exactly the row you are trying to redo an hour later
         args.refresh_days, args.retry_failed = -1, True
-    if not (args.write or args.dry_run or args.stats or args.sweep_only):
-        ap.error("pass --stats, --dry-run, --write or --sweep-only")
+    if not (args.write or args.dry_run or args.stats or args.sweep_only
+            or args.reground):
+        ap.error("pass --stats, --dry-run, --write, --sweep-only or --reground")
 
     from database import getConn
     with getConn() as conn:
         with conn.cursor() as cur:
             if args.stats:
                 print(stats(cur))
+                return
+            if args.reground:
+                # ! THE MIGRATION FIRST, as below: this reads `level`.
+                ensureTable(cur, DDL)
+                ensureLevelKey(cur)
+                regroundAll(cur, args.dir, write=args.write,
+                            limit=args.limit, only=args.only)
+                if args.write:
+                    conn.commit()
+                else:
+                    conn.rollback()
                 return
             if args.sweep_only:
                 ensureTable(cur, DDL)
