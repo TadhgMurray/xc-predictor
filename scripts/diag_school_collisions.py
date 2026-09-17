@@ -79,7 +79,7 @@ def collisions(cur, min_teams=2):
     several teams with MORE THAN ONE level. anet_team only."""
     got = _rows(cur, """
         SELECT lower(btrim(school)) AS name, team_id, level,
-               COALESCE(state, anet_state), city
+               COALESCE(anet_state, state), city  -- anet's own, not our guess
         FROM   anet_team
         WHERE  school IS NOT NULL AND btrim(school) <> '' AND level IS NOT NULL
           AND  lower(btrim(school)) IN (

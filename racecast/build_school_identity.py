@@ -136,14 +136,15 @@ def authoritativeStates(cur):
             if cur.fetchone() is None:
                 continue
             cur.execute(f"""
+                -- ⚠⚠ anet_state FIRST -- see the note in buildTeamStates.
                 SELECT lower(btrim(r.school)) AS name,
-                       upper(btrim(COALESCE(t.state, t.anet_state))) AS st
+                       upper(btrim(COALESCE(t.anet_state, t.state))) AS st
                 FROM   {table} r
                 JOIN   anet_team t ON t.team_id = r.team_id
                 WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
                   AND  r.school IS NOT NULL AND btrim(r.school) <> ''
-                  AND  COALESCE(t.state, t.anet_state) IS NOT NULL
-                  AND  btrim(COALESCE(t.state, t.anet_state)) <> ''
+                  AND  COALESCE(t.anet_state, t.state) IS NOT NULL
+                  AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
                 GROUP  BY 1, 2
             """)
             for name, st in cur.fetchall():
@@ -337,7 +338,7 @@ def buildLinkStates(cur, contested):
               "(scripts/link_tfrrs_to_anet.py --write builds it)", flush=True)
         return 0
     # ! THE LINK'S OWN state COLUMN, NOT A RE-JOIN TO anet_team. It is
-    #   written from the same COALESCE(state, anet_state) buildTeamStates
+    #   written from the same COALESCE(anet_state, state) buildTeamStates
     #   uses, so the two legs cannot disagree about where a team is.
     cur.execute("""
         INSERT INTO si_link_state (school, state)
@@ -408,16 +409,26 @@ def buildTeamStates(cur, contested):
             continue
         cur.execute(f"""
             INSERT INTO si_team_raw (person_id, school, state, n)
-            SELECT r.person_id, r.school,
-                   upper(btrim(COALESCE(t.state, t.anet_state))), count(*)
+            -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT anet's
+        --    (anet_teams.storeTeam: `state` is the queue's (school, state)
+        --    pair, inferred from where the athletes RACE; `anet_state` is
+        --    team["State"], which is where the school IS). COALESCEing our
+        --    guess first lets the inference outvote the id -- the exact
+        --    thing this file's header forbids -- and the dry run showed it
+        --    plainly (2026-09-17): Cornell NC, Ithaca WI, Tiffin IA,
+        --    Hartnell TX, Cerritos AZ, Iowa Central CC IN. Every one a
+        --    travel state. Our pair is kept only as the fallback for a team
+        --    anet gave no State for.
+        SELECT r.person_id, r.school,
+                   upper(btrim(COALESCE(t.anet_state, t.state))), count(*)
             FROM   {table} r
             JOIN   anet_team t ON t.team_id = r.team_id
             JOIN   si_names sn ON sn.name = lower(btrim(r.school))
             WHERE  r.person_id IS NOT NULL
               AND  r.team_id IS NOT NULL AND r.team_id <> 0
               AND  r.school IS NOT NULL
-              AND  COALESCE(t.state, t.anet_state) IS NOT NULL
-              AND  btrim(COALESCE(t.state, t.anet_state)) <> ''
+              AND  COALESCE(t.anet_state, t.state) IS NOT NULL
+              AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
             GROUP  BY 1, 2, 3
         """)
     cur.execute("""

@@ -605,3 +605,64 @@ def test_there_is_a_way_to_see_the_plans():
     assert "EXPLAIN (ANALYZE, BUFFERS, TIMING)" in src
     assert "statement_timeout" in src
     assert "_ANY_FORM" in src and "_JOIN_FORM" in src
+
+
+# ===================================================================== #
+#  anet_team.state IS OUR GUESS; anet_team.anet_state IS anet's          #
+# ===================================================================== #
+#
+# ⚠⚠ THE COLUMN NAMES ARE A TRAP AND EVERY READER FELL IN IT.
+#   anet_teams.storeTeam writes:
+#
+#       state       <- the QUEUE's (school, state) pair -- inferred from
+#                      where the athletes RACE, which for a college is a
+#                      travel mode
+#       anet_state  <- team["State"] -- where the school actually is
+#
+#   Every consumer read COALESCE(state, anet_state), i.e. our guess first.
+#   That is precisely what this file's header forbids ("the home-state
+#   inference ... must not outvote an id"), and the first real dry run put
+#   it on screen (2026-09-17):
+#
+#       Cornell          NC      (New York)
+#       Ithaca           WI      (New York)
+#       Tiffin           IA      (Ohio)
+#       Hartnell         TX      (California)
+#       Cerritos         AZ      (California)
+#       Iowa Central CC  IN      (Iowa)
+#       Pima (AZ) CC     WA      (Arizona)
+#
+#   Each of those would have been written into school_team_link.state, which
+#   build_school_identity then uses as the CLUSTER's state and anet_teams
+#   matches the crest against -- so the fix for "Oregon (OR) is not split"
+#   would have minted "Cornell (NC)".
+
+def test_anets_own_state_outranks_our_inference():
+    src = _identitySource()
+    assert "COALESCE(t.state, t.anet_state)" not in src, \
+        "the inference must not outvote the id"
+    assert src.count("COALESCE(t.anet_state, t.state)") >= 6
+
+    with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
+        link = fh.read()
+    assert "COALESCE(state, anet_state)" not in link
+    assert "COALESCE(anet_state, state)" in link
+
+
+def test_our_pair_is_still_the_fallback():
+    """anet does not give every team a State; where it does not, our pair is
+    all there is -- so this is a reordering, not a removal."""
+    src = _identitySource()
+    assert "COALESCE(t.anet_state, t.state) IS NOT NULL" in src
+
+
+def test_the_writer_is_what_makes_the_names_misleading():
+    """Pinned so the next reader does not have to rediscover which column is
+    which: storeTeam takes (school, state) from the CALLER and State from
+    the anet payload."""
+    with open(os.path.join(_ROOT, "scripts", "anet_teams.py")) as fh:
+        src = fh.read()
+    i = src.index("def storeTeam(cur, school, state, team):")
+    body = src[i:src.index("\ndef storeAddress(", i)]
+    assert "team.get(\"IDTeam\"), school, state, team.get(\"Name\")" in body
+    assert "team.get(\"State\")" in body      # -> anet_state

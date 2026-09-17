@@ -118,8 +118,18 @@ def collegeTeams(cur):
             printTeamLevels(meaning, _rows)
         print("")
         return {}
+    # ⚠⚠ anet_state FIRST, AND THE DRY RUN IS WHY (2026-09-17). `state` on
+    #    anet_team is OUR guess -- anet_teams.storeTeam writes the queue's
+    #    (school, state) pair there, inferred from where the athletes RACE --
+    #    while `anet_state` is team["State"], where the school actually is.
+    #    Preferring ours produced: Cornell NC, Ithaca WI, Tiffin IA, Hartnell
+    #    TX, Cerritos AZ, Iowa Central CC IN, Pima (AZ) CC as WA. Every one a
+    #    travel state, and every one of them would then have been written
+    #    into school_team_link.state -- which build_school_identity uses as
+    #    the CLUSTER's state and anet_teams matches the crest against. A
+    #    wrong state here mints "Cornell (NC)".
     cur.execute("""
-        SELECT team_id, school, upper(btrim(COALESCE(state, anet_state)))
+        SELECT team_id, school, upper(btrim(COALESCE(anet_state, state)))
         FROM   anet_team WHERE team_id = ANY(%s)
     """, (sorted(college),))
     return {int(t): (sc, st) for t, sc, st in cur.fetchall()}
