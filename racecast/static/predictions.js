@@ -1833,6 +1833,16 @@ function buildQuery(div) {
     if (e.added.length)
       q.set("add", e.added.map((a) => a.person_id).join(","));
 
+    /* ★ ASK FOR THE SPREAD (owner, 2026-09-16: "what are the chances this
+       team beats this team", and "team score variance as a part of our model
+       predictions"). The score in the table is the MIDDLE of a prediction,
+       not the prediction: the model publishes a band per athlete, and two
+       teams two points apart whose scores move by fifteen are a coin flip
+       that the page was rendering as a result.
+       ! OPT-IN ON THE WIRE, because the draws cost arithmetic per athlete
+         and the share card only wants the table. */
+    q.set("sim", "1");
+
     /*
      * ★ AND THE FIELD ITSELF -- THE LINEUP ON SCREEN (owner, 2026-09-16:
      *   "you can literally see the correct list there. Why not just take
@@ -2083,6 +2093,53 @@ function schoolCell(school, state, href, label, crestUrl) {
        + (href ? `<a href="${esc(href)}">${text}</a>` : text);
 }
 
+/* A probability as a percentage a reader can act on.
+   ★ NEVER "0%" OR "100%". 2,000 draws cannot tell 0 from 1-in-5,000, and a
+     page that prints a certainty about a cross country race is lying about
+     something nobody should believe anyway. */
+function pct(p) {
+  if (p === null || p === undefined || !isFinite(p)) return null;
+  if (p <= 0) return "<1%";
+  if (p >= 1) return ">99%";
+  if (p < 0.01) return "<1%";
+  if (p > 0.99) return ">99%";
+  return `${Math.round(p * 100)}%`;
+}
+
+/* The nested tooltip on a team's points (owner: "team score variance as a
+   part of our model predictions (in like a nested tooltip type shit)").
+
+   ★ WHAT IT SAYS IS THE RANGE, NOT THE NUMBER. score_p10 to score_p90 is
+     what the team scores in eight draws out of ten; the sd is there for
+     people who want it. A team that could not field five in some draws says
+     how often, because that is the difference between a 4th place and a
+     no-score.
+   ! AND WHO IT BEATS. h2h[a][b] is P(a scores better than b), counted only
+     over draws where both scored -- so the row lists its own odds against
+     every other team rather than making the reader compare two tooltips. */
+function scoreSpreadTip(t, d, teams) {
+  const s = t.sim;
+  if (!s) return "";
+  const lines = [];
+  if (s.score_p10 !== null && s.score_p90 !== null)
+    lines.push(`${Math.round(s.score_p10)}\u2013${Math.round(s.score_p90)} points in 8 draws out of 10`);
+  if (s.score_mean !== null)
+    lines.push(`mean ${s.score_mean.toFixed(1)}, sd ${
+      s.score_sd === null ? "?" : s.score_sd.toFixed(1)}`);
+  const w = pct(s.p_win), t3 = pct(s.p_top3);
+  if (w) lines.push(`wins ${w}, top three ${t3}`);
+  if (s.p_incomplete > 0.005)
+    lines.push(`cannot field five in ${pct(s.p_incomplete)} of draws`);
+
+  const row = ((d.sim || {}).h2h || {})[t.team] || {};
+  const odds = (teams || [])
+    .filter((o) => o.team !== t.team && row[o.team] !== null
+                                     && row[o.team] !== undefined)
+    .map((o) => `beats ${o.school_label || o.team} ${pct(row[o.team])}`);
+
+  return esc(lines.concat(odds).join("\n"));
+}
+
 function teamScoreTable(d) {
   const scored = (d.teams || []).some((t) => t.actual_score !== undefined
                                           && t.actual_score !== null);
@@ -2094,6 +2151,10 @@ function teamScoreTable(d) {
        those places would look like. The note says it instead, in words. */
   const full = (d.teams || []).filter((t) => t.score !== null);
   const short = (d.teams || []).filter((t) => t.score === null);
+  /* ! THE COLUMN APPEARS ONLY WHEN THERE IS SOMETHING IN IT. sim is opt-in
+       and can fail on its own without costing the table, so "asked for it"
+       and "got it" are different questions. */
+  const anySim = !!(d.sim && d.sim.available && full.some((t) => t.sim));
   const shortList = short.map((t) => `${esc(
       t.school_label || schoolWithState(t.team, t.state))} (${
       esc(t.note || "incomplete")})`).join(", ");
@@ -2132,7 +2193,9 @@ function teamScoreTable(d) {
             + `these divisions and capped at seven.">${
               esc(t.divs.join(" + "))}</span>`
           : ""}</td>
-      <td>${t.score}</td>
+      <td${t.sim ? ` class="has-tip" title="${scoreSpreadTip(t, d, full)}"`
+                 : ""}>${t.score}${t.sim ? '<span class="tip-dot">\u00b7</span>' : ""}</td>
+      ${anySim ? `<td class="pwin">${pct((t.sim || {}).p_win) ?? " - "}</td>` : ""}
       ${scored ? `<td class="actual">${t.actual_score ?? " - "}</td>` : ""}
       ${cells.join("")}
     </tr>`;
@@ -2143,12 +2206,20 @@ function teamScoreTable(d) {
      qualifier with their squad added reads "only 1 entered". */
   const note = `<p class="meta">Computed: five scorers, two displacers,
     incomplete teams removed.${
-      short.length ? ` Not scored: ${shortList}.` : ""}</p>`;
+      short.length ? ` Not scored: ${shortList}.` : ""}${
+    anySim ? ` Win chances and the range behind each score come from running
+      the race ${d.sim.draws.toLocaleString()} times, drawing every runner out
+      of their own predicted band. Hover a score for its range.` : ""}${
+    d.sim && d.sim.available === false && d.sim.reason
+      ? ` (No win chances: ${esc(d.sim.reason)})` : ""}</p>`;
 
   return `<h2>Predicted team scores</h2>
     <table>
       <thead><tr>
         <th>Place</th><th>Team</th><th>Points</th>
+        ${anySim ? `<th class="pwin" title="How often this team wins when the
+          race is run ${(d.sim || {}).draws || 0} times, drawing each runner
+          out of the band the model published for them.">Win</th>` : ""}
         ${scored ? "<th>Actual</th>" : ""}
         <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
       </tr></thead>

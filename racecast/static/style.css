@@ -4993,9 +4993,26 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .predict2 #output td.actual { color: #374151; }
 .predict2 #output .t-divs { color: #767676; font-size: 0.8em; }
 
+/* The win chance, and the dot that says a score has a range behind it.
+   ★ THE DOT IS THE AFFORDANCE. A title attribute is invisible until you
+     hover something, and nobody hovers a number that looks inert. */
+.predict2 #output td.pwin,
+.predict2 #output th.pwin {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.predict2 #output td.pwin { color: #374151; }
+.predict2 #output td.has-tip { cursor: help; }
+.predict2 #output .tip-dot {
+    color: #9ca3af;
+    font-weight: 700;
+    margin-left: 2px;
+}
+.predict2 #output td.has-tip:hover .tip-dot { color: #374151; }
+
 @media (max-width: 1019px) {
     /* Ten columns do not fit a phone, so the table scrolls rather than
        crushing the school column to nothing. */
     .predict2 #output { overflow-x: auto; }
-    .predict2 #output table { min-width: 660px; }
+    .predict2 #output table { min-width: 720px; }
 }
