@@ -154,3 +154,55 @@ def test_the_damaged_pairs_are_findable_and_re_askable():
     assert "if args.fix_multi:\n        args.redo = True" in src
     tgt = src[src.index("def targets("):src.index("def writeFile(")]
     assert "(w.school, w.state) IN (SELECT school, state FROM " in tgt
+
+
+def test_the_site_never_requires_a_column_the_scraper_has_not_added_yet():
+    """⚠ THIS TOOK EVERY CREST OFF THE SITE (2026-09-17). `level` is added by
+    scrape_school_logos.ensureTable/ensureLevelKey -- the SCRAPER. Between a
+    deploy and the next scrape run the live table has no such column, so a
+    reader that SELECTs it throws, loadCrests' own except swallows it, the
+    start-up cache loads EMPTY, and the whole site draws no crests at all.
+
+    A reader must never require a column its own process cannot create."""
+    src = open(os.path.join(_ROOT, "racecast", "school_logo.py")).read()
+    assert "def hasLevelColumn(cur, force=False):" in src
+    # both readers ask first
+    load = src[src.index("def loadCrests("):src.index("def crestPath(")]
+    assert 'hasLevelColumn(cur, True)' in load and '"\'\'"' in load.replace("'''", "")
+    row = src[src.index("def logoRow("):src.index("def pickRow(")]
+    assert "hasLevelColumn(cur)" in row
+    # ...and neither has a bare COALESCE(level left in it
+    for body in (load, row):
+        for line in body.split("\n"):
+            if "COALESCE(level" in line:
+                assert "hasLevelColumn" in body, line
+
+    class _Cur:
+        """The live table as it is between the deploy and the scrape."""
+        def __init__(self, has_level):
+            self.has_level, self.out = has_level, []
+            self.connection = type("C", (), {"rollback": lambda s: None})()
+        def execute(self, sql, params=None):
+            if "to_regclass" in sql:
+                self.out = [("school_logo",)]
+            elif "information_schema" in sql:
+                self.out = [(1,)] if self.has_level else []
+            elif "school_logo" in sql:
+                if "COALESCE(level" in sql and not self.has_level:
+                    raise RuntimeError('column "level" does not exist')
+                self.out = [("A", "MA", "p.png", "anet", "u", False, None, "")]
+            else:
+                self.out = []
+        def fetchone(self): return self.out[0] if self.out else None
+        def fetchall(self): return self.out
+
+    import school_logo as SL
+    SL._HAS_LEVEL.update({"at": 0.0, "ok": False})
+    assert SL.hasLevelColumn(_Cur(False), True) is False     # no raise
+    SL._HAS_LEVEL.update({"at": 0.0, "ok": False})
+    assert SL.hasLevelColumn(_Cur(True), True) is True
+    # and logoRow still answers on a table without the column
+    SL._HAVE.update({"at": 0.0, "ok": True})
+    SL._HAS_LEVEL.update({"at": 0.0, "ok": False})
+    got = SL.logoRow(_Cur(False), "A", "MA")
+    assert got is not None and got["level"] == ""

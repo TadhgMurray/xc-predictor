@@ -49,6 +49,38 @@ _NAME_RE = re.compile(r"^[0-9a-f]{16}\.png$")
 _HAVE = {"at": 0.0, "ok": False}
 _HAVE_TTL = 300
 
+# ⚠ THE `level` COLUMN IS ADDED BY THE SCRAPER, NOT BY THE SITE (2026-09-17:
+#   every crest on the site vanished). scrape_school_logos.ensureTable and
+#   ensureLevelKey are what add it, so between a deploy and the next scrape
+#   run the live table has no such column -- and a reader that SELECTs it
+#   throws, loadCrests' except swallows it, the cache loads empty, and the
+#   whole site draws no crests at all. A reader must never require a column
+#   its own process cannot create. Probed once per process, like the table.
+_HAS_LEVEL = {"at": 0.0, "ok": False}
+
+
+def hasLevelColumn(cur, force=False):
+    """Does school_logo carry `level` yet? False on any doubt, which reads
+    every row as level-less -- exactly the behaviour before the column."""
+    now = time.time()
+    if not force and now - _HAS_LEVEL["at"] < _HAVE_TTL:
+        return _HAS_LEVEL["ok"]
+    try:
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE  table_schema = 'public' AND table_name = 'school_logo'
+              AND  column_name = 'level'
+        """)
+        _HAS_LEVEL["ok"] = cur.fetchone() is not None
+    except Exception:                              # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                          # noqa: BLE001
+            pass
+        _HAS_LEVEL["ok"] = False
+    _HAS_LEVEL["at"] = now
+    return _HAS_LEVEL["ok"]
+
 # ★ THE SITE-WIDE CACHE, THE ONE school_identity ALREADY USES. A school
 #   name is mentioned hundreds of times on a busy page -- a race result, a
 #   meet's standings, a board -- and every one of them has to know whether
@@ -120,9 +152,10 @@ def loadCrests(conn_factory, force=False):
         with conn_factory() as conn:
             with conn.cursor() as cur:
                 if tableExists(cur, force=True):
-                    cur.execute("""
-                        SELECT school, state, sha, path,
-                               COALESCE(level, '') AS level
+                    lv = ("COALESCE(level, '')" if hasLevelColumn(cur, True)
+                          else "''")
+                    cur.execute(f"""
+                        SELECT school, state, sha, path, {lv} AS level
                         FROM   school_logo
                         WHERE  path IS NOT NULL
                           AND  COALESCE(lower(override), '') <> 'none'
@@ -350,9 +383,10 @@ def logoRow(cur, school, state=None, level=None):
         return None
     st = (state or "").upper()
     try:
-        cur.execute("""
+        lv = "COALESCE(level, '')" if hasLevelColumn(cur) else "''"
+        cur.execute(f"""
             SELECT school, state, path, kind, source_url, shared, override,
-                   COALESCE(level, '') AS level
+                   {lv} AS level
             FROM   school_logo WHERE school = %s
         """, (school,))
         rows = cur.fetchall() or []
