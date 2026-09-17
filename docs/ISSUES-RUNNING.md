@@ -2073,3 +2073,128 @@ level with the grades rewritten to match, tiny-team-is-pro, removing track
 difficulty while indoor is priced 4% easy, the XC-race-duplicated-into-TF dedupe
 (same day, same time, either sport), normalizing the 5k to a **track** 5k, and
 labelling a school in the extraction as `(name, state, id)` rather than a string.
+
+---
+
+## 2026-09-17 — the XC-into-TF duplicate, measured, and what is left of it
+
+Three findings, all measured against the live database rather than reasoned
+about. The first is fixed, the second is the owner's call and is **logged, not
+actioned**, the third is cosmetic and bigger than both.
+
+### ✅ FIXED — one TFRRS meet was scraped as both sports
+
+`prefill_tfrrs_queue` seeds every TFRRS id under **both** sports on purpose: an
+id does not say what it is, so both are tried and the wrong one is meant to be
+deleted when the page is classified. `run_tfrrs._isMeetPage` **took no sport
+argument** — any page carrying `tablesaw-xc` tables was "a real meet", whoever
+asked — and TFRRS serves the XC meet at the bare `/results/<id>` that the TF
+claim fetches. Its own docstring said "the signal differs by sport"; the code
+never looked.
+
+Meet **27037**, 2025-11-15: 436 `results_tf` rows under `Men's 8k` (an 8k is not
+a track event), 383 of them provably the same race as a `results` row — same
+person, same day, same time to a hundredth. Its `meets_tf` rows have no meet
+name, because the track parser found none on a page that is not a track meet
+page, and `athlete.html` renders a nameless race as "Race results" — which is
+what the owner saw, and is a template fallback, not scraped text.
+
+Fixed in `_isMeetPage` (an XC page is never a TF meet, whatever it links to) and
+purged by `scripts/purge_tfrrs_xc_in_tf.py`. Tests:
+`tests/test_tfrrs_sport_classify.py`.
+
+⚠ **Two purge queries were wrong before that one, in opposite directions, and
+the reason is worth keeping.** v1 matched `meets WHERE source='tfrrs'` and found
+nothing — `meets` is anet-only, TFRRS meet metadata lives in `meets_tfrrs`,
+which is the entire reason `app.py` has a `_tfrrs_join`. v2 matched "has a
+`meets_tfrrs` XC row AND has track rows" and proposed deleting **9,372 meets and
+5,371,425 `results_tf` rows** — Penn Relays, the Houston ISD zone meet, "Men's
+1500 Race Walk". Real track meets. The cause: `saveTFRRSMeetMeta` writes a
+`meets_tfrrs` row whenever the meta panel parses, **whether or not a single
+result was found**, so the old sport-blind classifier let an *XC claim on a real
+track meet* leave a junk `sport='XC'` row behind — and v2 read that junk as proof
+the *track* data was bogus. The lesson is in the script header: test for positive
+evidence of the thing you want to delete, never for the presence of a row
+somewhere else. It now also refuses above 200 meets without `--force`.
+
+### 📋 LOGGED, NOT ACTIONED — ~1,590 anet XC/TF pairs are anet's own doing
+
+Owner, 2026-09-17: *"yeah 1600 idrc about, just make sure to log it."*
+
+anet numbers its XC and TF meets **separately**, and publishes some races in
+both sections, so one physical race exists as two anet meets. Measured, matching
+on (person, day, time to 0.01s), both sides `source='anet'`:
+
+| event | pairs |
+|---|---|
+| 1600m | 624 |
+| 5000m | 350 |
+| 3200m | 323 |
+| 3000m | 196 |
+| 1mile | 47 |
+| 2miles | 19 |
+| 10-km | 17 |
+| 800m | 12 |
+| 8000m | 2 |
+
+≈1,590 rows. Examples: anet XC meet 270744 / TF meet 624231, both named
+`JERRY YOUNG: HARRIERS & THINCLADS`, 2025-11-06; XC 271776 / TF 631547, both
+`Coach Williams Let's See What You Got 1600`, 2025-11-11; XC 268771
+`King of the Track Classic` / TF 621183 `Moorpark King of the Track Classic 2025`.
+
+! **A 1600m absolutely can be a cross country race** (owner corrected this
+directly). These are November track races inside the cross-country season, and
+the ones above are genuine. Nothing here is a scraping bug.
+
+The cost: the race shows twice on an athlete page, and it is two rated results
+instead of one, so it carries double weight in a season mean. 1,590 rows against
+39M and 191M.
+
+Options, for whenever this is picked up. Preference is the second: it fixes what
+is visible, deletes nothing, and is reversible if the match rule is ever wrong.
+
+1. leave it;
+2. hide the duplicate at render time — `panels.py` already drops cross-source
+   copies of one race with a `seen` key and first-wins; same idea, same place;
+3. delete one side — cheapest for the ratings, but needs a rule for which wins,
+   and the XC side carries the course and difficulty while the TF side carries
+   the event name. Dry run first.
+
+### 🔎 OPEN — 3.39M anet track results have no `meets_tf` row at all
+
+Not a key mismatch and not a ratings problem. `scripts/diag_orphan_tf_results.py`
+narrows it, over a 0.5% page sample of anet `results_tf`:
+
+| joined on | matched |
+|---|---|
+| sampled | 787,216 |
+| `meet_id` | 769,474 |
+| `+ div_id` | 769,431 |
+| `+ event_id` | 769,426 |
+| `+ source` | 769,426 |
+
+The whole drop is at **`meet_id`** — 2.25% of rows belong to a meet with **no
+`meets_tf` geometry whatsoever**. Confirmed the other way: **15,971 meets have no
+geometry at all**, against only **58** that have some and still orphan rows. So
+the four-part key is sound and `meets_tf.source` is not the culprit (14,174,892
+anet + 2,087,858 tfrrs = 16,262,750, the whole table, no NULLs).
+
+**It is overwhelmingly historical.** Orphans by year: 2009 1,162,224 · 2010
+744,961 · 2008 571,152 · 2007 337,637 · 2006 225,702 · 2005 103,622 — ≈3.15M, 93%
+of the total, in 2005-2010. From 2011 the rate collapses to a few thousand a
+year, with bumps at 2022 (34,492), 2024 (20,473), 2026 (10,555), 2021 (11,250),
+2025 (7,777). So the cause is not fully dead and ~95k rows since 2021 came from
+whatever still does it. (Also 15 rows dated `2222`.)
+
+★ **The ratings are fine.** `speed_ratings_db` reads
+`COALESCE(m.distance_meters::real, _eventMetersSql('r'))` — it derives metres
+from the result's own `event_short` when the geometry row is missing, which is
+exactly this case. What is lost is the meet **name**, the **venue** and the
+**course**, so those races render as "Race results" with no location.
+
+⚠ **There is no local source to backfill from.** These meets have no
+`meets_tf_meta` name either — the nameless count (3,391,299) equals the orphan
+count, so both tables are missing them. A name can only come from a re-scrape,
+and the re-scrape will not reach them while their `meet_queue` TF rows read
+`scraped=1`. Resetting those 15,971 ids to `scraped=0` is the candidate fix; the
+open question is whether anet still serves 2005-2010 meets.
