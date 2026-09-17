@@ -37,10 +37,16 @@ merge_school_names.py -- two spellings, one team, proved by the athletes.
             Oregon Episcopal shape, so it is off unless --prefix and it
             needs PREFIX_MIN_SHARED / PREFIX_MIN_FRACTION instead.
 
-⚠ AND AN anet TEAM ID VETOES EITHER. Two spellings whose rows sit on
-  DIFFERENT anet teams are two schools whatever their names look like and
-  whoever transferred between them. That check is free -- results.team_id is
-  already there -- and it is the one piece of evidence that outranks a count.
+⚠ AND THE anet STATE VETOES EITHER. A string whose anet teams sit in more
+  than one state is a name several schools wear -- "St Thomas Aquinas",
+  "Glendale", "Meridian", "Centennial" -- and is never one team, whoever it
+  shares athletes with. Two strings each in ONE state, and the same state,
+  are one school. That outranks any count.
+
+  ! NOT THE TEAM ID. The first version vetoed on "different anet teams" and
+    refused Peak To Peak / Peak to Peak, RHAM / Rham, St Cloud / St. Cloud --
+    one school spelled twice, because ANET ITSELF CARRIES DUPLICATE TEAMS for
+    one school. The state is what those duplicates agree on.
 
 WHAT IT WRITES, AND WHAT READS IT
     school_name_alias (variant PK, canonical, n_variant, n_canonical,
@@ -118,22 +124,53 @@ def rosters(cur, min_athletes=2):
     return {k: v for k, v in out.items() if len(v) >= min_athletes}
 
 
-def teamIds(cur):
-    """{school string: {anet team_id}} -- the veto. Empty where the column
-    does not exist, which is then simply no veto."""
+# ⚠⚠ THE TEAM ID WAS THE WRONG VETO, AND THE SECOND DRY RUN PROVED IT.
+#    "different anet teams -> different schools" is false, because ANET
+#    ITSELF CARRIES DUPLICATE TEAMS FOR ONE SCHOOL. The refusals:
+#
+#      Peak To Peak / Peak to Peak   117 shared   [19494] vs [37702]
+#      LaVille      / Laville        117 shared   [28785] vs [17035]
+#      RHAM         / Rham           110 shared   [14773] vs [58439]
+#      DeKalb       / Dekalb         301 shared   [5173,...] vs [11638, 17210]
+#      St Cloud     / St. Cloud      458 shared   [15430] vs [40114]
+#      Lubbock Cooper / Lubbock-Cooper 346 shared [71151] vs [4495]
+#
+#    Every one of those is one school spelled two ways, refused because the
+#    two spellings landed on two anet rows.
+#
+# ★ THE STATE IS THE SIGNAL, NOT THE ID. Ask instead how many states a
+#   string's anet teams sit in:
+#
+#     * a string whose teams span MORE THAN ONE state is a generic name worn
+#       by several schools -- "St Thomas Aquinas", "Glendale", "Meridian",
+#       "Centennial". It is never merged into anything, whoever it shares
+#       athletes with.
+#     * two strings each in ONE state, and the same state, with a team's
+#       worth of shared athletes, are one school.
+#
+#   That refuses exactly the cases the id veto was built for and admits the
+#   ones it got wrong -- and it reads anet_state, the column anet actually
+#   populates, not the queue's guess (see collegeTeams in link_tfrrs_to_anet).
+def teamStates(cur):
+    """{school string: {state}} for the anet teams its rows use. Empty
+    where team_id does not exist, which is then simply no veto."""
     out = {}
     for table in ("results", "results_tf"):
         if not _hasColumn(cur, table, "team_id"):
             continue
         cur.execute(f"""
-            SELECT btrim(r.school) AS school, r.team_id
+            SELECT btrim(r.school) AS school,
+                   upper(btrim(COALESCE(t.anet_state, t.state))) AS st
             FROM   {table} r
+            JOIN   anet_team t ON t.team_id = r.team_id
             WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
               AND  r.school IS NOT NULL AND btrim(r.school) <> ''
+              AND  COALESCE(t.anet_state, t.state) IS NOT NULL
+              AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
             GROUP  BY 1, 2
         """)
-        for school, tid in cur.fetchall():
-            out.setdefault(school, set()).add(int(tid))
+        for school, st in cur.fetchall():
+            out.setdefault(school, set()).add(st)
     return out
 
 
@@ -190,7 +227,7 @@ def candidates(names, want_prefix=False):
     return sorted(set(pairs))
 
 
-def judge(pairs, rosters_by_name, teams_by_name,
+def judge(pairs, rosters_by_name, states_by_name,
           min_shared=MIN_SHARED, min_fraction=MIN_FRACTION,
           prefix_min_shared=PREFIX_MIN_SHARED,
           prefix_min_fraction=PREFIX_MIN_FRACTION):
@@ -207,11 +244,18 @@ def judge(pairs, rosters_by_name, teams_by_name,
         need_n = prefix_min_shared if rel == "prefix" else min_shared
         need_f = prefix_min_fraction if rel == "prefix" else min_fraction
         row = [a, b, rel, len(ra), len(rb), shared, round(frac, 4), None]
-        ta, tb = teams_by_name.get(a) or set(), teams_by_name.get(b) or set()
-        # ⚠ THE VETO FIRST. Two spellings on two anet teams are two schools,
-        #   however many athletes moved between them.
-        if ta and tb and not (ta & tb):
-            row[7] = f"different anet teams {sorted(ta)[:3]} vs {sorted(tb)[:3]}"
+        sa = states_by_name.get(a) or set()
+        sb = states_by_name.get(b) or set()
+        # ⚠ THE VETO FIRST, AND IT IS ABOUT STATES. A string whose anet teams
+        #   sit in several states is a name many schools wear; it is never
+        #   one team, whoever it shares athletes with.
+        if len(sa) > 1 or len(sb) > 1:
+            wide = a if len(sa) > 1 else b
+            row[7] = (f"{wide!r} spans {sorted(sa if len(sa) > 1 else sb)} "
+                      f"-- a name several schools wear")
+            refused.append(tuple(row))
+        elif sa and sb and sa != sb:
+            row[7] = f"different states {sorted(sa)} vs {sorted(sb)}"
             refused.append(tuple(row))
         elif shared >= need_n and frac >= need_f:
             merged.append(tuple(row))
@@ -308,8 +352,10 @@ def main():
         pairs = candidates(by_name.keys(), want_prefix=a.prefix)
         print(f"  {len(pairs):,} candidate pairs "
               f"({'decoration and prefixes' if a.prefix else 'decoration only'})")
-        by_team = teamIds(cur)
-        merged, refused = judge(pairs, by_name, by_team,
+        by_state = teamStates(cur)
+        print(f"  {len(by_state):,} of them carry an anet team, so their "
+              f"state is known")
+        merged, refused = judge(pairs, by_name, by_state,
                                 min_shared=a.min_shared,
                                 min_fraction=a.min_fraction)
         grouped = groups(merged, by_name)

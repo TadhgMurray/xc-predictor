@@ -14,7 +14,8 @@
 #   a word prefix of "Oregon Episcopal", "Oregon Clay" and "Oregon School for
 #   the Deaf". A substring rule merges four schools in three states and undoes
 #   the split the rest of this session built. The name proposes; the athletes
-#   decide; an anet team id vetoes.
+#   decide; the anet STATE vetoes (not the team id -- anet carries
+#   duplicate teams for one school; see TheStateVetoes).
 import os
 import sys
 import unittest
@@ -182,28 +183,64 @@ class TheAthletesDecide(unittest.TestCase):
         self.assertIn("needs 10", refused[0][7])
 
 
-class TheTeamIdVetoes(unittest.TestCase):
+class TheStateVetoes(unittest.TestCase):
+    """⚠⚠ THE TEAM ID WAS THE WRONG VETO (second dry run, 2026-09-17).
+    "different anet teams -> different schools" is false, because anet
+    itself carries duplicate teams for one school:
 
-    def test_different_anet_teams_are_two_schools_whatever_the_names(self):
-        rosters = {"La Jolla (CA)": set(range(1, 21)),
-                   "La Jolla-CA": set(range(1, 21))}     # identical rosters
-        teams = {"La Jolla (CA)": {111}, "La Jolla-CA": {222}}
-        merged, refused = M.judge(M.candidates(rosters.keys()), rosters, teams)
+        Peak To Peak / Peak to Peak   117 shared   [19494] vs [37702]
+        RHAM         / Rham           110 shared   [14773] vs [58439]
+        St Cloud     / St. Cloud      458 shared   [15430] vs [40114]
+
+    Every one is one school spelled twice, refused over two anet rows.
+
+    ★ THE STATE IS THE SIGNAL. A string whose teams span more than one state
+      is a name several schools wear and is never merged; two strings each
+      in one state, the same state, with a team's worth of shared athletes,
+      are one school."""
+
+    def test_two_spellings_in_one_state_are_one_school(self):
+        rosters = {"Peak To Peak": set(range(1, 40)),
+                   "Peak to Peak": set(range(20, 60))}
+        states = {"Peak To Peak": {"CO"}, "Peak to Peak": {"CO"}}
+        merged, refused = M.judge(M.candidates(rosters.keys()), rosters, states)
+        self.assertEqual(len(merged), 1, refused)
+
+    def test_a_name_several_schools_wear_is_never_merged(self):
+        """St Thomas Aquinas: 942 shared athletes, and still not one team."""
+        rosters = {"St Thomas Aquinas": set(range(1, 2000)),
+                   "St. Thomas Aquinas": set(range(1000, 3000))}
+        states = {"St Thomas Aquinas": {"FL", "KS", "NJ"},
+                  "St. Thomas Aquinas": {"CA", "NH"}}
+        merged, refused = M.judge(M.candidates(rosters.keys()), rosters, states)
         self.assertEqual(merged, [])
-        self.assertIn("different anet teams", refused[0][7])
+        self.assertIn("a name several schools wear", refused[0][7])
 
-    def test_the_same_team_id_does_not_block(self):
+    def test_one_wide_string_is_enough_to_refuse(self):
+        """"Glendale" spans CA and AZ; "Glendale (CA)" does not. Merging the
+        narrow one INTO the wide one would swallow the other Glendales."""
+        rosters = {"Glendale": set(range(1, 500)),
+                   "Glendale (CA)": set(range(1, 200))}
+        states = {"Glendale": {"CA", "AZ"}, "Glendale (CA)": {"CA"}}
+        merged, refused = M.judge(M.candidates(rosters.keys()), rosters, states)
+        self.assertEqual(merged, [])
+
+    def test_different_states_are_different_schools(self):
+        rosters = {"Kingston (WA)": set(range(1, 40)),
+                   "Kingston-MO": set(range(1, 40))}
+        states = {"Kingston (WA)": {"WA"}, "Kingston-MO": {"MO"}}
+        merged, refused = M.judge(M.candidates(rosters.keys()), rosters, states)
+        self.assertEqual(merged, [])
+        self.assertIn("different states", refused[0][7])
+
+    def test_no_anet_team_is_no_veto(self):
+        """A tfrrs-only string has no anet state; the athletes decide alone."""
         rosters = {"La Jolla (CA)": set(range(1, 21)),
                    "La Jolla-CA": set(range(1, 21))}
-        teams = {"La Jolla (CA)": {111}, "La Jolla-CA": {111}}
-        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, teams)
+        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, {})
         self.assertEqual(len(merged), 1)
-
-    def test_a_missing_team_id_is_no_veto(self):
-        rosters = {"La Jolla (CA)": set(range(1, 21)),
-                   "La Jolla-CA": set(range(1, 21))}
         merged, _ = M.judge(M.candidates(rosters.keys()), rosters,
-                            {"La Jolla (CA)": {111}})
+                            {"La Jolla (CA)": {"CA"}})
         self.assertEqual(len(merged), 1)
 
 
