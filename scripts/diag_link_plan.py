@@ -11,19 +11,32 @@ Reads nothing but statistics and plans. Writes nothing. --analyze EXECUTES
 the queries (under a statement_timeout, so it cannot hang the terminal the
 way the thing it is diagnosing did).
 
-★ THE SUSPICION IT EXISTS TO TEST. The pass filters
-`r.team_id = ANY(<2,034 college team ids>)`, and Postgres evaluates a
-scalar-array comparison by walking the array FOR EVERY ROW. On a 54M-row
-table that is up to 110 billion integer comparisons, single-threaded
-(XCP_DB_QUIET sets max_parallel_workers_per_gather = 0). The measured
-timings point straight at it: the filter took 124 s and the hash join that
-reads the WHOLE table took 13 s.
+★ WHAT IT FOUND, 2026-09-17 (this text is the answer, not the question --
+  three guesses preceded it and all three were wrong):
 
-If that is right, an index on team_id is not the fix and may not even be
-chosen -- the fix is to put the 2,034 ids in a TABLE and let the planner
-hash them, one probe per row instead of a scan of 2,034.
+    table        rows        size    = ANY cost    JOIN cost   ratio
+    results       39,280,600  12 GB  42,965,052    1,701,897    25x
+    results_tf   191,308,768  72 GB  184,231,311   9,364,835    20x
 
-Both forms are printed side by side so the plans settle it.
+  The fault is the DISTINCT, not the array and not a missing index. With
+  `team_id = ANY(...)` the planner chose
+
+      Unique -> Gather Merge -> Incremental Sort (Presorted Key: person_id)
+             -> Parallel Index Scan using idx_results_person
+                  Index Cond: (person_id IS NOT NULL)
+                  Filter: (team_id = ANY (...))
+
+  -- walking the WHOLE table through the person_id index, random heap access
+  across 12 GB and then 72 GB, purely to hand DISTINCT pre-sorted rows.
+  `person_id IS NOT NULL` as an Index Cond selects nearly everything.
+
+  Joining a relation removes the temptation: the sort cannot be kept, so the
+  planner takes a Seq Scan and a HashAggregate. Sequential I/O, no sort.
+
+! THE team_id INDEXES EXIST AND NEITHER PLAN USES THEM. ~10% of rows match,
+  which is well past where a seq scan wins.
+
+Both forms are printed side by side so the plans keep settling it.
 """
 import argparse
 import os
@@ -170,8 +183,11 @@ def main():
     print("      Filter' is the per-row array walk -- that is the fault.")
     print("    * 'Hash Join' / 'Hash Cond: (r.team_id = t.team_id)' is one")
     print("      hash probe per row instead, which is the fix.")
-    print("    * A 'Parallel Seq Scan' cannot appear while")
-    print("      max_parallel_workers_per_gather is 0 (XCP_DB_QUIET=1).")
+    print("    * an Index Scan whose Index Cond is only '<col> IS NOT NULL'")
+    print("      is the planner reading the whole table to get sorted rows")
+    print("      for a DISTINCT -- which is what this was.")
+    print("    * 'Planned Partitions: N' on a HashAggregate means it spills;")
+    print("      XCP_LINK_WORK_MEM raises work_mem for the real job.")
     return 0
 
 

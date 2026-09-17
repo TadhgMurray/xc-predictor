@@ -157,25 +157,42 @@ def collegeTeams(cur):
 #   four times (rebuild_overrides, --reground, the extraction): a silent slow
 #   step is indistinguishable from a hung one, and the person waiting cannot
 #   tell whether to keep waiting.
-# ⚠⚠ NOT `team_id = ANY(<2,034 ids>)`, AND THAT WAS THE WHOLE PROBLEM
-#    (owner, 2026-09-17: "that shit ain't going bruh. even with an index").
+# ⚠⚠ NOT `team_id = ANY(<2,034 ids>)`. MEASURED, WITH PLANS (2026-09-17,
+#    scripts/diag_link_plan.py, after the owner said "even with an index"):
 #
-#    Postgres evaluates a scalar-array comparison by WALKING THE ARRAY FOR
-#    EVERY ROW. 54M rows against 2,034 ids is up to 110 billion integer
-#    comparisons, single-threaded, because XCP_DB_QUIET sets
-#    max_parallel_workers_per_gather = 0. The measured timings said so
-#    plainly and I read them wrong twice:
+#      table        rows       size    = ANY cost    JOIN cost   ratio
+#      results      39,280,600  12 GB  42,965,052    1,701,897    25x
+#      results_tf  191,308,768  72 GB  184,231,311   9,364,835    20x
 #
-#        filter 2,034 teams out of `results`   124 s
-#        hash join over the WHOLE table         13 s
+# ★ AND THE REASON IS THE DISTINCT, NOT THE ARRAY. I guessed twice -- first a
+#   missing index, then a per-row walk of the 2,034-element array -- and the
+#   plan says it is neither. What the planner actually did with = ANY:
 #
-#    The query that reads everything was ten times faster than the query
-#    that "narrows" it. That is not a missing index -- an index may not even
-#    be chosen for a 4%-selective filter, and it would not change the shape.
+#      Unique
+#        -> Gather Merge -> Incremental Sort   (Presorted Key: person_id)
+#             -> Parallel Index Scan using idx_results_person
+#                  Index Cond: (person_id IS NOT NULL)
+#                  Filter: (team_id = ANY (...))
 #
-# ★ SO THE IDS GO IN A TABLE AND THE PLANNER HASHES THEM: one probe per row
-#   instead of a scan of 2,034. ANALYZEd so it is costed as the tiny relation
-#   it is. Same rows, same counts, a different algorithm.
+#   It walked the WHOLE TABLE through the person_id index -- random heap
+#   access across 12 GB, and 72 GB on results_tf -- for no other reason than
+#   to hand the DISTINCT its rows already sorted. `person_id IS NOT NULL` as
+#   an Index Cond selects essentially everything; the team filter was applied
+#   afterwards, per row, as a filter. That is where the 124 s went.
+#
+#   Joining a relation instead removes the temptation: the planner cannot
+#   keep the sort, so it takes a Seq Scan and a HashAggregate -- sequential
+#   I/O, no sort, one hash probe per row. That is the whole 20-25x.
+#
+# ! THE team_id INDEXES ARE NOT WHAT FIXED IT AND THE PLANNER DOES NOT USE
+#   THEM HERE. Both exist now (idx_results_team, idx_results_tf_team) and
+#   both plans ignore them: ~10% of rows match, which is far past the point
+#   where a seq scan wins. They may earn their keep elsewhere; they earned
+#   nothing here, and I should not have proposed them before reading a plan.
+#
+# ! AND max_parallel_workers_per_gather IS 2 ON THIS SERVER, not 0 -- the
+#   earlier note claiming the scan was single-threaded was describing
+#   XCP_DB_QUIET, which this job does not run under.
 _TEAMS_SQL = """
     CREATE TEMP TABLE ltl_teams (team_id int PRIMARY KEY)
 """
@@ -209,6 +226,15 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
     """{tfrrs school: {team_id: (n_athletes, n_seasons)}} over both tables."""
     import time
     out = {}
+    # ! THE HashAggregate SPILLS ON results_tf AND THE PLAN SAYS SO
+    #   ("Planned Partitions: 4" over 14.4M estimated groups at work_mem
+    #   256MB). Raised for this job only, and only where the server lets us
+    #   -- SET LOCAL dies with the transaction either way.
+    try:
+        cur.execute("SET LOCAL work_mem = %s",
+                    (os.environ.get("XCP_LINK_WORK_MEM", "1GB"),))
+    except Exception:                                         # noqa: BLE001
+        pass
     # the college ids as a RELATION, built once for every table below
     cur.execute("DROP TABLE IF EXISTS ltl_teams")
     cur.execute(_TEAMS_SQL)
