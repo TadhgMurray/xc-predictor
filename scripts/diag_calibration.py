@@ -71,6 +71,43 @@ Z_BANDS = ((1.0, 0.6827), (1.645, 0.90))
 TOLERATED_MISSING = ("baseline_mode", "baseline_half_life")
 
 
+# contiguous runs at this many offsets across the split; see sampleIndices
+SAMPLE_BLOCKS = 200
+
+
+def sampleIndices(total, want, blocks=SAMPLE_BLOCKS):
+    """Which validation rows to score: contiguous runs at evenly spaced
+    offsets across the WHOLE split.
+
+    ★ NOT range(want), which is what the first run did. The chunks are
+      written in athlete order, so the first 50,000 of 10,000,000 is the
+      corpus's first 0.5% -- and it topped out at a 50-week horizon, giving
+      2,503 rows in the 44-104w band and an empty 104w+ and 208w+. The
+      bands that gate the recruiting projection were measured on almost
+      nothing.
+
+    ★ AND NOT A RANDOM SAMPLE EITHER. ChunkedRaceDataset caches ONE chunk,
+      so 50,000 random global indices is ~50,000 torch.loads of whole
+      10,000-example files. Contiguous runs keep that cache working while
+      still spanning every chunk.
+    """
+    if want <= 0 or total <= 0:
+        return []
+    if want >= total:
+        return list(range(total))
+    blocks = max(1, min(int(blocks), want))
+    per = max(1, want // blocks)
+    span = total - per
+    out, seen = [], set()
+    for k in range(blocks):
+        start = 0 if blocks == 1 else int(round(k * span / (blocks - 1)))
+        for i in range(start, min(start + per, total)):
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+    return out[:want]
+
+
 def unwrapState(blob):
     """The weights out of whatever torch.load returned.
 
@@ -208,11 +245,12 @@ def main():
     print(f"[calibration] {model_path} on {dev}")
 
     loader = torch.utils.data.DataLoader(
-        torch.utils.data.Subset(val, list(range(n))), batch_size=a.batch,
-        shuffle=False, collate_fn=T.collateRagged)
+        torch.utils.data.Subset(val, sampleIndices(len(val), n)),
+        batch_size=a.batch, shuffle=False, collate_fn=T.collateRagged)
 
     gaps, resid, sigma, pred_l, act_l = [], [], [], [], []
     done = 0
+    seen_rows = 0
     with torch.no_grad():
         for batch in loader:
             # collateRagged returns (padded, masks, context, target, venues)
@@ -222,11 +260,20 @@ def main():
             if ven is not None:
                 ven = ven.to(dev)
             secs, lo, hi, sig = model.predictInterval(seqs, masks, ctx, ven)
-            base = model.baselineSeconds(seqs, masks)
-            # the target is z-scored ln(t / baseline); undo both to seconds
-            true_secs = base * torch.exp(
-                tgt.to(dev) * model.target_std + model.target_mean)
-            keep = (secs > 0) & (true_secs > 0) & torch.isfinite(sig)
+            # ★ THE CHUNKS STORE RAW TARGETS IN SECONDS -- train.py says so in
+            #   as many words, and the training loop z-scores them on the fly
+            #   with model.targetZ(sequences, masks, targets). So the target
+            #   IS the answer; there is nothing to undo.
+            #
+            # ! WHAT THE FIRST RUN PRINTED. Treating it as a z and
+            #   exponentiating gives exp(seconds * target_std + target_mean)
+            #   -- inf for every row, so |err| was inf, spread was nan, and
+            #   cover68 read 0.000 in every band including one with n=27.
+            #   That table said nothing about the model.
+            true_secs = tgt.to(dev).to(torch.float32).reshape(-1)
+            keep = (torch.isfinite(secs) & torch.isfinite(true_secs)
+                    & torch.isfinite(sig) & (secs > 0) & (true_secs > 0)
+                    & (sig > 0))
             gaps.append(ctx[:, GAP_FEATURE][keep].cpu().numpy())
             resid.append((torch.log(true_secs) - torch.log(secs))[keep]
                          .cpu().numpy())
@@ -234,9 +281,20 @@ def main():
             pred_l.append(torch.log(secs)[keep].cpu().numpy())
             act_l.append(torch.log(true_secs)[keep].cpu().numpy())
             done += int(keep.sum())
+            seen_rows += int(keep.numel())
     if not done:
         print("nothing scorable")
         return 1
+    # ! A TABLE BUILT ON A THIRD OF THE ROWS IS NOT THE ANSWER EITHER. The
+    #   drop is silent otherwise, and the first run's whole table was an
+    #   artifact of rows that should never have been scored.
+    dropped = seen_rows - done
+    if dropped:
+        print(f"[calibration] dropped {dropped:,} of {seen_rows:,} rows as "
+              f"non-finite or non-positive ({dropped / seen_rows:.1%})")
+        if dropped > 0.02 * seen_rows:
+            print("  ⚠ THAT IS TOO MANY TO IGNORE -- read it as a bug in the"
+                  " scoring or the chunks, not as a result.")
 
     gaps = np.concatenate(gaps) / 7.0            # days -> weeks
     print(f"[calibration] {done:,} scored; horizons "

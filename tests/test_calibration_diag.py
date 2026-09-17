@@ -161,3 +161,65 @@ def test_the_default_checkpoint_is_the_one_train_writes():
     assert hasattr(T, "MODEL_OUT")
     src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
     assert 'getattr(T, "MODEL_OUT"' in src
+
+
+def test_the_target_is_seconds_and_is_never_exponentiated():
+    """★ WHAT THE FIRST RUN PRINTED: cover68 0.000 in every band, |err| inf,
+    spread nan -- because the target was treated as a z-score and
+    exponentiated. train.py says "the chunks store raw targets in seconds"
+    and z-scores them at the loss with model.targetZ, so the target IS the
+    answer in seconds."""
+    train = open(os.path.join(_ROOT, "model", "train.py")).read()
+    assert "The chunks store raw targets in seconds" in train
+    assert "model.targetZ(sequences, masks, targets)" in train
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    assert "torch.exp(\n                tgt" not in src
+    assert "tgt.to(dev) * model.target_std" not in src
+    # the target is taken as seconds, and every non-finite row is dropped
+    assert "true_secs = tgt.to(dev).to(torch.float32).reshape(-1)" in src
+    assert "torch.isfinite(secs)" in src and "torch.isfinite(true_secs)" in src
+
+
+def test_a_nonfinite_residual_cannot_masquerade_as_zero_coverage():
+    """coverage() of nan is False, so an unfiltered inf reads as a model
+    whose band covers nothing -- indistinguishable from a real failure."""
+    sig = np.full(100, 0.03)
+    resid = np.full(100, np.inf)
+    assert C.coverage(resid, sig, 1.0) == 0.0     # why the mask has to be upstream
+    src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
+    assert "dropped" in src and "TOO MANY TO IGNORE" in src
+
+
+def test_the_sample_spans_the_whole_split_not_its_first_half_percent():
+    """The first run scored range(50_000) of 10,000,322 -- the corpus's first
+    0.5% in athlete order -- and topped out at a 50-week horizon, leaving the
+    44w+ bands that gate the projection measured on 2,503 rows and 104w+
+    empty."""
+    idx = C.sampleIndices(10_000_322, 50_000)
+    assert len(idx) == 50_000
+    assert len(set(idx)) == 50_000
+    assert min(idx) < 1_000                      # still starts at the front
+    assert max(idx) > 9_900_000                  # and reaches the very end
+    # spread across the split, not clustered
+    assert len(set(i // 100_000 for i in idx)) >= 100
+
+
+def test_the_sample_stays_chunk_cache_friendly():
+    """A random 50k of 10M is ~50k whole-chunk torch.loads, since
+    ChunkedRaceDataset caches exactly one chunk. Contiguous runs avoid that."""
+    idx = C.sampleIndices(1_000_000, 10_000, blocks=100)
+    runs = 1 + sum(1 for a, b in zip(idx, idx[1:]) if b != a + 1)
+    assert runs <= 100, runs                      # 100 runs, not 10,000
+    assert len(idx) == 10_000
+
+
+def test_the_sampler_degenerates_sanely():
+    assert C.sampleIndices(10, 50) == list(range(10))
+    assert C.sampleIndices(0, 50) == []
+    assert C.sampleIndices(100, 0) == []
+    one = C.sampleIndices(100, 7, blocks=1)
+    assert one == list(range(7))
+    # never out of range, whatever the shape
+    for total, want, blocks in ((100, 99, 200), (1000, 3, 50), (50, 50, 7)):
+        got = C.sampleIndices(total, want, blocks)
+        assert got and max(got) < total and len(set(got)) == len(got)
