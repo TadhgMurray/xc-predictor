@@ -137,6 +137,16 @@ def recentFloor(cur, sport, days, pct=FLOOR_PCT):
     return floor_id, lowest, n_meets, since
 
 
+# ⚠ anet ASSIGNS AN ID WHEN A MEET IS CREATED, NOT WHEN IT IS RACED, so a
+#   meet entered in spring and run in autumn carries a spring id. Id order
+#   is only ROUGHLY chronological and no percentile gives a clean four-month
+#   boundary -- XC's floor landed exactly on the single lowest recent meet
+#   because only 39 meets have results in the window at all (May to
+#   September is the cross country off-season). So the window is a soft
+#   hint and this cap is the real bound on the work.
+RECENT_CAP = 25000
+
+
 def emptyRecent(cur, sport, floor_id):
     """Queue rows from the floor UPWARD that we finished and got nothing from.
 
@@ -202,6 +212,9 @@ def main():
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--ahead", type=int, default=AHEAD)
     ap.add_argument("--recent-days", type=int, default=RECENT_DAYS)
+    ap.add_argument("--recent-cap", type=int, default=RECENT_CAP,
+                    help="at most this many empty meets per sport, newest "
+                         "first (0 = no cap)")
     ap.add_argument("--stop-after-misses", type=int, default=STOP_AFTER_MISSES)
     ap.add_argument("--new-only", action="store_true")
     ap.add_argument("--recent-only", action="store_true")
@@ -246,6 +259,17 @@ def main():
                               f"range to check.")
                     else:
                         empty = emptyRecent(cur, sport, floor_id)
+                        # ! NEWEST FIRST, THEN CAPPED. "Recent" is what the
+                        #   owner asked for, and when the id cannot prove a
+                        #   date the newest ids are the best available
+                        #   answer to it. Ordering by id descending and
+                        #   taking the top N is a bound you can reason
+                        #   about; a percentile on 39 meets is not.
+                        if args.recent_cap and len(empty) > args.recent_cap:
+                            empty = sorted(empty)[-args.recent_cap:]
+                            capped = True
+                        else:
+                            capped = False
                         span = top - floor_id
                         print(f"  {n_meets:,} meets have results since "
                               f"{since}")
@@ -254,7 +278,11 @@ def main():
                               f"lowest recent-dated meet is {lowest:,}, "
                               f"which is why this is a percentile)")
                         print(f"  finished meets at or above it with 0 "
-                              f"results: {len(empty):,}")
+                              f"results: {len(empty):,}"
+                              + (f"  (capped at the newest "
+                                 f"{args.recent_cap:,})" if capped else ""))
+                        if empty:
+                            print(f"  ids {min(empty):,}..{max(empty):,}")
                         if empty[:10]:
                             print(f"    e.g. {empty[:10]}")
                         above = [m for m in empty if m > top]
