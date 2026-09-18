@@ -124,6 +124,43 @@ def main():
                   f"{str(tschool or '(no anet team for this image)'):<26} "
                   f"{str(astate or '?'):<10} {str(mascot or '')}{flag}")
 
+    # ⚠⚠ AND ONE CACHE AFTER THE PICK IS NOT KEYED ON THE PICTURE. crestUrl
+    #    puts the image's own hash in `v=` precisely so new bytes mean a new
+    #    URL -- but thumbPath names the small copy from (file name, px) alone,
+    #    and the file name is a hash of (school, state, level), which does NOT
+    #    change when the contents do. So a thumbnail drawn from an earlier,
+    #    wrong picture keeps answering, at the one size the page actually
+    #    asks for, while everything above this line is correct.
+    print(f"\n=== what the page asks for, and what the thumb cache holds ===")
+    print(f"    THUMB_DIR = {school_logo.THUMB_DIR}")
+    print(f"    THUMB_PX  = {sorted(school_logo.THUMB_PX)}")
+    for st in states:
+        url = school_logo.crestUrl(name, st, px=128)
+        got = school_logo.crestState(name, st)
+        if got is None:
+            continue
+        full = got[2]
+        print(f"\n    asked with {st or '(none)'}: {url}")
+        print(f"      full file   {os.path.basename(full)}  "
+              f"bytes {fileDigest(full)}")
+        for px in sorted(school_logo.THUMB_PX):
+            small = school_logo.thumbPath(full, px)
+            if small == full:
+                continue
+            same = "(same picture)" if (fileDigest(small)[:12]
+                                        and os.path.exists(small)) else ""
+            # the useful comparison is not the digests matching -- a resized
+            # PNG never matches its source -- it is the MTIME order, which is
+            # the only thing thumbPath uses to decide staleness.
+            try:
+                stale = os.path.getmtime(small) < os.path.getmtime(full)
+            except OSError:
+                stale = None
+            print(f"      px={px:<4} {os.path.basename(small):<28} "
+                  f"bytes {fileDigest(small)}"
+                  + ("   <-- OLDER THAN THE FULL FILE: stale thumb"
+                     if stale else ""))
+
     print("\n  read it in this order: contextState decides the state, the "
           "crest row is looked up under it,\n  and the last table says whose "
           "mascot that row's picture really is.")
