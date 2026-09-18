@@ -56,6 +56,7 @@ WATCHED = (
     "racecast/school_name.py",
     "racecast/school_logo.py",
     "racecast/build_school_identity.py",
+    "racecast/build_team_identity.py",
     "racecast/build_ranking_results.py",
     "tfrrs/parser/column_map.py",
     "tfrrs/parser/parse_xc.py",
