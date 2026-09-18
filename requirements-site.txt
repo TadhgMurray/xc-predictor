@@ -1,0 +1,9 @@
+# What the WEBSITE needs on top of requirements-scrape.txt.
+#
+# Install:  /srv/venv/bin/pip install -r requirements-scrape.txt -r requirements-site.txt
+flask
+werkzeug
+markupsafe
+numpy
+pillow                   # imported as PIL
+cairosvg                 # crest rasterising

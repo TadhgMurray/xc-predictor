@@ -19,7 +19,11 @@ sys.path.insert(0, os.path.join(_HERE, "..", "fetch"))          # fetchTFPage
 sys.path.insert(0, os.path.join(_HERE, "..", "..", "scripts"))  # database, scraper
 
 from bs4 import BeautifulSoup
-from fetch_tf import fetchTFPage
+# ! fetch_tfrrs, NOT fetch_tf. The module was renamed and this import was
+#   not, so importing this file raised ModuleNotFoundError -- found by
+#   walking every third-party import in the repo to write the
+#   requirements files, not by anyone running it.
+from fetch_tfrrs import fetchTFPage
 from database import getConn
 from scraper import CloudflareException, RateLimitException
 

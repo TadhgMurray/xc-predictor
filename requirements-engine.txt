@@ -1,0 +1,15 @@
+# What the RATINGS ENGINE and the model need, on top of requirements-scrape.txt.
+# Heavy: torch and numba are large downloads, and a scrape needs neither.
+#
+# Install:  /srv/venv/bin/pip install -r requirements-engine.txt
+numpy
+scipy
+pandas
+numba
+scikit-learn             # imported as sklearn
+torch
+rapidfuzz
+pytz
+timezonefinder
+xarray
+icechunk

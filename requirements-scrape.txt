@@ -1,0 +1,33 @@
+# What a SCRAPE needs, and nothing else.
+#
+# ★ WHY THIS FILE EXISTS (owner, 2026-09-18). The repo had no manifest, so
+#   setting up a scrape meant discovering dependencies one ModuleNotFoundError
+#   at a time -- psycopg2, then playwright, then bs4, then lxml, then requests,
+#   each one costing a launch. The list below is every third-party import
+#   reachable from the two launchers, found by walking the AST rather than by
+#   reading the files I happened to open.
+#
+# Install:  /srv/venv/bin/pip install -r requirements-scrape.txt
+#
+# ! TWO IMPORTS ARE MEANT TO BE ABSENT FROM THE REPO and are not packages:
+#   config_local (the deploy's own database settings) and corrections (a
+#   generated data module, ~165 MB). A ModuleNotFoundError for either is a
+#   deploy problem, not a missing dependency -- do not go looking for them on
+#   PyPI.
+#
+# ! THE BROWSER IS NOT HERE. Both launchers need REAL Chrome, not Playwright's
+#   bundled chromium -- Cloudflare fingerprints the binary. Install it from the
+#   distro:
+#     wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+#     apt-get install -y ./google-chrome-stable_current_amd64.deb
+#   and headless=False means a headless box also needs xvfb:
+#     apt-get install -y xvfb
+#   Do NOT run `playwright install chromium`; see scripts/chrome_path.py.
+
+psycopg2-binary          # every module that touches the database
+playwright               # both launchers drive a real Chrome through it
+playwright-stealth       # anet launcher only
+beautifulsoup4           # tfrrs parsers
+lxml                     # the parser bs4 is asked for BY NAME: BeautifulSoup(html, "lxml")
+requests                 # tfrrs fetch tier 1
+curl_cffi                # tfrrs fetch tier 2 (Chrome TLS fingerprint)
