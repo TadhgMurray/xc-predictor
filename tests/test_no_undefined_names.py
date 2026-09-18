@@ -98,6 +98,54 @@ def undefinedNames(src):
     return sorted(used - bound)
 
 
+# ⚠⚠ AND A NAME CAN BE BOUND AND STILL BLOW UP (owner, 2026-09-18:
+#    "UnboundLocalError: cannot access local variable 'getConn'").
+#    anet_teams.main imports getConn from database at line 713 and a new
+#    branch used it at line 671. undefinedNames passed it -- correctly, by
+#    its own rule: the name IS bound somewhere in the file. Python binds it
+#    for the whole function scope but only ASSIGNS it when that line runs,
+#    so an earlier use is an UnboundLocalError, which is a NameError
+#    wearing a different hat and costs exactly as much on the server.
+#
+# ★ NARROW ON PURPOSE. Only a FUNCTION-LOCAL import, only a Load in the
+#   same function at a line before it, and only when the module level does
+#   not bind the name too (`import json` up top and a redundant local one
+#   is the repo's own habit and is harmless). Anything cleverer would model
+#   control flow and start arguing with the reader.
+def usedBeforeLocalImport(src):
+    """[(function, name)] -- a function-local import used above itself."""
+    tree = ast.parse(src)
+    top = set()
+    for n in tree.body:
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                top.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    top.add(t.id)
+    out = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first_import = {}
+        for n in ast.walk(fn):
+            if isinstance(n, (ast.Import, ast.ImportFrom)) and n is not fn:
+                for a in n.names:
+                    nm = (a.asname or a.name).split(".")[0]
+                    if nm not in top:
+                        first_import[nm] = min(first_import.get(nm, n.lineno),
+                                               n.lineno)
+        if not first_import:
+            continue
+        for n in ast.walk(fn):
+            if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id in first_import
+                    and n.lineno < first_import[n.id]):
+                out.append((fn.name, n.id))
+    return sorted(set(out))
+
+
 class NoModuleUsesANameItNeverGot(unittest.TestCase):
 
     def test_every_watched_module(self):
@@ -109,6 +157,18 @@ class NoModuleUsesANameItNeverGot(unittest.TestCase):
             with io.open(path, encoding="utf-8") as fh:
                 src = fh.read()
             bad = undefinedNames(src)
+            if bad:
+                offenders.append(f"{rel}: {bad}")
+        self.assertEqual(offenders, [], "\n" + "\n".join(offenders))
+
+    def test_no_watched_module_uses_a_local_import_above_itself(self):
+        offenders = []
+        for rel in WATCHED:
+            path = os.path.join(_ROOT, *rel.split("/"))
+            if not os.path.exists(path):
+                continue
+            with io.open(path, encoding="utf-8") as fh:
+                bad = usedBeforeLocalImport(fh.read())
             if bad:
                 offenders.append(f"{rel}: {bad}")
         self.assertEqual(offenders, [], "\n" + "\n".join(offenders))
@@ -145,6 +205,30 @@ class TheDetectorItself(unittest.TestCase):
         self.assertEqual(
             undefinedNames("def f():\n    import json\n    return json.dumps({})\n"),
             [])
+
+
+    # ★ THE REAL ONE, reduced: anet_teams.main, 2026-09-18.
+    def test_it_finds_a_local_import_used_above_itself(self):
+        src = ("def main():\n"
+               "    with getConn() as c:\n"
+               "        pass\n"
+               "    from database import getConn\n")
+        self.assertEqual(usedBeforeLocalImport(src), [("main", "getConn")])
+
+    def test_it_accepts_the_ordinary_lazy_import(self):
+        src = ("def f():\n"
+               "    from database import getConn\n"
+               "    return getConn()\n")
+        self.assertEqual(usedBeforeLocalImport(src), [])
+
+    # ! A MODULE-LEVEL IMPORT MAKES THE LOCAL ONE REDUNDANT, NOT WRONG.
+    def test_a_name_also_imported_at_module_level_is_fine(self):
+        src = ("import json\n"
+               "def f():\n"
+               "    x = json.dumps({})\n"
+               "    import json\n"
+               "    return x\n")
+        self.assertEqual(usedBeforeLocalImport(src), [])
 
 
 if __name__ == "__main__":

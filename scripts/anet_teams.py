@@ -668,6 +668,7 @@ def main():
                  "(--keep-better is the one that fills gaps without "
                  "overwriting a school's own athletics mark.)")
     if args.unfile_misplaced:
+        from database import getConn
         with getConn() as conn:
             with conn.cursor() as cur:
                 bad = misplacedCrests(cur)
