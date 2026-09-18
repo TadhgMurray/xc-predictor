@@ -529,12 +529,81 @@ def _int(v):
         return None
 
 
+# ⚠⚠ CHOOSING THE RIGHT TEAM ONLY FIXES WHAT IS WRITTEN NEXT (owner,
+#    2026-09-18: "oregon and wake forest still wrong" -- after anet_keyed
+#    landed AND after --state OR --write reported 0 crests).
+#
+#    Both halves are needed and this is the missing one. anet_keyed stopped
+#    the queue handing (Oregon, WI) the University of Oregon's team, and the
+#    WHERE clause below it refuses a team anet places in another state --
+#    so that pair is now not queued AT ALL. The row an earlier run already
+#    wrote there is untouched, and it is what the site still serves. "0
+#    crests, 2 missed" is the queue working exactly as designed and the bug
+#    surviving it.
+#
+# ★ AND THIS IS PROVABLE, NOT INFERRED -- which is why it is safe to delete
+#   where --prune-stale was not. school_logo.source_url IS anet_team's
+#   mascot_url: the row records which team's picture it fetched. So a row
+#   whose image belongs to a team anet itself places in a DIFFERENT state
+#   than the row is, by anet's own record, another school's crest. No
+#   athlete counting, no cluster heuristic, no guess about reachability.
+#
+# ! AN OVERRIDE IS STILL A DECISION, and a stateless row is still the
+#   deliberate any-state fallback. Neither is touched.
+def misplacedCrests(cur):
+    """[(school, state, level, anet_state)] -- stored crests that are, by
+    anet's own anet_state, some other school's."""
+    if not (_tableExists(cur, "school_logo") and _tableExists(cur, "anet_team")):
+        return []
+    cur.execute("""
+        SELECT DISTINCT l.school, l.state, COALESCE(l.level, ''),
+               upper(btrim(t.anet_state))
+        FROM   school_logo l
+        JOIN   anet_team t ON t.mascot_url = l.source_url
+        WHERE  l.override IS NULL
+          AND  l.kind = 'anet'
+          AND  COALESCE(btrim(l.state), '') <> ''
+          AND  COALESCE(btrim(t.anet_state), '') <> ''
+          AND  upper(btrim(t.anet_state)) <> upper(btrim(l.state))
+          -- ! AND NOBODY anet PLACES HERE OWNS IT TOO. One picture can be
+          --   several teams' mascot_url (a district mark, a campus family);
+          --   if ANY team wearing this image is one anet puts in this
+          --   state, the row is right and the disagreement is noise.
+          AND  NOT EXISTS (
+                   SELECT 1 FROM anet_team t2
+                   WHERE  t2.mascot_url = l.source_url
+                     AND  upper(btrim(t2.anet_state)) = upper(btrim(l.state)))
+        ORDER  BY l.school, l.state
+    """)
+    return [tuple(r) if not isinstance(r, dict) else
+            (r["school"], r["state"], r["coalesce"], r["upper"])
+            for r in cur.fetchall()]
+
+
+def unfileMisplaced(cur, rows):
+    """Delete them. Returns how many went."""
+    n = 0
+    for school, state, level, _anet_state in rows:
+        cur.execute("""DELETE FROM school_logo
+                       WHERE school = %s AND state = %s AND level = %s""",
+                    (school, state, level or ""))
+        n += cur.rowcount
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--unfile-misplaced", action="store_true",
+                    help="delete stored crests that are, by anet's own "
+                         "anet_state, another school's -- the rows an "
+                         "earlier run filed before the queue learned to "
+                         "refuse them. The pair then shows as --missing and "
+                         "a later pass can fill it correctly. Overrides are "
+                         "never touched. --dry-run lists them.")
     ap.add_argument("--state", default=None)
     ap.add_argument("--season", type=int, default=None, help="default: this year")
     ap.add_argument("--sports", default="xc,tf",
@@ -585,7 +654,8 @@ def main():
                     help="fetch even where anet's robots.txt disallows it")
     ap.add_argument("--dir", default=None)
     args = ap.parse_args()
-    if not (args.write or args.dry_run or args.probe or args.queue_only):
+    if not (args.write or args.dry_run or args.probe or args.queue_only
+            or args.unfile_misplaced):
         ap.error("pass --probe, --queue-only, --dry-run or --write")
     # ! CONTRADICTORY, SO IT IS REFUSED RATHER THAN RESOLVED. --replace says
     #   "install anet's mascot whatever is there" and --keep-better says
@@ -597,6 +667,25 @@ def main():
                  "second leaves a better-ranked crest alone. Pick one. "
                  "(--keep-better is the one that fills gaps without "
                  "overwriting a school's own athletics mark.)")
+    if args.unfile_misplaced:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                bad = misplacedCrests(cur)
+                print(f"  {len(bad):,} stored crests belong to a team anet "
+                      f"places in another state")
+                for school, state, level, anet_state in bad[:40]:
+                    print(f"    {school} ({state}) level={level or '-'} "
+                          f"-- anet puts that picture's team in {anet_state}")
+                if len(bad) > 40:
+                    print(f"    ... and {len(bad) - 40:,} more")
+                if args.write and bad:
+                    print(f"  deleted {unfileMisplaced(cur, bad):,}")
+                    conn.commit()
+                    print("  now re-run with --missing --logos-only --write "
+                          "to refill those pairs from the right team.")
+                elif bad:
+                    print("  DRY RUN -- pass --write to delete them.")
+        return
     season = args.season or time.gmtime().tm_year
     if args.probe:
         manners = Manners(rate=0)

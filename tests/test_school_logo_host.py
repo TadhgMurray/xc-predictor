@@ -414,5 +414,60 @@ class ThePruneStaysRemoved(unittest.TestCase):
             self.assertIn('st = (st or state or "").upper()', fh.read())
 
 
+# ★ TWO HALVES, AND ONLY ONE OF THEM LANDED FIRST (owner, 2026-09-18:
+#   "oregon and wake forest still wrong"). anet_keyed stopped the queue
+#   handing a pair another state's team; the rows an earlier run already
+#   wrote there were never removed, and the queue now refuses to re-file
+#   them, so the wrong crest survived every rerun ("0 crests, 2 missed").
+class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
+    def _src(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "anet_teams.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_it_exists_and_is_wired(self):
+        src = self._src()
+        self.assertIn("def misplacedCrests(cur):", src)
+        self.assertIn("def unfileMisplaced(cur, rows):", src)
+        self.assertIn('ap.add_argument("--unfile-misplaced"', src)
+        self.assertIn("if args.unfile_misplaced:", src)
+
+    # ★ THE PROOF IS anet'S OWN RECORD, which is what makes deleting safe
+    #   here and unsafe in the --prune-stale tombstone: school_logo.
+    #   source_url IS anet_team.mascot_url, so the row names its own team.
+    def test_it_matches_the_row_to_the_team_by_the_image_it_fetched(self):
+        src = self._src()
+        body = src[src.index("def misplacedCrests(cur):"):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("t.mascot_url = l.source_url", body)
+        self.assertIn("upper(btrim(t.anet_state)) <> upper(btrim(l.state))", body)
+
+    # ⚠ ONE PICTURE CAN BE SEVERAL TEAMS'. If any team wearing it is one
+    #   anet puts in this state, the row is right.
+    def test_a_shared_image_owned_here_too_is_left_alone(self):
+        src = self._src()
+        body = src[src.index("def misplacedCrests(cur):"):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("NOT EXISTS", body)
+        self.assertIn("t2.mascot_url = l.source_url", body)
+
+    def test_it_never_touches_an_override_or_a_stateless_row(self):
+        src = self._src()
+        body = src[src.index("def misplacedCrests(cur):"):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("l.override IS NULL", body)
+        self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
+
+    def test_it_needs_write_to_delete(self):
+        src = self._src()
+        i = src.index("if args.unfile_misplaced:")
+        block = src[i:i + 1400]
+        self.assertIn("DRY RUN", block)
+        self.assertIn("if args.write and bad:", block)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
