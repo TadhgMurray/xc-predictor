@@ -94,6 +94,44 @@ PRIOR_RACES = 2.0
 #   (`{"XC": 1.0, "TF:out": 2.5, "TF:in": 1.0}`, or the string
 #   "XC=1,TF:out=2.5,TF:in=1"). Whatever is used is printed.
 PRIOR_GROUP_BY = {"XC": 1.0, "TF:out": 2.5, "TF:in": 1.0}
+
+# ★★ WHICH CELLS ARE THE ZERO (owner, 2026-09-18: "we make flat 400 difficulty
+#    outdoor to 0.0 no matter what. Then we put indoor on avg comparison, and
+#    the indoor venues are only rated difficulty wise against each other
+#    (accounting for fitness)?"). That is the right design and it was not what
+#    this did.
+#
+# ⚠ WHAT IT DID: the gauge held the vote-weighted mean of D per (sport, era) at
+#   zero, and `sport` is ONE BIT -- XC or TF -- so indoor and outdoor track were
+#   anchored TOGETHER. Their combined mean was pinned; the split between them
+#   was free, and nothing said where indoor should sit. MEASURED
+#   (scripts/diag_indoor_level.py, 2026-09-18): indoor cells published a median
+#   difficulty of -0.0168 against outdoor's -0.0020, so indoor read 1.5% EASIER
+#   than outdoor. The sign is wrong -- an indoor oval is slower.
+#
+#   And because the COMBINED mean was held at zero, indoor drifting low pushed
+#   the outdoor cells up to compensate: 1,575 indoor cells against 25,629
+#   outdoor, so roughly 6% x 1.5% of contamination smeared onto every outdoor
+#   track. The error was not even confined to the group that caused it.
+#
+# ★ "outdoor": the zero is the weighted mean of the OUTDOOR cells alone, and
+#   the whole (sport, era) group is shifted by it. So an ordinary outdoor track
+#   is 0.0 by construction, and indoor's LEVEL is then whatever the data says
+#   relative to that -- identified, not asserted, because the athletes' own
+#   levels carry the fitness and many of them race both surfaces in one winter.
+#   Indoor venues keep being judged against each other by their group prior,
+#   which is what makes a banked oval sit below a flat 200m.
+#
+# ! THE KEY CARRIES LOCATION AND SURFACE ONLY ('TF:loc:<id>:in|:out', see
+#   fit_weather_correction.tfQuery), not track length, so "flat outdoor 400"
+#   cannot be addressed exactly. Outdoor track cells are overwhelmingly flat
+#   400s, so the outdoor mean is that anchor to within the handful of banked or
+#   oversized outdoor ovals.
+#
+# ! "all" is the old behaviour, kept so the two can be scored against each
+#   other with scripts/bracket_holdout.py rather than argued about.
+GAUGE_DEFAULT = "outdoor"
+GAUGE_CHOICES = ("outdoor", "all")
 PRIOR_GROUP_NAMES = ("XC", "TF:out", "TF:in")
 PRIOR_FIT = "fit"
 PRIOR_FIT_WARMUP = 6           # passes on the stated priors before the estimate
@@ -305,7 +343,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
-        prior_place=PRIOR_PLACE, voter_agg="mean"):
+        prior_place=PRIOR_PLACE, voter_agg="mean",
+        gauge=GAUGE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -440,6 +479,20 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     cell_pg = priorGroupOfKeys(cell_keys)
     base_pg = np.zeros(n_base, dtype=np.int64)
     base_pg[base_of_cell] = cell_pg
+    # ★ cell_pg: 0 XC, 1 outdoor track, 2 indoor track. The gauge's reference
+    #   is everything except indoor, so XC keeps its own whole-group zero and
+    #   the track groups are anchored on outdoor. See GAUGE_DEFAULT.
+    if gauge not in GAUGE_CHOICES:
+        raise ValueError(f"gauge must be one of {GAUGE_CHOICES}, got {gauge!r}")
+    gauge_ref = (cell_pg != 2) if gauge == "outdoor" else np.ones(n_cell, bool)
+    if verbose:
+        print(f"[bracket] gauge={gauge}: the zero is "
+              + ("the OUTDOOR cells' weighted mean, so indoor's level is "
+                 "measured against it" if gauge == "outdoor" else
+                 "every cell in the (sport, era) group, indoor included "
+                 "(pre-2026-09-18 behaviour)")
+              + f"  [{int(gauge_ref.sum()):,} of {n_cell:,} cells are the "
+                f"reference]", flush=True)
     prior_stated, fit_priors = _statedPriors(prior_group)
     prior_g = prior_stated.copy()
     prior_report = None
@@ -508,7 +561,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         pin = np.zeros(n_cell)
         for g in np.unique(cell_group[w_c_ > 0]):
             m_g = (cell_group == g) & (w_c_ > 0)
-            pin[m_g] = np.average(D_pre[m_g], weights=w_c_[m_g])
+            # ★ THE ZERO IS THE REFERENCE SUBSET'S MEAN, SUBTRACTED FROM THE
+            #   WHOLE GROUP. With gauge="outdoor" that makes an ordinary
+            #   outdoor track 0.0 by construction and lets indoor's level sit
+            #   where the data puts it, instead of pinning the two together and
+            #   leaving the split between them free. See GAUGE_DEFAULT.
+            m_ref = m_g & gauge_ref
+            # ! FALL BACK TO THE WHOLE GROUP, never to no cells. An era with
+            #   only indoor meets has no outdoor reference, and an unpinned
+            #   group would drift without limit.
+            use = m_ref if m_ref.any() else m_g
+            pin[m_g] = np.average(D_pre[use], weights=w_c_[use])
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
                     D_pre=D_pre, pin=pin, D_new=D_pre - pin)

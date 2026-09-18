@@ -56,7 +56,38 @@ indoor group is 6% of the track corpus and carries the weakest prior (1.0
 against outdoor's 2.5), so it is both the least constrained by data and the
 least pulled toward its group mean — while its group mean is itself unanchored.
 
-**Proposed fix, mirroring the engine that got it right:** extend the gauge from
+**BUILT (2026-09-18), and it is the owner's design, not my earlier one.** He
+asked: *"we make flat 400 difficulty outdoor to 0.0 no matter what. Then we put
+indoor on avg comparison, and the indoor venues are only rated difficulty wise
+against each other (accounting for fitness)?"* That is better than asserting a
+level, because it makes the level **identified** instead of stipulated.
+
+`bracket_engine.GAUGE_DEFAULT = "outdoor"`. The pin is now the weighted mean of
+the **outdoor** cells alone, subtracted from the whole (sport, era) group. So:
+
+- an ordinary outdoor track is **0.0 by construction** — the gauge, not a fit;
+- indoor's **level** is then whatever the data says relative to it, carried by
+  the athletes' own levels (many race both surfaces in one winter), so no
+  external constant is needed and `IND_LEVEL_DEFAULT` becomes a *check* rather
+  than a dependency;
+- indoor **venues** keep being judged against each other by their group prior,
+  which is what puts a banked oval below a flat 200m.
+
+⚠ The cell key is `TF:loc:<id>:in|:out` (`fit_weather_correction.tfQuery`) and
+carries no track length, so "flat outdoor 400" cannot be addressed exactly.
+Outdoor track cells are overwhelmingly flat 400s, so the outdoor mean is that
+anchor to within the handful of banked or oversized outdoor ovals.
+
+! An era with no outdoor cells falls back to pinning on the whole group. An
+unpinned group drifts without limit, so the fallback is never "no cells".
+
+`--gauge all` restores the old behaviour, and `scripts/bracket_holdout.py`
+takes `--gauge`, so the two are **scored** rather than argued about.
+`tests/test_bracket_gauge.py` pins the arithmetic, including the contamination
+the old gauge caused: with the combined mean held at zero, five correct outdoor
+cells get pushed up by one low indoor cell.
+
+**Superseded — my earlier proposal:** extend the gauge from
 `(sport, era)` to `(sport, surface, era)` and pin the indoor group's mean to an
 ASSERTED level rather than leaving it to float inside TF. Reuse
 `joint_solve.IND_LEVEL_DEFAULT` so there is one number, not two. Keep

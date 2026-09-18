@@ -63,7 +63,7 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
-          tilt=True, use_curve=True, verbose=True, joint_dump=None):
+          tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
@@ -79,7 +79,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           f"held-out rows ({pct:g}% of athletes, 10% of their races)", flush=True)
     f = be.fit(sub, npz, train=train_s, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
-               use_curve=use_curve, verbose=verbose, codes=codes)
+               use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge)
     pred, cov = be.predict(f)
     y = np.log(np.asarray(sub["norm"], dtype=np.float64))
     m = test_s & cov
@@ -212,14 +212,14 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
 
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
-           use_curve=True):
+           use_curve=True, gauge=be.GAUGE_DEFAULT):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
         cols, codes = bk.packCodes(cols, npz, era_years)
     f = be.fit(cols, npz, train=None, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
-               use_curve=use_curve, verbose=True, codes=codes)
+               use_curve=use_curve, verbose=True, codes=codes, gauge=gauge)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
              D_race=f["D_race"], votes_race=f["votes_race"],
              races_per_cell=f["races_per_cell"], races_per_base=f["races_per_base"],
@@ -252,6 +252,15 @@ def main():
                     help="races' worth of pull of an era toward its course's history")
     ap.add_argument("--prior-group", type=be.parsePrior, default=be.PRIOR_FIT,
                     help="races' worth of pull of a course toward its sport's average")
+    # ★ THE GAUGE, SO THE CHANGE IS SCORED RATHER THAN ARGUED ABOUT.
+    #   "outdoor" makes an ordinary outdoor track the zero and lets indoor's
+    #   level sit where the data puts it; "all" is the pre-2026-09-18
+    #   behaviour, which pinned indoor and outdoor together and left the split
+    #   between them free (indoor came out 1.5% EASIER, sign wrong).
+    ap.add_argument("--gauge", choices=be.GAUGE_CHOICES,
+                    default=be.GAUGE_DEFAULT,
+                    help="which cells are held at zero. Run both and compare "
+                         "the held-out error before trusting either.")
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-curve", action="store_true")
@@ -269,12 +278,12 @@ def main():
         fitAll(cols, npz, args.out, codes=codes, era_years=args.era_years,
                window=args.window, top=args.top, prior_races=args.prior_races,
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-               use_curve=not args.no_curve)
+               use_curve=not args.no_curve, gauge=args.gauge)
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-          use_curve=not args.no_curve)
+          use_curve=not args.no_curve, gauge=args.gauge)
 
 
 if __name__ == "__main__":
