@@ -202,7 +202,8 @@ def unfetchedTeams(cur, limit=None, min_rows=1):
             if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
 
 
-def teams(cur, limit=None, state=None, redo=False, missing=False):
+def teams(cur, limit=None, state=None, redo=False, missing=False,
+          school=None):
     """[(school, state, team_id, stored mascot_url)] -- the anet team each
     school's athletes actually raced under, biggest programme first.
 
@@ -284,6 +285,11 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
                                 AND COALESCE(lower(g2.override), '') <> 'none'
                                 AND (NOT g2.shared OR g2.override IS NOT NULL)))"""
     where_state = "AND si.state = %(state)s" if state else ""
+    # ★ ONE SCHOOL, WHEN THAT IS THE JOB (owner, 2026-09-18: fixing a single
+    #   Oregon row queued 10,996 teams and quoted 3.1 hours). The queue build
+    #   itself is 46s of grouping either way; this at least stops the FETCH
+    #   being the whole corpus.
+    where_school = "AND si.school = %(school)s" if school else ""
     lim = "LIMIT %(limit)s" if limit else ""
     cur.execute(f"""
         WITH t AS (
@@ -373,7 +379,7 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
         LEFT   JOIN anet_team a ON a.team_id = COALESCE(ak.team_id,
                                                         modal.team_id,
                                                         link.team_id)
-        WHERE  si.n_athletes >= 3 {done} {where_state} {gap}
+        WHERE  si.n_athletes >= 3 {done} {where_state} {where_school} {gap}
           AND  COALESCE(ak.team_id, modal.team_id, link.team_id) IS NOT NULL
           -- ⚠ AND NEVER A TEAM anet PLACES SOMEWHERE ELSE. Where anet states
           --   the team's state and it disagrees with this cluster's, the
@@ -385,7 +391,8 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
                 OR upper(btrim(a.anet_state)) = si.state)
         ORDER  BY si.n_athletes DESC
         {lim}
-    """, {"limit": limit, "state": (state or "").upper()})
+    """, {"limit": limit, "state": (state or "").upper(),
+           "school": school})
     return [tuple(r[k] for k in ("school", "state", "team_id", "mascot_url"))
             if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
 
@@ -713,6 +720,14 @@ def main():
                          "refuse them. The pair then shows as --missing and "
                          "a later pass can fill it correctly. Overrides are "
                          "never touched. --dry-run lists them.")
+    ap.add_argument("--school", default=None,
+                    help="only this exact school name. The queue build still "
+                         "groups every result row (~45s), but the fetch is "
+                         "one school instead of the corpus.")
+    ap.add_argument("--forget", action="store_true",
+                    help="delete the stored crest rows for the selected "
+                         "pairs first, so they are re-fetched unconditionally. "
+                         "Overrides are never deleted. Needs --write.")
     ap.add_argument("--state", default=None)
     ap.add_argument("--season", type=int, default=None, help="default: this year")
     ap.add_argument("--sports", default="xc,tf",
@@ -847,7 +862,7 @@ def main():
                     if args.unfetched else
                     teams(cur, args.limit, args.state,
                           redo=args.redo or args.logos_only,
-                          missing=args.missing))
+                          missing=args.missing, school=args.school))
             conn.commit()
             print(f"  queue built in {time.time() - _q0:.0f}s", flush=True)
             # ! THE ESTIMATE HAS TO BE HONEST ABOUT WHICH CALLS. --logos-only
@@ -865,6 +880,24 @@ def main():
                   + ("  [--missing: only pairs with no crest]"
                      if args.missing else ""),
                   flush=True)
+
+            # ★ FORGET FIRST, so --missing (which skips a pair that already
+            #   has a crest) and the keep-better guards cannot both decide
+            #   there is nothing to do. This is the psql DELETE that a stored
+            #   row needs before it can be re-fetched, without needing psql.
+            if args.forget and args.write and todo:
+                gone = 0
+                for school, state, _tid, _murl in todo:
+                    cur.execute("""DELETE FROM school_logo
+                                   WHERE school = %s AND state = %s
+                                     AND override IS NULL""",
+                                (school, state))
+                    gone += cur.rowcount
+                conn.commit()
+                print(f"  --forget: deleted {gone:,} stored crest row(s); "
+                      f"they will be re-fetched now", flush=True)
+            elif args.forget and not args.write:
+                print("  --forget needs --write; nothing deleted.", flush=True)
 
             # ! BEFORE ANY REQUEST. The whole point is to size the job.
             if args.queue_only:

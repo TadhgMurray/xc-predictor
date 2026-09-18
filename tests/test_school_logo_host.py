@@ -617,5 +617,42 @@ class ARosterStatusIsNotAnInstitution(unittest.TestCase):
             self.assertIn("_isRosterish", body, fn)
 
 
+# ★ ONE SCHOOL, AND A WAY TO MAKE IT RE-FETCH (owner, 2026-09-18: fixing a
+#   single Oregon row queued 10,996 teams at 3.1 hours, and the DELETE it
+#   needed first could not be run because psql had no usable role).
+class OneSchoolCanBeTargetedAndForgotten(unittest.TestCase):
+    def _src(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "anet_teams.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_school_filter_reaches_the_query(self):
+        src = self._src()
+        self.assertIn('ap.add_argument("--school"', src)
+        self.assertIn('where_school = "AND si.school = %(school)s"', src)
+        self.assertIn("{where_school}", src)
+        self.assertIn("school=args.school", src)
+
+    # ⚠⚠ FORGET MUST HAPPEN BEFORE ANY FETCH, or --missing skips the pair (it
+    #    still has a crest) and the keep-better guards refuse to overwrite --
+    #    which is exactly how a refetch looked like it ran and changed nothing.
+    def test_forget_runs_before_the_first_image_request(self):
+        src = self._src()
+        self.assertLess(src.index("if args.forget and args.write and todo:"),
+                        src.index("img, ctype = manners.get(url)"))
+
+    # ! AN OVERRIDE IS A DECISION. --forget must not discard one.
+    def test_forget_never_deletes_an_override(self):
+        src = self._src()
+        i = src.index("if args.forget and args.write and todo:")
+        self.assertIn("override IS NULL", src[i:i + 700])
+
+    def test_forget_needs_write(self):
+        self.assertIn("--forget needs --write", self._src())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
