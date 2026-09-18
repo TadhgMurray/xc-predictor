@@ -2632,12 +2632,25 @@ def resetInProgress():
     
     # The with triggers the context manager. It checks a connection out
     # of the pool, binds it to the name conn, and returns it to the pool.
+    # ⚠ IT RESET 2, NOT 3, AND IT IS CALLED resetInProgress (owner,
+    #   2026-09-18: "Reset 0 in-progress meets" printed while 308 rows sat at
+    #   in-progress). 3 is in-progress; 2 is failed. So a batch claimed by a
+    #   session that then died stayed at 3 FOREVER -- never claimed again,
+    #   never reported, just gone from the queue's working set. Every crashed
+    #   session leaked its batch, permanently.
     with getConn() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE meet_queue SET scraped = 0 WHERE scraped = 2 AND source = 'anet'")
-        count = cursor.rowcount
+        cursor.execute("UPDATE meet_queue SET scraped = 0 "
+                       "WHERE scraped = 3 AND source = 'anet'")
+        stranded = cursor.rowcount
+        # 2 is failed, and re-trying failures on every start is the existing
+        # behaviour -- kept, but counted separately so the two are legible.
+        cursor.execute("UPDATE meet_queue SET scraped = 0 "
+                       "WHERE scraped = 2 AND source = 'anet'")
+        failed = cursor.rowcount
         conn.commit()
-    print(f"[DB] Reset {count} in-progress meets to unscraped")
+    print(f"[DB] Requeued {stranded} stranded in-progress and {failed} "
+          f"failed meets")
 
 
 # getUnscrapedRecoveryEvents

@@ -117,10 +117,21 @@ MAX_BLOCK_RETRIES = 3
 # NEW — the full meet_id range to sweep. Each session gets a
 # non-overlapping slice of this range (see _computeSessionRange below).
 #
-# TODO: SCAN_END_ID is a placeholder — update this before running based on the
-# real XC/TF id ceiling you mentioned figuring out separately.
-SCAN_START_ID = 1
-SCAN_END_ID   = 670000
+# ⚠ DEAD, AND IT LOOKED LIKE A CEILING (owner, 2026-09-18: "I think maxing
+#   at 670k may be our issue"). runSession does NOT walk an id range: its
+#   loop calls getBatchUnscrapedMeets, which claims meet_queue rows with
+#   scraped=0 and source='anet'. Nothing in the session loop ever compares a
+#   meet_id to either of these. They survive only because
+#   _computeSessionRange still takes them, and the startup line that printed
+#   "starts at N, step S, up to 670000" described an arrangement the scraper
+#   stopped using -- which is worse than no line at all.
+#
+#   The real frontier is per sport and lives in the data:
+#   queue_anet_new.watermark() takes max(meet_id) with results, and the
+#   forward walk goes up from there. XC and TF are separate id spaces (owner
+#   confirmed), so each has its own.
+_UNUSED_SCAN_START_ID = 1
+_UNUSED_SCAN_END_ID   = 670000
 
 # Where checkpoint files live. One file per session index, e.g.
 # checkpoints/session_0.txt, checkpoints/session_1.txt, etc.
@@ -1426,32 +1437,66 @@ def _printSummary(summaries: list):
 #          summary. This is the top-level entry point for the scraper.
 # Arguments: None.
 # Output: None.
-def _printQueueDue():
-    """The anet queue, by sport and state. Exits when nothing is due."""
+_QUEUE_STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
+                4: "skipped"}
+
+
+def _queueState(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT sport, scraped, count(*)
+            FROM   meet_queue WHERE source = 'anet'
+            GROUP  BY sport, scraped ORDER BY sport, scraped
+        """)
+        rows = cur.fetchall()
+    conn.rollback()
+    return rows
+
+
+def _prepareQueue():
+    """Fill the queue, then report it. Exits if there is nothing to do.
+
+    ★ THE LAUNCHER OWNS THIS NOW (owner, 2026-09-18: "can you just make the
+      launcher handle the queue itself"). Running a seeding script and then
+      a scraper, and reasoning about five queue states in between, was two
+      commands and one silent failure mode: the sessions claimed nothing and
+      said "0 processed".
+
+    ! THE SAME CODE THE SCRIPT USES -- queue_anet_new.seedAll -- so a scrape
+      night cannot get a different answer than a dry run did. Set
+      ANET_NO_SEED=1 to drain the queue exactly as it stands.
+    """
     from database import getConn
+    from queue_anet_new import seedAll, dueCounts
+
+    skip = os.environ.get("ANET_NO_SEED", "") not in ("", "0", "false")
     with getConn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT sport, scraped, count(*)
-                FROM   meet_queue WHERE source = 'anet'
-                GROUP  BY sport, scraped ORDER BY sport, scraped
-            """)
-            rows = cur.fetchall()
-        conn.rollback()
-    _STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
-              4: "skipped"}
-    due = 0
-    print("[queue] anet meet_queue:")
-    for sport, state, n in rows:
-        if state == 0:
-            due += n
-        print(f"[queue]   {sport}  {_STATE.get(state, state):<12} {n:,}")
-    if not due:
-        print("[queue] ⚠ NOTHING IS DUE (no rows at scraped=0). The sessions "
-              "would claim nothing and report 0 processed.")
-        print("[queue]   Seed it: python scripts/queue_anet_new.py --write")
+        if skip:
+            print("[queue] ANET_NO_SEED=1 -- draining the queue as it "
+                  "stands, seeding nothing.")
+        else:
+            print("[queue] seeding: forward from the last real id per sport, "
+                  "plus recent meets with no results")
+            seedAll(conn, write=True,
+                    ahead=int(os.environ.get("SEED_AHEAD", 2000)),
+                    recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
+
+        print("[queue] anet meet_queue:")
+        for sport, state, n in _queueState(conn):
+            print(f"[queue]   {sport}  "
+                  f"{_QUEUE_STATE.get(state, state):<12} {n:,}")
+        due = dueCounts(conn)
+
+    total = sum(due.values())
+    if not total:
+        print("[queue] ⚠ NOTHING IS DUE even after seeding. Either every id "
+              "up to each sport's watermark is done and the forward walk "
+              "found no gap, or the walk has decided the corpus ends "
+              "(--stop-after-misses).")
+        print("[queue]   Look at it with: python scripts/queue_anet_new.py")
         sys.exit(1)
-    print(f"[queue] {due:,} due")
+    print("[queue] due: " + ", ".join(f"{k} {v:,}"
+                                      for k, v in sorted(due.items())))
 
 
 async def main():
@@ -1467,7 +1512,7 @@ async def main():
     #   outcome of a mis-seeded queue and the hardest to tell from a broken
     #   scraper, so it is stated up front and the run stops instead of
     #   spinning up six copies of Chrome to discover it.
-    _printQueueDue()
+    _prepareQueue()
 
     # One VPNRotator shared across all sessions. Passed into every runSession
     # call so they all coordinate rotation through the same lock and counter.
@@ -1485,12 +1530,16 @@ async def main():
         # point and stride, then starts the session.
         for i, config in enumerate(active_configs):
 
+            # ! THE RANGE IS VESTIGIAL, AND NOT PRINTED ANY MORE. runSession
+            #   takes these three and never uses them -- it claims from
+            #   meet_queue. Passed so the signature is unchanged; see the
+            #   note on _UNUSED_SCAN_START_ID.
             first_meet_id, session_end, stride = _computeSessionRange(
-                i, len(active_configs), SCAN_START_ID, SCAN_END_ID
+                i, len(active_configs),
+                _UNUSED_SCAN_START_ID, _UNUSED_SCAN_END_ID
             )
 
-            print(f"  {config['label']}: starts at {first_meet_id}, "
-                  f"step {stride}, up to {session_end}")
+            print(f"  {config['label']}: claiming from the shared queue")
 
             # Starts the sessions and appends it to the session list.
             tasks.append(asyncio.create_task(

@@ -192,6 +192,94 @@ def requeue(cur, sport, ids, chunk=5000):
     return n
 
 
+def seedSport(cur, sport, write=False, ahead=AHEAD,
+              recent_days=RECENT_DAYS, stop_after_misses=STOP_AFTER_MISSES,
+              do_new=True, do_recent=True, verbose=True):
+    """Seed one sport. Returns a dict of what it found and did.
+
+    ★ CALLED BY THE LAUNCHER TOO (owner, 2026-09-18: "can you just make the
+      launcher handle the queue itself"). One implementation, so a scrape
+      night cannot get a different answer than the dry run did.
+    """
+    def say(msg):
+        if verbose:
+            print(msg, flush=True)
+
+    out = {"sport": sport, "top": None, "misses": 0, "seeded": 0,
+           "woken": 0, "dated": 0, "undated": 0, "requeued": 0}
+    top = watermark(cur, sport)
+    if top is None:
+        say(f"  [{sport}] no anet results at all -- nothing to walk from.")
+        return out
+    out["top"] = top
+    out["misses"] = misses = trailingMisses(cur, sport, top)
+    say(f"  [{sport}] last id that produced results: {top:,}; "
+        f"ids asked about above it with nothing back: {misses:,}")
+
+    if do_new:
+        if misses >= stop_after_misses:
+            say(f"  [{sport}] {stop_after_misses}+ empty in a row -- "
+                f"treating that as the end of the corpus, nothing seeded "
+                f"forward.")
+        else:
+            lo, hi = top + 1, top + ahead
+            say(f"  [{sport}] seeding forward {lo:,}..{hi:,}")
+            if write:
+                ins, woke = seedForward(cur, sport, lo, hi)
+                out["seeded"], out["woken"] = ins, woke
+                say(f"  [{sport}]   {ins:,} new rows, {woke:,} "
+                    f"failed/stuck reset")
+
+    if do_recent:
+        since = (datetime.date.today()
+                 - datetime.timedelta(days=recent_days)).isoformat()
+        if hasDateColumn(cur, sport):
+            dated = emptyRecent(cur, sport, since)
+        else:
+            dated = []
+            say(f"  [{sport}] {SPORTS[sport]['dates']}.meet_date does not "
+                f"exist yet -- every empty meet counts as undated.")
+        undated = emptyUndated(cur, sport, top)
+        out["dated"], out["undated"] = len(dated), len(undated)
+        say(f"  [{sport}] dated since {since} with 0 results: {len(dated):,}"
+            + (f"; plus {len(undated):,} undated above the watermark"
+               if undated else ""))
+        todo = sorted(set(dated) | set(undated))
+        if write and todo:
+            out["requeued"] = requeue(cur, sport, todo)
+            say(f"  [{sport}]   {out['requeued']:,} reset to scraped=0")
+    return out
+
+
+def seedAll(conn, write=False, sports=None, verbose=True, **kw):
+    """Seed every sport and commit once. Returns [per-sport dict].
+
+    ! TAKES A CONNECTION, so the launcher can seed on the pool it already
+      opened rather than standing up a second one.
+    """
+    results = []
+    with conn.cursor() as cur:
+        for sport in (sports or list(SPORTS)):
+            results.append(seedSport(cur, sport, write=write,
+                                     verbose=verbose, **kw))
+    if write:
+        conn.commit()
+    else:
+        conn.rollback()
+    return results
+
+
+def dueCounts(conn):
+    """{sport: rows at scraped=0} for anet."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT sport, count(*) FROM meet_queue
+                       WHERE source = 'anet' AND scraped = 0
+                       GROUP BY sport""")
+        out = dict(cur.fetchall())
+    conn.rollback()
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
@@ -203,81 +291,20 @@ def main():
     ap.add_argument("--sport", choices=("XC", "TF"))
     args = ap.parse_args()
 
-    sports = [args.sport] if args.sport else list(SPORTS)
-    since = (datetime.date.today()
-             - datetime.timedelta(days=args.recent_days)).isoformat()
-
-    # ★ CREATE THE COLUMN BEFORE QUERYING IT. meets.meet_date is declared in
-    #   database.py's DDL, and a declaration is not a column -- CREATE TABLE
-    #   IF NOT EXISTS never adds one. ensureCoreColumns reads
-    #   information_schema first and takes a lock only for what is genuinely
-    #   missing, so on a database that already has it this is a catalogue
-    #   read and nothing else.
     ensureCoreColumns(verbose=True)
 
     with getConn() as conn:
-        with conn.cursor() as cur:
-            for sport in sports:
-                print(f"\n=== {sport} ===")
-                top = watermark(cur, sport)
-                if top is None:
-                    print("  no anet results at all -- nothing to walk from.")
-                    continue
-                misses = trailingMisses(cur, sport, top)
-                print(f"  last id that produced results: {top:,}")
-                print(f"  ids asked about above it with nothing back: "
-                      f"{misses:,}")
-
-                if not args.recent_only:
-                    if misses >= args.stop_after_misses:
-                        print(f"  ✓ {args.stop_after_misses}+ empty in a row "
-                              f"-- treating that as the end of the corpus. "
-                              f"Nothing seeded forward.")
-                    else:
-                        lo, hi = top + 1, top + args.ahead
-                        print(f"  seeding forward {lo:,}..{hi:,}")
-                        if args.write:
-                            ins, woke = seedForward(cur, sport, lo, hi)
-                            print(f"    {ins:,} new queue rows, "
-                                  f"{woke:,} failed/stuck rows reset")
-
-                if not args.new_only:
-                    if not hasDateColumn(cur, sport):
-                        # Every empty meet is then undated, which is the
-                        # truth about this database rather than a crash.
-                        dated = []
-                        print(f"  {SPORTS[sport]['dates']}.meet_date does "
-                              f"not exist yet -- every empty meet counts as "
-                              f"undated below. It is created by "
-                              f"createTables(), i.e. by the next scraper "
-                              f"start, and this gets exact after that.")
-                    else:
-                        dated = emptyRecent(cur, sport, since)
-                    undated = emptyUndated(cur, sport, top)
-                    print(f"  meets dated since {since} with 0 results: "
-                          f"{len(dated):,}")
-                    if dated[:10]:
-                        print(f"    e.g. {dated[:10]}")
-                    if undated:
-                        print(f"  plus {len(undated):,} above the watermark "
-                              f"with no stored date (they predate "
-                              f"{SPORTS[sport]['dates']}.meet_date)")
-                    todo = sorted(set(dated) | set(undated))
-                    if args.write and todo:
-                        print(f"    {requeue(cur, sport, todo):,} "
-                              f"reset to scraped=0")
-
-            if args.write:
-                conn.commit()
-                cur.execute("""SELECT sport, count(*) FROM meet_queue
-                               WHERE source = 'anet' AND scraped = 0
-                               GROUP BY sport ORDER BY sport""")
-                print("\n  queue now due:")
-                for sp, n in cur.fetchall():
-                    print(f"    {sp}  {n:,}")
-            else:
-                conn.rollback()
-                print("\n  DRY RUN -- pass --write to seed the queue.")
+        seedAll(conn, write=args.write,
+                sports=[args.sport] if args.sport else None,
+                ahead=args.ahead, recent_days=args.recent_days,
+                stop_after_misses=args.stop_after_misses,
+                do_new=not args.recent_only, do_recent=not args.new_only)
+        if args.write:
+            print("\n  queue now due:")
+            for sp, n in sorted(dueCounts(conn).items()):
+                print(f"    {sp}  {n:,}")
+        else:
+            print("\n  DRY RUN -- pass --write to seed the queue.")
 
 
 if __name__ == "__main__":
