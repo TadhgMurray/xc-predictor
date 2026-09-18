@@ -582,6 +582,15 @@ def misplacedCrests(cur):
       this picture in this state" becomes bool_or over the group rather than
       a subquery per row.
 
+    ⚠⚠ AND A STATE MISMATCH ALONE IS NOT THE BUG, which cost a third run
+       (owner, 2026-09-18: 9,299 rows, almost all clubs). 3DElite is filed
+       under CA, FL, KS and NC and anet has exactly ONE 3DElite team, in OK.
+       That crest is right: a club races in four states and is registered in
+       one. Placement is identity for a SCHOOL and not for a club, so the
+       mismatch had to be paired with anet having ANOTHER team of the same
+       NAME in the row's state -- which is what makes Oregon (WI) a wrong
+       crest and 3DElite (CA) a travelling club.
+
     ! AN OVERRIDE IS A DECISION and a stateless row is the deliberate
       any-state fallback. Neither is looked at.
     """
@@ -591,6 +600,7 @@ def misplacedCrests(cur):
         WITH lk AS MATERIALIZED (
             SELECT l.school, upper(btrim(l.state)) AS state,
                    COALESCE(l.level, '') AS level,
+                   lower(btrim(l.school)) AS namekey,
                    {_URL_KEY.format(c='l.source_url')} AS k
             FROM   school_logo l
             WHERE  l.kind = 'anet'
@@ -603,21 +613,44 @@ def misplacedCrests(cur):
             FROM   anet_team t
             WHERE  COALESCE(btrim(t.mascot_url), '') <> ''
               AND  COALESCE(btrim(t.anet_state), '') <> ''
+        ), named AS MATERIALIZED (
+            -- ★ WHICH (name, state) PAIRS anet ITSELF HAS A TEAM FOR.
+            SELECT DISTINCT lower(btrim(t.school)) AS namekey,
+                   upper(btrim(t.anet_state))      AS st
+            FROM   anet_team t
+            WHERE  COALESCE(btrim(t.school), '') <> ''
+              AND  COALESCE(btrim(t.anet_state), '') <> ''
         ), joined AS (
-            SELECT lk.school, lk.state, lk.level,
-                   -- ! ANY team anet places HERE makes the row right. One
+            SELECT lk.school, lk.state, lk.level, lk.namekey,
+                   -- ! ANY team anet places HERE makes the row right: one
                    --   picture can be several teams' (a district mark, a
                    --   campus family), and then the disagreement is noise.
                    bool_or(tk.st = lk.state) AS owned_here,
                    min(tk.st)                AS elsewhere
             FROM   lk JOIN tk ON tk.k = lk.k
-            GROUP  BY 1, 2, 3
+            GROUP  BY 1, 2, 3, 4
         )
-        SELECT school, state, level, elsewhere,
+        SELECT j.school, j.state, j.level, j.elsewhere,
                (SELECT count(*) FROM joined) AS matched
-        FROM   joined
-        WHERE  NOT owned_here
-        ORDER  BY school, state
+        FROM   joined j
+        WHERE  NOT j.owned_here
+          -- ★★ AND anet HAS A TEAM OF THIS NAME IN THIS STATE. This is the
+          --    whole predicate (owner, 2026-09-18). Without it the answer is
+          --    9,299 rows and almost all of them are clubs: 3DElite is filed
+          --    under CA, FL, KS and NC and anet has exactly ONE 3DElite team,
+          --    in OK. That crest is RIGHT -- a club races in four states and
+          --    is registered in one, so for a club the cluster's state is
+          --    where its athletes ran, not where the club is. Placement is
+          --    identity for a SCHOOL, not for a club.
+          --
+          --    What makes Oregon different is not the mismatch. It is that
+          --    anet has ANOTHER "Oregon" team, in WI -- so anet itself
+          --    answers this pair, and the stored row is a different team's
+          --    picture. Requiring that second team is what separates "we
+          --    filed the wrong school's crest" from "this club travels".
+          AND  EXISTS (SELECT 1 FROM named n
+                       WHERE n.namekey = j.namekey AND n.st = j.state)
+        ORDER  BY j.school, j.state
     """)
     rows = [tuple(r) for r in cur.fetchall()]
     # ! THE DENOMINATOR IS COUNTED SEPARATELY, because "0 of 0" reads as

@@ -459,7 +459,7 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
         self.assertNotIn("t.mascot_url = l.source_url", body)
         # the state comparison, now expressed as the group's own question
         self.assertIn("bool_or(tk.st = lk.state)", body)
-        self.assertIn("WHERE  NOT owned_here", body)
+        self.assertIn("WHERE  NOT j.owned_here", body)
 
     def test_the_normaliser_undoes_both_differences(self):
         src = self._src()
@@ -495,13 +495,25 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
         src = self._src()
         body = self._sql()
         self.assertIn("bool_or(tk.st = lk.state)", body)
-        self.assertIn("WHERE  NOT owned_here", body)
+        self.assertIn("WHERE  NOT j.owned_here", body)
 
     def test_it_never_touches_an_override_or_a_stateless_row(self):
         src = self._src()
         body = self._sql()
         self.assertIn("l.override IS NULL", body)
         self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
+
+    # ⚠⚠ A STATE MISMATCH ALONE IS NOT THE BUG (owner, 2026-09-18: 9,299
+    #    rows, almost all clubs). 3DElite is filed under CA, FL, KS and NC
+    #    and anet has exactly ONE 3DElite team, in OK -- that crest is
+    #    right, because a club races in four states and is registered in
+    #    one. Placement is identity for a SCHOOL, not for a club. What makes
+    #    Oregon (WI) different is that anet has ANOTHER "Oregon" team in WI.
+    def test_it_requires_anet_to_have_a_team_of_that_name_in_that_state(self):
+        body = self._sql()
+        self.assertIn("named AS MATERIALIZED", body)
+        self.assertIn("n.namekey = j.namekey AND n.st = j.state", body)
+        self.assertIn("EXISTS (SELECT 1 FROM named n", body)
 
     def test_it_needs_write_to_delete(self):
         src = self._src()
