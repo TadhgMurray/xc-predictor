@@ -907,6 +907,10 @@ class VPNRotatorLinux:
     # Arguments:
     #           self: the current instance of the class.
     # Output: None.
+    # Same name and value as the Windows rotator's, so the two
+    # classes stay swappable -- see test_rotator_surface.
+    STUCK_SESSION_PAUSE_SECONDS = 60
+
     def __init__(self):
 
         # ★ NO_VPN=1 RUNS WITHOUT A TUNNEL, on the box's own IP. The rotation
@@ -925,6 +929,9 @@ class VPNRotatorLinux:
             self.global_meets_since_rotation = 0
             self.rotation_count = 0
             self.last_rotation_time = time.time()
+            self.tunnel_ready = asyncio.Event()
+            self.tunnel_ready.set()
+            self.rotation_generation = 0
             return
 
         # join glues directory path and pattern together. glob finds files
@@ -950,7 +957,81 @@ class VPNRotatorLinux:
         self.global_meets_since_rotation = 0
         self.rotation_count = 0
         self.last_rotation_time = time.time()
+
+        # ⚠ THESE TWO EXISTED ONLY ON THE WINDOWS ROTATOR, AND THE LAUNCHER
+        #   CALLS waitForTunnel UNCONDITIONALLY. Every session died on
+        #   "'VPNRotatorLinux' object has no attribute 'waitForTunnel'"
+        #   before its first fetch. The gate is what stops sessions issuing
+        #   requests through a half-torn-down tunnel, and the generation is
+        #   what stops them all staggering again on a rotation they already
+        #   staggered around.
+        self.tunnel_ready = asyncio.Event()
+        self.tunnel_ready.set()          # nothing to wait for until a rotate
+        self.rotation_generation = 0
  
+    # handleStuckSession
+    # Purpose: A session reporting repeated 429s pauses EVERY session, so the
+    #          shared IP goes quiet rather than one session backing off while
+    #          the rest keep the limiter hot.
+    #
+    # ⚠ THIS EXISTED ONLY ON WINDOWS TOO, and scrape_results.py line 151
+    #   calls it unconditionally -- so on Linux the first stuck session would
+    #   have died on AttributeError instead of pausing. Found by the test
+    #   that compares the two classes' public surfaces, not by hitting it.
+    async def handleStuckSession(self, label: str):
+
+        if self.disabled:
+            # No tunnel to rest, but the IP still needs to go quiet.
+            print(f"[VPN] {label} stuck session (repeated 429s) and NO_VPN=1 "
+                  f"-- pausing {self.STUCK_SESSION_PAUSE_SECONDS}s; there is no "
+                  f"other IP to move to.")
+            await asyncio.sleep(self.STUCK_SESSION_PAUSE_SECONDS)
+            return
+
+        print(f"[VPN] {label} reporting a stuck session (repeated 429s) -- "
+              f"pausing ALL sessions for {self.STUCK_SESSION_PAUSE_SECONDS}s "
+              f"before allowing a retry")
+
+        # ! THE SAME GATE waitForTunnel USES, so "everyone stop" needs no
+        #   second mechanism. try/finally for the same reason rotate() has
+        #   one: a raise here must not park every session forever.
+        self.tunnel_ready.clear()
+        try:
+            await asyncio.sleep(self.STUCK_SESSION_PAUSE_SECONDS)
+        finally:
+            self.tunnel_ready.set()
+
+        print(f"[VPN] {label} pause complete -- resuming, caller will retry")
+
+    # waitForTunnel
+    # Purpose: Hold a session until any in-progress rotation finishes, then
+    #          stagger it so all sessions do not resume in the same instant.
+    # Arguments:
+    #           index: this session's position, which picks its stagger slot.
+    #           last_generation_seen: the generation this session last
+    #                   returned; equal means no new rotation, so no stagger.
+    #           total_sessions: how wide to spread the stagger.
+    # Output:   the current rotation generation, for the caller to remember.
+    #
+    # ! SAME CONTRACT AS THE WINDOWS ONE, deliberately: the launcher calls it
+    #   the same way on both platforms and cannot know which it has.
+    async def waitForTunnel(self, index: int, last_generation_seen: int,
+                            total_sessions: int):
+
+        if self.disabled:
+            return 0
+
+        await self.tunnel_ready.wait()
+
+        # No NEW rotation since this session last looked -- nothing to
+        # stagger around.
+        if self.rotation_generation == last_generation_seen:
+            return self.rotation_generation
+
+        slot = POST_ROTATION_STAGGER_SECONDS / max(total_sessions, 1)
+        await asyncio.sleep(index * slot)
+        return self.rotation_generation
+
     # _currentConf
     # Purpose: Returns the path to the currently-active config, or None
     #          if no tunnel is up yet.
@@ -1011,63 +1092,76 @@ class VPNRotatorLinux:
             if self.rotation_count != count_before:
                 print(f"[VPN] {label} skipping rotation — already rotated by another session")
                 return True
+
+            # ★ SHUT THE GATE FOR THE DURATION. Sessions calling
+            #   waitForTunnel() now block instead of firing requests down a
+            #   tunnel that is coming down. try/finally so a failure cannot
+            #   leave every session parked forever.
+            self.tunnel_ready.clear()
+            try:
+                return await self._rotateLocked(label, reason)
+            finally:
+                self.rotation_generation += 1
+                self.tunnel_ready.set()
+
+    async def _rotateLocked(self, label: str, reason: str) -> bool:
+        """The rotation itself, with the gate already shut by rotate()."""
+        old_conf = self._currentConf()
+
+        if old_conf:
+            await _bringDown(old_conf)
  
-            old_conf = self._currentConf()
+        # Try up to len(self.configs) configs, starting from the next
+        # one after current_index. range(len(self.configs)) gives us
+        # one attempt per config in the pool, in case several in a
+        # row are down — without this we'd give up after just one.
+        for _ in range(len(self.configs)):
 
-            if old_conf:
-                await _bringDown(old_conf)
- 
-            # Try up to len(self.configs) configs, starting from the next
-            # one after current_index. range(len(self.configs)) gives us
-            # one attempt per config in the pool, in case several in a
-            # row are down — without this we'd give up after just one.
-            for _ in range(len(self.configs)):
-    
-                self.current_index = (self.current_index + 1) % len(self.configs)
-                new_conf = self.configs[self.current_index]
-    
-                print(f"[VPN] {label} rotating ({reason}): "
-                    f"{os.path.basename(old_conf) if old_conf else 'none'} "
-                    f"-> {os.path.basename(new_conf)}")
-    
-                success = await _bringUp(new_conf)
-    
-                if success:
-                    await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
+            self.current_index = (self.current_index + 1) % len(self.configs)
+            new_conf = self.configs[self.current_index]
 
-                    # Verifies it's actually connected.
-                    if await _verifyConnectivity():
-                        self.rotation_count += 1
-                        self.last_rotation_time = time.time()
-                        self.global_meets_since_rotation = 0
+            print(f"[VPN] {label} rotating ({reason}): "
+                f"{os.path.basename(old_conf) if old_conf else 'none'} "
+                f"-> {os.path.basename(new_conf)}")
 
-                        print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
-                        return True
-                    
-                    print(f"[VPN] {label} {os.path.basename(new_conf)} came up but "
-                        f"failed connectivity check — tearing down and trying next")
-                else:
-                    # This config failed/timed out — log and loop to try the
-                    # next one.
-                    print(f"[VPN] {label} wg-quick up failed/timed out for "
-                        f"{os.path.basename(new_conf)} — trying next config")
+            success = await _bringUp(new_conf)
+
+            if success:
+                await asyncio.sleep(HANDSHAKE_WAIT_SECONDS)
+
+                # Verifies it's actually connected.
+                if await _verifyConnectivity():
+                    self.rotation_count += 1
+                    self.last_rotation_time = time.time()
+                    self.global_meets_since_rotation = 0
+
+                    print(f"[VPN] Rotation complete. Now on {os.path.basename(new_conf)}")
+                    return True
                 
-                # Whether wg-quick "succeeded" or not, this config isn't
-                # usable. Tear it down WITH verification before trying the
-                # next one — this is what stops a half-up interface from
-                # this attempt sticking around alongside the next one.
-                await _bringDown(new_conf)
-
-                old_conf = None
-    
-            # Every config in the pool failed. Lock still releases (we're
-            # exiting the `async with` block normally) — sessions will
-            # resume, just with no working tunnel until the NEXT rotation
-            # attempt succeeds.
-            print(f"[VPN] {label} all {len(self.configs)} configs failed — "
-                f"giving up on this rotation")
+                print(f"[VPN] {label} {os.path.basename(new_conf)} came up but "
+                    f"failed connectivity check — tearing down and trying next")
+            else:
+                # This config failed/timed out — log and loop to try the
+                # next one.
+                print(f"[VPN] {label} wg-quick up failed/timed out for "
+                    f"{os.path.basename(new_conf)} — trying next config")
             
-            return False
+            # Whether wg-quick "succeeded" or not, this config isn't
+            # usable. Tear it down WITH verification before trying the
+            # next one — this is what stops a half-up interface from
+            # this attempt sticking around alongside the next one.
+            await _bringDown(new_conf)
+
+            old_conf = None
+
+        # Every config in the pool failed. Lock still releases (we're
+        # exiting the `async with` block normally) — sessions will
+        # resume, just with no working tunnel until the NEXT rotation
+        # attempt succeeds.
+        print(f"[VPN] {label} all {len(self.configs)} configs failed — "
+            f"giving up on this rotation")
+        
+        return False
  
     # checkRotation
     # Purpose: Called by each session after every meet. Once the shared
