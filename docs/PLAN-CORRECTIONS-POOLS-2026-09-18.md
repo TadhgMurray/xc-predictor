@@ -134,18 +134,31 @@ rekey: **anet states the pool; stop inferring it.**
    level, or a roster too small to be a school. Absence of a link is absence
    of evidence, not evidence of pro.
 
-4. **A team with ~3 athletes is pro** ("dawgsmenesch"). RECOMMEND using the
-   fact instead of the proxy. `anet_team.level` already distinguishes them and
-   the census output confirms the coding: Georgetown Running Club, Oregon Track
-   Club and Nike Oregon Track Club are all **level 16**, while high schools are
-   4 and colleges 8. So club-ness is stored, not inferred, and it is the same
-   move as the whole team-id rekey — stop guessing what anet states.
+4. **A team with fewer than 15 distinct athletes is pro.** Owner's decision,
+   2026-09-18, after I recommended using `anet_team.level` instead: *"if
+   they're that small I'd prefer to make them pro. also ~3 athletes should
+   actually be 15 and I mean it."* Taken as given.
 
-   Size then has one honest job: a tiebreaker where `level` is missing. On its
-   own it catches real rural schools, which genuinely field three runners, and
-   a wrong pool compares an athlete against the wrong field — the harmful
-   direction under the separate-over-merge rule. Measure the size distribution
-   per level before choosing any floor.
+   `PRO_MAX_ATHLETES = 15`.
+
+   ⚠ **The window is the whole question, and it is LIFETIME, not per season.**
+   Per season, a rural high school fielding eight runners is under the bar
+   every year of its existence, and the rule would pro half the countryside.
+   Over the team's whole history almost any real school clears 15 easily, so
+   the same number catches only genuinely tiny entities — which is what the
+   owner is describing. Distinct `person_id` across `results` + `results_tf`
+   for that `team_id`, all years.
+
+   ! It is a floor, not an override. `anet_team.level` is still the primary
+     signal where it exists (level 16 = club, confirmed by the census: Oregon
+     Track Club, Nike Oregon Track Club, Georgetown Running Club); this rule
+     catches what has no level, plus the small entities the owner wants caught
+     regardless.
+
+   Before it ships, print the count it would move and the largest twenty
+   teams it catches. If real schools are in that list, they are the price the
+   owner has accepted — but they should be seen, not discovered later on a
+   rankings page.
 
 ## Suggested order
 
@@ -153,5 +166,5 @@ rekey: **anet states the pool; stop inferring it.**
 2. Pooling 2 (pro clubs) — self-contained, cheap, safe.
 3. Correction 2, rank-only first, with counts at several thresholds.
 4. Pooling 1 with Phase 4 of the team rekey; pooling 3 after Phase 2.
-5. Pooling 4 once the team-size distribution is known.
+5. Pooling 4 (PRO_MAX_ATHLETES = 15, lifetime distinct athletes) — print what it moves first.
 6. Correction 3 last, and only after `corrections.py` is in git or off the box.
