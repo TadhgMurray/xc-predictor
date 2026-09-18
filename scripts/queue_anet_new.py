@@ -45,7 +45,7 @@ import datetime
 
 sys.path.insert(0, "scripts")
 
-from database import getConn                            # noqa: E402
+from database import getConn, ensureCoreColumns         # noqa: E402
 
 SPORTS = {
     "XC": {"results": "results",    "dates": "meets"},
@@ -94,6 +94,23 @@ def trailingMisses(cur, sport, top):
     return run
 
 
+def hasDateColumn(cur, sport):
+    """Does this sport's date table actually carry meet_date yet?
+
+    ⚠ DECLARING A COLUMN IN THE DDL DOES NOT CREATE IT. `CREATE TABLE IF
+      NOT EXISTS` never adds a column to a table that already exists -- the
+      lesson that cost a day on venue_name and status, and that this script
+      then walked straight into by querying meets.meet_date the moment it
+      was added to the CREATE TABLE. ensureCoreColumns() in main() adds it;
+      this is the guard for the case where it could not (a busy table, an
+      older database), so the script degrades instead of crashing.
+    """
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = %s AND column_name = 'meet_date'""",
+                (SPORTS[sport]["dates"],))
+    return cur.fetchone() is not None
+
+
 def emptyRecent(cur, sport, since):
     """Meets DATED in the window that we finished and got nothing from.
 
@@ -127,13 +144,16 @@ def emptyUndated(cur, sport, above):
       This shrinks to nothing as meets are re-scraped with meets.meet_date.
     """
     res, dates = SPORTS[sport]["results"], SPORTS[sport]["dates"]
+    # ! NULL WHEN THE COLUMN IS NOT THERE, so "undated" stays answerable on
+    #   a database that has not run the migration yet.
+    datecol = "d.meet_date" if hasDateColumn(cur, sport) else "NULL::text"
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
         FROM   meet_queue q
         LEFT   JOIN {dates} d ON d.meet_id = q.meet_id
         WHERE  q.source = 'anet' AND q.sport = %s
           AND  q.scraped IN (1, 2) AND q.meet_id > %s
-          AND  d.meet_date IS NULL
+          AND  {datecol} IS NULL
           AND  NOT EXISTS (SELECT 1 FROM {res} r
                            WHERE r.meet_id = q.meet_id AND r.source = 'anet')
         ORDER  BY q.meet_id
@@ -187,6 +207,14 @@ def main():
     since = (datetime.date.today()
              - datetime.timedelta(days=args.recent_days)).isoformat()
 
+    # ★ CREATE THE COLUMN BEFORE QUERYING IT. meets.meet_date is declared in
+    #   database.py's DDL, and a declaration is not a column -- CREATE TABLE
+    #   IF NOT EXISTS never adds one. ensureCoreColumns reads
+    #   information_schema first and takes a lock only for what is genuinely
+    #   missing, so on a database that already has it this is a catalogue
+    #   read and nothing else.
+    ensureCoreColumns(verbose=True)
+
     with getConn() as conn:
         with conn.cursor() as cur:
             for sport in sports:
@@ -214,7 +242,17 @@ def main():
                                   f"{woke:,} failed/stuck rows reset")
 
                 if not args.new_only:
-                    dated = emptyRecent(cur, sport, since)
+                    if not hasDateColumn(cur, sport):
+                        # Every empty meet is then undated, which is the
+                        # truth about this database rather than a crash.
+                        dated = []
+                        print(f"  {SPORTS[sport]['dates']}.meet_date does "
+                              f"not exist yet -- every empty meet counts as "
+                              f"undated below. It is created by "
+                              f"createTables(), i.e. by the next scraper "
+                              f"start, and this gets exact after that.")
+                    else:
+                        dated = emptyRecent(cur, sport, since)
                     undated = emptyUndated(cur, sport, top)
                     print(f"  meets dated since {since} with 0 results: "
                           f"{len(dated):,}")
