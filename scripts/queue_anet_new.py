@@ -96,29 +96,60 @@ def trailingMisses(cur, sport, top):
     return run
 
 
-def recentFloor(cur, sport, days):
-    """The lowest anet meet_id whose results are inside the window.
+# A handful of meets carry a date that is not their own -- the corpus has
+# rows dated 2222 -- so the floor is a low percentile, not a minimum.
+FLOOR_PCT = 0.02
+
+
+def recentFloor(cur, sport, days, pct=FLOOR_PCT):
+    """The lowest anet meet_id that honestly belongs to the window.
 
     ★ AN ID FLOOR, NOT A DATE FILTER, because a meet with NO results has no
       date anywhere for cross country -- `meets` has div_id, meet_id,
       meet_name, course_name, distance, gps and state, and no date column at
       all. anet ids are chronological, so the id of the oldest recent result
-      is the honest boundary for "recent" that covers empty meets too.
+      is the honest boundary for "recent" and it covers empty meets too.
+
+    ⚠ A PERCENTILE, NOT min(). The first version took min(meet_id) over
+      recent-dated rows and TF came back with "the last four months" meaning
+      ids 317,500..670,828 -- 353,328 ids, more than half the whole TF id
+      space, for four months. One meet with a bad date drags a minimum all
+      the way down, and this corpus has rows dated 2222. Two per cent of
+      recent meets is a floor that a few liars cannot move.
+
+    ! PER MEET, NOT PER ROW, so a meet with ten thousand results does not
+      outvote one with six when the percentile is taken.
     """
     t = SPORTS[sport]["results"]
     since = (datetime.date.today()
              - datetime.timedelta(days=days)).isoformat()
-    cur.execute(f"""SELECT min(meet_id) FROM {t}
-                    WHERE source = 'anet' AND date >= %s""", (since,))
-    return cur.fetchone()[0], since
+    cur.execute(f"""
+        WITH m AS (
+            SELECT meet_id, max(date) AS d
+            FROM   {t} WHERE source = 'anet'
+            GROUP  BY meet_id
+        )
+        SELECT percentile_disc(%s) WITHIN GROUP (ORDER BY meet_id),
+               min(meet_id), count(*)
+        FROM   m WHERE d >= %s
+    """, (pct, since))
+    floor_id, lowest, n_meets = cur.fetchone()
+    return floor_id, lowest, n_meets, since
 
 
-def emptyRecent(cur, sport, floor_id, top_id):
-    """Queue rows in the recent range that we finished and got nothing from.
+def emptyRecent(cur, sport, floor_id):
+    """Queue rows from the floor UPWARD that we finished and got nothing from.
 
     These are the owner's "recent meets that have 0 results": we asked, the
     scrape completed, and nothing landed -- a meet whose results were not
     posted yet when we passed, or one we failed on quietly.
+
+    ⚠ NO UPPER BOUND, AND THE FIRST VERSION STOPPED AT THE WATERMARK. The
+      ids just ABOVE the last id that produced results are the newest meets
+      in the corpus and the likeliest of all to have been empty when we
+      passed and to have results now -- TF had 147 of them sitting at
+      scraped=1, which is precisely the case this pass exists for, and they
+      were the ones it excluded.
     """
     t = SPORTS[sport]["results"]
     cur.execute(f"""
@@ -126,11 +157,11 @@ def emptyRecent(cur, sport, floor_id, top_id):
         FROM   meet_queue q
         WHERE  q.source = 'anet' AND q.sport = %s
           AND  q.scraped IN (1, 2)
-          AND  q.meet_id BETWEEN %s AND %s
+          AND  q.meet_id >= %s
           AND  NOT EXISTS (SELECT 1 FROM {t} r
                            WHERE r.meet_id = q.meet_id AND r.source = 'anet')
         ORDER  BY q.meet_id
-    """, (sport, floor_id, top_id))
+    """, (sport, floor_id))
     return [r[0] for r in cur.fetchall()]
 
 
@@ -208,19 +239,29 @@ def main():
                                   f"{woke:,} failed/stuck rows reset")
 
                 if do_recent:
-                    floor_id, since = recentFloor(cur, sport,
-                                                  args.recent_days)
+                    floor_id, lowest, n_meets, since = recentFloor(
+                        cur, sport, args.recent_days)
                     if floor_id is None:
                         print(f"  no results since {since} -- no recent "
                               f"range to check.")
                     else:
-                        empty = emptyRecent(cur, sport, floor_id, top)
-                        print(f"  recent range (results since {since}): "
-                              f"{floor_id:,}..{top:,}")
-                        print(f"  finished meets in it with 0 results: "
-                              f"{len(empty):,}")
+                        empty = emptyRecent(cur, sport, floor_id)
+                        span = top - floor_id
+                        print(f"  {n_meets:,} meets have results since "
+                              f"{since}")
+                        print(f"  recent range: {floor_id:,} and up "
+                              f"({span:,} ids to the watermark; the single "
+                              f"lowest recent-dated meet is {lowest:,}, "
+                              f"which is why this is a percentile)")
+                        print(f"  finished meets at or above it with 0 "
+                              f"results: {len(empty):,}")
                         if empty[:10]:
                             print(f"    e.g. {empty[:10]}")
+                        above = [m for m in empty if m > top]
+                        if above:
+                            print(f"    {len(above):,} of them are ABOVE the "
+                                  f"watermark -- the newest ids, the ones "
+                                  f"most likely to have results now")
                         if args.write and empty:
                             n = requeue(cur, sport, empty)
                             print(f"    {n:,} reset to scraped=0")
