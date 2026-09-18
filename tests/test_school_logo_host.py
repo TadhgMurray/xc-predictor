@@ -654,5 +654,52 @@ class OneSchoolCanBeTargetedAndForgotten(unittest.TestCase):
         self.assertIn("--forget needs --write", self._src())
 
 
+# ★★ ONE anet TEAM'S MASCOT IS NOT A PLACEHOLDER (owner, 2026-09-18, the
+#    third attempt at Penn State). Counting name FAMILIES still hid it:
+#    'penn state', 'psu abington', 'psu berks', 'psu harrisburg' -- four, and
+#    SHARED_MIN is four. No word-prefix rule tells you PSU-Abington is Penn
+#    State Abington. But all 34 rows carry team 21255's image, and anet serves
+#    a mascot PER TEAM, so an image belonging to one team is that team's
+#    mascot. A real placeholder is worn by MANY teams.
+class AOneTeamImageIsNeverShared(unittest.TestCase):
+    def _src(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_sweep_counts_teams_and_drops_the_one_team_images(self):
+        src = self._src()
+        self.assertIn("def _teamsPerSha(cur):", src)
+        self.assertIn("count(DISTINCT t.team_id)", src)
+        body = src[src.index("def markShared("):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("per_team = _teamsPerSha(cur)", body)
+        self.assertIn("per_team.get(sha, 0) != 1", body)
+
+    # ! THE WRITE-TIME GUARD MUST AGREE WITH THE SWEEP, or it refuses to
+    #   install a crest the sweep would then not have flagged.
+    def test_the_write_guard_applies_the_same_rule(self):
+        src = self._src()
+        body = src[src.index("def sharedAlready("):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("count(DISTINCT t.team_id)", body)
+        self.assertIn("return False", body)
+
+    # ! FAMILIES REMAIN THE FALLBACK for an image no anet team carries -- a
+    #   crest from a school's own website has no team to count.
+    def test_families_still_decide_an_image_with_no_anet_team(self):
+        src = self._src()
+        body = src[src.index("def sharedAlready("):]
+        body = body[:body.index("\ndef ")]
+        self.assertIn("_family(n) for n in names", body)
+        self.assertIn("_isRosterish(n)", body)
+        # and only a count of exactly one team short-circuits: zero means
+        # "no anet team knows this image", which is not evidence either way
+        self.assertIn("== 1", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

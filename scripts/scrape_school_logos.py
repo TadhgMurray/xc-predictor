@@ -1456,6 +1456,12 @@ def kindRank(kind):
     return KIND_RANK.get(str(kind or "").split(":")[0], 5)
 
 
+# ! anet's mascot_url is protocol-relative; source_url is what was FETCHED
+#   (scheme added, "=s512" appended). The same normaliser anet_teams uses.
+_URL_KEY = ("regexp_replace(regexp_replace(btrim(lower({c})), "
+            "'^//', 'https://'), '=s[0-9]+$', '')")
+
+
 def sharedAlready(cur, sha, minimum=SHARED_MIN):
     """True when this exact image is already worn by `minimum` schools --
     a placeholder, and not worth installing on one more. The sweep would
@@ -1465,6 +1471,22 @@ def sharedAlready(cur, sha, minimum=SHARED_MIN):
     # ! FAMILIES, THE SAME COUNT markShared USES. Asking for distinct school
     #   NAMES here while the sweep counts families would refuse to install a
     #   crest the sweep would then not have flagged.
+    # ! ONE anet TEAM'S MASCOT IS NEVER A PLACEHOLDER -- the same rule
+    #   markShared applies, or this refuses to install a crest the sweep
+    #   would then not have flagged.
+    if _tableExists(cur, "anet_team"):
+        cur.execute(f"""
+            SELECT count(DISTINCT t.team_id)
+            FROM   school_logo l
+            JOIN   anet_team t
+                   ON {_URL_KEY.format(c='t.mascot_url')}
+                    = {_URL_KEY.format(c='l.source_url')}
+            WHERE  l.sha = %s
+        """, (sha,))
+        got = cur.fetchone()
+        if got and (got[0] if not isinstance(got, dict)
+                    else list(got.values())[0]) == 1:
+            return False
     cur.execute("SELECT school FROM school_logo WHERE sha = %s", (sha,))
     names = [r["school"] if isinstance(r, dict) else r[0]
              for r in cur.fetchall()]
@@ -1614,6 +1636,43 @@ def sharedShas(rows, minimum=SHARED_MIN):
 #   that deletes ten thousand live crests. Do not rebuild it on this theory.
 
 
+# ★★ ONE anet TEAM'S MASCOT IS NOT A PLACEHOLDER, WHATEVER IT IS CALLED
+#    (owner, 2026-09-18, after two failed attempts at this). Counting name
+#    FAMILIES was the second try and it still hid Penn State, because the
+#    families were:
+#
+#      'penn state', 'psu abington', 'psu berks', 'psu harrisburg'
+#
+#    Four, and SHARED_MIN is four. No amount of word-prefix cleverness tells
+#    you that "PSU-Abington" is "Penn State Abington"; chasing abbreviations
+#    is endless and would break somewhere else.
+#
+# ★ THE DATA ALREADY ANSWERS IT. anet serves a mascot PER TEAM, and all 34 of
+#   those rows carry team 21255's image. An image belonging to ONE team is
+#   that team's mascot by definition. A real district placeholder is worn by
+#   MANY teams -- that is what makes it a placeholder -- so teams are the
+#   thing to count, and they are a fact rather than a guess about names.
+#
+# ! FAMILIES REMAIN THE FALLBACK for a row whose image matches no anet team
+#   (a crest taken from a school's own website, and the ~950 anet rows whose
+#   URL matches nothing). Those have no team to count, so the old rule still
+#   decides them.
+def _teamsPerSha(cur):
+    """{sha: n_distinct_anet_teams} for every stored image anet also has."""
+    if not _tableExists(cur, "anet_team"):
+        return {}
+    cur.execute(f"""
+        SELECT l.sha, count(DISTINCT t.team_id)
+        FROM   school_logo l
+        JOIN   anet_team t
+               ON {_URL_KEY.format(c='t.mascot_url')}
+                = {_URL_KEY.format(c='l.source_url')}
+        WHERE  l.sha IS NOT NULL
+        GROUP  BY l.sha
+    """)
+    return {r[0]: r[1] for r in cur.fetchall()}
+
+
 def markShared(cur, minimum=SHARED_MIN):
     """Flag the district crests over the WHOLE table, and clear the flag
     from anything that is no longer one."""
@@ -1621,6 +1680,9 @@ def markShared(cur, minimum=SHARED_MIN):
     rows = [(r["school"], r["sha"]) if isinstance(r, dict) else (r[0], r[1])
             for r in cur.fetchall()]
     shas = sharedShas(rows, minimum)
+    # ! A ONE-TEAM IMAGE IS NEVER SHARED, whatever the names say.
+    per_team = _teamsPerSha(cur)
+    shas = {sha for sha in shas if per_team.get(sha, 0) != 1}
     cur.execute("UPDATE school_logo SET shared = false WHERE shared")
     if shas:
         cur.execute("UPDATE school_logo SET shared = true WHERE sha = ANY(%s)",
