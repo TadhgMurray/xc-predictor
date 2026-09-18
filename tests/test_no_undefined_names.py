@@ -41,6 +41,7 @@ WATCHED = (
     "scripts/scrape_tuning.py",
     "scripts/queue_meets.py",
     "scripts/queue_status.py",
+    "scripts/team_identity_census.py",
     "scripts/diag_crest_read.py",
     "tfrrs/driver/run_tfrrs.py",
     "tfrrs/driver/launch_tfrrs.py",
