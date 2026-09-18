@@ -6,42 +6,49 @@ rewrite.
 
 ---
 
-## 1. "Indoor is rated difficulty-wise as if it is 4% easy. Remove track difficulty (at least for now)?"
+## 1. Indoor reads easy. **THE BRACKET ENGINE HAS NO INDOOR ANCHOR AT ALL.**
 
-**This was diagnosed and fixed on 2026-09-11, and the symptom you are seeing is
-most likely a switch set the wrong way, not a missing fix.**
-`engine/joint_solve.py:564` says it in full:
+⚠ An earlier draft of this doc answered this from `engine/joint_solve.py` and
+was wrong to: the owner runs the **bracketed engine**. joint_solve DID fix this
+on 2026-09-11 by asserting `IND_LEVEL_DEFAULT = 0.012` (indoor 1.2% SLOWER,
+from the NCAA facility factors), because the indoor level and the winter form
+curve are one free direction the fit resolves backwards. `bracket_engine.py`
+has no equivalent, which is why the owner says it is not fixed. It is not.
 
-> ★★ INDOOR IS SEASON (owner, 2026-09-11: "I think indoor might be off"; the
-> page read every indoor oval 2.4-3.8% EASIER than outdoors, which is
-> backwards).
+**The mechanism, from `bracket_engine.py:430`:**
 
-The cause is collinearity, not a bad estimator: no venue hosts both an indoor
-and an outdoor track and nobody races indoors in May, so the form curve's
-Dec–Mar level and the indoor cells' mean are **one free direction**. The fit
-can put the winter gain in either, and it chose "indoor is easy".
+> the vote-weighted mean of D per **(sport, era)** is held at zero each pass
 
-The fix was to stop fitting it: `IND_LEVEL_DEFAULT = 0.012` — indoor asserted
-as **1.2% slower**, from the NCAA facility factors and the WA short-track
-tables — taken off `y` like `mu_fixed`, with the indoor cells recentred each
-pass so they keep only their own deviation (a banked BU below it, a flat 200m
-oval above). `--indoor-level fit` still exists and **restores the broken
-behaviour**.
+and `cell_sport` is one bit — XC vs TF:
 
-**So the first question is which `--indoor-level` the last ratings run used.**
-If it was `fit`, that is the whole bug and the fix is a flag. Check the run log
-for the `[joint] indoor level ASSERTED|fitted` line — it prints which.
+    cell_sport = [1 if k.startswith("TF:") else 0 for k in cell_keys]
+    cell_group = cell_sport * 100_000 + cell_era
 
-⚠ **And I would not remove track difficulty to fix this.** The collinearity
-argument applies to the indoor *level* only. Individual facility deviations
-(banked 200m vs flat 300m) are identified fine, because the same athletes run
-several tracks in one winter. Removing all track difficulty throws away signal
-that is measurable in order to fix a level that is already asserted.
+So indoor and outdoor track are pinned **together**. Their *combined* mean is
+anchored; the *split between them* is free, and nothing asserts what it should
+be. That is exactly the collinearity joint_solve documents — no venue hosts
+both surfaces and nobody races indoors in May, so the winter form gain can sit
+in the form curve or in the indoor cells, and the fit is free to choose.
 
-**Proposed:** confirm the flag; if it is already ASSERTED and the boards still
-read indoor as easy, then something downstream ignores the assertion and that
-is the bug to find. Removing track difficulty stays available but as a last
-resort, behind a flag, so the two can be compared.
+**And the prior amplifies it.** `PRIOR_GROUP_BY = {"XC": 1.0, "TF:out": 2.5,
+"TF:in": 1.0}` gives indoor the *weakest* pull toward its group mean, for a
+good reason stated in the code (banked vs flat, 160m vs 300m, and no weather).
+But a weak pull toward an *unanchored* level means indoor keeps more of a
+number that was never pinned to anything.
+
+**Proposed fix, mirroring the engine that got it right:** extend the gauge from
+`(sport, era)` to `(sport, surface, era)` and pin the indoor group's mean to an
+ASSERTED level rather than leaving it to float inside TF. Reuse
+`joint_solve.IND_LEVEL_DEFAULT` so there is one number, not two. Keep
+`PRIOR_GROUP_BY` as it is — with the level anchored, a weak prior is then doing
+the job it was designed for.
+
+⚠ **I would still not remove track difficulty.** The collinearity is about the
+indoor LEVEL only. Per-facility deviations are identified fine, because the
+same athletes run several tracks in one winter. Removing them discards
+measurable signal to fix a level that should simply be asserted. If the owner
+wants the comparison, the right shape is a flag that zeroes the surface term,
+so both can be run and scored against `scripts/bracket_holdout.py`.
 
 ## 2. XC race duplicated into TF as "Race Results" (AMO)
 
@@ -80,10 +87,29 @@ is honest, those medians are flat across bins — the difficulty has already bee
 removed. If they rise with difficulty, hard races are being over-credited
 ("overfed"), and the slope per percentile says by how much and to whom.
 
-**Proposed:** build that table and print it. It needs no decisions, it either
-confirms the owner's instinct or refutes it, and every other tuning question
-here depends on the answer. **I would do this before items 1, 3 and 5**, since
-it measures whether the difficulty machinery is trustworthy at all.
+**BUILT: `engine/diag_difficulty_calibration.py`** (read-only).
+
+    python engine/diag_difficulty_calibration.py --since 2015
+
+Difficulty bins down the side, within-race percentile bands across, the median
+`speed_rating` in each cell, and the slope of each column in rating points per
+point of difficulty.
+
+⚠ **The percentile is computed INSIDE each race**, and that is the whole
+design. Comparing everyone on hard courses with everyone on easy ones measures
+who SHOWS UP — championship courses are hard AND hold better fields, an effect
+far larger than the calibration error being looked for. Ranking within each
+race and comparing like position with like position removes it.
+
+⚠ **A FLAT column is the PASS**, not a rising one. If difficulty is honest it
+has already been removed from the rating. A rising column is the owner's
+"overfed", and the slope says by how much and to whom. The output states this
+in words, and `tests/test_difficulty_calibration.py` pins it, because the table
+is easy to read backwards.
+
+Undefined rather than zero where there is too little evidence: one bin, or
+every bin at the same difficulty, reports `--`. Printing 0.0 there would read
+as "flat, calibrated", which is the opposite of "we cannot tell".
 
 ## 5. "Race importance decides season ability"
 
@@ -109,9 +135,9 @@ added.
 ## Things I would add
 
 - **A hold-out check before any of this ships.** None of these changes can be
-  judged by the boards looking better. Keep a set of results out of the fit and
-  report prediction error before and after each change; a change that improves
-  the story and not the error is a change that has learnt the story.
+  judged by the boards looking better. `scripts/bracket_holdout.py` already
+  exists and prints held-out error by the number of races behind a cell —
+  every change here should be scored with it, before and after.
 - **Rate the same athlete twice, from disjoint halves of their season.** If the
   two ratings disagree by much more than the model's own claimed uncertainty,
   the uncertainty is wrong, and every "5-15 sigma" bar and every board depends

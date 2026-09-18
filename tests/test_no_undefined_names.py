@@ -66,6 +66,7 @@ WATCHED = (
     "engine/speed_ratings_db.py",
     "engine/build_team_pool.py",
     "engine/rating_outliers.py",
+    "engine/diag_difficulty_calibration.py",
     "model/feature_extraction.py",
 )
 
