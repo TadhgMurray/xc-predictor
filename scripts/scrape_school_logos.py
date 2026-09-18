@@ -1261,6 +1261,78 @@ def damagedPairs(cur):
             for r in cur.fetchall()]
 
 
+def suspectPairs(cur, verbose=True):
+    """[(school, state)] whose stored crest is NOT evidence of that school.
+
+    ★ THE OWNER'S REPORT (2026-09-18): "it seems it's taken some logos not
+      actually from the anet site (or it's taken them from a similar named
+      school). This is interesting bcs the team id and name resolved correctly
+      otherwise. Is there some way to only scrape these subsets so I don't have
+      to keep hammering anet?"
+
+      Yes, and the answer is already in the rows. `kind` records WHERE a crest
+      came from. A kind starting 'anet' is the team page for a team id we
+      resolved -- that is the school itself saying so, and those are the ones
+      the owner is not complaining about. Every other kind came off a school
+      WEBSITE, chosen by matching the school's name against a domain, and a
+      loose match there is exactly how a neighbour with a similar name hands
+      over its logo. The team id being right is no protection: it was never
+      consulted for those.
+
+    Two populations, reported separately:
+
+      off-anet   status ok, kind not 'anet*' -- a website crest, re-askable
+                 from anet's team page, which is the better evidence.
+      implausible  the stored source_url no longer passes plausibleHost for
+                 this school. These are rows written before the host rule
+                 tightened, and they are the "similar named school" ones.
+
+    ! PURE, AND NO NETWORK. plausibleHost is a string test, so the whole
+      suspect set is computed from the table in one query.
+    """
+    cur.execute("""
+        SELECT school, state, level, kind, source_url
+        FROM   school_logo
+        WHERE  status = 'ok' AND path IS NOT NULL
+          AND  COALESCE(lower(override), '') <> 'none'
+        ORDER  BY school, state
+    """)
+    rows = [r if isinstance(r, dict) else
+            {"school": r[0], "state": r[1], "level": r[2], "kind": r[3],
+             "source_url": r[4]}
+            for r in cur.fetchall()]
+
+    off_anet, implausible = [], []
+    for r in rows:
+        kind = (r.get("kind") or "")
+        if kind.split(":")[0] == "anet":
+            continue                      # the school's own team page: keep
+        pair = (r["school"], r["state"])
+        off_anet.append(pair)
+        if not plausibleHost(r["school"], r.get("source_url") or "",
+                             kind, None):
+            implausible.append(pair)
+
+    # ! DEDUPED ACROSS LEVELS. school_logo is keyed (school, state, level) and
+    #   targets() matches on (school, state), so a school with a crest per
+    #   level would otherwise be queued several times.
+    seen, pairs = set(), []
+    for pair in implausible + off_anet:
+        if pair not in seen:
+            seen.add(pair)
+            pairs.append(pair)
+
+    if verbose:
+        print(f"  {len(rows):,} crests stored")
+        print(f"  {len(off_anet):,} came from a school website rather than "
+              f"anet's team page")
+        print(f"  {len(set(implausible)):,} of those have a host that no "
+              f"longer passes the name test -- the likeliest wrong ones")
+        print(f"  {len(pairs):,} schools to re-ask (deduped across levels), "
+              f"worst first")
+    return pairs
+
+
 def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
             retry_failed=False, pairs=None):
     """The schools still to do, BIGGEST PROGRAMME FIRST.
@@ -1733,6 +1805,11 @@ def main():
     ap.add_argument("--dir", default=None, help="where the PNGs go (default XCP_LOGO_DIR)")
     ap.add_argument("--sweep-only", action="store_true",
                     help="re-run the shared-crest sweep and stop")
+    ap.add_argument("--suspect", action="store_true",
+                    help="only schools whose crest did NOT come from anet's "
+                         "team page, worst first. The wrong-logo subset, "
+                         "without re-asking anet for everything. Implies "
+                         "--redo; pair with --dry-run to see the list.")
     ap.add_argument("--fix-multi", action="store_true",
                     help="re-ask only the (school, state) pairs whose crest is "
                          "an anet mascot on a pair holding TWO INSTITUTIONS -- "
@@ -1746,6 +1823,10 @@ def main():
                          "a rescrape. Idempotent -- a crest with no flat "
                          "ground comes back byte-identical.")
     args = ap.parse_args()
+    if args.suspect:
+        # ! IMPLIES --redo, or the refresh window skips the very rows being
+        #   re-asked. Same reason --fix-multi does.
+        args.redo = True
     if args.fix_multi:
         args.redo = True
     if args.redo:
@@ -1785,11 +1866,21 @@ def main():
             #   repair it was asked for.
             ensureTable(cur, DDL)
             ensureLevelKey(cur)
-            pairs = damagedPairs(cur) if args.fix_multi else None
+            pairs = None
             if args.fix_multi:
+                pairs = damagedPairs(cur)
                 print(f"  {len(pairs):,} (school, state) pairs wear an anet "
                       f"mascot while holding two institutions", flush=True)
                 if not pairs:
+                    return
+            elif args.suspect:
+                # ★ ONLY THE CRESTS THAT ARE NOT ANET'S OWN ANSWER, so a
+                #   wrong-logo sweep costs one fetch per suspect school rather
+                #   than one per school in the corpus.
+                pairs = suspectPairs(cur)
+                if not pairs:
+                    print("  nothing suspect -- every stored crest came from "
+                          "anet's team page.", flush=True)
                     return
             todo = targets(cur, args.refresh_days, args.only, args.state,
                            args.limit, args.retry_failed, pairs)

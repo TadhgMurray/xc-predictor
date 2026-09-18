@@ -164,3 +164,69 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ★ THE WRONG-LOGO SUBSET (owner, 2026-09-18): "it's taken some logos not
+#   actually from the anet site (or it's taken them from a similar named
+#   school) ... is there some way to only scrape these subsets so I don't have
+#   to keep hammering anet?"
+#
+#   The answer is in the rows already. `kind` records where a crest came from:
+#   'anet*' means the team page for a resolved team id -- the school itself --
+#   and everything else came off a WEBSITE picked by matching a name against a
+#   domain, which is how a similarly-named neighbour hands over its logo. The
+#   team id being right is no protection, because it was never consulted for
+#   those.
+class TheSuspectSelector(unittest.TestCase):
+
+    @staticmethod
+    def _body():
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        i = src.index("def suspectPairs(")
+        return src[i:src.index("\ndef targets(", i)]
+
+    def test_it_keeps_anet_crests(self):
+        body = self._body()
+        self.assertIn('kind.split(":")[0] == "anet"', body)
+        self.assertIn("continue", body)
+
+    def test_it_reads_only_stored_rows(self):
+        """No network: a suspect sweep must not cost a fetch to plan."""
+        body = self._body()
+        self.assertIn("FROM   school_logo", body)
+        self.assertNotIn("requests", body)
+        self.assertNotIn("fetch", body)
+
+    def test_it_also_flags_a_host_that_no_longer_passes(self):
+        body = self._body()
+        self.assertIn("plausibleHost(", body)
+
+    # ! DEDUPED ACROSS LEVELS. school_logo is keyed (school, state, level) but
+    #   targets() matches on (school, state), so a school with a crest per
+    #   level would be queued several times.
+    def test_pairs_are_deduped(self):
+        body = self._body()
+        self.assertIn("seen", body)
+        self.assertIn("if pair not in seen:", body)
+
+    def test_the_flag_implies_redo(self):
+        """Without it the refresh window skips the rows being re-asked."""
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('ap.add_argument("--suspect"', src)
+        i = src.index("if args.suspect:")
+        self.assertIn("args.redo = True", src[i:i + 300])
+
+    def test_the_worst_are_queued_first(self):
+        """The implausible ones lead, so --limit covers them first."""
+        body = self._body()
+        self.assertIn("for pair in implausible + off_anet:", body)
