@@ -43,6 +43,7 @@ WATCHED = (
     "scripts/queue_status.py",
     "scripts/diag_indoor_level.py",
     "scripts/pg_guard.py",
+    "scripts/diag_indoor_labels.py",
     "scripts/team_identity_census.py",
     "scripts/diag_crest_read.py",
     "tfrrs/driver/run_tfrrs.py",

@@ -63,6 +63,40 @@ ASSERTED level rather than leaving it to float inside TF. Reuse
 `PRIOR_GROUP_BY` as it is — with the level anchored, a weak prior is then doing
 the job it was designed for.
 
+### "Wouldn't difficulties still just get messed up?" (owner, 2026-09-18)
+
+Partly, and the question separates into three things:
+
+**What pinning fixes.** The level is the only unidentified component. The
+per-oval DEVIATIONS -- a banked BU below the level, a flat 200m above -- are
+identified by athletes racing several ovals in one winter, a within-winter
+comparison that never involves the form curve. Those survive a level shift
+untouched, so pinning is not "shift everything and hope": it corrects the one
+piece the data cannot see and leaves the pieces it can.
+
+**What it does not fix.** Pinning is an ASSERTION. If 0.012 is wrong the error
+does not vanish, it moves into the winter form curve. That is why joint_solve
+calls it asserted rather than fitted, and why the only honest validation is
+`scripts/bracket_holdout.py`, not "the difficulties look right now".
+
+**The confound that could make it HARMFUL, and it must be checked first.**
+`engine/geometry_db.py:133` records from its own census that **is_indoor is
+wrong** on a measured fraction: "the winter pool carries mislabeled-indoor rows
+(measured: 55m/60m/300m/1000m in the Dec-Feb slice)". If part of the -1.5% is
+label noise rather than real drift, pinning the group's mean pushes the
+correction onto the CORRECTLY labelled ovals -- making them wrong to fix a
+number that was never theirs.
+
+So the order is: **`scripts/diag_indoor_labels.py` first.** It reports what
+share of indoor-flagged meets sit in high summer (calendar, cheap) and, with
+`--tells`, cross-checks against `geometry_db._INDOOR_TELL_EVENTS` -- the
+measured list of events that essentially do not exist outdoors, so a meet
+hosting one is indoor whatever its flag says.
+
+- label noise small -> pin the level, score with bracket_holdout.
+- label noise material -> fix the labels first, or pin on the subset that
+  passes the tells, because otherwise the assertion lands on the wrong cells.
+
 ⚠ **I would still not remove track difficulty.** The collinearity is about the
 indoor LEVEL only. Per-facility deviations are identified fine, because the
 same athletes run several tracks in one winter. Removing them discards
