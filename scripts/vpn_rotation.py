@@ -524,6 +524,11 @@ class VPNRotatorWindows:
     #           reason: why rotation was triggered e.g. "meet count" or "failure streak".
     # Output: Returns true if rotation succeeded, False if it failed.
     async def rotate(self, label: str, reason: str) -> bool:
+        # no tunnel to move; report no change so the caller does not
+        # restart the browser expecting a new IP
+        if self.disabled:
+            return False
+
 
         # Snapshot the rotation count before we wait for the lock.
         # If it changes while we wait, another session already rotated.
@@ -624,6 +629,9 @@ class VPNRotatorWindows:
     #           label: session label for printed output.
     # Output: Returns True if a rotation happened, False otherwise.
     async def checkRotation(self, label: str) -> bool:
+        if self.disabled:
+            return False
+
         
         threshold_reached = await self.recordMeet()
  
@@ -642,6 +650,9 @@ class VPNRotatorWindows:
     #           self: current instance.
     # Output:   None.
     def removeCurrentServer(self):
+        if self.disabled:
+            return
+
         # Intentionally does nothing. See file header for why removing servers on
         # every Cloudflare block drained the pool 46 -> 1. If you ever want
         # bad-server pruning back, gate it behind the same 90s cooldown rotate()
@@ -656,7 +667,40 @@ class VPNRotatorWindows:
 # wg-quick names interfaces after the filename (minus .conf), and
 # this whole launcher process runs inside `ip netns exec mullvad`,
 # so wg-quick commands here automatically operate on that namespace.
-WIREGUARD_DIR = os.path.expanduser("~/xc-predictor/wireguard")
+#
+# ⚠ IT WAS "~/xc-predictor/wireguard", A HOME-RELATIVE PATH BAKED INTO A
+#   REPO THAT DOES NOT LIVE IN HOME (owner, 2026-09-18: the launcher died
+#   with "No .conf files found in /root/xc-predictor/wireguard" while the
+#   checkout sits in /srv/xc-predictor). The deploy moved and this constant
+#   did not, so the whole scrape could not start.
+#
+# ! SEARCHED, IN ORDER, AND THE ERROR NAMES EVERY PLACE IT LOOKED. An
+#   explicit WIREGUARD_DIR wins; then the directory beside this checkout,
+#   which is where the confs belong for a repo-relative deploy; then the old
+#   home path, so an existing box keeps working untouched.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+WIREGUARD_CANDIDATES = [
+    os.environ.get("WIREGUARD_DIR") or "",
+    os.path.join(_REPO_ROOT, "wireguard"),
+    os.path.expanduser("~/xc-predictor/wireguard"),
+    "/etc/wireguard",
+]
+
+
+def _wireguardDir():
+    """The first candidate that holds at least one .conf, else the first
+    that exists, else the repo-relative default."""
+    for path in WIREGUARD_CANDIDATES:
+        if path and glob.glob(os.path.join(path, "*.conf")):
+            return path
+    for path in WIREGUARD_CANDIDATES:
+        if path and os.path.isdir(path):
+            return path
+    return os.path.join(_REPO_ROOT, "wireguard")
+
+
+WIREGUARD_DIR = _wireguardDir()
  
 # Rotate proactively every this many meets (summed across all sessions).
 LINUX_GLOBAL_MEETS_PER_ROTATION = 1000
@@ -864,7 +908,25 @@ class VPNRotatorLinux:
     #           self: the current instance of the class.
     # Output: None.
     def __init__(self):
-        
+
+        # ★ NO_VPN=1 RUNS WITHOUT A TUNNEL, on the box's own IP. The rotation
+        #   surface stays present and every method is a no-op, so nothing
+        #   else in the launcher has to know. This is the ENTIRE 429 defence
+        #   turned off: one IP, no rotation, and a Cloudflare block has
+        #   nothing to rotate to -- fine for a bounded catch-up run on a
+        #   host you control, wrong for a full sweep.
+        self.disabled = os.environ.get("NO_VPN", "") not in ("", "0", "false")
+        if self.disabled:
+            print("[VPN] NO_VPN=1 -- no tunnel, no rotation, one IP. "
+                  "A Cloudflare block will have nowhere to go.")
+            self.configs = []
+            self.current_index = -1
+            self.lock = asyncio.Lock()
+            self.global_meets_since_rotation = 0
+            self.rotation_count = 0
+            self.last_rotation_time = time.time()
+            return
+
         # join glues directory path and pattern together. glob finds files
         # matching the pattern. It returns a list of matching file paths, which
         # is then order alphabetically by sorted. This makes a sorted list of
@@ -872,7 +934,12 @@ class VPNRotatorLinux:
         self.configs = sorted(glob.glob(os.path.join(WIREGUARD_DIR, "*.conf")))
  
         if not self.configs:
-            raise RuntimeError(f"No .conf files found in {WIREGUARD_DIR}")
+            looked = "\n  ".join(p for p in WIREGUARD_CANDIDATES if p)
+            raise RuntimeError(
+                f"No WireGuard .conf files found. Looked in:\n  {looked}\n"
+                f"Put the Mullvad .conf files in one of those, or set "
+                f"WIREGUARD_DIR=/path/to/confs. To scrape without a VPN at "
+                f"all, run the launcher with NO_VPN=1.")
  
         print(f"[VPN] Loaded {len(self.configs)} configs")
  
@@ -891,6 +958,9 @@ class VPNRotatorLinux:
     #           self: current instance.
     # Output: A path string, or None.
     def _currentConf(self) -> str | None:
+        if self.disabled:
+            return None
+
  
         if self.current_index == -1:
             return None
