@@ -138,38 +138,39 @@ def askedFrontier(cur, sport):
 
 
 def trailingMisses(cur, sport, top):
-    """Consecutive ids above `top` that DO NOT EXIST on anet.
+    """Consecutive ids at the top that anet says are NOT MEETS.
 
-    ⚠ IT USED TO COUNT "NO RESULTS", AND THAT IS NOT THE END OF THE CORPUS
-      (owner, 2026-09-18: "there's like 10k meets that are scheduled with no
-      results, and they're interspersed between the last like 30k ids"). Every
-      id above the watermark has no results by definition -- the watermark IS
-      the last id that produced any -- so counting empties meant the first
-      run of scheduled meets read as the ceiling and the forward walk stopped
-      thousands of ids early.
+    ★ scraped = 4 IS THE 404, AND IT HAS BEEN RECORDED ALL ALONG.
+      launcher._processMeetResult writes status=4 for `not exists` -- "no meet
+      exists at this (meet_id, sport)" -- and its own comment says "if a
+      future full pass is run it will check this combo again". Nothing ever
+      did. So the authoritative answer to "where does the corpus end" was
+      sitting in the queue while this function guessed at it from missing
+      result rows, and then from missing meet rows.
 
-    ★ THE DISTINCTION IS ALREADY IN THE DATA, and it is the meet row, not the
-      result row. A meet that EXISTS writes `meets` / `meets_tf` rows from its
-      divisions the moment it is scraped, results or no results -- that is a
-      scheduled meet. An id that does not exist writes nothing at all -- that
-      is the 404. So the run to count is ids with no MEET row.
+    ⚠ IT COUNTED scraped IN (1, 2) ONLY, WHICH IS WHY IT SAID 0 (owner,
+      2026-09-18: "0 real meets with no results yet, and 0 ids in a row at
+      the top that are not meets at all", over a queue whose highest id is
+      656,607). Every id above the real corpus is at 4, and 4 was in neither
+      set it looked at.
 
-    ! STILL ONLY IDS WE ASKED ABOUT. An id never queued is not evidence of
-      anything.
+    ! STATE 1 WITH NO MEET ROW STILL COUNTS, for rows written before status 4
+      existed or by a path that did not use it.
     """
     mt = SPORTS[sport]["meets"]
     cur.execute(f"""
-        SELECT EXISTS (SELECT 1 FROM {mt} m
+        SELECT q.scraped,
+               EXISTS (SELECT 1 FROM {mt} m
                        WHERE m.meet_id = q.meet_id AND m.source = 'anet')
         FROM   meet_queue q
         WHERE  q.source = 'anet' AND q.sport = %s
-          AND  q.scraped IN (1, 2) AND q.meet_id > %s
+          AND  q.scraped IN (1, 2, 4) AND q.meet_id > %s
         ORDER  BY q.meet_id DESC
     """, (sport, top))
     run = 0
-    for (meet_exists,) in cur.fetchall():
-        if meet_exists:
-            break
+    for scraped, meet_exists in cur.fetchall():
+        if scraped != 4 and meet_exists:
+            break                      # a real meet: the corpus reaches here
         run += 1
     return run
 
@@ -186,6 +187,7 @@ def scheduledAbove(cur, sport, top):
         FROM   meet_queue q
         WHERE  q.source = 'anet' AND q.sport = %s
           AND  q.scraped IN (1, 2) AND q.meet_id > %s
+          -- never 4: that is "no such meet", not a scheduled one
           AND  EXISTS (SELECT 1 FROM {mt} m
                        WHERE m.meet_id = q.meet_id AND m.source = 'anet')
           AND  NOT EXISTS (SELECT 1 FROM {res} r
@@ -302,14 +304,27 @@ def seedForward(cur, sport, lo, hi):
     #   meet with no results is a SCHEDULED meet, and re-asking those is the
     #   recent pass's job (scheduledToRetry), measured from the watermark. Two
     #   passes, two populations, no overlap.
+    # ★ STATE 4 IS THE ONE TO RE-ASK. It means "no meet exists at this id",
+    #   recorded when we asked -- and anet creates ids over time, so that
+    #   answer expires. launcher._processMeetResult has written it all along
+    #   and its own comment expected a future pass to re-check; this is that
+    #   pass. Without it, ON CONFLICT DO NOTHING leaves 380,000 ids at 4
+    #   forever and the walk can never reach a new meet.
+    #
+    # ! PLUS STATE 1 WITH NO MEET ROW, for rows written before status 4
+    #   existed. And nothing with a meet row: a real meet with no results is
+    #   SCHEDULED, and re-asking those is scheduledToRetry's job. Two passes,
+    #   two populations, no overlap.
     mt = SPORTS[sport]["meets"]
     cur.execute(f"""
         UPDATE meet_queue q SET scraped = 0
         WHERE  q.source = 'anet' AND q.sport = %s
-          AND  q.meet_id BETWEEN %s AND %s AND q.scraped = 1
-          AND  NOT EXISTS (SELECT 1 FROM {mt} m
-                           WHERE m.meet_id = q.meet_id
-                             AND m.source = 'anet')
+          AND  q.meet_id BETWEEN %s AND %s
+          AND  (q.scraped = 4
+                OR (q.scraped = 1
+                    AND NOT EXISTS (SELECT 1 FROM {mt} m
+                                    WHERE m.meet_id = q.meet_id
+                                      AND m.source = 'anet')))
     """, (sport, lo, hi))
     return inserted, woken + cur.rowcount
 
@@ -349,8 +364,8 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
     out["scheduled"] = sched = scheduledAbove(cur, sport, top)
     say(f"  [{sport}] last id that produced results: {top:,}")
     say(f"  [{sport}] above it: {sched:,} real meets with no results yet "
-        f"(scheduled), and {misses:,} ids in a row at the top that are not "
-        f"meets at all")
+        f"(scheduled), and {misses:,} ids in a row at the top that anet says "
+        f"are not meets (queue state 4)")
 
     # ⚠ NOT askedFrontier, AND NOT THE WATERMARK EITHER. The old blind
     #   prefill queued every id to 670,000, so the asked frontier is 670,000
@@ -367,8 +382,9 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
         f"{asked if asked is None else format(asked, ',')})")
     if asked and asked > frontier + ahead:
         say(f"  [{sport}]   ids {frontier + 1:,}..{asked:,} were asked before "
-            f"and held no meet -- re-asked below, because 'not a meet' is an "
-            f"answer that expires: anet had not created them yet.")
+            f"and recorded as 'no such meet' (state 4) -- re-asked as the "
+            f"walk reaches them, because anet creates ids over time and that "
+            f"answer expires.")
 
     if do_new:
         if misses >= stop_after_misses:

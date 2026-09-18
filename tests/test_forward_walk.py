@@ -108,12 +108,28 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertGreater(int(m.group(1)), 1)
 
-    # ★ THE HALF THAT MAKES A FORWARD WALK POSSIBLE. The blind prefill asked
-    #   every id to 670,000 and marked them done; the ids just above the real
-    #   corpus said "no such meet" because anet had not created them yet.
+    # ★ scraped = 4 IS THE 404, RECORDED ALL ALONG.
+    #   launcher._processMeetResult writes status=4 for `not exists`, and its
+    #   own comment says a future pass should re-check. Nothing did, and the
+    #   first version of this walk looked only at states 1 and 2 -- which is
+    #   why it reported 0 ids above a watermark of 275,657 on a queue whose
+    #   highest id is 656,607.
+    def test_state_four_is_the_404(self):
+        launcher = _read("scripts/launcher.py")
+        call = "markScraped, meet_id, sport, status=4"
+        self.assertIn(call, launcher)
+        # and it is the branch taken when the meet does not exist
+        i = launcher.index(call)
+        self.assertIn("if not exists:", launcher[max(0, i - 400):i])
+
+    def test_the_ceiling_counts_state_four(self):
+        body = _func(self.src, "trailingMisses")
+        self.assertIn("scraped IN (1, 2, 4)", body)
+        self.assertIn("scraped != 4", body)
+
     def test_no_meet_is_an_answer_that_expires(self):
         body = _func(self.src, "seedForward")
-        self.assertIn("q.scraped = 1", body)
+        self.assertIn("q.scraped = 4", body)
         self.assertIn("NOT EXISTS", body)
 
     # ! AND ONLY THAT POPULATION. A real meet with no results is SCHEDULED,
@@ -121,7 +137,7 @@ class TheWalkStartsFromRealData(unittest.TestCase):
     #   watermark. Two passes, two populations, no overlap.
     def test_it_does_not_re_ask_scheduled_meets(self):
         body = _func(self.src, "seedForward")
-        i = body.index("q.scraped = 1")
+        i = body.index("q.scraped = 4")
         self.assertIn('SPORTS[sport]["meets"]', body)
         self.assertIn("NOT EXISTS", body[i:])
 
