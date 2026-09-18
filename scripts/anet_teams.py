@@ -558,63 +558,79 @@ def _int(v):
 # ! AN OVERRIDE IS STILL A DECISION, and a stateless row is still the
 #   deliberate any-state fallback. Neither is touched.
 def misplacedCrests(cur):
-    """[(school, state, level, anet_state)] -- stored crests that are, by
-    anet's own anet_state, some other school's.
+    """([(school, state, level, anet_state)], (n_anet_rows, n_matched)) --
+    stored crests that are, by anet's own anet_state, some other school's.
 
-    ⚠⚠ THE TWO URLS ARE NOT THE SAME STRING, and the first run of this
-       returned a clean "0" because of it (owner, 2026-09-18). anet_team.
-       mascot_url is anet's raw value -- protocol-relative, "//lh3.google
-       usercontent.com/..." -- and school_logo.source_url is what
-       mascotUrls() actually FETCHED, which adds the scheme and the "=s512"
-       googleusercontent sizing suffix. An equality join between them
-       matches nothing, ever. _URL_KEY normalises both ends.
+    ⚠⚠ THE TWO URLS ARE NOT THE SAME STRING (owner, 2026-09-18, a clean and
+       wrong "0 stored crests"). anet_team.mascot_url is anet's raw
+       protocol-relative "//lh3.googleusercontent.com/...", and
+       school_logo.source_url is what mascotUrls() FETCHED -- scheme added,
+       "=s512" appended for googleusercontent sizing. An equality join
+       between them matches nothing, ever. _URL_KEY undoes both.
+
+    ⚠⚠ AND NORMALISING BOTH SIDES MAKES THE JOIN UNINDEXABLE, which is the
+       second thing that went wrong (owner: "15 mins nothing printed"). The
+       first version wrapped both columns in regexp_replace AND put a
+       correlated NOT EXISTS over anet_team inside it, so Postgres re-scanned
+       every team, evaluating two regexes per row, once per crest row. Tens
+       of thousands squared. This is the same non-sargable mistake as the
+       course page's COALESCE join earlier the same day.
+
+    ★ SO THE KEYS ARE BUILT ONCE AND THE QUESTION IS A GROUP BY. Each side
+      is normalised in a MATERIALIZED CTE (one pass each), joined on the
+      plain text key (one hash join), and "does anet place ANY team wearing
+      this picture in this state" becomes bool_or over the group rather than
+      a subquery per row.
+
+    ! AN OVERRIDE IS A DECISION and a stateless row is the deliberate
+      any-state fallback. Neither is looked at.
     """
     if not (_tableExists(cur, "school_logo") and _tableExists(cur, "anet_team")):
-        return []
+        return [], (0, 0)
     cur.execute(f"""
-        SELECT DISTINCT l.school, l.state, COALESCE(l.level, ''),
-               upper(btrim(t.anet_state))
-        FROM   school_logo l
-        JOIN   anet_team t ON {_URL_KEY.format(c='t.mascot_url')}
-                            = {_URL_KEY.format(c='l.source_url')}
-        WHERE  l.override IS NULL
-          AND  l.kind = 'anet'
-          AND  COALESCE(btrim(l.state), '') <> ''
-          AND  COALESCE(btrim(t.anet_state), '') <> ''
-          AND  upper(btrim(t.anet_state)) <> upper(btrim(l.state))
-          -- ! AND NOBODY anet PLACES HERE OWNS IT TOO. One picture can be
-          --   several teams' mascot_url (a district mark, a campus family);
-          --   if ANY team wearing this image is one anet puts in this
-          --   state, the row is right and the disagreement is noise.
-          AND  NOT EXISTS (
-                   SELECT 1 FROM anet_team t2
-                   WHERE  {_URL_KEY.format(c='t2.mascot_url')}
-                        = {_URL_KEY.format(c='l.source_url')}
-                     AND  upper(btrim(t2.anet_state)) = upper(btrim(l.state)))
-        ORDER  BY l.school, l.state
+        WITH lk AS MATERIALIZED (
+            SELECT l.school, upper(btrim(l.state)) AS state,
+                   COALESCE(l.level, '') AS level,
+                   {_URL_KEY.format(c='l.source_url')} AS k
+            FROM   school_logo l
+            WHERE  l.kind = 'anet'
+              AND  l.override IS NULL
+              AND  COALESCE(btrim(l.source_url), '') <> ''
+              AND  COALESCE(btrim(l.state), '') <> ''
+        ), tk AS MATERIALIZED (
+            SELECT DISTINCT {_URL_KEY.format(c='t.mascot_url')} AS k,
+                   upper(btrim(t.anet_state)) AS st
+            FROM   anet_team t
+            WHERE  COALESCE(btrim(t.mascot_url), '') <> ''
+              AND  COALESCE(btrim(t.anet_state), '') <> ''
+        ), joined AS (
+            SELECT lk.school, lk.state, lk.level,
+                   -- ! ANY team anet places HERE makes the row right. One
+                   --   picture can be several teams' (a district mark, a
+                   --   campus family), and then the disagreement is noise.
+                   bool_or(tk.st = lk.state) AS owned_here,
+                   min(tk.st)                AS elsewhere
+            FROM   lk JOIN tk ON tk.k = lk.k
+            GROUP  BY 1, 2, 3
+        )
+        SELECT school, state, level, elsewhere,
+               (SELECT count(*) FROM joined) AS matched
+        FROM   joined
+        WHERE  NOT owned_here
+        ORDER  BY school, state
     """)
-    return [tuple(r) if not isinstance(r, dict) else
-            (r["school"], r["state"], r["coalesce"], r["upper"])
-            for r in cur.fetchall()]
-
-
-# ★ AND A ZERO HAS TO BE TELLABLE FROM A BROKEN JOIN, which is the whole
-#   reason the first version looked fine. This is printed beside the count.
-def crestJoinReach(cur):
-    """(rows_with_an_anet_source, of_those_matched_to_a_team)."""
-    if not (_tableExists(cur, "school_logo") and _tableExists(cur, "anet_team")):
-        return (0, 0)
-    cur.execute(f"""
-        SELECT count(*),
-               count(*) FILTER (WHERE EXISTS (
-                   SELECT 1 FROM anet_team t
-                   WHERE {_URL_KEY.format(c='t.mascot_url')}
-                       = {_URL_KEY.format(c='l.source_url')}))
-        FROM   school_logo l
-        WHERE  l.kind = 'anet' AND COALESCE(l.source_url, '') <> ''
+    rows = [tuple(r) for r in cur.fetchall()]
+    # ! THE DENOMINATOR IS COUNTED SEPARATELY, because "0 of 0" reads as
+    #   good news and a broken join gives exactly that.
+    cur.execute("""
+        SELECT count(*) FROM school_logo
+        WHERE  kind = 'anet' AND override IS NULL
+          AND  COALESCE(btrim(source_url), '') <> ''
+          AND  COALESCE(btrim(state), '') <> ''
     """)
-    row = cur.fetchone()
-    return (row[0], row[1]) if row else (0, 0)
+    have = cur.fetchone()[0]
+    matched = rows[0][4] if rows else None
+    return [(r[0], r[1], r[2], r[3]) for r in rows], (have, matched)
 
 
 def unfileMisplaced(cur, rows):
@@ -622,10 +638,12 @@ def unfileMisplaced(cur, rows):
     n = 0
     for school, state, level, _anet_state in rows:
         cur.execute("""DELETE FROM school_logo
-                       WHERE school = %s AND state = %s AND level = %s""",
+                       WHERE school = %s AND upper(btrim(state)) = %s
+                         AND COALESCE(level, '') = %s""",
                     (school, state, level or ""))
         n += cur.rowcount
     return n
+
 
 
 def main():
@@ -708,15 +726,18 @@ def main():
         from database import getConn
         with getConn() as conn:
             with conn.cursor() as cur:
-                bad = misplacedCrests(cur)
-                have, matched = crestJoinReach(cur)
-                print(f"  {matched:,} of {have:,} anet crest rows match a "
-                      f"team by image; {len(bad):,} of those belong to a "
-                      f"team anet places in another state")
-                if have and not matched:
+                bad, (have, matched) = misplacedCrests(cur)
+                print(f"  {have:,} anet crest rows carry a state and a source")
+                # ★ A ZERO MUST BE TELLABLE FROM A BROKEN JOIN. That is
+                #   exactly what made the equality-join version look fine.
+                if have and matched is None and not bad:
                     raise SystemExit(
-                        "  no row matched ANY team -- the join is broken, "
-                        "not the data. Nothing written.")
+                        "  no crest row matched ANY anet team by image -- "
+                        "the join is broken, not the data. Nothing written.")
+                if matched is not None:
+                    print(f"  {matched:,} of them match a team by image")
+                print(f"  {len(bad):,} wear a picture anet places only in "
+                      f"another state")
                 for school, state, level, anet_state in bad[:40]:
                     print(f"    {school} ({state}) level={level or '-'} "
                           f"-- anet puts that picture's team in {anet_state}")

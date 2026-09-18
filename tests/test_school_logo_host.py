@@ -428,6 +428,15 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
                      encoding="utf-8") as fh:
             return fh.read()
 
+    def _sql(self):
+        """The query text only. ⚠ NOT the docstring: asserting on prose is
+        how a test about a JOIN failed on the word "NOT EXISTS" in a comment
+        explaining why the JOIN replaced one."""
+        src = self._src()
+        body = src[src.index("def misplacedCrests(cur):"):]
+        body = body[:body.index("\ndef unfileMisplaced")]
+        return body[body.index("cur.execute(f"):]
+
     def test_it_exists_and_is_wired(self):
         src = self._src()
         self.assertIn("def misplacedCrests(cur):", src)
@@ -444,12 +453,13 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
     #    is what mascotUrls() fetched -- scheme added, "=s512" appended.
     def test_it_matches_the_row_to_the_team_by_the_image_it_fetched(self):
         src = self._src()
-        body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef crestJoinReach")]
+        body = self._sql()
         self.assertIn("_URL_KEY.format(c='t.mascot_url')", body)
         self.assertIn("_URL_KEY.format(c='l.source_url')", body)
         self.assertNotIn("t.mascot_url = l.source_url", body)
-        self.assertIn("upper(btrim(t.anet_state)) <> upper(btrim(l.state))", body)
+        # the state comparison, now expressed as the group's own question
+        self.assertIn("bool_or(tk.st = lk.state)", body)
+        self.assertIn("WHERE  NOT owned_here", body)
 
     def test_the_normaliser_undoes_both_differences(self):
         src = self._src()
@@ -462,33 +472,41 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
     #   first version look like good news.
     def test_it_reports_join_reach_and_refuses_a_total_miss(self):
         src = self._src()
-        self.assertIn("def crestJoinReach(cur):", src)
         i = src.index("if args.unfile_misplaced:")
-        block = src[i:i + 1800]
-        self.assertIn("crestJoinReach(cur)", block)
-        self.assertIn("if have and not matched:", block)
+        block = src[i:src.index("season = args.season", i)]
+        self.assertIn("bad, (have, matched) = misplacedCrests(cur)", block)
+        self.assertIn("if have and matched is None and not bad:", block)
         self.assertIn("the join is broken", block)
+
+    # ⚠⚠ AND NORMALISING BOTH SIDES KILLS EVERY INDEX (owner: "15 mins
+    #    nothing printed"). A correlated NOT EXISTS over anet_team with a
+    #    regex on both columns re-scans every team per crest row. The keys
+    #    are built once and the question is a GROUP BY.
+    def test_the_join_is_one_pass_not_a_subquery_per_row(self):
+        src = self._src()
+        body = self._sql()
+        self.assertIn("MATERIALIZED", body)
+        self.assertIn("JOIN tk ON tk.k = lk.k", body)
+        self.assertNotIn("NOT EXISTS", body)
 
     # ⚠ ONE PICTURE CAN BE SEVERAL TEAMS'. If any team wearing it is one
     #   anet puts in this state, the row is right.
     def test_a_shared_image_owned_here_too_is_left_alone(self):
         src = self._src()
-        body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef crestJoinReach")]
-        self.assertIn("NOT EXISTS", body)
-        self.assertIn("_URL_KEY.format(c='t2.mascot_url')", body)
+        body = self._sql()
+        self.assertIn("bool_or(tk.st = lk.state)", body)
+        self.assertIn("WHERE  NOT owned_here", body)
 
     def test_it_never_touches_an_override_or_a_stateless_row(self):
         src = self._src()
-        body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef crestJoinReach")]
+        body = self._sql()
         self.assertIn("l.override IS NULL", body)
         self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
 
     def test_it_needs_write_to_delete(self):
         src = self._src()
         i = src.index("if args.unfile_misplaced:")
-        block = src[i:i + 1400]
+        block = src[i:src.index("season = args.season", i)]
         self.assertIn("DRY RUN", block)
         self.assertIn("if args.write and bad:", block)
 
