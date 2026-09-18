@@ -78,6 +78,10 @@ def main():
                     help="narrow by default: the first run over "
                          "2015+ filled the server's temp space")
     ap.add_argument("--min-each", type=int, default=MIN_EACH)
+    ap.add_argument("--athletes", action="store_true",
+                    help="also run the within-athlete-year check. It scans "
+                         "result rows and is the slow confirmation; section 1 "
+                         "reads the published difficulty and is the answer.")
     args = ap.parse_args()
 
     from database import getConn
@@ -90,93 +94,156 @@ def main():
             if not _hasCol(cur, "meets_tf", "is_indoor"):
                 raise SystemExit("meets_tf.is_indoor does not exist here")
 
-            print(f"\n=== 1. the same athlete, the same year, both surfaces "
-                  f"(from {args.since}) ===", flush=True)
-            # ★ PASS 1: counts only. No sort, no spill -- this is what makes
-            #   the whole thing affordable.
-            print("    pass 1: which athlete-years have both surfaces...",
-                  flush=True)
+            # ★★ THE CHEAP, DIRECT ANSWER, and the one this should have started
+            #    with (owner, 2026-09-18: "idk what ur doing for that query but
+            #    its def awful it should not be this hard"). Correct: the owner
+            #    said indoor is wrong DIFFICULTY-wise, and the difficulty per
+            #    cell is written down -- course_difficulties, 74k rows. The
+            #    first version scanned 192M result rows to infer a number the
+            #    engine already publishes, and filled the disk doing it.
+            #
+            # ! THE SURFACE IS IN THE CELL KEY. bracket_engine.priorGroupOfKeys
+            #   reads it as: starts with "TF:", and the part before "@" ends
+            #   with ":in" for indoor. So that is how it is asked here, rather
+            #   than by guessing a prefix.
+            print(f"\n=== 1. the difficulty the engine PUBLISHED, per surface "
+                  f"===", flush=True)
             cur.execute("""
-                CREATE TEMP TABLE _ind_both ON COMMIT DROP AS
-                SELECT r.person_id, substr(r.date, 1, 4)::int AS season
-                FROM   results_tf r
-                JOIN   meets_tf m ON m.div_id = r.div_id
-                                 AND m.source = r.source
-                WHERE  r.speed_rating IS NOT NULL
-                  AND  r.person_id IS NOT NULL
-                  AND  r.date ~ '^(19|20)[0-9][0-9]-'
-                  AND  substr(r.date, 1, 4)::int >= %(since)s
-                GROUP  BY 1, 2
-                HAVING count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
-                           >= %(each)s
-                   AND count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
-                           >= %(each)s
-            """, {"since": args.since, "each": args.min_each})
-            cur.execute("CREATE INDEX ON _ind_both (person_id, season)")
-            cur.execute("SELECT count(*) FROM _ind_both")
-            n_both = cur.fetchone()[0]
-            print(f"    athlete-years with >= {args.min_each} races on each "
-                  f"surface: {n_both:,}")
-            if not n_both:
-                print("    -> nothing to compare. Widen --since or lower "
-                      "--min-each.")
-                conn.rollback()
-                return
+                SELECT CASE WHEN split_part(course_name, '@', 1) LIKE '%%:in'
+                            THEN 'indoor' ELSE 'outdoor' END AS surface,
+                       count(*),
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY difficulty),
+                       avg(difficulty),
+                       percentile_cont(0.25) WITHIN GROUP (ORDER BY difficulty),
+                       percentile_cont(0.75) WITHIN GROUP (ORDER BY difficulty)
+                FROM   course_difficulties
+                WHERE  course_name LIKE 'TF:%%'
+                  AND  difficulty IS NOT NULL AND difficulty > -0.9
+                GROUP  BY 1 ORDER BY 1
+            """)
+            got = {r[0]: r[1:] for r in cur.fetchall()}
+            print(f"    {'surface':<9} {'cells':>8} {'median':>9} {'mean':>9} "
+                  f"{'p25':>9} {'p75':>9}")
+            for surface in ("indoor", "outdoor"):
+                if surface not in got:
+                    print(f"    {surface:<9} {'--':>8}")
+                    continue
+                n, med, mean, q1, q3 = got[surface]
+                print(f"    {surface:<9} {n:>8,} {med:>9.4f} {mean:>9.4f} "
+                      f"{q1:>9.4f} {q3:>9.4f}")
+            if "indoor" in got and "outdoor" in got:
+                gap = float(got["indoor"][1]) - float(got["outdoor"][1])
+                print(f"\n    indoor median MINUS outdoor median: {gap:+.4f}")
+                # ★ SIGN AND SIZE, IN WORDS. difficulty is a fraction, so this
+                #   reads directly as a percentage.
+                if gap < -0.005:
+                    print(f"    -> INDOOR IS PUBLISHED AS {abs(gap) * 100:.1f}% "
+                          f"EASIER than outdoor. That is the owner's claim,\n"
+                          f"       measured. bracket_engine pins the mean of D "
+                          f"per (sport, era) with\n"
+                          f"       sport as ONE BIT, so indoor and outdoor are "
+                          f"anchored together and the\n"
+                          f"       split between them is free -- nothing "
+                          f"asserts an indoor level.")
+                elif gap > 0.005:
+                    print(f"    -> indoor is published as "
+                          f"{gap * 100:.1f}% HARDER, which is the expected "
+                          f"direction.")
+                else:
+                    print(f"    -> no material difference at this scale.")
 
-            # ★ PASS 2: medians for that small set only.
-            print("    pass 2: the indoor-minus-outdoor gap for those...",
-                  flush=True)
-            cur.execute("""
-                WITH per AS (
-                    SELECT b.person_id, b.season,
-                           percentile_cont(0.5) WITHIN GROUP
-                               (ORDER BY r.speed_rating::double precision)
-                               FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
-                               AS med_in,
-                           percentile_cont(0.5) WITHIN GROUP
-                               (ORDER BY r.speed_rating::double precision)
-                               FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
-                               AS med_out
-                    FROM   _ind_both b
-                    JOIN   results_tf r
-                           ON r.person_id = b.person_id
-                          AND substr(r.date, 1, 4)::int = b.season
+            if not args.athletes:
+                print(f"\n    (--athletes adds the within-athlete check, which "
+                      f"scans result rows;\n     it is the slower confirmation, "
+                      f"not the measurement.)")
+
+            if args.athletes:
+                print(f"\n=== 1b. the same athlete, the same year, both surfaces "
+                      f"(from {args.since}) ===", flush=True)
+                # ★ PASS 1: counts only. No sort, no spill -- this is what makes
+                #   the whole thing affordable.
+                print("    pass 1: which athlete-years have both surfaces...",
+                      flush=True)
+                cur.execute("""
+                    CREATE TEMP TABLE _ind_both ON COMMIT DROP AS
+                    SELECT r.person_id, substr(r.date, 1, 4)::int AS season
+                    FROM   results_tf r
                     JOIN   meets_tf m ON m.div_id = r.div_id
                                      AND m.source = r.source
                     WHERE  r.speed_rating IS NOT NULL
+                      AND  r.person_id IS NOT NULL
+                      AND  r.date ~ '^(19|20)[0-9][0-9]-'
+                      AND  substr(r.date, 1, 4)::int >= %(since)s
                     GROUP  BY 1, 2
-                )
-                SELECT count(*),
-                       percentile_cont(0.5) WITHIN GROUP
-                           (ORDER BY med_in - med_out),
-                       avg(med_in - med_out),
-                       percentile_cont(0.25) WITHIN GROUP
-                           (ORDER BY med_in - med_out),
-                       percentile_cont(0.75) WITHIN GROUP
-                           (ORDER BY med_in - med_out)
-                FROM   per WHERE med_in IS NOT NULL AND med_out IS NOT NULL
-            """)
-            n, med, mean, q1, q3 = cur.fetchone()
-            if n:
-                print(f"    indoor rating MINUS outdoor rating, same person, "
-                      f"same year  (n = {n:,}):")
-                print(f"      median {med:+.3f}   mean {mean:+.3f}   "
-                      f"IQR {q1:+.3f} .. {q3:+.3f}")
-                # ★ SAY WHICH WAY IS WRONG, in the output.
-                if med is not None and med > 0.3:
-                    print(f"      -> INDOOR IS RATED TOO GENEROUSLY by about "
-                          f"{med:+.2f} rating points.\n"
-                          f"         The surface is being treated as easier "
-                          f"than it is, so the\n"
-                          f"         rating gives back more than it took. "
-                          f"This is the owner's claim,\n"
-                          f"         and bracket_engine has no asserted indoor "
-                          f"level to stop it.")
-                elif med is not None and med < -0.3:
-                    print(f"      -> indoor is rated too HARSHLY by "
-                          f"{med:+.2f} points.")
-                else:
-                    print(f"      -> no systematic surface bias at this scale.")
+                    HAVING count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
+                               >= %(each)s
+                       AND count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
+                               >= %(each)s
+                """, {"since": args.since, "each": args.min_each})
+                cur.execute("CREATE INDEX ON _ind_both (person_id, season)")
+                cur.execute("SELECT count(*) FROM _ind_both")
+                n_both = cur.fetchone()[0]
+                print(f"    athlete-years with >= {args.min_each} races on each "
+                      f"surface: {n_both:,}")
+                if not n_both:
+                    print("    -> nothing to compare. Widen --since or lower "
+                          "--min-each.")
+                    n_both = 0
+
+                # ★ PASS 2: medians for that small set only.
+                print("    pass 2: the indoor-minus-outdoor gap for those...",
+                      flush=True)
+                cur.execute("""
+                    WITH per AS (
+                        SELECT b.person_id, b.season,
+                               percentile_cont(0.5) WITHIN GROUP
+                                   (ORDER BY r.speed_rating::double precision)
+                                   FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
+                                   AS med_in,
+                               percentile_cont(0.5) WITHIN GROUP
+                                   (ORDER BY r.speed_rating::double precision)
+                                   FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
+                                   AS med_out
+                        FROM   _ind_both b
+                        JOIN   results_tf r
+                               ON r.person_id = b.person_id
+                              AND substr(r.date, 1, 4)::int = b.season
+                        JOIN   meets_tf m ON m.div_id = r.div_id
+                                         AND m.source = r.source
+                        WHERE  r.speed_rating IS NOT NULL
+                        GROUP  BY 1, 2
+                    )
+                    SELECT count(*),
+                           percentile_cont(0.5) WITHIN GROUP
+                               (ORDER BY med_in - med_out),
+                           avg(med_in - med_out),
+                           percentile_cont(0.25) WITHIN GROUP
+                               (ORDER BY med_in - med_out),
+                           percentile_cont(0.75) WITHIN GROUP
+                               (ORDER BY med_in - med_out)
+                    FROM   per WHERE med_in IS NOT NULL AND med_out IS NOT NULL
+                """)
+                n, med, mean, q1, q3 = cur.fetchone()
+                if n:
+                    print(f"    indoor rating MINUS outdoor rating, same person, "
+                          f"same year  (n = {n:,}):")
+                    print(f"      median {med:+.3f}   mean {mean:+.3f}   "
+                          f"IQR {q1:+.3f} .. {q3:+.3f}")
+                    # ★ SAY WHICH WAY IS WRONG, in the output.
+                    if med is not None and med > 0.3:
+                        print(f"      -> INDOOR IS RATED TOO GENEROUSLY by about "
+                              f"{med:+.2f} rating points.\n"
+                              f"         The surface is being treated as easier "
+                              f"than it is, so the\n"
+                              f"         rating gives back more than it took. "
+                              f"This is the owner's claim,\n"
+                              f"         and bracket_engine has no asserted indoor "
+                              f"level to stop it.")
+                    elif med is not None and med < -0.3:
+                        print(f"      -> indoor is rated too HARSHLY by "
+                              f"{med:+.2f} points.")
+                    else:
+                        print(f"      -> no systematic surface bias at this scale.")
 
             print(f"\n=== 2. raw per-surface medians (context only) ===")
             cur.execute("""

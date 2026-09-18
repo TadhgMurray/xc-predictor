@@ -77,11 +77,40 @@ class EveryHeavyDiagnosticUsesIt(unittest.TestCase):
             self.assertIn("guard(cur)", src[i:i + 500], rel)
 
 
-class TheIndoorQueryNoLongerSpills(unittest.TestCase):
-    """The fix was not only the guard: the query itself asked for
-    percentile_cont per (person, season) over 192M rows, which sorts into ~10M
-    groups. Now it counts first (hash aggregate, no sort) and takes medians
-    only for the small set that has both surfaces."""
+# ⚠⚠ AND THE REAL FIX WAS NOT A FASTER QUERY, IT WAS THE RIGHT ONE (owner,
+#    2026-09-18: "idk what ur doing for that query but its def awful it should
+#    not be this hard"). Correct. The claim was about DIFFICULTY, and the
+#    difficulty per cell is published in course_difficulties -- 74k rows, with
+#    the surface in the cell key. Scanning 192M result rows to infer it was the
+#    mistake; making that scan cheaper was treating the symptom.
+class TheAnswerComesFromThePublishedDifficulty(unittest.TestCase):
+
+    def setUp(self):
+        self.src = read("scripts/diag_indoor_level.py")
+
+    def test_section_one_reads_course_difficulties_not_result_rows(self):
+        i = self.src.index("=== 1. the difficulty the engine PUBLISHED")
+        block = self.src[i:self.src.index("if args.athletes:", i)]
+        self.assertIn("FROM   course_difficulties", block)
+        self.assertNotIn("results_tf", block)
+
+    # ! THE SURFACE IS IN THE CELL KEY, read the way bracket_engine reads it:
+    #   starts with "TF:", and the part before "@" ends with ":in".
+    def test_it_reads_the_surface_the_way_the_engine_does(self):
+        self.assertIn("split_part(course_name, '@', 1) LIKE '%%:in'", self.src)
+        self.assertIn("course_name LIKE 'TF:%%'", self.src)
+
+    def test_the_expensive_scan_is_opt_in(self):
+        self.assertIn('ap.add_argument("--athletes"', self.src)
+        self.assertLess(self.src.index("=== 1. the difficulty the engine"),
+                        self.src.index("if args.athletes:"))
+
+
+class TheIndoorScanNoLongerSpills(unittest.TestCase):
+    """When it IS asked for, --athletes must not spill either: the first
+    version asked percentile_cont per (person, season) over 192M rows, sorting
+    into ~10M groups. It counts first (hash aggregate, no sort) and takes
+    medians only for the small set that has both surfaces."""
 
     def setUp(self):
         self.src = read("scripts/diag_indoor_level.py")
