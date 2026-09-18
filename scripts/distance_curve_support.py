@@ -208,7 +208,16 @@ def main():
         pool = key.split("|")[0]
         tgt = targets.get(pool)
         lo, hi = span
-        in_span = (lo is not None and tgt is not None and lo <= tgt <= hi)
+        # ! A TARGET EXACTLY AT THE EDGE IS INSIDE (2026-09-18). The span is
+        #   stored as a float from exp(log(d)), so a 5,000m target against a
+        #   5,000m span boundary compares as 5000.0 > 4999.9996 and was
+        #   reported as extrapolated. Three of the nine "NO"s in the first real
+        #   run were that -- college_f|XC, hs_f|XC and hs_m|XC all have their
+        #   target ON the boundary. A metre of tolerance, which is far below
+        #   any real distance difference.
+        EDGE_M = 1.0
+        in_span = (lo is not None and tgt is not None
+                   and (lo - EDGE_M) <= tgt <= (hi + EDGE_M))
         exp_t = localExponent(e, tgt) if tgt else None
         span_s = (f"{lo:,.0f}..{hi:,.0f}" if lo is not None else "?")
         print(f"  {key:<22} {span_s:>17} "
@@ -231,6 +240,42 @@ def main():
                   f"target {tgt:,.0f} m" if tgt else f"      {key}")
     else:
         print(f"\n  every pool's target is inside its own support.")
+
+    # ★★ AFTER A RE-FIT, THE FLOOR IS THE THING TO WATCH. MIN_LOCAL_EXP can
+    #    make every end segment legal while the PAIRS still say otherwise: a
+    #    curve pinned at the floor across most of its range is the floor
+    #    talking, not the data. Measured on the 2026-09-18 re-fit:
+    #    college_f|XC came back flat at 1.040 over 38 segments after two
+    #    stability demotions to degree 1 -- a straight line at the floor is not
+    #    a measurement.
+    floor_reach = []
+    for key in sorted(pools):
+        e = pools[key] or {}
+        kk, vv = e.get("knots") or [], e.get("values") or []
+        fl = e.get("min_local_exp")
+        if len(kk) < 2 or not fl:
+            continue
+        segs = [(vv[i + 1] - vv[i]) / (kk[i + 1] - kk[i])
+                for i in range(len(kk) - 1)]
+        at = sum(1 for x in segs if abs(x - fl) < 1e-6)
+        if at:
+            floor_reach.append((key, at, len(segs), fl))
+    if floor_reach:
+        print(f"\n  === how much of each curve is the FLOOR rather than the "
+              f"data ===")
+        print(f"  {'pool|sport':<22} {'at floor':>9} {'segments':>9} "
+              f"{'share':>7}  floor")
+        for key, at, n, fl in sorted(floor_reach, key=lambda r: -r[1] / r[2]):
+            share = 100.0 * at / n
+            note = ("   <-- the curve IS the floor; the pairs still say "
+                    "pace improves with distance" if share > 60 else "")
+            print(f"  {key:<22} {at:>9} {n:>9} {share:>6.0f}%  "
+                  f"{fl:.3f}{note}")
+        print(f"    ! the floor makes a curve LEGAL, not RIGHT. A pool mostly "
+              f"at the floor means the\n      underlying pairs are still "
+              f"confounded -- for XC that is the course and the\n      calendar "
+              f"(a November championship 10k against an October 8k), which a\n"
+              f"      same-athlete pair does not cancel.")
 
     bad = [(k, localExponent(pools[k], (pools[k].get('span') or (0, 0))[1]))
            for k in sorted(pools)]
