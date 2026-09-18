@@ -1568,6 +1568,20 @@ def staleRows(cur):
       cluster that comes back under an old state inherits a crest nobody
       re-checked.
 
+    ⚠⚠ "NOT A CLUSTER" IS NOT "NOT IN THE TABLE", and the first dry run
+       proved it (owner, 2026-09-18): 12,268 rows, nearly all of them club
+       teams -- 3DElite (CA), 210 Speed Elite (TX), 16Ways Track Club (IA).
+       Their crests are FINE. build_school_identity only clusters athletes
+       whose state it could resolve (its WHERE ... IS NOT NULL), so a name
+       it can place nowhere gets no row in school_identity AT ALL, and a
+       bare NOT EXISTS reads that absence as a rebuild having moved the
+       name. It moved nothing; it never held it.
+
+    ★ SO THE SCHOOL MUST STILL HAVE A CLUSTER SOMEWHERE. That is the
+      Penn State shape exactly -- clusters exist, this state is not one of
+      them -- and it is the only shape that is evidence of a rebuild. A
+      name school_identity has never heard of is out of scope here.
+
     ! NEVER A ROW A HUMAN SET. An override is a decision, and a rebuild is
       not allowed to discard it.
     """
@@ -1578,6 +1592,8 @@ def staleRows(cur):
         FROM   school_logo l
         WHERE  COALESCE(btrim(l.state), '') <> ''
           AND  l.override IS NULL
+          AND  EXISTS (SELECT 1 FROM school_identity si
+                       WHERE si.school = l.school)
           AND  NOT EXISTS (SELECT 1 FROM school_identity si
                            WHERE si.school = l.school AND si.state = l.state)
         ORDER  BY l.school, l.state

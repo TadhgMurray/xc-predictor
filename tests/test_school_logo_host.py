@@ -407,6 +407,26 @@ class AnIdentityRebuildLeavesRowsBehind(unittest.TestCase):
         body = src[i:src.index("\ndef ", i + 10)]
         self.assertIn("l.override IS NULL", body)
 
+    # ⚠⚠ A CLUB IS NOT A STALE ROW. build_school_identity clusters only
+    #    athletes whose state it could resolve, so a name it can place
+    #    nowhere -- every club team -- has NO row in school_identity at
+    #    all. A bare NOT EXISTS read that absence as a rebuild and proposed
+    #    deleting 12,268 perfectly good crests (owner, 2026-09-18). The
+    #    school has to still have a cluster SOMEWHERE for its missing state
+    #    to be evidence of anything.
+    def test_a_school_with_no_clusters_at_all_is_not_stale(self):
+        src = self._src()
+        i = src.index("def staleRows(")
+        body = src[i:src.index("\ndef ", i + 10)]
+        sql = body[body.index("SELECT l.school"):]
+        self.assertIn("EXISTS (SELECT 1 FROM school_identity si\n"
+                      "                       WHERE si.school = l.school)",
+                      sql)
+        # ... and it is a bare school test, not one that also pins the state
+        # (that is the OTHER clause -- the two together are the Penn State
+        # shape: clusters exist, this state is not among them).
+        self.assertIn("si.school = l.school AND si.state = l.state", sql)
+
     def test_a_stateless_row_is_not_called_stale(self):
         """level-less, state-less rows are the deliberate any-state fallback."""
         src = self._src()
