@@ -69,3 +69,31 @@ def test_a_nameless_id_keeps_its_id_and_an_idless_row_gets_a_name():
     assert "ELSE NULL" in q                       # neither: still no venue
     # indoor and outdoor are never one cell, on either branch
     assert q.count("THEN ':in' ELSE ':out' END") == 2
+
+
+# ⚠ THESE ARE PYTEST-STYLE BARE FUNCTIONS, and for that reason they ran NOWHERE
+#   when the file was executed directly: `python tests/test_tf_venue_name.py`
+#   did nothing and `python -m unittest` collected nothing, so five venue-name
+#   assertions were silently dormant (found 2026-09-18, while answering "did we
+#   ever fix the scraper not getting venue name").
+#
+# ! SO IT RUNS BOTH WAYS. pytest still collects the functions; run directly,
+#   this calls every test_* in the module and reports the failures itself.
+#   Converting them to unittest would work too, and would also rewrite five
+#   working tests for no gain.
+if __name__ == "__main__":
+    import sys as _sys
+
+    _fns = [(n, o) for n, o in sorted(globals().items())
+            if n.startswith("test_") and callable(o)]
+    _bad = []
+    for _name, _fn in _fns:
+        try:
+            _fn()
+            print(f"ok   {_name}")
+        except Exception as _exc:                      # noqa: BLE001
+            _bad.append((_name, _exc))
+            print(f"FAIL {_name}: {type(_exc).__name__}: {_exc}")
+    print(f"\nRan {len(_fns)} tests" + (f", {len(_bad)} failed" if _bad
+                                        else " -- OK"))
+    _sys.exit(1 if _bad else 0)

@@ -142,7 +142,12 @@ class ItCanBeWatchedAndItCanBeKilled(unittest.TestCase):
                          self.body.split("CREATE TEMP TABLE vn_loc")[0])
 
     def test_every_pass_only_fills_nulls_so_a_rerun_resumes(self):
-        self.assertEqual(self.body.count("t.venue_name IS NULL"), 3)
+        # ! COUNT THE SQL, NOT THE PROSE (2026-09-18). The function's
+        #   docstring now states the rule -- "ALL THREE ONLY FILL NULLS
+        #   (`AND t.venue_name IS NULL`)" -- which is itself an occurrence, so
+        #   counting the whole body made this fail on its own documentation.
+        sql = self.body.split('"""', 2)[2]
+        self.assertEqual(sql.count("t.venue_name IS NULL"), 3)
 
 
 if __name__ == "__main__":

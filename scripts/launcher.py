@@ -1542,6 +1542,41 @@ def _prepareQueue():
                                       for k, v in sorted(due.items())))
 
 
+
+# ★★ THE VENUE NAMES, AT THE END OF EVERY SCRAPE (owner, 2026-09-18: "did we
+#    ever fix the scraper not getting venue name (also when it does get the
+#    venue name does it update it for everything there)").
+#
+#    The scraper DOES capture it -- saveMeetTFMeta writes venue_name into
+#    meets_tf_meta. But meets_tf, which is what the engine labels courses with,
+#    is only filled by database.backfillMeetsTFVenueNames, and that was called
+#    by exactly one MANUAL script. So every scrape left the names sitting in
+#    meets_tf_meta and the engine went on printing a location id as a venue --
+#    the same "written, wired to nothing" failure that function's own comment
+#    records about itself.
+#
+# ! PASS 1 ONLY, and that is the point. Pass 1 joins each meet to its OWN
+#   meets_tf_meta row, which is exactly where a just-scraped meet's name is: a
+#   keyed, chunked, cheap join. Passes 2 and 3 aggregate all of meets_tf to
+#   spread a name across a location or a coordinate pair, which is a real job
+#   and stays an occasional one (scripts/backfill_tf_venues.py).
+def _fillVenueNames(label="[venues]"):
+    """Fill meets_tf.venue_name from each meet's own meta row. Never fatal: a
+    scrape that worked must not be reported as failed because a tidy-up did
+    not."""
+    try:
+        from database import getConn, backfillMeetsTFVenueNames
+        with getConn() as conn:
+            got = backfillMeetsTFVenueNames(conn, verbose=False, passes=(1,))
+            print(f"{label} meets_tf.venue_name filled from each meet's own "
+                  f"meta row: {got[0]:,}", flush=True)
+            print(f"{label} to spread a name across a whole location or "
+                  f"coordinate, run scripts/backfill_tf_venues.py", flush=True)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"{label} venue-name fill skipped ({type(exc).__name__}: {exc})",
+              flush=True)
+
+
 async def main():
  
     # Pool must be initialized before any session touches the DB.
@@ -1598,6 +1633,9 @@ async def main():
             ))
         summaries = await asyncio.gather(*tasks, return_exceptions=True)
  
+    # ! AFTER THE SESSIONS, BEFORE THE SUMMARY, so the count is
+    #   reported in the same breath as the scrape's own numbers.
+    _fillVenueNames()
     _printSummary(summaries)
     countRows()
  

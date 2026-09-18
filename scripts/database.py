@@ -1456,10 +1456,34 @@ def meetUrlTF(meet_info):
 #
 # ! AND ONLY EVER INTO A NULL. Nothing here overwrites a name a meet stated
 #   for itself -- the meet knows its own venue better than its neighbours do.
-def backfillMeetsTFVenueNames(conn, verbose=True, chunk=100000):
+def backfillMeetsTFVenueNames(conn, verbose=True, chunk=100000, passes=(1, 2, 3)):
     """Fill meets_tf.venue_name where it is missing: from the meet's own meta
     row, then from other meets at the same location. Returns (from_meta,
-    from_location, from_gps)."""
+    from_location, from_gps).
+
+    ★ passes= EXISTS SO A SCRAPE CAN RUN THE CHEAP HALF (owner, 2026-09-18:
+      "did we ever fix the scraper not getting venue name (also when it does
+      get the venue name does it update it for everything there)").
+
+      The answer to the first half was "the scraper captures it, into
+      meets_tf_meta -- but meets_tf, which the engine labels courses with, is
+      only filled by THIS function, and this function was called by one manual
+      script." So a fresh scrape put the name in meets_tf_meta and left
+      meets_tf NULL until somebody remembered.
+
+      PASS 1 is the one a scrape needs: it joins each meet to its OWN
+      meets_tf_meta row, which is exactly where a just-scraped meet's name is.
+      It is a keyed join, cheap, and chunked.
+
+      PASSES 2 AND 3 are the expensive ones -- they aggregate all of meets_tf
+      into a temp table of named locations and named coordinates -- and they
+      answer the second half of the question: yes, a venue named once names
+      every meet at that location_id (pass 2) or at those coordinates (pass 3).
+      Those stay a deliberate, occasional job.
+
+    ⚠ ALL THREE ONLY FILL NULLS (`AND t.venue_name IS NULL`). None of them ever
+      corrects a name that is already there, right or wrong.
+    """
     cursor = conn.cursor()
 
     import time as _t
@@ -1513,19 +1537,28 @@ def backfillMeetsTFVenueNames(conn, verbose=True, chunk=100000):
         print(f"  meets_tf meet_id {lo_id:,}..{hi_id:,} in {n_chunks:,} "
               f"blocks of {chunk:,}", flush=True)
         print("  pass 1/3: the meet's own meets_tf_meta row...", flush=True)
-    from_meta = _run("pass 1", """
-        UPDATE meets_tf t SET venue_name = m.venue_name
-        FROM   meets_tf_meta m
-        WHERE  m.meet_id = t.meet_id
-          AND  t.venue_name IS NULL
-          AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
-          AND  t.meet_id >= %s AND t.meet_id < %s
-    """)
+    from_meta = 0
+    if 1 in passes:
+        from_meta = _run("pass 1", """
+            UPDATE meets_tf t SET venue_name = m.venue_name
+            FROM   meets_tf_meta m
+            WHERE  m.meet_id = t.meet_id
+              AND  t.venue_name IS NULL
+              AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
+              AND  t.meet_id >= %s AND t.meet_id < %s
+        """)
 
     # ★ THE SOURCE IS BUILT ONCE, NOT PER CHUNK. The aggregate below scans
     #   all of meets_tf; running it inside each chunk's UPDATE would turn
     #   one full scan into one per block. Materialised and indexed, then
     #   joined -- which is also why this is a temp table and not a CTE.
+    from_location = from_gps = 0
+    if 2 not in passes and 3 not in passes:
+        conn.commit()
+        if verbose:
+            print(f"  meets_tf venue names: {from_meta:,} from the meet's own "
+                  f"meta row (passes 2-3 skipped)", flush=True)
+        return from_meta, from_location, from_gps
     if verbose:
         print("  pass 2/3: another meet at the same location_id...",
               flush=True)
