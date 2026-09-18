@@ -110,10 +110,47 @@ def _printQueueDue():
         if state == 0:
             due += n
         print(f"[queue]   {sport}  {names.get(state, state):<12} {n:,}")
+    return due
+
+
+def _prepareQueue():
+    """Report the queue, seed it if it has nothing to do, report again.
+
+    ★ THE LAUNCHER OWNS THIS (owner, 2026-09-18: "do I need to manually run
+      prefill for tfrrs or can I just run the launch_tfrrs"). Just run the
+      launcher. TFRRS_NO_SEED=1 drains the queue exactly as it stands.
+
+    ! THE SEED IS IDEMPOTENT AND ITS CEILING COMES FROM THE DATA. A fixed
+      100,000 stopped covering new meets the moment TFRRS passed it, and tfrrs
+      ids are already near 96,000 -- so re-running the prefill added nothing
+      and the queue stayed empty. prefill.ceilingFor() reads the highest id
+      anything has ever seen and seeds past it.
+    """
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "sweep"))
+    import prefill_tfrrs_queue as prefill
+
+    due = _printQueueDue()
+    if due:
+        print(f"[queue] {due:,} due", flush=True)
+        return
+
+    if os.environ.get("TFRRS_NO_SEED", "") not in ("", "0", "false"):
+        print("[queue] ⚠ nothing due and TFRRS_NO_SEED=1 -- nothing to do.")
+        sys.exit(1)
+
+    print("[queue] nothing due -- seeding", flush=True)
+    with getConn() as conn:
+        ceiling = prefill.seed(conn)
+    print(f"[queue] seeded through {ceiling:,}", flush=True)
+
+    due = _printQueueDue()
     if not due:
-        print("[queue] ⚠ NOTHING IS DUE (no rows at scraped=0). The sessions "
-              "would claim nothing and report nothing.")
-        print("[queue]   Seed it: python tfrrs/sweep/prefill_tfrrs_queue.py")
+        print("[queue] ⚠ STILL NOTHING DUE after seeding through "
+              f"{ceiling:,}. Every id up to there is already done, failed or "
+              f"recorded as not a meet. Raise the reach with "
+              f"TFRRS_SEED_AHEAD=20000 if TFRRS has moved on further than "
+              f"that.")
         sys.exit(1)
     print(f"[queue] {due:,} due", flush=True)
 
@@ -123,7 +160,7 @@ async def main():
     n_reset = await asyncio.to_thread(_resetStaleClaimsSync)
     print(f"reset {n_reset} stale TFRRS claims", flush=True)
 
-    await asyncio.to_thread(_printQueueDue)
+    await asyncio.to_thread(_prepareQueue)
 
     # The shared rotator — coordinates VPN rotation across all sessions.
     rotator = VPNRotator()
