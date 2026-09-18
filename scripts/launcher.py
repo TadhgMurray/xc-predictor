@@ -1467,15 +1467,28 @@ _QUEUE_STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
 # than each running the same seeding query against a queue that is already
 # refilled.
 _EXTEND_LOCK = asyncio.Lock()
-_EXTEND_STATE = {"exhausted": False}
+_EXTEND_STATE = {"exhausted": False, "dry": 0, "last_top": None}
+
+# Freshly-asked blocks that found no new meet before we call it the end.
+# ★ FRESHLY-ASKED IS THE POINT (owner, 2026-09-18: the walk stopped dead on
+#   31,198 historical "not a meet" answers). An id that was empty months ago
+#   is not evidence about today -- that is why it is being re-asked. Only a
+#   block we have just asked can say the corpus has ended.
+DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 3))
 
 
 async def _extendFrontier(label):
     """Seed the next block of ids above each sport's watermark.
 
-    Returns True when there is new work. False means the walk has hit its
-    miss threshold -- the "404" in "keep going until 404" -- and the run is
-    genuinely finished.
+    Returns True when there is new work. False means the walk is finished --
+    the "404" in "keep going until 404".
+
+    ★ AND THE 404 IS MEASURED FROM THIS RUN, NOT FROM THE QUEUE'S HISTORY. An
+      earlier version stopped when enough ids were already recorded as "not a
+      meet", and stopped dead on 31,198 of them -- answers from months ago,
+      about the very ids being re-asked. A block counts as dry only when WE
+      just asked it and no watermark moved, and DRY_BLOCKS_TO_STOP of those in
+      a row ends the walk.
 
     ! FORWARD ONLY. The recent-empties pass is a one-off at startup; re-running
       it here would re-queue the same meets every time the queue drained.
@@ -1488,25 +1501,48 @@ async def _extendFrontier(label):
 
         def _seed():
             from database import getConn
-            from queue_anet_new import seedAll, dueCounts
+            from queue_anet_new import seedAll, dueCounts, watermark, SPORTS
             with getConn() as conn:
+                # ! THE WATERMARK BEFORE AND AFTER IS THE EVIDENCE. It only
+                #   moves when a real meet was found, so comparing it across
+                #   a drained block says whether that block held anything --
+                #   without needing a per-id record of what came back.
+                with conn.cursor() as cur:
+                    tops = {sp: watermark(cur, sp)
+                            for sp in ([ANET_SPORT] if ANET_SPORT
+                                       else list(SPORTS))}
+                conn.rollback()
                 seedAll(conn, write=True, do_recent=False, verbose=False,
                         sports=[ANET_SPORT] if ANET_SPORT else None,
                         ahead=int(os.environ.get("SEED_AHEAD", 2000)))
                 due = dueCounts(conn)
             if ANET_SPORT:
                 due = {k: v for k, v in due.items() if k == ANET_SPORT}
-            return sum(due.values())
+            return sum(due.values()), tops
 
-        due = await runDbCall(_seed)
-        if due:
+        due, tops = await runDbCall(_seed)
+
+        # Did the block we just drained move any watermark?
+        moved = (_EXTEND_STATE["last_top"] is None
+                 or tops != _EXTEND_STATE["last_top"])
+        _EXTEND_STATE["last_top"] = tops
+        if moved:
+            _EXTEND_STATE["dry"] = 0
+        else:
+            _EXTEND_STATE["dry"] += 1
+
+        if due and _EXTEND_STATE["dry"] < DRY_BLOCKS_TO_STOP:
+            note = ("" if moved else
+                    f" [{_EXTEND_STATE['dry']}/{DRY_BLOCKS_TO_STOP} dry]")
             print(f"[queue] {label} queue drained -- seeded the next block, "
-                  f"{due:,} now due", flush=True)
+                  f"{due:,} now due{note}", flush=True)
             return True
 
         _EXTEND_STATE["exhausted"] = True
-        print(f"[queue] {label} queue drained and the forward walk found "
-              f"nothing new -- the corpus ends here. Stopping.", flush=True)
+        why = ("nothing left to seed" if not due else
+               f"{DRY_BLOCKS_TO_STOP} blocks in a row found no new meet")
+        print(f"[queue] {label} forward walk stopping: {why}. Watermarks: "
+              f"{tops}", flush=True)
         return False
 
 

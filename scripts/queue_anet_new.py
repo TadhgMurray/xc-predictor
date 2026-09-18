@@ -341,8 +341,12 @@ def requeue(cur, sport, ids, chunk=5000):
 
 
 def seedSport(cur, sport, write=False, ahead=AHEAD,
-              recent_days=RECENT_DAYS, stop_after_misses=STOP_AFTER_MISSES,
+              recent_days=RECENT_DAYS, stop_after_misses=None,
               do_new=True, do_recent=True, verbose=True):
+    # stop_after_misses is accepted and ignored: the stop now comes from this
+    # run's own evidence in launcher._extendFrontier, not from how many ids
+    # were empty the last time anyone asked. Kept so existing callers and the
+    # CLI flag do not break.
     """Seed one sport. Returns a dict of what it found and did.
 
     ★ CALLED BY THE LAUNCHER TOO (owner, 2026-09-18: "can you just make the
@@ -354,7 +358,7 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
             print(msg, flush=True)
 
     out = {"sport": sport, "top": None, "misses": 0, "seeded": 0,
-           "woken": 0, "dated": 0, "undated": 0, "requeued": 0}
+           "woken": 0, "dated": 0, "scheduled_retry": 0, "requeued": 0}
     top = watermark(cur, sport)
     if top is None:
         say(f"  [{sport}] no anet results at all -- nothing to walk from.")
@@ -375,7 +379,18 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
     #   actually run out.
     asked = askedFrontier(cur, sport)
     dense = denseFrontier(cur, sport)
-    frontier = dense or top
+    # ★ THE WALK STARTS JUST ABOVE THE WATERMARK, NOT ABOVE THE DENSE BLOCK
+    #   (owner, 2026-09-18). A new meet takes the next id anet has free, so
+    #   the ids that matter most are the few hundred immediately above the
+    #   last one that produced results -- starting at the top of the dense
+    #   block skipped 275,658..276,000, which is exactly where this week's
+    #   meets are.
+    #
+    # ! THE DENSE BLOCK IS THE GUARD, NOT THE START. Its job is to stop one
+    #   bogus id inflating the watermark: a watermark far above where real
+    #   meets actually stop is not a watermark, it is an outlier, and the walk
+    #   falls back to the dense block in that case.
+    frontier = top if (dense is None or top <= dense) else dense
     out["asked"], out["dense"], out["frontier"] = asked, dense, frontier
     say(f"  [{sport}] highest block of real meets ends at {frontier:,} "
         f"(watermark {top:,}, highest id ever queued "
@@ -387,18 +402,25 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
             f"answer expires.")
 
     if do_new:
-        if misses >= stop_after_misses:
-            say(f"  [{sport}] {stop_after_misses}+ ids in a row at the top "
-                f"are not meets at all -- treating that as the end of the "
-                f"corpus, nothing seeded forward.")
-        else:
-            lo, hi = frontier + 1, frontier + ahead
-            say(f"  [{sport}] seeding forward {lo:,}..{hi:,}")
-            if write:
-                ins, woke = seedForward(cur, sport, lo, hi)
-                out["seeded"], out["woken"] = ins, woke
-                say(f"  [{sport}]   {ins:,} new rows, {woke:,} "
-                    f"failed/stuck reset")
+        # ⚠ HISTORICAL state 4 IS NOT A CEILING, AND USING IT AS ONE STOPPED
+        #   THE WALK DEAD (owner, 2026-09-18: 31,198 in a row, so nothing was
+        #   seeded). Those ids were asked MONTHS ago. That they were not meets
+        #   then is exactly why they are worth asking now -- anet creates ids
+        #   over time. Treating a stale answer as evidence of the present is
+        #   the same mistake in a new place.
+        #
+        # ★ THE STOP COMES FROM THIS RUN'S OWN EVIDENCE INSTEAD. The launcher
+        #   seeds a block, drains it, and stops when a freshly-asked block
+        #   moves the watermark nowhere -- see launcher._extendFrontier. The
+        #   count below is reported because it is interesting, and used for
+        #   nothing.
+        lo, hi = frontier + 1, frontier + ahead
+        say(f"  [{sport}] seeding forward {lo:,}..{hi:,}")
+        if write:
+            ins, woke = seedForward(cur, sport, lo, hi)
+            out["seeded"], out["woken"] = ins, woke
+            say(f"  [{sport}]   {ins:,} new rows, {woke:,} re-asked "
+                f"(state 4, failed or stuck)")
 
     if do_recent:
         since = (datetime.date.today()

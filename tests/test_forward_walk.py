@@ -68,7 +68,36 @@ class ADrainedQueueExtendsInsteadOfStopping(unittest.TestCase):
     def test_it_says_which_it_was(self):
         body = _func(self.src, "_extendFrontier")
         self.assertIn("seeded the next block", body)
-        self.assertIn("corpus ends here", body)
+        self.assertIn("forward walk stopping", body)
+
+
+class TheStopComesFromFreshEvidence(unittest.TestCase):
+    """Only a block we have just asked can say the corpus has ended."""
+
+    def setUp(self):
+        self.src = _read("scripts/launcher.py")
+
+    def test_it_compares_watermarks_across_a_drained_block(self):
+        body = _func(self.src, "_extendFrontier")
+        self.assertIn("watermark", body)
+        self.assertIn('_EXTEND_STATE["last_top"]', body)
+
+    def test_a_dry_block_is_counted_and_a_productive_one_resets_it(self):
+        body = _func(self.src, "_extendFrontier")
+        self.assertIn('_EXTEND_STATE["dry"] += 1', body)
+        self.assertIn('_EXTEND_STATE["dry"] = 0', body)
+
+    def test_it_takes_several_dry_blocks_not_one(self):
+        import re as _re
+        m = _re.search(r"DRY_BLOCKS_TO_STOP = int\(os\.environ\.get\("
+                       r'"DRY_BLOCKS_TO_STOP", (\d+)\)\)', self.src)
+        self.assertIsNotNone(m)
+        self.assertGreater(int(m.group(1)), 1)
+
+    def test_it_says_which_reason_it_stopped_for(self):
+        body = _func(self.src, "_extendFrontier")
+        self.assertIn("nothing left to seed", body)
+        self.assertIn("found no new meet", body)
 
 
 class TheWalkStartsFromRealData(unittest.TestCase):
@@ -127,6 +156,23 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         self.assertIn("scraped IN (1, 2, 4)", body)
         self.assertIn("scraped != 4", body)
 
+    # ⚠ AND IT MUST NOT GATE THE WALK. 31,198 historical "not a meet"
+    #   answers stopped the walk dead, and those ids are precisely the ones
+    #   being re-asked: an answer from months ago is not evidence about today.
+    def test_a_stale_miss_count_does_not_stop_the_seeding(self):
+        seed = _func(self.src, "seedSport")
+        head, _, tail = seed.partition("if do_new:")
+        self.assertNotIn("stop_after_misses", tail)
+        self.assertIn("seeding forward", tail)
+
+    # ! AND THE WALK STARTS JUST ABOVE THE WATERMARK, because a new meet
+    #   takes the next free id -- starting at the top of the dense block
+    #   skipped 275,658..276,000, where this week's meets are.
+    def test_the_start_is_the_watermark_guarded_by_the_dense_block(self):
+        seed = _func(self.src, "seedSport")
+        self.assertIn("frontier = top if (dense is None or top <= dense)",
+                      seed)
+
     def test_no_meet_is_an_answer_that_expires(self):
         body = _func(self.src, "seedForward")
         self.assertIn("q.scraped = 4", body)
@@ -179,7 +225,7 @@ class TheWalkStartsFromRealData(unittest.TestCase):
     def test_the_two_numbers_are_reported_separately(self):
         body = _func(_read("scripts/queue_anet_new.py"), "seedSport")
         self.assertIn("scheduled", body)
-        self.assertIn("not meets at all", body)
+        self.assertIn("are not meets (queue state 4)", body)
 
 
 if __name__ == "__main__":
