@@ -64,6 +64,7 @@ WATCHED = (
     "tfrrs/parser/parse_tf.py",
     "tfrrs/scraper/save_tfrrs.py",
     "engine/speed_ratings_db.py",
+    "engine/build_team_pool.py",
     "model/feature_extraction.py",
 )
 

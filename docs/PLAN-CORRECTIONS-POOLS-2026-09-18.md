@@ -160,6 +160,38 @@ rekey: **anet states the pool; stop inferring it.**
    owner has accepted — but they should be seen, not discovered later on a
    rankings page.
 
+## Built so far (2026-09-18)
+
+`engine/build_team_pool.py` — `team_pool (team_id PK, kind, reason,
+n_athletes, n_rows, level, n_pros)`. One row per anet team saying which pool
+it is and why. `kind` ∈ pro, club, college, hs, ms, elem, unknown.
+
+Precedence, pinned in `tests/test_team_pool.py`:
+
+1. `n_athletes < 15` (all time, both feeds) → **pro**. Smallness beats anet's
+   level, on the owner's instruction.
+2. any professional athlete-season on its rows → **pro**.
+3. anet level club → **club**.
+4. any other anet level → that level.
+5. no level → **unknown**, never pro.
+
+Two of the owner's four rules turned out to be already implemented:
+`loadClubPros(min_pros=1)` is exactly "any pro in a club makes the club pro",
+and `loadTeamLevels` already names `club` from the anet code. So this defers to
+both rather than reimplementing them, and the *athlete* pool question stays in
+`loadClubMajority`, which holds the 2026-09-14 rule that a collegian racing
+the Euros is not a professional — a team-level flag must not override that.
+
+Nothing reads `team_pool` yet. Wiring the readers is deliberately separate, so
+the classification can be inspected before it can move a rating.
+
+    python engine/build_team_pool.py --dry-run --show 40
+
+The dry run prints the per-kind counts and the teams the 15-athlete rule
+catches, ordered by ROW count — a team with fourteen athletes and five
+thousand rows is the suspicious shape, either a real programme whose people
+are mis-merged or a relay squad raced to death.
+
 ## Suggested order
 
 1. Verify Correction 1 is running and count what it nukes (no code).
