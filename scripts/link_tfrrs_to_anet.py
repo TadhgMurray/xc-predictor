@@ -350,8 +350,15 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
 #   lowers the athlete floor, never removes it, and still wants a margin.
 MARGIN = 3.0                # blind tier: the winner beats the runner-up 3x
 MARGIN_NAMED = 2.0          # ... 2x when the names already agree
-MIN_ATHLETES_NAMED = 2    # the anet team's name IS this name
-MIN_ATHLETES_PREFIX = 3   # ... is a word-prefix of it
+# ⚠ AND WHEN IN DOUBT, SEPARATE (owner, 2026-09-18: "I'd prefer to separate
+#   more than over merge so just understand that"). A link is a MERGE, so
+#   these floors are the place that preference bites. They are one higher than
+#   the evidence strictly needs: an exact name plus three agreeing athletes
+#   with a 2x margin is already a strong claim, and the old-programme case
+#   this was loosened for (4-1-1-1) clears three comfortably. Two would also
+#   have worked and is not worth the schools it would wrongly join.
+MIN_ATHLETES_NAMED = 3    # the anet team's name IS this name
+MIN_ATHLETES_PREFIX = 4   # ... is a word-prefix of it
 
 
 # ⚠⚠ "Williams" vs "Williams College" IS A PREFIX, NOT "same", and that is
