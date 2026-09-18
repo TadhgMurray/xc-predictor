@@ -41,9 +41,25 @@ tables while it runs will give you a rating built on half-written data.
 
 20,344 teams with no metadata. Leave it. Everything in section 1 waits on it.
 
+⚠⚠ **A READ-ONLY DIAGNOSTIC CAN STILL TAKE THE BOX DOWN, and one did**
+   (2026-09-18): `diag_indoor_level` filled the server's temp space mid-scrape
+   with `DiskFull: could not write to file base/pgsql_tmp/...`. Postgres frees
+   the temp files when the query aborts, so it was transient — but the scraper
+   could as easily have hit the wall first and died.
+
+   Every heavy diagnostic now opens with `scripts/pg_guard.guard(cur)`, which
+   sets `temp_file_limit`, `statement_timeout` and `work_mem` **on that
+   connection only**. A runaway query now aborts itself instead of the disk.
+   Override with `XCP_DIAG_TEMP_LIMIT`, `XCP_DIAG_TIMEOUT`, `XCP_DIAG_WORK_MEM`.
+
+   Before starting any of them while a scrape runs: `df -h`.
+
 **While it runs, these are safe (read-only, no anet):**
 
-    scripts/diag_indoor_level.py --since 2015          # the indoor number
+    scripts/diag_indoor_level.py                       # the indoor number
+                                                       # (defaults to 2021+;
+                                                       #  2015+ is what filled
+                                                       #  the disk)
     engine/diag_difficulty_calibration.py --since 2020 --sport XC
     engine/rating_outliers.py --dry-run --since 2020 --sigma 5,8,10,15
     scripts/queue_status.py --sample 10

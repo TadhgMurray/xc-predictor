@@ -223,9 +223,14 @@ def main():
     bars = [float(x) for x in args.sigma.split(",") if x.strip()]
 
     from database import getConn
+    from pg_guard import guard
     all_rows, all_flagged = {}, []
     with getConn() as conn:
         with conn.cursor() as cur:
+            # ! A READ-ONLY DIAGNOSTIC MUST NOT BE ABLE TO FILL THE DISK.
+            #   diag_indoor_level did exactly that on 2026-09-18, under a
+            #   running scrape. Bounds this connection only.
+            guard(cur)
             for sport in ("XC", "TF"):
                 rows = scan(cur, sport, args.since, args.min_races,
                             args.min_spread)

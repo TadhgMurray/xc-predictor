@@ -46,6 +46,23 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
 
 MIN_EACH = 3          # races on each surface before an athlete-year counts
 
+# ⚠⚠ THIS FILLED THE SERVER'S TEMP SPACE ON ITS FIRST RUN (owner, 2026-09-18:
+#    "DiskFull: could not write to file base/pgsql_tmp/..."), while an 11-hour
+#    scrape was running. The first version asked for percentile_cont per
+#    (person, season) over every rated results_tf row -- 192M rows sorted into
+#    ~10M groups, which spills to disk without limit.
+#
+# ★ SO IT IS TWO CHEAP PASSES INSTEAD OF ONE EXPENSIVE ONE:
+#      1. COUNT per athlete-year, which hash-aggregates and never sorts, to
+#         find the few athlete-years that have races on BOTH surfaces;
+#      2. compute the medians for ONLY those, which is a small set.
+#    And scripts/pg_guard bounds the connection so a future mistake aborts the
+#    query rather than the disk.
+#
+# ! AND THE DEFAULT WINDOW IS NARROW. An answer from four seasons is the same
+#   answer; --since 2015 is available once it is known to be affordable.
+DEFAULT_SINCE = 2021
+
 
 def _hasCol(cur, table, col):
     cur.execute("""SELECT 1 FROM information_schema.columns
@@ -57,42 +74,77 @@ def _hasCol(cur, table, col):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--since", type=int, default=2015)
+    ap.add_argument("--since", type=int, default=DEFAULT_SINCE,
+                    help="narrow by default: the first run over "
+                         "2015+ filled the server's temp space")
     ap.add_argument("--min-each", type=int, default=MIN_EACH)
     args = ap.parse_args()
 
     from database import getConn
+    from pg_guard import guard
     with getConn() as conn:
         with conn.cursor() as cur:
+            # ! BEFORE ANY QUERY. A read-only diagnostic must not be able to
+            #   fill the disk under a running scrape -- it did, once.
+            guard(cur)
             if not _hasCol(cur, "meets_tf", "is_indoor"):
                 raise SystemExit("meets_tf.is_indoor does not exist here")
 
             print(f"\n=== 1. the same athlete, the same year, both surfaces "
                   f"(from {args.since}) ===", flush=True)
-            # ★ WITHIN-ATHLETE-YEAR, so the field cannot produce the effect.
+            # ★ PASS 1: counts only. No sort, no spill -- this is what makes
+            #   the whole thing affordable.
+            print("    pass 1: which athlete-years have both surfaces...",
+                  flush=True)
             cur.execute("""
-                WITH r AS MATERIALIZED (
-                    SELECT r.person_id,
-                           substr(r.date, 1, 4)::int AS season,
-                           CASE WHEN COALESCE(m.is_indoor, 0) = 1
-                                THEN 1 ELSE 0 END AS ind,
-                           r.speed_rating::double precision AS rating
-                    FROM   results_tf r
+                CREATE TEMP TABLE _ind_both ON COMMIT DROP AS
+                SELECT r.person_id, substr(r.date, 1, 4)::int AS season
+                FROM   results_tf r
+                JOIN   meets_tf m ON m.div_id = r.div_id
+                                 AND m.source = r.source
+                WHERE  r.speed_rating IS NOT NULL
+                  AND  r.person_id IS NOT NULL
+                  AND  r.date ~ '^(19|20)[0-9][0-9]-'
+                  AND  substr(r.date, 1, 4)::int >= %(since)s
+                GROUP  BY 1, 2
+                HAVING count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
+                           >= %(each)s
+                   AND count(*) FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
+                           >= %(each)s
+            """, {"since": args.since, "each": args.min_each})
+            cur.execute("CREATE INDEX ON _ind_both (person_id, season)")
+            cur.execute("SELECT count(*) FROM _ind_both")
+            n_both = cur.fetchone()[0]
+            print(f"    athlete-years with >= {args.min_each} races on each "
+                  f"surface: {n_both:,}")
+            if not n_both:
+                print("    -> nothing to compare. Widen --since or lower "
+                      "--min-each.")
+                conn.rollback()
+                return
+
+            # ★ PASS 2: medians for that small set only.
+            print("    pass 2: the indoor-minus-outdoor gap for those...",
+                  flush=True)
+            cur.execute("""
+                WITH per AS (
+                    SELECT b.person_id, b.season,
+                           percentile_cont(0.5) WITHIN GROUP
+                               (ORDER BY r.speed_rating::double precision)
+                               FILTER (WHERE COALESCE(m.is_indoor, 0) = 1)
+                               AS med_in,
+                           percentile_cont(0.5) WITHIN GROUP
+                               (ORDER BY r.speed_rating::double precision)
+                               FILTER (WHERE COALESCE(m.is_indoor, 0) = 0)
+                               AS med_out
+                    FROM   _ind_both b
+                    JOIN   results_tf r
+                           ON r.person_id = b.person_id
+                          AND substr(r.date, 1, 4)::int = b.season
                     JOIN   meets_tf m ON m.div_id = r.div_id
                                      AND m.source = r.source
                     WHERE  r.speed_rating IS NOT NULL
-                      AND  r.person_id IS NOT NULL
-                      AND  r.date ~ '^(19|20)[0-9][0-9]-'
-                      AND  substr(r.date, 1, 4)::int >= %(since)s
-                ), per AS MATERIALIZED (
-                    SELECT person_id, season,
-                           count(*) FILTER (WHERE ind = 1) AS n_in,
-                           count(*) FILTER (WHERE ind = 0) AS n_out,
-                           percentile_cont(0.5) WITHIN GROUP (ORDER BY rating)
-                               FILTER (WHERE ind = 1) AS med_in,
-                           percentile_cont(0.5) WITHIN GROUP (ORDER BY rating)
-                               FILTER (WHERE ind = 0) AS med_out
-                    FROM   r GROUP BY person_id, season
+                    GROUP  BY 1, 2
                 )
                 SELECT count(*),
                        percentile_cont(0.5) WITHIN GROUP
@@ -102,15 +154,12 @@ def main():
                            (ORDER BY med_in - med_out),
                        percentile_cont(0.75) WITHIN GROUP
                            (ORDER BY med_in - med_out)
-                FROM   per
-                WHERE  n_in >= %(each)s AND n_out >= %(each)s
-            """, {"since": args.since, "each": args.min_each})
+                FROM   per WHERE med_in IS NOT NULL AND med_out IS NOT NULL
+            """)
             n, med, mean, q1, q3 = cur.fetchone()
-            print(f"    athlete-years with >= {args.min_each} races on each "
-                  f"surface: {n:,}")
             if n:
                 print(f"    indoor rating MINUS outdoor rating, same person, "
-                      f"same year:")
+                      f"same year  (n = {n:,}):")
                 print(f"      median {med:+.3f}   mean {mean:+.3f}   "
                       f"IQR {q1:+.3f} .. {q3:+.3f}")
                 # ★ SAY WHICH WAY IS WRONG, in the output.

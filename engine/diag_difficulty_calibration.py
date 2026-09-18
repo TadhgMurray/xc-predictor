@@ -290,8 +290,13 @@ def main():
     args = ap.parse_args()
 
     from database import getConn
+    from pg_guard import guard
     with getConn() as conn:
         with conn.cursor() as cur:
+            # ! A READ-ONLY DIAGNOSTIC MUST NOT BE ABLE TO FILL THE DISK.
+            #   diag_indoor_level did exactly that on 2026-09-18, under a
+            #   running scrape. Bounds this connection only.
+            guard(cur)
             if not _tableExists(cur, "course_difficulties"):
                 raise SystemExit("course_difficulties is missing -- run the "
                                  "difficulty build first")
