@@ -168,45 +168,6 @@ def _blob(r="r", field="distance"):
     return f"(mt.division_distances -> {r}.div_id::text ->> '{field}')"
 
 
-def _courseJoin(r="r"):
-    """From a results row to its meet, EITHER SOURCE, for a course page.
-
-    ★ THE COURSE PAGES WERE ANET-ONLY AND NOBODY HAD NOTICED (owner,
-      2026-09-18: "those meets that were 404ing are not present on course
-      pages"). Every get_course_* query did `JOIN meets m ON m.div_id =
-      r.div_id AND m.source = r.source` and then `WHERE m.course_name = ...`.
-      Nothing writes a `meets` row for a tfrrs race -- save_tfrrs writes
-      `results` and `meets_tfrrs`, and `meets` is fed only by anet's
-      saveMeet -- so an INNER JOIN on `meets` drops every tfrrs cross
-      country race before the WHERE is even reached. Not a filter that
-      excluded them: they could not appear.
-
-      That is why the races the ?r= source pin just made reachable are not
-      on the course page. They were never on it.
-
-    ! LEFT JOIN ON BOTH, and the course name COALESCEd, which is exactly
-      what the athlete page has done since _tfrrs_join was written. Same
-      helpers, so the two cannot disagree about which course a race was on.
-    """
-    return f"""
-        LEFT JOIN meets m
-               ON m.div_id = {r}.div_id AND m.source = {r}.source
-        LEFT JOIN meets_tfrrs mt
-               ON {r}.source = 'tfrrs' AND mt.meet_id = {r}.meet_id
-              AND mt.sport = 'XC'
-    """
-
-
-# The course-page distance: either source's scraped value. NOT
-# _xc_distance_sql -- that one takes dist_override first, and the course
-# boards are keyed and cached on the scraped distance. Changing which
-# distance a course page groups by is a separate decision from making
-# tfrrs races visible on it, and doing both in one edit would make it
-# impossible to tell which one moved a number.
-def _courseDistSql(r="r"):
-    return f"COALESCE(m.distance, {_blob(r, 'distance')}::real)"
-
-
 def _xc_course_sql(r="r"):
     """Display course name, either source."""
     return "COALESCE(m.course_name, mt.venue_name)"
@@ -4398,16 +4359,14 @@ def get_course_header(cur, course_name, dist=None):
     #   page had none, so course.html rendered bare names through
     #   schoolLabel and answered with each name's BIGGEST cluster.
     #   mode() over the course's own meets, not one arbitrary row.
-    cur.execute(f"""
+    cur.execute("""
         SELECT count(*)                    AS n_results,
                count(DISTINCT r.person_id) AS n_athletes,
-               mode() WITHIN GROUP (ORDER BY COALESCE(m.state, mt.state))
-                   AS state
+               mode() WITHIN GROUP (ORDER BY m.state) AS state
         FROM results r
-        {_courseJoin('r')}
-        WHERE {_xc_course_sql('r')} = %(course)s
-          AND (%(dist)s::int IS NULL
-               OR round({_courseDistSql('r')})::int = %(dist)s)
+        JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+        WHERE m.course_name = %(course)s
+          AND (%(dist)s::int IS NULL OR round(m.distance)::int = %(dist)s)
     """, {"course": course_name, "dist": dist})
     row = cur.fetchone()
     return row if row and row["n_results"] else None
@@ -4428,9 +4387,9 @@ def get_course_rating_bests(cur, course_name, dist=None, limit=60):
                    row_number() OVER (PARTITION BY r.person_id
                                       ORDER BY r.speed_rating DESC) AS pr_rn
             FROM results r
-            {_courseJoin('r')}
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
             {_athlete_lateral('r')}
-            WHERE {_xc_course_sql('r')} = %(course)s
+            WHERE m.course_name = %(course)s
               {dist_sql}
               AND m.distance IS NOT NULL
               AND r.person_id IS NOT NULL
@@ -4465,9 +4424,9 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
                        PARTITION BY r.meet_id, r.div_id, r.source, r.school
                        ORDER BY r.speed_rating DESC) AS tn
             FROM results r
-            {_courseJoin('r')}
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
             {_athlete_lateral('r')}
-            WHERE {_xc_course_sql('r')} = %(course)s
+            WHERE m.course_name = %(course)s
               AND m.distance IS NOT NULL
               AND NULLIF(TRIM(r.school), '') IS NOT NULL
               AND a.gender IN ('M', 'F')
@@ -4510,30 +4469,30 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
     (varsity 5000m, frosh 3200m). array_agg collects them into one list
     per meet instead of collapsing to a single value.
     """
-    cur.execute(f"""
-        SELECT r.meet_id,
-               COALESCE(m.meet_name, mt.meet_name) AS meet_name,
+    cur.execute("""
+        SELECT m.meet_id,
+               m.meet_name,
                -- DISTINCT so a distance run by six divisions appears once.
                -- ORDER BY so the list is stable between page loads.
                -- FILTER drops NULLs, which would otherwise become a literal
                -- NULL *element* in the array (tfrrs XC rows have no distance).
-               array_agg(DISTINCT {_courseDistSql('r')}
-                         ORDER BY {_courseDistSql('r')})
-                   FILTER (WHERE {_courseDistSql('r')} IS NOT NULL)
-                   AS distances,
+               array_agg(DISTINCT m.distance ORDER BY m.distance)
+                   FILTER (WHERE m.distance IS NOT NULL) AS distances,
                max(r.date)  AS last_date,
                count(*)     AS n_results
-        FROM results r
-        {_courseJoin('r')}
-        WHERE {_xc_course_sql('r')} = %(course)s
-        GROUP BY r.meet_id, COALESCE(m.meet_name, mt.meet_name)
+        FROM meets m
+        JOIN results r
+             ON r.div_id = m.div_id
+            AND r.source = m.source
+        WHERE m.course_name = %(course)s
+        GROUP BY m.meet_id, m.meet_name
         -- dist picks WHICH meets appear (those that ran the selected
         -- distance) but not what a row says about them: the distances
         -- and result counts stay the whole meet's. A HAVING, not a
         -- WHERE, so the filter doesn't also throw away the other
         -- divisions' rows before the aggregates see them.
         HAVING %(dist)s::int IS NULL
-            OR bool_or(round({_courseDistSql('r')})::int = %(dist)s)
+            OR bool_or(round(m.distance)::int = %(dist)s)
         ORDER BY max(r.date) DESC
         LIMIT %(limit)s
         -- +1: the extra row is how the cap reports that it bit. See capped.py.
@@ -4544,16 +4503,18 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
 
 def get_course_distances(cur, course_name):
     """Which distances have been raced on this course, and how often."""
-    cur.execute(f"""
-        SELECT {_courseDistSql('r')} AS distance,
+    cur.execute("""
+        SELECT m.distance,
                count(*)     AS n_results,
                min(r.date)  AS first_date,
                max(r.date)  AS last_date
-        FROM results r
-        {_courseJoin('r')}
-        WHERE {_xc_course_sql('r')} = %(course)s
-          AND {_courseDistSql('r')} IS NOT NULL
-        GROUP BY 1
+        FROM meets m
+        JOIN results r
+             ON r.div_id = m.div_id
+            AND r.source = m.source
+        WHERE m.course_name = %(course)s
+          AND m.distance IS NOT NULL
+        GROUP BY m.distance
         ORDER BY count(*) DESC
     """, {"course": course_name})
     return cur.fetchall()
@@ -5138,9 +5099,9 @@ def get_course_records(cur, course_name, dist, limit=60):
                    row_number() OVER (PARTITION BY r.person_id
                                       ORDER BY r.time_seconds ASC) AS pr_rn
             FROM results r
-            {_courseJoin('r')}
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
             {_athlete_lateral('r')}
-            WHERE {_xc_course_sql('r')} = %(course)s
+            WHERE m.course_name = %(course)s
               AND round(m.distance)::int = %(dist)s
               AND r.person_id IS NOT NULL
               AND a.gender IN ('M', 'F')
@@ -5171,9 +5132,9 @@ def get_course_team_records(cur, course_name, dist, limit=60):
                        PARTITION BY r.meet_id, r.div_id, r.source, r.school
                        ORDER BY r.time_seconds ASC) AS tn
             FROM results r
-            {_courseJoin('r')}
+            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
             {_athlete_lateral('r')}
-            WHERE {_xc_course_sql('r')} = %(course)s
+            WHERE m.course_name = %(course)s
               AND round(m.distance)::int = %(dist)s
               AND NULLIF(TRIM(r.school), '') IS NOT NULL
               AND a.gender IN ('M', 'F')
