@@ -58,6 +58,28 @@ def _tells():
         return []
 
 
+# ⚠ meets_tf HAS NO DATE COLUMN AT ALL (owner, 2026-09-18:
+#   'UndefinedColumn: column "date" does not exist ... Perhaps you meant
+#   "meets_tf.state"'). Its columns are div_id, meet_id, meet_name, venue_name,
+#   meet_url, event_short, event_id, distance_meters, gps_lat, gps_long, state,
+#   is_indoor -- no date. The meet's date lives on meets_tf_meta.meet_date, one
+#   row per meet, and the row-level date is on results_tf.date.
+#
+# ! SO THE COLUMNS ARE CHECKED, and a wrong assumption fails with a sentence
+#   naming what is actually there instead of a raw UndefinedColumn.
+def _needCols(cur, table, cols):
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = %s""",
+                (table,))
+    have = {r[0] for r in cur.fetchall()}
+    missing = [c for c in cols if c not in have]
+    if missing:
+        raise SystemExit(
+            f"  {table} has no column(s) {missing}. It has: "
+            f"{', '.join(sorted(have))}")
+    return have
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -73,20 +95,30 @@ def main():
         with conn.cursor() as cur:
             guard(cur)
 
-            print(f"\n=== 1. the calendar (meets_tf only, cheap) ===",
-                  flush=True)
+            print(f"\n=== 1. the calendar (meets_tf + meets_tf_meta, cheap) "
+                  f"===", flush=True)
+            _needCols(cur, "meets_tf", ("meet_id", "is_indoor"))
+            _needCols(cur, "meets_tf_meta", ("meet_id", "meet_date"))
+            # ! THE DATE COMES FROM meets_tf_meta, one row per meet, so this is
+            #   a keyed join and not a scan of results_tf.
             cur.execute("""
-                SELECT COALESCE(is_indoor, 0) = 1 AS flagged_indoor,
-                       substr(date, 6, 2) AS mon,
+                SELECT COALESCE(m.is_indoor, 0) = 1 AS flagged_indoor,
+                       substr(mm.meet_date, 6, 2)   AS mon,
                        count(*)
-                FROM   meets_tf
-                WHERE  date ~ '^(19|20)[0-9][0-9]-'
-                  AND  substr(date, 1, 4)::int >= %s
+                FROM   meets_tf m
+                JOIN   meets_tf_meta mm ON mm.meet_id = m.meet_id
+                WHERE  mm.meet_date ~ '^(19|20)[0-9][0-9]-'
+                  AND  substr(mm.meet_date, 1, 4)::int >= %s
                 GROUP  BY 1, 2 ORDER BY 1, 2
             """, (args.since,))
             by = {}
             for flagged, mon, n in cur.fetchall():
                 by[(bool(flagged), mon)] = int(n)
+            if not by:
+                print("    no dated meets -- meets_tf_meta.meet_date is empty "
+                      "for this window.")
+                conn.rollback()
+                return
 
             ind_total = sum(n for (f, _m), n in by.items() if f)
             out_total = sum(n for (f, _m), n in by.items() if not f)
@@ -94,13 +126,13 @@ def main():
                             if f and m in OUTDOOR_MONTHS)
             out_wrong = sum(n for (f, m), n in by.items()
                             if not f and m in INDOOR_MONTHS)
-            print(f"    indoor-flagged meets:  {ind_total:>9,}   "
+            print(f"    indoor-flagged rows:  {ind_total:>9,}   "
                   f"of which in {'/'.join(OUTDOOR_MONTHS)}: {ind_wrong:>8,} "
                   f"({100.0 * ind_wrong / max(ind_total, 1):5.2f}%)")
-            print(f"    outdoor-flagged meets: {out_total:>9,}   "
+            print(f"    outdoor-flagged rows: {out_total:>9,}   "
                   f"of which in {'/'.join(INDOOR_MONTHS)}: {out_wrong:>8,} "
                   f"({100.0 * out_wrong / max(out_total, 1):5.2f}%)")
-            print(f"\n    month distribution of indoor-flagged meets:")
+            print(f"\n    month distribution of indoor-flagged rows:")
             for mon in sorted({m for (_f, m) in by}):
                 n = by.get((True, mon), 0)
                 bar = "#" * min(60, int(60.0 * n / max(ind_total, 1) * 4))
@@ -108,18 +140,19 @@ def main():
 
             # ★ WHAT IT MEANS FOR THE GAUGE, said out loud.
             noise = 100.0 * ind_wrong / max(ind_total, 1)
-            print(f"\n    -> {noise:.2f}% of indoor-flagged meets sit in high "
+            print(f"\n    -> {noise:.2f}% of indoor-flagged rows sit in high "
                   f"summer.")
             if noise > 2.0:
-                print(f"       That is enough label noise that pinning the "
-                      f"indoor group's mean would\n"
-                      f"       push part of the correction onto correctly "
-                      f"labelled ovals. Clean the\n"
-                      f"       labels first, or pin on a subset that passes "
-                      f"the tells.")
+                print(f"       That is enough label noise that anchoring on "
+                      f"outdoor would push part of\n"
+                      f"       the correction onto correctly labelled ovals. "
+                      f"Clean the labels first, or\n"
+                      f"       restrict the gauge to cells that pass the "
+                      f"tells.")
             else:
                 print(f"       Small enough that the -1.5% is about the level, "
-                      f"not the labels.")
+                      f"not the labels, so the\n"
+                      f"       outdoor gauge is measuring what it should.")
 
             if args.tells:
                 tells = _tells()
@@ -139,12 +172,13 @@ def main():
                                (t.div_id IS NOT NULL)      AS has_tell,
                                count(*)
                         FROM   meets_tf m
+                        JOIN   meets_tf_meta mm ON mm.meet_id = m.meet_id
                         LEFT   JOIN t ON t.div_id = m.div_id
-                        WHERE  m.date ~ '^(19|20)[0-9][0-9]-'
-                          AND  substr(m.date, 1, 4)::int >= %s
+                        WHERE  mm.meet_date ~ '^(19|20)[0-9][0-9]-'
+                          AND  substr(mm.meet_date, 1, 4)::int >= %s
                         GROUP  BY 1, 2 ORDER BY 1, 2
                     """, ([e.lower() for e in tells], args.since))
-                    print(f"    {'flagged':<9} {'has tell':<9} {'meets':>10}")
+                    print(f"    {'flagged':<9} {'has tell':<9} {'rows':>10}")
                     for flagged, has_tell, n in cur.fetchall():
                         print(f"    {str(bool(flagged)):<9} "
                               f"{str(bool(has_tell)):<9} {n:>10,}")
