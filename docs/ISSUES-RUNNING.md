@@ -2198,3 +2198,58 @@ count, so both tables are missing them. A name can only come from a re-scrape,
 and the re-scrape will not reach them while their `meet_queue` TF rows read
 `scraped=1`. Resetting those 15,971 ids to `scraped=0` is the candidate fix; the
 open question is whether anet still serves 2005-2010 meets.
+
+## 2026-09-18 — the failed-meet set has been laundered into "due"
+
+**State:** you cannot currently ask "which meets failed". Rescraping them as a
+set is not possible right now, and this is why.
+
+`meet_queue.scraped` means: 0 due, 1 done, 2 failed, 3 in-progress/stranded,
+4 the feed says no meet exists at this id.
+
+The first version of `ANET_RETRY_FAILED` / `TFRRS_RETRY_FAILED` (2026-09-18,
+since replaced) did this:
+
+1. `UPDATE meet_queue SET scraped = 0 WHERE scraped IN (2, 3)` — reset every
+   failure to *due*;
+2. then claimed `WHERE scraped = 0`.
+
+Step 2 is every due row, including the thousands a forward walk had seeded and
+never scraped, so the "retry" was an ordinary scrape night wearing a flag. But
+the lasting damage is step 1: **it destroyed the evidence of which rows were
+failures.** They are now indistinguishable from ids nobody has ever tried.
+`resetInProgress` / `resetTFRRSInProgress` do the same to state 3 at every
+launch, by design, so stranded claims were folded in too.
+
+That run happened on both feeds before the fix landed. So the 62 Unicode
+`jsonb` failures and everything else that failed are sitting at state 0.
+
+**What this does and does not cost.** Nothing is permanently lost: those meets
+are due, so any normal scrape will eventually redo them, and the Unicode bug
+that broke them is fixed (`database._Utf8Json`). What is lost is the ability
+to do *only* them — which is exactly what was wanted, and why it is worth
+writing down rather than discovering again.
+
+**How to re-identify them, approximately.** A meet that failed to save is
+queued *done* or *due* while having no result rows, and unlike a genuinely
+scheduled meet it has a real meet row with a past date. So the signature is:
+
+    a queue row at scraped IN (0, 1)
+      AND a meets/meets_tf row exists for (meet_id, sport)
+      AND its date is in the past
+      AND zero result rows reference it
+
+`queue_meets.emptyRecent` and `scheduledToRetry` already compute neighbouring
+populations and are the place to build this from. It is a heuristic, not a
+recovery: a meet legitimately held with no published results looks the same.
+
+**The fix that is in place now**, so this cannot recur: a retry claims states
+2 and 3 *directly* (`database._claimMeetBatch(..., states=(2, 3))`) and resets
+nothing, the start-up reset is skipped in retry mode, and the reported count is
+`failedCounts`, not `dueCounts`. `scripts/queue_status.py` prints what each
+mode would claim, with the id span of each set, so a "retry" that is really a
+corpus sweep is visible before it runs.
+
+**Before any rescrape now**, run `scripts/queue_status.py --sample 10`. If
+`normal run` is in the tens of thousands, that is the laundered set plus the
+forward-walk seeds, and a full run will take a night at the paced rate.
