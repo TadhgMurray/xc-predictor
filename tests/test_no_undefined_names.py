@@ -40,6 +40,7 @@ WATCHED = (
     "scripts/vpn_rotation.py",
     "scripts/scrape_tuning.py",
     "scripts/queue_meets.py",
+    "scripts/queue_status.py",
     "tfrrs/driver/run_tfrrs.py",
     "tfrrs/driver/launch_tfrrs.py",
     "tfrrs/sweep/prefill_tfrrs_queue.py",
