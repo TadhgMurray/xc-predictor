@@ -76,7 +76,7 @@ class TheDesignThatMakesItMeanAnything(unittest.TestCase):
 
     def test_small_fields_and_thin_courses_are_excluded(self):
         self.assertIn("r.field >= %(min_field)s", self.src)
-        self.assertIn("COALESCE(n_results, 0) >= %(min_course)s", self.src)
+        self.assertIn("COALESCE(cd.n_results, 0) >= %(min_course)s", self.src)
 
     # ! A ROBUST CENTRE, like every other summary in this work: one absurd
     #   rating in a cell must not move the cell.
@@ -86,6 +86,27 @@ class TheDesignThatMakesItMeanAnything(unittest.TestCase):
 
     def test_the_ctes_are_materialized(self):
         self.assertEqual(self.src.count("AS MATERIALIZED"), 3)
+
+    # ⚠⚠ THE JOIN IS canonical_id, NOT course_name. Measured 2026-09-18: 0 of
+    #    74,356 course_difficulties rows match meets.course_name, because that
+    #    column holds the bracket CELL KEY ('TF:...'), not a venue name. The
+    #    site joins meets -> course_canonical -> course_difficulties
+    #    (app.py:1988), and so must this or it measures nothing.
+    def test_it_joins_the_way_the_site_joins(self):
+        self.assertIn("b.canonical_id = cc.canonical_id", self.src)
+        self.assertIn("cc.course_name = m.course_name", self.src)
+        self.assertIn("b.distance_m = (round(m.distance / 100.0) * 100)::int",
+                      self.src)
+        self.assertNotIn("b.course_name = m.course_name", self.src)
+
+    # ! FIVE PLACES, BOTH AXES, in the query and in the preflight -- the
+    #   site's own rounding (app.py:1988). A different rounding misses.
+    def test_the_gps_rounding_matches_the_sites(self):
+        for axis in ("gps_lat", "gps_long"):
+            self.assertEqual(self.src.count(f"round(cc.{axis}::numeric"), 2,
+                             axis)
+            self.assertEqual(self.src.count(f"round(m.{axis}::numeric"), 2,
+                             axis)
 
     def test_it_writes_nothing(self):
         code = self.src.split('"""', 2)[2]

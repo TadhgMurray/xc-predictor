@@ -108,23 +108,38 @@ def preflight(cur, table, since, min_course, verbose=True):
                        f"n_results is NULL on {n_cd - n_nres:,} rows -- "
                        f"lower it with --min-course-results 0")
 
-    # ⚠ THE JOIN KEY. Counted on its own, because a name mismatch is invisible
-    #   in the final query and is the most likely cause.
+    # ⚠ THE JOIN KEY IS canonical_id. Measured 2026-09-18: 0 of 74,356 rows
+    #   match meets.course_name, because course_difficulties.course_name is the
+    #   bracket CELL KEY ('TF:...'), not a venue. Each hop is counted, so a
+    #   miss says which hop.
+    if not _tableExists(cur, "course_canonical"):
+        return False, "course_canonical is missing -- the join needs it"
+    cur.execute("SELECT count(*) FROM course_difficulties "
+                "WHERE canonical_id IS NOT NULL AND difficulty IS NOT NULL")
+    n_canon = cur.fetchone()[0]
+    say(f"    ... with a canonical_id: {n_canon:,}")
+    if not n_canon:
+        return False, ("course_difficulties has no canonical_id -- this build "
+                       "predates the canonical join; rebuild it")
     cur.execute("""
         SELECT count(*) FROM (
-            SELECT DISTINCT course_name FROM course_difficulties
-            WHERE difficulty IS NOT NULL
-        ) cd
-        WHERE EXISTS (SELECT 1 FROM meets m WHERE m.course_name = cd.course_name)
+            SELECT DISTINCT cc.canonical_id
+            FROM   meets m
+            JOIN   course_canonical cc
+                   ON cc.course_name = m.course_name
+                  AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+                  AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+        ) x
+        WHERE EXISTS (SELECT 1 FROM course_difficulties cd
+                      WHERE cd.canonical_id = x.canonical_id)
     """)
-    n_named = cur.fetchone()[0]
-    say(f"    ... whose course_name also appears in meets: {n_named:,}")
-    if not n_named:
-        return False, ("course_difficulties.course_name never equals "
-                       "meets.course_name -- the two spellings differ "
-                       "(course_name is a namespaced DISPLAY name, see "
-                       "probe_meet.py:299), so the join needs the canonical "
-                       "key, not this one")
+    n_reach = cur.fetchone()[0]
+    say(f"    ... canonical ids reachable from meets (name + rounded GPS): "
+        f"{n_reach:,}")
+    if not n_reach:
+        return False, ("meets joins no canonical course -- either GPS is "
+                       "missing on the meets, or course_canonical was built "
+                       "from a different name spelling")
 
     cur.execute(f"""SELECT count(*) FROM {table}
                     WHERE speed_rating IS NOT NULL
@@ -141,20 +156,36 @@ def preflight(cur, table, since, min_course, verbose=True):
 def _sql(table, bins):
     """Median rating per (difficulty bin, percentile band).
 
+    ⚠⚠ THE JOIN IS canonical_id, NOT course_name, and the first version got
+       this wrong: 0 of 74,356 course_difficulties rows matched
+       meets.course_name. `course_difficulties.course_name` is the BRACKET CELL
+       KEY, namespaced by sport ('TF:...' -- see difficulty_view._SQL, which
+       filters on exactly that prefix), not a venue name.
+
+    ★ SO IT GOES THE WAY THE SITE GOES (racecast/app.py:1988):
+
+           meets -> course_canonical  on (course_name, rounded GPS)
+                 -> course_difficulties on (canonical_id, distance bucket)
+
+       The GPS rounding to 5 places and the distance rounded to the nearest
+       100m are both the site's, so this measures the difficulty a reader
+       actually sees rather than a near-miss of it.
+
     ★ ONE PASS. percent_rank() gives each row its position inside its own
       race; ntile() over the courses gives the difficulty bins; the bands are
-      a lateral join so a row lands in at most one. Every CTE MATERIALIZED so
-      none is re-run per row.
+      a join so a row lands in at most one. Every CTE MATERIALIZED so none is
+      re-run per row.
     """
     band_rows = ", ".join(f"({p}, '{name}')" for p, name in BANDS)
     return f"""
         WITH cd AS MATERIALIZED (
-            SELECT course_name, difficulty
-            FROM   course_difficulties
-            WHERE  difficulty IS NOT NULL
-              AND  COALESCE(n_results, 0) >= %(min_course)s
+            SELECT cd.canonical_id, cd.distance_m, cd.difficulty
+            FROM   course_difficulties cd
+            WHERE  cd.difficulty IS NOT NULL
+              AND  cd.canonical_id IS NOT NULL
+              AND  COALESCE(cd.n_results, 0) >= %(min_course)s
         ), binned AS MATERIALIZED (
-            SELECT course_name, difficulty,
+            SELECT canonical_id, distance_m, difficulty,
                    ntile({bins}) OVER (ORDER BY difficulty) AS dbin
             FROM   cd
         ), r AS MATERIALIZED (
@@ -165,7 +196,13 @@ def _sql(table, bins):
                    count(*) OVER (PARTITION BY r.div_id, r.source) AS field
             FROM   {table} r
             JOIN   meets m ON m.div_id = r.div_id AND m.source = r.source
-            JOIN   binned b ON b.course_name = m.course_name
+            JOIN   course_canonical cc
+                   ON cc.course_name = m.course_name
+                  AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+                  AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+            JOIN   binned b
+                   ON b.canonical_id = cc.canonical_id
+                  AND b.distance_m = (round(m.distance / 100.0) * 100)::int
             WHERE  r.speed_rating IS NOT NULL
               AND  r.date ~ '^(19|20)[0-9][0-9]-'
               AND  substr(r.date, 1, 4)::int >= %(since)s
