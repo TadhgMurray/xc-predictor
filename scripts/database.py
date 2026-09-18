@@ -1415,73 +1415,132 @@ def meetUrlTF(meet_info):
 #
 # ! AND ONLY EVER INTO A NULL. Nothing here overwrites a name a meet stated
 #   for itself -- the meet knows its own venue better than its neighbours do.
-def backfillMeetsTFVenueNames(conn, verbose=True):
+def backfillMeetsTFVenueNames(conn, verbose=True, chunk=100000):
     """Fill meets_tf.venue_name where it is missing: from the meet's own meta
     row, then from other meets at the same location. Returns (from_meta,
     from_location, from_gps)."""
     cursor = conn.cursor()
 
     import time as _t
-    _t0 = _t.time()
+
+    # ⚠ CHUNKED, BECAUSE EACH PASS USED TO BE ONE STATEMENT OVER 16.2M ROWS
+    #   (owner, 2026-09-18: "backfill tf venues is hanging"). It was not
+    #   hanging. Pass 1 rewrites up to 14.8M row versions in a single UPDATE
+    #   inside a single transaction, and the progress line was printed
+    #   BEFORE the statement started -- so the terminal showed "pass 1/3"
+    #   and then nothing for hours, which is indistinguishable from a hang
+    #   and, for a job you cannot watch, is the same thing.
+    #
+    # ! AND IT IS RESUMABLE BY CONSTRUCTION. Every pass only touches rows
+    #   where venue_name IS NULL and commits per chunk, so killing this at
+    #   any point loses nothing and re-running picks up where it stopped.
+    #   The old single transaction threw away every row it had filled.
+    cursor.execute("SELECT min(meet_id), max(meet_id) FROM meets_tf")
+    lo_id, hi_id = cursor.fetchone()
+    if lo_id is None:
+        if verbose:
+            print("  meets_tf is empty -- nothing to backfill")
+        return 0, 0, 0
+
+    def _chunks():
+        lo = lo_id
+        while lo <= hi_id:
+            yield lo, lo + chunk
+            lo += chunk
+
+    n_chunks = max(1, (hi_id - lo_id) // chunk + 1)
+
+    def _run(label, sql, params=()):
+        """One pass, chunk by chunk, committing and reporting as it goes."""
+        total, t0, done = 0, _t.time(), 0
+        for lo, hi in _chunks():
+            cursor.execute(sql, params + (lo, hi))
+            total += cursor.rowcount
+            conn.commit()
+            done += 1
+            if verbose and (done % 20 == 0 or done == n_chunks):
+                pct = 100.0 * done / n_chunks
+                print(f"    {label}: {pct:5.1f}%  ({done:,}/{n_chunks:,} "
+                      f"id blocks, {total:,} filled, "
+                      f"{_t.time() - t0:.0f}s)", flush=True)
+        if verbose:
+            print(f"    {label}: {total:,} filled "
+                  f"({_t.time() - t0:.0f}s)", flush=True)
+        return total
+
     if verbose:
+        print(f"  meets_tf meet_id {lo_id:,}..{hi_id:,} in {n_chunks:,} "
+              f"blocks of {chunk:,}", flush=True)
         print("  pass 1/3: the meet's own meets_tf_meta row...", flush=True)
-    cursor.execute("""
+    from_meta = _run("pass 1", """
         UPDATE meets_tf t SET venue_name = m.venue_name
         FROM   meets_tf_meta m
         WHERE  m.meet_id = t.meet_id
           AND  t.venue_name IS NULL
           AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
+          AND  t.meet_id >= %s AND t.meet_id < %s
     """)
-    from_meta = cursor.rowcount
-    if verbose:
-        print(f"    {from_meta:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
-        _t0 = _t.time()
-        print("  pass 2/3: another meet at the same location_id "
-              "(one grouped scan of meets_tf)...", flush=True)
 
-    # the same PLACE, named by whichever of its meets did say
+    # ★ THE SOURCE IS BUILT ONCE, NOT PER CHUNK. The aggregate below scans
+    #   all of meets_tf; running it inside each chunk's UPDATE would turn
+    #   one full scan into one per block. Materialised and indexed, then
+    #   joined -- which is also why this is a temp table and not a CTE.
+    if verbose:
+        print("  pass 2/3: another meet at the same location_id...",
+              flush=True)
+    cursor.execute("DROP TABLE IF EXISTS vn_loc")
     cursor.execute("""
+        CREATE TEMP TABLE vn_loc AS
+        SELECT location_id,
+               mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
+        FROM   meets_tf
+        WHERE  location_id IS NOT NULL
+          AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
+        GROUP  BY location_id
+    """)
+    cursor.execute("CREATE INDEX ON vn_loc (location_id)")
+    cursor.execute("ANALYZE vn_loc")
+    conn.commit()
+    if verbose:
+        cursor.execute("SELECT count(*) FROM vn_loc")
+        print(f"    {cursor.fetchone()[0]:,} named locations", flush=True)
+    from_location = _run("pass 2", """
         UPDATE meets_tf t SET venue_name = src.venue_name
-        FROM (
-            SELECT location_id,
-                   mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
-            FROM   meets_tf
-            WHERE  location_id IS NOT NULL
-              AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
-            GROUP  BY location_id
-        ) src
+        FROM   vn_loc src
         WHERE  src.location_id = t.location_id
           AND  t.venue_name IS NULL
+          AND  t.meet_id >= %s AND t.meet_id < %s
     """)
-    from_location = cursor.rowcount
-    if verbose:
-        print(f"    {from_location:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
-        _t0 = _t.time()
-        print("  pass 3/3: the same coordinates, for rows with no location id "
-              "(the slowest -- it rounds two numerics per row)...", flush=True)
 
-    # ! AND THE SAME COORDINATES, for the rows that carry no location id at
-    #   all. Rounded to five places, which is how course_canonical keys a
-    #   venue -- about a metre, so it is the same field and not the same town.
+    if verbose:
+        print("  pass 3/3: the same coordinates, for rows with no location "
+              "id...", flush=True)
+    cursor.execute("DROP TABLE IF EXISTS vn_gps")
     cursor.execute("""
+        CREATE TEMP TABLE vn_gps AS
+        SELECT round(gps_lat::numeric, 5)  AS la,
+               round(gps_long::numeric, 5) AS lo,
+               mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
+        FROM   meets_tf
+        WHERE  gps_lat IS NOT NULL AND gps_long IS NOT NULL
+          AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
+        GROUP  BY 1, 2
+    """)
+    cursor.execute("CREATE INDEX ON vn_gps (la, lo)")
+    cursor.execute("ANALYZE vn_gps")
+    conn.commit()
+    if verbose:
+        cursor.execute("SELECT count(*) FROM vn_gps")
+        print(f"    {cursor.fetchone()[0]:,} named coordinates", flush=True)
+    from_gps = _run("pass 3", """
         UPDATE meets_tf t SET venue_name = src.venue_name
-        FROM (
-            SELECT round(gps_lat::numeric, 5)  AS la,
-                   round(gps_long::numeric, 5) AS lo,
-                   mode() WITHIN GROUP (ORDER BY btrim(venue_name)) AS venue_name
-            FROM   meets_tf
-            WHERE  gps_lat IS NOT NULL AND gps_long IS NOT NULL
-              AND  venue_name IS NOT NULL AND btrim(venue_name) <> ''
-            GROUP  BY 1, 2
-        ) src
+        FROM   vn_gps src
         WHERE  t.venue_name IS NULL
           AND  t.gps_lat IS NOT NULL AND t.gps_long IS NOT NULL
-          AND  round(t.gps_lat::numeric, 5)  = src.la
+          AND  round(t.gps_lat::numeric, 5) = src.la
           AND  round(t.gps_long::numeric, 5) = src.lo
+          AND  t.meet_id >= %s AND t.meet_id < %s
     """)
-    from_gps = cursor.rowcount
-    if verbose:
-        print(f"    {from_gps:,} filled ({_t.time() - _t0:.0f}s)", flush=True)
 
     conn.commit()
     if verbose:

@@ -99,5 +99,51 @@ class TheWiring(unittest.TestCase):
         self.assertIn("still have none", _backfillBody())
 
 
+# ★ THE OWNER SAW IT AS A HANG, TWICE, FOR DIFFERENT REASONS (2026-09-16
+#   the schema pass, 2026-09-18 the passes themselves). The first fix made
+#   the PASS observable and left the pass as one statement over 16.2M rows,
+#   which is hours of silence with a progress line printed before it starts.
+#   A job nobody can watch is a job nobody can tell apart from a dead one.
+class ItCanBeWatchedAndItCanBeKilled(unittest.TestCase):
+
+    # ! READ AS TEXT, like every other test here. Importing database pulls
+    #   in psycopg2, which turns "is this job watchable" into "is the driver
+    #   installed" on any machine that just wants to run the suite.
+    def setUp(self):
+        self.body = _backfillBody()
+
+    def test_the_updates_are_bounded_by_an_id_range(self):
+        # every pass's UPDATE carries the chunk bound, so no single
+        # statement can touch the whole table
+        self.assertEqual(self.body.count("t.meet_id >= %s AND t.meet_id < %s"),
+                         3)
+
+    def test_it_commits_inside_a_pass(self):
+        # not just at the end: a kill at any point keeps what is done
+        run = self.body[self.body.index("def _run("):]
+        self.assertIn("conn.commit()", run.split("return total")[0])
+
+    def test_it_reports_inside_a_pass(self):
+        run = self.body[self.body.index("def _run("):]
+        self.assertIn("id blocks", run)
+        self.assertIn("flush=True", run)
+
+    # ! AND THE AGGREGATE IS BUILT ONCE. Chunking a query whose source is a
+    #   full-table aggregate turns one scan into one scan per block, which
+    #   would be slower than the version being fixed.
+    def test_the_source_aggregates_are_materialised_once(self):
+        for tmp in ("vn_loc", "vn_gps"):
+            self.assertEqual(self.body.count(f"CREATE TEMP TABLE {tmp}"), 1)
+            self.assertIn(f"CREATE INDEX ON {tmp}", self.body)
+        self.assertNotIn("mode() WITHIN GROUP (ORDER BY btrim(venue_name)) "
+                         "AS venue_name\n        FROM   meets_tf\n"
+                         "        WHERE  location_id IS NOT NULL\n"
+                         "          AND  venue_name IS NOT NULL",
+                         self.body.split("CREATE TEMP TABLE vn_loc")[0])
+
+    def test_every_pass_only_fills_nulls_so_a_rerun_resumes(self):
+        self.assertEqual(self.body.count("t.venue_name IS NULL"), 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
