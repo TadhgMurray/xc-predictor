@@ -83,6 +83,27 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         self.assertIn("results", body)
         self.assertNotIn("meet_queue", body)
 
+    # ⚠ THE WALK MUST START ABOVE WHAT WE HAVE ASKED, NOT ABOVE WHAT HAS
+    #   ANSWERED. The old blind prefill queued every id to 670,000 under both
+    #   sports; XC's watermark is 275,585. Seeding from the watermark walks
+    #   into already-asked ids, where ON CONFLICT DO NOTHING adds nothing, and
+    #   the first extension would call the corpus exhausted.
+    def test_the_walk_starts_above_the_highest_id_ever_queued(self):
+        self.assertIn("def askedFrontier(", self.src)
+        body = _func(self.src, "askedFrontier")
+        self.assertIn("FROM meet_queue", body)
+        self.assertIn("max(meet_id)", body)
+
+        seed = _func(self.src, "seedSport")
+        self.assertIn("askedFrontier(cur, sport)", seed)
+        self.assertIn("frontier + 1", seed)
+        # and never the watermark alone
+        self.assertNotIn("lo, hi = top + 1", seed)
+
+    def test_a_queue_never_seeded_that_high_still_walks_from_the_watermark(self):
+        seed = _func(self.src, "seedSport")
+        self.assertIn("max(top, asked or 0)", seed)
+
     # ! "UNTIL 404" CANNOT BE ONE 404: anet ids have real gaps.
     def test_the_stop_is_a_run_of_misses_not_one(self):
         self.assertIn("STOP_AFTER_MISSES", self.src)

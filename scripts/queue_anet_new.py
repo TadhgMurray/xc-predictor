@@ -73,6 +73,30 @@ def watermark(cur, sport):
     return cur.fetchone()[0]
 
 
+def askedFrontier(cur, sport):
+    """The highest id we have EVER queued for this sport, or None.
+
+    ⚠ THE FORWARD WALK STARTED AT THE WRONG NUMBER (owner, 2026-09-18:
+      "where does it actually start the forward walk"). It started at the
+      watermark -- the last id that produced RESULTS -- and for cross country
+      that is 275,585 while the old blind prefill queued every id up to
+      670,000 under both sports. So the walk seeded into ids we had already
+      asked about, where ON CONFLICT DO NOTHING correctly leaves them alone,
+      added nothing, and would have reported the corpus exhausted on its
+      first extension. The genuinely never-asked ids begin ABOVE here.
+
+    ! THE TWO FRONTIERS ANSWER DIFFERENT QUESTIONS, and both are needed.
+      This one is "what have we never looked at" -- where the forward walk
+      belongs. The watermark is "what has ever given us data" -- what
+      scheduled-above-the-watermark is measured from. Below this id and above
+      the watermark is the interspersed scheduled population, which is the
+      recent pass's job, not the walk's.
+    """
+    cur.execute("""SELECT max(meet_id) FROM meet_queue
+                   WHERE source = 'anet' AND sport = %s""", (sport,))
+    return cur.fetchone()[0]
+
+
 def trailingMisses(cur, sport, top):
     """Consecutive ids above `top` that DO NOT EXIST on anet.
 
@@ -266,13 +290,24 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
         f"(scheduled), and {misses:,} ids in a row at the top that are not "
         f"meets at all")
 
+    # Where "never asked" begins. max() of the two, so a database whose
+    # queue was never seeded that high still walks from the watermark.
+    asked = askedFrontier(cur, sport)
+    frontier = max(top, asked or 0)
+    out["asked"] = asked
+    out["frontier"] = frontier
+    if asked and asked > top:
+        say(f"  [{sport}] highest id ever queued: {asked:,} -- the forward "
+            f"walk starts above THAT, not above the watermark, or it would "
+            f"re-seed ids already asked and add nothing")
+
     if do_new:
         if misses >= stop_after_misses:
             say(f"  [{sport}] {stop_after_misses}+ ids in a row at the top "
                 f"are not meets at all -- treating that as the end of the "
                 f"corpus, nothing seeded forward.")
         else:
-            lo, hi = top + 1, top + ahead
+            lo, hi = frontier + 1, frontier + ahead
             say(f"  [{sport}] seeding forward {lo:,}..{hi:,}")
             if write:
                 ins, woke = seedForward(cur, sport, lo, hi)
