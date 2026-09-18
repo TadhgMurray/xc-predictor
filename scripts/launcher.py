@@ -8,6 +8,7 @@
 # each meet is XC or TF at scrape time, rather than trusting queue's
 # sport tag (which is wrong).
 
+import sys
 import asyncio
 import random
 import platform
@@ -1425,12 +1426,48 @@ def _printSummary(summaries: list):
 #          summary. This is the top-level entry point for the scraper.
 # Arguments: None.
 # Output: None.
+def _printQueueDue():
+    """The anet queue, by sport and state. Exits when nothing is due."""
+    from database import getConn
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT sport, scraped, count(*)
+                FROM   meet_queue WHERE source = 'anet'
+                GROUP  BY sport, scraped ORDER BY sport, scraped
+            """)
+            rows = cur.fetchall()
+        conn.rollback()
+    _STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
+              4: "skipped"}
+    due = 0
+    print("[queue] anet meet_queue:")
+    for sport, state, n in rows:
+        if state == 0:
+            due += n
+        print(f"[queue]   {sport}  {_STATE.get(state, state):<12} {n:,}")
+    if not due:
+        print("[queue] ⚠ NOTHING IS DUE (no rows at scraped=0). The sessions "
+              "would claim nothing and report 0 processed.")
+        print("[queue]   Seed it: python scripts/queue_anet_new.py --write")
+        sys.exit(1)
+    print(f"[queue] {due:,} due")
+
+
 async def main():
  
     # Pool must be initialized before any session touches the DB.
     initPool()
     createTables()
     resetInProgress()
+
+    # ★ SAY WHAT THERE IS TO DO, BEFORE DOING IT (owner, 2026-09-18: six
+    #   sessions reported "0 processed" and the reason -- an empty queue --
+    #   was printed nowhere). A run with nothing to claim is the most likely
+    #   outcome of a mis-seeded queue and the hardest to tell from a broken
+    #   scraper, so it is stated up front and the run stops instead of
+    #   spinning up six copies of Chrome to discover it.
+    _printQueueDue()
 
     # One VPNRotator shared across all sessions. Passed into every runSession
     # call so they all coordinate rotation through the same lock and counter.

@@ -793,15 +793,29 @@ def createTables():
     try:
         with getConn() as conn:
             cursor = conn.cursor()
-            _createCoreTables(cursor)
-            _createTFTables(cursor)
-            _createRecoveryTable(cursor)
-            _migrateLocationID(cursor)
-            _migrateMeetQueueCompositeKey(cursor)
-            _migrateMeetQueueAddSource(cursor)
-            _migrateMeetExtrasAddSource(cursor)
-            _migrateResultsAddTeamSlug(cursor)
-            _migrateResultsAddStatus(cursor)
+            # ⚠ COMMIT BETWEEN PHASES, OR TWO LAUNCHERS DEADLOCK. The whole
+            #   of createTables used to be ONE transaction, so it held every
+            #   ACCESS EXCLUSIVE lock it took until the end. Two instances
+            #   starting together then crossed: "Process A waits for
+            #   AccessExclusiveLock on relation X; Process B waits for
+            #   AccessShareLock on relation Y" -- a genuine deadlock, which
+            #   a lock_timeout cannot help with because neither side is
+            #   merely waiting, they are waiting on each other. Committing
+            #   after each phase means no lock is held across phases and
+            #   there is no cycle to form.
+            #   (a loop, not a nested def: a def here truncates every tool
+            #   that reads this function's source, the tests included)
+            for _step in (_createCoreTables,
+                          _createTFTables,
+                          _createRecoveryTable,
+                          _migrateLocationID,
+                          _migrateMeetQueueCompositeKey,
+                          _migrateMeetQueueAddSource,
+                          _migrateMeetExtrasAddSource,
+                          _migrateResultsAddTeamSlug,
+                          _migrateResultsAddStatus):
+                _step(cursor)
+                conn.commit()
             # ★ AND EVERY OTHER COLUMN THE DDL DECLARES. The two migrations
             #   above are hand-written, which is the habit that lost
             #   team_slug, status and venue_name in one day; this catches the
@@ -811,17 +825,28 @@ def createTables():
             _grew = []
             for _ddl in _coreDdlText():
                 _grew += ensureDdlColumns(cursor, _ddl)
+                conn.commit()          # per DDL block, same reason
             if _grew:
                 print("[DB] added missing columns: "
                       + ", ".join(f"{t}.{c}" for t, c in _grew))
             # and say so about the ones no DDL declares, which cannot be added
             auditInsertColumns(cursor)
+            conn.commit()
             _createMeetsTFMetaTable(cursor)
+            conn.commit()
             _createIndexes(cursor)
             conn.commit()
         print("[DB] Tables ready")
     except Exception as e:
-        print(f"[DB] Failed to create tables: {e}")
+        # ⚠ AND IT IS NOT A WARNING. The scraper ran on regardless, found a
+        #   queue it could not read and reported "0 processed" with no cause
+        #   -- half an hour of looking at the wrong thing. A schema step that
+        #   failed means the tables are not known to be right.
+        print(f"[DB] ⚠ FAILED TO CREATE TABLES: {type(e).__name__} {e}")
+        print("[DB]   The schema is NOT known to be correct. Re-run; if it "
+              "is a deadlock, another launcher or pipeline step is starting "
+              "at the same time -- start one at a time.")
+        raise
  
 
 # _createCoreTables

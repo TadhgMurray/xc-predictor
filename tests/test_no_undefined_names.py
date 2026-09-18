@@ -31,6 +31,16 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # repo: a diagnostic that has rotted is not worth a red suite, but anything
 # on the path to writing the database is.
 WATCHED = (
+    # ★ THE ANET SCRAPE'S OWN PATH WAS NOT WATCHED, and that is how a bare
+    #   sys.exit() got into launcher.py hours after this file was written to
+    #   catch exactly that in database.py (owner, 2026-09-18). These four are
+    #   the first thing that runs on a scrape night.
+    "scripts/launcher.py",
+    "scripts/scrape_results.py",
+    "scripts/vpn_rotation.py",
+    "scripts/scrape_tuning.py",
+    "scripts/queue_anet_new.py",
+    "tfrrs/driver/run_tfrrs.py",
     "scripts/database.py",
     "scripts/result_status.py",
     "scripts/backfill_tf_venues.py",
