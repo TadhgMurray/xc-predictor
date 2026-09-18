@@ -1215,8 +1215,12 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             # are absent from needs_work entirely — we never loop over them.
             # ANET_SPORT=XC (or TF) scopes the whole run to one sport;
             # unset takes both, in meet_id order.
+            # ! RETRY-ONLY CLAIMS THE FAILURES THEMSELVES, not state 0. See
+            #   database._claimMeetBatch: resetting them to 0 first made them
+            #   indistinguishable from every other due row, so the run scraped
+            #   the whole queue.
             batch = await runDbCall(getBatchUnscrapedMeets, BATCH_SIZE,
-                                    ANET_SPORT)
+                                    ANET_SPORT, CLAIM_STATES)
             
             # ★ EMPTY IS NOT "DONE" -- IT IS "EXTEND THE FRONTIER"
             #   (owner, 2026-09-18: the genuinely-empty recent meets number
@@ -1430,6 +1434,9 @@ _WALK = {"it": None}
 #   when the queue drains instead of walking forward. One bounded pass over
 #   the meets we broke.
 RETRY_FAILED = os.environ.get("ANET_RETRY_FAILED", "") not in ("", "0", "false")
+# ★ 2 = failed, 3 = a session died holding the claim. Both are "we broke this
+#   meet"; 0 is "never tried", which a retry must leave alone.
+CLAIM_STATES = (2, 3) if RETRY_FAILED else (0,)
 SEED_AHEAD = int(os.environ.get("SEED_AHEAD", 500))
 DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 2))
 
@@ -1485,16 +1492,13 @@ def _prepareQueue():
       ANET_NO_SEED=1 to drain the queue exactly as it stands.
     """
     from database import getConn
-    from queue_meets import seedAll, dueCounts
+    from queue_meets import seedAll, dueCounts, failedCounts
 
     skip = os.environ.get("ANET_NO_SEED", "") not in ("", "0", "false")
     with getConn() as conn:
         if RETRY_FAILED:
-            print("[queue] ANET_RETRY_FAILED=1 -- re-claiming failed and "
-                  "stranded meets only. No forward walk, no recent pass.")
-            seedAll(conn, source="anet", write=True,
-                    sports=[ANET_SPORT] if ANET_SPORT else None,
-                    do_new=False, do_recent=False, do_failed=True)
+            print("[queue] ANET_RETRY_FAILED=1 -- failed and stranded meets "
+                  "only. Nothing seeded, nothing reset, no forward walk.")
         elif skip:
             print("[queue] ANET_NO_SEED=1 -- draining the queue as it "
                   "stands, seeding nothing.")
@@ -1510,7 +1514,8 @@ def _prepareQueue():
         for sport, state, n in _queueState(conn):
             print(f"[queue]   {sport}  "
                   f"{_QUEUE_STATE.get(state, state):<12} {n:,}")
-        due = dueCounts(conn, "anet")
+        due = (failedCounts(conn, "anet") if RETRY_FAILED
+               else dueCounts(conn, "anet"))
 
     if ANET_SPORT:
         print(f"[queue] ANET_SPORT={ANET_SPORT} -- this run claims "
@@ -1529,6 +1534,10 @@ def _prepareQueue():
               "(--stop-after-misses).")
         print("[queue]   Look at it with: python scripts/queue_meets.py")
         sys.exit(1)
+    from scrape_tuning import perMeetDelayRange
+    _lo, _hi = perMeetDelayRange()
+    print(f"[queue] pace: {_lo}-{_hi}s between meets per session "
+          f"(PER_MEET_DELAY), {NUM_SESSIONS} session(s)")
     print("[queue] due: " + ", ".join(f"{k} {v:,}"
                                       for k, v in sorted(due.items())))
 
@@ -1538,7 +1547,14 @@ async def main():
     # Pool must be initialized before any session touches the DB.
     initPool()
     createTables()
-    resetInProgress()
+    # ⚠ NOT IN RETRY MODE. resetInProgress flips 3 -> 0, and a retry claims 2
+    #   and 3 themselves, so resetting first would move every stranded claim
+    #   out of the set this run exists to work on.
+    if RETRY_FAILED:
+        print("[queue] retry mode: leaving stranded claims at state 3 so the "
+              "retry can claim them.")
+    else:
+        resetInProgress()
 
     # ★ SAY WHAT THERE IS TO DO, BEFORE DOING IT (owner, 2026-09-18: six
     #   sessions reported "0 processed" and the reason -- an empty queue --

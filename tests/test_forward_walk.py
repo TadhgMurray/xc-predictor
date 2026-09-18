@@ -103,7 +103,7 @@ class TheStopComesFromFreshEvidence(unittest.TestCase):
     def test_the_claim_splits_the_batch_between_sports(self):
         db = _read("scripts/database.py")
         body = _func(db, "_claimMeetBatch")
-        self.assertIn('_claimOneSport(cursor, half, "XC")', body)
+        self.assertIn('_claimOneSport(cursor, half, "XC", states)', body)
         self.assertIn('"TF"', body)
         self.assertIn("batch_size // 2", body)
 

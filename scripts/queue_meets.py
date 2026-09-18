@@ -424,6 +424,20 @@ def seedAll(conn, source="anet", write=False, sports=None, verbose=True, **kw):
     return results
 
 
+# ! THE RETRY'S OWN DENOMINATOR. A retry claims states 2 and 3 directly, so
+#   "how much is there to do" is not dueCounts -- which counts state 0, the
+#   rows a retry deliberately leaves alone.
+def failedCounts(conn, source="anet"):
+    """{sport: rows at scraped 2 or 3} for one feed."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT sport, count(*) FROM meet_queue
+                       WHERE source = %s AND scraped IN (2, 3)
+                       GROUP BY sport""", (source,))
+        out = dict(cur.fetchall())
+    conn.rollback()
+    return out
+
+
 def dueCounts(conn, source="anet"):
     """{sport: rows at scraped=0} for one feed."""
     with conn.cursor() as cur:

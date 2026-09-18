@@ -505,6 +505,11 @@ _WALK = {"it": None}
 # asked blocks may come back empty before that sport is called finished.
 TFRRS_SEED_AHEAD = int(os.environ.get("TFRRS_SEED_AHEAD", 500))
 TFRRS_DRY_BLOCKS = int(os.environ.get("TFRRS_DRY_BLOCKS", 2))
+TFRRS_RETRY_FAILED = (os.environ.get("TFRRS_RETRY_FAILED", "")
+                      not in ("", "0", "false"))
+# ★ 2 = failed, 3 = a session died holding the claim. 0 is "never tried",
+#   which a retry must leave alone.
+CLAIM_STATES = (2, 3) if TFRRS_RETRY_FAILED else (0,)
 
 
 async def _extendFrontier(label):
@@ -517,7 +522,7 @@ async def _extendFrontier(label):
       is the whole reason those ids are being re-asked.
     """
     # ! RETRY-ONLY MODE ENDS WHEN THE QUEUE DRAINS -- no new ids.
-    if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
+    if TFRRS_RETRY_FAILED:
         return False
     from queue_meets import ForwardWalk
 
@@ -551,7 +556,11 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
     try:
         while True:
             t0 = time.perf_counter()
-            batch = await asyncio.to_thread(claimTFRRSMeetBatch, CLAIM_BATCH_SIZE)
+            # ! RETRY-ONLY CLAIMS 2 AND 3 THEMSELVES -- see
+            #   database._claimMeetBatch for why a reset-then-claim-0 retry
+            #   silently became an ordinary scrape of the whole queue.
+            batch = await asyncio.to_thread(claimTFRRSMeetBatch,
+                                            CLAIM_BATCH_SIZE, CLAIM_STATES)
             _tick("claim", time.perf_counter() - t0)
 
             # ★ EMPTY IS NOT "DONE" -- IT IS "EXTEND THE FRONTIER" (owner,

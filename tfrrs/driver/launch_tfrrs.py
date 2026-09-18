@@ -104,10 +104,15 @@ def _printQueueDue():
             rows = cur.fetchall()
         conn.rollback()
     names = {0: "due", 1: "done", 2: "failed", 3: "in-progress", 4: "not a meet"}
+    # ! IN RETRY MODE THE WORK IS STATES 2 AND 3, not 0 -- the claim takes
+    #   them directly, so counting state 0 would report "nothing to do" on a
+    #   queue full of failures.
+    wanted = ((2, 3) if os.environ.get("TFRRS_RETRY_FAILED", "")
+              not in ("", "0", "false") else (0,))
     due = 0
     print("[queue] tfrrs meet_queue:", flush=True)
     for sport, state, n in rows:
-        if state == 0:
+        if state in wanted:
             due += n
         print(f"[queue]   {sport}  {names.get(state, state):<12} {n:,}")
     return due
@@ -133,12 +138,9 @@ def _prepareQueue():
     #   forwards pass and stuff"). Resets failed and stranded claims, seeds
     #   nothing, and run_tfrrs ends the run when the queue drains.
     if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
-        print("[queue] TFRRS_RETRY_FAILED=1 -- re-claiming failed and "
-              "stranded meets only. No forward walk, no recent pass.",
+        print("[queue] TFRRS_RETRY_FAILED=1 -- failed and stranded meets "
+              "only. Nothing seeded, nothing reset, no forward walk.",
               flush=True)
-        with getConn() as conn:
-            seedAll(conn, source="tfrrs", write=True,
-                    do_new=False, do_recent=False, do_failed=True)
     elif os.environ.get("TFRRS_NO_SEED", "") not in ("", "0", "false"):
         print("[queue] TFRRS_NO_SEED=1 -- draining the queue as it stands.",
               flush=True)
@@ -167,7 +169,15 @@ def _prepareQueue():
 
 async def main():
     # Stale-claim reset is blocking psycopg2 -> run it off the event loop.
-    n_reset = await asyncio.to_thread(_resetStaleClaimsSync)
+    # ⚠ NOT IN RETRY MODE. This flips 3 -> 0, and a retry claims 2 and 3
+    #   themselves -- so resetting first would quietly move every stranded
+    #   claim out of the set the run is supposed to be working on.
+    if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
+        n_reset = 0
+        print("[queue] retry mode: leaving stranded claims at state 3 so the "
+              "retry can claim them.", flush=True)
+    else:
+        n_reset = await asyncio.to_thread(_resetStaleClaimsSync)
     print(f"reset {n_reset} stale TFRRS claims", flush=True)
 
     await asyncio.to_thread(_prepareQueue)

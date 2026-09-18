@@ -2460,11 +2460,12 @@ def populateRecoveryQueue(rows: list) -> int:
 # Output: dict mapping meet_id (int) → list of sports still needing
 #         work, e.g. {101: ["XC", "TF"], 5601: ["TF"]}.
 #         Empty dict means no status=0 work remains — scraping is done.
-def getBatchUnscrapedMeets(batch_size: int, sport: str = None) -> dict:
+def getBatchUnscrapedMeets(batch_size: int, sport: str = None,
+                           states=(0,)) -> dict:
     
     with getConn() as conn:
         cursor = conn.cursor()
-        rows = _claimMeetBatch(cursor, batch_size, sport)
+        rows = _claimMeetBatch(cursor, batch_size, sport, states)
         conn.commit()  # commit the claim so other sessions see status=3 immediately
  
     return _buildMeetSportDict(rows)
@@ -2494,7 +2495,23 @@ def getBatchUnscrapedMeets(batch_size: int, sport: str = None) -> dict:
 # Output: list of (meet_id, sport) tuples actually claimed this call.
 #         May be shorter than batch_size if fewer than batch_size rows
 #         are left at status=0 (i.e. scraping is nearly done).
-def _claimMeetBatch(cursor, batch_size, sport=None):
+def _claimMeetBatch(cursor, batch_size, sport=None, states=(0,)):
+    # ⚠⚠ WHICH STATES TO CLAIM IS THE CALLER'S, AND A RETRY MUST NOT GO
+    #    THROUGH STATE 0 (owner, 2026-09-18: "I think you're checking more ids
+    #    than just the failed ones. I'm not even sure you're resetting the ids
+    #    at all for the failed ones").
+    #
+    #    Both halves of that are right, and they are the same fault. The first
+    #    retry-only mode reset states 2 and 3 to 0 and then claimed state 0 --
+    #    which is EVERY due row, including the thousands an earlier forward
+    #    walk had seeded and never scraped. So the run was an ordinary scrape
+    #    night wearing a retry flag, and no output could tell you whether the
+    #    reset had happened, because the reset made the failures identical to
+    #    everything else.
+    #
+    # ★ SO A RETRY CLAIMS 2 AND 3 DIRECTLY AND RESETS NOTHING. The set it
+    #   works on is then exactly the failures, by construction rather than by
+    #   hoping the queue was empty.
 
     # ⚠ THERE WAS NO ORDER BY, AND THAT IS WHY A RUN CAN BE ALL ONE SPORT
     #   (owner, 2026-09-18: "I swear I didn't see a single xc meet"). Without
@@ -2518,17 +2535,17 @@ def _claimMeetBatch(cursor, batch_size, sport=None):
     # ! AND A SPORT WITH NOTHING DUE GIVES ITS HALF BACK, so the batch stays
     #   full once one sport finishes rather than halving throughput.
     if sport:
-        return _claimOneSport(cursor, batch_size, sport)
+        return _claimOneSport(cursor, batch_size, sport, states)
 
     half = max(1, batch_size // 2)
-    rows = _claimOneSport(cursor, half, "XC")
-    rows += _claimOneSport(cursor, batch_size - len(rows), "TF")
+    rows = _claimOneSport(cursor, half, "XC", states)
+    rows += _claimOneSport(cursor, batch_size - len(rows), "TF", states)
     if len(rows) < batch_size:
-        rows += _claimOneSport(cursor, batch_size - len(rows), "XC")
+        rows += _claimOneSport(cursor, batch_size - len(rows), "XC", states)
     return rows
 
 
-def _claimOneSport(cursor, limit, sport):
+def _claimOneSport(cursor, limit, sport, states=(0,)):
     if limit <= 0:
         return []
     cursor.execute(
@@ -2538,14 +2555,14 @@ def _claimOneSport(cursor, limit, sport):
         WHERE (meet_id, sport, source) IN (
             SELECT meet_id, sport, source
             FROM meet_queue
-            WHERE scraped = 0 AND source = 'anet' AND sport = %s
+            WHERE scraped = ANY(%s) AND source = 'anet' AND sport = %s
             ORDER BY meet_id
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )
         RETURNING meet_id, sport
         """,
-        (sport, limit),
+        (list(states), sport, limit),
     )
     return list(cursor.fetchall())
 
@@ -2935,10 +2952,10 @@ def _migrateMeetExtrasAddSource(cursor):
 #           batch_size: max rows to claim this round.
 # Output:   list of (meet_id, sport) tuples actually claimed (status 0 -> 3).
 #           Empty list = no tfrrs work left.
-def claimTFRRSMeetBatch(batch_size: int) -> list:
+def claimTFRRSMeetBatch(batch_size: int, states=(0,)) -> list:
     with getConn() as conn:
         cursor = conn.cursor()
-        rows = _claimTFRRSBatch(cursor, batch_size)
+        rows = _claimTFRRSBatch(cursor, batch_size, states)
         conn.commit()   # publish the 0->3 flip so a concurrent run can't re-grab
     return rows
  
@@ -2952,7 +2969,9 @@ def claimTFRRSMeetBatch(batch_size: int) -> list:
 #           cursor:     open cursor.
 #           batch_size: max rows to claim.
 # Output:   list of (meet_id, sport) tuples.
-def _claimTFRRSBatch(cursor, batch_size):
+# ! states= IS THE RETRY PATH, exactly as in _claimMeetBatch: a retry claims
+#   2 and 3 themselves rather than resetting them to 0 and claiming everything.
+def _claimTFRRSBatch(cursor, batch_size, states=(0,)):
     cursor.execute(
         """
         UPDATE meet_queue
@@ -2960,13 +2979,13 @@ def _claimTFRRSBatch(cursor, batch_size):
         WHERE (meet_id, sport, source) IN (
             SELECT meet_id, sport, source
             FROM meet_queue
-            WHERE scraped = 0 AND source = 'tfrrs'
+            WHERE scraped = ANY(%s) AND source = 'tfrrs'
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )
         RETURNING meet_id, sport
         """,
-        (batch_size,),
+        (list(states), batch_size),
     )
     return cursor.fetchall()
  
