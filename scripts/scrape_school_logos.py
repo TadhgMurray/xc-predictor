@@ -1551,66 +1551,32 @@ def sharedShas(rows, minimum=SHARED_MIN):
     return {sha for sha, fams in by.items() if len(fams) >= minimum}
 
 
-def staleRows(cur):
-    """school_logo rows whose (school, state) is no longer a cluster.
-
-    ⚠ A REBUILD THAT MERGES A NAME LEAVES ITS OLD ROWS BEHIND (owner,
-      2026-09-18, via diag_crest): school_identity has ONE "Penn State"
-      cluster, in PA, and school_logo had Penn State rows under seventeen
-      states -- AR, AZ, CA, CT, FL, IA, IL, IN, KY, MD, MN, NJ, NY, OH, OR,
-      PA, VA -- all carrying the same image. Those sixteen are from the build
-      when the name had 28 clusters. anet_teams' --redo files crests under
-      the NEW pairs and deletes nothing, and its own docstring says so
-      without drawing the conclusion.
-
-      They are not harmless. Every one is another name+state wearing the
-      crest, they make the table unreadable when something goes wrong, and a
-      cluster that comes back under an old state inherits a crest nobody
-      re-checked.
-
-    ⚠⚠ "NOT A CLUSTER" IS NOT "NOT IN THE TABLE", and the first dry run
-       proved it (owner, 2026-09-18): 12,268 rows, nearly all of them club
-       teams -- 3DElite (CA), 210 Speed Elite (TX), 16Ways Track Club (IA).
-       Their crests are FINE. build_school_identity only clusters athletes
-       whose state it could resolve (its WHERE ... IS NOT NULL), so a name
-       it can place nowhere gets no row in school_identity AT ALL, and a
-       bare NOT EXISTS reads that absence as a rebuild having moved the
-       name. It moved nothing; it never held it.
-
-    ★ SO THE SCHOOL MUST STILL HAVE A CLUSTER SOMEWHERE. That is the
-      Penn State shape exactly -- clusters exist, this state is not one of
-      them -- and it is the only shape that is evidence of a rebuild. A
-      name school_identity has never heard of is out of scope here.
-
-    ! NEVER A ROW A HUMAN SET. An override is a decision, and a rebuild is
-      not allowed to discard it.
-    """
-    if not _tableExists(cur, "school_identity"):
-        return []
-    cur.execute("""
-        SELECT l.school, l.state, l.level, l.kind
-        FROM   school_logo l
-        WHERE  COALESCE(btrim(l.state), '') <> ''
-          AND  l.override IS NULL
-          AND  EXISTS (SELECT 1 FROM school_identity si
-                       WHERE si.school = l.school)
-          AND  NOT EXISTS (SELECT 1 FROM school_identity si
-                           WHERE si.school = l.school AND si.state = l.state)
-        ORDER  BY l.school, l.state
-    """)
-    return [(r["school"], r["state"], r["level"], r["kind"])
-            if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
-
-
-def pruneStale(cur, rows):
-    """Delete those rows. Returns how many went."""
-    n = 0
-    for school, state, level, _kind in rows:
-        cur.execute("""DELETE FROM school_logo
-                       WHERE school = %s AND state = %s AND level = %s""",
-                    (school, state, level or ""))
-        n += cur.rowcount
-    return n
+# ⚠⚠ THERE WAS A --prune-stale HERE AND IT WAS WRONG TWICE (2026-09-18).
+#
+#    The idea: school_identity has ONE "Penn State" cluster (PA) while
+#    school_logo had Penn State rows under seventeen states, so rows whose
+#    (school, state) is not a cluster must be leftovers from an older build
+#    and can go. The first dry run proposed 12,268 rows. Narrowing it to
+#    schools that still have a cluster somewhere still proposed 9,923 --
+#    nearly all club teams: 3DElite (CA/FL/KS/NC), 3M Track Club (AZ/NE),
+#    301 Panthers (NC/VA).
+#
+# ★ AND THOSE ROWS SERVE. crestState's resolver answers None for a name the
+#   identity cannot place -- every club -- and then falls back to the
+#   CALLER'S OWN state (`st = (st or state or "").upper()`, and read its
+#   comment: without that floor every crest on the site disappears whenever
+#   the label cache is empty). A club racing in four states is looked up
+#   under each of them in turn, so a row under a state that is not a cluster
+#   is not unreachable. It is the row that answers. There is no predicate
+#   over (school, state) that separates a rebuild leftover from a live club
+#   crest, because the read path does not distinguish them either.
+#
+# ★ AND PENN STATE WAS NEVER THIS ANYWAY. Its crest was suppressed by the
+#   `shared` flag -- loadCrests filters `(NOT shared OR override IS NOT
+#   NULL)` -- because sharedShas counted five spellings of ONE institution
+#   as five schools. That is fixed in sharedShas/_family, above, and the
+#   seventeen rows were a cosmetic annoyance this escalated into a feature
+#   that deletes ten thousand live crests. Do not rebuild it on this theory.
 
 
 def markShared(cur, minimum=SHARED_MIN):
@@ -1898,11 +1864,6 @@ def main():
     ap.add_argument("--dir", default=None, help="where the PNGs go (default XCP_LOGO_DIR)")
     ap.add_argument("--sweep-only", action="store_true",
                     help="re-run the shared-crest sweep and stop")
-    ap.add_argument("--prune-stale", action="store_true",
-                    help="delete school_logo rows whose (school, state) is no "
-                         "longer a school_identity cluster -- leftovers from "
-                         "an identity rebuild. Overrides are never touched. "
-                         "Needs --write; --dry-run lists them.")
     ap.add_argument("--suspect", action="store_true",
                     help="only schools whose crest did NOT come from anet's "
                          "team page, worst first. The wrong-logo subset, "
@@ -1964,27 +1925,6 @@ def main():
             #   repair it was asked for.
             ensureTable(cur, DDL)
             ensureLevelKey(cur)
-
-            # ★ BEFORE ANYTHING ELSE, because the shared sweep counts these
-            #   rows and a stale one can tip a real crest over the bar.
-            if args.prune_stale:
-                stale = staleRows(cur)
-                print(f"  {len(stale):,} school_logo rows whose (school, "
-                      f"state) is no longer a cluster", flush=True)
-                for school, state, level, kind in stale[:25]:
-                    print(f"    {school} ({state}) level={level or '-'} "
-                          f"{kind}")
-                if len(stale) > 25:
-                    print(f"    ... and {len(stale) - 25:,} more")
-                if args.write and stale:
-                    print(f"  deleted {pruneStale(cur, stale):,}", flush=True)
-                    n = markShared(cur)
-                    print(f"  shared sweep re-run: {n:,} images are worn by "
-                          f"{SHARED_MIN}+ institution families", flush=True)
-                    conn.commit()
-                elif stale:
-                    print("  DRY RUN -- pass --write to delete them.")
-                return
 
             pairs = None
             if args.fix_multi:

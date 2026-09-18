@@ -377,14 +377,15 @@ class OneUniversitysCampusesAreNotFourSchools(unittest.TestCase):
         self.assertNotIn("count(DISTINCT school)", body)
 
 
-class AnIdentityRebuildLeavesRowsBehind(unittest.TestCase):
-    """school_identity has ONE Penn State cluster, in PA; school_logo had
-    Penn State rows under seventeen states. Sixteen are from the build when
-    the name had 28 clusters, and --redo files under the new pairs without
-    deleting the old."""
-
-    @staticmethod
-    def _src():
+# ⚠⚠ THE PRUNE IS GONE AND MUST NOT COME BACK ON THAT THEORY (2026-09-18).
+#    --prune-stale deleted school_logo rows whose (school, state) was not a
+#    school_identity cluster. Two dry runs said 12,268 then 9,923 rows,
+#    nearly all live club crests. crestState falls back to the CALLER'S own
+#    state for any name the identity cannot place -- every club -- so a row
+#    under a non-cluster state is the row that answers, not a leftover.
+#    Penn State's real cause was the `shared` flag, fixed in _family.
+class ThePruneStaysRemoved(unittest.TestCase):
+    def _src(self):
         import io
         import os
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -392,63 +393,25 @@ class AnIdentityRebuildLeavesRowsBehind(unittest.TestCase):
                      encoding="utf-8") as fh:
             return fh.read()
 
-    def test_stale_rows_can_be_found(self):
+    def test_no_prune_flag_and_no_stale_query(self):
         src = self._src()
-        self.assertIn("def staleRows(", src)
-        i = src.index("def staleRows(")
-        body = src[i:src.index("\ndef ", i + 10)]
-        self.assertIn("NOT EXISTS", body)
-        self.assertIn("school_identity", body)
+        self.assertNotIn('add_argument("--prune-stale"', src)
+        self.assertNotIn("def staleRows(", src)
+        self.assertNotIn("def pruneStale(", src)
 
-    # ⚠ AN OVERRIDE IS A DECISION. A rebuild must not discard one.
-    def test_it_never_touches_an_override(self):
+    def test_the_reason_is_written_down_where_the_code_was(self):
         src = self._src()
-        i = src.index("def staleRows(")
-        body = src[i:src.index("\ndef ", i + 10)]
-        self.assertIn("l.override IS NULL", body)
+        self.assertIn("THERE WAS A --prune-stale HERE", src)
+        self.assertIn("Do not rebuild it on this theory.", src)
 
-    # ⚠⚠ A CLUB IS NOT A STALE ROW. build_school_identity clusters only
-    #    athletes whose state it could resolve, so a name it can place
-    #    nowhere -- every club team -- has NO row in school_identity at
-    #    all. A bare NOT EXISTS read that absence as a rebuild and proposed
-    #    deleting 12,268 perfectly good crests (owner, 2026-09-18). The
-    #    school has to still have a cluster SOMEWHERE for its missing state
-    #    to be evidence of anything.
-    def test_a_school_with_no_clusters_at_all_is_not_stale(self):
-        src = self._src()
-        i = src.index("def staleRows(")
-        body = src[i:src.index("\ndef ", i + 10)]
-        sql = body[body.index("SELECT l.school"):]
-        self.assertIn("EXISTS (SELECT 1 FROM school_identity si\n"
-                      "                       WHERE si.school = l.school)",
-                      sql)
-        # ... and it is a bare school test, not one that also pins the state
-        # (that is the OTHER clause -- the two together are the Penn State
-        # shape: clusters exist, this state is not among them).
-        self.assertIn("si.school = l.school AND si.state = l.state", sql)
-
-    def test_a_stateless_row_is_not_called_stale(self):
-        """level-less, state-less rows are the deliberate any-state fallback."""
-        src = self._src()
-        i = src.index("def staleRows(")
-        body = src[i:src.index("\ndef ", i + 10)]
-        self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
-
-    def test_there_is_a_flag_and_it_needs_write(self):
-        src = self._src()
-        self.assertIn('ap.add_argument("--prune-stale"', src)
-        self.assertIn("if args.prune_stale:", src)
-        i = src.index("if args.prune_stale:")
-        block = src[i:i + 1200]
-        self.assertIn("DRY RUN", block)
-        self.assertIn("if args.write and stale:", block)
-
-    # ★ THE SWEEP MUST RE-RUN AFTER A PRUNE, or the rows it counted are gone
-    #   and the flags it set stay.
-    def test_pruning_re_runs_the_shared_sweep(self):
-        src = self._src()
-        i = src.index("if args.prune_stale:")
-        self.assertIn("markShared(cur)", src[i:i + 1200])
+    # ★ THE READ PATH IS THE EVIDENCE, so pin the line the argument rests on.
+    def test_the_caller_state_floor_still_exists(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "racecast", "school_logo.py"),
+                     encoding="utf-8") as fh:
+            self.assertIn('st = (st or state or "").upper()', fh.read())
 
 
 if __name__ == "__main__":
