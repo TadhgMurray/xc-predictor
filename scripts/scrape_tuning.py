@@ -34,7 +34,9 @@ def _envFloat(name, default):
 #   twenty-five sessions finish in about the same wall time; six use a lot
 #   less RAM, because each one is a real Chrome.
 #
-#   To actually go gentler, lower TARGET_REQUESTS_PER_SEC_PER_IP.
+#   To actually go gentler ON TF, lower TARGET_REQUESTS_PER_SEC_PER_IP. For
+#   XC that number does nothing: see the warning on it below. XC throughput
+#   is PER_MEET_DELAY divided by NUM_SESSIONS, and both matter.
 #
 # ! CAPPED BY SESSION_CONFIGS. launcher takes SESSION_CONFIGS[:NUM_SESSIONS],
 #   so a number above the configured list silently gets the list's length.
@@ -44,7 +46,15 @@ NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
 # allowed against the single shared IP. Start low, raise it while watching
 # your 1015 rate, then back off ~30% from where bans start.
 #
-# ★ THE REAL PACE KNOB. Halve it and the whole run takes twice as long,
+# ⚠ TRACK ONLY. perRequestDelayRange() is read in exactly one place --
+#   scrape_results.py's TF event/div loop -- so this number paces TF and
+#   NOTHING ELSE. The XC division loop sleeps a hardcoded 0.3-0.6s instead,
+#   so for cross country the throughput knobs are PER_MEET_DELAY and
+#   NUM_SESSIONS, and sessions genuinely multiply (there is no shared budget
+#   being divided). Measured 2026-09-18, after an estimate given on the
+#   assumption this applied to both.
+#
+# ★ THE REAL PACE KNOB FOR TF. Halve it and the TF run takes twice as long,
 #   whatever the session count.
 TARGET_REQUESTS_PER_SEC_PER_IP = _envFloat(
     "TARGET_REQUESTS_PER_SEC_PER_IP", 3.0)
