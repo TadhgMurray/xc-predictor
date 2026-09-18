@@ -1468,7 +1468,8 @@ def sharedAlready(cur, sha, minimum=SHARED_MIN):
     cur.execute("SELECT school FROM school_logo WHERE sha = %s", (sha,))
     names = [r["school"] if isinstance(r, dict) else r[0]
              for r in cur.fetchall()]
-    return len({_family(n) for n in names}) >= minimum
+    return len({_family(n) for n in names
+                if not _isRosterish(n)}) >= minimum
 
 
 def storedKind(cur, school, state, level=None):
@@ -1511,6 +1512,39 @@ def touch(cur, school, state):
                    WHERE school = %s AND state = %s""", (school, state))
 
 
+# ⚠⚠ AND "UNAT-Penn State" IS NOT AN INSTITUTION (owner, 2026-09-18: the
+#    PA row came back shared = True after the family fix). _family takes the
+#    first two words, so the unattached spellings each invented a family of
+#    their own:
+#
+#      Penn State            -> "penn state"
+#      UNAT-Penn State       -> "unat penn"
+#      UNA-Penn State        -> "una penn"
+#      U-Penn State Altoona  -> "u penn"
+#
+#    Four families, SHARED_MIN is four, and the correct crest was suppressed
+#    again -- by the very fix meant to stop that. A roster status means "no
+#    team"; it cannot be evidence that a picture is a district placeholder, so
+#    it contributes no family at all.
+#
+# ! THE REPO ALREADY KNEW THIS SHAPE: racecast/school_name.isRosterStatus and
+#   panels._NOT_A_TEAM_PREFIXES are the same judgement. Spelled out here
+#   rather than imported because this module is the scraper's and must run
+#   with no racecast on the path.
+_ROSTER_PREFIXES = ("unat", "unnat", "unath", "una", "unaff", "u")
+
+
+def _isRosterish(name):
+    """True when a name's FIRST word is an unattached marker rather than part
+    of the school's name. Only the first word, and only as a whole word: a
+    school really is called "Una" (AL) and another "Unalakleet" (AK), so this
+    asks whether the rest of the string still names a school."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", str(name or "").lower()) if w]
+    if len(words) < 2:
+        return False
+    return words[0] in _ROSTER_PREFIXES
+
+
 def _family(name):
     """The institution FAMILY a name belongs to: its first two words.
 
@@ -1546,7 +1580,8 @@ def sharedShas(rows, minimum=SHARED_MIN):
     """
     by = {}
     for school, sha in rows:
-        if sha:
+        # ! A ROSTER STATUS CONTRIBUTES NO FAMILY. See _isRosterish.
+        if sha and not _isRosterish(school):
             by.setdefault(sha, set()).add(_family(school))
     return {sha for sha, fams in by.items() if len(fams) >= minimum}
 

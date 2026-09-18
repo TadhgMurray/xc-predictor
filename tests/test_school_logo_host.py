@@ -329,10 +329,11 @@ class OneUniversitysCampusesAreNotFourSchools(unittest.TestCase):
         ns = {"re": _re}
         for node in ast.parse(src).body:
             if isinstance(node, ast.FunctionDef) and node.name in (
-                    "_family", "sharedShas"):
+                    "_family", "_isRosterish", "sharedShas"):
                 exec(ast.get_source_segment(src, node), ns)
             if isinstance(node, ast.Assign) and getattr(
-                    node.targets[0], "id", "") == "SHARED_MIN":
+                    node.targets[0], "id", "") in ("SHARED_MIN",
+                                                   "_ROSTER_PREFIXES"):
                 exec(ast.get_source_segment(src, node), ns)
         self.family = ns["_family"]
         self.sharedShas = ns["sharedShas"]
@@ -563,6 +564,57 @@ class TheQueueBuildIsNotSilent(unittest.TestCase):
                      "NOT g2.shared OR g2.override IS NOT NULL",
                      "si2.n_athletes >= 3"):
             self.assertIn(cond, block)
+
+
+# ⚠⚠ THE FAMILY FIX SUPPRESSED PENN STATE AGAIN (owner, 2026-09-18: the PA
+#    row came back shared = True). _family takes the first two words, so each
+#    unattached spelling invented a family: "unat penn", "una penn", "u penn",
+#    "penn state" -- four, and SHARED_MIN is four. A roster status means "no
+#    team" and cannot be evidence that a picture is a district placeholder.
+class ARosterStatusIsNotAnInstitution(unittest.TestCase):
+    def _fns(self):
+        import io
+        import os
+        import re as _re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        ns = {"re": _re}
+        i = src.index("_ROSTER_PREFIXES =")
+        exec(src[i:src.index("def sharedShas")], ns)     # noqa: S102
+        return ns["_family"], ns["_isRosterish"]
+
+    def test_the_unattached_spellings_add_no_family(self):
+        family, rosterish = self._fns()
+        names = ["Penn State", "Penn State Behrend", "UNAT-Penn State",
+                 "Unat-Penn State", "UNA-Penn State", "U-Penn State Altoona",
+                 "Penn State-Berks"]
+        fams = {family(n) for n in names if not rosterish(n)}
+        self.assertEqual(fams, {"penn state"})
+
+    # ! AND A SCHOOL WHOSE NAME MERELY STARTS WITH THOSE LETTERS IS A SCHOOL.
+    #   "Una" (AL) and "Unalakleet" (AK) are real, and so is every
+    #   "University ..." -- the marker has to be a WHOLE first word.
+    def test_a_real_school_is_not_mistaken_for_a_roster_status(self):
+        _family, rosterish = self._fns()
+        for name in ("Una", "Unalakleet", "Union", "University High",
+                     "Universal Academy", "Unatego"):
+            self.assertFalse(rosterish(name), name)
+
+    def test_both_counters_skip_them(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        # sharedShas (the sweep) and sharedAlready (the write-time guard) must
+        # agree, or one refuses a crest the other would not have flagged.
+        for fn in ("def sharedShas(", "def sharedAlready("):
+            body = src[src.index(fn):]
+            body = body[:body.index("\ndef ", 10)]
+            self.assertIn("_isRosterish", body, fn)
 
 
 if __name__ == "__main__":
