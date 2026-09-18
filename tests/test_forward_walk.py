@@ -95,6 +95,34 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         body = _func(self.src, "trailingMisses")
         self.assertIn("scraped IN (1, 2)", body)
 
+    # ⚠ THE BUG THAT WOULD HAVE STOPPED THE WALK EARLY (owner, 2026-09-18:
+    #   "there's like 10k meets that are scheduled with no results, and
+    #   they're interspersed between the last like 30k ids"). Every id above
+    #   the watermark has no results by definition, so counting empties made
+    #   the first run of scheduled meets look like the end of the corpus.
+    def test_the_ceiling_is_missing_MEETS_not_missing_results(self):
+        body = _func(self.src, "trailingMisses")
+        src = _read("scripts/queue_anet_new.py")
+        # it asks the meets table, not the results table
+        self.assertIn('SPORTS[sport]["meets"]', body)
+        self.assertNotIn('SPORTS[sport]["results"]', body)
+        # and the two tables are genuinely different per sport
+        self.assertIn('"meets": "meets_tf"', src)
+
+    def test_scheduled_meets_are_retried_not_counted_as_a_ceiling(self):
+        src = _read("scripts/queue_anet_new.py")
+        body = _func(src, "scheduledToRetry")
+        # a real meet with no results
+        self.assertIn('SPORTS[sport]["meets"]', body)
+        self.assertIn("NOT EXISTS", body)
+        # and it does not waste a fetch on one still in the future
+        self.assertIn("meet_date > %(today)s", body)
+
+    def test_the_two_numbers_are_reported_separately(self):
+        body = _func(_read("scripts/queue_anet_new.py"), "seedSport")
+        self.assertIn("scheduled", body)
+        self.assertIn("not meets at all", body)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

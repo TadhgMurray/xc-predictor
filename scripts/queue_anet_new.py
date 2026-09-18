@@ -48,8 +48,10 @@ sys.path.insert(0, "scripts")
 from database import getConn, ensureCoreColumns         # noqa: E402
 
 SPORTS = {
-    "XC": {"results": "results",    "dates": "meets"},
-    "TF": {"results": "results_tf", "dates": "meets_tf_meta"},
+    # results: where a finish lands.  meets: where the MEET lands, which a
+    # scheduled meet with no results still gets.  dates: where its date lands.
+    "XC": {"results": "results",    "meets": "meets",    "dates": "meets"},
+    "TF": {"results": "results_tf", "meets": "meets_tf", "dates": "meets_tf_meta"},
 }
 
 # How far past the watermark to seed in one go. Small on purpose: the
@@ -72,26 +74,60 @@ def watermark(cur, sport):
 
 
 def trailingMisses(cur, sport, top):
-    """How many ids above `top` we ASKED about and got nothing from.
+    """Consecutive ids above `top` that DO NOT EXIST on anet.
 
-    ! ASKED, not merely absent. An id we never queued is not evidence of a
-      ceiling; an id we queued, scraped and got no results from is.
+    ⚠ IT USED TO COUNT "NO RESULTS", AND THAT IS NOT THE END OF THE CORPUS
+      (owner, 2026-09-18: "there's like 10k meets that are scheduled with no
+      results, and they're interspersed between the last like 30k ids"). Every
+      id above the watermark has no results by definition -- the watermark IS
+      the last id that produced any -- so counting empties meant the first
+      run of scheduled meets read as the ceiling and the forward walk stopped
+      thousands of ids early.
+
+    ★ THE DISTINCTION IS ALREADY IN THE DATA, and it is the meet row, not the
+      result row. A meet that EXISTS writes `meets` / `meets_tf` rows from its
+      divisions the moment it is scraped, results or no results -- that is a
+      scheduled meet. An id that does not exist writes nothing at all -- that
+      is the 404. So the run to count is ids with no MEET row.
+
+    ! STILL ONLY IDS WE ASKED ABOUT. An id never queued is not evidence of
+      anything.
     """
-    res = SPORTS[sport]["results"]
+    mt = SPORTS[sport]["meets"]
     cur.execute(f"""
-        SELECT EXISTS (SELECT 1 FROM {res} r
-                       WHERE r.meet_id = q.meet_id AND r.source = 'anet')
+        SELECT EXISTS (SELECT 1 FROM {mt} m
+                       WHERE m.meet_id = q.meet_id AND m.source = 'anet')
         FROM   meet_queue q
         WHERE  q.source = 'anet' AND q.sport = %s
           AND  q.scraped IN (1, 2) AND q.meet_id > %s
         ORDER  BY q.meet_id DESC
     """, (sport, top))
     run = 0
-    for (has_results,) in cur.fetchall():
-        if has_results:
+    for (meet_exists,) in cur.fetchall():
+        if meet_exists:
             break
         run += 1
     return run
+
+
+def scheduledAbove(cur, sport, top):
+    """Ids above `top` that ARE real meets but have produced no results.
+
+    The scheduled meets. Reported so the two numbers are never confused
+    again: these are work that will pay off later, not a ceiling.
+    """
+    mt, res = SPORTS[sport]["meets"], SPORTS[sport]["results"]
+    cur.execute(f"""
+        SELECT count(DISTINCT q.meet_id)
+        FROM   meet_queue q
+        WHERE  q.source = 'anet' AND q.sport = %s
+          AND  q.scraped IN (1, 2) AND q.meet_id > %s
+          AND  EXISTS (SELECT 1 FROM {mt} m
+                       WHERE m.meet_id = q.meet_id AND m.source = 'anet')
+          AND  NOT EXISTS (SELECT 1 FROM {res} r
+                           WHERE r.meet_id = q.meet_id AND r.source = 'anet')
+    """, (sport, top))
+    return cur.fetchone()[0]
 
 
 def hasDateColumn(cur, sport):
@@ -132,32 +168,43 @@ def emptyRecent(cur, sport, since):
     return [r[0] for r in cur.fetchall()]
 
 
-def emptyUndated(cur, sport, above):
-    """Finished-but-empty meets with NO stored date, above an id.
+def scheduledToRetry(cur, sport, above, has_date):
+    """The scheduled meets worth asking again: real meets above the
+    watermark with no results, minus any we know are still in the future.
 
-    ! THE HONEST REMAINDER. Until today an empty cross country meet stored
-      no date at all -- anet's MeetDate was parsed by saveMeet and dropped,
-      landing only on result rows -- so those meets cannot be tested against
-      the window. They are not in it and not out of it; they are unknown.
-      Counted separately, and only re-asked ABOVE the watermark, where
-      "these are the newest ids" is the one thing we do know about them.
-      This shrinks to nothing as meets are re-scraped with meets.meet_date.
+    ★ THIS IS THE ACTUAL WORK (owner, 2026-09-18: "there's like 10k meets
+      that are scheduled with no results, and they're interspersed between
+      the last like 30k ids"). They are not a ceiling and they are not
+      failures -- they are meets we reached before the results were posted.
+      Being above the watermark is what marks them out, and it needs no date.
+
+    ! A DATE STILL HELPS WHEN WE HAVE IT: a meet scheduled for next month
+      will be just as empty today, so asking is a wasted fetch. meets_tf_meta
+      carries the date for track; meets.meet_date does for cross country from
+      today on. Without one, every scheduled meet is asked -- which is right,
+      because the alternative is never asking.
     """
-    res, dates = SPORTS[sport]["results"], SPORTS[sport]["dates"]
-    # ! NULL WHEN THE COLUMN IS NOT THERE, so "undated" stays answerable on
-    #   a database that has not run the migration yet.
-    datecol = "d.meet_date" if hasDateColumn(cur, sport) else "NULL::text"
+    mt, res = SPORTS[sport]["meets"], SPORTS[sport]["results"]
+    dates = SPORTS[sport]["dates"]
+    future = ""
+    if has_date:
+        future = f"""
+          AND NOT EXISTS (SELECT 1 FROM {dates} d
+                          WHERE d.meet_id = q.meet_id
+                            AND d.meet_date > %(today)s)"""
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
         FROM   meet_queue q
-        LEFT   JOIN {dates} d ON d.meet_id = q.meet_id
-        WHERE  q.source = 'anet' AND q.sport = %s
-          AND  q.scraped IN (1, 2) AND q.meet_id > %s
-          AND  {datecol} IS NULL
+        WHERE  q.source = 'anet' AND q.sport = %(sport)s
+          AND  q.scraped IN (1, 2) AND q.meet_id > %(above)s
+          AND  EXISTS (SELECT 1 FROM {mt} m
+                       WHERE m.meet_id = q.meet_id AND m.source = 'anet')
           AND  NOT EXISTS (SELECT 1 FROM {res} r
                            WHERE r.meet_id = q.meet_id AND r.source = 'anet')
+          {future}
         ORDER  BY q.meet_id
-    """, (sport, above))
+    """, {"sport": sport, "above": above,
+          "today": datetime.date.today().isoformat()})
     return [r[0] for r in cur.fetchall()]
 
 
@@ -213,14 +260,17 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
         return out
     out["top"] = top
     out["misses"] = misses = trailingMisses(cur, sport, top)
-    say(f"  [{sport}] last id that produced results: {top:,}; "
-        f"ids asked about above it with nothing back: {misses:,}")
+    out["scheduled"] = sched = scheduledAbove(cur, sport, top)
+    say(f"  [{sport}] last id that produced results: {top:,}")
+    say(f"  [{sport}] above it: {sched:,} real meets with no results yet "
+        f"(scheduled), and {misses:,} ids in a row at the top that are not "
+        f"meets at all")
 
     if do_new:
         if misses >= stop_after_misses:
-            say(f"  [{sport}] {stop_after_misses}+ empty in a row -- "
-                f"treating that as the end of the corpus, nothing seeded "
-                f"forward.")
+            say(f"  [{sport}] {stop_after_misses}+ ids in a row at the top "
+                f"are not meets at all -- treating that as the end of the "
+                f"corpus, nothing seeded forward.")
         else:
             lo, hi = top + 1, top + ahead
             say(f"  [{sport}] seeding forward {lo:,}..{hi:,}")
@@ -239,12 +289,12 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
             dated = []
             say(f"  [{sport}] {SPORTS[sport]['dates']}.meet_date does not "
                 f"exist yet -- every empty meet counts as undated.")
-        undated = emptyUndated(cur, sport, top)
-        out["dated"], out["undated"] = len(dated), len(undated)
-        say(f"  [{sport}] dated since {since} with 0 results: {len(dated):,}"
-            + (f"; plus {len(undated):,} undated above the watermark"
-               if undated else ""))
-        todo = sorted(set(dated) | set(undated))
+        sched = scheduledToRetry(cur, sport, top, hasDateColumn(cur, sport))
+        out["dated"], out["scheduled_retry"] = len(dated), len(sched)
+        say(f"  [{sport}] dated since {since} with 0 results: {len(dated):,}")
+        say(f"  [{sport}] scheduled above the watermark, worth asking again: "
+            f"{len(sched):,}")
+        todo = sorted(set(dated) | set(sched))
         if write and todo:
             out["requeued"] = requeue(cur, sport, todo)
             say(f"  [{sport}]   {out['requeued']:,} reset to scraped=0")
